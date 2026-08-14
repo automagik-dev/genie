@@ -8,7 +8,7 @@
  * Honors a `<!-- skills-lint:ignore -->` bailout marker to skip a file.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 
@@ -49,19 +49,20 @@ function collectSubcommands(helpText: string): Set<string> {
   return cmds;
 }
 
-function getGenieCommands(): Set<string> {
+export function getGenieCommands(root: string = ROOT): Set<string> {
   // Validate against the repo's own freshly-built binary when present, not
   // whatever `genie` happens to be on PATH — a stale global install can lag
   // the source (e.g. missing the `v5` namespace) and produce false failures.
-  // Run `bun run build` before linting so `dist/genie.js` reflects source.
+  // A clean checkout has no dist/, so probe src/genie.ts directly rather than
+  // falling back to a possibly stale globally installed Genie.
   //
   // LIMITATION: only the FIRST token after `genie` is validated. `genie v5 task`
   // resolves to `v5`, so bogus subcommands under a valid namespace (e.g.
   // `genie v5 bogus-verb`) pass this lint. Command honesty below the namespace
   // level must be verified in review, not assumed from a green lint.
-  const distBin = join(ROOT, 'dist', 'genie.js');
-  const cmd = existsSync(distBin) ? `bun ${distBin} --help` : 'genie --help';
-  const out = execSync(cmd, { encoding: 'utf8' });
+  const distBin = join(root, 'dist', 'genie.js');
+  const cli = existsSync(distBin) ? distBin : join(root, 'src', 'genie.ts');
+  const out = execFileSync('bun', [cli, '--help'], { encoding: 'utf8' });
   return collectSubcommands(out);
 }
 

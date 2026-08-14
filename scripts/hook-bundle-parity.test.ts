@@ -11,11 +11,7 @@ import {
 
 describe('committed hook bundle parity', () => {
   test('all three build outputs are byte-deterministic and mode 755', async () => {
-    expect(HOOK_BUNDLES.map((target) => target.name)).toEqual([
-      'validate-wish',
-      'validate-completion',
-      'session-context',
-    ]);
+    expect(HOOK_BUNDLES.map((target) => target.name)).toEqual(['validate-wish', 'session-context']);
     await expect(assertHookBundlesParity()).resolves.toBeUndefined();
   });
 
@@ -30,8 +26,14 @@ describe('committed hook bundle parity', () => {
         await expect(assertHookBundleParity(fixture)).rejects.toThrow('Hook bundle drift');
 
         writeFileSync(bundle, await renderHookBundle(target.source));
+        // 744 is STRICTER than 755: the tighten-only doctor cannot restore
+        // the lost executable bits, so the message names regeneration.
         chmodSync(bundle, 0o744);
-        await expect(assertHookBundleParity(fixture)).rejects.toThrow('must have mode 755');
+        await expect(assertHookBundleParity(fixture)).rejects.toThrow(/must have mode 755.*--write/);
+        // 777 is WIDER than 755: exactly the group/world-writable drift the
+        // doctor's tighten-only repair exists for.
+        chmodSync(bundle, 0o777);
+        await expect(assertHookBundleParity(fixture)).rejects.toThrow(/must have mode 755.*genie doctor --fix/);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });

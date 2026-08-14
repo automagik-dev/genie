@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { type BranchGuardDeps, branchGuard } from '../handlers/branch-guard.js';
 import type { HookPayload } from '../types.js';
 
@@ -164,6 +168,79 @@ describe('branch-guard', () => {
     });
   });
 
+  // =========================================================================
+  // TRUSTED GH EXECUTABLE — hooks-v2#security
+  // =========================================================================
+
+  // A repository-local `gh` shim planted on PATH must never answer the
+  // merge-gate lookup: its forged `dev` output would turn the handler's
+  // fall-closed deny into an allow. The default resolver runs `gh` through
+  // the trusted-executable gate, which refuses any binary inside the
+  // agent's working-directory trust roots before spawning it.
+  describe('repo-local gh shim cannot forge the merge-gate answer', () => {
+    /** Plant a `gh` shim whose forged answer is `dev`, then invoke the handler
+     *  with the shim dir prepended to PATH. Returns the handler result. */
+    async function runWithGhShim(shimDir: string, cwd: string) {
+      mkdirSync(shimDir, { recursive: true });
+      const marker = join(shimDir, 'SHIM_RAN');
+      // If the handler ever trusts this shim, `gh pr view` "succeeds" with a
+      // forged baseRefName of `dev` — exactly the forge this test exists to
+      // prove impossible from inside the repository.
+      writeFileSync(join(shimDir, 'gh'), `#!/bin/sh\ntouch "${marker}"\nprintf 'dev'\n`, { mode: 0o755 });
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${shimDir}:${originalPath ?? ''}`;
+      try {
+        const payload: HookPayload = { ...makePayload('gh pr merge 123'), cwd };
+        return { result: await branchGuard(payload), marker };
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    }
+
+    test('a repo-local gh shim is refused outright and can never forge the merge-gate answer', async () => {
+      const repoDir = mkdtempSync(join(tmpdir(), 'genie-branch-guard-shim-repo-'));
+      try {
+        // Best-effort git init makes the fixture a real checkout; the refusal
+        // fires on the working-directory root itself, so the assertion does
+        // not depend on git being available.
+        try {
+          execSync('git init', { cwd: repoDir, stdio: 'pipe' });
+        } catch {
+          /* git unavailable — the cwd trust root still covers the shim */
+        }
+        const { result, marker } = await runWithGhShim(join(repoDir, 'tools'), repoDir);
+        expect(result).toBeDefined();
+        expect(result!.decision).toBe('deny');
+        expect(result!.reason).toContain('could not resolve base branch of PR #123');
+        expect(result!.reason).toContain('trusted gh resolution failed');
+        expect(result!.reason).toContain('Refusing repository-local gh executable');
+        // The forged allow never executes: a fall-closed deny, not a forged dev.
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+      }
+    });
+
+    // Trust-boundary contrast: the trusted-executable gate refuses binaries
+    // under the *repository* trust roots. A shim on a user-owned PATH
+    // directory outside the repo is the user's own tooling and still
+    // answers — this test documents that boundary so a future hardening
+    // change cannot silently invert it.
+    test('a gh shim outside the repository trust roots still answers (documented user-PATH boundary)', async () => {
+      const repoDir = mkdtempSync(join(tmpdir(), 'genie-branch-guard-boundary-repo-'));
+      const shimRoot = mkdtempSync(join(tmpdir(), 'genie-branch-guard-boundary-shim-'));
+      try {
+        const { result, marker } = await runWithGhShim(join(shimRoot, 'bin'), repoDir);
+        expect(result).toBeUndefined();
+        expect(existsSync(marker)).toBe(true);
+      } finally {
+        rmSync(repoDir, { recursive: true, force: true });
+        rmSync(shimRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('blocks checkout main with chained mutation', () => {
     const blocked = [
       'git checkout main && git commit -m "test"',
@@ -254,6 +331,9 @@ describe('branch-guard', () => {
       ['long flag, equals-separated', 'gh pr merge 1270 --repo=automagik-dev/genie --squash'],
       ['short flag, space-separated', 'gh pr merge 1270 --squash -R automagik-dev/genie'],
       ['short flag, equals-separated', 'gh pr merge 1270 -R=automagik-dev/genie'],
+      ['quoted long value', 'gh pr merge 1270 --repo "automagik-dev/genie"'],
+      ['quoted long equals value', "gh pr merge 1270 --repo='automagik-dev/genie'"],
+      ['quoted short value', "gh pr merge 1270 -R 'automagik-dev/genie'"],
       ['repo before pr num still parsed', 'gh pr merge 1270 --repo automagik-dev/genie --auto --delete-branch'],
       ['slug with dots and hyphens', 'gh pr merge 42 --repo my-org/my.repo-name'],
       ['slug with underscores', 'gh pr merge 7 --repo owner_x/name_y'],
@@ -279,10 +359,22 @@ describe('branch-guard', () => {
       expect(calls[0].repo).toBeUndefined();
     });
 
-    test('malformed repo arg (no slash) is ignored — repo stays undefined', async () => {
+    test('malformed explicit repo arg fails closed without lookup', async () => {
       const { deps, calls } = spyDeps('dev');
-      await branchGuard(makePayload('gh pr merge 1270 --repo justowner'), deps);
-      expect(calls[0].repo).toBeUndefined();
+      const result = await branchGuard(makePayload('gh pr merge 1270 --repo justowner'), deps);
+      expect(result?.decision).toBe('deny');
+      expect(result?.reason).toContain('exact `OWNER/NAME`');
+      expect(calls).toHaveLength(0);
+    });
+
+    test('the same PR number is verified against each exact quoted repository', async () => {
+      const { deps, calls } = spyDeps('dev');
+      await branchGuard(makePayload('gh pr merge 1270 --repo "owner-a/project"'), deps);
+      await branchGuard(makePayload("gh pr merge 1270 -R='owner-b/project'"), deps);
+      expect(calls).toEqual([
+        { prNum: '1270', repo: 'owner-a/project' },
+        { prNum: '1270', repo: 'owner-b/project' },
+      ]);
     });
 
     test('--repo inside a quoted body is stripped before extraction (no accidental forwarding)', async () => {

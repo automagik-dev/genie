@@ -26,11 +26,13 @@ import {
   checkAgentSync,
   checkCodexIntegration,
   checkIndexLaneDrift,
+  checkOmniBridgeHealth,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
+  evaluateOmniBridgeHealth,
   evaluateOmniHookTimeout,
   findDispatchHookTimeoutSec,
 } from './doctor.js';
@@ -158,10 +160,11 @@ describe('doctorCommand', () => {
     expect(exitCode).toBe(0);
   });
 
-  test('human output renders a header and a summary line', async () => {
+  test('human output renders a header and an honest warning summary', async () => {
     const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
     expect(output).toContain('genie doctor');
-    expect(output).toContain('All checks passed.');
+    expect(output).toContain('warning(s) need attention.');
+    expect(output).not.toContain('All checks passed.');
   });
 });
 
@@ -475,6 +478,47 @@ describe('omni hook-timeout guardrail', () => {
     expect(findDispatchHookTimeoutSec({})).toBeNull();
   });
 
+  test('finds the smallest dispatch timeout across settings and injected plugin manifests', () => {
+    const settings = { hooks: { PreToolUse: [{ hooks: [{ command: DISPATCH, timeout: 30 }] }] } };
+    const claudeManifest = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash|Read|Write|Edit|NotebookEdit|SendMessage',
+            hooks: [{ command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-runtime.cjs" claude', timeout: 125 }],
+          },
+        ],
+      },
+    };
+    const kimiManifest = {
+      hooks: [
+        { event: 'PreToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs" claude', timeout: 120 },
+      ],
+    };
+    expect(findDispatchHookTimeoutSec(settings, { claudeManifest, kimiManifest })).toBe(30);
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest, kimiManifest })).toBe(120);
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest })).toBe(125);
+  });
+
+  test('ignores non-dispatch manifest entries (SessionStart, validate-wish, PostToolUse)', () => {
+    const claudeManifest = {
+      hooks: {
+        SessionStart: [
+          { hooks: [{ command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs"', timeout: 5 }] },
+        ],
+        PreToolUse: [{ hooks: [{ command: 'node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs', timeout: 5 }] }],
+        PostToolUse: [{ hooks: [{ command: 'node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs', timeout: 3 }] }],
+      },
+    };
+    const kimiManifest = {
+      hooks: [
+        { event: 'PostToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/dispatch-runtime.cjs" claude', timeout: 2 },
+        { event: 'PreToolUse', command: 'node "$KIMI_PLUGIN_ROOT/scripts/validate-wish.cjs"', timeout: 4 },
+      ],
+    };
+    expect(findDispatchHookTimeoutSec({}, { claudeManifest, kimiManifest })).toBeNull();
+  });
+
   test('warns when the hook timeout is below pollBudgetMs', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: 5 });
     expect(res?.status).toBe('warn');
@@ -493,7 +537,7 @@ describe('omni hook-timeout guardrail', () => {
   test('warns when approvals are enabled but no dispatch timeout is found', () => {
     const res = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: 110_000, timeoutSec: null });
     expect(res?.status).toBe('warn');
-    expect(res?.detail).toContain('no `genie hook dispatch`');
+    expect(res?.detail).toContain('no genie dispatch PreToolUse timeout found (settings or plugin manifests)');
   });
 
   test('passes when the hook timeout strictly exceeds pollBudgetMs', () => {
@@ -504,6 +548,81 @@ describe('omni hook-timeout guardrail', () => {
 
   test('emits no check when omni approvals are disabled', () => {
     expect(evaluateOmniHookTimeout({ enabled: false, pollBudgetMs: 110_000, timeoutSec: 1 })).toBeNull();
+  });
+});
+
+describe('omni bridge health probe (retired SessionStart hook replacement)', () => {
+  test('emits no check when omni is not configured', () => {
+    expect(evaluateOmniBridgeHealth({ configured: false, apiStatus: null })).toBeNull();
+  });
+
+  test('passes when the bridge reports healthy', () => {
+    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'healthy', version: '2.1.0' });
+    expect(res).toMatchObject({ name: 'omni bridge health', status: 'pass' });
+    expect(res?.detail).toContain('(v2.1.0)');
+  });
+
+  test('warns when the bridge reports a non-healthy status', () => {
+    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'degraded' });
+    expect(res).toMatchObject({ status: 'warn' });
+    expect(res?.detail).toContain('degraded');
+    expect(res?.suggestion).toContain('omni status');
+  });
+
+  test('warns when the bridge is unreachable, with a start suggestion', () => {
+    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: null, error: 'fetch failed' });
+    expect(res).toMatchObject({ status: 'warn' });
+    expect(res?.detail).toContain('unreachable');
+    expect(res?.suggestion).toContain('omni start');
+  });
+
+  test('checkOmniBridgeHealth probes the configured URL and stays silent when unconfigured', async () => {
+    const calls: string[] = [];
+    const fakeFetch = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({ status: 'healthy', version: '2.1.0' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    // Unconfigured (isolated GENIE_HOME has no omni section, env unset) → silent.
+    const priorUrl = process.env.OMNI_API_URL;
+    const priorKey = process.env.OMNI_API_KEY;
+    Reflect.deleteProperty(process.env, 'OMNI_API_URL');
+    Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
+    try {
+      expect(await checkOmniBridgeHealth(fakeFetch)).toEqual([]);
+      expect(calls).toEqual([]);
+
+      process.env.OMNI_API_URL = 'http://127.0.0.1:8882';
+      const results = await checkOmniBridgeHealth(fakeFetch);
+      expect(calls).toEqual(['http://127.0.0.1:8882/api/v2/health']);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ name: 'omni bridge health', status: 'pass' });
+    } finally {
+      if (priorUrl === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
+      else process.env.OMNI_API_URL = priorUrl;
+      if (priorKey === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
+      else process.env.OMNI_API_KEY = priorKey;
+    }
+  });
+
+  test('checkOmniBridgeHealth degrades to warn on a throwing fetch', async () => {
+    const prior = process.env.OMNI_API_URL;
+    process.env.OMNI_API_URL = 'http://127.0.0.1:9999';
+    try {
+      const throwingFetch = (async () => {
+        throw new Error('connection refused');
+      }) as unknown as typeof fetch;
+      const results = await checkOmniBridgeHealth(throwingFetch);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ status: 'warn' });
+      expect(results[0].detail).toContain('connection refused');
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
+      else process.env.OMNI_API_URL = prior;
+    }
   });
 });
 

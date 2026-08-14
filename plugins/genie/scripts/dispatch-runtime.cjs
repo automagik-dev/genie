@@ -22,6 +22,7 @@ const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const CODEX_EVENTS = new Set(['PreToolUse', 'PermissionRequest']);
 const CODEX_LAUNCHER_CONTRACT = 'genie-codex-dispatch-v1';
+const CLAUDE_LAUNCHER_CONTRACT = 'genie-claude-dispatch-v1';
 const STALE_CODEX_HOOK_RECOVERY =
   'stale Codex hook definition after a Genie plugin refresh: launcher binding flags are missing or malformed. ' +
   'Close all Codex tasks first. Then, from an external terminal, run `genie doctor`; ' +
@@ -77,8 +78,8 @@ function launcherSha256(launcherPath = __filename, fsApi = {}) {
  * @param {{lstat?: typeof lstatSync, readFile?: typeof readFileSync}} [fsApi]
  * @returns {string | null}
  */
-function launcherBindingError(expectedDigest, expectedContract, launcherPath = __filename, fsApi = {}) {
-  if (expectedContract !== CODEX_LAUNCHER_CONTRACT) {
+function launcherBindingError(expectedDigest, expectedContract, launcherPath = __filename, fsApi = {}, requiredContract = CODEX_LAUNCHER_CONTRACT) {
+  if (expectedContract !== requiredContract) {
     return 'launcher contract version is missing or does not match the reviewed definition';
   }
   if (typeof expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(expectedDigest)) {
@@ -561,8 +562,26 @@ async function readBoundedStdin(stream = process.stdin, maxBytes = MAX_STDIN_BYT
 
 async function main() {
   const runtime = process.argv[2];
-  const expectedEvent = process.argv[3];
-  const binding = runtime === 'codex' ? parseLauncherBindingArgs(process.argv.slice(4)) : null;
+  const expectedEvent = runtime === 'codex' ? process.argv[3] : undefined;
+  const bindingArgs = runtime === 'codex' ? process.argv.slice(4) : process.argv.slice(3);
+  const binding = runtime === 'codex' || runtime === 'claude' ? parseLauncherBindingArgs(bindingArgs) : null;
+  if (runtime === 'codex' || runtime === 'claude') {
+    const requiredContract = runtime === 'codex' ? CODEX_LAUNCHER_CONTRACT : CLAUDE_LAUNCHER_CONTRACT;
+    const error = binding && 'error' in binding
+      ? binding.error
+      : launcherBindingError(binding?.digest, binding?.contract, __filename, {}, requiredContract);
+    if (error) {
+      const message = `genie hook launcher: ${error}`;
+      if (runtime === 'codex') {
+        process.stdout.write(codexFailureOutput('', message, expectedEvent));
+        process.exitCode = 0;
+      } else {
+        process.stderr.write(`${message}\n`);
+        process.exitCode = 2;
+      }
+      return;
+    }
+  }
   const { raw, overflow } = await readBoundedStdin();
   if (overflow) {
     const message = 'genie hook launcher: input exceeded the safety limit';
@@ -575,21 +594,12 @@ async function main() {
     }
     return;
   }
-  if (runtime === 'codex') {
-    const error = binding && 'error' in binding
-      ? binding.error
-      : launcherBindingError(binding?.digest, binding?.contract);
-    if (error) {
-      process.stdout.write(codexFailureOutput(raw, `genie hook launcher: ${error}`, expectedEvent));
-      process.exitCode = 0;
-      return;
-    }
-  }
   process.exitCode = await launch(runtime, raw, {}, expectedEvent);
 }
 
 module.exports = {
   childTimeoutMs,
+  CLAUDE_LAUNCHER_CONTRACT,
   CODEX_LAUNCHER_CONTRACT,
   codexFailureOutput,
   launcherBindingError,

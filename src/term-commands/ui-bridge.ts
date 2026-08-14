@@ -12,10 +12,11 @@
  * Contract: `src/lib/v5/UI-BRIDGE.md` (protocol version, tools, notifications,
  * skew policy, lifetime).
  *
- * LAZY-LOAD contract: like `genie mcp`, the read-only `bun:sqlite` open +
- * read-tool registry are `await import`-ed inside the action, so they never
- * enter the genie startup import graph. The transport loop, watcher, and state
- * ops are ordinary static imports (none pulls in `mcp-tools.ts`).
+ * LAZY-LOAD contract: like `genie mcp`, the shared mcp-tools registry
+ * (write-capable open + read registry) is `await import`-ed inside the action,
+ * so it never enters the genie startup import graph. The transport loop,
+ * watcher, and state ops are ordinary static imports (none pulls in
+ * `mcp-tools.ts`).
  */
 
 import type { Command } from 'commander';
@@ -269,7 +270,7 @@ export async function runUiBridge(): Promise<void> {
 
   await runMcpServerLoop({
     tools: [...MCP_TOOLS, ...buildRosterTools(getWriteDb)],
-    openReadonlyDb,
+    openDb: openReadonlyDb,
     initialize: bridgeInitialize,
     onClose: () => shutdown(false),
   });

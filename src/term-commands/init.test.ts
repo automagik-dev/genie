@@ -64,7 +64,7 @@ describe('genie init', () => {
     expect(stdout).toContain('genie board');
   });
 
-  test('the kickoff prompts `genie launch` writes into a worktree are ignored', () => {
+  test('legacy launch kickoff prompts under .genie/launch/ stay ignored (residue protection)', () => {
     initGitRepo(dir);
     expect(runInit(dir).code).toBe(0);
 
@@ -82,7 +82,7 @@ describe('genie init', () => {
   test('--help discloses every project MCP file class init may reconcile', () => {
     const { code, stdout } = runInit(dir, ['--help']);
     expect(code).toBe(0);
-    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
+    for (const path of ['.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
   });
 
   test('second run is a no-op: .gitignore and INDEX.md are byte-identical', () => {
@@ -189,13 +189,12 @@ describe('genie init', () => {
 
   describe('MCP server registration', () => {
     const mcpPath = (root: string) => join(root, '.mcp.json');
-    const warpMcpPath = (root: string) => join(root, '.warp', '.mcp.json');
 
-    test('fresh repo: writes both .mcp.json and .warp/.mcp.json with the genie entry', () => {
+    test('fresh repo: writes .mcp.json with the genie entry', () => {
       initGitRepo(dir);
       expect(runInit(dir).code).toBe(0);
 
-      for (const path of [mcpPath(dir), warpMcpPath(dir)]) {
+      for (const path of [mcpPath(dir)]) {
         expect(existsSync(path)).toBe(true);
         const servers = JSON.parse(readFileSync(path, 'utf-8')).mcpServers;
         expect(servers.genie).toBeDefined();
@@ -239,22 +238,20 @@ describe('genie init', () => {
       expect(runInit(dir).code).toBe(0);
 
       const mcpBefore = readFileSync(mcpPath(dir));
-      const warpBefore = readFileSync(warpMcpPath(dir));
 
       expect(runInit(dir).code).toBe(0);
 
       expect(readFileSync(mcpPath(dir)).equals(mcpBefore)).toBe(true);
-      expect(readFileSync(warpMcpPath(dir)).equals(warpBefore)).toBe(true);
     });
 
     test('--json reports the mcp config writes as created then skipped', () => {
       initGitRepo(dir);
       const first = JSON.parse(runInit(dir, ['--json']).stdout);
       const actions = first.mcp.map((c: { path: string; action: string }) => c.action);
-      expect(actions.slice(0, 2)).toEqual(['created', 'created']);
+      expect(actions).toEqual(['created', 'created']);
 
       const second = JSON.parse(runInit(dir, ['--json']).stdout);
-      expect(second.mcp.map((c: { action: string }) => c.action).slice(0, 2)).toEqual(['skipped', 'skipped']);
+      expect(second.mcp.map((c: { action: string }) => c.action)).toEqual(['skipped', 'skipped']);
     });
 
     test('malformed .mcp.json is surfaced, not clobbered', () => {
@@ -271,13 +268,12 @@ describe('genie init', () => {
 
     test('valid but wrong-shaped server maps are rejected without partial scaffold writes', () => {
       initGitRepo(dir);
-      mkdirSync(join(dir, '.warp'), { recursive: true });
-      writeFileSync(warpMcpPath(dir), '{"mcpServers":[]}');
+      writeFileSync(mcpPath(dir), '{"mcpServers":[]}');
       const { code, stderr } = runInit(dir);
       expect(code).toBe(1);
       expect(stderr).toContain('mcpServers');
-      expect(readFileSync(warpMcpPath(dir), 'utf8')).toBe('{"mcpServers":[]}');
-      expect(existsSync(mcpPath(dir))).toBe(false);
+      expect(readFileSync(mcpPath(dir), 'utf8')).toBe('{"mcpServers":[]}');
+      expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(false);
       expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
     });
   });

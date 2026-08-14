@@ -29,7 +29,6 @@ import { freshness } from './handlers/freshness.js';
 import { gitFreezeGuard } from './handlers/git-freeze-guard.js';
 import { identityInject } from './handlers/identity-inject.js';
 import { omniApproval } from './handlers/omni-approval.js';
-import { orchestrationGuard } from './handlers/orchestration-guard.js';
 import type { Handler, HandlerResult, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -67,16 +66,6 @@ const builtinHandlers: ReadonlyArray<Handler> = [
     matcher: /^Bash$/,
     priority: 2,
     fn: gitFreezeGuard,
-  },
-  {
-    version: '1',
-    source: 'builtin',
-    manifest_path: BUILTIN_MANIFEST_PATH,
-    name: 'orchestration-guard',
-    event: 'PreToolUse',
-    matcher: /^Bash$/,
-    priority: 2,
-    fn: orchestrationGuard,
   },
   {
     version: '1',
@@ -135,7 +124,7 @@ export function compileOmniToolMatcher(source: string): RegExp {
 
 /**
  * Build the `omni-approval` handler descriptor. Priority 5 keeps it AFTER the
- * branch/orchestration deny-guards (1, 2) — so a guard deny short-circuits
+ * branch/git-freeze deny-guards (1, 2) — so a guard deny short-circuits
  * before we ever bother the phone — and before the context-adding handlers (8).
  */
 function omniApprovalHandler(matcher: RegExp, runtime: 'claude' | 'codex'): Handler {
@@ -472,7 +461,7 @@ function decisionReason(result: HandlerResult): string | undefined {
  * only, no additionalContext / updatedInput); that intent MUST surface to CC so
  * a resolved approval runs the tool without a redundant local prompt.
  *
- * The context-carrying builtins (orchestration-guard, audit-context, freshness)
+ * The context-carrying builtins (audit-context, freshness)
  * attach `permissionDecision: 'allow'` next to their `additionalContext`. That
  * allow is incidental — pre-omni the dispatcher never read it, surfacing only
  * the context and deferring the permission decision to CC. Treating it as

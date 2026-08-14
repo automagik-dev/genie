@@ -66,6 +66,18 @@ function addWorktree(fx: Fixture, name: string, branch: string, parent?: string)
   return path;
 }
 
+/**
+ * Materialize a remotty session worktree: post-0.3 placement
+ * `<project>/.worktrees/<session>`, on any branch the session chose.
+ */
+function addSessionWorktree(fx: Fixture, name: string, branch: string): string {
+  const sessionsDir = join(fx.root, '.worktrees');
+  mkdirSync(sessionsDir, { recursive: true });
+  const path = join(sessionsDir, name);
+  git(fx.root, 'worktree', 'add', '-q', '-b', branch, path);
+  return path;
+}
+
 function branchExists(root: string, branch: string): boolean {
   return git(root, 'branch', '--list', branch).trim() !== '';
 }
@@ -312,7 +324,7 @@ describe('classification and fail-closed removal', () => {
     expect(checks[1]).toMatchObject({
       name: 'launch worktrees: other checkouts',
       status: 'pass',
-      detail: '2 kept (not launch worktrees of this repo) — never touched by --fix',
+      detail: '2 kept (not launch worktrees or remotty sessions of this repo) — never touched by --fix',
     });
 
     expect(runFix(fx)).toEqual([]);
@@ -340,6 +352,88 @@ describe('classification and fail-closed removal', () => {
         throw new Error('cleanup must not run without a repo root');
       },
     });
+  });
+});
+
+describe('post-0.3 retarget: remotty sessions are never launch residue', () => {
+  test('legacy residue is still detected while a remotty session on a wish branch is not classified', () => {
+    const fx = makeFixture();
+    // Pre-0.3 shape: under the legacy launch base, on the launch branch shape.
+    const legacy = addWorktree(fx, 'repo-demo-alpha', 'wish/demo-alpha');
+    // Post-0.3 shape: `<project>/.worktrees/<session>` — a remotty session whose
+    // branch HAPPENS to be launch-shaped (wish spawns compose `wish/<slug>-<group>`).
+    const session = addSessionWorktree(fx, 'sess-demo', 'wish/demo-beta');
+
+    const scan = scanLaunchWorktrees(fx.root, fx.base);
+    const legacyEntry = scan.entries.find((entry) => entry.branch === 'wish/demo-alpha');
+    const sessionEntry = scan.entries.find((entry) => entry.branch === 'wish/demo-beta');
+    expect(legacyEntry?.disposition).toBe('removable');
+    expect(sessionEntry?.disposition).toBe('remotty-session');
+    expect(sessionEntry?.reason).toContain('post-0.3 wish worktree');
+
+    // Doctor reports the legacy residue AND the session count, but never lets
+    // the session into the launch-residue bucket.
+    const report = checkLaunchWorktrees(fx.root, { worktreesBase: fx.base })
+      .map((check) => `${check.name} — ${check.detail} — ${check.suggestion ?? ''}`)
+      .join('\n');
+    expect(report).toContain('1 of 1 reclaimable (merged into dev, clean)');
+    expect(report).toContain(
+      'remotty sessions — 1 kept (remotty sessions — post-0.3 wish worktrees; removal is manifest-owned by remotty) — never touched by --fix',
+    );
+
+    // --fix reclaims ONLY the provably safe legacy worktree: the session and
+    // its branch survive whatever state they are in. (Capture the reported
+    // path first — the removal itself makes the path unresolvable.)
+    const reportedLegacy = realpathSync(legacy);
+    const fixLog = runFix(fx).join('\n');
+    expect(fixLog).toContain(`removed ${reportedLegacy} (wish/demo-alpha)`);
+    expect(existsSync(session)).toBe(true);
+    expect(branchExists(fx.root, 'wish/demo-beta')).toBe(true);
+  });
+
+  test('a session on a wt/* branch is a session too — placement alone decides, never the branch', () => {
+    const fx = makeFixture();
+    const session = addSessionWorktree(fx, 'sess-wt', 'wt/sess-wt');
+
+    const scan = scanLaunchWorktrees(fx.root, fx.base);
+    expect(scan.entries).toHaveLength(1);
+    expect(scan.entries[0]).toMatchObject({ disposition: 'remotty-session', branch: 'wt/sess-wt' });
+
+    const checks = checkLaunchWorktrees(fx.root, { worktreesBase: fx.base });
+    expect(checks.find((check) => check.name === 'launch worktrees')?.detail).toBe('none found');
+    expect(checks.find((check) => check.name === 'remotty sessions')?.detail).toContain('1 kept');
+
+    // A dirty session is kept like any other session: --fix never touches it.
+    writeFileSync(join(session, 'scratch.txt'), 'wip\n');
+    expect(runFix(fx)).toEqual([]);
+    expect(existsSync(join(session, 'scratch.txt'))).toBe(true);
+    expect(branchExists(fx.root, 'wt/sess-wt')).toBe(true);
+  });
+
+  test('a session never enters the reclaimable count, even merged+clean', () => {
+    const fx = makeFixture();
+    addSessionWorktree(fx, 'sess-clean', 'wish/demo-clean');
+
+    // No legacy residue: the headline must say none found rather than counting
+    // the session as reclaimable.
+    expect(checkLaunchWorktrees(fx.root, { worktreesBase: fx.base })[0]).toMatchObject({
+      name: 'launch worktrees',
+      status: 'pass',
+      detail: 'none found',
+    });
+    expect(runFix(fx)).toEqual([]);
+    expect(branchExists(fx.root, 'wish/demo-clean')).toBe(true);
+  });
+
+  test('scanning from inside a session still recognizes sibling sessions via the main worktree', () => {
+    const fx = makeFixture();
+    const from = addSessionWorktree(fx, 'sess-one', 'wish/demo-one');
+    addSessionWorktree(fx, 'sess-two', 'wish/demo-two');
+
+    // Doctor runs FROM a session worktree: the sessions base still resolves
+    // through the main worktree (first porcelain record), not the cwd.
+    const scan = scanLaunchWorktrees(from, fx.base);
+    expect(scan.entries.map((entry) => entry.disposition)).toEqual(['remotty-session']);
   });
 });
 

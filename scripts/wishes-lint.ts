@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { validateWish } from '../plugins/genie/scripts/src/validate-wish.js';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
 
@@ -346,6 +347,22 @@ function lintWishMetadata(file: string): { record?: WishRecord; issues: WishStru
   };
 }
 
+/**
+ * Run the template-derived wish validator (the blocking write check) over a
+ * WISH.md. This is the drift gate: when the canonical template changes, the
+ * corpus must follow, or every repo carrying wishes fails CI here.
+ */
+function lintWishTemplate(file: string, text: string): WishStructureIssue[] {
+  if (basename(file) !== 'WISH.md') return [];
+  if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
+  const result = validateWish(text);
+  return result.issues.map((issue) => ({
+    file,
+    line: issue.line,
+    message: `wish template violation: ${issue.message}`,
+  }));
+}
+
 function lintWishGraph(records: WishRecord[]): WishStructureIssue[] {
   const issues: WishStructureIssue[] = [];
   const bySlug = new Map(records.map((record) => [record.slug, record]));
@@ -413,7 +430,9 @@ function main() {
   const wishRecords: WishRecord[] = [];
 
   for (const file of files) {
+    const text = readFileSync(file, 'utf8');
     allBroken.push(...lintFile(file));
+    allStructureIssues.push(...lintWishTemplate(file, text));
     allStructureIssues.push(...lintExecutionStrategy(file));
     allStructureIssues.push(...lintDesignReviewEvidence(file));
     const metadata = lintWishMetadata(file);
@@ -438,7 +457,7 @@ function main() {
     process.exit(1);
   }
 
-  console.error(`wishes-lint: OK (${files.length} files scanned, 0 broken brainstorm links)`);
+  console.error(`wishes-lint: OK (${files.length} files scanned, 0 broken brainstorm links, template validator green)`);
 }
 
 main();

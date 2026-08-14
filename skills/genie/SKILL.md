@@ -54,7 +54,7 @@ For requests that did not bypass, check whether the topic matches existing work 
 
 | Existing state | Override |
 |----------------|----------|
-| Wish status APPROVED | `work` (native-team execution) or `genie launch <slug>` (Warp cockpit) |
+| Wish status APPROVED | `work` (native-team execution) |
 | Wish status IN_PROGRESS | Resume `work` or the recorded corrective route |
 | Wish status DRAFT | `wish` to continue refining |
 | Wish status FIX-FIRST | `fix` |
@@ -67,7 +67,7 @@ Tell the user: "Found an existing [wish/brainstorm] for '[topic]' ([STATUS]) —
 
 ## Operational Command Mapping
 
-v5 is zero-daemon: documents live in git, per-group execution state lives in `.genie/genie.db`, and execution happens through the active runtime's native subagents or `genie launch` worktree panes. Map natural language to live verbs:
+v5 is zero-daemon: documents live in git, per-group execution state lives in `.genie/genie.db`, and execution happens through the active runtime's native subagents. Map natural language to live verbs:
 
 | User says | Route |
 |-----------|-------|
@@ -82,15 +82,15 @@ v5 is zero-daemon: documents live in git, per-group execution state lives in `.g
 | "claim a task" / "start on <id>" | `genie task checkout <id> --worker <name>` — atomic; a racing claimant gets a conflict error and stands down |
 | "stop agent X" / "kill X" | Native team: stop the background subagent in-session — no CLI verb |
 | "message agent X" | The runtime's native follow-up surface |
-| "create a team for X" | `work` on the wish, or `genie launch <slug>` — Warp cockpit, one pane per ready group, each in its own worktree |
+| "create a team for X" | `work` on the wish — native role agents, one per execution group |
 | "show logs for X" | `genie task status <id>` (detail, dependencies, stage log) |
-| "open the cockpit" | `genie launch <slug>` (`--dry-run` to preview, `--groups <csv>` to scope) |
+| "open the cockpit" | `genie board --wish <slug>` (live lanes); `genie context --wish <slug> --plan` previews the spawn plan |
 | "is genie healthy" / "diagnose" | `genie doctor` |
 | "set up genie here" | `genie init` (idempotent per-repo scaffold) |
 
 ## Post-Dispatch
 
-After dispatching subagents, monitor through structured state — `genie board`, `genie task status <id>` — and wait for completion notifications. No terminal scraping or sleep-polling (the orchestration-guard hook flags it); completion is push, not poll.
+After dispatching subagents, monitor through structured state — `genie board`, `genie task status <id>` — and wait for completion notifications. No terminal scraping or sleep-polling (a retired orchestration-guard hook used to flag it); completion is push, not poll.
 
 ## Live CLI Surface
 

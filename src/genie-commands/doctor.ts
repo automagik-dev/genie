@@ -91,6 +91,7 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -555,7 +556,7 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
 
 /**
  * Group E: report what a Codex MCP child launched in this repository would
- * resolve — the SAME `resolveProjectContext` the read-only MCP server uses, so
+ * resolve — the SAME `resolveProjectContext` the MCP server uses, so
  * doctor and the server can never disagree about project context. An absent
  * database mirrors the `genie.db` check's "created on first use" stance as a
  * warn (the MCP returns a typed error, never a healthy empty board); a
@@ -835,25 +836,69 @@ interface CcSettings {
   hooks?: { PreToolUse?: unknown };
 }
 
-/**
- * Smallest `timeout` (SECONDS) among PreToolUse hooks that run `genie hook
- * dispatch` in a Claude Code settings object — that is the ceiling the omni
- * approval handler polls under. null when no such hook is installed. Pure +
- * exported so the guardrail is unit-tested without a settings file on disk.
- */
-export function findDispatchHookTimeoutSec(settings: CcSettings): number | null {
-  const pre = settings.hooks?.PreToolUse;
-  if (!Array.isArray(pre)) return null;
+/** Parsed plugin-manifest documents consulted alongside the settings object. */
+export interface DispatchManifestDocs {
+  /** plugins/genie/hooks/hooks.json — Claude manifest, settings-shaped. */
+  claudeManifest?: unknown;
+  /** plugins/genie/.kimi-plugin/plugin.json — flat `hooks` array. */
+  kimiManifest?: unknown;
+}
+
+/** Smallest timeout among settings-shaped PreToolUse entries matching the predicate. */
+function minMatchingTimeout(entries: unknown, matches: (command: string) => boolean): number | null {
+  if (!Array.isArray(entries)) return null;
   let min: number | null = null;
-  for (const entry of pre as HookMatcher[]) {
+  for (const entry of entries as HookMatcher[]) {
     if (!Array.isArray(entry?.hooks)) continue;
     for (const h of entry.hooks as HookCommand[]) {
-      if (typeof h?.command === 'string' && h.command.includes('hook dispatch') && typeof h.timeout === 'number') {
+      if (typeof h?.command === 'string' && matches(h.command) && typeof h.timeout === 'number') {
         min = min === null ? h.timeout : Math.min(min, h.timeout);
       }
     }
   }
   return min;
+}
+
+/** Smallest timeout among the Kimi flat-hook PreToolUse dispatch entries. */
+function minKimiDispatchTimeout(manifest: unknown): number | null {
+  const hooks = (manifest as { hooks?: unknown } | undefined)?.hooks;
+  if (!Array.isArray(hooks)) return null;
+  let min: number | null = null;
+  for (const hook of hooks as Array<{ event?: unknown; command?: unknown; timeout?: unknown }>) {
+    if (
+      hook?.event === 'PreToolUse' &&
+      typeof hook.command === 'string' &&
+      hook.command.includes('dispatch-runtime.cjs') &&
+      typeof hook.timeout === 'number'
+    ) {
+      min = min === null ? hook.timeout : Math.min(min, hook.timeout);
+    }
+  }
+  return min;
+}
+
+function minOf(current: number | null, next: number | null): number | null {
+  if (next === null) return current;
+  return current === null ? next : Math.min(current, next);
+}
+
+/**
+ * Smallest `timeout` (SECONDS) among PreToolUse hooks that reach the omni
+ * approval handler: `genie hook dispatch` entries in a Claude Code settings
+ * object, plus `dispatch-runtime.cjs` entries in the shipped Claude and Kimi
+ * plugin manifests. That minimum is the ceiling the approval handler polls
+ * under. null when no such hook is installed. Pure + exported so the
+ * guardrail is unit-tested without files on disk.
+ */
+export function findDispatchHookTimeoutSec(settings: CcSettings, manifests: DispatchManifestDocs = {}): number | null {
+  let min = minMatchingTimeout(settings.hooks?.PreToolUse, (command) => command.includes('hook dispatch'));
+  min = minOf(
+    min,
+    minMatchingTimeout((manifests.claudeManifest as CcSettings | undefined)?.hooks?.PreToolUse, (command) =>
+      command.includes('dispatch-runtime.cjs'),
+    ),
+  );
+  return minOf(min, minKimiDispatchTimeout(manifests.kimiManifest));
 }
 
 /**
@@ -876,7 +921,7 @@ export function evaluateOmniHookTimeout(params: {
     return {
       name,
       status: 'warn',
-      detail: 'omni approvals enabled but no `genie hook dispatch` PreToolUse timeout found',
+      detail: 'omni approvals enabled but no genie dispatch PreToolUse timeout found (settings or plugin manifests)',
       suggestion: `Install the genie PreToolUse hook with a timeout ≥ ${needSec}s so approvals can resolve.`,
     };
   }
@@ -901,16 +946,110 @@ export function evaluateOmniHookTimeout(params: {
 async function checkOmniHookTimeout(): Promise<CheckResult[]> {
   const rt = await resolveOmniRuntimeConfig();
   if (!rt.approvals.enabled) return []; // omni off → stay silent
-  const settingsPath = join(homedir(), '.claude', 'settings.json');
   let timeoutSec: number | null = null;
   try {
-    if (existsSync(settingsPath)) {
-      timeoutSec = findDispatchHookTimeoutSec(JSON.parse(readFileSync(settingsPath, 'utf8')) as CcSettings);
+    const settings = existsSync(join(homedir(), '.claude', 'settings.json'))
+      ? (JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8')) as CcSettings)
+      : {};
+    const manifests: DispatchManifestDocs = {};
+    const pluginRoot = resolveGenieSource(resolveGenieHome()).pluginRoot;
+    if (pluginRoot !== null) {
+      const claudePath = join(pluginRoot, 'hooks', 'hooks.json');
+      if (existsSync(claudePath)) manifests.claudeManifest = JSON.parse(readFileSync(claudePath, 'utf8'));
+      const kimiPath = join(pluginRoot, '.kimi-plugin', 'plugin.json');
+      if (existsSync(kimiPath)) manifests.kimiManifest = JSON.parse(readFileSync(kimiPath, 'utf8'));
     }
+    timeoutSec = findDispatchHookTimeoutSec(settings, manifests);
   } catch {
-    timeoutSec = null; // unreadable/malformed settings → treated as "not found"
+    timeoutSec = null; // unreadable/malformed settings or manifests → treated as "not found"
   }
   const result = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: rt.approvals.pollBudgetMs, timeoutSec });
+  return result ? [result] : [];
+}
+
+// ============================================================================
+// Omni bridge health probe
+// ============================================================================
+
+/** omni CLI's own fallback API URL (packages/cli/src/commands/status.ts). */
+export const OMNI_BRIDGE_DEFAULT_URL = 'http://localhost:8882';
+/** Bounded probe budget — doctor is interactive; the bridge answers locally. */
+export const OMNI_BRIDGE_PROBE_TIMEOUT_MS = 3_000;
+
+/**
+ * Evaluate the omni bridge health probe. Returns null when omni is not
+ * configured (no check emitted). The probe moved here from the retired omni
+ * plugin SessionStart health hook (hooks-v2#retire): `genie doctor` replaces
+ * the hook's per-session health scan with an on-demand diagnostic — no
+ * auto-install, no auto-recovery. Pure + exported for testing.
+ */
+export function evaluateOmniBridgeHealth(params: {
+  configured: boolean;
+  apiStatus: string | null;
+  version?: string;
+  error?: string;
+}): CheckResult | null {
+  if (!params.configured) return null;
+  const name = 'omni bridge health';
+  const versionSuffix = params.version ? ` (v${params.version})` : '';
+  if (params.apiStatus === 'healthy') {
+    return { name, status: 'pass', detail: `omni bridge healthy${versionSuffix}` };
+  }
+  if (params.apiStatus !== null) {
+    return {
+      name,
+      status: 'warn',
+      detail: `omni bridge reports status "${params.apiStatus}"${versionSuffix}`,
+      suggestion: 'Inspect the bridge with `omni status`; `omni start` brings it up.',
+    };
+  }
+  return {
+    name,
+    status: 'warn',
+    detail: `omni bridge unreachable${params.error ? ` (${params.error})` : ''}`,
+    suggestion: 'Start the bridge with `omni start` (or `genie omni serve`), then re-run `genie doctor`.',
+  };
+}
+
+interface OmniBridgeHealthProbe {
+  status: string | null;
+  version?: string;
+  error?: string;
+}
+
+/** One bounded GET to the bridge's health endpoint; never throws. */
+async function fetchOmniBridgeHealth(apiUrl: string, fetchImpl: typeof fetch): Promise<OmniBridgeHealthProbe> {
+  try {
+    const response = await fetchImpl(`${apiUrl.replace(/\/+$/, '')}/api/v2/health`, {
+      headers: { 'Accept-Encoding': 'identity' },
+      signal: AbortSignal.timeout(OMNI_BRIDGE_PROBE_TIMEOUT_MS),
+    });
+    const health = (await response.json()) as { status?: unknown; version?: unknown };
+    return {
+      status: typeof health.status === 'string' ? health.status : 'unknown',
+      version: typeof health.version === 'string' ? health.version : undefined,
+    };
+  } catch (err) {
+    return { status: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Probe the configured omni bridge. Silent when omni is not configured
+ * (no `apiUrl`/`apiKey` in genie config or env) so a machine that never uses
+ * omni carries no probe noise. `fetchImpl` is a test seam; production uses
+ * the global fetch.
+ */
+export async function checkOmniBridgeHealth(fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
+  const rt = await resolveOmniRuntimeConfig();
+  if (rt.apiUrl === undefined && rt.apiKey === undefined) return []; // omni off → stay silent
+  const probe = await fetchOmniBridgeHealth(rt.apiUrl ?? OMNI_BRIDGE_DEFAULT_URL, fetchImpl);
+  const result = evaluateOmniBridgeHealth({
+    configured: true,
+    apiStatus: probe.status,
+    version: probe.version,
+    error: probe.error,
+  });
   return result ? [result] : [];
 }
 
@@ -2108,6 +2247,11 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   if (options?.fix) {
     cleanupV4(cleanupOptions);
     cleanupLaunchWorktrees(root, cleanupOptions);
+    // Mode repair runs AFTER worktree removal: the removal scan decides on the
+    // pre-repair state, so a worktree whose only dirt is mode drift is never
+    // removed in the same run that tightens it (removal stays fail-closed on
+    // the state the user last saw; the next --fix may reclaim it).
+    repairWorktreeModes(root, cleanupOptions);
   }
 
   // Group E: ONE bounded host observation feeds the probe, the advisory, and
@@ -2137,12 +2281,15 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ),
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
+    ...checkWorktreeModes(root),
     ...checkAgentSync(),
     ...(await checkOmniHookTimeout()),
+    ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');
+  const warnings = results.filter((r) => r.status === 'warn');
 
   // One bounded activation observation feeds the additive integration summary.
   // It is purely additive: `{ ok, checks }` meanings are unchanged, and a pending
@@ -2165,7 +2312,9 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     out('');
     for (const line of results.flatMap(renderCheckLines)) out(line);
     out('');
-    out(failed.length === 0 ? '\x1b[32mAll checks passed.\x1b[0m' : `\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    if (failed.length > 0) out(`\x1b[31m${failed.length} check(s) failed.\x1b[0m`);
+    else if (warnings.length > 0) out(`\x1b[33m${warnings.length} warning(s) need attention.\x1b[0m`);
+    else out('\x1b[32mAll checks passed.\x1b[0m');
     // Broken Codex diagnostics go to stderr (no all-green footer); current/pending
     // status goes to stdout — the same stream split the setup/JSON projections use.
     if (integration) {

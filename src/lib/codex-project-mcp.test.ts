@@ -720,17 +720,16 @@ describe('registerProjectMcpConfigs', () => {
     expect(readFileSync(codexPath, 'utf8')).toContain('/absolute/genie');
   });
 
-  test('preflights both JSON files and rejects wrong-shaped valid JSON before any sibling write', () => {
-    mkdirSync(join(root, '.warp'), { recursive: true });
-    writeFileSync(join(root, '.warp', '.mcp.json'), '{"mcpServers":[]}');
+  test('preflights the JSON config and rejects wrong-shaped valid JSON before any sibling write', () => {
+    writeFileSync(join(root, '.mcp.json'), '{"mcpServers":[]}');
     expect(() =>
       registerProjectMcpConfigs(root, {
         pluginProbe: enabled,
         entry: { command: '/g', args: ['mcp'] },
       }),
     ).toThrow(/mcpServers.*must be an object/);
-    expect(existsSync(join(root, '.mcp.json'))).toBe(false);
-    expect(readFileSync(join(root, '.warp', '.mcp.json'), 'utf8')).toBe('{"mcpServers":[]}');
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('{"mcpServers":[]}');
+    expect(existsSync(join(root, '.codex', 'config.toml'))).toBe(false);
   });
 
   test('an enabled plugin leaves exactly one Codex route; a disabled plugin leaves exactly one fallback', () => {
@@ -753,15 +752,12 @@ describe('registerProjectMcpConfigs', () => {
     ).toThrow(/preserved.*unverified|unverified.*usable/i);
     expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toBe(original);
     expect(existsSync(join(root, '.mcp.json'))).toBe(false);
-    expect(existsSync(join(root, '.warp', '.mcp.json'))).toBe(false);
   });
 
   test('rejects file and parent-directory symlinks for every project MCP target', () => {
     if (process.platform === 'win32') return;
     const cases = [
       { target: '.mcp.json', parentLink: false },
-      { target: join('.warp', '.mcp.json'), parentLink: false },
-      { target: join('.warp', '.mcp.json'), parentLink: true },
       { target: join('.codex', 'config.toml'), parentLink: false },
       { target: join('.codex', 'config.toml'), parentLink: true },
     ];

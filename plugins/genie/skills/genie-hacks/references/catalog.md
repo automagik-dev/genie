@@ -23,11 +23,11 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Title:** Provider Switching — Right Model for the Job
 - **Category:** providers
 - **Problem:** One model and reasoning level is being used for every task even though exploration, implementation, and adversarial review have different needs.
-- **Solution:** Pick the terminal client per wish with `genie launch --agent`, then configure model, effort, and permissions in that client's named-agent surface. Codex uses `~/.codex/agents/*.toml`; Claude/Hermes use their native role configuration. Keep host-specific routing out of shared `SKILL.md` frontmatter.
+- **Solution:** Pick the terminal client per wish through the dispatch role, then configure model, effort, and permissions in that client's named-agent surface. Codex uses `~/.codex/agents/*.toml`; Claude/Hermes use their native role configuration. Keep host-specific routing out of shared `SKILL.md` frontmatter.
 - **Code:**
   ```bash
-  # Fast scaffolding wish: drive the cockpit panes with Codex
-  genie launch my-scaffold-wish --agent codex
+  # Fast scaffolding wish: dispatch engineers with a codex-backed named role
+  genie task checkout <task-id> --worker engineer  # then dispatch via the client's named role
 
   # Define review roles in the selected client's agent configuration with a
   # read-only sandbox and higher reasoning only when the task warrants it.
@@ -35,22 +35,21 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
   Use a fast read-heavy configuration for exploration and the strongest justified configuration for demanding review.
 - **Benefit:** Match latency and depth to the cognitive demand without encoding host-specific model settings in skills.
 - **When to use:** Mixed workloads — boilerplate generation vs. nuanced code review. When cost or speed matters per task.
-- ***v4 note:*** daemon per-role provider flags are gone. Provider choice now lives on `genie launch --agent`; role behavior lives in each client's native agent configuration.
+- ***v4 note:*** daemon per-role provider flags are gone. Provider choice now lives in the dispatch role; role behavior lives in each client's native agent configuration.
 
 ### hack: team-coordination
 - **ID:** `team-coordination`
 - **Title:** Multi-Team Coordination at Scale
 - **Category:** teams
 - **Problem:** You have multiple wishes that depend on each other, and running them sequentially wastes time.
-- **Solution:** Use `dream` to batch-execute wishes with dependency ordering, or open one `genie launch` cockpit per independent wish. Use the active runtime's native subagents for independent work, steer the same thread with follow-up messaging, and isolate parallel writers per the concurrency contract in AGENTS.md and the `work` skill's Dispatch section. Track shared wish state in the task DB.
+- **Solution:** Use `dream` to batch-execute wishes with dependency ordering. Use the active runtime's native subagents for independent work, steer the same thread with follow-up messaging, and isolate parallel writers per the concurrency contract in AGENTS.md and the `work` skill's Dispatch section. Track shared wish state in the task DB.
 - **Code:**
   ```bash
   # Queue wishes for overnight execution
   # Invoke the dream skill in the active client.
 
-  # Or run independent wishes in parallel — one cockpit each
-  genie launch auth-refactor
-  genie launch api-v2
+  # Run independent wishes in parallel through native subagents (see the
+  # dream skill for batch orchestration)
 
   # Monitor both from any terminal (state is shared SQLite)
   genie board --wish auth-refactor
@@ -138,8 +137,8 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Solution:** Match the model and reasoning effort to each named-agent role, scope wishes tightly, run `refine` on prompts before dispatch, and use the selected client's usage telemetry for evidence (Codex JSONL/app indicators or the equivalent client surface).
 - **Code:**
   ```bash
-  # 1. Cheaper driver for bulk scaffolding wishes
-  genie launch my-scaffold-wish --agent codex
+  # 1. Cheaper driver for bulk scaffolding wishes: dispatch with the
+  #    engineer-trivial named role (model/effort set in its agent profile)
 
   # 2. Tight wish scoping
   # BAD:  "Refactor the entire codebase"
@@ -183,7 +182,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Title:** Debugging Agent Issues Like a Pro
 - **Category:** debugging
 - **Problem:** An agent is stuck, producing wrong output, or a team isn't making progress.
-- **Solution:** Use `trace` for root-cause analysis, `genie doctor` for install health, and the task DB for where work is stuck. Native clients return each subagent's final summary to the orchestrator; cockpit panes from `genie launch` remain visible in the terminal.
+- **Solution:** Use `trace` for root-cause analysis, `genie doctor` for install health, and the task DB for where work is stuck. Native clients return each subagent's final summary to the orchestrator — the push-based completion signal means nothing needs watching in the terminal.
 - **Code:**
   ```bash
   # Systematic investigation of an unknown failure

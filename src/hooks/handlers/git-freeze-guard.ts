@@ -57,7 +57,7 @@
  * ## What "targets the shared checkout" means
  *
  * A linked worktree has its own HEAD, so `git switch` inside one is exactly the
- * escape hatch AGENTS.md points at (`genie launch`). The guard therefore
+ * escape hatch AGENTS.md points at (worktree isolation). The guard therefore
  * compares `git rev-parse --show-toplevel` of the command's effective directory
  * against the same for the session `cwd`, and denies only when they are the
  * same working tree. Subagents operating in their own worktree are untouched.
@@ -67,8 +67,8 @@
  * and the deny is raised for the first that lands in the shared checkout, so a
  * legitimate lead invocation cannot shield a frozen one behind it.
  *
- * Priority: 2 (a deny-guard — runs with branch-guard/orchestration-guard,
- * before omni-approval (5) and the context handlers (8)).
+ * Priority: 2 (a deny-guard — runs with branch-guard, before omni-approval
+ * (5) and the context handlers (8)).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -449,8 +449,8 @@ function denyReason(subcommand: string, sharedRoot: string): string {
     '  permitted plumbing, and this guard never fires on another working tree:',
     '    git worktree add <path> -b <branch> <base>',
     '    git -C <path> switch <branch>          # allowed: different working tree',
-    '- Whole execution group needs isolation? `genie launch <wish-slug>` gives each group its',
-    '  own pane + worktree by construction.',
+    '- Whole execution group needs isolation? Have the orchestrator arrange a dedicated',
+    '  worktree (explicit `git worktree add` plumbing is permitted) and dispatch there.',
     '- Otherwise sequence the work: hand the repo-level mutation back to the orchestrator,',
     '  which owns HEAD, and continue once it reports the move is done.',
     '- Read-only inspection stays allowed: `git status`, `git log`, `git diff`, `git show`,',

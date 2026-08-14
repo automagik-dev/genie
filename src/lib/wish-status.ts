@@ -72,6 +72,45 @@ export function readBoundedWishFile(path: string, budget: number): string | null
 }
 
 /**
+ * Like {@link readBoundedWishFile} but reads at most `headBytes` of the file —
+ * for consumers that only need the leading content (the Status table sits at
+ * the top of every real wish doc). The same lstat / O_NOFOLLOW / fstat
+ * hardening applies, and files larger than `maxFileBytes` are refused exactly
+ * as the full read refuses them. The SessionStart hook uses this so its active
+ * wish count is not starved by a cumulative full-file budget.
+ */
+export function readBoundedWishHead(path: string, maxFileBytes: number, headBytes: number): string | null {
+  let descriptor: number | null = null;
+  try {
+    const pathStats = lstatSync(path);
+    if (!pathStats.isFile() || pathStats.isSymbolicLink() || pathStats.size > maxFileBytes) return null;
+
+    descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+    const fileStats = fstatSync(descriptor);
+    if (!fileStats.isFile() || fileStats.size > maxFileBytes) return null;
+
+    const bytes = Buffer.alloc(Math.min(fileStats.size, headBytes));
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    return bytes.subarray(0, offset).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // Best-effort, as in the full read.
+      }
+    }
+  }
+}
+
+/**
  * Where a `| **Status** | ... |` cell ends. The two modes are NOT
  * interchangeable and each consumer keeps the one it has always used:
  *

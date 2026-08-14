@@ -4,8 +4,8 @@
  * against throwaway git-repo fixtures seeded via the real v5 state layer.
  *
  * Also asserts the LAZY-LOAD contract with a static import-graph probe: the
- * read-only `bun:sqlite` open in `mcp-tools.ts` must NOT be reachable from
- * `genie.ts` except through the dynamic `import()` inside the `mcp` action.
+ * `bun:sqlite` opens in `mcp-tools.ts` must NOT be reachable from `genie.ts`
+ * except through the dynamic `import()` inside the `mcp` action.
  */
 
 import { Database } from 'bun:sqlite';
@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  accessSync,
   chmodSync,
   existsSync,
+  constants as fsConstants,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -91,6 +93,55 @@ async function driveMcp(cwd: string, requests: Record<string, unknown>[]): Promi
     .map((l) => JSON.parse(l) as RpcResponse);
 }
 
+/**
+ * Drive ONE live `genie mcp` session in two stages, running `between` after the
+ * first batch's responses have landed. Sending everything up front (driveMcp)
+ * cannot express a filesystem that changes MID-session, which is exactly what a
+ * degraded-then-repaired server has to survive.
+ */
+async function driveMcpStaged(
+  cwd: string,
+  first: Record<string, unknown>[],
+  expectedFirstLines: number,
+  between: () => void,
+  second: Record<string, unknown>[],
+): Promise<RpcResponse[]> {
+  const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+    cwd,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  // Only COMPLETE lines count: a half-arrived line is not a response yet.
+  const complete = (): string[] =>
+    buffered
+      .split('\n')
+      .slice(0, -1)
+      .filter((l) => l.trim().length > 0);
+
+  proc.stdin.write(`${first.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  proc.stdin.flush();
+  while (complete().length < expectedFirstLines) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  between();
+  proc.stdin.write(`${second.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  await proc.stdin.end();
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  await proc.exited;
+  return complete().map((l) => JSON.parse(l) as RpcResponse);
+}
+
 /** Like driveMcp but sends raw (already-serialized) lines — for malformed input. */
 async function driveMcpRaw(cwd: string, rawLines: string[]): Promise<RpcResponse[]> {
   const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
@@ -130,7 +181,7 @@ function seed(cwd: string): { taskId: string } {
   const t = createTask(db, { title: 'seed task', boardId: board.id, wish: 'genie-mcp', group: 'g2' });
   createTask(db, { title: 'other', boardId: board.id });
   // Fold pending WAL frames into the main db before the reader subprocess opens,
-  // so the readonly `genie mcp` server isn't racing an open WAL writer under
+  // so the `genie mcp` server isn't racing an open WAL writer under
   // cross-file test contention ("database is locked").
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
@@ -182,7 +233,7 @@ describe('mcp handshake', () => {
 // ============================================================================
 
 describe('mcp tools/list', () => {
-  test('lists exactly the 5 read-only tools with input schemas', async () => {
+  test('lists exactly the 5 read tools + 12 write tools with input schemas', async () => {
     const responses = await driveMcp(repo, [INIT, INITIALIZED, { jsonrpc: '2.0', id: 2, method: 'tools/list' }]);
     const list = responses.find((r) => r.id === 2);
     const tools = list?.result?.tools as Array<{ name: string; inputSchema: unknown }>;
@@ -190,6 +241,18 @@ describe('mcp tools/list', () => {
       'genie_active',
       'genie_board',
       'genie_task',
+      'genie_task_add_dependency',
+      'genie_task_block',
+      'genie_task_checkout',
+      'genie_task_comment',
+      'genie_task_create',
+      'genie_task_done',
+      'genie_task_heartbeat',
+      'genie_task_move',
+      'genie_task_release',
+      'genie_task_report',
+      'genie_task_set_wish',
+      'genie_task_unblock',
       'genie_wish_status',
       'genie_worktree_context',
     ]);
@@ -328,7 +391,10 @@ describe('mcp tools/call', () => {
     const found = toolPayload<{ id: string; title: string }>(responses.find((r) => r.id === 5)!);
     expect(found.id).toBe(taskId);
     expect(found.title).toBe('seed task');
-    const missing = toolPayload<{ error: string; id: string }>(responses.find((r) => r.id === 6)!);
+    const missingRes = responses.find((r) => r.id === 6)!;
+    // An `error`-keyed payload is DATA, not the error channel: stays isError false.
+    expect(missingRes.result?.isError).toBe(false);
+    const missing = toolPayload<{ error: string; id: string }>(missingRes);
     expect(missing).toEqual({ error: 'not_found', id: 't_nope' });
   });
 
@@ -646,7 +712,7 @@ describe('mcp missing-database fail-closed', () => {
     const decoder = new TextDecoder();
     let out = '';
     // Synchronize: wait for the initialize reply BEFORE seeding, which proves the
-    // server's startup read-only open already ran against an absent db (null) —
+    // server's startup open already ran against an absent db (null) —
     // otherwise the test could seed first and pass without exercising the reopen.
     proc.stdin.write(`${JSON.stringify(INIT)}\n`);
     while (!out.includes('"serverInfo"')) {
@@ -673,6 +739,340 @@ describe('mcp missing-database fail-closed', () => {
     expect(res?.result?.isError).toBe(false);
     const payload = toolPayload<{ counts: { total: number } }>(res!);
     expect(payload.counts.total).toBeGreaterThan(0); // saw the db created mid-session
+  });
+});
+
+// ============================================================================
+// Write-capable open (Group 1 of wish mcp-write-tools): the server now serves
+// against the hardened write path; the no-create and degrade guarantees hold.
+// ============================================================================
+
+describe('mcp write-capable open', () => {
+  /**
+   * True when THIS environment can express "a write-protected, fully-current WAL
+   * database still serves reads". Two ways it cannot:
+   *   - running as root (some CI containers), where chmod never revokes write
+   *     access, so the write-protected branch is not the one under test;
+   *   - platforms whose SQLite refuses to open a write-protected WAL database
+   *     read-only at all (Linux: SQLITE_READONLY_CANTINIT), where the asserted
+   *     state simply does not exist.
+   * Mirrors the unit-level escape hatch in mcp-tools.test.ts.
+   */
+  function writeProtectedReadsAreExpressible(dbPath: string): boolean {
+    try {
+      accessSync(dbPath, fsConstants.W_OK);
+      return false; // still writable (running as root)
+    } catch {
+      // write access revoked as intended — proceed to the readability probe
+    }
+    try {
+      const probe = new Database(dbPath, { readonly: true });
+      try {
+        probe.query('SELECT 1 FROM tasks').get();
+        return true;
+      } finally {
+        probe.close();
+      }
+    } catch {
+      return false; // unreadable here — the scenario is inexpressible
+    }
+  }
+
+  test('outside a git repo, tool calls fail closed and create neither .genie/ nor genie.db', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'genie-mcp-nonrepo-'));
+    try {
+      const responses = await driveMcp(plain, [
+        INIT,
+        INITIALIZED,
+        { jsonrpc: '2.0', id: 19, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
+      ]);
+      const res = responses.find((r) => r.id === 19);
+      expect(res?.error).toBeUndefined();
+      expect(res?.result?.isError).toBe(true);
+      const payload = toolPayload<{ error: string }>(res!);
+      expect(payload.error).toBe('project-context-unavailable');
+      // Resolver ordering (Decision 5): a non-ok context never reaches the
+      // write open, so no file or directory is created.
+      expect(existsSync(join(plain, '.genie'))).toBe(false);
+      expect(existsSync(join(plain, 'genie.db'))).toBe(false);
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  test('on a write-protected fully-current db, all 5 read tools serve (strict validator intact)', async () => {
+    const { taskId } = seed(repo);
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    const stateDir = dirname(dbPath);
+    const originalModes = new Map<string, number>();
+    const mutatedModes = new Set<string>();
+    const cleanupErrors: unknown[] = [];
+    let testError: unknown;
+
+    try {
+      for (const path of sqlitePaths) {
+        if (!existsSync(path)) continue;
+        originalModes.set(path, statSync(path).mode & 0o777);
+        mutatedModes.add(path);
+        chmodSync(path, 0o444);
+      }
+      originalModes.set(stateDir, statSync(stateDir).mode & 0o777);
+      mutatedModes.add(stateDir);
+      chmodSync(stateDir, 0o555);
+
+      if (!writeProtectedReadsAreExpressible(dbPath)) return; // see the helper
+
+      const calls = [
+        { id: 21, name: 'genie_board', arguments: {} },
+        { id: 22, name: 'genie_wish_status', arguments: { wish: 'genie-mcp' } },
+        { id: 23, name: 'genie_worktree_context', arguments: { branch: 'main' } },
+        { id: 24, name: 'genie_task', arguments: { id: taskId } },
+        { id: 25, name: 'genie_active', arguments: {} },
+      ];
+      const responses = await driveMcp(repo, [
+        INIT,
+        INITIALIZED,
+        ...calls.map((c) => ({
+          jsonrpc: '2.0',
+          id: c.id,
+          method: 'tools/call',
+          params: { name: c.name, arguments: c.arguments },
+        })),
+      ]);
+      for (const c of calls) {
+        const res = responses.find((r) => r.id === c.id);
+        expect(res?.error).toBeUndefined();
+        expect(res?.result?.isError).toBe(false);
+        expect(toolPayload<Record<string, unknown>>(res!)).not.toHaveProperty('error');
+      }
+      const board = toolPayload<{ counts: { total: number } }>(responses.find((r) => r.id === 21)!);
+      expect(board.counts.total).toBe(2); // the fully-current db's real state
+    } catch (error) {
+      testError = error;
+    } finally {
+      for (const path of [stateDir, ...sqlitePaths]) {
+        if (!mutatedModes.has(path)) continue;
+        try {
+          chmodSync(path, originalModes.get(path)!);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+    }
+    if (testError !== undefined && cleanupErrors.length > 0) {
+      throw new AggregateError([testError, ...cleanupErrors], 'MCP write-capable proof failed and cleanup incomplete');
+    }
+    if (testError !== undefined) throw testError;
+    if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'Failed to restore write-protected fixture');
+  });
+
+  test('a session whose first write open failed recovers writes as soon as the filesystem is repaired', async () => {
+    const { taskId } = seed(repo);
+    const dbPath = resolveDbPath(repo);
+    const sqlitePaths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`].filter((p) => existsSync(p));
+    const stateDir = dirname(dbPath);
+    const originalModes = new Map<string, number>([
+      ...sqlitePaths.map((p) => [p, statSync(p).mode & 0o777] as const),
+      [stateDir, statSync(stateDir).mode & 0o777],
+    ]);
+    let repaired = false;
+    const repair = (): void => {
+      if (repaired) return;
+      repaired = true;
+      chmodSync(stateDir, originalModes.get(stateDir)!);
+      for (const path of sqlitePaths) chmodSync(path, originalModes.get(path)!);
+    };
+
+    for (const path of sqlitePaths) chmodSync(path, 0o444);
+    chmodSync(stateDir, 0o555);
+    try {
+      try {
+        accessSync(dbPath, fsConstants.W_OK);
+        return; // running as root — the degrade is inexpressible here
+      } catch {
+        // write access revoked as intended — proceed
+      }
+      const comment = (id: number) => ({
+        jsonrpc: '2.0',
+        id,
+        method: 'tools/call',
+        params: { name: 'genie_task_comment', arguments: { id: taskId, text: `note ${id}` } },
+      });
+      // Two writes on ONE server: the first while the db cannot be written, the
+      // second after the modes are restored between them.
+      const responses = await driveMcpStaged(repo, [INIT, INITIALIZED, comment(41)], 2, repair, [comment(42)]);
+
+      // The first write fails typed — read_only_database where the degraded
+      // handle still serves reads, project-database-unavailable on platforms
+      // that cannot open a write-protected WAL db at all.
+      const before = responses.find((r) => r.id === 41);
+      expect(before?.error).toBeUndefined();
+      expect(before?.result?.isError).toBe(true);
+      expect(['read_only_database', 'project-database-unavailable']).toContain(
+        toolPayload<{ error: string }>(before!).error,
+      );
+      // The second write succeeds on the SAME server: nothing latched.
+      const after = responses.find((r) => r.id === 42);
+      expect(after?.error).toBeUndefined();
+      expect(after?.result?.isError).toBe(false);
+      expect(toolPayload<{ taskId: string }>(after!).taskId).toBe(taskId);
+    } finally {
+      repair();
+    }
+  });
+});
+// ============================================================================
+// E2e stdio round-trip (Group 3 of wish mcp-write-tools): ONE spawned `genie
+// mcp` process serves a real client session — initialize → tools/list (5 read +
+// 12 write) → create → checkout → done — and genie_board reflects the terminal
+// state; a follow-up `genie task sync` publishes the card to the tracked
+// .genie/roadmap.json snapshot.
+// ============================================================================
+
+describe('mcp e2e round-trip', () => {
+  test('create → checkout → done lands on genie_board and task sync publishes the card', async () => {
+    // Seed a current, empty db so the server opens against a healthy repo
+    // (the round trip itself must create the card via the write tools).
+    const db = openDb({ cwd: repo });
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+
+    const proc = Bun.spawn(['bun', GENIE, 'mcp'], {
+      cwd: repo,
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = '';
+    const completed = (): RpcResponse[] =>
+      out
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .map((l) => JSON.parse(l) as RpcResponse);
+
+    proc.stdin.write(`${JSON.stringify(INIT)}\n`);
+    proc.stdin.write(`${JSON.stringify(INITIALIZED)}\n`);
+    proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`);
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 71,
+        method: 'tools/call',
+        params: { name: 'genie_task_create', arguments: { title: 'e2e card', wish: 'mcp-e2e', group: 'g3' } },
+      })}\n`,
+    );
+    // Read until the create response arrives; the server stays alive because
+    // stdin is still open, so the rest of the round trip shares this session.
+    while (!completed().some((r) => r.id === 71)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    const created = completed().find((r) => r.id === 71);
+    expect(created, 'genie_task_create response missing').toBeDefined();
+    expect(created!.result?.isError).toBe(false);
+    const taskId = toolPayload<{ task: { id: string; status: string } }>(created!).task.id;
+    expect(toolPayload<{ task: { status: string } }>(created!).task.status).toBe('ready');
+
+    // Same-session tools/list: 5 read + 12 write tools.
+    const list = completed().find((r) => r.id === 2);
+    expect(list, 'tools/list response missing').toBeDefined();
+    const names = (list!.result?.tools as Array<{ name: string }>).map((t) => t.name);
+    expect(names).toHaveLength(17);
+    const nameSet = new Set(names);
+    for (const read of ['genie_board', 'genie_wish_status', 'genie_worktree_context', 'genie_task', 'genie_active']) {
+      expect(nameSet.has(read)).toBe(true);
+    }
+    for (const write of [
+      'genie_task_create',
+      'genie_task_checkout',
+      'genie_task_done',
+      'genie_task_move',
+      'genie_task_block',
+      'genie_task_unblock',
+      'genie_task_release',
+      'genie_task_comment',
+      'genie_task_report',
+      'genie_task_heartbeat',
+      'genie_task_set_wish',
+      'genie_task_add_dependency',
+    ]) {
+      expect(nameSet.has(write)).toBe(true);
+    }
+
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 72,
+        method: 'tools/call',
+        params: { name: 'genie_task_checkout', arguments: { id: taskId, worker: 'g3-worker' } },
+      })}\n`,
+    );
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 73,
+        method: 'tools/call',
+        params: { name: 'genie_task_done', arguments: { id: taskId } },
+      })}\n`,
+    );
+    proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 74, method: 'tools/call', params: { name: 'genie_board', arguments: {} } })}\n`,
+    );
+    await proc.stdin.end();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+    }
+    await proc.exited;
+
+    const checkout = completed().find((r) => r.id === 72)!;
+    expect(checkout.result?.isError).toBe(false);
+    expect(toolPayload<{ task: { status: string; claimedBy: string } }>(checkout).task).toMatchObject({
+      status: 'in_progress',
+      claimedBy: 'g3-worker',
+    });
+
+    const done = completed().find((r) => r.id === 73)!;
+    expect(done.result?.isError).toBe(false);
+    expect(toolPayload<{ task: { status: string } }>(done).task.status).toBe('done');
+
+    const board = completed().find((r) => r.id === 74)!;
+    expect(board.result?.isError).toBe(false);
+    const boardPayload = toolPayload<{
+      counts: Record<string, number>;
+      tasks: Array<{ id: string; title: string; status: string; wish: string }>;
+    }>(board);
+    expect(boardPayload.counts).toEqual({ blocked: 0, ready: 0, in_progress: 0, done: 1, total: 1 });
+    expect(boardPayload.tasks).toContainEqual(
+      expect.objectContaining({ id: taskId, title: 'e2e card', status: 'done', wish: 'mcp-e2e' }),
+    );
+
+    // Follow-up: the CLI's snapshot publication path (also the husky hook) now
+    // writes the card into the tracked .genie/roadmap.json.
+    const genieHome = mkdtempSync(join(tmpdir(), 'genie-mcp-ghome-'));
+    try {
+      const sync = Bun.spawnSync(['bun', GENIE, 'task', 'sync'], {
+        cwd: repo,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1', GENIE_HOME: genieHome },
+      });
+      expect(sync.exitCode, `task sync failed: ${sync.stderr.toString()}`).toBe(0);
+      const roadmapPath = join(repo, '.genie', 'roadmap.json');
+      expect(existsSync(roadmapPath)).toBe(true);
+      const snapshot = JSON.parse(readFileSync(roadmapPath, 'utf-8')) as {
+        tasks: Array<{ id: string; title: string; status: string }>;
+      };
+      expect(snapshot.tasks).toContainEqual(expect.objectContaining({ id: taskId, title: 'e2e card', status: 'done' }));
+    } finally {
+      rmSync(genieHome, { recursive: true, force: true });
+    }
   });
 });
 
@@ -739,7 +1139,7 @@ describe('mcp worktree branch resolution', () => {
 });
 
 // ============================================================================
-// Lazy-load probe — mcp-tools (the readonly bun:sqlite open) must NOT be in the
+// Lazy-load probe — mcp-tools (the write-capable bun:sqlite open) must NOT be in the
 // STATIC import graph reachable from genie.ts. It is only `await import`-ed
 // inside the `mcp` action, so non-mcp paths (board/task/--help) never load it.
 // ============================================================================

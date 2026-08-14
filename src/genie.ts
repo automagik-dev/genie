@@ -5,7 +5,7 @@
  *
  * Surviving surface after the v4 runtime demolition:
  *   Utilities:  setup, doctor, update, install, uninstall, shortcuts
- *   Lifecycle:  init (scaffold), launch (Warp cockpit)
+ *   Lifecycle:  init (scaffold), context (spawn plan)
  *   State:      task, board  (SQLite-backed, .genie/genie.db)
  *   Hooks:      hook namespace + git hook dispatch
  */
@@ -25,9 +25,9 @@ import { updateCommand } from './genie-commands/update.js';
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { VERSION } from './lib/version.js';
+import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
-import { registerLaunchCommand } from './term-commands/launch.js';
 import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerOmniCommands } from './term-commands/omni.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
@@ -85,7 +85,7 @@ program
   .option('--json', 'Emit JSON instead of human output')
   .option(
     '--fix',
-    'Remove detected residue: v4 leftovers (backup-first) and merged, clean `genie launch` worktrees (idempotent)',
+    'Backup/remove proven v4 residue and merged clean `genie launch` worktrees; tighten registered-worktree files only from wider modes to their index modes and dirs only from 0775/0777 to 0755; refuse replacements, symlinks, and non-wider or ambiguous modes (idempotent)',
   )
   .action(doctorCommand);
 
@@ -186,11 +186,11 @@ registerHookNamespace(program);
 // ============================================================================
 
 registerInitCommand(program);
-registerLaunchCommand(program);
 registerMcpCommand(program);
 registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
+registerContextCommand(program);
 registerIdeaCommand(program);
 registerOmniCommands(program);
 

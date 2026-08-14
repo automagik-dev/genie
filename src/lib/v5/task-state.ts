@@ -32,7 +32,12 @@ export interface TaskRow {
   wish: string | null;
   /** Wish-group name this task belongs to, or null. */
   group: string | null;
-  /** Declared roster agent that works this card, or null when the current orchestrating agent does (W1 routing). */
+  /**
+   * Declared roster agent that works this card, or null when the current
+   * orchestrating agent does (W1 routing). Imported values are untrusted
+   * TEXT — a hand-merged roadmap.json reaches this row unvalidated — so shell
+   * and prompt consumers must call {@link requireRosterAgent} first.
+   */
   assignedAgent: string | null;
   /** Why the declared agent was assigned; always present when assignedAgent is set. */
   assignedReason: string | null;

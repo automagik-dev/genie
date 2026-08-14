@@ -196,50 +196,66 @@ READY_COUNT="$(cli task list --wish "$SLUG" --status ready --json | json_task_co
 [ "$READY_COUNT" -eq 3 ] || die "expected 3 ready tasks after create, got $READY_COUNT"
 
 # ============================================================================
-# 3b. `genie launch --dry-run` — plan one Warp pane per ready group while all 3
-#     are ready, touching NOTHING. Isolation: GENIE_WORKTREES_DIR points at a
-#     fixture-scoped dir the command has never created; HOME is redirected into
-#     the fixture so the platform Warp config dir (macOS: $HOME/.warp/...,
-#     Linux: $HOME/.local/share/warp-terminal/...) also resolves under the
-#     fixture and can be proven untouched — the real user Warp dir is never
-#     read or written. dry-run must plan 3 panes with absolute cwds, then leave
-#     the worktrees dir empty and write no launch config anywhere.
+# 3b. `genie context --wish <slug> --plan` — the spawn-context preview (composed
+#     branch + base SHA + ready tasks) while all 3 groups are ready, touching
+#     NOTHING. The plan payload is what a spawn consumes, so it must be ONE
+#     line of versioned JSON carrying a full 40-hex base SHA and all three
+#     task ids. Read-only is proven by byte-identical genie.db plus an
+#     unchanged .genie/ file set around the call. (This replaces the retired
+#     `launch --dry-run` section — the preview survives as the context verb.)
+#     The fixture gets a local `dev` branch so the config-free integration
+#     policy (local dev wins) resolves without a remote.
 # ============================================================================
-step "launch --dry-run (plan-only, no materialization)"
-LAUNCH_WT="$SCRATCH/launch-worktrees"
-LAUNCH_HOME="$SCRATCH/launch-home"
-LAUNCH_OUT="$SCRATCH/launch-dry.out"
-mkdir -p "$LAUNCH_HOME"
+step "context --plan (spawn preview, touches nothing)"
+git -C "$FIXTURE" branch dev
 
-if HOME="$LAUNCH_HOME" GENIE_WORKTREES_DIR="$LAUNCH_WT" bun "$DIST" launch "$SLUG" --dry-run > "$LAUNCH_OUT" 2>&1; then
-  LAUNCH_RC=0
+CTX_OUT="$SCRATCH/context-plan.out"
+db_fingerprint() {
+  bun -e 'const fs=require("fs"),c=require("crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$1"
+}
+# The genie.db-wal/-shm pair is SQLite-VFS-owned: the documented --plan
+# carve-out on builds that reject the immutable URI form may recreate those
+# two sidecars without genie writing through them, so the file-set comparison
+# excludes the pair (mirroring context.test.ts's cross-platform bound) while
+# the main-file hash proves no genie write reached the database.
+genie_listing() {
+  ls -A "$FIXTURE/.genie" | grep -vE '^genie\.db(-wal|-shm)?$' | sort
+}
+DB_BEFORE="$(db_fingerprint "$FIXTURE/.genie/genie.db")"
+GENIE_LISTING_BEFORE="$(genie_listing)"
+
+if ( cd "$FIXTURE" && bun "$DIST" context --wish "$SLUG" --plan ) > "$CTX_OUT" 2>&1; then
+  CTX_RC=0
 else
-  LAUNCH_RC=$?
+  CTX_RC=$?
 fi
-cat "$LAUNCH_OUT"
+cat "$CTX_OUT"
 
-assert launch-dry-run-exit-0
-[ "$LAUNCH_RC" -eq 0 ] || die "launch --dry-run exited $LAUNCH_RC"
+assert context-plan-exit-0
+[ "$CTX_RC" -eq 0 ] || die "context --plan exited $CTX_RC"
 
-assert launch-dry-run-plans-three-groups
-grep -q '3 group(s)' "$LAUNCH_OUT" || die "launch --dry-run did not report 3 groups"
+assert context-plan-is-one-line-of-versioned-json
+[ "$(wc -l < "$CTX_OUT" | tr -d ' ')" -eq 1 ] || die "context --plan must emit exactly one line"
+grep -q '"version":1' "$CTX_OUT" || die "context --plan did not emit a version 1 payload"
 
-assert launch-dry-run-one-absolute-worktree-per-group
-WT_LINES="$(grep -c "worktree: $LAUNCH_WT/" "$LAUNCH_OUT" || true)"
-[ "$WT_LINES" -eq 3 ] || die "expected 3 absolute worktree paths under $LAUNCH_WT, got $WT_LINES"
+assert context-plan-names-wish-branch-and-base
+grep -q "\"wish\":\"$SLUG\"" "$CTX_OUT" || die "context --plan payload does not name the wish"
+grep -q "\"branch\":\"wish/$SLUG\"" "$CTX_OUT" || die "context --plan payload does not carry the composed wish branch"
+grep -qE '"base":"[0-9a-f]{40}"' "$CTX_OUT" || die "context --plan base is not a full 40-hex SHA"
 
-assert launch-dry-run-panes-have-absolute-cwd
-CWD_ABS="$(grep -oE 'cwd: /' "$LAUNCH_OUT" | wc -l | tr -d ' ')"
-[ "$CWD_ABS" -eq 3 ] || die "expected 3 absolute pane cwds in the YAML, got $CWD_ABS"
+assert context-plan-carries-three-ready-tasks
+[ "$(grep -o '"id"' "$CTX_OUT" | wc -l | tr -d ' ')" -eq 3 ] || die "expected 3 task ids in the context payload"
 
-assert launch-dry-run-materialized-no-worktrees
-if [ -d "$LAUNCH_WT" ] && [ -n "$(ls -A "$LAUNCH_WT" 2>/dev/null)" ]; then
-  die "launch --dry-run materialized worktree content under $LAUNCH_WT"
-fi
+assert context-plan-touches-nothing
+DB_AFTER="$(db_fingerprint "$FIXTURE/.genie/genie.db")"
+[ "$DB_BEFORE" = "$DB_AFTER" ] || die "context --plan rewrote .genie/genie.db"
+GENIE_LISTING_AFTER="$(genie_listing)"
+NEW_FILES="$(comm -13 <(printf '%s\n' "$GENIE_LISTING_BEFORE") <(printf '%s\n' "$GENIE_LISTING_AFTER") || true)"
+GONE_FILES="$(comm -23 <(printf '%s\n' "$GENIE_LISTING_BEFORE") <(printf '%s\n' "$GENIE_LISTING_AFTER") || true)"
+[ -z "$NEW_FILES$GONE_FILES" ] || die "context --plan changed the .genie/ file set (+:$NEW_FILES -:$GONE_FILES)"
 
-assert launch-dry-run-wrote-no-config
-FOUND_CFG="$(find "$LAUNCH_HOME" -name "genie-$SLUG.yaml" 2>/dev/null)"
-[ -z "$FOUND_CFG" ] || die "launch --dry-run wrote a launch config under $LAUNCH_HOME: $FOUND_CFG"
+assert context-plan-materialized-no-worktrees
+[ "$(git -C "$FIXTURE" worktree list --porcelain | grep -c '^worktree')" -eq 1 ] || die "context --plan materialized extra worktrees"
 
 # ============================================================================
 # 4. Render the board (pure query, no stored view state).

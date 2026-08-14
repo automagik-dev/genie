@@ -24,7 +24,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrubw9bxa7f28dd8",
@@ -42,7 +44,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrubw9do9fc563c4",
@@ -60,7 +64,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrubw9ft4d20d980",
@@ -78,7 +84,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruxc5gvd0c00325",
@@ -96,7 +104,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruxc5iv51303ef4",
@@ -114,7 +124,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruxc5l659685893",
@@ -132,7 +144,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruxc5mz0a9ee3f5",
@@ -150,7 +164,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruxc5ora3add7b8",
@@ -168,7 +184,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mruzpyww3e2a8b8b",
@@ -186,7 +204,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrv087jca37acdd9",
@@ -204,7 +224,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrv087ldf5bdb175",
@@ -222,7 +244,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrveq6oe95cb9141",
@@ -240,7 +264,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrvf2p7za43e792d",
@@ -258,7 +284,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrvf2pam274f1741",
@@ -276,7 +304,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrvf2pd39e9349c2",
@@ -294,7 +324,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwknwl195358a3",
@@ -312,7 +344,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwknz76a0d4a64",
@@ -330,7 +364,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwko1x1cae87af",
@@ -348,7 +384,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwko4i254384c6",
@@ -366,7 +404,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwko6w4d889a11",
@@ -384,7 +424,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrwwko9jc20398ca",
@@ -402,7 +444,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxqzo6s8fbb27ec",
@@ -420,7 +464,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9wzrda10d35b",
@@ -438,7 +484,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9x1pbce3a16b",
@@ -456,7 +504,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9x49eb19d0ad",
@@ -474,7 +524,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9x6sb3dfb668",
@@ -492,7 +544,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9x8t711ce43e",
@@ -510,7 +564,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mrxr9xbb010c4f81",
@@ -528,7 +584,9 @@
       "heartbeat_at": null,
       "blocked_by": "claude-code",
       "blocked_reason": "RELOCATED 2026-07-23: khal-native-theme ledger + tasks live in khal-os/genie-desktop .genie (Felipe: desktop context in the desktop repo). Do not checkout here.",
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_ms58w0yqa195fbf8",
@@ -546,7 +604,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_ms58y58z0b45759f",
@@ -564,7 +624,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_ms58y5bc8853df95",
@@ -582,7 +644,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_ms58y5e19f6e9757",
@@ -600,7 +664,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mscebl889535b59e",
@@ -618,7 +684,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_mscebla86e45ab77",
@@ -636,7 +704,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msi18po2a63fe11f",
@@ -654,7 +724,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msi18prp35883ce7",
@@ -672,7 +744,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msi18pv9b29465c2",
@@ -690,7 +764,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msi2nv2gcf9c97af",
@@ -708,7 +784,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msiyp3ua4e038e63",
@@ -726,7 +804,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msiyp3x10655eab9",
@@ -744,7 +824,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msiyp3zr6f65f0fc",
@@ -762,7 +844,9 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     },
     {
       "id": "t_msiyp42ib277f60a",
@@ -780,7 +864,329 @@
       "heartbeat_at": null,
       "blocked_by": null,
       "blocked_reason": null,
-      "block_kind": null
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msnw1wva78ca40b7",
+      "board_id": null,
+      "title": "Cross-agent delegation — teammates on the board",
+      "status": "done",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "cross-agent-delegate",
+      "group_name": null,
+      "created_at": 1786406074534,
+      "updated_at": 1786413384910,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msnwyz4qff08ad29",
+      "board_id": null,
+      "title": "W1-B: lane-path board --json + byte-freeze regression",
+      "status": "done",
+      "claimed_by": "engineer-b",
+      "claimed_at": 1786411501612,
+      "wish": "cross-agent-delegate",
+      "group_name": "group-b",
+      "created_at": 1786407617114,
+      "updated_at": 1786412348073,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msnwyz7136c34cb2",
+      "board_id": null,
+      "title": "W1-C: roadmap-sync lockstep + round-trip tests",
+      "status": "done",
+      "claimed_by": "engineer-c",
+      "claimed_at": 1786411499996,
+      "wish": "cross-agent-delegate",
+      "group_name": "group-c",
+      "created_at": 1786407617197,
+      "updated_at": 1786412796523,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msnx6kz8c52d4762",
+      "board_id": null,
+      "title": "W1-A1: schema core — columns, lockstep, roster",
+      "status": "done",
+      "claimed_by": "engineer-a1",
+      "claimed_at": 1786408694769,
+      "wish": "cross-agent-delegate",
+      "group_name": "group-a1",
+      "created_at": 1786407972020,
+      "updated_at": 1786411453387,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msnx6l1k7cddfcc0",
+      "board_id": null,
+      "title": "W1-A2: CLI verbs, timeline notes, docs",
+      "status": "done",
+      "claimed_by": "engineer-a2",
+      "claimed_at": 1786411502191,
+      "wish": "cross-agent-delegate",
+      "group_name": "group-a2",
+      "created_at": 1786407972104,
+      "updated_at": 1786412198104,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msoqsd8sdb8df48b",
+      "board_id": null,
+      "title": "Write-capable server core",
+      "status": "done",
+      "claimed_by": "g1-server-core",
+      "claimed_at": 1786460670279,
+      "wish": "mcp-write-tools",
+      "group_name": "group-1",
+      "created_at": 1786457697292,
+      "updated_at": 1786558209313,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msoqsdb5429d06e8",
+      "board_id": null,
+      "title": "Operative write tools",
+      "status": "done",
+      "claimed_by": "g2-write-tools",
+      "claimed_at": 1786558267434,
+      "wish": "mcp-write-tools",
+      "group_name": "group-2",
+      "created_at": 1786457697377,
+      "updated_at": 1786568148732,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msoqsdde40b31ee9",
+      "board_id": null,
+      "title": "E2e proof + read-only wording sweep",
+      "status": "done",
+      "claimed_by": "g3-e2e-sweep",
+      "claimed_at": 1786568193561,
+      "wish": "mcp-write-tools",
+      "group_name": "group-3",
+      "created_at": 1786457697458,
+      "updated_at": 1786628093499,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp4fp6ce714c8be",
+      "board_id": null,
+      "title": "Delegate bridge — routed cards become agent turns (W2+W3)",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": null,
+      "created_at": 1786480620852,
+      "updated_at": 1786657262650,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": "dream-scc-reversals",
+      "blocked_reason": "re-targeted by spawn-context-contract group reversals (2026-08-13): gating moves from headless-turn-open to herdr-swap (0.3) + engine-turn-verbs (remotty board card t_msqkkjt221792465); S-F turn transport re-bases from one-shot headless launches to live herdr sessions (agent start -> prompt --wait --until -> read -> report/release)",
+      "block_kind": "work",
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a1qlaaa8acdc",
+      "board_id": null,
+      "title": "delegate-bridge A: W1 handoff docs + status polish",
+      "status": "done",
+      "claimed_by": "engineer-trivial-a",
+      "claimed_at": 1786554116904,
+      "wish": "delegate-bridge",
+      "group_name": "group-a",
+      "created_at": 1786483716429,
+      "updated_at": 1786554590852,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a1sz195f0ea9",
+      "board_id": null,
+      "title": "delegate-bridge S: seam spike (gate for B-F)",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-s",
+      "created_at": 1786483716515,
+      "updated_at": 1786483716515,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a1vd3c103d09",
+      "board_id": null,
+      "title": "delegate-bridge B: adapter cards + brief writer",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-b",
+      "created_at": 1786483716601,
+      "updated_at": 1786483716601,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a1xzca62d364",
+      "board_id": null,
+      "title": "delegate-bridge C: bridge core — task delegate",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-c",
+      "created_at": 1786483716695,
+      "updated_at": 1786483716695,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a20k0a1df8a8",
+      "board_id": null,
+      "title": "delegate-bridge D: degradation + doctor orphan check",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-d",
+      "created_at": 1786483716788,
+      "updated_at": 1786483716788,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a23b3c681369",
+      "board_id": null,
+      "title": "delegate-bridge E: task fan + ratification",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-e",
+      "created_at": 1786483716887,
+      "updated_at": 1786483716887,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_msp6a25sef5b7e40",
+      "board_id": null,
+      "title": "delegate-bridge F: adapter smoke matrix ×5",
+      "status": "ready",
+      "claimed_by": null,
+      "claimed_at": null,
+      "wish": "delegate-bridge",
+      "group_name": "group-f",
+      "created_at": 1786483716976,
+      "updated_at": 1786483716976,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     }
   ],
   "task_dependencies": [],
@@ -1019,6 +1425,258 @@
       "author_kind": "human",
       "author": "g3-engineer",
       "created_at": 1786129435459
+    },
+    {
+      "id": 65,
+      "task_id": "t_msnx6kz8c52d4762",
+      "kind": "claim",
+      "note": "claimed by engineer-a1",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786408694769
+    },
+    {
+      "id": 66,
+      "task_id": "t_msnx6kz8c52d4762",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "orchestrator-prime",
+      "created_at": 1786411453387
+    },
+    {
+      "id": 67,
+      "task_id": "t_msnwyz7136c34cb2",
+      "kind": "claim",
+      "note": "claimed by engineer-c",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786411499996
+    },
+    {
+      "id": 68,
+      "task_id": "t_msnwyz4qff08ad29",
+      "kind": "claim",
+      "note": "claimed by engineer-b",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786411501613
+    },
+    {
+      "id": 69,
+      "task_id": "t_msnx6l1k7cddfcc0",
+      "kind": "claim",
+      "note": "claimed by engineer-a2",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786411502192
+    },
+    {
+      "id": 70,
+      "task_id": "t_msnx6l1k7cddfcc0",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "orchestrator-prime",
+      "created_at": 1786412198104
+    },
+    {
+      "id": 71,
+      "task_id": "t_msnwyz4qff08ad29",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "orchestrator-prime",
+      "created_at": 1786412348073
+    },
+    {
+      "id": 72,
+      "task_id": "t_msnwyz7136c34cb2",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "orchestrator-prime",
+      "created_at": 1786412796523
+    },
+    {
+      "id": 73,
+      "task_id": "t_msnw1wva78ca40b7",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "orchestrator-prime",
+      "created_at": 1786413384911
+    },
+    {
+      "id": 74,
+      "task_id": "t_msoqsd8sdb8df48b",
+      "kind": "claim",
+      "note": "claimed by g1-server-core",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786460670279
+    },
+    {
+      "id": 75,
+      "task_id": "t_msoqsd8sdb8df48b",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786462438505
+    },
+    {
+      "id": 76,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "wish",
+      "note": "(none)→delegate-bridge",
+      "author_kind": "claude-code",
+      "author": "cli",
+      "created_at": 1786480645159
+    },
+    {
+      "id": 77,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "block",
+      "note": "blocked on remotty headless-turn-open (cross-repo; design M2 mechanism)",
+      "author_kind": "claude-code",
+      "author": "cli",
+      "created_at": 1786480645240
+    },
+    {
+      "id": 78,
+      "task_id": "t_msp6a1qlaaa8acdc",
+      "kind": "claim",
+      "note": "claimed by engineer-trivial-a",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786554116904
+    },
+    {
+      "id": 79,
+      "task_id": "t_msp6a1qlaaa8acdc",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786554590852
+    },
+    {
+      "id": 80,
+      "task_id": "t_msoqsd8sdb8df48b",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786558209313
+    },
+    {
+      "id": 81,
+      "task_id": "t_msoqsdb5429d06e8",
+      "kind": "claim",
+      "note": "claimed by g2-write-tools",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786558267434
+    },
+    {
+      "id": 82,
+      "task_id": "t_msoqsdb5429d06e8",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786568148733
+    },
+    {
+      "id": 83,
+      "task_id": "t_msoqsdde40b31ee9",
+      "kind": "claim",
+      "note": "claimed by g3-e2e-sweep",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786568193562
+    },
+    {
+      "id": 84,
+      "task_id": "t_msoqsdde40b31ee9",
+      "kind": "release",
+      "note": "completed",
+      "author_kind": "human",
+      "author": "cli",
+      "created_at": 1786628093499
+    },
+    {
+      "id": 85,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "block",
+      "note": "re-targeted by spawn-context-contract group reversals (2026-08-13): gating moves from headless-turn-open to herdr-swap (0.3) + engine-turn-verbs (remotty board card t_msqkkjt221792465); S-F turn transport re-bases from one-shot headless launches to live herdr sessions (agent start -> prompt --wait --until -> read -> report/release)",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657262650
+    },
+    {
+      "id": 86,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "comment",
+      "note": "Board-edge re-target recorded (spawn-context-contract group reversals, 2026-08-13): the enforced block on this card was re-placed via task block, never unblocked, so the live gating now reads herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) instead of headless-turn-open. Groups S-F re-base their turn transport to live herdr sessions; group A (done, W1 scope) is unaffected.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272200
+    },
+    {
+      "id": 87,
+      "task_id": "t_msp6a1sz195f0ea9",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): the seam spike now proves the live-herdr turn seam (agent start / prompt --wait --until / read) instead of the one-shot headless-launch seam. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272357
+    },
+    {
+      "id": 88,
+      "task_id": "t_msp6a1vd3c103d09",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): adapter cards + brief writer target live herdr sessions (id-free continue form via herdr agent verbs) instead of turn-per-launch headless argv. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272489
+    },
+    {
+      "id": 89,
+      "task_id": "t_msp6a1xzca62d364",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): bridge core drives live herdr sessions per turn (agent prompt --wait --until + read hand-back) instead of one-shot headless turn launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272621
+    },
+    {
+      "id": 90,
+      "task_id": "t_msp6a20k0a1df8a8",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): degradation paths now cover herdr session failures and release (not detached-launch refusals). Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272747
+    },
+    {
+      "id": 91,
+      "task_id": "t_msp6a23b3c681369",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): task fan + ratification transport re-bases to live herdr sessions (per-turn prompt --wait --until / read) instead of one-shot headless launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272871
+    },
+    {
+      "id": 92,
+      "task_id": "t_msp6a25sef5b7e40",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): the adapter smoke matrix exercises live-herdr-session turns instead of one-shot headless launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657273022
     }
   ],
   "wish_groups": [],

@@ -26,7 +26,7 @@ lives in the task engine:
 ```bash
 genie task list --json                # Worker/task state
 genie task status <id>                # One task's detail + stage log
-genie launch <slug> [--groups <csv>]  # Multi-session cockpit: one pane per ready group
+genie context --wish <slug> --plan  # Spawn-context preview: branch + base SHA + ready tasks
 ```
 
 ### Agent Communication

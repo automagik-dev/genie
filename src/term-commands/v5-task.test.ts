@@ -147,7 +147,7 @@ describe('task create', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to: claude — owns the parser');
+    expect(status.stdout).toContain('Assigned to:claude — owns the parser');
   });
 
   test('rejects a non-roster agent, naming the allowed roster in stderr', async () => {
@@ -609,7 +609,7 @@ describe('task assign', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to: codex — dissent on the parser');
+    expect(status.stdout).toContain('Assigned to:codex — dissent on the parser');
     expect(status.stdout).toContain('Timeline:');
     expect(status.stdout).toContain('assign by');
     expect(status.stdout).toContain('assigned to codex: dissent on the parser');

@@ -45,12 +45,12 @@ Subcommands:
   /genie status                     Genie doctor summary plus .genie presence
   /genie board [wish]               Task board, optionally scoped to one wish
   /genie wish <slug>                Wish status: board plus task list
-  /genie work-plan <slug> [groups]  Dry-run launch plan; never executes work
+  /genie work-plan <slug> [group]   Spawn-plan preview (context --plan); never executes work
   /genie review-plan <slug>         Wish status plus acceptance criteria
   /genie help                       This help
 
 Aliases: /genie-board, /genie-wish, /genie-work-plan, /genie-review-plan.
-Mutations (spawn, launch, task done) stay human-gated outside this surface."""
+Mutations (spawn, task done) stay human-gated outside this surface."""
 
 
 def _payload_of(raw: str) -> dict[str, Any]:
@@ -165,19 +165,17 @@ def _run_wish(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
 
 def _run_work_plan(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
     if not rest:
-        return _usage("/genie work-plan <slug> [groups]")
+        return _usage("/genie work-plan <slug> [group]")
     slug = rest[0]
     args = dict(base)
     args["slug"] = slug
     tail = rest[1:]
-    if tail and tail[0] == "--groups":
+    if tail and tail[0] == "--group":
         tail = tail[1:]
     if tail:
-        groups = [group for group in tail[0].split(",") if group]
-        if groups:
-            args["groups"] = groups
+        args["group"] = tail[0]
     payload = _payload_of(invoke("genie_work_plan", _genie_work_plan, args))
-    return _render(f"genie work-plan {slug}", payload, ["mode: dry-run (nothing executed)", _data_summary(payload)])
+    return _render(f"genie work-plan {slug}", payload, ["mode: plan (read-only, nothing executed)", _data_summary(payload)])
 
 
 def _run_review_plan(rest: list[str], base: dict[str, Any], invoke: _Invoke) -> str:
@@ -264,7 +262,7 @@ def slash_genie_wish(args_text: str = "", **kwargs: Any) -> str:
 
 
 def slash_genie_work_plan(args_text: str = "", **kwargs: Any) -> str:
-    """Thin wrapper: /genie-work-plan <slug> [groups]."""
+    """Thin wrapper: /genie-work-plan <slug> [group]."""
     return slash_genie(f"work-plan {args_text or ''}".strip(), **kwargs)
 
 
@@ -277,7 +275,7 @@ def cli_handler(args: argparse.Namespace) -> None:
     """Route a parsed ``hermes genie ...`` invocation through the dispatcher."""
     sub = getattr(args, "genie_command", None) or "help"
     parts: list[str] = [str(sub)]
-    for attr in ("slug", "wish", "groups"):
+    for attr in ("slug", "wish", "group"):
         value = getattr(args, attr, None)
         if value:
             parts.append(str(value))
@@ -292,9 +290,9 @@ def setup_cli(subparser: argparse.ArgumentParser) -> None:
     board.add_argument("wish", nargs="?", default="", help="Optional wish slug filter")
     wish = sub.add_parser("wish", help="Show wish status (board plus tasks)")
     wish.add_argument("slug", help="Wish slug")
-    work = sub.add_parser("work-plan", help="Show a dry-run launch plan (no execution)")
+    work = sub.add_parser("work-plan", help="Show a spawn-plan preview (context --plan, no execution)")
     work.add_argument("slug", help="Wish slug")
-    work.add_argument("groups", nargs="?", default="", help="Optional comma-separated group filter")
+    work.add_argument("group", nargs="?", default="", help="Optional single execution group")
     review = sub.add_parser("review-plan", help="Show wish status plus acceptance criteria")
     review.add_argument("slug", help="Wish slug")
     subparser.set_defaults(func=cli_handler)

@@ -145,20 +145,19 @@ def _genie_task_status(args: dict, **kwargs: Any) -> str:
 
 
 def _genie_work_plan(args: dict, **kwargs: Any) -> str:
-    """genie launch <slug> --dry-run, optionally with --groups <csv>. Raw YAML-ish capture."""
+    """genie context --wish <slug> --plan, optionally with --group <g>. Raw JSON capture."""
     cwd = resolve_cwd(args.get("cwd"))
     slug, err = _required_ref(args, "slug", "slug")
     if err:
         return _validation_error(cwd, err)
-    cmd = ["launch", slug, "--dry-run"]
-    groups = args.get("groups")
-    if groups:
-        raw_items = [groups] if isinstance(groups, str) else list(groups)
+    cmd = ["context", "--wish", slug, "--plan"]
+    group = args.get("group")
+    if group:
         try:
-            items = [validate_ref(g, "groups") for g in raw_items]  # per-item safety before the comma join
+            item = validate_ref(group, "group")  # same charset gate the slug gets
         except ValueError as exc:
             return _validation_error(cwd, str(exc))
-        cmd.extend(["--groups", ",".join(items)])
+        cmd.extend(["--group", item])
     return _json(run_genie(cmd, cwd=cwd))
 
 
@@ -249,15 +248,15 @@ def _register_commands(ctx) -> None:
             "genie",
             commands.slash_genie,
             "Operate Genie status, board, wishes, work plans, and review plans (read-only)",
-            "[status|board [wish]|wish <slug>|work-plan <slug> [groups]|review-plan <slug>|help]",
+            "[status|board [wish]|wish <slug>|work-plan <slug> [group]|review-plan <slug>|help]",
         ),
         ("genie-board", commands.slash_genie_board, "Show the Genie task board", "[wish]"),
         ("genie-wish", commands.slash_genie_wish, "Show Genie wish status (board plus tasks)", "<slug>"),
         (
             "genie-work-plan",
             commands.slash_genie_work_plan,
-            "Prepare a non-mutating Genie work plan (launch --dry-run)",
-            "<slug> [groups]",
+            "Prepare a non-mutating Genie work plan (context --plan)",
+            "<slug> [group]",
         ),
         ("genie-review-plan", commands.slash_genie_review_plan, "Prepare a non-mutating Genie review plan", "<slug>"),
     ]

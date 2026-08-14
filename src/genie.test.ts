@@ -67,7 +67,22 @@ describe('genie CLI registration', () => {
 
     expect(proc.exitCode).toBe(0);
     const stdout = proc.stdout.toString();
-    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
+    for (const path of ['.mcp.json', '.codex/config.toml']) expect(stdout).toContain(path);
+  });
+
+  test('doctor --fix help discloses its tighten-only scope and refusal conditions', () => {
+    const repoRoot = import.meta.dir;
+    const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'genie.ts'), 'doctor', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: fxHome, GENIE_HOME: join(fxHome, '.genie') },
+    });
+
+    expect(proc.exitCode).toBe(0);
+    const stdout = proc.stdout.toString();
+    expect(stdout).toContain('wider modes to their index modes');
+    expect(stdout).toContain('0775/0777 to 0755');
+    expect(stdout).toContain('refuse replacements, symlinks, and');
+    expect(stdout).toContain('non-wider or ambiguous modes');
   });
 
   test('update rejects an unknown flag with a nonzero exit (pre-contract binaries error, not update)', () => {

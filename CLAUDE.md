@@ -59,34 +59,36 @@ src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightw
   sqlite-open.ts                Shared bun:sqlite open primitive (WAL, busy_timeout, typed errors)
   task-state.ts                 Task / dependency / ready-set state machine
   omni-queue.ts                 Approval-queue + inbox persistence for the Omni runner
-  warp-launch.ts                Warp cockpit planner — one worktree per ready group
+  base-state.ts                 Integration-branch resolution + recorded wish-base state (context verb)
   TAXONOMY.md                   The docs-in-git / state-in-SQLite contract
 src/hooks/                      Provider-neutral Claude/Codex hook dispatch and wire adapters
   index.ts                      Handler chain + fail-closed envelope (buildFailClosedResponse)
   dispatch-command.ts           CLI entry: genie hook dispatch
-  handlers/                     branch-guard, freshness, identity-inject, omni-approval, orchestration-guard, audit-context
-src/term-commands/              CLI command handlers (board, init, launch, omni, shortcuts, task, ...)
+  handlers/                     branch-guard, freshness, identity-inject, omni-approval, git-freeze-guard, audit-context
+src/term-commands/              CLI command handlers (board, context, init, omni, shortcuts, task, ...)
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
 .genie/                         Per-repo state: git-tracked wishes/brainstorms/INDEX.md + genie.db (gitignored)
 ```
 
 ## CLI Commands
 
-Fourteen top-level commands (run `genie <command> --help` for detail):
+Sixteen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
 | `board` | Kanban view derived by query (no stored view state); `--board`, `--wish`, `--json` |
+| `idea <text...>` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `doctor` | Diagnostic checks on the genie installation |
 | `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
-| `init` | Scaffold per-repo state and reconcile `.mcp.json`, `.warp/.mcp.json`, plus the marker-owned `.codex/config.toml` stable-facade route |
+| `init` | Scaffold per-repo state and reconcile `.mcp.json` plus the marker-owned `.codex/config.toml` stable-facade route |
 | `install` | Post-install finisher — authenticated delivery, v4 cleanup (`--skip-v4-cleanup`), and non-Codex convergence |
-| `launch <slug>` | Open a Warp cockpit for a wish: one pane per ready group, each in its own worktree |
-| `mcp` | Read-only stdio MCP server exposing genie.db task/board state |
+| `context` | Resolve spawn context: wish/group branch + base SHA, or the integration branch (versioned JSON); `--plan` previews |
+| `mcp` | Stdio MCP server exposing genie.db task/board state (read + write tools) |
 | `omni` | Omni integration — `serve`, `status`, `inbox`, `handshake` |
 | `setup` | Configure Genie; authenticated `setup --codex` owns Codex activation and managed convergence |
 | `shortcuts` | Manage tmux keyboard shortcuts |
 | `task` | Task state (SQLite, zero-daemon) |
+| `ui-bridge` | UI-owned stdio MCP bridge into genie.db (reads + roster writes + change-push) |
 | `uninstall` | Remove Genie CLI and clean up hooks |
 | `update` | Update Genie CLI to the latest GitHub Release |
 | `help` | `genie help [command]` |
@@ -141,7 +143,7 @@ Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-commo
 | `GENIE_AGENT_NAME` | Agent identity for hook dispatch |
 | `GENIE_AGENT_ID` | Agent id used by hook identity injection |
 | `GENIE_TEAM` | Default team when `--team` not provided |
-| `GENIE_WORKTREES_DIR` | Override where `launch` creates per-group worktrees (default `<GENIE_HOME>/worktrees`) |
+| `GENIE_WORKTREES_DIR` | Override the worktrees base the doctor launch-residue check and review snapshots use (default `<GENIE_HOME>/worktrees`) |
 | `GENIE_CONFIG_FILE` | Override the resolved genie config path |
 | `OMNI_*` | Omni runner config — `OMNI_APPROVALS_ENABLED`, `OMNI_API_URL`, `OMNI_API_KEY`, `OMNI_NATS_URL`, `OMNI_APPROVAL_CHAT`, `OMNI_INSTANCE`, `OMNI_APPROVE_TOKENS`/`OMNI_DENY_TOKENS` |
 

@@ -67,6 +67,10 @@ const WORKSPACE_EXEMPT = new Set([
   // behavior.
   'task',
   'board',
+  // `context` is the read-only spawn-context contract verb. Like `task`/
+  // `board` it self-resolves from the git common-dir and must work in a fresh
+  // repo with no workspace.json.
+  'context',
   // `idea` is the one-verb quick-capture (roadmap board's Idea lane). Same v5
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).
@@ -76,9 +80,9 @@ const WORKSPACE_EXEMPT = new Set([
   // `task`/`board` it self-resolves the global genie.db and never reads the
   // v4 workspace.json, so gating it on the legacy workspace concept is wrong.
   'omni',
-  // `mcp` is the read-only stdio MCP server. It opens the shared genie.db
-  // read-only and DEGRADES to an empty board when the file is absent, so the
-  // legacy workspace gate must not exit 2 before the JSON-RPC loop even starts.
+  // `mcp` is the stdio MCP server (read + write tools). It resolves the shared
+  // genie.db itself and fails closed when the file is absent, so the legacy
+  // workspace gate must not exit 2 before the JSON-RPC loop even starts.
   'mcp',
   // `ui-bridge` is the UI-owned stdio MCP bridge (reads + roster writes + push).
   // Like `mcp` it self-resolves the shared genie.db and speaks JSON-RPC on stdio;

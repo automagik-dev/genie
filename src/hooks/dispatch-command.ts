@@ -17,7 +17,7 @@
  * CC reads empty PreToolUse stdout as allow-by-default. A payload we cannot
  * parse, or a `dispatch()` that throws unexpectedly, must therefore NOT produce
  * empty stdout — that would silently bypass every guard (branch-guard,
- * orchestration-guard, ...). `computeDispatchOutput` wraps the dispatch flow so
+ * git-freeze-guard, ...). `computeDispatchOutput` wraps the dispatch flow so
  * both cases emit a NON-EMPTY, non-allow envelope instead (see
  * `buildFailClosedResponse` in ./index.ts for the exact shape and the
  * AskUserQuestion inline-picker carve-out). A legitimate empty result from
@@ -26,7 +26,6 @@
  */
 
 import type { Command } from 'commander';
-import { registerHookTrustCommand } from '../term-commands/hook/trust.js';
 import { adaptCodexPreToolUseOutput, normalizeCodexHookPayload } from './codex-adapter.js';
 import { buildFailClosedResponse, dispatch, installDispatchRegistry } from './index.js';
 import type { HookPayload } from './types.js';
@@ -232,10 +231,7 @@ export function registerHookNamespace(program: Command): void {
     .option('--runtime <runtime>', 'Wire protocol: auto, claude, or codex', 'auto')
     .action(dispatchAction);
 
-  // Group 1 of hookify-third-party-absorption: trust subcommand. Subsequent
-  // groups extend this namespace with `list`, `scaffold`, `test`, `reload`,
-  // `quarantine`, `import`, `prune`. Registered synchronously so commander's
-  // parse pass sees it; the trust handler itself only runs when the user
-  // invokes `genie hook trust` so the dispatch hot path doesn't pay for it.
-  registerHookTrustCommand(hook);
+  // hooks-v2#retire: `genie hook trust` and its loader scaffolding were
+  // quarantined (src/hooks/trust.ts + src/term-commands/hook/trust.ts) with the
+  // design parked. Re-entry conditions are recorded in those files' headers.
 }

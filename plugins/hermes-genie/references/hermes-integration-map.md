@@ -26,13 +26,13 @@ skills, same MCP tool set, same agent-sync convergence, same doctor coverage.
 | Plugin manifest | `.claude-plugin/plugin.json` (Skills, Hooks, MCP) — **current** | `plugins/genie/.codex-plugin/plugin.json` — **current** | `plugins/hermes-genie/plugin.yaml` declared 7 native tools + hooks + commands + 4 skills — **pre-wish** | `plugins/hermes-genie/plugin.yaml` declares 3 native tools + MCP + hooks; skills sourced via `skills.external_dirs` — **current** |
 | Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **pre-wish** | the 23 product skills via `skills.external_dirs` pointed at the release-converged **`$GENIE_HOME/skills`** root (resolver fallback chain: explicit override → `$GENIE_HOME/skills` → `$GENIE_HOME/plugins/genie/skills`); ≤1 thin cockpit adapter via `ctx.register_skill` — **current** |
 | Hooks | Claude hook set — **current** | `codex-hooks.json` H3/H4/H6 — **current** | `on_session_start`, `pre_tool_call`, `post_tool_call` (advisory KHAW bridge) — **pre-wish** | `on_session_start`, `pre_tool_call`, `pre_llm_call` (advisory, read-only, no mutation; KHAW bridge removed) — **current** |
-| MCP | `.mcp.json` → `genie mcp` (5 read-only tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read-only tools) — **current** | none — native tools only — **pre-wish** | `genie mcp` wired as the shared 5-tool read-only server — **current** |
+| MCP | `.mcp.json` → `genie mcp` (5 read + 12 write tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read + 12 write tools) — **current** | none — native tools only — **pre-wish** | `genie mcp` wired as the shared 17-tool read + write server — **current** |
 | Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **pre-wish** | same lane, now also converging (after link/enable) the `skills.external_dirs` entry for `$GENIE_HOME/skills` + the `mcp_servers.genie` wiring into the live profile's `config.yaml`; inline top-level `mcp_servers:`/`skills:` degrade to a non-fatal WARN skip — **current** |
 | Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **pre-wish** | Hermes lane + MCP + skills-dir checks in `genie doctor` — **current** |
 
 ## Tool map
 
-Convergence, shipped: the shared read-only **MCP** server (`genie mcp`) provides the board/wish/task
+Convergence, shipped: the shared **MCP** server (`genie mcp`, read + write tools) provides the board/wish/task
 surface for every client; Hermes keeps only the tools that have no MCP equivalent. **No duplicates** —
 a tool is either an MCP tool or a native Hermes tool, never both.
 
@@ -44,7 +44,7 @@ a tool is either an MCP tool or a native Hermes tool, never both.
 | MCP (shared) | `genie_active` | active wishes/tasks snapshot | **current** — provided by `genie mcp` |
 | MCP (shared) | `genie_worktree_context` | resolved worktree/branch/cwd context | **current** — provided by `genie mcp` |
 | Native Hermes | `genie_status` | `genie doctor --json` + `.genie/` presence | **current** — remains native |
-| Native Hermes | `genie_work_plan` | `genie launch <slug> --dry-run` | **current** — remains native |
+| Native Hermes | `genie_work_plan` | `genie context --wish <slug> --plan` | **current** — remains native |
 | Native Hermes | `genie_review_plan` | board/tasks + Success/QA criteria from WISH.md | **current** — remains native |
 
 **Retired natives** (present in the pre-wish `plugin.yaml`, removed once the MCP tools shipped to
@@ -110,7 +110,7 @@ Guardrails (inherited from the Codex convergence discipline):
 
 The entire Hermes surface is read-only: every tool, command, hook, and skill reports
 `mutation: "none"` and performs no writes under `.genie/`. Mutation-capable operations
-(`genie_task_checkout`, `genie_task_done`, executing a real `genie launch`, spawn/send) are
+(`genie_task_checkout`, `genie_task_done`, spawn/send) are
 deferred and each individual invocation requires an explicit human-gate packet.
 
 Full rules, the deferred-capability table, the human-gate packet contract, and the four

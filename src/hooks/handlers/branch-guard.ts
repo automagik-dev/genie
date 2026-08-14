@@ -10,10 +10,15 @@
  * that by resolving the PR's `baseRefName` at check time and denying on any
  * non-dev base. Fall-closed policy: if the base cannot be resolved, deny.
  *
+ * The verification lookup spawns `gh` only after it passes the
+ * trusted-executable gate (hooks-v2#security): a repository-local `gh` shim
+ * on PATH is refused outright, so it can never forge the merge-gate answer.
+ *
  * Priority: 1 (runs FIRST, before all other handlers)
  */
 
 import { spawnSync } from 'node:child_process';
+import { resolveTrustedExecutable } from '../../lib/trusted-executable.js';
 import { maskQuotedRegions } from '../shell-quoting.js';
 import type { HandlerResult, HookPayload } from '../types.js';
 
@@ -82,7 +87,7 @@ export interface BranchGuardDeps {
    * wrong repo and returns GraphQL "no such PR" → fall-closed deny on a
    * perfectly legitimate merge.
    */
-  resolvePrBase: (prNum: string, repo?: string) => Promise<ResolvePrBaseResult>;
+  resolvePrBase: (prNum: string, repo?: string, cwd?: string) => Promise<ResolvePrBaseResult>;
 }
 
 /** Maximum stderr bytes we surface in a deny reason. Protects against gh
@@ -90,7 +95,25 @@ export interface BranchGuardDeps {
 const STDERR_SURFACE_CAP = 500;
 
 const defaultDeps: BranchGuardDeps = {
-  async resolvePrBase(prNum, repo) {
+  async resolvePrBase(prNum, repo, cwd) {
+    // The `gh` binary is resolved through the trusted-executable gate before
+    // spawning: a repository-local `gh` shim planted on PATH must never
+    // answer the merge-gate lookup, because its forged `dev` output would
+    // turn the hook's fall-closed deny into an allow. Resolution failure is
+    // a `reason` (deny), exactly like every other lookup failure shape.
+    const resolveCwd = cwd ?? process.cwd();
+    let gh: string;
+    try {
+      // Explicit `which` reading the live PATH (the sibling handlers inject
+      // `which` the same way). The default Bun.which form caches its answer
+      // per process, which would make a PATH-injected shim unobservable in
+      // tests; production behavior is identical because the hook's PATH is
+      // fixed at launch.
+      gh = resolveTrustedExecutable('gh', resolveCwd, (command) => Bun.which(command, { PATH: process.env.PATH }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { reason: `trusted gh resolution failed: ${message.slice(0, STDERR_SURFACE_CAP)}` };
+    }
     // spawnSync (not execSync) so we can inspect exit code AND stderr
     // independently. The previous `stdio: ['ignore','pipe','ignore']` routed
     // stderr to /dev/null, making every fall-closed deny undiagnosable.
@@ -105,7 +128,8 @@ const defaultDeps: BranchGuardDeps = {
     if (repo) args.push('--repo', repo);
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync('gh', args, {
+      result = spawnSync(gh, args, {
+        cwd: resolveCwd,
         encoding: 'utf8',
         timeout: 10_000,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -154,9 +178,63 @@ function extractPrNumber(cmd: string): string | null {
  * Returns `null` when no explicit repo is present; callers fall back to the
  * subprocess's default resolution (git remote of cwd).
  */
-function extractRepoFlag(cmd: string): string | null {
-  const match = cmd.match(/(?:--repo|-R)(?:\s+|=)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/);
-  return match ? match[1] : null;
+type RepoFlag = { kind: 'absent' } | { kind: 'valid'; repo: string } | { kind: 'invalid' };
+
+function shellTokens(cmd: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let quote: "'" | '"' | null = null;
+  let active = false;
+  for (let index = 0; index < cmd.length; index++) {
+    const char = cmd[index];
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else if (char === '\\' && quote === '"' && index + 1 < cmd.length) token += cmd[++index];
+      else token += char;
+      active = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      active = true;
+    } else if (char === '\\' && index + 1 < cmd.length) {
+      token += cmd[++index];
+      active = true;
+    } else if (/\s/.test(char)) {
+      if (active) tokens.push(token);
+      token = '';
+      active = false;
+    } else if (';&|'.includes(char)) {
+      if (active) tokens.push(token);
+      tokens.push(char);
+      token = '';
+      active = false;
+    } else {
+      token += char;
+      active = true;
+    }
+  }
+  if (active) tokens.push(token);
+  return tokens;
+}
+
+function extractRepoFlag(cmd: string): RepoFlag {
+  const tokens = shellTokens(cmd);
+  const merge = tokens.findIndex(
+    (token, index) => token === 'gh' && tokens[index + 1] === 'pr' && tokens[index + 2] === 'merge',
+  );
+  if (merge < 0) return { kind: 'absent' };
+  const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  for (let index = merge + 3; index < tokens.length && ![';', '&', '|'].includes(tokens[index]); index++) {
+    const token = tokens[index];
+    if (token === '--repo' || token === '-R') {
+      const repo = tokens[index + 1];
+      return repo !== undefined && repoPattern.test(repo) ? { kind: 'valid', repo } : { kind: 'invalid' };
+    }
+    const equal = /^(?:--repo|-R)=(.*)$/.exec(token);
+    if (equal) return repoPattern.test(equal[1]) ? { kind: 'valid', repo: equal[1] } : { kind: 'invalid' };
+  }
+  return { kind: 'absent' };
 }
 
 export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = defaultDeps): Promise<HandlerResult> {
@@ -205,8 +283,20 @@ export async function branchGuard(payload: HookPayload, deps: BranchGuardDeps = 
           'BLOCKED: `gh pr merge` requires an explicit PR number so the target base branch can be verified. §19 (v2): agents merge PRs targeting `dev` only; main/master is humans-only via GitHub UI.',
       };
     }
-    const repo = extractRepoFlag(matchTarget) ?? undefined;
-    const resolved = await deps.resolvePrBase(prNum, repo);
+    const repoFlag = extractRepoFlag(command);
+    if (repoFlag.kind === 'invalid') {
+      return {
+        decision: 'deny',
+        reason:
+          'BLOCKED: `gh pr merge --repo` must name an exact `OWNER/NAME` repository so the target can be verified.',
+      };
+    }
+    const repo = repoFlag.kind === 'valid' ? repoFlag.repo : undefined;
+    // Trust roots derive from the agent's working directory — the surface a
+    // repository-local shim is planted in. Older/odd clients that omit the
+    // field fall back to the hook process cwd.
+    const cwd = typeof payload.cwd === 'string' ? payload.cwd : process.cwd();
+    const resolved = await deps.resolvePrBase(prNum, repo, cwd);
     if ('reason' in resolved) {
       return {
         decision: 'deny',

@@ -7,11 +7,26 @@ import {
   checkResourceLine,
   collectResourceViolations,
   extractInlineCodeSpans,
+  getGenieCommands,
   isResourceAllowlisted,
   validateSkillMetadata,
 } from './skills-lint.ts';
 
 const SCRIPT = join(import.meta.dir, 'skills-lint.ts');
+
+test('clean checkout probes the current source CLI when dist is absent', () => {
+  const root = mkdtempSync(join(tmpdir(), 'skills-lint-clean-root-'));
+  try {
+    mkdirSync(join(root, 'src'), { recursive: true });
+    writeFileSync(
+      join(root, 'src', 'genie.ts'),
+      "process.stdout.write('Usage: genie\\n\\nCommands:\\n  context  current source command\\n');\n",
+    );
+    expect(getGenieCommands(root)).toContain('context');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe('checkResourceLine — imperative discriminators', () => {
   test('flags an imperative repo-root template copy', () => {
