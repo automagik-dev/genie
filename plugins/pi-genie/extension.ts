@@ -459,17 +459,17 @@ export default function genieExtension(pi: any): void {
     name: 'genie_work_plan',
     label: 'Genie Work Plan',
     description:
-      'Preview the execution plan for a wish (genie launch <slug> --dry-run), optionally limited to specific groups. Output is YAML-ish text captured raw. Read-only dry-run.',
+      'Preview the spawn plan for a wish (genie context --wish <slug> --plan), optionally limited to one group. Output is versioned JSON captured raw. Read-only plan.',
     parameters: {
       type: 'object',
       properties: {
         wish: stringProp('Wish slug'),
-        groups: stringProp('Comma-separated execution group names to include'),
+        group: stringProp('Single execution group name to include'),
       },
     },
     async execute(
       _toolCallId: string,
-      params: { wish: string; groups?: string },
+      params: { wish: string; group?: string },
       _signal: unknown,
       _onUpdate: unknown,
       ctx: { cwd: string },
@@ -477,8 +477,13 @@ export default function genieExtension(pi: any): void {
       if (!validRef(params.wish)) {
         return invalidRefResult('wish slug', params.wish, ctx.cwd);
       }
-      const args = ['launch', params.wish, '--dry-run'];
-      if (params.groups) args.push('--groups', params.groups);
+      const args = ['context', '--wish', params.wish, '--plan'];
+      if (params.group) {
+        if (!validRef(params.group)) {
+          return invalidRefResult('group', params.group, ctx.cwd);
+        }
+        args.push('--group', params.group);
+      }
       const result = await runGenie(args, ctx.cwd);
       const data = result.parsed ? result.data : ((result.data as { stdout?: string } | null)?.stdout ?? result.data);
       return toolResult(result, JSON.stringify(data, null, 2), !result.success);

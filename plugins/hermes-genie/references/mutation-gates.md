@@ -5,10 +5,10 @@ The rules that keep the Hermes-native surface read-only, and the gate every futu
 ## Read-only MVP boundary
 
 - Every tool, slash command, hook, and skill in this plugin reports `mutation: "none"` and performs no state writes — no task claims, no dispatch, no sends, no writes under `.genie/`.
-- The default native surface is the three gap tools the MCP board surface does not cover: `genie_status` (`doctor --json` plus `.genie/` presence), `genie_work_plan` (`launch <slug> --dry-run`), and `genie_review_plan` (board/task composite plus the WISH.md acceptance sections). Board and task truth come from the genie MCP tools.
+- The default native surface is the three gap tools the MCP board surface does not cover: `genie_status` (`doctor --json` plus `.genie/` presence), `genie_work_plan` (`context --wish <slug> --plan`), and `genie_review_plan` (board/task composite plus the WISH.md acceptance sections). Board and task truth come from the genie MCP tools.
 - The four legacy board/task tools (`genie_board`, `genie_wish_status`, `genie_task_list`, `genie_task_status`) still exist behind `GENIE_HERMES_LEGACY_TOOLS=1` for one transition release; they wrap the same read-only subcommands (`board --json`, `task list --json`, `task status <id>`) and remain `mutation: "none"`. All subprocess calls use the argv-only bridge.
 - `genie board --json` writes in exactly one shape: scoped with `--board <ref>` to a lane-defining board, it reconciles sync-owned card lanes from WISH.md statuses before rendering. This surface never passes `--board` — `genie_board` accepts only `cwd` and `wish`, and `genie_wish_status`/`genie_review_plan`/`session_context` are wish-scoped or unscoped — so every board read here takes the laneless path and writes nothing. Exposing a `board` parameter would make the tool mutation-capable and requires the gate below.
-- The dry-run line is the boundary: `genie_work_plan` runs `genie launch <slug> --dry-run`, which prints the dispatch plan and touches nothing. Executing a real `genie launch` is a mutation and is out of scope here.
+- The plan line is the boundary: `genie_work_plan` runs `genie context --wish <slug> --plan`, which prints the spawn-context payload (branch + base SHA + ready tasks) and touches nothing. Materializing a worktree or spawning an agent is a mutation and is out of scope here.
 
 ## Deferred mutation tools
 
@@ -18,7 +18,7 @@ These capabilities are deliberately not shipped. Adding any of them is a new wis
 |---------------------|------------|-----------------|
 | `genie_task_checkout` | `genie task checkout <id> --worker <name>` | claims a task — changes worker assignment and board truth |
 | `genie_task_done` | `genie task done <ref>` | marks work complete — changes board truth |
-| executing `genie launch` | `genie launch <slug>` (without `--dry-run`) | creates worktrees and branches, dispatches agents |
+| spawning a wish worktree | `genie context --wish <slug>` (non-plan) then materializing the branch/base | records a wish base in genie state and lets a spawn create worktrees/branches |
 | spawn / send | any agent spawn or message dispatch | starts or steers autonomous work |
 
 ## Human-gate rule
@@ -36,7 +36,7 @@ No packet, no approval, no mutation. This mirrors the HUMAN-GATE evidence contra
 Four facts an operator must verify before approving any mutation — all answerable with the read-only surface plus `git status`:
 
 1. **Working directory** — the packet's `cwd` points at the intended repo/worktree. `genie_status` echoes the resolved `cwd` and confirms `.genie/` presence.
-2. **Branch / worktree target** — which branch or worktree the mutation lands on, and that it is not a protected branch (e.g. `main`). `genie_work_plan` shows the exact worktrees and branches a launch would create.
+2. **Branch / worktree target** — which branch or worktree the mutation lands on, and that it is not a protected branch (e.g. `main`). `genie_work_plan` shows the exact branch and base SHA a spawn would materialize.
 3. **Working-tree cleanliness** — no uncommitted or unrelated changes on the target that the mutation could clobber or entangle (`git status` on the target checkout).
 4. **Board/task truth** — the affected wish and tasks are in the expected state (`genie_board`, `genie_wish_status`, `genie_task_status`): the task is ready, not already claimed or in progress by another worker, and its dependencies are done.
 

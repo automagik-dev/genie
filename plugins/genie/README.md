@@ -117,8 +117,9 @@ invokes the plugin copies as `$genie:brainstorm`, `$genie:wish`, `$genie:review`
 intentionally select the user tier, which now only ever holds a separately installed personal copy. Claude Code uses the
 equivalent slash skills. Native subagents do not imply separate worktrees. Every engineer first claims its assigned task
 with `genie task checkout <id> --worker <name>`, reports completion without mutating task state, and is reviewed by a
-different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Use
-`genie launch` when separate worktrees or a human-supervised Warp cockpit are required.
+different agent. Only the orchestrator calls `genie task done <id>` after a SHIP verdict and passing validation. Separate
+worktrees, when required, are orchestrator-arranged (client-provided worktrees or explicit `git worktree add`
+plumbing per the dispatch contract).
 
 Those selectors are for manual invocation. Each physical skill's `agents/openai.yaml` starter card is selector-free, so selecting a plugin-tier or user-tier card executes that already-selected physical skill instead of naming and potentially redirecting to the other tier.
 

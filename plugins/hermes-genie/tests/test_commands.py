@@ -170,7 +170,7 @@ def test_genie_wish_requires_slug():
     assert "/genie help" in text
 
 
-def test_genie_work_plan_parses_groups(monkeypatch):
+def test_genie_work_plan_passes_group(monkeypatch):
     commands = load_commands()
     captured: dict[str, Any] = {}
 
@@ -181,18 +181,18 @@ def test_genie_work_plan_parses_groups(monkeypatch):
                 "success": True,
                 "mutation": "none",
                 "cwd": "/repo",
-                "command": ["genie", "launch", "demo", "--dry-run", "--groups", "a,b"],
-                "data": {"stdout": "plan line 1\nplan line 2\n", "stderr": "", "returncode": 0},
+                "command": ["genie", "context", "--wish", "demo", "--plan", "--group", "a"],
+                "data": {"stdout": '{"version":1,"wish":"demo"}\n', "stderr": "", "returncode": 0},
             }
         )
 
     monkeypatch.setattr(commands, "_genie_work_plan", fake_work_plan)
-    text = commands.slash_genie("work-plan demo a,b")
+    text = commands.slash_genie("work-plan demo a")
     assert captured["slug"] == "demo"
-    assert captured["groups"] == ["a", "b"]
+    assert captured["group"] == "a"
     assert text.splitlines()[0].startswith("OK")
-    assert "dry-run" in text
-    assert "genie launch demo --dry-run --groups a,b" in text
+    assert "plan" in text
+    assert "genie context --wish demo --plan --group a" in text
 
 
 def test_wrappers_delegate_to_dispatcher(monkeypatch):

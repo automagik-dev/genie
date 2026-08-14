@@ -15,10 +15,9 @@ STATUS_PROP: dict[str, Any] = {
     "enum": ["blocked", "ready", "in_progress", "done"],
     "description": "Task status filter.",
 }
-GROUPS_PROP: dict[str, Any] = {
-    "type": "array",
-    "items": {"type": "string"},
-    "description": "Execution group names to include in the dry-run plan.",
+GROUP_PROP: dict[str, Any] = {
+    "type": "string",
+    "description": "Execution group name to include in the plan.",
 }
 ID_PROP: dict[str, Any] = {"type": "string", "description": "Genie task id (e.g. t_abc123)."}
 
@@ -75,12 +74,12 @@ GENIE_TASK_STATUS_SCHEMA: dict[str, Any] = {
 GENIE_WORK_PLAN_SCHEMA: dict[str, Any] = {
     "name": "genie_work_plan",
     "description": (
-        "Preview the execution plan for a wish (genie launch <slug> --dry-run), optionally "
-        "limited to specific groups. Output is YAML-ish text captured raw. Read-only dry-run."
+        "Preview the spawn plan for a wish (genie context --wish <slug> --plan), optionally "
+        "limited to one group. Output is versioned JSON captured raw. Read-only plan."
     ),
     "parameters": {
         "type": "object",
-        "properties": {"cwd": CWD_PROP, "slug": SLUG_PROP, "groups": GROUPS_PROP},
+        "properties": {"cwd": CWD_PROP, "slug": SLUG_PROP, "group": GROUP_PROP},
         "required": ["slug"],
     },
 }

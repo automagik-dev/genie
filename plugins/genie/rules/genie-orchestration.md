@@ -4,7 +4,7 @@ Genie is zero-daemon: docs live in git, task state in SQLite. Load `/genie` for 
 ## Dispatch — native teams
 - Spawn workers with the **Agent tool**: one call per execution group, all groups in a single message for parallel waves; workers run in the background and notify on completion.
 - Follow-ups via **SendMessage**; each worker's final report returns as its Agent tool result. Push, not poll.
-- Multi-session cockpit: `genie launch <slug> [--groups <csv>]` — one pane per ready group.
+- Spawn plan preview: `genie context --wish <slug> --plan` — branch + base SHA + ready tasks, side-effect free.
 
 ## Task DB — the shared truth
 ```bash

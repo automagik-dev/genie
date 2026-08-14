@@ -29,7 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, sep } from 'node:path';
 import { type IntegrationBranch, resolveIntegration } from '../lib/v5/base-state.js';
-import { resolveWorktreesBase } from '../term-commands/launch.js';
+import { resolveWorktreesBase } from '../lib/v5/launch-worktrees.js';
 import type { CheckResult } from './doctor.js';
 import { sizeOfPathTree } from './legacy-v4.js';
 

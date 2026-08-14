@@ -32,7 +32,7 @@ and `BLOCKED` are evidence returned by a reviewer. The `Status` field in
 |-------------|---------|------------|
 | `DRAFT` | Plan exists but has not passed plan review | `wish`, then plan `review` |
 | `FIX-FIRST` | Plan review found blocking gaps | `fix`, then plan `review` |
-| `APPROVED` | Plan review returned SHIP and the plan is ready | `work` or `genie launch <slug>` |
+| `APPROVED` | Plan review returned SHIP and the plan is ready | `work` |
 | `IN_PROGRESS` | At least one execution group has started; execution/PR gates are not complete | resume `work` or the recorded corrective route |
 | `BLOCKED` | A recorded external, environment, or specification blocker prevents progress | resolve the recorded blocker, then resume the prior stage |
 | `SHIPPED` | The authorized merge and required QA/release gate completed | terminal/history only |
@@ -86,7 +86,7 @@ The checkout claim is atomic: exactly one concurrent claimant wins; the loser ge
 
 ### Warp cockpit
 
-`genie launch <slug>` opens one Warp pane per ready group, each pane in its own worktree with a curated prompt. `--dry-run` prints the plan without touching anything; `--groups <csv>` scopes; `--agent claude|codex` picks the terminal agent. Worktrees share the main repo's task DB, so claims stay atomic across panes.
+`genie context --wish <slug> --plan` prints the spawn plan (branch + base SHA + ready tasks) without touching anything; `--group g` scopes to one group. Native subagents share the main repo's task DB, so claims stay atomic.
 
 ### Monitoring
 

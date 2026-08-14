@@ -819,27 +819,23 @@ describe('Group E release and documentation contracts', () => {
     ).toContain('legacy workspace-write grants are forbidden');
   });
 
-  test('README and contributor command inventories match the 14-command source surface', () => {
-    const expected = [
-      'board',
-      'doctor',
-      'help',
-      'hook',
-      'init',
-      'install',
-      'launch',
-      'mcp',
-      'omni',
-      'setup',
-      'shortcuts',
-      'task',
-      'uninstall',
-      'update',
-    ];
+  test('README and contributor command inventories match the live CLI registry', () => {
+    // Derive the expected inventory from the actual command registry instead of
+    // a hardcoded list: spawning `--help` and parsing the Commands section
+    // keeps this structurally awake when a verb is added, removed, or renamed.
+    const proc = Bun.spawnSync([process.execPath, join(ROOT, 'src', 'genie.ts'), '--help'], { cwd: ROOT });
+    expect(proc.exitCode).toBe(0);
+    const help = proc.stdout.toString();
+    const commandsBlock = help.split('Commands:')[1] ?? '';
+    expect(commandsBlock.length).toBeGreaterThan(0);
+    const expected = [...commandsBlock.matchAll(/^ {2}([a-z][a-z-]*)/gm)].map((match) => match[1]).sort();
+    const countWords: Record<number, string> = { 14: 'Fourteen', 15: 'Fifteen', 16: 'Sixteen', 17: 'Seventeen' };
+    const word = countWords[expected.length];
+    if (word === undefined) throw new Error(`no count word recorded for a ${expected.length}-command registry`);
     const readme = read('README.md');
     const contributor = read('CLAUDE.md');
-    expect(readme).toContain('14 CLI commands');
-    expect(contributor).toContain('Fourteen top-level commands');
+    expect(readme).toContain(`${expected.length} CLI commands`);
+    expect(contributor).toContain(`${word} top-level commands`);
     const readmeCommands = [...readme.matchAll(/^\| `genie ([a-z-]+)/gm)].map((match) => match[1]).sort();
     const contributorCommands = [...contributor.matchAll(/^\| `([a-z-]+)/gm)].map((match) => match[1]).sort();
     expect(readmeCommands).toEqual(expected);
@@ -1058,7 +1054,7 @@ describe('Group E release and documentation contracts', () => {
     expect(omni).toContain('"agent": "codex"');
     const readme = read('README.md');
     expect(readme).toContain('The Codex route is plugin-independent');
-    for (const path of ['.mcp.json', '.warp/.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
+    for (const path of ['.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
   });
 
   test('the retired homolog channel never reappears in any workflow', () => {

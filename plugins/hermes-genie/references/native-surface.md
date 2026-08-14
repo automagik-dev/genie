@@ -49,7 +49,7 @@ Every tool returns a JSON string with one uniform envelope:
 | Tool | Genie CLI invocation | Notes |
 |------|----------------------|-------|
 | `genie_status` | `genie doctor --json` | gap tool (default). `data` wraps the doctor report as `data.doctor` plus `data.genie_dir` / `data.genie_dir_present` for the resolved cwd |
-| `genie_work_plan` | `genie launch <slug> --dry-run [--groups <csv>]` | gap tool (default). Dry-run prints the dispatch plan (YAML-ish, raw capture) without touching anything |
+| `genie_work_plan` | `genie context --wish <slug> --plan [--group <g>]` | gap tool (default). Plan mode prints the versioned spawn-context payload (branch + base SHA + ready tasks, raw JSON capture) without touching anything |
 | `genie_review_plan` | board + task-list composite, then reads `.genie/wishes/<slug>/WISH.md` | gap tool (default). Extracts the `## Success Criteria` and `## QA Criteria` sections into `data.criteria`; `source` is the wish-file path |
 | `genie_board` | `genie board --json [--wish <slug>]` | legacy (flag-gated). Duplicates the MCP board tool; prefer the MCP surface |
 | `genie_wish_status` | `genie board --wish <slug> --json` + `genie task list --wish <slug> --json` | legacy (flag-gated). Composite: `data.board` and `data.tasks` are full leg payloads |
@@ -58,7 +58,7 @@ Every tool returns a JSON string with one uniform envelope:
 
 ## Input safety
 
-- References (`slug`, `wish`, `id`, `status`, `groups` items) must match `[A-Za-z0-9][A-Za-z0-9._-]*` — no leading dash (option injection), no path separators, no `..` (traversal). Invalid input returns an error payload with `source: "input-validation"`; no subprocess runs.
+- References (`slug`, `wish`, `id`, `status`, `group`) must match `[A-Za-z0-9][A-Za-z0-9._-]*` — no leading dash (option injection), no path separators, no `..` (traversal). Invalid input returns an error payload with `source: "input-validation"`; no subprocess runs.
 - The subprocess bridge executes argv lists only — never a shell string — and rejects any argument containing `;`, `&&`, `||`, backticks, `$(`, or newlines.
 - Subprocess calls run with a 30-second default timeout; every failure (timeout, missing binary, nonzero exit) becomes an error payload, never an uncaught exception.
 - `genie_review_plan` refuses to follow a resolved wish path that escapes `.genie/wishes/` (symlink defense in depth on top of reference validation).

@@ -37,14 +37,16 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
 // into describing a body that no longer ships.
 const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'board',
+  'context',
   'doctor',
   'hook',
+  'idea',
   'init',
-  'launch',
   'omni',
   'setup',
   'shortcuts',
   'task',
+  'ui-bridge',
   'uninstall',
   'update',
 ];

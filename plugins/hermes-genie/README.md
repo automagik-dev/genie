@@ -51,7 +51,7 @@ All seven tools are read-only — every payload carries `mutation: "none"`.
 | `genie_wish_status` | Composite wish status: board slice plus task list for one slug | none |
 | `genie_task_list` | Task list with optional wish and status filters | none |
 | `genie_task_status` | One task's detail, dependencies, and stage log (raw capture) | none |
-| `genie_work_plan` | Execution-plan preview via `genie launch <slug> --dry-run` | none |
+| `genie_work_plan` | Spawn-plan preview via `genie context --wish <slug> --plan` | none |
 | `genie_review_plan` | Board/tasks plus Success and QA Criteria extracted from the wish's WISH.md | none |
 
 The full layer map (slash commands, CLI tree, hooks, skills), payload contract, and grounded tool-to-CLI mapping live in [`references/native-surface.md`](references/native-surface.md).
@@ -62,7 +62,7 @@ The authoritative Claude/Codex/Hermes parity document — shipped surfaces per c
 
 Hermes is the chat/reasoning cockpit; Genie remains the execution system and source of task truth.
 
-This MVP performs no state writes: no task claims, no dispatch, no sends, no `.genie/` mutation. Mutation-capable operations (`genie_task_checkout`, `genie_task_done`, executing `genie launch`, spawn/send) are deferred and gated behind explicit human approval — see [`references/mutation-gates.md`](references/mutation-gates.md).
+This MVP performs no state writes: no task claims, no dispatch, no sends, no `.genie/` mutation. Mutation-capable operations (`genie_task_checkout`, `genie_task_done`, spawn/send) are deferred and gated behind explicit human approval — see [`references/mutation-gates.md`](references/mutation-gates.md).
 
 ## Development
 

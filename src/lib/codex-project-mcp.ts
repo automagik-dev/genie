@@ -1,5 +1,5 @@
 /**
- * Project-scoped MCP lifecycle for Codex, Claude Code, and Warp.
+ * Project-scoped MCP lifecycle for Codex and Claude Code.
  *
  * Codex has one supported route to Genie's stdio MCP server: the marker-owned
  * `<worktree>/.codex/config.toml` entry. The enabled `genie@automagik` plugin
@@ -117,17 +117,17 @@ export interface CodexPluginMcpUsabilityOptions {
 }
 
 export interface RegisterProjectMcpOptions {
-  /** Reuse a caller's one-shot probe so a launch with N worktrees queries Codex once. */
+  /** Reuse a caller's one-shot probe so a multi-target reconciliation queries Codex once. */
   pluginProbe?: CodexPluginProbe;
   probeDeps?: CodexPluginProbeDeps;
-  /** Command written to the Claude/Warp JSON configs (`.mcp.json`, `.warp/.mcp.json`). */
+  /** Command written to the Claude Code JSON config (`.mcp.json`). */
   entry?: McpServerEntry;
   /**
    * Dedicated command for the marker-owned Codex `.codex/config.toml` route.
    * Defaults to {@link RegisterProjectMcpOptions.entry}. Trusted `genie init`
    * passes the stable {@link genieFacadeMcpEntry} facade here so the Codex marker
    * uses the version-independent `<GENIE_HOME>/bin/genie` command even while
-   * Claude/Warp keep the running-executable entry.
+   * Claude Code keeps the running-executable entry.
    */
   codexEntry?: McpServerEntry;
   /**
@@ -227,7 +227,7 @@ function isSameOrContainedPath(parent: string, child: string): boolean {
 
 function configProjectRoot(configPath: string): string {
   const parent = dirname(configPath);
-  return ['.codex', '.warp'].includes(basename(parent)) ? dirname(parent) : parent;
+  return basename(parent) === '.codex' ? dirname(parent) : parent;
 }
 
 /** Reject repository-controlled links before reading or replacing project config. */
@@ -640,7 +640,7 @@ export function genieMcpEntry(command?: string, argv = process.argv): McpServerE
  * The stable marker-owned Codex route command: the canonical absolute
  * `<GENIE_HOME>/bin/genie` facade with `args = ["mcp"]` and NO effective cwd
  * override. Unlike {@link genieMcpEntry} (which records the running executable
- * for Claude/Warp), this facade path is deliberately version- and
+ * for Claude Code), this facade path is deliberately version- and
  * plugin-independent: it survives plugin updates and symlinked invocation, and
  * is rewritten only by trusted `genie init` after an explicit GENIE_HOME
  * relocation. It never resolves to a versioned plugin-cache path.
@@ -999,16 +999,14 @@ export function reconcileCodexProjectMcp(
 }
 
 /**
- * Register the shared stdio entry for Claude/Warp, then reconcile exactly one
+ * Register the shared stdio entry for Claude Code, then reconcile exactly one
  * Codex route. All files are parsed before any write, so valid-but-wrong-shaped
  * JSON cannot leave one sibling config partially updated.
  */
 export function registerProjectMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
   const entry = options.entry ?? genieMcpEntry();
   const codexEntry = options.codexEntry ?? entry;
-  const preparedJson = [join(root, '.mcp.json'), join(root, '.warp', '.mcp.json')].map((path) =>
-    prepareJsonMcpConfig(path, entry),
-  );
+  const preparedJson = [join(root, '.mcp.json')].map((path) => prepareJsonMcpConfig(path, entry));
   // Trusted init reconciles the marker-owned Codex route independent of plugin
   // state (`forceCodexFallback`) — the `||` short-circuits so a forced call never
   // spends a Codex query. Otherwise the marker is retained only when no usable
