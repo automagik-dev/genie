@@ -1,17 +1,25 @@
 /**
- * doctor: accumulated `genie launch` worktrees.
+ * doctor: worktree classification — legacy launch residue plus remotty
+ * sessions.
  *
- * `genie launch` materializes one git worktree per wish group under
- * `<GENIE_HOME>/worktrees/` on branch `wish/<slug>-<group>` and never removes
- * one, so they pile up invisibly. This module makes them visible in
+ * Pre-0.3, `genie launch` materialized one git worktree per wish group under
+ * `<GENIE_HOME>/worktrees/` on branch `wish/<slug>-<group>` and never removed
+ * one, so they piled up invisibly. This module makes them visible in
  * `genie doctor` and removable by `genie doctor --fix` — but only when removal
- * is provably safe.
+ * is provably safe (the drain tool for that legacy residue).
+ *
+ * Post-0.3 (spawn-context-contract#drain retarget), wish worktrees are
+ * remotty's sessions: `<project>/.worktrees/<session>`. They are NEVER
+ * classified as launch residue — doctor reports them as kept sessions and
+ * never touches them (removal is manifest-owned by remotty). The launch
+ * residue class stays scoped to the legacy placement: launch branch shape
+ * AND a path under the legacy `<GENIE_HOME>/worktrees/` base.
  *
  * Two properties govern everything here:
  *
  *  1. Enumeration is authoritative, never heuristic. Entries come from
  *     `git worktree list --porcelain` — the same source `genie launch` itself
- *     trusts — not from reading directory names under the worktrees base. A
+ *     trusted — not from reading directory names under the worktrees base. A
  *     directory git does not know about is not a worktree and is never touched;
  *     a worktree git knows about outside the base is not ours and is never
  *     touched either.
@@ -22,12 +30,12 @@
  *     A dirty tree, an unmerged branch, an unresolvable integration branch, or
  *     ANY git probe that errors all land in a `kept` class: reported with the
  *     reason, excluded from the reclaimable count and bytes, and unreachable by
- *     `--fix`.
+ *     `--fix`. Remotty sessions are kept by construction, whatever their state.
  */
 
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { basename, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { type IntegrationBranch, resolveIntegration } from '../lib/v5/base-state.js';
 import { resolveWorktreesBase } from '../lib/v5/launch-worktrees.js';
 import type { CheckResult } from './doctor.js';
@@ -57,7 +65,9 @@ export type WorktreeDisposition =
   | 'unresolved'
   /** A git probe failed; without its answer nothing is proven. */
   | 'error'
-  /** Not a launch worktree of this repo. */
+  /** A remotty session worktree (post-0.3 wish worktree). Never launch residue. */
+  | 'remotty-session'
+  /** Not a launch worktree or remotty session of this repo. */
   | 'foreign';
 
 export interface LaunchWorktreeEntry {
@@ -262,6 +272,23 @@ function classifyEntry(
 }
 
 /**
+ * True when `path` is a remotty session worktree: its parent directory is the
+ * repo's own `.worktrees/` (post-0.3 placement `<project>/.worktrees/<session>`).
+ * Location-only, deliberately: a session's branch is remotty's business
+ * (`wish/<slug>-<group>` for wish spawns, `wt/*` otherwise), so the branch
+ * never enters the predicate. `sessionBase` resolves from the main worktree
+ * (the first porcelain record) so the classification is stable wherever
+ * doctor runs — main checkout or a session worktree itself.
+ */
+function isRemottySession(sessionBase: string, path: string): boolean {
+  try {
+    return canonical(dirname(path)) === sessionBase;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Enumerate and classify every worktree of the repo at `root`.
  *
  * The main worktree and the checkout doctor is running from are dropped before
@@ -283,24 +310,39 @@ export function scanLaunchWorktrees(root: string, worktreesBase?: string): Launc
   const records = parseWorktreePorcelain(list.stdout);
   const integration = resolveIntegration(root);
   const skip = new Set([canonical(root), canonical(records[0]?.path ?? root)]);
+  // The sessions dir hangs off the MAIN worktree, whatever checkout doctor
+  // runs from. `canonical` returns the raw path when the dir does not exist,
+  // which can never equal a canonical worktree dirname — no false positives.
+  const sessionBase = canonical(join(records[0]?.path ?? root, '.worktrees'));
   const entries: LaunchWorktreeEntry[] = [];
   for (const record of records) {
     if (skip.has(canonical(record.path))) continue;
-    // Launch-created iff BOTH the branch shape and the location say so.
+    // Launch-created iff BOTH the branch shape and the location say so. This
+    // runs first: a launch worktree can never be a session, and the legacy
+    // residue class must keep detecting pre-0.3 leftovers.
     const launchBranch =
       record.branch !== null && LAUNCH_BRANCH_PATTERN.test(record.branch) && isUnder(base, record.path)
         ? record.branch
         : null;
-    entries.push(
-      launchBranch === null
-        ? { ...record, disposition: 'foreign', reason: 'not a launch worktree of this repo', sizeBytes: 0 }
-        : classifyEntry(root, record.path, launchBranch, integration),
-    );
+    if (launchBranch !== null) {
+      entries.push(classifyEntry(root, record.path, launchBranch, integration));
+    } else if (isRemottySession(sessionBase, record.path)) {
+      entries.push({
+        ...record,
+        disposition: 'remotty-session',
+        reason: 'remotty session (post-0.3 wish worktree)',
+        sizeBytes: 0,
+      });
+    } else {
+      entries.push({ ...record, disposition: 'foreign', reason: 'not a launch worktree of this repo', sizeBytes: 0 });
+    }
   }
   return { entries, integrationBranch: integration?.name ?? null, enumerationError: null };
 }
 
 const CHECK_NAME = 'launch worktrees';
+/** Post-0.3 sibling check: remotty sessions are reported here, never as residue. */
+const REMOTTY_SESSIONS_CHECK_NAME = 'remotty sessions';
 
 const UNRESOLVED_ADVICE =
   'Create a local `dev` branch or set the remote default (`git remote set-head origin -a`), then re-run.';
@@ -328,7 +370,9 @@ function summarizeCounts(scan: LaunchWorktreeScan, launch: LaunchWorktreeEntry[]
 
 /** Headline: how many of the launch worktrees `--fix` would actually reclaim. */
 function summarizeScan(scan: LaunchWorktreeScan): CheckResult {
-  const launch = scan.entries.filter((entry) => entry.disposition !== 'foreign');
+  const launch = scan.entries.filter(
+    (entry) => entry.disposition !== 'foreign' && entry.disposition !== 'remotty-session',
+  );
   if (launch.length === 0) return { name: CHECK_NAME, status: 'pass', detail: 'none found' };
   const [detail, advice] = summarizeCounts(scan, launch);
   const prune = launch.some((entry) => entry.disposition === 'error') ? PRUNE_ADVICE : '';
@@ -356,9 +400,13 @@ function describeEntry(entry: LaunchWorktreeEntry): CheckResult {
 }
 
 /**
- * Detect-only view of the launch worktrees. Pure read: doctor without `--fix`
+ * Detect-only view of the worktrees. Pure read: doctor without `--fix`
  * mutates nothing here. Outside a git repo (`root === null`) there is nothing to
  * enumerate and no check is emitted.
+ *
+ * Three families of lines: the legacy launch-residue check (kept from the
+ * pre-0.3 drain contract), the remotty-session count (post-0.3 wish worktrees,
+ * never launch residue, never touched), and the collapsed other-checkouts count.
  */
 export function checkLaunchWorktrees(root: string | null, deps: LaunchWorktreeDeps = {}): CheckResult[] {
   if (root === null) return [];
@@ -373,10 +421,28 @@ export function checkLaunchWorktrees(root: string | null, deps: LaunchWorktreeDe
       },
     ];
   }
+  const sessions = scan.entries.filter((entry) => entry.disposition === 'remotty-session');
   const foreign = scan.entries.filter((entry) => entry.disposition === 'foreign');
+  const launch = (entry: LaunchWorktreeEntry): boolean =>
+    entry.disposition !== 'foreign' && entry.disposition !== 'remotty-session';
   return [
     summarizeScan(scan),
-    ...scan.entries.filter((entry) => entry.disposition !== 'foreign').map(describeEntry),
+    ...scan.entries.filter(launch).map(describeEntry),
+    // Remotty sessions collapse into ONE count line: a repo can carry many
+    // live sessions, and a line each would bury the residue the check exists
+    // to surface. They stay visible (and provably untouched) as a count —
+    // post-0.3 wish worktrees are remotty's, so doctor reports, never classifies
+    // them as launch residue, and never touches them (removal is manifest-owned
+    // by remotty).
+    ...(sessions.length === 0
+      ? []
+      : [
+          {
+            name: REMOTTY_SESSIONS_CHECK_NAME,
+            status: 'pass' as const,
+            detail: `${sessions.length} kept (remotty sessions — post-0.3 wish worktrees; removal is manifest-owned by remotty) — never touched by --fix`,
+          },
+        ]),
     // Foreign checkouts collapse into ONE line: a repo can carry dozens of
     // hand-made worktrees, and a line each would bury the residue the check
     // exists to surface. They stay visible (and provably untouched) as a count.
@@ -386,7 +452,7 @@ export function checkLaunchWorktrees(root: string | null, deps: LaunchWorktreeDe
           {
             name: `${CHECK_NAME}: other checkouts`,
             status: 'pass' as const,
-            detail: `${foreign.length} kept (not launch worktrees of this repo) — never touched by --fix`,
+            detail: `${foreign.length} kept (not launch worktrees or remotty sessions of this repo) — never touched by --fix`,
           },
         ]),
   ];
