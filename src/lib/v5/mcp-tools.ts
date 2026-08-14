@@ -32,6 +32,7 @@ import {
 } from './genie-db.js';
 import { resolveEventAuthor } from './identity.js';
 import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
+import { resolveWishBranch } from './resolve-wish-branch.js';
 import { BUSY_TIMEOUT_MS, isBusyError, openWithWalIndexRecovery } from './sqlite-open.js';
 
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
@@ -433,37 +434,11 @@ function currentBranch(cwd: string): string | null {
 }
 
 /**
- * Resolve a `wish/<slug>[-<group>]` branch into `{ wish, group }`. Both slug and
- * group may contain hyphens, so a raw last-dash split is ambiguous
- * (`wish/genie-mcp` is the `genie-mcp` wish with no group, NOT a `genie` wish
- * with an `mcp` group). Disambiguate against the db, most-authoritative first:
- *   1. exact known slug → top-level branch, group = null;
- *   2. longest known slug that is a prefix + `-<group>` (group unverified);
- *   3. no known wish (brand-new branch) → last-dash heuristic, else whole rest.
- * Returns `null` only when the branch is not a `wish/…` branch.
- *
- * There is no verified-launch-worktree step: wish-group rows are production-dead
- * (no writer), so a `<slug>-<group>` branch can never be confirmed against a
- * live group — the group is taken at face value from the branch name.
+ * `wish/<slug>[-<group>]` disambiguation lives in the shared
+ * {@link resolveWishBranch} module — same implementation the SessionStart hook
+ * bundles (see resolve-wish-branch.ts). The board supplies genie.db slugs,
+ * longest-first; the hook supplies its own merged slug list.
  */
-function resolveWishBranch(db: Database | null, branch: string): { wish: string; group: string | null } | null {
-  const rest = branch.startsWith('wish/') ? branch.slice('wish/'.length) : null;
-  if (!rest) return null;
-  const known = db ? listWishSlugs(db) : []; // longest-first
-  // 1. Exact known slug → top-level branch (no group).
-  if (known.includes(rest)) return { wish: rest, group: null };
-  // 2. Longest known slug that is a prefix (group unverified) → best guess.
-  for (const slug of known) {
-    if (rest.startsWith(`${slug}-`)) {
-      const group = rest.slice(slug.length + 1);
-      if (group) return { wish: slug, group };
-    }
-  }
-  // 4. No known wish yet → last-dash heuristic, else the whole rest as the wish.
-  const dash = rest.lastIndexOf('-');
-  if (dash > 0 && dash < rest.length - 1) return { wish: rest.slice(0, dash), group: rest.slice(dash + 1) };
-  return { wish: rest, group: null };
-}
 
 // ============================================================================
 // Tool context + registry
@@ -552,7 +527,7 @@ interface WorktreeContextPayload {
 
 function genieWorktreeContext(ctx: ToolContext, args: Record<string, unknown>): WorktreeContextPayload {
   const branch = argString(args, 'branch') ?? currentBranch(ctx.cwd);
-  const parsed = branch ? resolveWishBranch(ctx.db, branch) : null;
+  const parsed = branch ? resolveWishBranch(ctx.db ? listWishSlugs(ctx.db) : [], branch) : null;
 
   if (parsed) {
     const wishTasks = ctx.db ? listTasks(ctx.db, { wish: parsed.wish }) : [];

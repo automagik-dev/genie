@@ -3,22 +3,24 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WISH_SLUG_PATTERN, extractLegacyStatusValue, extractStatusCell, readBoundedWishFile } from './wish-status.js';
+import {
+  WISH_SLUG_PATTERN,
+  extractLegacyStatusValue,
+  extractStatusCell,
+  readBoundedWishFile,
+  readBoundedWishHead,
+} from './wish-status.js';
 
 const MAX_WISH_BYTES = 256 * 1_024;
 const SESSION_CONTEXT_BUNDLE = join(import.meta.dir, '..', '..', 'plugins', 'genie', 'scripts', 'session-context.cjs');
 /**
- * The hook stops after MAX_WISHES=8 emitted wishes. Batching more than eight
- * probes into one repository therefore reports null for everything past the cap
- * — a silent pass, not a failure. Keep this at 8 or below.
- */
-const PROBES_PER_RUN = 8;
-
-/**
  * One corpus, two readings. Every row pins BOTH consumers at once, because the
  * point of the shared module is that it changed the mechanics and nothing else:
  * the board reads a `row-end` cell raw, the SessionStart hook reads a
- * `first-pipe` cell through its charset + ACTIVE_STATUSES vocabulary.
+ * `first-pipe` cell through its charset + display vocabulary (the active
+ * statuses plus the terminal set). Two rows pin the hooks-v2 extension itself:
+ * SHIPPED moved inside the vocabulary, so those expectations flipped from the
+ * pre-extension null to SHIPPED.
  *
  * The delicate distinction is between "this consumer cannot read this row",
  * which skips and keeps scanning, and "it read the row and disliked the value",
@@ -200,15 +202,18 @@ const CORPUS: CorpusRow[] = [
     slug: 'vocab-invalid-then-valid',
     body: '| **Status** | SHIPPED |\n| **Status** | DRAFT |\n',
     board: 'SHIPPED',
-    session: null,
-    why: 'the board takes the first row; the hook matches it, fails the vocabulary, and stops',
+    // hooks-v2 display vocabulary: SHIPPED is now a first-class display token
+    // (it was outside the old active-only vocabulary, which pinned these two
+    // rows to null); the stop-on-rejection mechanics stay pinned by row-4.
+    session: 'SHIPPED',
+    why: 'the board takes the first row; the hook matches it and displays it under the extended vocabulary',
   },
   {
     slug: 'vocab-invalid-blocks-legacy',
     body: '| **Status** | SHIPPED |\n**Status:** DRAFT\n',
     board: 'SHIPPED',
-    session: null,
-    why: 'a vocabulary failure on a matched row blocks the legacy fallback',
+    session: 'SHIPPED',
+    why: 'a matched displayable row blocks the legacy fallback, exactly as a vocabulary failure did pre-hooks-v2',
   },
   {
     slug: 'em-dash-note',
@@ -322,6 +327,20 @@ describe('bounded wish read', () => {
     mkdirSync(directory);
     expect(readBoundedWishFile(directory, MAX_WISH_BYTES)).toBeNull();
   });
+
+  test('head reads cap at headBytes and refuse files over the max size, with the same guards', () => {
+    const file = join(dir, 'head.md');
+    writeFileSync(file, `| **Status** | DRAFT |\n${'x'.repeat(1_000)}`);
+    expect(readBoundedWishHead(file, MAX_WISH_BYTES, 32)).toBe('| **Status** | DRAFT |\nxxxxxxxxx');
+    expect(readBoundedWishHead(file, 64, 32)).toBeNull();
+    expect(readBoundedWishHead(join(dir, 'missing.md'), MAX_WISH_BYTES, 32)).toBeNull();
+    const link = join(dir, 'head-link.md');
+    symlinkSync(file, link);
+    expect(readBoundedWishHead(link, MAX_WISH_BYTES, 32)).toBeNull();
+    const directory = join(dir, 'head-dir.md');
+    mkdirSync(directory);
+    expect(readBoundedWishHead(directory, MAX_WISH_BYTES, 32)).toBeNull();
+  });
 });
 
 describe('corpus: board reading (v5-board readWishStatus)', () => {
@@ -352,32 +371,32 @@ describe('corpus: board reading (v5-board readWishStatus)', () => {
 
 describe('corpus: SessionStart reading (session-context.cjs, end to end)', () => {
   const dirs: string[] = [];
-  const statuses = new Map<string, string>();
+  const statuses = new Map<string, string | null>();
 
+  // One node spawn per corpus row is deliberately sequential; give the hook
+  // explicit headroom over bun's default 5s (CI runners are slower).
   beforeAll(() => {
     // Run the real shipped hook: it is the only honest witness for a script
-    // whose module body writes to stdout and exits.
-    for (let start = 0; start < CORPUS.length; start += PROBES_PER_RUN) {
-      const batch = CORPUS.slice(start, start + PROBES_PER_RUN);
+    // whose module body writes to stdout and exits. hooks-v2#session-context
+    // emits exactly one wish per run — the session's own — so each corpus row
+    // gets its own repo with that wish on the branch (db-less: the scan path).
+    for (const row of CORPUS) {
       const repo = mkdtempSync(join(tmpdir(), 'wish-status-session-'));
       dirs.push(repo);
       mkdirSync(join(repo, '.git'), { recursive: true });
-      for (const row of batch) {
-        mkdirSync(join(repo, '.genie', 'wishes', row.slug), { recursive: true });
-        writeFileSync(join(repo, '.genie', 'wishes', row.slug, 'WISH.md'), row.body);
-      }
+      writeFileSync(join(repo, '.git', 'HEAD'), `ref: refs/heads/wish/${row.slug}\n`);
+      mkdirSync(join(repo, '.genie', 'wishes', row.slug), { recursive: true });
+      writeFileSync(join(repo, '.genie', 'wishes', row.slug, 'WISH.md'), row.body);
       const stdout = execFileSync('node', [SESSION_CONTEXT_BUNDLE], {
         input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
         encoding: 'utf8',
         env: { ...process.env, GENIE_WORKER: '0' },
       });
       const context = (JSON.parse(stdout).hookSpecificOutput?.additionalContext ?? '') as string;
-      for (const line of context.split('\n')) {
-        const match = line.match(/^- slug=(\S+) status=(\S+) /);
-        if (match) statuses.set(match[1], match[2]);
-      }
+      const match = context.match(new RegExp(`^- wish=${row.slug} status=(\\S+) `, 'm'));
+      statuses.set(row.slug, match && match[1] !== 'unknown' ? match[1] : null);
     }
-  });
+  }, 30_000);
 
   afterAll(() => {
     for (const dir of dirs) rmSync(dir, { recursive: true, force: true });

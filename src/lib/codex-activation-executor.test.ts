@@ -1085,7 +1085,7 @@ describe('H3 SessionStart smoke', () => {
     expect(() => runBoundedH3Smoke(root)).toThrow(/H3 SessionStart smoke failed/);
   });
 
-  test('any stderr output is a deterministic failure', () => {
+  test('stderr beyond the tolerated degradation line is a deterministic failure', () => {
     const root = makeTRoot('process.stderr.write("noise");process.stdout.write("{}");\n');
     expect(() => runBoundedH3Smoke(root)).toThrow(/stderr|H3 SessionStart smoke failed/);
   });
