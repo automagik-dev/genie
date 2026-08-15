@@ -65,7 +65,9 @@ function findRepoRoot(start: string): string | null {
 
 function writeTrustFile(path: string, file: TrustFile): void {
   const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  // `<GENIE_HOME>/hooks/` — GENIE_HOME is created here as an intermediate, so
+  // 0o700 keeps a permissive umask from leaving it group-writable.
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   // Atomic write via temp + rename so a crash mid-write doesn't corrupt the
   // trust file (the security boundary). Stable JSON (sorted keys, 2-space

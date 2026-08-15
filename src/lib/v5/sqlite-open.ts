@@ -160,6 +160,14 @@ export interface OpenSqliteOptions {
    * without contending on the schema write lock. Omit to always run ensureSchema.
    */
   schemaIsCurrent?: (db: Database) => boolean;
+  /**
+   * Mode for the containing directory when this open creates it. Set ONLY by
+   * the global DB, whose directory IS GENIE_HOME and must never carry group or
+   * other write bits (the install promoter rejects those). Left unset for the
+   * per-repo `.genie/`, which lives inside the user's own repository where
+   * forcing 0o700 would be surprising — that path keeps the ambient umask.
+   */
+  dirMode?: number;
 }
 
 /**
@@ -175,7 +183,7 @@ export interface OpenSqliteOptions {
  */
 export function openSqlite(opts: OpenSqliteOptions): Database {
   const { path } = opts;
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: opts.dirMode });
   return openInitialized(opts);
 }
 

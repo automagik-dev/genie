@@ -380,7 +380,9 @@ function warnFailure(ctx: CleanupContext, path: string, error: unknown): void {
 /** Copy a home-relative file into the run's backup dir, preserving structure. */
 function backupFile(ctx: CleanupContext, filePath: string): string {
   const dest = join(ctx.backupRoot, relative(ctx.home, filePath));
-  mkdirSync(dirname(dest), { recursive: true });
+  // backupRoot is `<GENIE_HOME>/state-backups/…`, so GENIE_HOME can be created
+  // here as an intermediate — 0o700 keeps it safe under a permissive umask.
+  mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
   copyFileSync(filePath, dest);
   ctx.backupDirUsed = true;
   return dest;
@@ -405,7 +407,7 @@ function listRelativeFiles(root: string): string[] {
  */
 function backupCacheManifest(ctx: CleanupContext, relic: V4CacheRelic): string {
   const dest = join(ctx.backupRoot, 'cache-manifests', `genie-${relic.version}.txt`);
-  mkdirSync(dirname(dest), { recursive: true });
+  mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
   let orphanedAt = '';
   try {
     orphanedAt = readFileSync(join(relic.path, V4_LEGACY_MANIFEST.orphanMarkerFile), 'utf-8').trim();
@@ -473,7 +475,7 @@ function cleanupHomeResidue(ctx: CleanupContext, relics: V4HomeResidueRelic[]): 
   for (const relic of relics) {
     try {
       const backupPath = join(ctx.backupRoot, 'genie-home', relic.relPath);
-      mkdirSync(dirname(backupPath), { recursive: true });
+      mkdirSync(dirname(backupPath), { recursive: true, mode: 0o700 });
       cpSync(relic.path, backupPath, { recursive: true });
       ctx.backupDirUsed = true;
       rmSync(relic.path, { recursive: true, force: true });
@@ -487,7 +489,8 @@ function cleanupHomeResidue(ctx: CleanupContext, relics: V4HomeResidueRelic[]): 
 
 function writeCleanupLog(genieHome: string, logLines: string[]): string {
   const logsDir = join(genieHome, 'logs');
-  mkdirSync(logsDir, { recursive: true });
+  // `<GENIE_HOME>/logs` — GENIE_HOME is the intermediate created here.
+  mkdirSync(logsDir, { recursive: true, mode: 0o700 });
   const logFile = join(logsDir, 'v4-cleanup.log');
   appendFileSync(logFile, `${logLines.join('\n')}\n`, 'utf-8');
   return logFile;

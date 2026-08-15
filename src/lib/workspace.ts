@@ -163,7 +163,9 @@ function saveWorkspaceRoot(root: string): void {
     const config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf-8')) : {};
     if (config.workspaceRoot === root) return;
     config.workspaceRoot = root;
-    mkdirSync(home, { recursive: true });
+    // Another first-creator of GENIE_HOME: 0o700 so a permissive umask cannot
+    // leave it group-writable, which the install promoter rejects outright.
+    mkdirSync(home, { recursive: true, mode: 0o700 });
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
   } catch {
     /* best-effort */

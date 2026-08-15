@@ -102,7 +102,9 @@ export interface IntegrationConsentTransitionRef {
 
 function writeIntegrationConsentState(state: IntegrationConsentState, genieHome: string): void {
   const path = join(genieHome, INTEGRATION_CONSENT_NAME);
-  mkdirSync(genieHome, { recursive: true });
+  // Another first-creator of GENIE_HOME: 0o700 so a permissive umask cannot
+  // leave it group-writable, which the install promoter rejects outright.
+  mkdirSync(genieHome, { recursive: true, mode: 0o700 });
   const staging = `${path}.staging-${process.pid}`;
   writeFileSync(
     staging,
@@ -2512,7 +2514,8 @@ function readRefreshIntent(path: string, runtime: RuntimeName): RefreshIntent | 
 }
 
 function writeRefreshIntent(path: string, intent: RefreshIntent): void {
-  mkdirSync(dirname(path), { recursive: true });
+  // `stateDir` defaults to `resolveGenieHome()`, so this dirname is GENIE_HOME.
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const staging = `${path}.staging-${process.pid}`;
   writeFileSync(staging, `${JSON.stringify(intent, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   renameSync(staging, path);

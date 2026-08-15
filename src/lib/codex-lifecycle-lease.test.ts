@@ -63,9 +63,26 @@ function stagingFiles(genieHome: string): string[] {
   return readdirSync(genieHome).filter((name) => /^\.codex-lifecycle\.lock\.staging-[0-9a-f]{2}$/.test(name));
 }
 
+const umaskRestores: number[] = [];
+
+/** Set a process umask for one test; the afterEach below always restores it. */
+function useUmask(mask: number): void {
+  umaskRestores.push(process.umask(mask));
+}
+
+/**
+ * The predicate `assertSafeOwnedDirectory` applies in install-promotion.ts,
+ * which is module-private there. A directory carrying any group or other write
+ * bit is rejected as unsafe permissions and aborts the install.
+ */
+function hasUnsafeWriteBits(path: string): boolean {
+  return (lstatSync(path).mode & 0o022) !== 0;
+}
+
 afterEach(() => {
   for (const lease of heldLeases.splice(0)) lease.release();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const mask of umaskRestores.splice(0)) process.umask(mask);
 });
 
 function hold(result: ReturnType<typeof acquireLifecycleLease>): HeldLifecycleLease {
@@ -91,6 +108,25 @@ describe('acquireLifecycleLease — acquisition and mutual exclusion', () => {
     const lease = hold(acquireLifecycleLease('update-delivery', { genieHome }));
     expect(lease.kind).toBe('update-delivery');
     expect(existsSync(join(genieHome, LEASE_FILE))).toBe(true);
+  });
+
+  test('a GENIE_HOME first created by the lease is never group- or other-writable under a permissive umask', () => {
+    // Regression: fresh Linux installs create GENIE_HOME here first, and under
+    // Ubuntu's user-private-group default umask 002 an unmoded recursive mkdir
+    // produced 0775. The install promoter then aborted with "GENIE_HOME has
+    // unsafe permissions". Assert the resulting mode, not umask mechanics, so
+    // the invariant holds across platforms and runtimes.
+    const fixtureRoot = freshHome();
+    useUmask(0o002);
+    const intermediate = join(fixtureRoot, 'intermediate');
+    const genieHome = join(intermediate, '.genie');
+    expect(existsSync(intermediate)).toBe(false);
+
+    hold(acquireLifecycleLease('update-delivery', { genieHome }));
+
+    expect(existsSync(join(genieHome, LEASE_FILE))).toBe(true);
+    expect(hasUnsafeWriteBits(genieHome)).toBe(false);
+    expect(hasUnsafeWriteBits(intermediate)).toBe(false);
   });
 
   test('a second acquisition while held returns a typed busy refusal naming the holder kind', () => {
