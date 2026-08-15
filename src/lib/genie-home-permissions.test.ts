@@ -34,7 +34,7 @@ const umaskRestores: number[] = [];
 const PERMISSIVE_UMASK = 0o002;
 
 afterEach(() => {
-  for (const mask of umaskRestores.splice(0)) process.umask(mask);
+  for (const mask of umaskRestores.splice(0).reverse()) process.umask(mask);
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 });
 
@@ -219,8 +219,8 @@ const REPO_ROOT = new URL('../..', import.meta.url).pathname;
  */
 const GENIE_HOME_TOKENS = /genieHome|GENIE_HOME|resolveGenieHome|backupRoot/;
 
-/** A safe mode grants nothing to group or other. */
-const SAFE_MODE = /mode:\s*0o[0-7]{3,4}/;
+/** A safe mode grants nothing to group or other: both low digits lack the write bit. */
+const SAFE_MODE = /mode:\s*0o[0-7]?[0-7][0145][0145]\b/;
 
 /**
  * Verified NOT to create GENIE_HOME, despite matching the token heuristic.

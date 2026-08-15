@@ -82,7 +82,7 @@ function hasUnsafeWriteBits(path: string): boolean {
 afterEach(() => {
   for (const lease of heldLeases.splice(0)) lease.release();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-  for (const mask of umaskRestores.splice(0)) process.umask(mask);
+  for (const mask of umaskRestores.splice(0).reverse()) process.umask(mask);
 });
 
 function hold(result: ReturnType<typeof acquireLifecycleLease>): HeldLifecycleLease {
