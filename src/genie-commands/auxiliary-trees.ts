@@ -168,7 +168,10 @@ function inspectTree(context: AuxiliaryTreeTransaction): { digest: string } | { 
 function stageFreshTree(context: AuxiliaryTreeTransaction, sourceDigest: string): AuxiliaryTreeOutcome | null {
   const { options, ops, excluded, staging } = context;
   try {
-    mkdirSync(dirname(options.destination), { recursive: true });
+    // Every production caller destination is `<GENIE_HOME>/<tree>`, so this
+    // parent is GENIE_HOME itself and must never inherit group/other write
+    // bits from a permissive umask. The tree contents below keep source modes.
+    mkdirSync(dirname(options.destination), { recursive: true, mode: 0o700 });
     ops.copyTree(options.source, staging, excluded);
   } catch (error) {
     return failure(options, 'copy-fresh', error, verifiedArtifact(ops, options.source, sourceDigest, excluded));

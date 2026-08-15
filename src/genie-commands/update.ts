@@ -1169,7 +1169,8 @@ async function collectUpdateDiagnostics(
   extras: UpdateDiagnosticsExtras,
 ): Promise<{ path: string; signals: RecentLogSignal[]; newestStaleTimestamp: string | null }> {
   const logsDir = join(GENIE_HOME, 'logs');
-  mkdirSync(logsDir, { recursive: true });
+  // `<GENIE_HOME>/logs` — GENIE_HOME is the intermediate created here.
+  mkdirSync(logsDir, { recursive: true, mode: 0o700 });
   const generatedAt = new Date().toISOString();
   const safeStamp = generatedAt.replace(/[:.]/g, '-');
   const path = join(logsDir, `update-diagnostics-${safeStamp}.json`);
