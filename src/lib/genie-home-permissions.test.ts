@@ -21,6 +21,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { convergeAuxiliaryTree } from '../genie-commands/auxiliary-trees.js';
 import { persistIntegrationConsent } from './runtime-integrations.js';
 import { openGlobalDb, resolveGlobalDbPath } from './v5/global-db.js';
@@ -208,7 +209,7 @@ describe('GENIE_HOME first-creation permissions', () => {
   });
 });
 
-const REPO_ROOT = new URL('../..', import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 // ─── Source scan ──────────────────────────────────────────────────────────────
 
@@ -221,6 +222,15 @@ const GENIE_HOME_TOKENS = /genieHome|GENIE_HOME|resolveGenieHome|backupRoot/;
 
 /** A safe mode grants nothing to group or other: both low digits lack the write bit. */
 const SAFE_MODE = /mode:\s*0o[0-7]?[0-7][0145][0145]\b/;
+
+/**
+ * A `mkdirSync(target, { options })` call, matched against whole-file source so
+ * a formatter-wrapped call spanning several lines is still seen — including the
+ * trailing comma Biome adds when it wraps the argument list. Both groups
+ * exclude `;` so an options-less `mkdirSync(dir);` cannot swallow a later
+ * statement's object literal.
+ */
+const MKDIR_CALL = /mkdirSync\(\s*([^;]+?),\s*\{([^;]*?)\}\s*,?\s*\)/g;
 
 /**
  * Verified NOT to create GENIE_HOME, despite matching the token heuristic.
@@ -258,18 +268,19 @@ interface UnsafeMkdir {
 function scanUnsafeGenieHomeMkdirs(repoRoot: string): UnsafeMkdir[] {
   const offenders: UnsafeMkdir[] = [];
   for (const file of sourceFiles(join(repoRoot, 'src'))) {
-    const lines = readFileSync(file, 'utf8').split('\n');
+    const source = readFileSync(file, 'utf8');
     const consts = new Map<string, string>();
-    for (const line of lines) {
+    for (const line of source.split('\n')) {
       const declaration = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/.exec(line);
       if (declaration && !consts.has(declaration[1])) consts.set(declaration[1], declaration[2]);
     }
-    for (const [index, line] of lines.entries()) {
-      const call = /mkdirSync\(\s*(.+?),\s*\{(.*?)\}\s*\)/.exec(line);
-      if (!call || !call[2].includes('recursive: true') || SAFE_MODE.test(call[2])) continue;
-      const [, target] = call;
+    for (const call of source.matchAll(MKDIR_CALL)) {
+      const options = call[2];
+      if (!options.includes('recursive: true') || SAFE_MODE.test(options)) continue;
+      const target = call[1].replace(/\s+/g, ' ');
       if (!GENIE_HOME_TOKENS.test(expandIdentifiers(target, consts))) continue;
-      const site = `${relative(repoRoot, file)}:${index + 1}`;
+      const line = source.slice(0, call.index).split('\n').length;
+      const site = `${relative(repoRoot, file)}:${line}`;
       if (!SCAN_EXEMPTIONS.has(site)) offenders.push({ site, target });
     }
   }

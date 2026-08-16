@@ -1334,7 +1334,7 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     } finally {
       check.close();
     }
-  });
+  }, 30_000); // two cold `bun src/genie.ts mcp` boots race here; loaded CI runners exceed the 5s default
 });
 
 function callOn(ctx: ToolContext, name: string, args: Record<string, unknown>): unknown {
