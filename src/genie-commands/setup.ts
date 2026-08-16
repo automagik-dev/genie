@@ -1175,7 +1175,7 @@ function installGenieTmuxConf(): void {
   if (!src) return;
 
   try {
-    mkdirSync(genieHome, { recursive: true });
+    mkdirSync(genieHome, { recursive: true, mode: 0o700 });
     copyFileSync(src, dest);
     console.log(`\x1b[32m\u2713\x1b[0m Installed genie tmux config to ${dest}`);
   } catch {

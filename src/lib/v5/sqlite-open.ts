@@ -21,7 +21,7 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { closeSync, mkdirSync, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -160,6 +160,14 @@ export interface OpenSqliteOptions {
    * without contending on the schema write lock. Omit to always run ensureSchema.
    */
   schemaIsCurrent?: (db: Database) => boolean;
+  /**
+   * Mode for the containing directory when this open creates it. Set ONLY by
+   * the global DB, whose directory IS GENIE_HOME and must never carry group or
+   * other write bits (the install promoter rejects those). Left unset for the
+   * per-repo `.genie/`, which lives inside the user's own repository where
+   * forcing 0o700 would be surprising — that path keeps the ambient umask.
+   */
+  dirMode?: number;
 }
 
 /**
@@ -175,7 +183,7 @@ export interface OpenSqliteOptions {
  */
 export function openSqlite(opts: OpenSqliteOptions): Database {
   const { path } = opts;
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: opts.dirMode });
   return openInitialized(opts);
 }
 
@@ -221,6 +229,16 @@ function openInitialized(opts: OpenSqliteOptions): Database {
 // session, whose close writes the header (`openWriteableDb` in mcp-tools.ts,
 // re-opened by `promoteDegradedHandle` in mcp-server.ts). That path is
 // single-owner and low-concurrency — the fleet never runs the probe.
+//
+// "Single-owner" is an assumption about the CALLER, and one MCP server per
+// database does honour it. Two MCP servers on one `.genie/genie.db` do not: both
+// enter the recovery path at startup and race on handle creation, the wal-index
+// mmap and the exclusive-lock proof below. On Linux that race intermittently
+// kills a process natively (SIGBUS/SIGSEGV inside bun's shm handling), which no
+// JS `catch` can observe — the process simply disappears mid-request. The
+// cross-process mutex below therefore makes the assumption true instead of
+// merely documenting it: the whole probe/rebuild/reopen sequence runs under a
+// lock file, so a second entrant waits rather than racing.
 
 /** Bytes of the `-shm` WAL-index header this module inspects (iChange @8, nPage @20). */
 const WAL_INDEX_HEADER_BYTES = 24;
@@ -349,11 +367,111 @@ function rebuildSidecarsExclusively(path: string): boolean {
 }
 
 /**
+ * Suffix of the cross-process recovery mutex, named as a sidecar of the database
+ * so the same `.gitignore` stanza that hides `-wal`/`-shm` hides it too.
+ */
+const RECOVERY_LOCK_SUFFIX = '-recovery-lock';
+
+/**
+ * How long a contender waits for the recovery lock before giving up. Generous
+ * enough to outlast a holder that is mid-rebuild on a loaded CI runner; bounded
+ * so a wedged holder degrades into a retryable {@link BusyDbError} rather than a
+ * hang.
+ */
+export const RECOVERY_LOCK_WAIT_MS = 5_000;
+
+/** Poll interval while waiting for the lock. */
+const RECOVERY_LOCK_POLL_MS = 25;
+
+/**
+ * Age at which a lock whose holder cannot be proven dead is assumed abandoned.
+ * A legitimate hold is bounded by two opens, each at most `busy_timeout` plus
+ * the backoff budget (~11.6s together), so this sits comfortably above it: a
+ * live-but-slow holder is never reaped. The usual crashed-holder case does not
+ * wait this out — the PID liveness check below reclaims it on the next poll.
+ */
+const RECOVERY_LOCK_STALE_MS = 30_000;
+
+/** True when `pid` still names a live process (EPERM means alive, just not ours). */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * True when the existing lock belongs to a holder that died mid-recovery. The
+ * recorded PID is the primary evidence; the age is the fallback for a lock whose
+ * PID is unreadable, malformed, or reused. An unreadable/vanished lock is NOT
+ * abandoned — plain acquisition retry already covers that.
+ */
+function recoveryLockIsAbandoned(lockPath: string): boolean {
+  let ageMs: number;
+  let recorded: string;
+  try {
+    ageMs = Date.now() - statSync(lockPath).mtimeMs;
+    recorded = readFileSync(lockPath, 'utf8').trim();
+  } catch {
+    return false;
+  }
+  const pid = Number.parseInt(recorded, 10);
+  if (Number.isInteger(pid) && pid > 0 && !processIsAlive(pid)) return true;
+  return ageMs >= RECOVERY_LOCK_STALE_MS;
+}
+
+/**
+ * Take the recovery mutex for `path`, waiting out a live holder up to
+ * {@link RECOVERY_LOCK_WAIT_MS} and reclaiming an abandoned one.
+ *
+ * Returns the lock path to release, or `null` when the lock file itself cannot
+ * be created (a read-only or missing directory). A missing mutex is not a reason
+ * to fail an otherwise-healthy open: the caller proceeds unserialized, exactly
+ * as it did before this lock existed. Only a lock held past the wait budget
+ * fails, and it fails as {@link BusyDbError} because that is what it is —
+ * transient contention on a healthy database, safe to retry.
+ */
+function acquireRecoveryLock(path: string): string | null {
+  const lockPath = `${path}${RECOVERY_LOCK_SUFFIX}`;
+  const deadline = Date.now() + RECOVERY_LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+      return lockPath;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+      if (recoveryLockIsAbandoned(lockPath)) releaseRecoveryLock(lockPath);
+      else if (Date.now() >= deadline) {
+        throw new BusyDbError(path, new Error(`WAL-index recovery lock held past ${RECOVERY_LOCK_WAIT_MS}ms`));
+      } else sleepMs(RECOVERY_LOCK_POLL_MS);
+    }
+  }
+}
+
+/** Drop the recovery mutex. A lock already gone (reaped as stale) is not an error. */
+function releaseRecoveryLock(lockPath: string | null): void {
+  if (lockPath === null) return;
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Already reclaimed by a stale-lock reaper — nothing left to release.
+  }
+}
+
+/**
  * Run `open`, healing a poisoned WAL index around it. The poison is detected two
  * ways because platforms differ in where it surfaces: the open may throw, or it
  * may hand back a handle whose every write fails — caught by the post-open
  * probe. Either way the sidecars are rebuilt and the open is retried EXACTLY
  * ONCE.
+ *
+ * The entire sequence is serialized across processes by a lock file taken BEFORE
+ * the first handle exists, so concurrent entrants never race on the wal-index
+ * mmap (see the section header). A waiter that wins the lock re-runs the probe
+ * from scratch rather than assuming anything: by then the previous holder has
+ * usually healed the database, and the ordinary healthy path just proceeds.
  *
  * CALLERS: the MCP write path only (`tryWriteOpen` in mcp-tools.ts). See the
  * section header above for why this must never wrap the fleet-wide
@@ -368,6 +486,16 @@ function rebuildSidecarsExclusively(path: string): boolean {
  * the rebuild is skipped the ORIGINAL error propagates and both sidecars survive.
  */
 export function openWithWalIndexRecovery(path: string, open: () => Database): Database {
+  const lockPath = acquireRecoveryLock(path);
+  try {
+    return openUnderRecoveryLock(path, open);
+  } finally {
+    releaseRecoveryLock(lockPath);
+  }
+}
+
+/** The probe/rebuild/reopen sequence itself. Runs only under the recovery mutex. */
+function openUnderRecoveryLock(path: string, open: () => Database): Database {
   let db: Database;
   try {
     db = open();

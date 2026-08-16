@@ -13,11 +13,12 @@
 
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BusyDbError,
+  RECOVERY_LOCK_WAIT_MS,
   WalIndexPoisonError,
   hasStaleReadonlyWalIndex,
   isBusyError,
@@ -343,6 +344,77 @@ describe('openWithWalIndexRecovery', () => {
     expect(attempts).toBe(1);
     db.exec('INSERT INTO t (id) VALUES (2)'); // writable
     db.close();
+  });
+
+  /**
+   * The cross-process mutex that makes the helper's single-owner assumption
+   * true. Two MCP servers on one database used to enter the probe/rebuild
+   * concurrently and race on the wal-index mmap, which the kernel resolves by
+   * killing a process outright on Linux.
+   */
+  describe('recovery lock', () => {
+    const lockOf = (path: string) => `${path}-recovery-lock`;
+
+    test('the lock is taken for the open and released after it, on success and on throw', () => {
+      const path = seeded(join(base, 'db.sqlite'));
+      let heldDuringOpen = false;
+      const db = openWithWalIndexRecovery(path, () => {
+        heldDuringOpen = existsSync(lockOf(path));
+        return new Database(path);
+      });
+      expect(heldDuringOpen).toBe(true); // held before any handle exists
+      expect(existsSync(lockOf(path))).toBe(false);
+      db.close();
+
+      expect(() =>
+        openWithWalIndexRecovery(path, () => {
+          throw new Error('unrelated failure');
+        }),
+      ).toThrow('unrelated failure');
+      expect(existsSync(lockOf(path))).toBe(false); // released in `finally`, not only on success
+    });
+
+    test('a lock whose holder died is reclaimed at once — a crash mid-recovery bricks nothing', async () => {
+      const path = seeded(join(base, 'db.sqlite'));
+      const child = Bun.spawn(['true'], { stdout: 'ignore', stderr: 'ignore' });
+      const holder = child.pid;
+      await child.exited; // reaped: `process.kill(holder, 0)` now raises ESRCH
+      writeFileSync(lockOf(path), String(holder));
+
+      const started = Date.now();
+      const db = openWithWalIndexRecovery(path, () => new Database(path));
+      // Reclaimed on PID evidence, not by waiting out the 30s age fallback.
+      expect(Date.now() - started).toBeLessThan(RECOVERY_LOCK_WAIT_MS);
+      db.exec('INSERT INTO t (id) VALUES (4)'); // and the open really happened
+      db.close();
+      expect(existsSync(lockOf(path))).toBe(false);
+    });
+
+    test('a lock whose PID is unreadable is reclaimed once it ages out', () => {
+      const path = seeded(join(base, 'db.sqlite'));
+      writeFileSync(lockOf(path), 'not-a-pid'); // no liveness evidence to go on
+      const aged = new Date(Date.now() - 10 * RECOVERY_LOCK_WAIT_MS);
+      utimesSync(lockOf(path), aged, aged);
+
+      const db = openWithWalIndexRecovery(path, () => new Database(path));
+      db.close();
+      expect(existsSync(lockOf(path))).toBe(false);
+    });
+
+    test('a lock held by a LIVE holder past the wait budget fails typed-busy, never as corruption', () => {
+      const path = seeded(join(base, 'db.sqlite'));
+      writeFileSync(lockOf(path), String(process.pid)); // this process is alive by definition
+
+      let attempts = 0;
+      expect(() =>
+        openWithWalIndexRecovery(path, () => {
+          attempts += 1;
+          return new Database(path);
+        }),
+      ).toThrow(BusyDbError); // transient contention — the caller retries, never degrades
+      expect(attempts).toBe(0); // no handle was ever created outside the mutex
+      rmSync(lockOf(path), { force: true });
+    }, 15_000); // deliberately waits out the full RECOVERY_LOCK_WAIT_MS budget
   });
 
   test('a non-poison open failure propagates unchanged (no sidecars are touched)', () => {

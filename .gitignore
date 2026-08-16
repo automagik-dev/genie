@@ -79,6 +79,10 @@ yarn-error.log*
 .genie/genie.db
 .genie/genie.db-wal
 .genie/genie.db-shm
+# Cross-process mutex for the MCP write path's WAL-index recovery. Normally
+# created and removed inside one open; survives only a holder that crashed
+# mid-recovery, and the next open reaps it.
+.genie/genie.db-recovery-lock
 
 # Machine-local roadmap sync baseline (pairs genie.db with roadmap.json)
 .genie/roadmap-sync

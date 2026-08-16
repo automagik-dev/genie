@@ -257,7 +257,11 @@ function tryCreateLease(
   afterCaptureForTest?: (event: LifecycleLeaseCaptureEvent) => void,
 ): CreateResult {
   try {
-    mkdirSync(dirOf(path), { recursive: true });
+    // 0o700 on every created level: this is often the first creation of
+    // GENIE_HOME on a fresh machine, and a permissive umask (002 on Ubuntu's
+    // user-private-group default) would otherwise leave it group-writable,
+    // which the install promoter rejects as unsafe permissions.
+    mkdirSync(dirOf(path), { recursive: true, mode: 0o700 });
   } catch (error) {
     return {
       ok: false,

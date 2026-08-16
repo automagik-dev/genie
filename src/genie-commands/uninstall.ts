@@ -1756,7 +1756,10 @@ function createAgentFileBackup(targets: AgentSyncRemovalTargets): (name: string,
   return (name, bytes) => {
     if (backupRoot === null) backupRoot = allocateExclusiveBackupRoot(genieHome, `agent-sync-uninstall-${stamp}`);
     const destination = join(backupRoot, 'claude', 'agents', name);
-    mkdirSync(dirname(destination), { recursive: true });
+    // Under `<GENIE_HOME>/state-backups/…`. The allocator above already creates
+    // that parent at 0o700; declaring it here too removes the ordering
+    // dependence so this can never be the unsafe first creator.
+    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     writeFileSync(destination, bytes, { flag: 'wx' });
     return destination;
   };

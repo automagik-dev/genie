@@ -33,7 +33,9 @@ export function genieConfigExists(): boolean {
 function ensureGenieDir(): void {
   const dir = getGenieDir();
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    // GENIE_HOME itself — 0o700 so it is safe even when this runs before any
+    // lease-owning creator, rather than relying on call ordering.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }
 
