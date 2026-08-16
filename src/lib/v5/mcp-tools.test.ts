@@ -866,8 +866,19 @@ interface RpcResponse {
   error?: { code: number; message: string };
 }
 
+/** One spawned `genie mcp` run: its responses plus the evidence for missing ones. */
+interface McpServerRun {
+  responses: RpcResponse[];
+  /** stdout lines that were not parseable JSON — what a child killed mid-write leaves. */
+  unparsedStdout: string[];
+  stderr: string;
+  exitCode: number | null;
+  /** Set when the OS killed the child; SIGBUS/SIGSEGV escape every JS handler. */
+  signal: string | null;
+}
+
 /** Spawn a real `genie mcp` server subprocess (as an MCP client would). */
-async function spawnMcpServer(cwd: string, requests: Record<string, unknown>[]): Promise<RpcResponse[]> {
+async function spawnMcpServer(cwd: string, requests: Record<string, unknown>[]): Promise<McpServerRun> {
   const proc = Bun.spawn(['bun', join(import.meta.dir, '..', '..', 'genie.ts'), 'mcp'], {
     cwd,
     stdin: 'pipe',
@@ -877,12 +888,40 @@ async function spawnMcpServer(cwd: string, requests: Record<string, unknown>[]):
   });
   proc.stdin.write(`${requests.map((r) => JSON.stringify(r)).join('\n')}\n`);
   await proc.stdin.end();
-  const stdout = await new Response(proc.stdout).text();
+  // Drain both pipes concurrently: a child that fills stderr while we block on
+  // stdout would wedge, and stderr is the only record a native death leaves.
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   await proc.exited;
-  return stdout
-    .split('\n')
-    .filter((l) => l.trim().length > 0)
-    .map((l) => JSON.parse(l) as RpcResponse);
+  const responses: RpcResponse[] = [];
+  const unparsedStdout: string[] = [];
+  for (const line of stdout.split('\n')) {
+    if (line.trim().length === 0) continue;
+    try {
+      responses.push(JSON.parse(line) as RpcResponse);
+    } catch {
+      unparsedStdout.push(line);
+    }
+  }
+  return { responses, unparsedStdout, stderr, exitCode: proc.exitCode, signal: proc.signalCode };
+}
+
+/**
+ * The response for `id`, or a failure naming what the child actually did. A
+ * server the kernel killed exits with stdout unflushed, so a bare
+ * `expect(res).toBeDefined()` reports only that the response is missing — never
+ * that the process died, with what signal, or what it printed first.
+ */
+function mcpResponse(run: McpServerRun, id: number): RpcResponse {
+  const found = run.responses.find((r) => r.id === id);
+  if (found) return found;
+  throw new Error(
+    [
+      `no JSON-RPC response id=${id} (exit=${run.exitCode} signal=${run.signal})`,
+      `  ids seen: ${JSON.stringify(run.responses.map((r) => r.id))}`,
+      `  unparsed stdout: ${JSON.stringify(run.unparsedStdout)}`,
+      `  stderr: ${run.stderr.trim() || '(empty)'}`,
+    ].join('\n'),
+  );
 }
 
 const MCP_INIT = {
@@ -1311,13 +1350,13 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
       ]);
 
     const [a, b] = await Promise.all([drive('w1'), drive('w2')]);
-    const aRes = a.find((r) => r.id === 2);
-    const bRes = b.find((r) => r.id === 2);
-    expect(aRes).toBeDefined();
-    expect(bRes).toBeDefined();
-    expect(aRes?.error).toBeUndefined(); // no JSON-RPC error, no -32603
-    expect(bRes?.error).toBeUndefined();
-    const outcomes = [aRes!, bRes!];
+    // Accessors, not `toBeDefined()`: a missing response must report the child's
+    // exit status, signal and stderr, not just its own absence.
+    const aRes = mcpResponse(a, 2);
+    const bRes = mcpResponse(b, 2);
+    expect(aRes.error).toBeUndefined(); // no JSON-RPC error, no -32603
+    expect(bRes.error).toBeUndefined();
+    const outcomes = [aRes, bRes];
     const winners = outcomes.filter((r) => r.result?.isError === false);
     const losers = outcomes.filter((r) => r.result?.isError === true);
     expect(winners).toHaveLength(1);
