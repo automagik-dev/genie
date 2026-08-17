@@ -41,31 +41,49 @@ interface GhStub {
   exit: number;
 }
 
-/** Run the extracted guard with `gh` stubbed on PATH. */
-function runGuard(stub: GhStub, version = '5.260728.4') {
+/**
+ * Run the extracted guard with `gh` stubbed on PATH. A single stub answers
+ * every call; an array answers call N with entry N (the last entry repeats),
+ * so transient-then-definitive sequences can be scripted.
+ */
+function runGuard(stub: GhStub | GhStub[], version = '5.260728.4') {
   const root = mkdtempSync(join(tmpdir(), 'genie-replay-guard-'));
   roots.push(root);
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
+  const sequence = Array.isArray(stub) ? stub : [stub];
+  const countFile = join(root, 'gh-calls');
+  writeFileSync(countFile, '0');
+  const arms = sequence
+    .map((response, index) => {
+      const arm = index === sequence.length - 1 ? '*' : String(index + 1);
+      const body = `${response.stdout ? `printf '%s' '${response.stdout}'\n` : ''}${
+        response.stderr ? `printf '%s\\n' '${response.stderr}' >&2\n` : ''
+      }exit ${response.exit}`;
+      return `  ${arm}) ${body} ;;`;
+    })
+    .join('\n');
   writeFileSync(
     join(bin, 'gh'),
-    `#!/bin/sh\n${stub.stdout ? `printf '%s' '${stub.stdout}'\n` : ''}${stub.stderr ? `printf '%s\\n' '${stub.stderr}' >&2\n` : ''}exit ${stub.exit}\n`,
+    `#!/bin/sh\nn=$(cat '${countFile}')\nn=$((n + 1))\nprintf '%s' "$n" > '${countFile}'\ncase "$n" in\n${arms}\nesac\n`,
   );
   chmodSync(join(bin, 'gh'), 0o755);
 
   const scriptPath = join(root, 'guard.sh');
   writeFileSync(scriptPath, stepScript(readFileSync(WORKFLOW, 'utf8'), STEP));
 
-  return Bun.spawnSync(['bash', scriptPath], {
+  const result = Bun.spawnSync(['bash', scriptPath], {
     env: {
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       GH_TOKEN: 'stub-token',
       RELEASE_REPOSITORY: 'automagik-dev/genie',
       INPUT_VERSION: version,
+      RETRY_SLEEP_SCALE: '0',
     },
     stdout: 'pipe',
     stderr: 'pipe',
   });
+  return Object.assign(result, { ghCalls: Number(readFileSync(countFile, 'utf8')) });
 }
 
 describe('release-publish replay guard behavior', () => {
@@ -94,9 +112,28 @@ describe('release-publish replay guard behavior', () => {
     expect(run.stdout.toString()).toContain('has no GitHub Release yet');
   });
 
-  test('an ambiguous API failure fails closed', () => {
+  test('an ambiguous API failure fails closed after exhausting the bounded retry loop', () => {
     const run = runGuard({ stderr: 'gh: Server Error (HTTP 500)', exit: 1 });
     expect(run.exitCode).toBe(1);
     expect(run.stdout.toString() + run.stderr.toString()).toContain('release-replay.unknown');
+    expect(run.ghCalls).toBe(4);
+  });
+
+  test('transient failures before a definitive 404 still admit the run', () => {
+    const run = runGuard([
+      { stderr: 'gh: Server Error (HTTP 500)', exit: 1 },
+      { stderr: 'gh: Bad Gateway (HTTP 502)', exit: 1 },
+      { stderr: 'gh: Not Found (HTTP 404)', exit: 1 },
+    ]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString()).toContain('has no GitHub Release yet');
+    expect(run.ghCalls).toBe(3);
+  });
+
+  test('permission failures fail closed without retrying', () => {
+    const run = runGuard({ stderr: 'gh: HTTP 403 Forbidden', exit: 1 });
+    expect(run.exitCode).toBe(1);
+    expect(run.stdout.toString() + run.stderr.toString()).toContain('release-replay.unknown');
+    expect(run.ghCalls).toBe(1);
   });
 });

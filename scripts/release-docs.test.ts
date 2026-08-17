@@ -137,6 +137,10 @@ describe('Group E release and documentation contracts', () => {
     // ambiguous API failures fail closed rather than silently admitting
     expect(admit).toContain('release-replay.unknown');
     expect(admit).toContain(`grep -q 'HTTP 404'`);
+    // the probe retries transient API failures (bounded), never permission
+    // failures — behavior pinned by release-replay-guard.test.ts
+    expect(admit).toContain('for attempt in 1 2 3 4; do');
+    expect(admit).toContain('release_probe=unknown');
     // the guard runs only after the caller is proven
     expect(admit.indexOf('name: Refuse re-dispatch of an already published release')).toBeGreaterThan(
       admit.indexOf('name: Bind caller workflow and control commit'),
@@ -624,6 +628,16 @@ describe('Group E release and documentation contracts', () => {
     expect(helper).not.toContain('gh release edit');
     expect(helper).toContain('-f body=');
     expect(helper).toContain('source "$(dirname "$0")/gh-retry.sh"');
+    // Asset reconciliation resolves the release id once, then reads, uploads,
+    // and downloads by numeric id — never through by-tag draft resolution.
+    const assets = read('scripts/reconcile-release-assets.sh');
+    expect(assets).toContain('source "$(dirname "$0")/gh-retry.sh"');
+    expect(assets).toContain('gh_release_lookup --expect-exists');
+    expect(assets).toContain('gh_upload_release_asset');
+    expect(assets).toContain('gh_download_release_asset');
+    expect(assets).not.toContain('gh release upload');
+    expect(assets).not.toContain('gh release download');
+    expect(assets).toContain('`--clobber` is deliberately forbidden');
   });
 
   test('channel documentation does not claim unsigned manifests are signed or use GitHub latest as authority', () => {

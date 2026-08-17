@@ -150,18 +150,46 @@ for platform in "${PLATFORMS[@]}"; do
   done
 done
 
+# Sourced after all input validation; the helper probes nothing on load.
+# shellcheck source=scripts/gh-retry.sh
+source "$(dirname "$0")/gh-retry.sh"
+
 WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/genie-release-assets.XXXXXX")"
 trap 'rm -rf "$WORK_ROOT"' EXIT HUP INT TERM
 REMOTE_JSON="$WORK_ROOT/remote.json"
 EXPECTED_JSON="$(printf '%s\n' "${EXPECTED[@]}" | jq -R . | jq -s .)"
 
+# Resolve the release identity exactly once. Drafts carry no tag ref, so the
+# status-aware lookup is the only step allowed to touch the flaky by-tag
+# listing; every read, download, and upload below operates on the numeric id.
+resolve_release_id() {
+  local rc=0 release_json
+  release_json="$(gh_release_lookup --expect-exists "$RELEASE_REPOSITORY" "$TAG")" || rc=$?
+  case "$rc" in
+    0) ;;
+    4)
+      echo "release ${TAG} does not exist; run prepare first" >&2
+      exit 3
+      ;;
+    *)
+      echo "cannot determine whether release ${TAG} exists; refusing to proceed" >&2
+      exit 3
+      ;;
+  esac
+  RELEASE_ID="$(jq -r '.id' <<<"$release_json")"
+  [[ "$RELEASE_ID" =~ ^[0-9]+$ ]] || {
+    echo "invalid release id resolved for ${TAG}" >&2
+    exit 3
+  }
+}
+
 fetch_remote_inventory() {
-  gh release view "$TAG" --repo "$RELEASE_REPOSITORY" --json assets,isDraft,isPrerelease >"$REMOTE_JSON"
+  gh_retry gh api "repos/${RELEASE_REPOSITORY}/releases/${RELEASE_ID}" >"$REMOTE_JSON"
   jq -e --argjson expected "$EXPECTED_JSON" '
     (.assets | type == "array") and
-    (.isDraft | type == "boolean") and
-    (.isPrerelease | type == "boolean") and
-    (all(.assets[]; (.name | type == "string"))) and
+    (.draft | type == "boolean") and
+    (.prerelease | type == "boolean") and
+    (all(.assets[]; (.name | type == "string") and ((.id | type == "number") and (.id == (.id | floor))))) and
     (([.assets[].name] | length) == ([.assets[].name] | unique | length)) and
     (all(.assets[]; .name as $name | ($expected | index($name)) != null))
   ' "$REMOTE_JSON" >/dev/null || {
@@ -180,10 +208,17 @@ remote_is_complete() {
 }
 
 download_remote() {
-  local name="$1" destination="$2" path
+  local name="$1" destination="$2" path asset_id
   mkdir "$destination"
-  gh release download "$TAG" --repo "$RELEASE_REPOSITORY" --pattern "$name" --dir "$destination"
+  # Bound to the validated inventory: the asset id comes from REMOTE_JSON, so
+  # exactly the enumerated asset is fetched — no by-tag pattern resolution.
+  asset_id="$(jq -r --arg name "$name" 'first(.assets[] | select(.name == $name)) | .id' "$REMOTE_JSON")"
+  [[ "$asset_id" =~ ^[0-9]+$ ]] || {
+    echo "remote inventory has no asset id for: ${name}" >&2
+    exit 3
+  }
   path="$destination/$name"
+  gh_download_release_asset "$RELEASE_REPOSITORY" "$asset_id" "$path"
   [[ -f "$path" && ! -L "$path" && -s "$path" ]] || {
     echo "downloaded release asset must be a nonempty physical regular file: ${name}" >&2
     exit 3
@@ -210,7 +245,7 @@ verify_inventory() {
       --print-provenance >"$generic_result"
     bash "$(dirname "$0")/release-generic-provenance.sh" verify-reusable "$generic_result"
     result="$WORK_ROOT/native-${platform}.json"
-    gh attestation verify "$tarball" \
+    gh_retry gh attestation verify "$tarball" \
       --repo "$RELEASE_REPOSITORY" \
       --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
       --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
@@ -218,7 +253,7 @@ verify_inventory() {
       --format json >"$result"
     remote_control_sha="$(bash "$(dirname "$0")/release-native-predicate.sh" reusable-control-sha "$result")"
     exact_result="$WORK_ROOT/native-exact-${platform}.json"
-    gh attestation verify "$tarball" \
+    gh_retry gh attestation verify "$tarball" \
       --repo "$RELEASE_REPOSITORY" \
       --predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1" \
       --cert-identity "https://github.com/${RELEASE_REPOSITORY}/.github/workflows/sign-attest.yml@refs/heads/main" \
@@ -239,7 +274,7 @@ verify_inventory() {
         exit 3
       }
       delivery_result="$WORK_ROOT/delivery-${platform}-${evidence_channel}.json"
-      gh attestation verify "$descriptor" \
+      gh_retry gh attestation verify "$descriptor" \
         --bundle "$bundle" \
         --repo "$RELEASE_REPOSITORY" \
         --predicate-type "https://github.com/${RELEASE_REPOSITORY}/delivery-evidence/v1" \
@@ -256,6 +291,7 @@ verify_inventory() {
   done
 }
 
+resolve_release_id
 fetch_remote_inventory
 
 if remote_is_complete; then
@@ -265,18 +301,17 @@ if remote_is_complete; then
   differs=false
   complete="$WORK_ROOT/complete"
   mkdir "$complete"
+  index=0
   for name in "${EXPECTED[@]}"; do
-    gh release download "$TAG" --repo "$RELEASE_REPOSITORY" --pattern "$name" --dir "$complete"
-    [[ -f "$complete/$name" && ! -L "$complete/$name" && -s "$complete/$name" ]] || {
-      echo "downloaded release asset must be a nonempty physical regular file: ${name}" >&2
-      exit 3
-    }
+    download_remote "$name" "$WORK_ROOT/complete-${index}"
+    cp "$WORK_ROOT/complete-${index}/$name" "$complete/$name"
     if ! cmp -- "$DIST_DIR/$name" "$complete/$name"; then
       differs=true
     fi
+    index=$((index + 1))
   done
 
-  if [[ "$(jq -r '.isDraft' "$REMOTE_JSON")" == true ]]; then
+  if [[ "$(jq -r '.draft' "$REMOTE_JSON")" == true ]]; then
     verify_inventory "$complete"
     if [[ "$differs" == true ]]; then
       echo "::notice ::release-assets.draft_reused ${TAG} preserves its complete authenticated draft inventory"
@@ -295,7 +330,7 @@ if remote_is_complete; then
   exit 0
 fi
 
-if [[ "$(jq -r '.isDraft' "$REMOTE_JSON")" == false ]]; then
+if [[ "$(jq -r '.draft' "$REMOTE_JSON")" == false ]]; then
   echo "refusing to mutate an incomplete published immutable release: ${TAG}" >&2
   exit 3
 fi
@@ -320,8 +355,21 @@ for name in "${EXPECTED[@]}"; do
 done
 verify_inventory "$effective"
 
+# Per-asset by-id uploads resume finer than the old batch call. A retried
+# upload whose first attempt actually landed surfaces as already_exists (rc 6):
+# it is skipped — never deleted, never clobbered — and the post-upload
+# re-fetch + byte-compare below stays the authority that catches any mismatch.
 if [[ ${#MISSING[@]} -gt 0 ]]; then
-  gh release upload "$TAG" --repo "$RELEASE_REPOSITORY" "${MISSING[@]}"
+  for path in "${MISSING[@]}"; do
+    name="${path##*/}"
+    upload_rc=0
+    gh_upload_release_asset "$RELEASE_REPOSITORY" "$RELEASE_ID" "$path" || upload_rc=$?
+    if [[ "$upload_rc" -eq 6 ]]; then
+      echo "::notice ::release-assets.upload_skipped ${name} already present on retry; byte verification adjudicates"
+    elif [[ "$upload_rc" -ne 0 ]]; then
+      exit "$upload_rc"
+    fi
+  done
 fi
 
 fetch_remote_inventory

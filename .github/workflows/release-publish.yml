@@ -81,7 +81,9 @@ jobs:
   admit:
     name: Admit trusted release orchestrator
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # 5 minutes leaves headroom for the replay guard's bounded retry loop
+    # (three sleeps, 30s worst case) on top of normal step time.
+    timeout-minutes: 5
     permissions:
       # Read-only, and only so the replay guard below can ask whether the tag
       # already carries a published release. contents:write still starts at the
@@ -163,22 +165,49 @@ jobs:
           # and pushes a fresh tag). See automagik-dev/genie#2674.
           # Drafts stay admissible on purpose: an interrupted run must still be
           # able to finish the release it already opened.
+          # The probe retries transient API failures (the admit job has no
+          # checkout, so it cannot source scripts/gh-retry.sh): a definitive
+          # 404 admits, permission failures surface immediately, and anything
+          # unresolved after the bounded loop still fails closed below.
+          # RETRY_SLEEP_SCALE exists so the behavior test runs without sleeps.
           RELEASE_JSON="$(mktemp)"
           RELEASE_ERROR="$(mktemp)"
-          if gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}" \
-            >"$RELEASE_JSON" 2>"$RELEASE_ERROR"; then
-            if [[ "$(jq -r '.draft' "$RELEASE_JSON")" != true ]]; then
-              echo "::error ::release-replay.published v${INPUT_VERSION} already has a published GitHub Release — published releases are non-replayable (immutable asset inventory + deterministic released_at); allocate a fresh version instead. See automagik-dev/genie#2674"
-              exit 1
+          release_probe=unknown
+          for attempt in 1 2 3 4; do
+            if gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}" \
+              >"$RELEASE_JSON" 2>"$RELEASE_ERROR"; then
+              release_probe=found
+              break
             fi
-            echo "v${INPUT_VERSION} exists only as a draft release; admitting so the interrupted publish can complete"
-          elif grep -q 'HTTP 404' "$RELEASE_ERROR"; then
-            echo "v${INPUT_VERSION} has no GitHub Release yet"
-          else
-            cat "$RELEASE_ERROR" >&2
-            echo "::error ::release-replay.unknown could not determine whether v${INPUT_VERSION} already has a published release; failing closed. See automagik-dev/genie#2674"
-            exit 1
-          fi
+            if grep -q 'HTTP 404' "$RELEASE_ERROR"; then
+              release_probe=absent
+              break
+            fi
+            if grep -qiE 'HTTP 40[13]|forbidden|permission|not authorized|bad credentials' "$RELEASE_ERROR"; then
+              break
+            fi
+            if [[ "$attempt" -lt 4 ]]; then
+              echo "::warning ::release-replay probe attempt ${attempt}/4 failed; retrying"
+              sleep "$(( ${RETRY_SLEEP_SCALE:-5} * attempt ))"
+            fi
+          done
+          case "$release_probe" in
+            found)
+              if [[ "$(jq -r '.draft' "$RELEASE_JSON")" != true ]]; then
+                echo "::error ::release-replay.published v${INPUT_VERSION} already has a published GitHub Release — published releases are non-replayable (immutable asset inventory + deterministic released_at); allocate a fresh version instead. See automagik-dev/genie#2674"
+                exit 1
+              fi
+              echo "v${INPUT_VERSION} exists only as a draft release; admitting so the interrupted publish can complete"
+              ;;
+            absent)
+              echo "v${INPUT_VERSION} has no GitHub Release yet"
+              ;;
+            *)
+              cat "$RELEASE_ERROR" >&2
+              echo "::error ::release-replay.unknown could not determine whether v${INPUT_VERSION} already has a published release; failing closed. See automagik-dev/genie#2674"
+              exit 1
+              ;;
+          esac
 
   prepare-delivery-evidence:
     name: Build canonical delivery descriptors
