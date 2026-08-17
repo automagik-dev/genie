@@ -31,9 +31,14 @@ interface FakeState {
   draft: boolean;
   prerelease?: boolean;
   assets: Record<string, string>;
+  assetIds?: Record<string, number>;
   calls?: Array<{ tool: string; args: string[] }>;
   attestationBatchSizes?: number[];
   failOn?: string;
+  failTimes?: Record<string, number>;
+  noRelease?: boolean;
+  uploadLandThenFail?: number;
+  uploadCorruptFirst?: boolean;
   controlSha?: string;
   secondControlSha?: string;
   remoteAssets?: unknown;
@@ -113,32 +118,89 @@ const value = (flag) => { const index = args.indexOf(flag); return index >= 0 ? 
     join(root, 'gh'),
     `#!/usr/bin/env bun
 ${recordPrelude}
-import { basename, join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
 record('gh');
-if (state.failOn && ('gh ' + args.join(' ')).includes(state.failOn)) { save(); process.exit(42); }
-if (args[0] === 'release' && args[1] === 'view') {
-  const assets = state.remoteAssets ?? Object.keys(state.assets).map((name) => ({ name }));
-  console.log(JSON.stringify({ assets, isDraft: state.draft, isPrerelease: state.prerelease ?? !state.draft }));
-  save(); process.exit(0);
-}
-if (args[0] === 'release' && args[1] === 'download') {
-  const name = value('--pattern');
-  const dir = value('--dir');
-  if (!(name in state.assets)) { save(); process.exit(4); }
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), state.assets[name]);
-  save(); process.exit(0);
-}
-if (args[0] === 'release' && args[1] === 'upload') {
-  if (args.includes('--clobber')) state.usedClobber = true;
-  const paths = [];
-  for (let index = 3; index < args.length; index += 1) {
-    if (args[index] === '--repo') { index += 1; continue; }
-    if (!args[index].startsWith('-')) paths.push(args[index]);
+const joined = 'gh ' + args.join(' ');
+if (state.failTimes) {
+  for (const key of Object.keys(state.failTimes)) {
+    if (state.failTimes[key] > 0 && joined.includes(key)) {
+      state.failTimes[key] -= 1;
+      save();
+      console.error('gh: Internal Server Error (HTTP 502)');
+      process.exit(1);
+    }
   }
-  for (const path of paths) state.assets[basename(path)] = readFileSync(path, 'utf8');
-  save(); process.exit(0);
+}
+if (state.failOn && joined.includes(state.failOn)) { save(); process.exit(42); }
+const ensureIds = () => {
+  state.assetIds ??= {};
+  let next = Object.values(state.assetIds).reduce((left, right) => Math.max(left, right), 0);
+  for (const name of Object.keys(state.assets)) if (!(name in state.assetIds)) state.assetIds[name] = ++next;
+};
+const releaseJson = () => {
+  ensureIds();
+  const assets = state.remoteAssets ?? Object.keys(state.assets).map((name) => ({ name, id: state.assetIds[name] }));
+  return JSON.stringify({
+    id: 500,
+    tag_name: 'v${VERSION}',
+    draft: state.draft,
+    prerelease: state.prerelease ?? !state.draft,
+    assets,
+  });
+};
+if (args[0] === 'api' && /\\/releases\\/tags\\//.test(args[1] ?? '')) {
+  // Published releases resolve via the tag ref; drafts have none.
+  if (!state.noRelease && state.draft !== true) { console.log(releaseJson()); save(); process.exit(0); }
+  save();
+  console.error('gh: Not Found (HTTP 404)');
+  process.exit(1);
+}
+if (args[0] === 'api' && args.includes('--paginate')) {
+  if (!state.noRelease && state.draft === true) console.log('500');
+  save();
+  process.exit(0);
+}
+const assetPath = args.find((arg) => /\\/releases\\/assets\\/[0-9]+$/.test(arg));
+if (args[0] === 'api' && assetPath) {
+  ensureIds();
+  const id = Number(assetPath.split('/').pop());
+  const name = Object.keys(state.assetIds).find((candidate) => state.assetIds[candidate] === id);
+  if (!name || !(name in state.assets)) { save(); console.error('gh: Not Found (HTTP 404)'); process.exit(4); }
+  process.stdout.write(state.assets[name]);
+  save();
+  process.exit(0);
+}
+if (args[0] === 'api' && args.includes('POST') && args.some((arg) => arg.includes('uploads.github.com'))) {
+  if (args.includes('--clobber')) state.usedClobber = true;
+  const url = args.find((arg) => arg.includes('uploads.github.com'));
+  const name = url.split('name=')[1];
+  const bytes = readFileSync(value('--input'), 'utf8');
+  ensureIds();
+  if (name in state.assets) {
+    save();
+    console.error('HTTP 422: Validation Failed (already_exists)');
+    process.exit(1);
+  }
+  if (state.uploadLandThenFail && state.uploadLandThenFail > 0) {
+    // The upload landed server-side but the response was lost: store the
+    // bytes, then report a transient failure so the caller retries into
+    // already_exists.
+    state.uploadLandThenFail -= 1;
+    state.assets[name] = state.uploadCorruptFirst ? 'corrupted-bytes-from-lost-response' : bytes;
+    ensureIds();
+    save();
+    console.error('gh: unexpected EOF');
+    process.exit(1);
+  }
+  state.assets[name] = bytes;
+  ensureIds();
+  save();
+  process.exit(0);
+}
+if (args[0] === 'api' && !args.includes('POST') && /\\/releases\\/500$/.test(args[1] ?? '')) {
+  if (state.noRelease) { save(); console.error('gh: Not Found (HTTP 404)'); process.exit(1); }
+  console.log(releaseJson());
+  save();
+  process.exit(0);
 }
 if (args[0] === 'attestation' && args[1] === 'verify') {
   if (args.includes('--bundle')) {
@@ -246,6 +308,8 @@ save();
       CANDIDATE_MANIFEST_DIR: candidates,
       RELEASE_REPOSITORY: 'automagik-dev/genie',
       DIST_DIR: dist,
+      GH_RETRY_SLEEPS: '0 0 0 0',
+      GH_RETRY_LOOKUP_LAG_SLEEP: '0',
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -259,12 +323,19 @@ function calls(state: FakeState, tool: string, command?: string): Array<{ tool: 
   );
 }
 
+function uploadCalls(state: FakeState): Array<{ tool: string; args: string[] }> {
+  return (state.calls ?? []).filter(
+    (call) => call.tool === 'gh' && call.args.some((arg) => arg.includes('uploads.github.com')),
+  );
+}
+
 describe('exact GitHub release asset reconciliation', () => {
   test('uploads and byte-verifies the exact dev fanout inventory into an empty draft without clobber', () => {
     const { result, state } = run({ draft: true, assets: {} });
     expect(result.exitCode).toBe(0);
     expect(Object.keys(state.assets).sort()).toEqual([...NAMES].sort());
-    expect(calls(state, 'gh', 'release upload')).toHaveLength(1);
+    // One by-id POST per asset — finer resumption than the old batch upload.
+    expect(uploadCalls(state)).toHaveLength(NAMES.length);
     expect(state.usedClobber).not.toBe(true);
   });
 
@@ -288,7 +359,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(stable.result.exitCode).toBe(3);
     expect(stable.result.stderr.toString()).toContain('published immutable release');
     expect(stable.state.assets).toEqual(devAssets);
-    expect(calls(stable.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(stable.state)).toHaveLength(0);
   });
 
   test('rejects missing and extra local inventory before any GitHub mutation', () => {
@@ -332,14 +403,14 @@ describe('exact GitHub release asset reconciliation', () => {
 
     const mismatch = run({ draft: true, assets: { [NAMES[0]]: 'different' } });
     expect(mismatch.result.exitCode).toBe(3);
-    expect(calls(mismatch.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(mismatch.state)).toHaveLength(0);
   });
 
   test('a complete authenticated draft reuses prior nondeterministic bundle bytes', () => {
     const draft = run({ draft: true, assets: localAssets('older-run') });
     expect(draft.result.exitCode).toBe(0);
     expect(draft.result.stdout.toString()).toContain('preserves its complete authenticated draft inventory');
-    expect(calls(draft.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(draft.state)).toHaveLength(0);
   });
 
   test('a retry rejects authenticated old descriptors bound to different candidate manifest bytes', () => {
@@ -352,7 +423,7 @@ describe('exact GitHub release asset reconciliation', () => {
     }
     const retry = run({ draft: true, assets: stale });
     expect(retry.result.exitCode).toBe(3);
-    expect(calls(retry.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(retry.state)).toHaveLength(0);
   });
 
   test('an interrupted draft preserves prior bundle bytes while uploading only missing assets', () => {
@@ -369,7 +440,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(resumed.result.exitCode).toBe(0);
     expect(resumed.state.assets[priorBundle]).toBe(partial[priorBundle]);
     expect(Object.keys(resumed.state.assets).sort()).toEqual([...NAMES].sort());
-    expect(calls(resumed.state, 'gh', 'release upload')).toHaveLength(1);
+    expect(uploadCalls(resumed.state)).toHaveLength(NAMES.length - Object.keys(partial).length);
   });
 
   test('reuses a complete published inventory only after pinned cryptographic verification', () => {
@@ -377,7 +448,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const { result, state } = run({ draft: false, assets: publishedAssets });
     expect(result.exitCode).toBe(0);
     expect(state.assets).toEqual(publishedAssets);
-    expect(calls(state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(state)).toHaveLength(0);
     expect(calls(state, 'cosign')).toHaveLength(4);
     expect(calls(state, 'slsa-verifier')).toHaveLength(4);
     expect(calls(state, 'gh', 'attestation verify')).toHaveLength(12);
@@ -401,7 +472,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const { result, state } = run({ draft: false, assets: publishedAssets });
     expect(result.exitCode).toBe(0);
     expect(state.assets).toEqual(publishedAssets);
-    expect(calls(state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(state)).toHaveLength(0);
     // 4 platforms x 2 passes (unfiltered, then certificate-filtered), each
     // answered with GitHub's immutable-release attestation ahead of ours.
     expect(state.attestationBatchSizes).toHaveLength(8);
@@ -412,30 +483,71 @@ describe('exact GitHub release asset reconciliation', () => {
     const partial = run({ draft: false, prerelease: false, assets: { [NAMES[0]]: localAssets()[NAMES[0]] } });
     expect(partial.result.exitCode).toBe(3);
     expect(partial.result.stderr.toString()).toContain('incomplete published immutable release');
-    expect(calls(partial.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(partial.state)).toHaveLength(0);
 
     const extra = run({ draft: true, assets: { unexpected: 'x' } });
     expect(extra.result.exitCode).toBe(3);
     expect(extra.result.stderr.toString()).toContain('unexpected assets');
-    expect(calls(extra.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(extra.state)).toHaveLength(0);
   });
 
   test('rejects duplicate and malformed remote inventory before upload', () => {
     const duplicate = run({
       draft: true,
       assets: {},
-      remoteAssets: [{ name: NAMES[0] }, { name: NAMES[0] }],
+      remoteAssets: [
+        { name: NAMES[0], id: 1 },
+        { name: NAMES[0], id: 2 },
+      ],
     });
     expect(duplicate.result.exitCode).toBe(3);
-    expect(calls(duplicate.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(duplicate.state)).toHaveLength(0);
 
     const malformed = run({ draft: true, assets: {}, remoteAssets: [{ name: 7 }] });
     expect(malformed.result.exitCode).toBe(3);
-    expect(calls(malformed.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(malformed.state)).toHaveLength(0);
+  });
+
+  test('rides out transient upload failures without duplicating or clobbering assets', () => {
+    // One 502 on the first upload POST; the retry succeeds. Every asset lands
+    // exactly once and the post-upload byte verification passes.
+    const { result, state } = run({ draft: true, assets: {}, failTimes: { 'uploads.github.com': 1 } });
+    expect(result.exitCode).toBe(0);
+    expect(Object.keys(state.assets).sort()).toEqual([...NAMES].sort());
+    expect(state.usedClobber).not.toBe(true);
+    expect((state.calls ?? []).every((call) => !call.args.includes('DELETE'))).toBe(true);
+  });
+
+  test('an upload that landed but lost its response is skipped, and byte verification adjudicates', () => {
+    // The first POST stores the bytes server-side but reports a transient
+    // failure; the retry surfaces already_exists and is skipped — never
+    // deleted, never clobbered. Identical bytes → success.
+    const clean = run({ draft: true, assets: {}, uploadLandThenFail: 1 });
+    expect(clean.result.exitCode).toBe(0);
+    expect(clean.result.stdout.toString()).toContain('release-assets.upload_skipped');
+    expect(Object.keys(clean.state.assets).sort()).toEqual([...NAMES].sort());
+
+    // Same scenario but the landed bytes are corrupt: the skip must NOT hide
+    // the mismatch — the post-upload byte compare fails closed.
+    const corrupt = run({ draft: true, assets: {}, uploadLandThenFail: 1, uploadCorruptFirst: true });
+    expect(corrupt.result.exitCode).toBe(3);
+    expect(corrupt.result.stderr.toString()).toContain('remote release asset verification failed after upload');
+  }, 30_000);
+
+  test('fails closed before any mutation when the release cannot be resolved', () => {
+    const unknown = run({ draft: true, assets: {}, failTimes: { 'releases/tags': 99 } });
+    expect(unknown.result.exitCode).toBe(3);
+    expect(unknown.result.stderr.toString()).toContain('cannot determine whether release');
+    expect(uploadCalls(unknown.state)).toHaveLength(0);
+
+    const absent = run({ draft: true, assets: {}, noRelease: true });
+    expect(absent.result.exitCode).toBe(3);
+    expect(absent.result.stderr.toString()).toContain('run prepare first');
+    expect(uploadCalls(absent.state)).toHaveLength(0);
   });
 
   test('propagates upload and verification failures', () => {
-    const upload = run({ draft: true, assets: {}, failOn: 'gh release upload' });
+    const upload = run({ draft: true, assets: {}, failOn: 'uploads.github.com' });
     expect(upload.result.exitCode).toBe(42);
 
     const endorsement = run({ draft: true, assets: {}, failOn: 'gh attestation verify' });
@@ -443,7 +555,7 @@ describe('exact GitHub release asset reconciliation', () => {
 
     const verification = run({ draft: false, assets: localAssets('published'), failOn: 'cosign verify-blob' });
     expect(verification.result.exitCode).toBe(42);
-    expect(calls(verification.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(verification.state)).toHaveLength(0);
 
     const mismatchedSecondPass = run({
       draft: false,
@@ -455,10 +567,10 @@ describe('exact GitHub release asset reconciliation', () => {
 
     const genericPolicy = run({ draft: false, assets: localAssets('published'), invalidGeneric: true });
     expect(genericPolicy.result.exitCode).not.toBe(0);
-    expect(calls(genericPolicy.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(genericPolicy.state)).toHaveLength(0);
 
     const nativePolicy = run({ draft: false, assets: localAssets('published'), invalidNative: true });
     expect(nativePolicy.result.exitCode).not.toBe(0);
-    expect(calls(nativePolicy.state, 'gh', 'release upload')).toHaveLength(0);
+    expect(uploadCalls(nativePolicy.state)).toHaveLength(0);
   }, 15_000);
 });
