@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -244,6 +244,52 @@ describe('guard-run-provenance (orchestrated vs break-glass)', () => {
       PATH: `${root}:${process.env.PATH ?? ''}`,
     });
     expect(result.exitCode).toBe(0);
+  });
+
+  test('rides out transient gh failures before validating the run record', () => {
+    const root = mkroot('genie-run-gh-flaky-');
+    const ghPath = join(root, 'gh');
+    const counter = join(root, 'calls');
+    writeFileSync(counter, '0');
+    writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bun\nimport { readFileSync, writeFileSync, writeSync } from 'node:fs';\nconst counter = ${JSON.stringify(
+        counter,
+      )};\nconst calls = Number(readFileSync(counter, 'utf8')) + 1;\nwriteFileSync(counter, String(calls));\nif (calls <= 2) { console.error('gh: HTTP 502 Bad Gateway'); process.exit(1); }\nconst rec = ${JSON.stringify(
+        VALID_RUN,
+      )};\nwriteSync(1, JSON.stringify(rec));\nprocess.exit(0);\n`,
+    );
+    chmodSync(ghPath, 0o755);
+    const result = guard('guard-run-provenance', {
+      ...PROVENANCE_ENV,
+      RUN_ID: '123456',
+      PATH: `${root}:${process.env.PATH ?? ''}`,
+      GH_RETRY_SLEEPS: '0 0 0 0',
+    });
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(counter, 'utf8')).toBe('3');
+  });
+
+  test('permission failures fail closed after a single attempt', () => {
+    const root = mkroot('genie-run-gh-forbidden-');
+    const ghPath = join(root, 'gh');
+    const counter = join(root, 'calls');
+    writeFileSync(counter, '0');
+    writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bun\nimport { readFileSync, writeFileSync } from 'node:fs';\nconst counter = ${JSON.stringify(
+        counter,
+      )};\nwriteFileSync(counter, String(Number(readFileSync(counter, 'utf8')) + 1));\nconsole.error('gh: HTTP 403 Forbidden');\nprocess.exit(1);\n`,
+    );
+    chmodSync(ghPath, 0o755);
+    const result = guard('guard-run-provenance', {
+      ...PROVENANCE_ENV,
+      RUN_ID: '123456',
+      PATH: `${root}:${process.env.PATH ?? ''}`,
+      GH_RETRY_SLEEPS: '0 0 0 0',
+    });
+    expect(result.exitCode).toBe(3);
+    expect(readFileSync(counter, 'utf8')).toBe('1');
   });
 });
 

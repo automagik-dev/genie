@@ -53,22 +53,25 @@ describe('promotion effective release subject selection', () => {
 
     const assets = PLATFORMS.flatMap((platform) => {
       const name = `genie-${VERSION}-${platform}.tar.gz`;
-      return [name, `${name}.bundle`, `${name}.intoto.jsonl`].map((asset) => ({ name: asset }));
-    });
+      return [name, `${name}.bundle`, `${name}.intoto.jsonl`];
+    }).map((name, index) => ({ name, id: index + 1 }));
     writeFileSync(
       join(bin, 'gh'),
       `#!/usr/bin/env bun
-import { copyFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
-if (args[0] === 'release' && args[1] === 'view') {
-  console.log(${JSON.stringify(JSON.stringify({ assets }))});
+const assets = ${JSON.stringify(assets)};
+if (args[0] === 'api' && /\\/releases\\/tags\\//.test(args[1] ?? '')) {
+  console.log(JSON.stringify({ id: 900, tag_name: 'v${VERSION}', draft: false, prerelease: true, assets }));
   process.exit(0);
 }
-if (args[0] === 'release' && args[1] === 'download') {
-  const name = args[args.indexOf('--pattern') + 1];
-  const dir = args[args.indexOf('--dir') + 1];
-  copyFileSync(join(process.env.REMOTE_DIR, name), join(dir, name));
+const assetPath = args.find((arg) => /\\/releases\\/assets\\/[0-9]+$/.test(arg));
+if (args[0] === 'api' && assetPath) {
+  const id = Number(assetPath.split('/').pop());
+  const name = assets.find((asset) => asset.id === id)?.name;
+  if (!name) process.exit(1);
+  process.stdout.write(readFileSync(join(process.env.REMOTE_DIR, name)));
   process.exit(0);
 }
 if (args[0] === 'attestation' && args[1] === 'verify' && args.includes('--help')) process.exit(1);
@@ -138,5 +141,34 @@ process.exit(2);
         scanPhysicalTree(join(remotePayloads.get(platform)!, 'plugins', 'genie')).digest,
       );
     }
+  }, 15_000);
+
+  test('fails closed when the remote release probe cannot be resolved', () => {
+    // A transient API outage must never be misread as "no remote subjects":
+    // that would silently rebind promoted descriptors to same-run bytes.
+    const root = mkdtempSync(join(tmpdir(), 'genie-release-subjects-'));
+    roots.push(root);
+    const dist = join(root, 'dist');
+    const bin = join(root, 'bin');
+    mkdirSync(dist);
+    mkdirSync(bin);
+    for (const platform of PLATFORMS) createTarball(dist, platform, 'current');
+    writeFileSync(join(bin, 'gh'), '#!/usr/bin/env bash\necho "gh: Internal Server Error (HTTP 502)" >&2\nexit 1\n');
+    chmodSync(join(bin, 'gh'), 0o755);
+    const materialized = Bun.spawnSync(['bash', MATERIALIZE], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        VERSION,
+        RELEASE_REPOSITORY: 'automagik-dev/genie',
+        DIST_DIR: dist,
+        GH_RETRY_SLEEPS: '0 0 0 0',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(materialized.exitCode).toBe(3);
+    expect(materialized.stderr.toString()).toContain('could not determine whether');
   }, 15_000);
 });

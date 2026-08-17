@@ -619,7 +619,11 @@ describe('Group E release and documentation contracts', () => {
     expect(helper).toContain('genie-agent-sync-migration-v1');
     expect(helper).toContain('older than `5.260711.6`');
     expect(helper).toContain('create_args=(release create');
-    expect(helper).toContain('gh release edit');
+    // Note reconciliation mutates the body by numeric release id (transient-
+    // aware PATCH), never through the flaky by-tag `gh release edit` path.
+    expect(helper).not.toContain('gh release edit');
+    expect(helper).toContain('-f body=');
+    expect(helper).toContain('source "$(dirname "$0")/gh-retry.sh"');
   });
 
   test('channel documentation does not claim unsigned manifests are signed or use GitHub latest as authority', () => {
