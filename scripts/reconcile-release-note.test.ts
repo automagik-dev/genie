@@ -16,6 +16,7 @@ interface FakeReleaseState {
   makeLatest?: string;
   verifiedTag?: boolean;
   failOn?: string;
+  failTimes?: Record<string, number>;
 }
 
 afterEach(() => {
@@ -49,17 +50,42 @@ const field = (flag, name) => {
     if (args[index] === flag && args[index + 1].startsWith(name + '=')) return args[index + 1].slice(name.length + 1);
   }
 };
-if (state.failOn && args.join(' ').includes(state.failOn)) { save(); process.exit(42); }
-if (args[0] === 'release' && args[1] === 'view') {
-  if (!state.exists) { save(); process.exit(1); }
-  const json = value('--json');
-  if (json === 'body') console.log(state.body ?? '');
-  if (json === 'isPrerelease,isDraft') {
-    console.log(String(state.prerelease === true) + '\\t' + String(state.draft === true));
+const joined = args.join(' ');
+// Transient simulation: fail matching invocations with a retryable 502 until
+// the per-substring budget is exhausted, then behave normally.
+if (state.failTimes) {
+  for (const key of Object.keys(state.failTimes)) {
+    if (state.failTimes[key] > 0 && joined.includes(key)) {
+      state.failTimes[key] -= 1;
+      save();
+      console.error('gh: Internal Server Error (HTTP 502)');
+      process.exit(1);
+    }
   }
-  if (json === 'databaseId,isDraft,isPrerelease') {
-    console.log(String(state.id ?? 101) + '\\t' + String(state.draft === true) + '\\t' + String(state.prerelease === true));
-  }
+}
+if (state.failOn && joined.includes(state.failOn)) { save(); process.exit(42); }
+const releaseJson = () => JSON.stringify({
+  id: state.id ?? 101,
+  draft: state.draft === true,
+  prerelease: state.prerelease === true,
+  tag_name: 'v5.260711.6',
+  body: state.body ?? '',
+});
+if (args[0] === 'api' && /\\/releases\\/tags\\//.test(args[1] ?? '')) {
+  // The tags endpoint resolves published releases only; drafts carry no tag ref.
+  if (state.exists && state.draft !== true) { console.log(releaseJson()); save(); process.exit(0); }
+  save();
+  console.error('gh: Not Found (HTTP 404)');
+  process.exit(1);
+}
+if (args[0] === 'api' && args.includes('--paginate')) {
+  if (state.exists && state.draft === true) console.log(String(state.id ?? 101));
+  save();
+  process.exit(0);
+}
+if (args[0] === 'api' && !args.includes('PATCH') && /\\/releases\\/[0-9]+$/.test(args[1] ?? '')) {
+  if (!state.exists) { save(); console.error('gh: Not Found (HTTP 404)'); process.exit(1); }
+  console.log(releaseJson());
   save();
   process.exit(0);
 }
@@ -74,15 +100,12 @@ if (args[0] === 'release' && args[1] === 'create') {
   save();
   process.exit(0);
 }
-if (args[0] === 'release' && args[1] === 'edit') {
-  if (value('--notes') !== undefined) state.body = value('--notes');
-  save();
-  process.exit(0);
-}
-if (args[0] === 'api') {
+if (args[0] === 'api' && args.includes('PATCH')) {
+  const body = field('-f', 'body');
   const draft = field('-F', 'draft');
   const prerelease = field('-F', 'prerelease');
   const makeLatest = field('-f', 'make_latest');
+  if (body !== undefined) state.body = body;
   if (draft !== undefined) state.draft = draft === 'true';
   if (prerelease !== undefined) state.prerelease = prerelease === 'true';
   if (makeLatest !== undefined) state.makeLatest = makeLatest;
@@ -104,6 +127,8 @@ process.exit(2);
       CHANNEL: 'stable',
       DRAFT: 'false',
       RELEASE_REPOSITORY: 'automagik-dev/genie',
+      GH_RETRY_SLEEPS: '0 0 0 0',
+      GH_RETRY_LOOKUP_LAG_SLEEP: '0',
       ...overrides,
     },
     stdout: 'pipe',
@@ -114,6 +139,9 @@ process.exit(2);
     state: JSON.parse(readFileSync(statePath, 'utf8')) as FakeReleaseState,
   };
 }
+
+const patchCalls = (state: FakeReleaseState) =>
+  (state.calls ?? []).filter((args) => args[0] === 'api' && args.includes('PATCH'));
 
 describe('release migration-note reconciliation', () => {
   test('prepare creates a verified-tag draft that is explicitly non-latest', () => {
@@ -136,7 +164,33 @@ describe('release migration-note reconciliation', () => {
     const second = run(first.state);
     expect(second.result.exitCode).toBe(0);
     expect(second.state.body.match(/genie-agent-sync-migration-v1/g)).toHaveLength(1);
-    expect(second.state.calls?.filter((args) => args[1] === 'edit')).toHaveLength(1);
+    expect(patchCalls(second.state)).toHaveLength(1);
+  });
+
+  test('prepare fails closed when release existence cannot be determined', () => {
+    // A transient API failure must never be read as "the release is missing":
+    // that is how a duplicate draft gets created mid-outage. Exhausted retries
+    // on the existence probe → exit 3 with ZERO create calls.
+    const { result, state } = run({
+      exists: false,
+      body: '',
+      failTimes: { 'releases/tags': 10 },
+    });
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain('cannot determine whether release');
+    expect(state.calls?.filter((args) => args[1] === 'create')).toHaveLength(0);
+  });
+
+  test('prepare rides out transient API failures on the existence probe', () => {
+    const { result, state } = run({
+      exists: false,
+      body: '',
+      failTimes: { 'releases/tags': 2 },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(state.calls?.filter((args) => args[1] === 'create')).toHaveLength(1);
+    const tagProbes = state.calls?.filter((args) => args[0] === 'api' && /\/releases\/tags\//.test(args[1] ?? ''));
+    expect(tagProbes?.length).toBeGreaterThanOrEqual(3);
   });
 
   test('stable finalize promotes to Latest from a fresh draft or a dev-published prerelease', () => {
@@ -160,7 +214,10 @@ describe('release migration-note reconciliation', () => {
     expect(fromDevPublished.state.draft).toBe(false);
     expect(fromDevPublished.state.prerelease).toBe(false);
     expect(fromDevPublished.state.makeLatest).toBe('true');
-    expect(fromDevPublished.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(1);
+    expect(patchCalls(fromDevPublished.state)).toHaveLength(1);
+    // All resolution happens by numeric id — never through the flaky by-tag
+    // `gh release view` draft-listing path.
+    expect(fromDraft.state.calls?.filter((args) => args[0] === 'release' && args[1] === 'view')).toHaveLength(0);
   });
 
   test('dev finalize publishes a prerelease that is never Latest', () => {
@@ -192,7 +249,7 @@ describe('release migration-note reconciliation', () => {
     expect(stable.result.exitCode).toBe(0);
     expect(stable.state.prerelease).toBe(false);
     expect(stable.state.makeLatest).toBe('true');
-    expect(stable.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+    expect(patchCalls(stable.state)).toHaveLength(0);
 
     // A dev release already published as a prerelease is immutable on the dev
     // channel — flags preserved, never Latest, no PATCH.
@@ -211,7 +268,7 @@ describe('release migration-note reconciliation', () => {
     expect(devPublished.result.exitCode).toBe(0);
     expect(devPublished.state.prerelease).toBe(true);
     expect(devPublished.state.makeLatest).toBe('false');
-    expect(devPublished.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+    expect(patchCalls(devPublished.state)).toHaveLength(0);
   });
 
   test('DRAFT=true leaves the fully prepared release unpublished', () => {
@@ -220,7 +277,7 @@ describe('release migration-note reconciliation', () => {
     });
     expect(draft.result.exitCode).toBe(0);
     expect(draft.state.draft).toBe(true);
-    expect(draft.state.calls?.filter((args) => args[0] === 'api')).toHaveLength(0);
+    expect(patchCalls(draft.state)).toHaveLength(0);
   });
 
   test('refuses to replay an existing stable release through a prerelease channel', () => {
@@ -244,8 +301,10 @@ describe('release migration-note reconciliation', () => {
   });
 
   test('propagates GitHub API failures instead of reporting success', () => {
-    const edit = run({ exists: true, body: 'needs note', draft: true, failOn: 'release edit' });
-    expect(edit.result.exitCode).toBe(42);
+    // Unknown-class failures (exit 42, empty stderr) are never retried and
+    // pass through verbatim — default-closed classification.
+    const noteAppend = run({ exists: true, body: 'needs note', draft: true, failOn: 'api -X PATCH' });
+    expect(noteAppend.result.exitCode).toBe(42);
 
     const publish = run(
       {

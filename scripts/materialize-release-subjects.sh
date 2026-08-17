@@ -29,17 +29,24 @@ effective="$work_root/effective"
 mkdir "$effective"
 for name in "${BASE_ASSETS[@]}"; do cp "$DIST_DIR/$name" "$effective/$name"; done
 
+# shellcheck source=scripts/gh-retry.sh
+source "$(dirname "$0")/gh-retry.sh"
+
+# Status-aware existence probe: transient API failures are retried and an
+# unresolvable state fails closed instead of being misread as "no release".
+# The lookup also resolves drafts (which carry no tag ref) via the listing.
 remote_json="$work_root/remote.json"
 remote_exists=true
-if ! gh release view "v${VERSION}" --repo "$RELEASE_REPOSITORY" --json assets >"$remote_json" 2>"$work_root/view.err"; then
-  if grep -qiE 'release not found|HTTP[^0-9]*404|status[^0-9]*404' "$work_root/view.err"; then
-    remote_exists=false
-  else
-    cat "$work_root/view.err" >&2
+lookup_rc=0
+gh_release_lookup "$RELEASE_REPOSITORY" "v${VERSION}" >"$remote_json" || lookup_rc=$?
+case "$lookup_rc" in
+  0) ;;
+  4) remote_exists=false ;;
+  *)
     echo "could not determine whether v${VERSION} already has release subjects" >&2
     exit 3
-  fi
-fi
+    ;;
+esac
 
 if [[ "$remote_exists" == true ]]; then
   jq -e '
@@ -54,7 +61,10 @@ if [[ "$remote_exists" == true ]]; then
     if jq -e --arg name "$name" 'any(.assets[]; .name == $name)' "$remote_json" >/dev/null; then
       destination="$work_root/remote-${name//[^A-Za-z0-9]/_}"
       mkdir "$destination"
-      gh release download "v${VERSION}" --repo "$RELEASE_REPOSITORY" --pattern "$name" --dir "$destination"
+      # Download by asset id — bound to the validated inventory, and free of
+      # the by-tag draft-listing resolution.
+      asset_id="$(jq -r --arg name "$name" 'first(.assets[] | select(.name == $name)) | .id' "$remote_json")"
+      gh_download_release_asset "$RELEASE_REPOSITORY" "$asset_id" "$destination/$name"
       [[ -f "$destination/$name" && ! -L "$destination/$name" && -s "$destination/$name" ]] || {
         echo "downloaded release subject must be a nonempty physical file: ${name}" >&2
         exit 3

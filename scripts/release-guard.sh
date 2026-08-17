@@ -29,6 +29,11 @@
 # Exit codes: 0 ok | 3 guard failed (fail closed) | 64 misuse
 set -euo pipefail
 
+# Transient-aware gh call wrapper. Sourcing probes nothing: input validation
+# still runs before any network call in every subcommand.
+# shellcheck source=scripts/gh-retry.sh
+source "$(dirname "$0")/gh-retry.sh"
+
 # Release publication uses Genie's exact numeric 5.YYMMDD.N scheme. Channels
 # carry dev/stable semantics, so suffix-bearing tags are rejected before any
 # asset upload or manifest reconciliation can begin.
@@ -331,11 +336,11 @@ guard_trusted_release() {
   control_tmp="$(mktemp)"
   trap 'rm -f "${source_tmp:-}" "${control_tmp:-}"' EXIT
 
-  if ! gh api "repos/${expected_repo}/actions/runs/${SOURCE_CI_RUN_ID}" >"$source_tmp" 2>/dev/null; then
+  if ! gh_retry gh api "repos/${expected_repo}/actions/runs/${SOURCE_CI_RUN_ID}" >"$source_tmp"; then
     fail "could not fetch source CI run ${SOURCE_CI_RUN_ID} from ${expected_repo}"
   fi
-  if ! gh api -X GET "repos/${expected_repo}/actions/workflows/ci.yml/runs" \
-      -f branch=main -f event=push -f status=success -f per_page=100 >"$control_tmp" 2>/dev/null; then
+  if ! gh_retry gh api -X GET "repos/${expected_repo}/actions/workflows/ci.yml/runs" \
+      -f branch=main -f event=push -f status=success -f per_page=100 >"$control_tmp"; then
     fail "could not fetch successful main CI runs from ${expected_repo}"
   fi
 
@@ -494,7 +499,7 @@ guard_run_provenance() {
   tmp="$(mktemp)"
   # ${tmp:-} because the EXIT trap outlives this function's local under set -u.
   trap 'rm -f "${tmp:-}"' EXIT
-  if ! gh api "repos/${expected_repo}/actions/runs/${run_id}" >"$tmp" 2>/dev/null; then
+  if ! gh_retry gh api "repos/${expected_repo}/actions/runs/${run_id}" >"$tmp"; then
     fail "could not fetch upstream run ${run_id} from ${expected_repo} (bad run_id or insufficient token scope)"
   fi
   check_run_provenance "$tmp"
