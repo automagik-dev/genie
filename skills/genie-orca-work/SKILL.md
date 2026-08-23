@@ -65,7 +65,7 @@ Read once from brain (`brain_profile_get` → tier slots) at wish time, written 
 - Nested child worktrees under the repo are swept by `bun test` from the main worktree → remove them (`git worktree remove`) after merging, BEFORE the integrated gate.
 - Message bodies (`send --body`, `linear comment add --body`) go in single quotes or `--body-file`; backticks inside double quotes are shell substitution (a coordinator ran `brain analyze` by accident).
 - After pruning dependencies, `rm -rf node_modules && bun install --frozen-lockfile` before trusting the gate — a stale `node_modules` hid a missing transitive dep that CI then caught.
-- Receipts carry no tokens and no agent session id. `scripts/retro-collect.ts --run <run>` joins session logs by dispatch start time (Claude only so far).
+- Receipts carry no tokens and no agent session id. `skills/genie-orca-work/scripts/retro-collect.ts --run <run>` joins session logs by dispatch start time (Claude only so far).
 - Reviewer verdicts measured on brain (2026-08-22): 5 of 7 reviews FIX-FIRST, every one a real bug; the integrated gate and the live dogfood each caught one more. Never skip either.
 
 ## Dogfood (coordinator-owned, after the integrator)

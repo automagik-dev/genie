@@ -137,7 +137,7 @@
       }
     },
     {
-      "include": ["skills/genie-orca/scripts/**"],
+      "include": ["skills/genie-orca-work/scripts/**"],
       "linter": {
         "rules": {
           "suspicious": {

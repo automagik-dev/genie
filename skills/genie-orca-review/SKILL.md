@@ -23,7 +23,7 @@ A reviewer is a **read-only worker dispatched by the coordinator**, never the en
 | per group | 1 capable model (≠ engineer) | verdict as-is |
 | wish-approval, PR | 3 in parallel (claude / codex / third), same read-only worktree | severity-max; any BLOCKED → BLOCKED; SHIP only if all SHIP; one merged Linear comment |
 | council | lenses (questioner / architecture / simplifier / perf …) on a decision | synthesis + unresolved tensions, persisted next to the wish |
-| retro | the run's `RETRO.md` from `scripts/retro-collect.ts` | findings → skill edits, not prose |
+| retro | the run's `RETRO.md` from `skills/genie-orca-work/scripts/retro-collect.ts` | findings → skill edits, not prose |
 
 ## Fix loop
 
