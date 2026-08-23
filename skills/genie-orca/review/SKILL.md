@@ -1,5 +1,5 @@
 ---
-name: genie-orca:review
+name: genie-orca-review
 description: "Independent, read-only review of a group, a wish, or a PR on Orca — SHIP / FIX-FIRST / BLOCKED with severity-tagged findings. Council and retro are this skill with a different input."
 ---
 
