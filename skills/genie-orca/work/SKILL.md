@@ -1,5 +1,5 @@
 ---
-name: genie-orca:work
+name: genie-orca-work
 description: "Coordinator loop for an approved wish on Orca — one Run per wish, one Task per group, supervised workers in child worktrees, review→fix loops, Linear written only at gate transitions. genie v6 'corpo leve': genie owns the documents and this protocol; Orca owns dispatch state; Linear owns status; brain owns preferences."
 ---
 

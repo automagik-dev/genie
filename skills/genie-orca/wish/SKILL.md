@@ -1,5 +1,5 @@
 ---
-name: genie-orca:wish
+name: genie-orca-wish
 description: "Turn a brainstorm/design into an APPROVED-able wish whose Dispatch plan is the literal input to Orca tasks and Linear issues. High-reasoning pass: pre-decide everything so fast workers can execute without judgment calls."
 ---
 
