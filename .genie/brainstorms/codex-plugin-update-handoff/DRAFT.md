@@ -4,7 +4,7 @@
 **Started:** 2026-07-12
 **Renamed from:** `sessionstart-hook-reliability` after the live root cause proved broader than H3
 **Parent context:** the hook-contract half of
-[`always-on-genie`](../always-on-genie/DRAFT.md); worktree isolation remains independent.
+`always-on-genie` _(draft deleted 2026-08-25)_; worktree isolation remains independent.
 
 ## WRS
 

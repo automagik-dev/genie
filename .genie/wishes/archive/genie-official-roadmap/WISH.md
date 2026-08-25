@@ -2,14 +2,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — execution started 2026-08-24 (G1+G2 done, G3 in flight) |
+| **Status** | SHIPPED — G1–G3 committed `2d588622a` (2026-08-25); closed by Felipe's same-day triage (UI/khal/plugin ledgers deleted, board kept for standalone mode) |
 | **Slug** | `genie-official-roadmap` |
 | **Date** | 2026-07-28 |
 | **Author** | Felipe + orchestrator (Fable 5) |
 | **Appetite** | medium |
 | **Branch** | `wish/genie-official-roadmap` |
 | **Repos touched** | automagik-dev/genie only |
-| **Design** | [DESIGN.md](../../brainstorms/genie-official-roadmap/DESIGN.md) |
+| **Design** | [DESIGN.md](../../../brainstorms/genie-official-roadmap/DESIGN.md) |
 
 ## Summary
 

@@ -1,0 +1,2 @@
+# link sweep — 2026-08-25 post-triage
+files=109 rewritten=0 unresolved=0

@@ -19,7 +19,7 @@ Run it against the released, self-synced `council.js`. This exercises the string
 Once #2 confirms the 7 agents are real subagent types, re-pull the exact LangWatch comparison. Method + working `langwatch` CLI recipes are in [routing-pin-qa-20260710.md](../../wishes/archive/routing-matrix/qa/routing-pin-qa-20260710.md). Expect Fable token share to fall toward gate-only (~11%, the level the one properly-pinned wish hit) and Opus engineering share to rise. Last night was inconclusive *only* because pins weren't mechanically enforced — not because the design is wrong.
 
 ### 5. genie-spend — close the 4 open gaps (closest-to-wishable track)
-Tonight's calibration ([genie-spend DRAFT](../genie-spend/DRAFT.md) CALIBRATION section) answers most of these; your ruling turns them into a `/wish`:
+Tonight's calibration (genie-spend DRAFT _(draft deleted 2026-08-25)_ CALIBRATION section) answers most of these; your ruling turns them into a `/wish`:
 - **Key/endpoint source** → recommend: read the OTLP-ingest key from `OTEL_EXPORTER_OTLP_HEADERS` in `~/.claude/settings.json`, endpoint `https://langwatch.khal.ai`. **Proven to authenticate the `langwatch` CLI last night.**
 - **Substrate** → recommend: **shell out to the `langwatch` CLI, not hand-rolled REST** (direct REST returned 403; the CLI wraps the same endpoints and works).
 - **Effort splits** → recommend: compute **client-side from trace search** (`analytics query` has no `--filter`; the effort-filter is silently broken).
