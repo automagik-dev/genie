@@ -1,0 +1,2 @@
+# link sweep — 2026-08-25 final (G3): move-aware resolver over every .md under .genie/ (INDEX, brainstorms, wishes incl. archive/)
+files=134 rewritten=0 unresolved=0

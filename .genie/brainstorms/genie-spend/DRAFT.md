@@ -57,7 +57,7 @@ Totals: **$18,175 · 1,113 traces · 63 sessions.** Token buckets: prompt (fresh
 
 ## CALIBRATION — 2026-07-10 (day-1 pin-QA window, partial ~6.85h) — [full file](genie-spend-calibration-20260710.md)
 
-Measured via the `langwatch` CLI during the routing-pin day-1 QA. This window is a gate/review-heavy overnight dogfood — good for **shape/recipe** calibration, not a representative full day. Cross-ref [routing-matrix/qa/routing-pin-qa-20260710.md](../../wishes/routing-matrix/qa/routing-pin-qa-20260710.md).
+Measured via the `langwatch` CLI during the routing-pin day-1 QA. This window is a gate/review-heavy overnight dogfood — good for **shape/recipe** calibration, not a representative full day. Cross-ref [routing-matrix/qa/routing-pin-qa-20260710.md](../../wishes/archive/routing-matrix/qa/routing-pin-qa-20260710.md).
 
 **$/day trend point (span-level `performance.total_cost`):** 07-08 full **$4,352** · 07-09 full **$1,230** (pins merged 21:51Z) · 07-10 00:00–06:51Z **$1,613** partial → **~$5,650/day run-rate** (upper-ish bound, not typical). The 21-day baseline averages ~$850/day, but recent dogfood days sit well above — the exact heavy-spend spike `genie spend` needs to surface.
 
@@ -75,7 +75,7 @@ Measured via the `langwatch` CLI during the routing-pin day-1 QA. This window is
 
 **Phase-1 query shapes that proved WORKABLE (all via the CLI, existing key):** cost-by-model, cost-by-day (per-day windows; each query returns the prior period free), token-volume-by-model, trace-count-by-model, top-sessions-by-cost (`--group-by metadata.thread_id`), effort histogram + per-effort cost percentiles. **BROKEN/blocked tonight:** (1) direct REST 403 → use the CLI; (2) **effort-filtered analytics** unavailable (`analytics query` has no `--filter`; underlying effort-filter silently broken) → **effort splits must be computed client-side from trace search**; (3) **per-model p50/p90 NOT derivable** — trace search returns no per-trace model (spans empty; model lives only at span level in analytics) → **parked**; per-effort percentiles are the usable substitute, or span-level export the CLI doesn't expose; (4) **cache-read + `--group-by metadata.model`** hits a known ClickHouse bug → avoid (query cache-read without the model groupBy). Net: a CLI-backed Phase-1 covering model/day/thread/effort splits is achievable now; per-model percentiles and effort-filtered analytics are the two gaps to design around.
 
-## CALIBRATION DELTA — 2026-07-11 day-2 pull ([full evidence](../../wishes/routing-matrix/qa/routing-pin-qa-20260711.md))
+## CALIBRATION DELTA — 2026-07-11 day-2 pull ([full evidence](../../wishes/archive/routing-matrix/qa/routing-pin-qa-20260711.md))
 
 - **Two cost figures must not be mixed** (design constraint for `genie spend` output): trace-level
   ungrouped `total_cost`(=`cost_billed`) = day totals (07-09 $658 · 07-10 $2,499 · 07-11 $1,391@19.7h);

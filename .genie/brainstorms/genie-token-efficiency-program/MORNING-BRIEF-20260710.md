@@ -13,10 +13,10 @@ Run `genie update` **twice** on the dogfood host — once ever. The release that
 - **string-args fix is stamped** into the local council workflow: `grep -n "typeof" ~/.claude/workflows/council.js` (or grep for the string-coercion the fix added) confirms `ec68cd8f` reached the stamped script.
 
 ### 3. Council live-QA ritual: `/council "revisar tudo"`
-Run it against the released, self-synced `council.js`. This exercises the string-args path end-to-end on the shipped artifact and **unblocks the council-workflow final execution review** (the g5-gate parks in `.genie/wishes/council-workflow/qa/` until then). Defect story + secondary skill-text-vs-script mismatch are pre-written in [overnight-observations-20260710.md](../../wishes/council-workflow/qa/overnight-observations-20260710.md).
+Run it against the released, self-synced `council.js`. This exercises the string-args path end-to-end on the shipped artifact and **unblocks the council-workflow final execution review** (the g5-gate parks in `.genie/wishes/council-workflow/qa/` until then). Defect story + secondary skill-text-vs-script mismatch are pre-written in [overnight-observations-20260710.md](../../wishes/archive/council-workflow/qa/overnight-observations-20260710.md).
 
 ### 4. Routing-pin re-test
-Once #2 confirms the 7 agents are real subagent types, re-pull the exact LangWatch comparison. Method + working `langwatch` CLI recipes are in [routing-pin-qa-20260710.md](../../wishes/routing-matrix/qa/routing-pin-qa-20260710.md). Expect Fable token share to fall toward gate-only (~11%, the level the one properly-pinned wish hit) and Opus engineering share to rise. Last night was inconclusive *only* because pins weren't mechanically enforced — not because the design is wrong.
+Once #2 confirms the 7 agents are real subagent types, re-pull the exact LangWatch comparison. Method + working `langwatch` CLI recipes are in [routing-pin-qa-20260710.md](../../wishes/archive/routing-matrix/qa/routing-pin-qa-20260710.md). Expect Fable token share to fall toward gate-only (~11%, the level the one properly-pinned wish hit) and Opus engineering share to rise. Last night was inconclusive *only* because pins weren't mechanically enforced — not because the design is wrong.
 
 ### 5. genie-spend — close the 4 open gaps (closest-to-wishable track)
 Tonight's calibration ([genie-spend DRAFT](../genie-spend/DRAFT.md) CALIBRATION section) answers most of these; your ruling turns them into a `/wish`:

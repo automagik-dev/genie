@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS — execution started 2026-08-24 (G1+G2 done, G3 in flight) |
 | **Slug** | `genie-official-roadmap` |
 | **Date** | 2026-07-28 |
 | **Author** | Felipe + orchestrator (Fable 5) |
@@ -57,14 +57,16 @@ Turn the audited wish jar (36 wishes; 3-scout evidence audit 2026-07-28) into th
 
 ## Success Criteria
 
-- [ ] 29 audited-DONE wish dirs under `.genie/wishes/archive/`; `bun run check` green (wishes-lint scans the recursive tree, 0 broken links)
-- [ ] Link sweep passes: every relative markdown link in moved files AND `.genie/INDEX.md` resolves; sweep output stored at `.genie/wishes/genie-official-roadmap/qa/link-sweep.txt`
-- [ ] `genie task export` shows the `roadmap` board with exactly 19 cards, each non-null lane matching DESIGN's enumeration; `genie board --board roadmap` renders them
-- [ ] Ritual-QA card in Review lane enumerates all 6 items (timeline comment)
-- [ ] `genie doctor` reports zero index-lane `drift` entries; no lifecycle-section INDEX entry has `wishes/archive/…` as first link
-- [ ] INDEX.md: Shipped section lists all 29; duplicate khal bullet gone; update-handoff entry corrected; stable-release facts per DESIGN Risk 5
-- [ ] `roadmap.json` committed; diff vs execution-start baseline (`boards: []`, 33 boardless rows, 0 cards) shows board + 19 cards; the 29 HISTORICAL boardless rows (pre-2026-07-28, excl. this wish's pointer + 3 group tasks, which legitimately transition during execution) unchanged in count/ids; `genie task sync` in-sync post-commit
-- [ ] `public-roadmap-polish` DRAFT exists with INDEX Raw entry and Idea card
+- [x] 29 audited-DONE wish dirs under `.genie/wishes/archive/`; `bun run check` green (wishes-lint scans the recursive tree, 0 broken links)
+- [x] Link sweep passes: every relative markdown link in moved files AND `.genie/INDEX.md` resolves; sweep output stored at `.genie/wishes/genie-official-roadmap/qa/link-sweep.txt`
+- [x] `genie task export` shows the `roadmap` board with exactly 19 cards, each non-null lane matching DESIGN's enumeration; `genie board --board roadmap` renders them
+- [x] Ritual-QA card in Review lane enumerates all 6 items (timeline comment)
+- [x] `genie doctor` reports zero index-lane `drift` entries; no lifecycle-section INDEX entry has `wishes/archive/…` as first link
+- [x] INDEX.md: Shipped section lists all 29; duplicate khal bullet gone; update-handoff entry corrected; stable-release facts per DESIGN Risk 5
+- [x] `roadmap.json` committed; diff vs execution-start baseline (`boards: []`, 33 boardless rows, 0 cards) shows board + 19 cards; the 29 HISTORICAL boardless rows (pre-2026-07-28, excl. this wish's pointer + 3 group tasks, which legitimately transition during execution) unchanged in count/ids; `genie task sync` in-sync post-commit
+- [x] `public-roadmap-polish` DRAFT exists with INDEX Raw entry and Idea card
+
+_Ticked 2026-08-25 by the orchestrator on gate output (execution record below): counts moved with reality — 36 archived (not 29), 78 tasks in the snapshot (59 historical + 19 cards; the 29 pre-2026-07-28 boardless rows unchanged), 62 links rewritten, sweep 0, doctor ok=18/drift 0, ritual card 8 items. Independent execution review still owed before SHIPPED._
 
 ## Execution Strategy
 
@@ -191,6 +193,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Loop 2 → SHIP (22:58:35Z):** gate executed on both branches — broken simulated post-move tree: `unresolved: 20` (exactly the specified inventory: 17+1+2), chain exit 1; rewritten tree: `unresolved: 0`, chain exit 0. `mkdir -p` in-chain; evidence file self-describing. All prior verifications re-confirmed (8/8 DESIGN criteria carried, LOW-A/LOW-B honored, `task block` executable on the ready pointer, wishes-lint OK). Informational, no action: the `#`-fragment `.split` is inert under the current regex; corpus has zero fragment links.
 
 **Execution amendment (orchestrator, post-approval):** plan approval landed before execution, so this wish's OWN card seeds in the **Wish** lane (not Brainstorm) and its INDEX entry sits in **Poured** (skill rule: plan SHIP → Poured; Poured↔Wish joins `ok`). The `ok>=18` threshold is unaffected. All other enumeration placements unchanged.
+
+### Execution record — 2026-08-24/25 (orchestrator: Fable 5, branch `v6/corpo-leve`)
+
+- **Re-baseline before G1:** jar had grown 36 → 44 wishes since the 2026-07-28 audit. The 8 newcomers were execution-verified (merged PR via `gh pr view`, board group tasks done, WISH review ledgers): 7 are DONE and join the archive set (lifecycle-lease-busy-grace #2745, roadmap-truth #2751, harness-audit-landing #2752, remotty-board-asks #2755, cross-agent-delegate #2766, mcp-write-tools #2773, proportional-validation-policy `78a22a325`); delegate-bridge stays (A done, S–F re-scoped #2774). Five of the seven carried stale headers (APPROVED/IN_PROGRESS) — flipped to SHIPPED with the PR cited. genie-ui-dash + live-dev-loop deliberately NOT archived (all groups executed on the fork, Felipe live QA still pending → not durably SHIPPED).
+- **Board reconstruction (pre-G2):** local genie.db was a strict subset of `roadmap.json` (35 vs 59 tasks, 0 db-only rows, 0 status diffs) with three-way sync diverged → `genie task import --replace` (lossless), sync in-sync.
+- **G1 — done.** 36 dirs `git mv`'d to `wishes/archive/`; a move-aware resolver rewrote 62 relative links (INDEX 37, archived wishes 22, brainstorms 3 — superset of the design's 20-link inventory because the archive set grew); sweep `unresolved: 0` recorded at `qa/link-sweep.txt`; `wishes:lint` OK. Task `t_ms58y58z0b45759f` done.
+- **G2 — done.** Board `roadmap` (`b_mt8mqovo4a7bac13`, 6 lanes) seeded with exactly 19 cards per D7 with two substitutions forced by reality: proportional-validation-policy and cross-agent-delegate shipped (archived) → replaced by delegate-bridge and genie-v6-corpo-leve. Ritual card `t_mt8mqq1h0f973d55` carries an 8-item comment (the design's 6 + proportional-validation QA rows + roadmap-truth live oracles). Boardless pointer `t_ms58w0yqa195fbf8` blocked as "superseded by roadmap-board card". **Lane amendment:** roadmap-truth (shipped 2026-08-06, after this plan) re-lanes cards from WISH status on `--json` reads; triggered once so the snapshot carries the durable lanes — v4-home-residue-doctor + release-ops-hardening (DRAFT) land in Idea, delegate-bridge (APPROVED) in Wish, genie-ui-dash + live-dev-loop (IN_PROGRESS) in Work. The design's hand-placed Work/Review lanes for those are superseded; the D4 priority order is stated in INDEX prose instead. Task `t_ms58y5bc8853df95` done.
+- **G3 — in flight.** INDEX rewritten: lanes-follow-truth preamble, release facts pinned (first stable v5.260727.5; current stable v5.260816.2, 2026-08-17), lifecycle sections mirror the reconciled lanes, duplicate khal-native-theme bullet removed, Shipped section = 36 wishes; `public-roadmap-polish` DRAFT + Raw entry + Idea card. Gates recorded below.
 
 ---
 

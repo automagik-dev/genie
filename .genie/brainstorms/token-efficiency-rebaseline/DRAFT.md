@@ -62,7 +62,7 @@ promotion v5.260711.6 done.
    `agent(prompt, {model, effort})` pins model+effort per call deterministically, bypassing subagent-type
    delivery entirely. The 07-09 DESIGN scoped "workflow-tool migration of /work wave dispatch" OUT as a
    later experiment; that OUT is flipped by the hybrid ruling (lane 2).
-4. **LangWatch day-2 evidence** (full: [qa/routing-pin-qa-20260711.md](../../wishes/routing-matrix/qa/routing-pin-qa-20260711.md)):
+4. **LangWatch day-2 evidence** (full: [qa/routing-pin-qa-20260711.md](../../wishes/archive/routing-matrix/qa/routing-pin-qa-20260711.md)):
    - $/day: 07-08 $3,447 · 07-09 $658 · 07-10 $2,499 · 07-11 ~$1,694/day run-rate (cooling).
    - First pro-design movement: Opus token share 33→41.7%, touch 28.6→59.7%; Haiku touch 6.4→19.4%;
      first-ever low/medium-effort traces (1+2). BUT Fable token share 51.7% / touch 98.5% — nowhere near
