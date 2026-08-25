@@ -3,10 +3,10 @@
 | Campo | Valor |
 |-------|-------|
 | **Slug** | `genie-v6-corpo-leve` |
-| **Rev.** | **3.1** (2026-08-25) — rev. 3 reescrita sobre a rev. 2 após council de 2 rodadas × 5 lentes; **.1 = loop de correção** dos 4 critical / 7 major / 3 minor da design review da rev. 3 |
+| **Rev.** | **3.2** (2026-08-25) — rev. 3 reescrita sobre a rev. 2 após council de 2 rodadas × 5 lentes; **.1** = loop de correção dos 14 achados da review da rev. 3; **.2** = loop de correção dos 6 major + 7 minor que a re-review encontrou na 3.1 |
 | **WRS** | 100/100 |
 | **Council** | [COUNCIL.md](COUNCIL.md) · dossiê em [council/](council/) |
-| **Design review** | rev. 2: FIX-FIRST 2× (digest `581a20fa…`). Rev. 3: **FIX-FIRST** (digest `c4fd4cbf…`) — [relatório](reviews/design-review-rev3-20260825.md), 14 achados, todos endereçados nesta rev. 3.1. **Rev. 3.1 aguarda re-review.** |
+| **Design review** | rev. 2: FIX-FIRST 2× (`581a20fa…`). Rev. 3: **FIX-FIRST** (`c4fd4cbf…`) — [relatório](reviews/design-review-rev3-20260825.md), 14 achados. Rev. 3.1: **FIX-FIRST** (`213dc675…`) — 4 critical resolvidos, 6 major novos introduzidos pelo loop. **Rev. 3.2 aguarda re-review.** |
 
 ## Problema
 
@@ -46,9 +46,14 @@ Consequências que atravessam todo o resto deste documento:
 
 - O gate vive **dentro de `openDb()`** (`src/lib/v5/genie-db.ts:404`), antes do `openSqlite` — não em cada verbo. É o único ponto que cobre de uma vez os ~27 call-sites restantes (seis deles passam `path` explícito: `doctor.ts:287`, `context.ts:218`, `v5-board.ts:261`, `mcp-tools.ts:203,205,367`) e os git hooks. **O gate resolve o modo a partir do repo dono do `dbPath`**, nunca do `process.cwd()` — mesma âncora `git-common-dir` que resolveu o caminho do banco, e é a única forma de a asserção forte (`.genie/genie.db` **não existe**) ser verdadeira. `openDb` é `CREATE TABLE IF NOT EXISTS`: uma abertura acidental deixaria `count(*) FROM tasks = 0` e passaria em falso.
 - Em modo `orca` os verbos de board continuam **registrados** no commander e recusam com razão (exit **2**, código já usado como "operador precisa agir"). Não se desregistra o comando — "unknown command" esconde a causa.
-- **Verbo humano recusa alto; maquinário automático cala.** Os verbos de board saem com exit **2** e mensagem. `genie task sync` em modo orca **sai 0 sem fazer nada** — é chamado por git hook, e um exit ≠ 0 poluiria todo commit com ruído.
+- **Recusa é um erro tipado; quem traduz são três pontos nomeados.** `openDb()` recebe só `{path, cwd}` (`src/lib/v5/genie-db.ts:404`) — não sabe qual verbo o chamou, logo **não** escolhe exit code. Ele lança `ModeRefusalError`. A tradução acontece em exatamente três lugares, e nenhum outro:
+  1. **`preAction` novo** (não-isento): recusa os verbos de `ORCA_FORBIDDEN` antes do handler → exit **2** com mensagem. Este é o caminho normal.
+  2. **`genie task sync`** (`src/term-commands/v5-task.ts`, handler de `sync`): captura `ModeRefusalError` e **sai 0, silencioso** — é chamado por git hook, e exit ≠ 0 poluiria todo commit.
+  3. **`openWishDb`** (`src/term-commands/context.ts:213-224`): hoje converte **qualquer** throw em `failClosed('unreadable-db')`; passa a **re-lançar** `ModeRefusalError` sem mascarar.
+- **`ORCA_FORBIDDEN` é uma lista fechada:** `task` (todos os subverbos **exceto** `sync`), `board`, `idea`. Nada mais.
+- **`genie context --wish` não recusa em orca — ele degrada.** Em modo orca o verbo implica `--plan`: devolve o mesmo payload, estritamente read-only, sem abrir o banco para escrita. Recusar seria pior, porque a Decisão 6 depende exatamente desse verbo para computar a base da wave.
 - **`.husky/pre-commit` é item de trabalho, não é inerte.** A rev. 3 inicial afirmou que todos os `.husky/*` já eram guardados por `-f src/genie.ts` **e** `-f .genie/roadmap.json` — **falso e verificado**: `post-merge`, `post-rewrite` e `post-checkout` têm as duas guardas, mas `pre-commit:23` tem só `[ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ]` e roda `task sync` em **todo** commit. Com o no-op de saída 0 acima, ele passa a ser silenciosamente inofensivo em orca; sem ele, imprimiria `warn: board snapshot not refreshed` a cada commit.
-- **`genie mcp` sai inteiro** (Felipe, 2026-08-25: "só tava testando") — `src/lib/v5/{mcp-server,mcp-tools}.ts`, o verbo `mcp`, e **as duas rotas** que `genie init` escreve hoje: a entrada `genie` em `.mcp.json` **e** a rota marker-owned em `.codex/config.toml` (`src/term-commands/init.ts:207` → `registerMcpConfigs(root, { codexEntry: genieFacadeMcpEntry(), forceCodexFallback: true })` → `src/lib/codex-project-mcp.ts`). Saem junto os checks de rota MCP do doctor (`src/genie-commands/doctor.ts:67,77,455-672`, incluindo `hasDuplicateMcpGenieKeys`) — senão, entre a deleção do verbo e a deleção da máquina Codex, o `init` reconcilia uma rota para um verbo inexistente e o `doctor` a audita. Fecha por deleção o buraco das 17 tools `genie_*` e remove 3 call-sites de `openDb`.
+- **`genie mcp` sai inteiro** (Felipe, 2026-08-25: "só tava testando") — `src/lib/v5/{mcp-server,mcp-tools}.ts`, o verbo `mcp`, e **as duas rotas** que `genie init` escreve hoje: a entrada `genie` em `.mcp.json` **e** a rota marker-owned em `.codex/config.toml` (`src/term-commands/init.ts:207` → `registerMcpConfigs(root, { codexEntry: genieFacadeMcpEntry(), forceCodexFallback: true })` → `src/lib/codex-project-mcp.ts`). Sai junto o check de rota de projeto do doctor — `codexProjectRouteCheck` (`src/genie-commands/doctor.ts:507-564`) e o import de `codex-project-mcp` em `:67`. **Não** `hasDuplicateMcpGenieKeys` (`:77`, usado em `:1607` dentro de `checkHermesMcp`): esse é o check do `~/.hermes/config.yaml` do agent-sync e sai com a máquina Hermes, não com o MCP — senão, entre a deleção do verbo e a deleção da máquina Codex, o `init` reconcilia uma rota para um verbo inexistente e o `doctor` a audita. Fecha por deleção o buraco das 17 tools `genie_*` e remove 3 call-sites de `openDb`.
 - **Onde fica a borda.** A rev. 3 inicial dizia que "a borda já existe" no `program.hook('preAction')` de `installWorkspaceCheck` — **falso e verificado**: `WORKSPACE_EXEMPT` (`src/lib/interactivity.ts:45-92`) isenta `task`, `board`, `context`, `idea`, `init`, `doctor` e `install`, exatamente os verbos que o modo precisa gatear, e `commandRequiresWorkspace` (`:110`) retorna antes de qualquer coisa. A borda mecânica do modo é **o próprio `openDb()`** (estado) mais um `preAction` **novo e não-isento** cuja única função é transformar a recusa numa mensagem legível para os verbos de `ORCA_FORBIDDEN`. Duas camadas, uma verdade: as duas chamam o mesmo resolvedor.
 - **Sem capability/ports injetados.** O resolvedor é uma função pura (`resolveExecutionMode(repoRoot)`, ~30 LOC). Threadar um port por ~14k LOC de `src/lib/v5` para gatear o que o modo já decide não-invocando é a alternativa "adapter de executor" que este design rejeita por ficar vazia.
 
@@ -61,7 +66,9 @@ Consequências que atravessam todo o resto deste documento:
 
 O Genie continua *computando* a base — é o compilador; ele só não a persiste em banco.
 
-**O pino precisa de enforcement, não de disciplina.** Sem banco, `resolveWishBase` (`context.ts:271-308`) **recomputa** a base a cada chamada, a partir de um branch de integração que se move: o valor só fica pinado quando alguém o escreve na WISH.md. Por isso `validate-wish --mode orca` **reprova** (não avisa) uma wish orca cuja célula `Base` não traga branch + SHA de 40 hex. Sem essa regra, a mitigação do Risco 1 seria só uma boa intenção.
+**O pino precisa de enforcement, não de disciplina.** Sem banco, `resolveWishBase` (`context.ts:271-308`) **recomputa** a base a cada chamada, a partir de um branch de integração que se move: o valor só fica pinado quando alguém o escreve na WISH.md. Por isso `validate-wish --mode orca` **reprova** (não avisa) uma wish orca cuja célula `Base` não traga branch + SHA de 40 hex.
+
+**Isso é máquina nova e está orçada como tal.** O validador de hoje (`plugins/genie/scripts/src/validate-wish.ts:256`, `validateWish(content)`) é **puramente estrutural**: `parseWishTemplateContract` (`:77-128`) deriva da fixture apenas `sections`, `subsections`, `groupHeadingPattern`, `checkboxPattern`, `titlePattern` — e o comentário `:74-76` declara que "tudo que o validador exige vem daqui". Uma segunda fixture (Decisão 20) acrescenta **cabeçalhos**, e cabeçalho não exprime "célula `Base` com SHA de 40 hex", "Run/Task não vazios", "ids do Dispatch plan casando com o header" nem o enum de `Tracker` (`scripts/wishes-lint.ts` não conhece `Tracker` hoje: zero ocorrências). Portanto o validador ganha, além do parâmetro `--mode`, um **conjunto de regras de conteúdo** que só rodam em `--mode orca` — quatro regras, todas sobre células de tabela do header e do Dispatch plan. É o maior módulo novo desta rev.; o Simplicity Case o declara e o **PR 3** o carrega junto da realocação para `scripts/`.
 
 **4. Fronteira Genie ↔ Orca**
 
@@ -75,7 +82,7 @@ O Genie continua *computando* a base — é o compilador; ele só não a persist
 
 - Três skills publicadas e autônomas: `skills/genie-orca-{wish,work,review}` (flat; a árvore aninhada `skills/genie-orca/` some, junto com `skills/genie-orca/scripts/retro-collect.ts`). **Retro não é uma quarta skill:** é `genie-orca-review` operando em modo retro, lendo receipts do Orca e `.jsonl` de sessão — a Decisão 18 herdada se refere a isso.
 - `wish`, `work` e `review` (bases) abrem com **uma** guarda de uma linha: se `mode=orca`, invoque a skill orca correspondente. Uma condicional por arquivo, grep-ável e testável — **nunca** seções gated por modo no meio do texto (condicional em prosa que nenhum teste consegue afirmar).
-- O router `genie` perde a tabela "Operational Command Mapping" (`skills/genie/SKILL.md:74-93`, 13 menções de board) e passa a delegar por modo; State Detection: `APPROVED → genie-orca-work` em modo orca.
+- O router `genie` perde a tabela "Operational Command Mapping" (`skills/genie/SKILL.md:68-92`; "board" aparece 6× na tabela e 8× no arquivo) e passa a delegar por modo; State Detection: `APPROVED → genie-orca-work` em modo orca.
 - `brainstorm` fica inalterado exceto o ponteiro de board no crystallize — `.genie/INDEX.md` é o ponteiro.
 - Três lints mecânicos: (i) nenhuma fence de `skills/genie-orca-*` invoca `genie task|genie board|genie idea` (`scripts/skills-lint.ts:114-125` já extrai fences e invocações); (ii) a primeira instrução de cada skill orca nomeia a base que ela substitui; (iii) paridade byte-a-byte entre `skills/` no repo e o que é publicado.
 - **Por que lint e não confiança:** as cópias instaladas hoje em `~/.claude/skills/genie-orca-*` **já divergiram** do repo (69 / 105 / 29 linhas de diff em wish/work/review, em dois dias), e o "overlay" instalado é uma **cópia da base inteira** (`references/base-wish/SKILL.md` = 113 linhas byte-idênticas a `skills/wish/SKILL.md`). O fork já aconteceu uma vez sem ninguém notar.
@@ -95,7 +102,7 @@ O Genie continua *computando* a base — é o compilador; ele só não a persist
 
 **7. Hooks**
 
-- `genie init --claude-hooks` escreve as entradas em `.claude/settings.json`. Isto é **código novo**, não realocação: hoje `genie hook` só tem `dispatch` e `claude-settings.ts` apenas limpa legado.
+- `genie init --claude-hooks` escreve as entradas em `.claude/settings.json`. Isto é **código novo**, não realocação: hoje `genie hook` só tem `dispatch` e `claude-settings.ts` apenas limpa legado. **Isso não viola o congelamento do classic** (D1): sem o writer, o classic *perde* os guards junto com o plugin — o writer restaura capacidade existente, e um modo congelado é mantido, não degradado. Pela mesma régua, a saída de `identity-inject` e `freshness` é consequência da remoção do plugin (eles alimentam board/sessão que somem), não uma mudança de comportamento decidida para o classic.
 - Modo **orca: só `branch-guard`.** `git-freeze-guard` discrimina por `agent_id`/`agent_type` da mesma sessão CC e é fail-open quando nulo (`src/hooks/handlers/git-freeze-guard.ts:11-28`); o worker do Orca é processo separado em worktree filha, então lá ele libera sempre — enforcement fantasma. `branch-guard` casa por padrão de comando, é sessão-agnóstico, e é a única execução mecânica do §19 (main é humano) que sobrevive.
 - Modo **classic (congelado): `git-freeze-guard` e `audit-context` seguem** como estão.
 - `identity-inject`, `freshness` e `omni-approval` saem. O envelope fail-closed e a exceção do `AskUserQuestion` (`src/hooks/index.ts`) ficam idênticos nos dois modos.
@@ -138,7 +145,7 @@ Alternativas descartadas:
 ## Simplicity Case
 
 - **Estado durável novo:** um arquivo de 6 bytes, `.genie/mode`, commitado. O item 6 do simplicity gate exige requisito **medido** para durable state nova, e ele existe: sem um marcador commitado, um `git clone` de repo orca chega sem modo, a precedência cai para o global e o board escreve — o modo do repo não pode viver em estado machine-local. Nenhum banco, nenhum schema, nenhum caminho de recuperação. A provenance é texto no documento que já é commitado.
-- **Máquina nova:** um resolvedor de modo puro (~30 LOC), um gate em `openDb()`, um writer de hooks, e três lints de skill. Nada mais.
+- **Máquina nova, inteira:** um resolvedor de modo puro (~30 LOC); um gate em `openDb()` que lança `ModeRefusalError`; três traduções desse erro (preAction, `task sync`, `openWishDb`); um writer de hooks; três lints de skill; e — o maior item — **quatro regras de conteúdo no `validate-wish --mode orca`** (célula `Base` com SHA de 40 hex, Run/Task não vazios, ids do Dispatch plan casando com o header, enum de `Tracker`), que a fixture por modo não consegue exprimir porque o contrato de hoje é só estrutural. Nada além disso.
 - **Complexidade removida:** `genie mcp` inteiro (servidor + 17 tools); `plugins/` inteiro e a máquina de delivery assinada (~50k LOC src + ~30k test); Omni (segundo banco global + NATS + daemon); UI e `hire_roster`; o board do caminho feliz; a ambiguidade de seleção de skill; o script `retro-collect.ts`.
 - **Adiado até medir:** capability/ports; skills.sh como gate de CI (só depois do smoke de paridade existir); 3ª família de review sempre ligada; notificador de gate.
 
@@ -160,12 +167,12 @@ Alternativas descartadas:
 | 10 | Omni deletado inteiro | Sem produtor após o plugin; default off; maior durable state órfã do repo |
 | 11 | **`genie mcp` deletado inteiro**, nos dois modos, junto com as duas rotas (`.mcp.json` + `.codex/config.toml`) e os checks de rota do doctor | Era exploratório e nunca teve consumidor fora de teste; deletar fecha o furo das 17 write tools sem precisar de gate |
 | 12 | Dispatch plan validado como argv: enums fechados, `worktree` por regex, `validation_cmd` sem metacaracteres | As células viram argv de `worker-start`; WISH.md é prosa editável por PR |
+| 13* | `validate-wish --mode orca` **reprova** wish sem célula `Base (branch @ sha)` com SHA de 40 hex, e valida o enum de `Tracker` — regras de **conteúdo**, não de estrutura | Sem banco a base é recomputada a cada chamada; o pino só existe se for verificado (nasceu do achado M10 da design review) |
 
 ### Herdadas da rev. 2 (inalteradas)
 
 | # | Decisão |
 |---|---|
-| 12b | `validate-wish --mode orca` também **reprova** wish sem célula `Base (branch @ sha)` com SHA de 40 hex | Sem banco a base é recomputada a cada chamada; o pino só existe se for verificado |
 | 13 | Tracker por cadeia: Linear → GitHub issue → WISH.md (Status log), escolhida pelo header `Tracker` |
 | 14 | Dois gates humanos: `wish-approval` e `merge`; `[dogfood]` só quando a wish declara |
 | 15 | Review: por grupo 1 reviewer de família ≠ engenheiro; nos gates 2 famílias; 3ª opt-in por wish |
@@ -173,7 +180,7 @@ Alternativas descartadas:
 | 17 | Nunca `haiku`/`sonnet` em coluna `model` ou exemplo de dispatch; carga pesada em `codex gpt-5.6-terra --effort xhigh`; coordenador em Fable |
 | 18 | Retro é `genie-orca-review` em modo retro (não é skill própria, não é script); a lacuna do join sessão↔dispatch é declarada no RETRO.md |
 | 19 | Coordenador é o único escritor no tracker, e só em transições |
-| 20 | Validador com fixture por modo (`wish-template.orca.md`, `--mode orca`); classic ignora `## Dispatch plan` |
+| 20 | Validador com fixture por modo (`wish-template.orca.md`, `--mode orca`) para a **estrutura**; classic ignora `## Dispatch plan`. As regras de **conteúdo** (12b e o enum de `Tracker`) não cabem em fixture e são código no validador, ativado por `--mode orca` |
 | 21 | Wish v5 entra em orca só por emenda explícita com Dispatch plan |
 | 22 | Dispatch plan é a fonte; Run/Task do Orca é cache reconstruível |
 
@@ -194,13 +201,13 @@ Alternativas descartadas:
 
 ## Critérios de Sucesso
 
-Os sete critérios da fronteira, na forma que o council verificou ser provável:
+Os oito critérios da fronteira — os sete da Sofia mais o (h), que a design review da rev. 3 exigiu — na forma que o council e a review verificaram ser provável:
 
-- [ ] **(a) Sem corpo em modo orca.** Após `brainstorm → wish → work` num repo orca — incluindo **um commit real**, para exercitar os git hooks — `.genie/genie.db` **não existe**, `.genie/roadmap.json` não existe, e `git status --porcelain` está vazio. Em repo v5 pré-existente convertido: `sha256(genie.db)` e `count(*) FROM tasks` idênticos antes e depois. A base da wave é resolvida por `genie context --wish --plan`, que **não escreve nada**, e persistida como texto na WISH.md — não há escrita a permitir. O único arquivo que o scaffold orca acrescenta é `.genie/mode`, e ele é commitado no próprio scaffold.
+- [ ] **(a) Sem corpo em modo orca.** Após `brainstorm → wish → work` num repo orca — incluindo **um commit real**, para exercitar os git hooks — `.genie/genie.db` **não existe**, `.genie/roadmap.json` não existe, e `git status --porcelain` está vazio. Em repo v5 pré-existente convertido: `sha256(genie.db)` e `count(*) FROM tasks` idênticos antes e depois. A base da wave é resolvida por `genie context --wish --plan`, que **não escreve nada**, e persistida como texto na WISH.md — não há escrita a permitir. **A asserção de `git status` é medida depois do commit do scaffold, não logo após o `init`:** `genie init` escreve `.genie/INDEX.md`, muta `.gitignore` e agora grava `.genie/mode` (`src/term-commands/init.ts:65,82,107`) e **não commita nada** — não há `git commit` em `init.ts`. O que o critério prova é que, com o scaffold já commitado, o ciclo brainstorm→wish→work→commit **não faz nascer nenhum arquivo novo** além dos documentos que a wish deliberadamente cria.
 - [ ] **(b) Provenance.** `validate-wish --mode orca` exige header `Orchestration` com Run/Task não vazios, célula `Base (branch @ sha)` com SHA de 40 hex, e `## Dispatch plan` cujos `id` casam com o header; o bloco de provenance na WISH.md carrega os sete campos, com a faixa de SHA verificada pelo coordenador via `git log`. A prova de execução viva no Orca é **evidência de aceite manual**, não gate de CI — não há binário `orca` no runner.
-- [ ] **(c) Clássico intocado, com duas exceções nomeadas.** Golden de `genie --help` idêntico **exceto as linhas `mcp` e `omni`** (ambos deletados por decisão explícita); `genie task --help`, `genie board --json` e o schema de `task export` byte-idênticos; `tests/e2e/v5-lifecycle.sh` verde, com o **único** diff sendo a remoção do bloco zero-omni (`:368-427`) e da asserção `help-lists-omni-task-board` (`:400-404`, que hoje exige que `--help` liste `omni`); sem env e sem `.genie/mode`, `resolveExecutionMode()` retorna `classic`.
+- [ ] **(c) Clássico intocado, com duas exceções nomeadas.** Golden de `genie --help` idêntico **exceto as linhas `mcp` e `omni`** (ambos deletados por decisão explícita); `genie task --help`, `genie board --json` e o schema de `task export` byte-idênticos; `tests/e2e/v5-lifecycle.sh` verde, com o **único** diff sendo a remoção do bloco 9b inteiro (`:367-442` — inclusive `nats-connection-count-zero-on-load` e `nats-import-is-dynamic-only`, `:425-442`, que leem `src/lib/omni-runner.ts` e morreriam com `omni-runner source not found` assim que o PR 5 deletar o arquivo) e da asserção `help-lists-omni-task-board` (`:400-404`, que hoje exige que `--help` liste `omni`); sem env e sem `.genie/mode`, `resolveExecutionMode()` retorna `classic`.
 - [ ] **(d) Rótulo honesto.** "Rotulado como Orca" = header `Orchestration` presente; spawn genérico não recebe o rótulo nem passa pelo gate. Valor de modo desconhecido: exit ≠ 0 e nenhuma substring do valor bruto em stdout/stderr.
-- [ ] **(e) Nada a reconciliar.** Teste arquitetural: **nenhum consumidor de `openDb` ramifica por modo** — a interseção entre "importa `v5/genie-db`" e "menciona `orca`" contém exatamente dois módulos, o que hospeda o gate (`src/lib/v5/genie-db.ts`) e o resolvedor; qualquer terceiro reprova. (A rev. 3 inicial pedia interseção vazia, o que a própria Decisão 3 falsifica.) E, em vez de afirmar a ausência de uma feature que nunca existiu — nada em `src/`/`scripts/` instala git hook —, a asserção é sobre o que existe: num repo orca, um **commit real** não deixa `roadmap.json` nascer, e o `.husky/pre-commit` sai 0 e silencioso.
+- [ ] **(e) Nada a reconciliar.** O modo é lido em **exatamente quatro** pontos, todos nomeados neste design: o resolvedor (`resolveExecutionMode`), o gate (`src/lib/v5/genie-db.ts`), o `preAction` de tradução, e o handler de `task sync`. O teste arquitetural é sobre o **importador do resolvedor**: qualquer quinto módulo que o importe reprova o lint. (Contar módulos que importam `v5/genie-db` não serve — a rev. 3 pedia interseção vazia, o que o próprio gate falsifica, e "exatamente dois" quebra assim que `v5-task.ts` traduz a recusa do `sync`.) E, em vez de afirmar a ausência de uma feature que nunca existiu — nada em `src/`/`scripts/` instala git hook —, a asserção é sobre o que existe: num repo orca, um **commit real** não deixa `roadmap.json` nascer, e o `.husky/pre-commit` sai 0 e silencioso.
 - [ ] **(f) Rollback do modo.** Flipar orca→classic devolve `genie task create` funcionando; **remover** a chave volta ao global com `git status` limpo (prova de que não há estado a limpar); `GENIE_MODE=classic` vence um repo marcado orca. Rollback é de **modo**, não de wish: uma wish emendada não reconstrói board.
 - [ ] **(h) Clone herda o modo.** `git clone` de um repo orca, sem nenhuma configuração local, e `genie task create` recusa com exit 2 — prova de que `.genie/mode` é commitado e de que a resolução não depende de estado de máquina.
 - [ ] **(g) `Tracker: none`.** `wishes-lint` valida o campo `Tracker` com enum `linear:<ids> | #<N> | none`; fixture com `Tracker: none` passa em `--mode orca`; WISH.md + `.genie/INDEX.md` são a identidade humana.
@@ -222,15 +229,15 @@ Ordem revisada pelo council — o modo sobe para o começo, para que toda deleç
 | 0 | Fixtures de paridade | Goldens do classic + `tests/e2e/orca-mode-lifecycle.sh` (espelho negativo, com commit real). Nada é deletado |
 | 1 | **Modo** | `.genie/mode` (commitado), resolvedor puro ancorado no `git-common-dir`, gate em `openDb()` + `preAction` novo, `task sync` saindo 0, **`.husky/pre-commit`**, `context --wish --plan`, `init --mode` com prompt |
 | 2 | UI e MCP saem | `packages/genie-ui`, `ui-bridge`, `bridge-watcher`, `hire_roster` (migração), `mcp-server`/`mcp-tools` + verbo `mcp` + rota em `.mcp.json` **e** em `.codex/config.toml` (`codex-project-mcp.ts`) + os checks de rota MCP do `doctor`, docs |
-| 3 | Realocação | `validate-wish` → `scripts/`, `session-context` → CLI, `references/*` → skills, `agents/*` → `templates/`, promoção das skills orca |
+| 3 | Realocação **+ validador** | `validate-wish` → `scripts/` **e** suas quatro regras de conteúdo `--mode orca` (Decisão 13*); `session-context` → CLI; `references/*` → skills; `agents/*` → `templates/`; promoção das skills orca |
 | 4 | CI/release | `ci.yml`, `release-publish.yml` (`publish.if`), `version.yml`, `build-tarballs.yml`, `build-binary.sh` — com o plugin ainda presente e uma tag de dry-run |
-| 5 | Omni sai | lib, fila, banco global, handler, verbo, skill, dep — **mais** os três checks omni de `src/genie-commands/doctor.ts:886-1045` e o import em `:79`, senão o typecheck quebra antes do rescope do doctor (PR 7) |
+| 5 | Omni sai | lib, fila, banco global, handler, verbo, skill, dep — **mais** os três checks omni de `src/genie-commands/doctor.ts:886-1054` (usos em `:947,1044`) e o import em `:79`, senão o typecheck quebra antes do rescope do doctor (PR 7) |
 | 6 | Deprecação | Release que ainda embarca o plugin e ensina a remoção. Único passo irreversível; não deleta nada |
 | 7 | `plugins/` sai | + libs/comandos/testes/scripts mortos; rescope de `install/update/uninstall/doctor` |
 | 8 | Hooks + publicação | `genie init --claude-hooks` (conjunto por modo); skillset em skills.sh; docs |
 
 ## Próximo passo
 
-Review independente desta rev. 3. Depois de SHIP, persistir a evidência e verificar o digest antes de rodar `wish`.
+Re-review independente desta rev. 3.2. Depois de SHIP, persistir a evidência e verificar o digest antes de rodar `wish`.
 
-**Gates ainda pendentes:** design review da rev. 3 (não iniciada); a wish só pode ser vertida depois dela.
+**Histórico de review:** rev. 3 → FIX-FIRST (14 achados, [relatório](reviews/design-review-rev3-20260825.md)); rev. 3.1 → FIX-FIRST (4 critical resolvidos, 6 major novos introduzidos pelo próprio loop de correção). **Gate pendente:** re-review da rev. 3.2. A wish só pode ser vertida depois de um SHIP carimbado.
