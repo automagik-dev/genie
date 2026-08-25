@@ -76,7 +76,7 @@ O Genie continua *computando* a base — é o compilador; ele só não a persist
 - **Genie** é o compilador Git-native de intenção e gates: brainstorm, WRS, DESIGN, wish, acceptance criteria, review `SHIP|FIX-FIRST|BLOCKED`, `.genie/INDEX.md` e **evidência final**.
 - **Orca** é a fonte de verdade da **execução ativa**: Run, Task/DAG, Dispatch, worker, retries, perguntas/escalations, terminal/worktree, `worker_done`.
 - **Sem dual-write, sem adapter de sincronização, sem Genie Task ↔ Orca Task.** Em modo orca o Genie não tem task manager, logo não há nada a reconciliar.
-- **Provenance é append-only, unidirecional, e nunca relida.** O coordenador anexa um bloco delimitado à WISH.md a cada transição de gate — mesmo padrão que o repo já usa em `<!-- genie-design-review:start -->` + SHA-256 (`skills/*/references/design-review-evidence.mjs`) — com sete campos: data · grupo · `run_`/`task_`/`dispatch_` · agent+model+effort **efetivos do receipt** · faixa de SHA **verificada pelo coordenador com `git log`, não copiada da prosa do worker** · verdict + família do reviewer · comando de validação + linha de resumo citada.
+- **Provenance é append-only, unidirecional, e nunca relida.** O coordenador anexa um bloco delimitado à WISH.md a cada transição de gate — mesmo padrão que o repo já usa no bloco delimitado `genie-design-review` + SHA-256 (`skills/*/references/design-review-evidence.mjs`) — com sete campos: data · grupo · `run_`/`task_`/`dispatch_` · agent+model+effort **efetivos do receipt** · faixa de SHA **verificada pelo coordenador com `git log`, não copiada da prosa do worker** · verdict + família do reviewer · comando de validação + linha de resumo citada.
 - **Regra que impede virar sync:** nada que o Genie escreve pode ser relido pelo coordenador para decidir dispatch. A única exceção é o **Dispatch plan**, que é *upstream* do Orca (é a fonte da reconstrução), não espelho dele.
 
 **5. Skills**
@@ -243,3 +243,11 @@ Ordem revisada pelo council — o modo sobe para o começo, para que toda deleç
 Quarta review independente, desta rev. 3.3. Depois de SHIP, persistir a evidência e verificar o digest antes de rodar `wish`.
 
 **Histórico de review:** rev. 3 → FIX-FIRST (14 achados: 4 critical); rev. 3.1 → FIX-FIRST (critical resolvidos, mas o loop introduziu 6 major); rev. 3.2 → FIX-FIRST (0 critical, 3 major — dois deles a terceira recorrência do mesmo padrão: um critério falsificado pela própria decisão). Relatórios em [reviews/](reviews/). **Gate pendente:** a quarta review. A wish só pode ser vertida depois de um SHIP carimbado.
+<!-- genie-design-review:start -->
+## Design Review Evidence
+
+- **Verdict:** SHIP
+- **Reviewed content SHA-256:** `d91de43a1d03ba55f87652182b2a008ea42246eeae7c8e05aec9b35d2c4d2889`
+- **Reviewer:** reviewer-independente-4a-rodada (Claude Opus, read-only)
+- **Reviewed at:** 2026-08-25T22:33:36Z
+<!-- genie-design-review:end -->
