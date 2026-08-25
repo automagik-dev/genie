@@ -43,7 +43,9 @@ Give the separate-repo genie UI (the dash fork) a sanctioned channel into CLI-on
 ## Dependencies
 
 **depends-on:** none
-**blocks:** genie-ui-dash
+**blocks:** none
+
+_(Was `genie-ui-dash`; that ledger was deleted 2026-08-25 — genie has no UI surface.)_
 
 ## Success Criteria
 
