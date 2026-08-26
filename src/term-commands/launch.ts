@@ -514,7 +514,10 @@ function ensureWorktree(repoRoot: string, plan: LaunchGroupPlan, write: (line: s
     if (isRegisteredWorktree(repoRoot, plan.worktree)) return 'reused';
     throw new WorktreeCollisionError(plan.worktree);
   }
-  mkdirSync(dirname(plan.worktree), { recursive: true });
+  // The worktrees base defaults to `<GENIE_HOME>/worktrees`, so GENIE_HOME can
+  // be created here as an intermediate — 0o700 keeps it safe under a
+  // permissive umask.
+  mkdirSync(dirname(plan.worktree), { recursive: true, mode: 0o700 });
   const attaching = branchExists(repoRoot, plan.branch);
   if (attaching) {
     write(`  [attach] ${plan.branch} at ${shortSha(repoRoot, plan.branch)} (existing branch; not recreated from HEAD)`);
@@ -605,7 +608,7 @@ function materialize(plan: LaunchPlan, deps: LaunchDeps, write: (line: string) =
   write(`Launching wish "${plan.slug}" — ${plan.groups.length} group(s):`);
   for (const group of plan.groups) {
     const action = ensureWorktree(plan.repoRoot, group, write);
-    mkdirSync(dirname(group.promptPath), { recursive: true });
+    mkdirSync(dirname(group.promptPath), { recursive: true, mode: 0o700 });
     writeFileSync(group.promptPath, group.prompt, 'utf-8');
     // Register the `genie mcp` server (read + write tools) in this worktree so
     // the pane's agent (Warp/Claude Code) can query board + wish state and

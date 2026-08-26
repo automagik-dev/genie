@@ -1038,12 +1038,12 @@
       "wish": "delegate-bridge",
       "group_name": null,
       "created_at": 1786480620852,
-      "updated_at": 1786480645240,
+      "updated_at": 1786657262650,
       "lane": null,
       "agent_kind": null,
       "heartbeat_at": null,
-      "blocked_by": "cli",
-      "blocked_reason": "blocked on remotty headless-turn-open (cross-repo; design M2 mechanism)",
+      "blocked_by": "dream-scc-reversals",
+      "blocked_reason": "re-targeted by spawn-context-contract group reversals (2026-08-13): gating moves from headless-turn-open to herdr-swap (0.3) + engine-turn-verbs (remotty board card t_msqkkjt221792465); S-F turn transport re-bases from one-shot headless launches to live herdr sessions (agent start -> prompt --wait --until -> read -> report/release)",
       "block_kind": "work",
       "assigned_agent": null,
       "assigned_reason": null
@@ -1605,6 +1605,78 @@
       "author_kind": "human",
       "author": "cli",
       "created_at": 1786628093499
+    },
+    {
+      "id": 85,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "block",
+      "note": "re-targeted by spawn-context-contract group reversals (2026-08-13): gating moves from headless-turn-open to herdr-swap (0.3) + engine-turn-verbs (remotty board card t_msqkkjt221792465); S-F turn transport re-bases from one-shot headless launches to live herdr sessions (agent start -> prompt --wait --until -> read -> report/release)",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657262650
+    },
+    {
+      "id": 86,
+      "task_id": "t_msp4fp6ce714c8be",
+      "kind": "comment",
+      "note": "Board-edge re-target recorded (spawn-context-contract group reversals, 2026-08-13): the enforced block on this card was re-placed via task block, never unblocked, so the live gating now reads herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) instead of headless-turn-open. Groups S-F re-base their turn transport to live herdr sessions; group A (done, W1 scope) is unaffected.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272200
+    },
+    {
+      "id": 87,
+      "task_id": "t_msp6a1sz195f0ea9",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): the seam spike now proves the live-herdr turn seam (agent start / prompt --wait --until / read) instead of the one-shot headless-launch seam. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272357
+    },
+    {
+      "id": 88,
+      "task_id": "t_msp6a1vd3c103d09",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): adapter cards + brief writer target live herdr sessions (id-free continue form via herdr agent verbs) instead of turn-per-launch headless argv. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272489
+    },
+    {
+      "id": 89,
+      "task_id": "t_msp6a1xzca62d364",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): bridge core drives live herdr sessions per turn (agent prompt --wait --until + read hand-back) instead of one-shot headless turn launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272621
+    },
+    {
+      "id": 90,
+      "task_id": "t_msp6a20k0a1df8a8",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): degradation paths now cover herdr session failures and release (not detached-launch refusals). Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272747
+    },
+    {
+      "id": 91,
+      "task_id": "t_msp6a23b3c681369",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): task fan + ratification transport re-bases to live herdr sessions (per-turn prompt --wait --until / read) instead of one-shot headless launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657272871
+    },
+    {
+      "id": 92,
+      "task_id": "t_msp6a25sef5b7e40",
+      "kind": "comment",
+      "note": "Gating re-target recorded (spawn-context-contract group reversals, 2026-08-13): the adapter smoke matrix exercises live-herdr-session turns instead of one-shot headless launches. Gating: herdr-swap (0.3) + engine-turn-verbs (remotty card t_msqkkjt221792465) - formerly headless-turn-open.",
+      "author_kind": "prime-agent",
+      "author": "dream-scc-reversals",
+      "created_at": 1786657273022
     }
   ],
   "wish_groups": [],

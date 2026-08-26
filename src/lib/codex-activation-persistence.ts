@@ -108,7 +108,12 @@ export interface AtomicWriteOptions {
 export function atomicWriteFileSync(path: string, content: string, options: AtomicWriteOptions = {}): void {
   const mode = options.mode ?? 0o600;
   const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
+  // Every caller writes under GENIE_HOME — the activation store's paths derive
+  // from `resolveGenieHome()`, delivery evidence sits under
+  // `<GENIE_HOME>/<evidence>`, and the capability sidecar lands beside the
+  // prior binary in `<GENIE_HOME>/bin/.previous`. A direct mode is therefore
+  // correct here; no caller opt-in is needed.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (options.backup) backupExistingRegularFile(path);
   const staging = join(dir, `.${basenameOf(path)}.staging-${process.pid}-${uniqueSuffix()}`);
   const fd = openSync(staging, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, mode);

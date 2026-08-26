@@ -79,6 +79,10 @@ export function openGlobalDb(opts: OpenGlobalOptions = {}): Database {
     schemaVersion: GLOBAL_SCHEMA_VERSION,
     ensureSchema,
     schemaIsCurrent,
+    // This directory is GENIE_HOME, and every `genie omni` subcommand reaches
+    // it leaseless — so this open is a first-creator that must not leave group
+    // or other write bits behind for the install promoter to reject.
+    dirMode: 0o700,
   });
 }
 
