@@ -1215,6 +1215,36 @@ describe('roadmap.json canonical sync', () => {
     expect(settled.code).toBe(0);
   });
 
+  test('imported snapshots with reordered object keys remain in sync', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+
+    const published = await cli(repo, 'export', '--write');
+    expect(published.stderr).toBe('');
+    expect(published.code).toBe(0);
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as unknown;
+    const reorderKeys = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(reorderKeys);
+      if (value !== null && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .reverse()
+            .map(([key, child]) => [key, reorderKeys(child)]),
+        );
+      }
+      return value;
+    };
+    writeFileSync(snapshotPath, `${JSON.stringify(reorderKeys(snapshot), null, 2)}\n`);
+
+    const imported = await cli(repo, 'import', '--replace');
+    expect(imported.code).toBe(0);
+    const settled = await cli(repo, 'sync');
+    expect(settled.code).toBe(0);
+    expect(settled.stdout).toContain('in sync (none)');
+  });
+
   test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });

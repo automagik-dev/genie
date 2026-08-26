@@ -40,3 +40,7 @@ plus `Gates: wish-approval, [dogfood], merge` and the worker contract line (own 
 ## Gate
 
 `wish-approval` is a human gate: the human opens the reviewed wish and approves. Under `/goal`-style pre-approval, record that in the header (`Approval: … pre-approved <date>`) and proceed.
+
+## Model rule (Felipe, 2026-08-23)
+
+- **Never** dispatch `haiku` or `sonnet` — forbidden for workers, scouts, reviewers, fixers, and every `model` column of a Dispatch plan. Heavy lifting goes to **gpt terra**: `orca orchestration worker-start --agent codex --model gpt-5.6-terra --effort xhigh`. Coordinator stays on Fable. Independent reviewers use a different model family from the engineer (Fable ↔ gpt-5.6-terra).
