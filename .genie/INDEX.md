@@ -12,7 +12,6 @@
 
 ## Simmering
 
-
 - khal-app-kit-identity + genie-remote-ssh — **RELOCATED 2026-07-23** with the whole khal-native-desktop track to `khal-os/genie-desktop:.genie/` (branch `wish/khal-native-theme`; Felipe: desktop context lives in the desktop repo). Second and third of the Theme→Identity→SSH order, both WRS 60 simmering there
 - [genie-boards-ui](brainstorms/genie-boards-ui/DRAFT.md) — WRS 70; genie desktop boards module: ABSORB of the G4 kanban decided by Felipe; tab + split-toggle layout tentatively locked ("that looks good", confirm at crystallize); archive section + per-project .genie-commit checkboxes added to scope; roadmap shape (per-project board + groom-with-agent task) recommended, awaiting Felipe; depends on ui-bridge board-payload extension (protocol 1.1) + genie-ui-dash G5 (2026-07-21)
 - [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 92; Demand→Patch/Standard/Program router + circuit-breaker (flex cuts autonomous, payout cuts human-only); invisible routing compiled from intent — program-scale, splits at pour time
@@ -20,8 +19,6 @@
 - [cross-agent-delegate](brainstorms/cross-agent-delegate/DRAFT.md) — **re-scoped 2026-07-21:** Codex skill-distribution prerequisite solved by agent-sync (#2541); remaining live: delegate skill (Codex+Hermes), wish companion sessions, refine style cards, auto plan-gate counter-read (umbrella G6)
 
 ## Ready
-
-
 
 - [WISH: v4-home-residue-doctor](wishes/v4-home-residue-doctor/WISH.md) — **DRAFT** (2026-07-05, small appetite, never started; Felipe directive: "find and clean all stale genie v4 shit… genie doctor should do that"): v4 residue manifest + doctor check/fix + diagnostics age filter. Relevance raised 2026-07-26 by the backlog sweep: the only live-impact open product bug (#2450 — v4 pgserve PM2 entry crash-loops after upgrade) is v4 daemon/process residue that file-scoped `legacy-v4.ts` never touches; this wish is the natural vehicle (added to INDEX 2026-07-26 — entry was missing)
 - [WISH: release-ops-hardening](wishes/release-ops-hardening/WISH.md) — **DRAFT** (2026-07-26, small-medium appetite; needs Felipe approval + a plan gate before execution): enforce the outage-taught release rules mechanically — publish admit refuses re-dispatch of published versions (#2674), orphan-alert exempts pending stable candidates (structural false positive on every dev→main promotion, live example #2681), #2675 dead-default deletion + multi-attestation/CAS-loop test coverage + #2669 pin-checker quoting, and dogfood FIXTURE_N tracking real N. Sequenced after the first stable release
@@ -35,6 +32,7 @@
 
 ## Poured
 
+- [absorb-lirazsiri-prs — DESIGN](brainstorms/absorb-lirazsiri-prs/DESIGN.md) → [WISH](wishes/absorb-lirazsiri-prs/WISH.md) — **APPROVED 2026-08-07** (design SHIP after 1 fix loop, digest `9f06a8e0…`; plan SHIP after 1 fix loop, both HIGHs orchestrator-confirmed): close #2737 (db-sync, PR review BLOCKED — 2 CRITICAL/9 HIGH, conflicts with canonical roadmap.json/`task sync` channel) + #2738 (fix-loop budgets) with Felipe-approved credit notes; absorb A1 (resolved fix-loop budget re-authored, 6 files + mirrors), B1 (hireAgent race fix, main task-state.ts:1312), B2 (verify-only, already-fixed), B3 (umask test hardening, Co-authored-by). 4 groups: a1 ∥ b1 ∥ b2-b3 → close-notes (human-gated)
 - [WISH: genie-official-roadmap](wishes/genie-official-roadmap/WISH.md) — **APPROVED 2026-07-28** ([DESIGN](brainstorms/genie-official-roadmap/DESIGN.md) SHIP after 1 fix loop, digest `36097b0d…`; plan SHIP after 2 fix loops, all findings execution-verified by the reviewer): triage of all 36 wishes (3-scout evidence audit) into the official roadmap — archive 29 DONE-verified wishes with full link-rewrite inventory, cold-seed the `roadmap` board with 19 lifecycle cards (Work order: dogfood-remediation → v4-residue → release-ops → proportional-validation, Felipe-ratified), rewrite INDEX with a Shipped section, draft `public-roadmap-polish`. 3 groups: archive+links ∥ board-seed → INDEX rewrite; single commit in G3.
 
 - khal-native-theme — **APPROVED 2026-07-23, RELOCATED same day** to `khal-os/genie-desktop:.genie/` (branch `wish/khal-native-theme`, commit `484c243`; Felipe: desktop context lives in the desktop repo — the fork's own genie.db carries the 6 seeded group tasks and its WISH adds the live-visual-checkpoint protocol CP-1..6). Design SHIP digest `bdd54325…`, plan SHIP after 1 fix loop, 3-lens ledger verify 0 must-fix. This repo's 7 stale task rows are hard-blocked with a relocation reason. First of Theme→Identity→SSH
