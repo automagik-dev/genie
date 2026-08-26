@@ -4,6 +4,10 @@
     {
       "key": "stage_log_backfill_v1",
       "value": "1784758341375"
+    },
+    {
+      "key": "wish_base:demo",
+      "value": "{\"branch\":\"wish/demo\",\"base\":\"8077da74ed33ff954c0ca9434127f53750479b43\",\"recordedAt\":1786660506271}"
     }
   ],
   "boards": [],
@@ -1187,6 +1191,66 @@
       "block_kind": null,
       "assigned_agent": null,
       "assigned_reason": null
+    },
+    {
+      "id": "t_mst654bh5c21f31b",
+      "board_id": null,
+      "title": "PR 2796 review remediation: hook and security lane",
+      "status": "in_progress",
+      "claimed_by": "fix-pr2796-hooks",
+      "claimed_at": 1786725370116,
+      "wish": null,
+      "group_name": null,
+      "created_at": 1786725351197,
+      "updated_at": 1786725370116,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_mst665da415cf59a",
+      "board_id": null,
+      "title": "PR 2796 lane B: doctor/context CLI remediation",
+      "status": "in_progress",
+      "claimed_by": "fix-pr2796-state-cli",
+      "claimed_at": 1786725407977,
+      "wish": null,
+      "group_name": null,
+      "created_at": 1786725399214,
+      "updated_at": 1786725407977,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
+    },
+    {
+      "id": "t_mst66jso644a763f",
+      "board_id": null,
+      "title": "PR 2796 review remediation: MCP and release gates",
+      "status": "in_progress",
+      "claimed_by": "fix-pr2796-mcp-release",
+      "claimed_at": 1786725423158,
+      "wish": null,
+      "group_name": null,
+      "created_at": 1786725417913,
+      "updated_at": 1786725423158,
+      "lane": null,
+      "agent_kind": null,
+      "heartbeat_at": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "block_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null
     }
   ],
   "task_dependencies": [],
@@ -1677,6 +1741,33 @@
       "author_kind": "prime-agent",
       "author": "dream-scc-reversals",
       "created_at": 1786657273022
+    },
+    {
+      "id": 93,
+      "task_id": "t_mst654bh5c21f31b",
+      "kind": "claim",
+      "note": "claimed by fix-pr2796-hooks",
+      "author_kind": "codex",
+      "author": "cli",
+      "created_at": 1786725370117
+    },
+    {
+      "id": 94,
+      "task_id": "t_mst665da415cf59a",
+      "kind": "claim",
+      "note": "claimed by fix-pr2796-state-cli",
+      "author_kind": "codex",
+      "author": "cli",
+      "created_at": 1786725407977
+    },
+    {
+      "id": 95,
+      "task_id": "t_mst66jso644a763f",
+      "kind": "claim",
+      "note": "claimed by fix-pr2796-mcp-release",
+      "author_kind": "codex",
+      "author": "cli",
+      "created_at": 1786725423158
     }
   ],
   "wish_groups": [],
