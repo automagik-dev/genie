@@ -139,7 +139,7 @@ bun run skills:lint
 bun scripts/fresh-install-smoke.ts
 ```
 
-Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 22-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
+Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, role-agent staging, and the 22-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
 
 ## Claude Code and Hermes
 

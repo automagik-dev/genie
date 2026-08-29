@@ -1195,8 +1195,7 @@ async function observeMcp(
 ): Promise<NativeMcpEvidence> {
   if (dependencies.observeNativeMcp !== undefined) return dependencies.observeNativeMcp(input);
   if (evidenceKind === 'verified-local-fixture') return directMcpEvidence(input);
-  const native = await import('./codex-native-mcp-evidence.js');
-  return native.captureCodexNativeMcpEvidenceForDogfood(input);
+  throw new Error('native Genie MCP dogfood is retired; use standalone task/board evidence');
 }
 
 function observedRepo(

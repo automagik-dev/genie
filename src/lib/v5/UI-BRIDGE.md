@@ -1,21 +1,20 @@
 # genie ui-bridge — protocol contract
 
 The page the separate-repo genie UI (the dash fork) is built against. `genie
-ui-bridge` is a long-lived **stdio** MCP server the UI spawns and owns: reads
-reused from `genie mcp`, exactly two roster write tools, and change-push
+ui-bridge` is a long-lived **stdio** MCP server the UI spawns and owns: five
+read tools, exactly two roster write tools, and change-push
 notifications from an in-child watcher. Genie stays zero-daemon — the child lives
 and dies with the UI and **never opens a socket or port**.
 
-> Sibling, not a fork. `genie mcp` now serves the operative surface (5 read +
-> 12 write tools); the bridge's own write surface (roster) exists only here.
-> The two commands share one transport (`src/lib/v5/mcp-server.ts`).
+> This private UI transport is retained independently of the retired `genie
+> mcp` product integration. Its roster write surface exists only here.
 
 ## Versions
 
 | Name | Value | Meaning |
 |------|-------|---------|
 | **Bridge protocol version** | **`1.0`** | Versions the bridge CONTRACT: tool set, notification semantics, write surface. Reported by the handshake as `bridgeProtocolVersion`. |
-| MCP wire version | `2024-11-05` | The MCP transport version, reported as `protocolVersion`. Unchanged from `genie mcp`. |
+| MCP wire version | `2024-11-05` | The private bridge transport version reported as `protocolVersion`. |
 | Genie version | `<genie CLI version>` | Reported as `genieVersion` (and `serverInfo.version`). Independent release cadence. |
 
 The exact protocol version string the handshake reports is **`1.0`**.

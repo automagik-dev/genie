@@ -703,6 +703,14 @@ function fallbackBounds(raw: string, path: string): { start: number; end: number
     );
   }
   if (start < 0) return null;
+  if (
+    raw.indexOf(FALLBACK_BEGIN, start + FALLBACK_BEGIN.length) >= 0 ||
+    raw.indexOf(FALLBACK_END, endMarker + FALLBACK_END.length) >= 0
+  ) {
+    throw new Error(
+      `Cannot reconcile genie MCP server: ${path} has duplicate ${FALLBACK_BEGIN}/${FALLBACK_END} blocks. Repair or remove those marker blocks and retry.`,
+    );
+  }
   let end = endMarker + FALLBACK_END.length;
   // The generated block owns its line ending and one blank separator. Include
   // those bytes in the marker bounds so update/remove is byte-idempotent and

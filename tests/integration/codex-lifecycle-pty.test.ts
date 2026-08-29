@@ -42,7 +42,6 @@ const REPO_ROOT = join(import.meta.dir, '..', '..');
 const PRODUCTION_GENIE_CLI = join(REPO_ROOT, 'src', 'genie.ts');
 const LIFECYCLE_TEST_RUNNER = join(REPO_ROOT, 'tests', 'support', 'codex-lifecycle-test-runner.ts');
 const REAL_SESSION_CONTEXT = join(REPO_ROOT, 'plugins', 'genie', 'scripts', 'session-context.cjs');
-const REAL_MCP_LAUNCHER = join(REPO_ROOT, 'plugins', 'genie', 'scripts', 'mcp-launcher.cjs');
 const REAL_CODEX_AGENTS = join(REPO_ROOT, 'plugins', 'genie', 'codex-agents');
 const REAL_SKILLS = join(REPO_ROOT, 'plugins', 'genie', 'skills');
 const TARGET = '5.260722.1';
@@ -91,7 +90,6 @@ beforeAll(() => {
   mkdirSync(join(payload, 'scripts'), { recursive: true });
   mkdirSync(join(payload, 'hooks'), { recursive: true });
   cpSync(REAL_SESSION_CONTEXT, join(payload, 'scripts', 'session-context.cjs'));
-  cpSync(REAL_MCP_LAUNCHER, join(payload, 'scripts', 'mcp-launcher.cjs'));
   cpSync(REAL_CODEX_AGENTS, join(payload, 'codex-agents'), { recursive: true });
   cpSync(REAL_SKILLS, join(payload, 'skills'), { recursive: true });
   writeFileSync(join(payload, 'README.md'), 'genie codex payload\n');
