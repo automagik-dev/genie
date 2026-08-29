@@ -803,6 +803,52 @@ describe('Group E release and documentation contracts', () => {
     expect(doc).toContain('scripts/verify-codex-activation-payload.ts');
   });
 
+  test('dual-mode docs preserve the operator and public Orca contributor contracts', () => {
+    const operator = read('README.md');
+    const contributor = read('plugins/genie/references/orca-orchestration.md');
+    const pluginReadme = read('plugins/genie/README.md');
+
+    for (const topic of [
+      '`standalone` is the default',
+      'genie setup --orchestration-mode orca',
+      'genie setup --orchestration-mode standalone',
+      'orchestration.contract.v1',
+      'genie doctor',
+      'ambiguous_after_possible_commit',
+      'unsupported_environment',
+      'genie update --rollback',
+      'genie uninstall',
+      'A7',
+    ]) {
+      expect(operator).toContain(topic);
+    }
+    expect(operator).toContain('Genie does not open `.genie/genie.db`');
+    expect(operator).toContain('roadmap');
+    expect(operator).toContain('The legacy `genie mcp`');
+    expect(operator).toContain('until the later A7 PR');
+    expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
+
+    for (const topic of [
+      'orca orchestration',
+      '--json',
+      'shell: false',
+      'fixed by platform and managed-terminal state',
+      'No fallback',
+      'ambiguous_after_possible_commit',
+      'Verb amendment checklist',
+      'public read-back',
+      '`send`, `reply`, `ask`, and `check --ack`',
+    ]) {
+      expect(contributor).toContain(topic);
+    }
+    expect(contributor).not.toContain('ORCA_CLI_COMMAND');
+    for (const forbidden of ['terminal send', '--inject', 'internal RPC', 'private API']) {
+      expect(contributor).toContain(`Reject \`${forbidden}\``);
+    }
+    expect(pluginReadme).toContain('[Orca dual-mode operator and contributor contract]');
+    expect(pluginReadme).toContain('references/orca-orchestration.md');
+  });
+
   test('release build independently verifies each extracted activation payload', () => {
     const build = read('scripts/build-binary.sh');
     const extract = build.indexOf('tar -xzf "${TARBALL}"');
