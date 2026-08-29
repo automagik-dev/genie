@@ -59,6 +59,7 @@ import {
 } from '../lib/install-promotion.js';
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
+import { refreshOwnedOrcaPluginMetadata } from '../lib/orca-plugin-lifecycle.js';
 import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
@@ -3177,6 +3178,10 @@ async function runDelivery(
         cleanupStagingArtifacts(externalRoot, tarballPath);
       },
     });
+    // A4: refresh only an existing Genie ownership claim. The public A3
+    // compatibility probe must succeed before the marker advances; config and
+    // both authorities' lifecycle history remain untouched.
+    await refreshOwnedOrcaPluginMetadata();
     // The payload is now in GENIE_HOME; publish attested delivery facts (and the
     // rollback sidecar for a protocol-capable backup) under the held lease.
     const deliveryRoot = resolveCanonicalPayloadRoot();

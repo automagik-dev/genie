@@ -77,6 +77,7 @@ import {
 import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
 import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
   type CodexAgentDisplayState,
@@ -273,6 +274,10 @@ function checkGit(root: string | null): CheckResult[] {
 }
 
 function checkDatabase(root: string | null): CheckResult[] {
+  const lifecycle = inspectOrcaPluginLifecycle();
+  if (lifecycle.mode === 'orca') {
+    return [{ name: 'genie.db', status: 'pass', detail: 'not opened — Orca is the selected lifecycle authority' }];
+  }
   const dbPath = join(root ?? process.cwd(), '.genie', 'genie.db');
   if (!existsSync(dbPath)) {
     return [
@@ -2062,6 +2067,9 @@ function indexTargetExists(genieDir: string, relativePath: string): boolean {
  */
 export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
   const name = 'jar: index-lane drift';
+  if (inspectOrcaPluginLifecycle().mode === 'orca') {
+    return [{ name, status: 'pass', detail: 'not read — Orca is the selected lifecycle authority' }];
+  }
   const base = root ?? process.cwd();
   const indexPath = join(base, '.genie', 'INDEX.md');
   if (!existsSync(indexPath)) {
@@ -2137,6 +2145,51 @@ export interface DoctorDeps {
   projectContext?: ProjectContext | null;
   /** TEST-ONLY cryptographic seam for persisted delivery-evidence fixtures; no CLI/env path exposes it. */
   deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
+  /** A3 public compatibility probe seam for Orca-mode diagnostics. */
+  orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
+}
+
+export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
+  const state = inspectOrcaPluginLifecycle();
+  const payloadStatus =
+    state.payload === 'owned-clean' || (state.mode === 'standalone' && state.payload === 'unmanaged');
+  const results: CheckResult[] = [
+    {
+      name: 'orchestration authority',
+      status: state.mode === 'invalid' ? 'fail' : 'pass',
+      detail: `mode=${state.mode}; payload=${state.payload}; host_registration=${state.hostRegistration}`,
+      suggestion: state.recovery,
+    },
+  ];
+  if (state.mode !== 'orca') return results;
+  if (!payloadStatus) {
+    const authority = results[0];
+    if (authority !== undefined) results[0] = { ...authority, status: 'fail' };
+    return results;
+  }
+  if (!probeLiveRuntime && deps.orcaCompatibilityProbe === undefined) return results;
+  try {
+    const probe =
+      deps.orcaCompatibilityProbe ??
+      (async () => {
+        const { createOrcaPluginRuntime } = await import('../../plugins/genie/orca-runtime.js');
+        return createOrcaPluginRuntime().probe();
+      });
+    const compatibility = await probe();
+    results.push({
+      name: 'Orca compatibility',
+      status: 'pass',
+      detail: `runtime=${compatibility.runtimeVersion}; contract=${compatibility.contract}; runtime_id=${compatibility.runtimeId}`,
+    });
+  } catch (error) {
+    results.push({
+      name: 'Orca compatibility',
+      status: 'fail',
+      detail: error instanceof Error ? error.message : String(error),
+      suggestion: 'Use a supported Orca runtime, then retry `genie setup --orchestration-mode orca`.',
+    });
+  }
+  return results;
 }
 
 // ============================================================================
@@ -2267,6 +2320,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
       : (hostObservation?.probe ?? probeCodexGeniePlugin());
   const results: CheckResult[] = [
     ...checkGenieBinary(),
+    ...(await checkOrcaLifecycle(deps, !injectedRoot || deps.orcaCompatibilityProbe !== undefined)),
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
     ...checkSkills(root),
