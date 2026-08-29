@@ -61,7 +61,7 @@ verdict that was not persisted does not advance the lifecycle.
 | `trace` | Reproduce and isolate root cause without patching | Unknown issues needing investigation |
 | `docs` | Audit, generate, and validate documentation against code | Docs stale or missing |
 | `dream` | Batch-execute SHIP-ready wishes overnight | Multiple wishes ready |
-| `pm` | Backlog triage, prioritization, tracking, reporting | Managing a stream of work |
+| `quick` | Ship one tiny low-risk change through verified dev read-back within 60 minutes | A fully decided change fits the hard one-hour contract |
 | `omni` | Wire a Genie agent to an Omni channel | Channel wiring |
 | `genie-hacks` | Browse community patterns and hacks | Looking for prior art |
 

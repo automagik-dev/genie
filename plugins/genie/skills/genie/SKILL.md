@@ -39,7 +39,7 @@ For requests that did not bypass, classify the user's request into exactly one c
 
 | Category | Signal | Route |
 |----------|--------|-------|
-| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "pm", "wire omni", "hacks" | Invoke the named skill through the active runtime's skill surface and pass through the remaining request. |
+| **explicit** | Names a skill: "brainstorm X", "wish X", "review X", "work X", "council X", "refine X", "fix X", "trace X", "docs X", "report X", "dream", "quick", "wire omni", "hacks" | Invoke the named skill through the active runtime's skill surface and pass through the remaining request. |
 | **concrete** | Clear feature/change: "add X", "implement Y", "build a..." | `wish` |
 | **fuzzy** | Exploratory: "I'm not sure how to...", "what if we...", "how should I handle..." | `brainstorm` |
 | **bug** | "X is broken", "error when...", "something's wrong with..." | `report` |
