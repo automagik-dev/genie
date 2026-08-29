@@ -136,6 +136,18 @@ describe('Orca authority barriers', () => {
       error: InvalidOrchestrationAuthorityError,
       code: 'invalid_orchestration_authority',
     },
+    {
+      name: 'misspelled authority field',
+      config: { orchestration: { mod: 'orca' } },
+      error: InvalidOrchestrationAuthorityError,
+      code: 'invalid_orchestration_authority',
+    },
+    {
+      name: 'extra authority field',
+      config: { orchestration: { mode: 'orca', extra: true } },
+      error: InvalidOrchestrationAuthorityError,
+      code: 'invalid_orchestration_authority',
+    },
   ] as const) {
     test(`${fixtureCase.name} refuses CLI and low-level operations without lifecycle mutations`, async () => {
       const root = authorityFixture(fixtureCase.config);

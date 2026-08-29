@@ -61,15 +61,21 @@ describe('orchestration authority mode', () => {
     expect(resolveOrchestrationMode()).toBe('standalone');
   });
 
-  test('malformed authority selection fails closed with a stable typed error', () => {
-    fixture({ orchestration: { mode: 'automatic' }, runtime: { defaultAgent: 'invalid' } });
-    expect(() => resolveOrchestrationMode()).toThrow(InvalidOrchestrationAuthorityError);
-    try {
-      assertLocalLifecycleEnabled();
-    } catch (error) {
-      expect(error).toBeInstanceOf(InvalidOrchestrationAuthorityError);
-      expect((error as InvalidOrchestrationAuthorityError).code).toBe('invalid_orchestration_authority');
-      expect((error as Error).message).toContain('orchestration.mode must be either "standalone" or "orca"');
-    }
-  });
+  for (const config of [
+    { orchestration: { mode: 'automatic' }, runtime: { defaultAgent: 'invalid' } },
+    { orchestration: { mod: 'orca' } },
+    { orchestration: { mode: 'orca', extra: true } },
+  ]) {
+    test(`malformed authority selection fails closed: ${JSON.stringify(config.orchestration)}`, () => {
+      fixture(config);
+      expect(() => resolveOrchestrationMode()).toThrow(InvalidOrchestrationAuthorityError);
+      try {
+        assertLocalLifecycleEnabled();
+      } catch (error) {
+        expect(error).toBeInstanceOf(InvalidOrchestrationAuthorityError);
+        expect((error as InvalidOrchestrationAuthorityError).code).toBe('invalid_orchestration_authority');
+        expect((error as Error).message).toContain('orchestration.mode must be either "standalone" or "orca"');
+      }
+    });
+  }
 });

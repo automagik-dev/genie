@@ -10,7 +10,7 @@ export const INVALID_ORCHESTRATION_AUTHORITY_CODE = 'invalid_orchestration_autho
 
 const OrchestrationAuthoritySchema = z
   .object({
-    orchestration: OrchestrationConfigSchema.optional(),
+    orchestration: OrchestrationConfigSchema.strict().optional(),
   })
   .passthrough();
 
