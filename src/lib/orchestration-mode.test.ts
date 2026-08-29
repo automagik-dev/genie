@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
+  InvalidOrchestrationAuthorityError,
   LocalLifecycleDisabledError,
   assertLocalLifecycleEnabled,
   resolveOrchestrationMode,
@@ -44,7 +45,7 @@ describe('orchestration authority mode', () => {
   });
 
   test('Orca mode is explicit and returns the stable typed lifecycle refusal', () => {
-    fixture({ orchestration: { mode: 'orca' } });
+    fixture({ orchestration: { mode: 'orca' }, runtime: { defaultAgent: 'invalid' } });
     expect(resolveOrchestrationMode()).toBe('orca');
     expect(() => assertLocalLifecycleEnabled()).toThrow(LocalLifecycleDisabledError);
     try {
@@ -52,6 +53,23 @@ describe('orchestration authority mode', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(LocalLifecycleDisabledError);
       expect((error as LocalLifecycleDisabledError).code).toBe('local_lifecycle_disabled_in_orca_mode');
+    }
+  });
+
+  test('authority resolution ignores unrelated malformed config fields', () => {
+    fixture({ orchestration: { mode: 'standalone' }, runtime: { defaultAgent: 'invalid' } });
+    expect(resolveOrchestrationMode()).toBe('standalone');
+  });
+
+  test('malformed authority selection fails closed with a stable typed error', () => {
+    fixture({ orchestration: { mode: 'automatic' }, runtime: { defaultAgent: 'invalid' } });
+    expect(() => resolveOrchestrationMode()).toThrow(InvalidOrchestrationAuthorityError);
+    try {
+      assertLocalLifecycleEnabled();
+    } catch (error) {
+      expect(error).toBeInstanceOf(InvalidOrchestrationAuthorityError);
+      expect((error as InvalidOrchestrationAuthorityError).code).toBe('invalid_orchestration_authority');
+      expect((error as Error).message).toContain('orchestration.mode must be either "standalone" or "orca"');
     }
   });
 });
