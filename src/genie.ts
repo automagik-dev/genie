@@ -73,6 +73,11 @@ program
   .option('--codex', 'Activate the authenticated Codex delivery and converge its managed surfaces')
   .option('--terminal', 'Only configure terminal defaults')
   .option('--session', 'Only configure session settings')
+  .addOption(
+    new Option('--orchestration-mode <mode>', 'Select lifecycle authority explicitly')
+      .choices(['standalone', 'orca'])
+      .conflicts(['quick', 'shortcuts', 'codex', 'terminal', 'session', 'reset', 'show']),
+  )
   .option('--reset', 'Reset configuration to defaults')
   .option('--show', 'Show current configuration')
   .action(async (options: SetupOptions) => {

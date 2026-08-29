@@ -60,6 +60,7 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveCodexDir, resolveGenieHome } from '../lib/genie-home.js';
+import { type OrcaPluginCompatibilityResult, switchOrchestrationMode } from '../lib/orca-plugin-lifecycle.js';
 import { acquireOrderedLifecycleLeases, releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import {
   type CodexAgentInstallResult,
@@ -83,6 +84,7 @@ export interface SetupOptions {
   session?: boolean;
   reset?: boolean;
   show?: boolean;
+  orchestrationMode?: 'standalone' | 'orca';
 }
 
 export interface SetupDeps {
@@ -132,6 +134,8 @@ export interface SetupDeps {
     afterAssets?: () => void;
     afterRoute?: () => void;
   };
+  /** A3 public compatibility probe seam for isolated Orca mode-switch tests. */
+  orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
 }
 
 export class SetupIntegrationError extends Error {
@@ -1028,6 +1032,17 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     await withSetupLease(deps, () => resetConfig());
     console.log('\x1b[32m\u2713 Configuration reset to defaults.\x1b[0m');
     console.log();
+    return;
+  }
+
+  if (options.orchestrationMode !== undefined) {
+    if (options.orchestrationMode !== 'standalone' && options.orchestrationMode !== 'orca') {
+      throw new SetupIntegrationError('orchestration mode must be either "standalone" or "orca"');
+    }
+    const result = await switchOrchestrationMode(options.orchestrationMode, { probe: deps.orcaCompatibilityProbe });
+    const detail = result.changed ? 'changed' : 'already selected';
+    console.log(`\x1b[32m\u2713\x1b[0m Orchestration mode ${detail}: ${result.mode}`);
+    if (result.backupPath !== null) console.log(`  Previous config backed up at ${contractPath(result.backupPath)}`);
     return;
   }
 
