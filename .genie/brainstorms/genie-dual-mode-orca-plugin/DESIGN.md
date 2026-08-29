@@ -396,8 +396,8 @@ persists valid fresh evidence and verifies the digest may it open the documentat
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-Independent review is pending for candidate content SHA-256
-`99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. Any prior SHIP evidence or approval is
-superseded because the candidate content and canonical document lifecycle changed; a follow-up must stamp this exact
-committed candidate with fresh independent evidence before a documentation PR or implementation begins.
+- **Verdict:** SHIP
+- **Reviewed content SHA-256:** `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`
+- **Reviewer:** term_e6f3cbf4-2e03-4a62-9a72-54812cc92394
+- **Reviewed at:** 2026-08-29T17:47:21.000Z
 <!-- genie-design-review:end -->

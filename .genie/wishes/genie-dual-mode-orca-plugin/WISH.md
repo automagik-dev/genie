@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — four canonical planning documents pending fresh independent review and evidence stamp; no past approval authorizes work |
+| **Status** | APPROVED — design SHIP and plan SHIP 2026-08-29 |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -141,11 +141,10 @@ obtain fresh independent design review and digest stamping before approval or im
    `1923ce0955511b741eadabb3dc680bb462ce611b`.
 
 **Acceptance Criteria:**
-- [ ] Fresh independent review stamps reviewable DESIGN content SHA-256
-  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`; until then, evidence
-  verification is expected to fail, all four canonical documents remain pending review, and no past approval
-  authorizes a documentation PR or implementation.
-- [ ] Wish and INDEX linters pass; diff contains only the four canonical planning documents.
+- [x] Fresh independent review stamped reviewable DESIGN content SHA-256
+  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`; evidence verification passes and
+  all four canonical documents consistently advance from pending to approved.
+- [x] Wish and INDEX linters pass; diff contains only the four canonical planning documents.
 
 **Validation:**
 ```bash
@@ -361,10 +360,12 @@ done
 
 ## Review Results
 
-- **Current amended candidate:** fresh independent design review, digest stamping, and plan review are pending for
-  reviewable DESIGN content SHA-256
-  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. No current verdict, reviewer identity,
-  or review timestamp is recorded; no past approval authorizes a documentation PR or implementation.
+- **Current amended candidate — SHIP:** independent reviewer
+  `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394` returned SHIP at `2026-08-29T17:47:21Z` for reviewable DESIGN
+  content SHA-256 `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36` and plan SHIP. Evidence: the diff
+  is limited to the four canonical planning documents; their pending-to-approved lifecycle is consistent; P1
+  remains no-retry with recovery reads limited to an exact identifier known before launch; no fallback, store, or
+  private API is introduced; and the digest and diff checks are clean.
 - **Superseded plan-review provenance (not approval for the amended candidate):** on 2026-08-29 at 17:04 UTC,
   independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698` returned SHIP for the prior plan at
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest
