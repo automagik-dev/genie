@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — amended post-stamp candidate pending fresh independent review |
+| **Status** | APPROVED — design SHIP and plan SHIP 2026-08-29 |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -361,14 +361,12 @@ done
 
 ## Review Results
 
-- **Current amended candidate — pending:** reviewable DESIGN content SHA-256
-  `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`. Fresh independent review and a new
-  evidence stamp are required; the plan remains unauthorized for implementation or further lifecycle advancement
-  until then.
-- **Superseded post-stamp provenance:** reviewer `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394` reviewed the prior
-  candidate at `2026-08-29T17:47:21Z`, digest
-  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. The substantive DESIGN next-step
-  correction invalidated that stamp; it grants no authority for the amended candidate.
+- **Current amended candidate — SHIP:** independent reviewer
+  `term_fb7838bc-745e-45ba-9d62-becc5d842e07` returned SHIP at `2026-08-29T17:57:45Z` for reviewable DESIGN
+  content SHA-256 `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe` and plan SHIP. Evidence: the diff is
+  limited to the four canonical planning documents; no stale review grants authorization; P1 remains no-retry with
+  recovery reads limited to an exact identifier known before launch; the A1–A7 DAG is unchanged; and the digest and
+  diff checks are clean.
 - **Earlier superseded plan-review provenance:** on 2026-08-29 at 17:04 UTC, independent reviewer
   `term_62af8174-811d-4720-911e-a2891f6a0698` accepted the prior plan at
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest

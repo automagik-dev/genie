@@ -397,9 +397,8 @@ further plan-lifecycle transition or A1–A7 authorization. The prior stamp is s
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-- **Status:** PENDING — substantive post-stamp amendment requires fresh independent review
-- **Candidate content SHA-256:** `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`
-- **Prior stamp:** SUPERSEDED — reviewer `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394`, reviewed at
-  `2026-08-29T17:47:21.000Z`, digest
-  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`
+- **Verdict:** SHIP
+- **Reviewed content SHA-256:** `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`
+- **Reviewer:** term_fb7838bc-745e-45ba-9d62-becc5d842e07
+- **Reviewed at:** 2026-08-29T17:57:45.000Z
 <!-- genie-design-review:end -->
