@@ -44,6 +44,13 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function receiptEntityId(result: unknown, entity: 'run' | 'task', legacyId: 'runId' | 'taskId'): string {
+  const record = object(result);
+  const value = record[legacyId] ?? object(record[entity]).id;
+  if (typeof value !== 'string') throw new Error(`missing ${entity} identifier`);
+  return value;
+}
+
 runRealSmoke(
   'real Orca runtime either completes the disposable flow or fails unsupported without mutation',
   async () => {
@@ -69,12 +76,12 @@ runRealSmoke(
         operation: 'run-create',
         objective: `Genie A3 disposable smoke ${suffix}`,
       });
-      const disposableRunId = String(object(createdRun.result).runId);
+      const disposableRunId = receiptEntityId(createdRun.result, 'run', 'runId');
       const runReadback = await runtime.execute({ operation: 'run-show', id: disposableRunId });
       expect(object(object(runReadback.result).run).id).toBe(disposableRunId);
 
       const createdTask = await runtime.execute({ operation: 'task-create', spec: `Disposable A3 task ${suffix}` });
-      disposableTaskId = String(object(createdTask.result).taskId);
+      disposableTaskId = receiptEntityId(createdTask.result, 'task', 'taskId');
       await runtime.execute({
         operation: 'task-update',
         id: disposableTaskId,
@@ -91,6 +98,9 @@ runRealSmoke(
     }
 
     expect(disposableTaskId).toBeDefined();
+    const restored = await runtime.execute({ operation: 'run-current' });
+    expect(object(object(restored.result).run).id).toBe(priorRunId);
     expect(await snapshotLocalLifecycle()).toEqual(before);
   },
+  30_000,
 );

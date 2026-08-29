@@ -492,6 +492,17 @@ const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
 const terminalId = id;
 const receipt = (shape: z.ZodRawShape) => z.object(shape).strict();
 const runEntity = receipt({ id, objective: longText.optional(), coordinatorTerminalHandle: terminalId.optional() });
+const publicRunEntity = receipt({
+  id,
+  objective: longText,
+  home_database: z.string().min(1).max(128),
+  coordinator_handle: terminalId,
+  coordinator_pane_key: z.string().min(1).max(256),
+  consumer_generation: z.number().int().positive(),
+  legacy: z.number().int().min(0).max(1),
+  created_at: z.string().min(1).max(64),
+  updated_at: z.string().min(1).max(64),
+});
 const taskEntity = receipt({
   id,
   spec: longText,
@@ -501,6 +512,25 @@ const taskEntity = receipt({
   status: taskStatus,
   result: result.optional(),
 });
+const publicTaskEntity = receipt({
+  id,
+  run_id: id,
+  parent_id: id.nullable(),
+  created_by_terminal_handle: terminalId,
+  created_by_pane_key: z.string().min(1).max(256),
+  created_by_process_incarnation: z.string().min(1).max(512),
+  created_by_run_generation: z.number().int().positive(),
+  task_title: shortText,
+  display_name: shortText,
+  spec: longText,
+  status: taskStatus,
+  deps: z.string().max(16_384),
+  result: z.string().max(32_768).nullable(),
+  created_at: z.string().min(1).max(64),
+  completed_at: z.string().min(1).max(64).nullable(),
+});
+const mutationMetadata = receipt({ requestId: z.string().uuid(), replayed: z.boolean() });
+const bindingMetadata = receipt({ consumerGeneration: z.number().int().positive() });
 const workerEntity = receipt({
   id,
   taskId: id,
@@ -533,14 +563,31 @@ const checkResult = receipt({
   count: z.number().int().min(0).max(50).optional(),
 });
 const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
-  'run-create': receipt({ runId: id }),
+  'run-create': z.union([
+    receipt({ runId: id }),
+    receipt({ run: publicRunEntity, binding: bindingMetadata, mutation: mutationMetadata }),
+  ]),
   'run-list': receipt({ runs: z.array(runEntity).max(100), cursor: cursor.optional() }),
-  'run-show': receipt({ run: runEntity }),
-  'run-current': receipt({ run: runEntity, coordinatorTerminalHandle: terminalId }),
-  'run-use': receipt({ runId: id, coordinatorTerminalHandle: terminalId }),
-  'task-create': receipt({ taskId: id }),
-  'task-list': receipt({ tasks: z.array(taskEntity).max(100) }),
-  'task-update': receipt({ taskId: id }),
+  'run-show': receipt({ run: z.union([runEntity, publicRunEntity]) }),
+  'run-current': z.union([
+    receipt({ run: runEntity, coordinatorTerminalHandle: terminalId }),
+    receipt({ run: publicRunEntity.nullable() }),
+  ]),
+  'run-use': z.union([
+    receipt({ runId: id, coordinatorTerminalHandle: terminalId }),
+    receipt({ run: publicRunEntity, binding: bindingMetadata, mutation: mutationMetadata }),
+  ]),
+  'task-create': z.union([receipt({ taskId: id }), receipt({ task: publicTaskEntity, mutation: mutationMetadata })]),
+  'task-list': z.union([
+    receipt({ tasks: z.array(taskEntity).max(100) }),
+    receipt({
+      runId: id,
+      legacyReadOnly: z.boolean(),
+      tasks: z.array(publicTaskEntity).max(100),
+      count: z.number().int().min(0).max(100),
+    }),
+  ]),
+  'task-update': z.union([receipt({ taskId: id }), receipt({ task: publicTaskEntity, mutation: mutationMetadata })]),
   'worker-start': receipt({ dispatchId: id, taskId: id }),
   'worker-show': receipt({ dispatch: workerEntity }),
   'worker-read': receipt({ dispatchId: id, source: workerSource, output: longText, cursor: cursor.optional() }),
@@ -593,6 +640,46 @@ export interface OrcaMutationReceipt {
 }
 
 export type OrcaAdapterResponse = OrcaJsonEnvelope & { readonly receipt?: OrcaMutationReceipt };
+
+const runtimeStatusSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    ok: z.literal(true),
+    result: z
+      .object({
+        target: z.object({ kind: z.literal('local') }).strict(),
+        app: z
+          .object({
+            running: z.literal(true),
+            pid: z.number().int().positive(),
+            desktopWindowStatus: z.enum(['available', 'unavailable']),
+          })
+          .strict(),
+        runtime: z
+          .object({
+            state: z.literal('ready'),
+            reachable: z.literal(true),
+            runtimeId: z.string().min(1).max(256),
+            appVersion: z.string().regex(/^\d+\.\d+\.\d+(?:[-+].*)?$/),
+            remoteUpdateSupport: z
+              .object({
+                installMode: z.string().min(1).max(128),
+                automatic: z.boolean(),
+                reason: z.string().min(1).max(256),
+              })
+              .strict(),
+            capabilities: z.array(z.string().min(1).max(256)).max(256),
+          })
+          .strict(),
+        graph: z.object({ state: z.literal('ready') }).strict(),
+      })
+      .strict(),
+    _meta: z.object({ runtimeId: z.string().min(1).max(256) }).strict(),
+  })
+  .strict()
+  .refine((value) => value.result.runtime.runtimeId === value._meta.runtimeId, 'runtime identity mismatch');
+
+export type OrcaRuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 
 function ambiguousMutationError(
   operation: OrcaOrchestrationVerb,
@@ -703,6 +790,7 @@ interface OrcaAdapterTestOptions {
 
 export interface OrcaOrchestrationAdapter {
   readonly executable: string;
+  status(): Promise<OrcaRuntimeStatus>;
   execute(input: unknown): Promise<OrcaAdapterResponse>;
 }
 
@@ -728,8 +816,21 @@ function recordOf(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function entityId(value: unknown, key: 'run' | 'task'): unknown {
+  const entity = recordOf(value)[key];
+  return typeof entity === 'object' && entity !== null ? recordOf(entity).id : undefined;
+}
+
 function receiptIds(operation: OrcaOrchestrationVerb, value: unknown): Readonly<Record<string, string>> {
   const result = recordOf(value);
+  if (operation === 'run-create' || operation === 'run-use') {
+    const runId = result.runId ?? entityId(result, 'run');
+    return typeof runId === 'string' ? Object.freeze({ runId }) : Object.freeze({});
+  }
+  if (operation === 'task-create' || operation === 'task-update') {
+    const taskId = result.taskId ?? entityId(result, 'task');
+    return typeof taskId === 'string' ? Object.freeze({ taskId }) : Object.freeze({});
+  }
   const fields: Partial<Record<OrcaOrchestrationVerb, readonly string[]>> = {
     'run-create': ['runId'],
     'run-use': ['runId'],
@@ -756,16 +857,13 @@ type ReadbackPlan = { operation: ValidatedOrcaOperation; matches: (result: unkno
 function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): ReadbackPlan | undefined {
   if (operation.operation === 'run-use') {
     const receipt = recordOf(result);
+    const receiptRunId = receipt.runId ?? entityId(receipt, 'run');
     return {
       operation: { operation: 'run-current' },
       matches: (readback) => {
         const current = recordOf(readback);
         const run = recordOf(current.run);
-        return (
-          receipt.runId === operation.id &&
-          run.id === operation.id &&
-          receipt.coordinatorTerminalHandle === current.coordinatorTerminalHandle
-        );
+        return receiptRunId === operation.id && run.id === operation.id;
       },
     };
   }
@@ -802,7 +900,8 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
     };
   }
   if (operation.operation === 'run-create') {
-    const runId = recordOf(result).runId;
+    const value = recordOf(result);
+    const runId = value.runId ?? entityId(value, 'run');
     return {
       operation: { operation: 'run-show', id: String(runId) },
       matches: (readback) => {
@@ -813,22 +912,33 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
   }
   if (operation.operation === 'task-create' || operation.operation === 'task-update') {
     const mutation = recordOf(result);
-    const taskId = operation.operation === 'task-create' ? mutation.taskId : operation.id;
+    const mutationTaskId = mutation.taskId ?? entityId(mutation, 'task');
+    const taskId = operation.operation === 'task-create' ? mutationTaskId : operation.id;
     return {
       operation: { operation: 'task-list' },
       matches: (readback) => {
-        if (mutation.taskId !== taskId) return false;
+        if (mutationTaskId !== taskId) return false;
         const tasks = recordOf(readback).tasks;
         if (!Array.isArray(tasks)) return false;
         const matching = tasks.map(recordOf).filter((candidate) => candidate.id === taskId);
         if (matching.length !== 1) return false;
         const task = matching[0];
+        if (operation.operation === 'task-create' && 'run_id' in task) {
+          return (
+            task.spec === operation.spec &&
+            task.task_title === (operation.title ?? operation.spec) &&
+            task.deps === JSON.stringify(operation.deps ?? []) &&
+            task.parent_id === (operation.parent ?? null)
+          );
+        }
         return operation.operation === 'task-create'
           ? task.spec === operation.spec &&
               task.title === operation.title &&
               JSON.stringify(task.deps ?? []) === JSON.stringify(operation.deps ?? []) &&
               task.parent === operation.parent
-          : task.status === operation.status && JSON.stringify(task.result) === JSON.stringify(operation.result);
+          : task.status === operation.status &&
+              (JSON.stringify(task.result) === JSON.stringify(operation.result) ||
+                task.result === JSON.stringify(operation.result));
       },
     };
   }
@@ -948,11 +1058,9 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
   const executor = options.executor ?? spawnOrcaProcess;
   const defaultTimeout = options.timeoutMs ?? DEFAULT_ORCA_TIMEOUT_MS;
   const now = options.now ?? (() => new Date());
-  const invoke = async (operation: ValidatedOrcaOperation): Promise<OrcaJsonEnvelope> => {
-    const argv = buildOrcaOrchestrationArgv(operation);
-    let result: OrcaProcessResult;
+  const executeProcess = async (argv: readonly string[], operation: OrcaOrchestrationVerb | 'runtime') => {
     try {
-      result = await executor({
+      return await executor({
         executable,
         argv,
         shell: false,
@@ -964,7 +1072,7 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
     } catch (error) {
       throw new OrcaAdapterError(
         'executable_unavailable',
-        operation.operation,
+        operation,
         'resolve',
         'safe',
         'Verify that the deterministic Orca executable is installed and available, then retry.',
@@ -973,6 +1081,10 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
           : 'Orca execution failed',
       );
     }
+  };
+  const invoke = async (operation: ValidatedOrcaOperation): Promise<OrcaJsonEnvelope> => {
+    const argv = buildOrcaOrchestrationArgv(operation);
+    let result = await executeProcess(argv, operation.operation);
     result = { ...result, stderr: sanitizeStderr(result.stderr, operation, env) };
     const isMutation = mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation);
     const failure = processFailure(operation.operation, operation, result);
@@ -998,6 +1110,44 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
   };
   return Object.freeze({
     executable,
+    async status(): Promise<OrcaRuntimeStatus> {
+      const result = await executeProcess(['status', '--json'], 'runtime');
+      if (result.outputLimited || result.transportLost || result.timedOut || result.exitCode !== 0) {
+        throw new OrcaAdapterError(
+          result.outputLimited ? 'output_limit' : result.timedOut ? 'timeout' : 'process_exit',
+          'runtime',
+          'execute',
+          'safe',
+          'Restore the public Orca runtime and retry the compatibility probe.',
+          'Orca status did not complete successfully',
+        );
+      }
+      let decoded: unknown;
+      try {
+        decoded = parseJsonRejectingDuplicateKeys(result.stdout);
+      } catch {
+        throw new OrcaAdapterError(
+          'malformed_json',
+          'runtime',
+          'decode',
+          'safe',
+          'Use a compatible Orca CLI version.',
+          'Orca status was not one JSON document',
+        );
+      }
+      const parsed = runtimeStatusSchema.safeParse(decoded);
+      if (!parsed.success) {
+        throw new OrcaAdapterError(
+          'unexpected_response',
+          'runtime',
+          'decode',
+          'safe',
+          'Use a compatible Orca CLI version.',
+          'Orca status did not match the strict runtime compatibility contract',
+        );
+      }
+      return parsed.data;
+    },
     async execute(input: unknown): Promise<OrcaAdapterResponse> {
       const parsed = orcaOperationSchema.safeParse(input);
       if (!parsed.success) {
@@ -1047,7 +1197,7 @@ async function finalizeMutation(
     verb: operation.operation,
     ids: receiptIds(operation.operation, envelope.result),
     runtimeId: meta.runtimeId as string,
-    runtimeVersion: meta.runtimeVersion as string,
+    runtimeVersion: (meta.runtimeVersion as string | undefined) ?? null,
     startedAt,
     completedAt: now().toISOString(),
     readbackVerb: plan?.operation.operation ?? null,
@@ -1087,11 +1237,11 @@ function mapReadbackFailure(
 }
 
 function validateMutationReceipt(operation: ValidatedOrcaOperation, envelope: OrcaJsonEnvelope): void {
-  if (envelope._meta?.runtimeId === undefined || envelope._meta.runtimeVersion === undefined) {
+  if (envelope._meta?.runtimeId === undefined) {
     throw ambiguousMutationError(
       operation.operation,
       'receipt',
-      'mutation receipt omitted bounded runtime identity/version metadata',
+      'mutation receipt omitted bounded runtime identity metadata',
     );
   }
   if (!receiptMatchesRequest(operation, envelope.result)) {
@@ -1117,6 +1267,7 @@ function validateMutationReceipt(operation: ValidatedOrcaOperation, envelope: Or
   }
   if (
     operation.operation === 'run-use' &&
+    'coordinatorTerminalHandle' in recordOf(envelope.result) &&
     recordOf(envelope.result).coordinatorTerminalHandle !== envelope._meta.invokingTerminal
   ) {
     throw new OrcaAdapterError(
@@ -1134,9 +1285,9 @@ function receiptMatchesRequest(operation: ValidatedOrcaOperation, result: unknow
   const value = recordOf(result);
   switch (operation.operation) {
     case 'run-use':
-      return value.runId === operation.id;
+      return (value.runId ?? entityId(value, 'run')) === operation.id;
     case 'task-update':
-      return value.taskId === operation.id;
+      return (value.taskId ?? entityId(value, 'task')) === operation.id;
     case 'worker-start':
       return value.taskId === operation.task;
     case 'worker-release':

@@ -6,7 +6,7 @@ import {
   createOrcaOrchestrationAdapter,
 } from '../../src/lib/orca-orchestration-adapter';
 
-export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.193';
+export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.192';
 export const ORCA_REQUIRED_CONTRACT = 'orchestration.contract.v1';
 
 export interface OrcaPluginCompatibility {
@@ -49,15 +49,14 @@ function versionAtLeast(actual: string, minimum: string): boolean {
 
 async function probe(adapter: OrcaOrchestrationAdapter): Promise<OrcaPluginCompatibility> {
   try {
-    const response = await adapter.execute({ operation: 'run-list', limit: 1 });
-    const runtimeId = response._meta?.runtimeId;
-    const runtimeVersion = response._meta?.runtimeVersion;
+    const response = await adapter.status();
+    const runtimeId = response.result.runtime.runtimeId;
+    const runtimeVersion = response.result.runtime.appVersion;
     if (
-      runtimeId === undefined ||
-      runtimeVersion === undefined ||
-      !versionAtLeast(runtimeVersion, ORCA_MINIMUM_RUNTIME_VERSION)
+      !versionAtLeast(runtimeVersion, ORCA_MINIMUM_RUNTIME_VERSION) ||
+      !response.result.runtime.capabilities.includes(ORCA_REQUIRED_CONTRACT)
     ) {
-      throw unsupportedEnvironment('Orca runtime compatibility metadata is absent or outside the supported range.');
+      throw unsupportedEnvironment('Orca runtime version or orchestration contract is outside the supported range.');
     }
     return Object.freeze({ runtimeId, runtimeVersion, contract: ORCA_REQUIRED_CONTRACT });
   } catch (error) {

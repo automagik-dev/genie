@@ -5,6 +5,7 @@ import {
   OrcaAdapterError,
   type OrcaOperation,
   type OrcaProcessExecutor,
+  type OrcaRuntimeStatus,
   __orcaAdapterTestOnly,
   buildOrcaOrchestrationArgv,
   createOrcaOrchestrationAdapter,
@@ -167,6 +168,57 @@ describe('closed Orca orchestration argv grammar', () => {
 });
 
 describe('runtime and executor boundary', () => {
+  const validStatus = (): OrcaRuntimeStatus => ({
+    id: 'local-status',
+    ok: true,
+    result: {
+      target: { kind: 'local' },
+      app: { running: true, pid: 123, desktopWindowStatus: 'available' },
+      runtime: {
+        state: 'ready',
+        reachable: true,
+        runtimeId: 'runtime_a',
+        appVersion: '1.4.192',
+        remoteUpdateSupport: { installMode: 'manual', automatic: false, reason: 'manual-update' },
+        capabilities: ['orchestration.contract.v1'],
+      },
+      graph: { state: 'ready' },
+    },
+    _meta: { runtimeId: 'runtime_a' },
+  });
+
+  test('uses only the closed root status argv for runtime compatibility', async () => {
+    const requests: Parameters<OrcaProcessExecutor>[0][] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      env: { SAFE: 'yes' },
+      executor: async (request) => {
+        requests.push(request);
+        return { exitCode: 0, stdout: JSON.stringify(validStatus()), stderr: '' };
+      },
+    });
+    expect(await adapter.status()).toEqual(validStatus());
+    expect(requests.map(({ argv, shell }) => ({ argv, shell }))).toEqual([
+      { argv: ['status', '--json'], shell: false },
+    ]);
+  });
+
+  test('strictly rejects malformed, duplicate-key, error, and schema-drifted status results', async () => {
+    const drifted = { ...validStatus(), extra: true };
+    const mismatched = { ...validStatus(), _meta: { runtimeId: 'runtime_other' } };
+    for (const stdout of [
+      'not-json',
+      '{"id":"local-status","id":"duplicate"}',
+      JSON.stringify({ id: 'local-status', ok: false, error: { code: 'offline', message: 'offline' } }),
+      JSON.stringify(drifted),
+      JSON.stringify(mismatched),
+    ]) {
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({ exitCode: 0, stdout, stderr: '' }),
+      });
+      await expect(adapter.status()).rejects.toBeInstanceOf(OrcaAdapterError);
+    }
+  });
+
   test('resolves one deterministic executable without fallback', () => {
     expect(resolveOrcaExecutable({ platform: 'win32' })).toBe('orca.exe');
     expect(resolveOrcaExecutable({ platform: 'darwin' })).toBe('orca');

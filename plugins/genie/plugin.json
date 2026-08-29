@@ -12,7 +12,7 @@
   "keywords": ["workflow", "orchestration", "orca", "skills", "agents"],
   "extensions": {
     "dev.orca.compatibility": {
-      "minimumRuntimeVersion": "1.4.193",
+      "minimumRuntimeVersion": "1.4.192",
       "requiredContract": "orchestration.contract.v1",
       "transport": "public-cli"
     }
