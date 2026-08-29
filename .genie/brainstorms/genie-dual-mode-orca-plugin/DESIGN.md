@@ -72,13 +72,30 @@ The initial capability table is closed and versioned with the plugin. Each row n
 public CLI verb and its post-mutation proof. Verbs absent from the table are unavailable even if the
 installed Orca version supports them.
 
-| Capability | Official argv prefix | Proof |
-|------------|----------------------|-------|
-| Run create/list/show/use | `orca orchestration run-create\|run-list\|run-show\|run-use` | create receipt then `run-show`; reads return validated envelopes |
-| Task create/list/update | `orca orchestration task-create\|task-list\|task-update` | mutation receipt then `task-list`/identified result read-back |
-| Worker start/show/read/release | `orca orchestration worker-start\|worker-show\|worker-read\|worker-release` | start receipt then `worker-show`; release is receipt-only |
-| Messaging | `orca orchestration send\|check\|reply\|ask` | bounded message receipt; `check` is the public read path where applicable |
-| Gates | `orca orchestration gate-create\|gate-list\|gate-resolve` | create receipt then `gate-list`; resolve is receipt-only |
+The adapter accepts exactly the semantic inputs below. Required inputs are unbracketed; bracketed inputs are
+optional. The emitted flag column is exhaustive: the adapter owns the executable, the `orchestration`
+prefix, argument order, and one final `--json`; callers cannot supply any other flag or positional value.
+
+| Public verb | Accepted semantic inputs | Exact emitted flags, in order | Post-mutation proof |
+|-------------|--------------------------|-------------------------------|---------------------|
+| `run-create` | `objective` | `--objective <text>` | `run-show --id <receipt.runId>` |
+| `run-list` | `[limit]`, `[cursor]` | `[--limit <positive-int>] [--cursor <opaque>]` | Validated read envelope |
+| `run-show` | `id` | `--id <run-id>` | Validated identified read envelope |
+| `run-use` | `id` | `--id <run-id>` | `run-show --id <requested-id>` and verify the returned binding/run identity |
+| `task-create` | `spec`, `[title]`, `[deps]`, `[parent]` | `--spec <text> [--task-title <text>] [--deps <json-array>] [--parent <task-id>]` | `task-list`, locate `receipt.taskId`, and compare immutable fields |
+| `task-list` | `[status]`, `[ready]`, `[brief]` | `[--status <enum>] [--ready] [--brief]` | Validated read envelope |
+| `task-update` | `id`, `status`, `[result]` | `--id <task-id> --status <enum> [--result <json>]` | `task-list`, locate the requested ID, and compare status/result |
+| `worker-start` | `task`, `agent`, `[model]`, `[effort]`, `[timeoutMs]` | `--task <task-id> --worktree current --agent <enum> [--model <opaque-id> [--effort <enum>]] [--timeout-ms <bounded-int>]` | `worker-show --dispatch <receipt.dispatchId>` |
+| `worker-show` | `dispatch` | `--dispatch <dispatch-id>` | Validated identified read envelope |
+| `worker-read` | `dispatch`, `[source]`, `[cursor]`, `[limit]` | `--dispatch <dispatch-id> [--source <enum>] [--cursor <opaque>] [--limit <positive-int>]` | Validated bounded read envelope |
+| `worker-release` | `dispatch` | `--dispatch <dispatch-id>` | `worker-show --dispatch <requested-id>` and verify the public released/retained terminal disposition |
+| `send` | `subject`, `[body]`, `[type]`, `[priority]`, `[threadId]`, `[payload]` | `--subject <text> [--body <text>] [--type <enum>] [--priority <enum>] [--thread-id <id>] [--payload <json>]` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
+| `check` | `[ack]`, `[unread]`, `[peek]`, `[all]`, `[types]`, `[wait]`, `[timeoutMs]` | `[--ack <delivery-id>] [--unread\|--peek\|--all] [--types <csv-enum>] [--wait [--timeout-ms <bounded-int>]]` | Validated bounded read envelope |
+| `reply` | `id`, `body` | `--id <message-id> --body <text>` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
+| `ask` | exactly one of `question` or `resume`, `[options]`, `[timeoutMs]` | `--question <text>\|--resume <message-id> [--options <csv>] [--timeout-ms <bounded-int>]` | Validated answer/pending receipt; recovery resumes the same message ID |
+| `gate-create` | `task`, `question`, `[options]` | `--task <task-id> --question <text> [--options <json-array>]` | `gate-list --task <requested-task>`, locate `receipt.gateId`, and compare question/options |
+| `gate-list` | `[task]`, `[status]` | `[--task <task-id>] [--status <enum>]` | Validated read envelope |
+| `gate-resolve` | `id`, `resolution`, `task` | `--id <gate-id> --resolution <text>` (`task` is proof context and is not emitted) | `gate-list --task <task-id>`, locate the requested gate ID, and compare resolved status/resolution |
 
 `dispatch`, `dispatch-show`, terminal handles as message destinations, `worker-stop`, `worker-abandon`,
 `worker-retain`, `reset`, and every other unlisted verb are outside the plugin. Adding a verb requires a
@@ -90,6 +107,14 @@ values are JSON-serialized only for flags whose documented CLI grammar requires 
 unknown flags, positional spillover, values containing a flag in place of data, raw argv, command strings,
 and a caller-provided `--json` are rejected before process launch. The adapter appends exactly one final
 `--json` and never interpolates values into a shell program.
+
+Contract tests cover every row and must negatively prove rejection before spawn of all terminal flags
+(`--terminal`, terminal handles, `--format`), setup/placement flags (`--setup`, `--worktree` from callers,
+`--name`, `--repo`, `--base-branch`), routing/impersonation flags (`--on`, `--to`, `--run`, `--from`,
+`--dispatch-capability`, `--takeover-legacy`), executable selection or wrapper inputs, raw argv/command
+strings, recovery-only `--retry-request`, caller-supplied `--json`, and every unknown flag or field. Values
+are also tested against flag-shaped substitution. The sole emitted `--worktree current` is an adapter
+constant for `worker-start`, never caller input or a general placement surface.
 
 ## Runtime, receipts, and failure contract
 
@@ -119,10 +144,14 @@ Mutations require all of the following:
 4. a normalized receipt returned to the caller with verb, Orca identifiers, runtime/version metadata, and
    timestamps, but no second-store persistence.
 
-`send`, `reply`, `gate-resolve`, `worker-release`, and any operation without a stable entity read path use the
-validated bounded mutation receipt as the documented proof. They are never retried automatically because a
-timeout can hide a committed mutation. Recovery tells the operator which public read command can establish
-state before choosing a new action.
+The named read-back probes are `run-show` after `run-use`, `gate-list --task` after `gate-resolve`, and
+`worker-show` after `worker-release`; their response schemas must expose enough public state to prove the
+requested effect. If a supported Orca compatibility range lacks one of those public fields, that mutation is
+unsupported for that range unless a narrow design amendment documents why no public read exists and permits
+a receipt-only exception for that verb. Today the only receipt-only mutations are `send` and `reply`, whose
+allowed public subset has no stable message-by-ID read. Mutations are never retried automatically because a
+timeout can hide a committed mutation. Recovery names the exact allowed public read command that can
+establish state before another mutation, or identifies the documented receipt-only ambiguity.
 
 The stable error taxonomy is:
 
@@ -156,11 +185,14 @@ intent and does not import Orca state. A failed preflight leaves the prior confi
 
 ## MCP retirement and lifecycle sequencing
 
-MCP retirement occurs only after the standalone regression suite, Orca mode barriers, plugin packaging, and
-real-runtime smoke are green. The retirement PR removes the server, tools, launchers, release inventory, and
-only registrations with Genie ownership proof. An old `genie mcp` invocation returns a stable deprecation
-diagnostic and non-zero exit; it does not start a compatibility server. Upgrade and rollback fixtures prove
-that unrelated MCP registrations and user configuration survive.
+MCP retirement is the final implementation change. It occurs only after standalone lifecycle preservation,
+Orca mode barriers, plugin packaging and real-runtime smoke, install/update/rollback/uninstall and mode-switch
+fixtures, release inventory and every supported tarball check, and operator/contributor documentation have
+landed and are green. Its slim PR removes only the server, tools, launchers, and registrations with Genie
+ownership proof, updates the already-landed migration documentation, and leaves release mechanics to the
+preceding packaging PR. An old `genie mcp` invocation returns a stable deprecation diagnostic and non-zero
+exit; it does not start a compatibility server. Upgrade and rollback fixtures prove that unrelated MCP
+registrations and user configuration survive.
 
 Install and update stage payloads, verify versions and inventory, preflight the selected mode, then atomically
 activate. Rollback restores the prior Genie-owned payload/config snapshot. Uninstall removes only owned files
@@ -207,7 +239,12 @@ inspected before promotion.
   one `--json`, uses `shell: false`, and cannot accept raw argv, unknown flags, `dispatch`, `--inject`, a
   terminal-send surface, internal RPC, or a private API.
 - [ ] Each allowlisted verb has schema, exact argv, success envelope, non-zero exit, malformed/unexpected
-  JSON, timeout, output-cap, resolution, receipt, and applicable read-back tests.
+  JSON, timeout, output-cap, resolution, receipt, and applicable read-back tests; negative argv fixtures for
+  every row reject terminal, setup/placement, routing/impersonation, executable override, raw-argv, recovery,
+  caller-`--json`, and unknown inputs before spawn.
+- [ ] Public contract probes specifically prove `run-use` with `run-show`, `gate-resolve` with `gate-list`
+  plus `--task`, and `worker-release` with `worker-show`; a missing public proof field makes that mutation
+  incompatible unless a later narrow design amendment documents the absence and receipt-only exception.
 - [ ] A packaged-plugin smoke against a real supported Orca runtime creates and reads back a disposable Run/
   Task flow; cleanup uses only allowed public operations. An unavailable/incompatible runtime creates no
   Genie lifecycle state and returns a bounded typed error.
@@ -235,10 +272,17 @@ are shallow; no PR mixes the dirty v6 evidence or unrelated roadmap/Khal changes
    receipts/read-backs, and hermetic fake-process tests. Depends only on approved A0 and can proceed beside A1.
 4. **A3 — plugin payload and real-runtime smoke:** manifests/marketplace, adapter wiring, compatibility probe,
    and disposable Run/Task smoke. Depends on A2; does not own install transitions.
-5. **A4 — MCP retirement:** remove Genie MCP runtime and proved-owned registrations, retain stable retired
-   diagnostic, and run standalone parity. Depends on A1 and A3.
-6. **A5 — lifecycle, packaging, and docs:** install/update/rollback/uninstall/mode switching, doctor, release
-   inventory/tarballs, and operator/contributor docs. Depends on A3 and A4.
+5. **A4 — lifecycle preservation and transitions:** standalone parity plus install/update/rollback/uninstall,
+   mode switching, ownership-preserving fixtures, and `doctor`. Depends on A1 and A3; does not remove MCP or
+   change release inventory.
+6. **A5 — packaging and release artifacts:** version-consistent manifests/marketplace, release inventory, and
+   build/inspection of every supported tarball. Depends on A3 and A4; does not remove MCP or rewrite docs.
+7. **A6 — operator and contributor documentation:** mode selection, recovery, compatibility, upgrade,
+   rollback, and planned MCP-retirement guidance. Depends on A4 and A5; documentation only.
+8. **A7 — MCP retirement:** remove the Genie MCP runtime and proved-owned registrations, retain the stable
+   retired diagnostic, update only retirement-specific documentation, and rerun standalone/release parity.
+   Depends on A1 through A6 and is independently revertible; no lifecycle, packaging, or release mechanism is
+   introduced in this PR.
 
 For code PRs, write a failing focused test first, implement the minimum contract, run the narrow suite, then
 run `bun install --frozen-lockfile`, `bun run check`, affected release/smoke tests, and PR CI. An engineer's
