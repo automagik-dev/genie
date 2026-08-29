@@ -208,10 +208,10 @@ state is explicitly true, and runtime/version metadata and timestamp satisfy the
 envelope or an omitted/mismatched acknowledgement field is `missing_receipt`/`readback_mismatch`, not success.
 Mutations, including `check --ack`, are never retried automatically because a timeout can hide a committed
 mutation. A `check --ack` timeout is therefore classified `ambiguous_after_possible_commit`; recovery instructs
-the operator to run non-mutating `check --all` (optionally narrowed by the original types) and inspect whether the
-delivery remains visible before deciding whether to issue the acknowledgement again. Recovery otherwise names
-the exact allowed public read command that can establish state before another mutation, or identifies the
-documented receipt-only ambiguity.
+the operator not to retry automatically because the allowed public subset cannot distinguish a committed
+acknowledgement from an uncommitted one after the response is lost. The result is unrecoverably ambiguous within
+the adapter; only external or operator confirmation may justify a later acknowledgement attempt. Recovery for
+other mutations names the exact allowed public read command that must establish state before another mutation.
 
 The stable error taxonomy is:
 
@@ -219,6 +219,7 @@ The stable error taxonomy is:
 - `executable_unavailable` / `incompatible_cli_version`
 - `invalid_operation` / `invalid_argument`
 - `timeout` / `output_limit`
+- `ambiguous_after_possible_commit`
 - `process_exit`
 - `malformed_json` / `unexpected_response`
 - `missing_receipt` / `readback_mismatch`
@@ -311,9 +312,10 @@ inspected before promotion.
   Genie lifecycle state and returns a bounded typed error.
 - [ ] `check --ack` tests accept only the bounded acknowledgement receipt with the exact requested delivery ID
   and explicit acknowledged state, reject read/missing/mismatched receipts, and simulate timeout after commit to
-  prove there is no automatic retry and recovery directs the operator through non-mutating `check --all`.
+  prove the exact `ambiguous_after_possible_commit` error, no automatic retry, no claimed in-adapter recovery,
+  and guidance that only external or operator confirmation may justify a later acknowledgement attempt.
 - [ ] Other timeout-after-commit tests prove there is no automatic mutation retry and diagnostics direct the
-  operator to a read-back before another mutation.
+  operator to the exact read-back; recovery tests prove that read-back establishes state before another mutation.
 - [ ] `genie mcp` and Genie-owned MCP wiring are retired with a stable non-zero diagnostic; standalone CLI
   parity remains green and no hidden MCP compatibility server starts.
 - [ ] Fresh install, update, interrupted update, rollback, uninstall, and both mode switches are repeatable
@@ -360,7 +362,7 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 | 1 | The packaged plugin host may forbid child processes. | High | A3 probes the real host; fail `unsupported_environment`, never change transport. |
 | 2 | Orca CLI grammar or envelopes drift. | High | Manifest compatibility range, exact contract fixtures, live smoke, fail closed on unknown shapes. |
 | 3 | A writable Genie path bypasses mode routing. | High | Guard low-level seams and independently inventory all DB/roadmap callers in A1 review. |
-| 4 | Timeout hides a committed mutation. | High | No automatic retry; return ambiguity plus the public read-back recovery command. |
+| 4 | Timeout hides a committed mutation. | High | No automatic retry; require public read-back before another mutation where it proves state, otherwise report unrecoverable ambiguity. |
 | 5 | Install/uninstall adopts or removes user-owned state. | High | Ownership proof, backups, atomic transitions, isolated-home fixtures, narrow deletion inventory. |
 | 6 | MCP retirement breaks an unrecorded client. | Medium | Inventory first, parity gate retirement, retain explicit diagnostic and rollback path. |
 | 7 | Runtime resolution reaches the wrong Orca installation. | Medium | One documented platform choice, validate host override, no candidate fallback, report resolved version. |
