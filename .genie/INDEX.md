@@ -20,6 +20,9 @@
 ## Ready
 
 
+- [genie-dual-mode-orca-plugin](brainstorms/genie-dual-mode-orca-plugin/DESIGN.md) — **WRS 100, design review pending (2026-08-29):** Felipe-selected Option A. Standalone keeps its local board/task behaviour; explicit Orca mode refuses writable Genie DB and roadmap paths, while a Genie-owned Orca plugin uses only a closed, schema-built public `orca orchestration ... --json` argv allowlist with no shell, terminal injection, internal RPC, second lifecycle store, or local fallback. MCP retirement and mode-aware lifecycle packaging follow after the central guard and plugin parity; upstream Ideas 17239 is advisory only.
+
+
 
 - [WISH: v4-home-residue-doctor](wishes/v4-home-residue-doctor/WISH.md) — **DRAFT** (2026-07-05, small appetite, never started; Felipe directive: "find and clean all stale genie v4 shit… genie doctor should do that"): v4 residue manifest + doctor check/fix + diagnostics age filter. Relevance raised 2026-07-26 by the backlog sweep: the only live-impact open product bug (#2450 — v4 pgserve PM2 entry crash-loops after upgrade) is v4 daemon/process residue that file-scoped `legacy-v4.ts` never touches; this wish is the natural vehicle (added to INDEX 2026-07-26 — entry was missing)
 - [WISH: release-ops-hardening](wishes/release-ops-hardening/WISH.md) — **DRAFT** (2026-07-26, small-medium appetite; needs Felipe approval + a plan gate before execution): enforce the outage-taught release rules mechanically — publish admit refuses re-dispatch of published versions (#2674), orphan-alert exempts pending stable candidates (structural false positive on every dev→main promotion, live example #2681), #2675 dead-default deletion + multi-attestation/CAS-loop test coverage + #2669 pin-checker quoting, and dogfood FIXTURE_N tracking real N. Sequenced after the first stable release
