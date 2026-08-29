@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -343,8 +343,10 @@ done
 
 ## Review Results
 
-_Pending independent plan review. Execution and PR reviews must be independent and bound to the exact reviewed SHA;
-fixes require fresh review evidence._
+- **2026-08-29 17:04 UTC — SHIP.** Independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698`
+  reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest
+  `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`. The release-assets timeout was
+  environmental and reproduced byte-identically on the baseline.
 
 ---
 
