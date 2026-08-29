@@ -18,6 +18,7 @@ const TOP_LEVEL_VERSION_FILES = [
   'plugins/genie/.claude-plugin/plugin.json',
   'plugins/genie/.codex-plugin/plugin.json',
   'plugins/genie/.kimi-plugin/plugin.json',
+  'plugins/genie/orca-plugin.json',
 ] as const;
 
 const COMMITTED_VERSION_FILES = ['package.json', ...TOP_LEVEL_VERSION_FILES] as const;
