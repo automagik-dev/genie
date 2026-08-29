@@ -30,6 +30,7 @@ describe('release payload version contract', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
+      'plugins/genie/orca-plugin.json',
     ]) {
       writeJson(root, path, { name: 'genie', version: '5.000000.0' });
     }
@@ -68,6 +69,7 @@ describe('release payload version contract', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
+      'plugins/genie/orca-plugin.json',
     ]) {
       expect(JSON.parse(readFileSync(join(root, path), 'utf8')).version).toBe(version);
     }
@@ -85,6 +87,17 @@ describe('release payload version contract', () => {
     writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version: '5.260711.9' });
 
     expect(() => verifyReleasePayloadVersion(root, version)).toThrow('.codex-plugin/plugin.json');
+  });
+
+  test('verification catches a diverging or missing native Orca manifest', () => {
+    const root = fixture();
+    const version = '5.260711.10';
+    stampReleasePayloadVersion(root, version);
+    writeJson(root, 'plugins/genie/orca-plugin.json', { id: 'genie', version: '5.260711.9' });
+    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('orca-plugin.json');
+
+    rmSync(join(root, 'plugins/genie/orca-plugin.json'));
+    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('metadata is missing');
   });
 
   test('source preflight rejects committed drift before a staged override can hide it', () => {
@@ -119,5 +132,7 @@ describe('release payload version contract', () => {
     expect(sourcePreflight).toBeLessThan(stageStamp);
     expect(buildScript).toContain('release-payload-version.ts" --stamp');
     expect(buildScript).toContain('release-payload-version.ts" --verify');
+    expect(buildScript).toContain('"plugins/genie/orca-plugin.json"');
+    expect(buildScript).toContain('"plugins/genie/orca-entrypoint.min.js"');
   });
 });

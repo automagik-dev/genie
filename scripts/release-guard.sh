@@ -158,6 +158,7 @@ version_child_matches_parent() {
     'plugins/genie/.claude-plugin/plugin.json' \
     'plugins/genie/.codex-plugin/plugin.json' \
     'plugins/genie/.kimi-plugin/plugin.json' \
+    'plugins/genie/orca-plugin.json' \
     'plugins/genie/package.json' \
     'plugins/pi-genie/package.json' \
     'plugins/hermes-genie/plugin.yaml' | LC_ALL=C sort)"
@@ -169,6 +170,7 @@ version_child_matches_parent() {
     plugins/genie/.claude-plugin/plugin.json \
     plugins/genie/.codex-plugin/plugin.json \
     plugins/genie/.kimi-plugin/plugin.json \
+    plugins/genie/orca-plugin.json \
     plugins/genie/package.json \
     plugins/pi-genie/package.json; do
     git show "${child_sha}:${path}" |

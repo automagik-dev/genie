@@ -308,6 +308,7 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
     ['plugins/genie/.claude-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version }],
+    ['plugins/genie/orca-plugin.json', { id: 'genie', version }],
     ['plugins/genie/package.json', { name: 'genie-plugin', version }],
     ['plugins/pi-genie/package.json', { name: 'genie-pi-plugin', version }],
   ];
@@ -339,7 +340,7 @@ function versionRepo(packageScript?: string) {
 }
 
 describe('check-version-child (parent CI inheritance)', () => {
-  test('accepts the exact deterministic six-field auto-version child', () => {
+  test('accepts the exact deterministic version-only child', () => {
     const fixture = versionRepo();
     const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '5.260714.2'], fixture.root);
     expect(result.exitCode).toBe(0);
