@@ -103,7 +103,14 @@ afterEach(() => {
 });
 
 function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
-  return { root, databaseRoot: root, pluginProbe: NO_CODEX, bunVersion: '1.3.10', bunPath: '/usr/bin/bun' };
+  return {
+    root,
+    databaseRoot: root,
+    pluginProbe: NO_CODEX,
+    codexActivation: null,
+    bunVersion: '1.3.10',
+    bunPath: '/usr/bin/bun',
+  };
 }
 
 describe('Bun runtime contract', () => {
@@ -394,18 +401,7 @@ describe('Codex doctor lifecycle results', () => {
     const durations: number[] = [];
     for (let index = 0; index < 5; index += 1) {
       const started = performance.now();
-      await captureDoctor(() =>
-        doctorCommand(
-          { json: true },
-          {
-            root: process.cwd(),
-            databaseRoot: process.cwd(),
-            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
-            bunVersion: '1.3.10',
-            bunPath: '/usr/bin/bun',
-          },
-        ),
-      );
+      await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
       durations.push(performance.now() - started);
     }
     durations.sort((a, b) => a - b);

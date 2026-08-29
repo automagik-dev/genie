@@ -107,58 +107,26 @@ def test_genie_board_passes_wish_scope(monkeypatch):
     assert "items: 2" in text
 
 
-def test_board_prefers_mcp_tool_when_context_available(monkeypatch):
+def test_board_uses_standalone_adapter_and_ignores_plugin_context(monkeypatch):
     commands = load_commands()
+    calls: list[dict[str, Any]] = []
 
-    def legacy_bridge(args: dict, **kwargs: Any) -> str:
-        raise AssertionError("legacy bridge used despite an MCP-capable context")
-
-    monkeypatch.setattr(commands, "_genie_board", legacy_bridge)
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    class Ctx:
-        def call_tool(self, name: str, args: dict[str, Any]) -> str:
-            calls.append((name, dict(args)))
-            return json.dumps(
-                {
-                    "success": True,
-                    "mutation": "none",
-                    "cwd": "/repo",
-                    "command": ["genie", "board", "--json", "--wish", "demo"],
-                    "data": [{"id": 1}],
-                }
-            )
-
-    text = commands.slash_genie("board demo", context=Ctx())
-    assert calls and calls[0][0] == "genie_board"
-    assert calls[0][1].get("wish") == "demo"
-    assert text.splitlines()[0].startswith("OK")
-
-
-def test_board_falls_back_to_legacy_bridge_when_mcp_call_fails(monkeypatch):
-    commands = load_commands()
-    used_bridge: list[bool] = []
-
-    def legacy_bridge(args: dict, **kwargs: Any) -> str:
-        used_bridge.append(True)
+    def standalone_adapter(args: dict, **kwargs: Any) -> str:
+        calls.append(dict(args))
         return json.dumps(
             {
                 "success": True,
                 "mutation": "none",
                 "cwd": "/repo",
-                "command": ["genie", "board", "--json"],
-                "data": [],
+                "command": ["genie", "board", "--json", "--wish", "demo"],
+                "data": [{"id": 1}],
             }
         )
 
-    monkeypatch.setattr(commands, "_genie_board", legacy_bridge)
+    monkeypatch.setattr(commands, "_genie_board", standalone_adapter)
 
-    class Ctx:
-        def call_tool(self, name: str, args: dict[str, Any]) -> str:
-            raise RuntimeError("mcp unavailable")
-
-    text = commands.slash_genie("board", context=Ctx())
-    assert used_bridge == [True]  # degraded to the legacy bridge
+    text = commands.slash_genie("board demo", context=object())
+    assert calls == [{"wish": "demo"}]
     assert text.splitlines()[0].startswith("OK")
 
 
