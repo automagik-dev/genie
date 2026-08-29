@@ -271,17 +271,21 @@ done
 **Goal:** Give users and maintainers complete, testable guidance for dual-mode authority.
 
 **Deliverables:**
-1. Mode, authority, compatibility, recovery, upgrade, rollback, uninstall, and unsupported-host guidance.
-2. Contributor threat boundary, verb-amendment process, and planned MCP-retirement migration guidance.
+1. Operator guidance in `README.md` for mode selection, authority, compatibility, recovery, upgrade, rollback,
+   uninstall, unsupported hosts, and the planned MCP-retirement migration.
+2. Contributor guidance in `plugins/genie/references/orca-orchestration.md` for the threat boundary and
+   verb-amendment process, plus mirrored/plugin links from the operator surface.
+3. Extend `scripts/release-docs.test.ts` with a targeted dual-mode documentation contract that reads both files and
+   asserts the required operator/contributor topics and public-only examples.
 
 **Acceptance Criteria:**
 - [ ] Examples match shipped CLI and contain no private APIs, terminal injection, fallback, or v6 assumptions.
-- [ ] Links, plugin mirrors, generated docs if any, and recovery rituals validate.
+- [ ] The targeted release-docs test fails when either named documentation surface or a required topic disappears;
+  links, plugin mirrors, generated docs if any, and recovery rituals also validate.
 
 **Validation:**
 ```bash
-bun run lint:docs-markdown
-bun run lint:docs-links
+bun test scripts/release-docs.test.ts
 bun run wishes:lint
 bun run check
 ```
@@ -345,8 +349,15 @@ done
 
 - **2026-08-29 17:04 UTC — SHIP.** Independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698`
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest
-  `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`. The release-assets timeout was
-  environmental and reproduced byte-identically on the baseline.
+  `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`.
+- **Durable baseline receipt for the unrelated release-assets timeout:** reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`
+  and its baseline parent `3c17272fc7c9a0f3c85f3feab28f80aec3f5ce06` contain the byte-identical
+  `scripts/reconcile-release-assets.test.ts` Git blob `698fdc3334cf5271702d621d533f029775c0021c`. The exact focused command
+  `bun test scripts/reconcile-release-assets.test.ts` produced **2 fail / 3 pass / exit 1** on both trees: the empty-draft
+  case exceeded its 5,000 ms timeout (the subprocess returned exit code 3 before the assertion), and the selected-channel
+  fanout case exceeded its 15,000 ms timeout. Because the failing test bytes and focused outcome were unchanged from the
+  immutable baseline, the reviewer classified the timeout as pre-existing/environmental rather than an Option-A
+  planning-doc regression.
 
 ---
 
