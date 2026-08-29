@@ -146,4 +146,12 @@ describe('release payload version contract', () => {
     expect(buildScript).toContain('"plugins/genie/orca-plugin.json"');
     expect(buildScript).toContain('"plugins/genie/orca-entrypoint.min.js"');
   });
+
+  test('tarball builds are gated by source version verification', () => {
+    const workflow = readFileSync(join(repoRoot, '.github/workflows/build-tarballs.yml'), 'utf8');
+
+    expect(workflow).toContain('verify-source-version:');
+    expect(workflow).toContain('bun scripts/release-payload-version.ts --verify-source .');
+    expect(workflow).toContain('needs: verify-source-version');
+  });
 });
