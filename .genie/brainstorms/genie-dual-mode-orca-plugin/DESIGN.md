@@ -344,16 +344,14 @@ inspected before promotion.
 Each PR starts from then-current `origin/dev`, has one owner, and is independently reviewable. Dependencies
 are shallow; no PR mixes the dirty v6 evidence or unrelated roadmap/Khal changes.
 
-1. **A0 — canonical planning set and evidence gate:** reconcile the four canonical planning documents —
-   `DRAFT.md`, this `DESIGN.md`, `WISH.md`, and the `INDEX.md` entry — in one docs-only commit. Compute the
-   reviewable DESIGN digest after the set is final, then obtain fresh independent review of the exact committed
-   candidate before stamping evidence. The existing WISH and this A0 plan remain the current planning lifecycle,
-   but this substantive amendment returns the four-document set to pending review; neither the plan nor any
-   superseded review authorizes implementation or further lifecycle advancement.
+1. **A0 — canonical planning set and evidence gate (complete):** the four canonical planning documents —
+   `DRAFT.md`, this `DESIGN.md`, `WISH.md`, and the `INDEX.md` entry — were reconciled as one docs-only set,
+   independently reviewed, digest-stamped, and approved. This approved WISH and A0 decomposition are the current
+   planning lifecycle and authorize the dependency-gated A1–A7 execution sequence.
 2. **A1 — mode schema and authority barriers:** config/resolver, DB pre-open guard, roadmap pre-write guard,
-   typed diagnostic, and standalone/Orca negative fixtures. Depends only on freshly reviewed and stamped A0.
+   typed diagnostic, and standalone/Orca negative fixtures. Depends only on approved and stamped A0.
 3. **A2 — closed Orca CLI adapter:** schemas, argv table, runtime resolution, bounded runner, errors,
-   receipts/read-backs, and hermetic fake-process tests. Depends only on freshly reviewed and stamped A0 and can
+   receipts/read-backs, and hermetic fake-process tests. Depends only on approved and stamped A0 and can
    proceed beside A1.
 4. **A3 — plugin payload and real-runtime smoke:** manifests/marketplace, adapter wiring, compatibility probe,
    and disposable Run/Task smoke. Depends on A2; does not own install transitions.
@@ -389,16 +387,15 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 
 ## Next step
 
-The existing WISH and A0 decomposition are the current plan, but the four canonical documents are amended-DRAFT
-and pending fresh independent review of their exact committed state. The reviewer must return a verdict plus the
-reviewable DESIGN content SHA-256; the orchestrator must then persist and verify that new evidence before any
-further plan-lifecycle transition or A1–A7 authorization. The prior stamp is superseded and grants no authority.
+The approved WISH and A0 decomposition are the current plan. A0's canonical-document evidence gate is complete;
+A1 mode guards and A2 adapter work are the next authorized groups and may proceed in parallel, followed by the
+dependency-gated A3–A7 sequence.
 
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-- **Verdict:** SHIP
-- **Reviewed content SHA-256:** `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`
-- **Reviewer:** term_fb7838bc-745e-45ba-9d62-becc5d842e07
-- **Reviewed at:** 2026-08-29T17:57:45.000Z
+- **Verdict:** PENDING
+- **Reviewed content SHA-256:** `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`
+- **Reviewer:** PENDING
+- **Reviewed at:** PENDING
 <!-- genie-design-review:end -->
