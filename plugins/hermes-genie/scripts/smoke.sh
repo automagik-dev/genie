@@ -5,7 +5,7 @@
 # the homogeneous contract:
 #
 #   1. plugin link converged + plugin.yaml version == genie release version
-#   2. retired mcp_servers.genie route absent
+#   2. historical marker-owned route retired; no standalone Genie MCP route added
 #   3. skills.external_dirs holds the product skills root (or a managed copy)
 #   4. no khaw-bridge skill in the payload; pre_llm_call hook, not post_tool_call
 #   5. `genie doctor` reports every hermes leg green
@@ -119,7 +119,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2) mcp_servers.genie absent (external runtime retired)
+# 2) Historical marker-owned route absent; standalone task/board needs no MCP config.
 # ---------------------------------------------------------------------------
 if [ -f "$CONFIG" ]; then
   if grep -Eq 'genie:managed:mcp_servers\.genie|^[[:space:]]+genie:[[:space:]]*$' "$CONFIG"; then

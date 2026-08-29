@@ -1,13 +1,6 @@
 /**
- * Project-scoped MCP lifecycle for Codex and Claude Code.
- *
- * Codex has one supported route to Genie's stdio MCP server: the marker-owned
- * `<worktree>/.codex/config.toml` entry. The enabled `genie@automagik` plugin
- * deliberately declares no MCP server.
- *
- * This module is the sole owner of reconciling and inspecting that route. Its
- * legacy route-classification helpers remain fail-closed for older installed
- * payloads, but production init/setup always retain the stable absolute facade.
+ * Read-only Codex plugin discovery plus retirement of historical project MCP
+ * registrations. No API in this module can create or revive a Genie route.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -32,11 +25,6 @@ import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from './trusted-executable.js';
 
 export type ArtifactAction = 'created' | 'updated' | 'skipped';
-
-export interface McpServerEntry {
-  command: string;
-  args: string[];
-}
 
 export interface McpConfigResult {
   path: string;
@@ -116,30 +104,8 @@ export interface CodexPluginMcpUsabilityOptions {
   cwd?: string;
 }
 
-export interface RegisterProjectMcpOptions {
-  /** Reuse a caller's one-shot probe so a multi-target reconciliation queries Codex once. */
-  pluginProbe?: CodexPluginProbe;
-  probeDeps?: CodexPluginProbeDeps;
-  /** Command written to the Claude Code JSON config (`.mcp.json`). */
-  entry?: McpServerEntry;
-  /**
-   * Dedicated command for the marker-owned Codex `.codex/config.toml` route.
-   * Defaults to {@link RegisterProjectMcpOptions.entry}. Trusted `genie init`
-   * Historical callers could provide a distinct Codex entry during migration.
-   */
-  codexEntry?: McpServerEntry;
-  /**
-   * Reconcile the marker-owned Codex route INDEPENDENT of plugin/delivery state
-   * (trusted `genie init`). A route name is not proof of ownership, so an
-   * unmanaged same-key route is still preserved and reported rather than
-   * overwritten.
-   */
-  forceCodexFallback?: boolean;
-}
-
 export interface RetireProjectMcpOptions {
-  /** @deprecated `.mcp.json` entries are never ownership-authoritative and are always preserved. */
-  ownedEntries?: McpServerEntry[];
+  readonly retirementOnly?: true;
 }
 
 export interface GitProjectRoots {
@@ -613,31 +579,6 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
   }
 }
 
-function interpretedGenieEntry(argv: string[]): string | null {
-  const candidate = argv[1];
-  if (!candidate || !isAbsolute(candidate)) return null;
-  try {
-    const stat = lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    return realpathSync(candidate);
-  } catch {
-    // Compiled binaries receive the first CLI argument in argv[1], not a script.
-    return null;
-  }
-}
-
-/**
- * The absolute stdio entry used by all project-scoped clients. A compiled Bun
- * executable directly receives `mcp`; an interpreted source/dist invocation
- * records both the absolute Bun executable and absolute entry script.
- */
-export function genieMcpEntry(command?: string, argv = process.argv): McpServerEntry {
-  if (command !== undefined) return { command, args: ['mcp'] };
-  const executable = realpathSync(process.execPath);
-  const script = interpretedGenieEntry(argv);
-  return { command: executable, args: script ? [script, 'mcp'] : ['mcp'] };
-}
-
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -720,10 +661,6 @@ function hasUnmanagedFallback(raw: string, owned: { start: number; end: number }
   return isJsonObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, GENIE_PLUGIN_NAME);
 }
 
-function fallbackBlock(entry: McpServerEntry): string {
-  return `${FALLBACK_BEGIN}\nmcp_servers.genie.command = ${JSON.stringify(entry.command)}\nmcp_servers.genie.args = ${JSON.stringify(entry.args)}\n${FALLBACK_END}`;
-}
-
 function removeOwnedFallback(raw: string, owned: { start: number; end: number }): string {
   return `${raw.slice(0, owned.start)}${raw.slice(owned.end)}`;
 }
@@ -764,86 +701,17 @@ function assertNonGenieTomlSemantics(raw: string, next: string, path: string): v
   }
 }
 
-function prepareCodexFallback(
-  configPath: string,
-  entry: McpServerEntry,
-  required: boolean,
-): CodexProjectMcpResult & {
-  content?: string;
-} {
-  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  const exists = existsSync(configPath);
-  const raw = exists ? readFileSync(configPath, 'utf8') : '';
-  const owned = fallbackBounds(raw, configPath);
-  const unmanaged = hasUnmanagedFallback(raw, owned);
-
-  if (!required) {
-    if (unmanaged) {
-      return {
-        path: configPath,
-        action: 'skipped',
-        ok: false,
-        route: 'conflict',
-        detail:
-          'enabled plugin and an unmanaged [mcp_servers.genie] entry are both present; remove one manually to avoid duplicate routing',
-      };
-    }
-    if (owned === null) {
-      return { path: configPath, action: 'skipped', ok: true, route: 'plugin', detail: 'enabled plugin' };
-    }
-    const content = removeOwnedFallback(raw, owned);
-    assertNonGenieTomlSemantics(raw, content, configPath);
-    return {
-      path: configPath,
-      action: 'updated',
-      ok: true,
-      route: 'plugin',
-      detail: 'enabled plugin; removed marker-owned project fallback',
-      content,
-    };
-  }
-
-  if (unmanaged) {
-    return {
-      path: configPath,
-      action: 'skipped',
-      ok: false,
-      route: 'unmanaged-fallback',
-      detail:
-        'preserved user-owned [mcp_servers.genie] fallback byte-for-byte, but its command is unverified; cannot claim a usable Genie MCP route',
-    };
-  }
-
-  const block = fallbackBlock(entry);
-  const unowned = owned === null ? raw : removeOwnedFallback(raw, owned);
-  const content = unowned.length === 0 ? `${block}\n` : `${block}\n\n${unowned}`;
-  assertNonGenieTomlSemantics(raw, content, configPath);
-  if (content === raw) {
-    return { path: configPath, action: 'skipped', ok: true, route: 'fallback', detail: 'project fallback current' };
-  }
-  return {
-    path: configPath,
-    action: exists ? 'updated' : 'created',
-    ok: true,
-    route: 'fallback',
-    detail: 'project fallback active',
-    content,
-  };
-}
-
-/** Merge only the marker-owned Codex fallback. Kept exported for migration callers/tests. */
-export function mergeCodexMcpFallback(configPath: string, entry: McpServerEntry): ArtifactAction {
-  const prepared = prepareCodexFallback(configPath, entry, true);
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared.action;
-}
-
 /** Remove only the marker-owned Codex fallback. */
 export function removeCodexMcpFallback(configPath: string): ArtifactAction {
-  const prepared = prepareCodexFallback(configPath, genieMcpEntry(), false);
-  if (prepared.route === 'conflict') return 'skipped';
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared.action;
+  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
+  if (!existsSync(configPath)) return 'skipped';
+  const raw = readFileSync(configPath, 'utf8');
+  const owned = fallbackBounds(raw, configPath);
+  if (owned === null) return 'skipped';
+  const content = removeOwnedFallback(raw, owned);
+  assertNonGenieTomlSemantics(raw, content, configPath);
+  applyPreparedWrite({ path: configPath, action: 'updated', content });
+  return 'updated';
 }
 
 /** Read-only route inspection used by doctor. */
@@ -898,71 +766,6 @@ export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): 
     route: 'none',
     detail: plugin.cliAvailable ? `no usable Codex MCP route; ${plugin.detail}` : plugin.detail,
   };
-}
-
-/**
- * Refuse an install/enable mutation when it would collide with a user-owned
- * project registration. Marker-owned state is safe for reconciliation; an
- * unmanaged `[mcp_servers.genie]` entry is preserved byte-for-byte.
- */
-export function preflightCodexPluginMutation(root: string): { ok: boolean; path: string; detail: string } {
-  const path = join(root, '.codex', 'config.toml');
-  try {
-    assertSafeProjectConfigPath(root, path);
-    const raw = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    const owned = fallbackBounds(raw, path);
-    if (hasUnmanagedFallback(raw, owned)) {
-      return {
-        ok: false,
-        path,
-        detail:
-          'user-owned [mcp_servers.genie] fallback is present; refusing to install or enable the plugin because that would create duplicate routing',
-      };
-    }
-    return { ok: true, path, detail: 'no unmanaged Genie MCP fallback' };
-  } catch (error) {
-    return { ok: false, path, detail: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/**
- * Reconcile the Codex route at an already-resolved worktree root.
- * Query failures fail safe to the absolute project fallback.
- */
-export function reconcileCodexProjectMcp(
-  root: string,
-  plugin: CodexPluginProbe,
-  entry = genieMcpEntry(),
-): CodexProjectMcpResult {
-  const path = join(root, '.codex', 'config.toml');
-  const effectivePlugin = isUsableCodexPlugin(plugin);
-  const prepared = prepareCodexFallback(path, entry, !effectivePlugin);
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared;
-}
-
-/** Preserve `.mcp.json` and reconcile exactly one marker-owned Codex route. */
-export function registerProjectMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
-  const entry = options.entry ?? genieMcpEntry();
-  const codexEntry = options.codexEntry ?? entry;
-  const preparedJson = [preparePreservedJsonMcpConfig(join(root, '.mcp.json'))];
-  // Trusted init reconciles the marker-owned Codex route independent of plugin
-  // state (`forceCodexFallback`) — the `||` short-circuits so a forced call never
-  // spends a Codex query. Otherwise the marker is retained only when no usable
-  // plugin is proven. Either way an unowned same-key route is preserved.
-  const required =
-    options.forceCodexFallback === true ||
-    !isUsableCodexPlugin(options.pluginProbe ?? probeCodexGeniePlugin(options.probeDeps));
-  const preparedCodex = prepareCodexFallback(join(root, '.codex', 'config.toml'), codexEntry, required);
-
-  if (!preparedCodex.ok) {
-    throw new Error(`Cannot reconcile Codex project MCP at ${preparedCodex.path}: ${preparedCodex.detail}`);
-  }
-
-  const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
-  if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
-  results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
-  return results;
 }
 
 /** Preserve `.mcp.json`; retire only the marker-owned Codex fallback. */

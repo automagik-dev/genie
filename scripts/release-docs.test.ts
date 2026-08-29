@@ -308,7 +308,7 @@ describe('Group E release and documentation contracts', () => {
     // Missing, skipped, duplicated, stale, or identity-mismatched native
     // entries fail the aggregate instead of degrading to representative proof.
     expect(completeness).toContain('if: ${{ always() }}');
-    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$NATIVE_RESULT" == success ]]');
+    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$STANDALONE_RESULT" == success ]]');
     expect(completeness).toContain('downloaded candidate matrix differs from the matrix used to schedule native jobs');
     expect(completeness).toContain('bun scripts/validate-dogfood-matrix-evidence.ts');
     expect(completeness).toContain('--evidence-dir aggregate/entries');

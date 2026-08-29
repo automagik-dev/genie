@@ -28,7 +28,7 @@ function fixture(): { root: string; manifest: string; dist: string; value: Recor
   return { root, manifest, dist, value };
 }
 
-describe('candidate dogfood manifest-derived native matrix', () => {
+describe('candidate dogfood manifest-derived standalone matrix', () => {
   test('emits exactly one digest-bound native entry per manifest platform', () => {
     const fx = fixture();
     const matrix = buildCandidateDogfoodMatrix(fx.manifest, fx.dist);

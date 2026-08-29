@@ -389,7 +389,7 @@ jobs:
             echo "previous_manifest_sha256=${PREVIOUS_MANIFEST_SHA256}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Upload manifest-derived native dogfood matrix
+      - name: Upload manifest-derived standalone dogfood matrix
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-dogfood-candidate-matrix
@@ -544,7 +544,7 @@ jobs:
           done
 
   codex-native-dogfood:
-    name: Codex native dogfood / ${{ matrix.platform }}
+    name: Codex standalone task/board dogfood / ${{ matrix.platform }}
     needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -723,7 +723,7 @@ jobs:
           retention-days: 30
 
   codex-dogfood-completeness:
-    name: Require complete Codex native dogfood matrix
+    name: Require complete Codex standalone dogfood matrix
     needs: [prepare-delivery-evidence, codex-native-dogfood]
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -731,17 +731,17 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Reject failed, skipped, or unavailable native entries
+      - name: Reject failed, skipped, or unavailable standalone entries
         shell: bash
         env:
           PREPARE_RESULT: ${{ needs.prepare-delivery-evidence.result }}
-          NATIVE_RESULT: ${{ needs.codex-native-dogfood.result }}
+          STANDALONE_RESULT: ${{ needs.codex-native-dogfood.result }}
           EXPECTED_MATRIX: ${{ needs.prepare-delivery-evidence.outputs.dogfood_matrix }}
           EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
         run: |
           set -euo pipefail
-          [[ "$PREPARE_RESULT" == success && "$NATIVE_RESULT" == success ]] || {
-            echo "::error::Codex dogfood is incomplete (prepare=${PREPARE_RESULT}, native=${NATIVE_RESULT})"
+          [[ "$PREPARE_RESULT" == success && "$STANDALONE_RESULT" == success ]] || {
+            echo "::error::Codex dogfood is incomplete (prepare=${PREPARE_RESULT}, standalone=${STANDALONE_RESULT})"
             exit 1
           }
           [[ -n "$EXPECTED_MATRIX" && -n "$EXPECTED_MANIFEST_SHA256" ]] || {

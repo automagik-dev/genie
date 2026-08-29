@@ -6,7 +6,7 @@ What the Genie Hermes plugin exposes, layer by layer, and the exact contract eve
 
 | Layer | Provides | Declared in `plugin.yaml` |
 |-------|----------|---------------------------|
-| Tools (default) | `genie_status`, `genie_work_plan`, `genie_review_plan` — the three gap tools the genie MCP board surface does not cover | `provides_tools` |
+| Tools (default) | `genie_status`, `genie_work_plan`, `genie_review_plan` — read-only native tools backed by standalone Genie CLI JSON | `provides_tools` |
 | Retired tools | Historical duplicate board/task native tools cannot be restored by configuration or environment flags | not declared |
 | Slash commands | `/genie` dispatcher (`status`, `board`, `wish`, `work-plan`, `review-plan`, `help`) plus thin wrappers `/genie-board`, `/genie-wish`, `/genie-work-plan`, `/genie-review-plan` | `provides_commands` |
 | CLI tree | `hermes genie` with subcommands `status`, `board`, `wish`, `work-plan`, `review-plan` | `provides_cli_commands` |
@@ -15,7 +15,7 @@ What the Genie Hermes plugin exposes, layer by layer, and the exact contract eve
 
 Layer semantics:
 
-- **Slash commands** — `/genie <subcommand>` gives outcome-first, human-readable output; an unknown subcommand answers with a pointer to `/genie help`. The `/genie-*` wrappers are aliases into the same dispatcher. When Hermes passes a plugin context that can invoke tools (`call_tool`), the dispatcher routes each subcommand to the first-class MCP tool name so the human surface rides the same truth as the model; when no such context is present (or the MCP call fails) it falls back to the plugin-local read-only bridge handler during the transition.
+- **Slash commands** — `/genie <subcommand>` gives outcome-first, human-readable output; an unknown subcommand answers with a pointer to `/genie help`. The `/genie-*` wrappers are aliases into the same dispatcher and read through the plugin-local standalone CLI bridge.
 - **CLI tree** — registered only when the Hermes build exposes `register_cli_command`. Registration of CLI commands, skills, and hooks is `hasattr`-guarded, so `register(ctx)` completes cleanly on builds that lack any of them.
 - **Hooks** — advisory only, never blocking. `on_session_start` injects a short reminder when the working directory contains `.genie/`; `pre_tool_call` raises an advisory when a terminal command scrapes or sleep-polls Genie state (e.g. `tmux capture-pane`) instead of using the structured tools; `pre_llm_call` injects bounded Genie session context when the working directory contains `.genie/` and returns `None` (no injection) otherwise. All report `mutation: "none"`.
 - **Skills** — a single thin cockpit pointer (`genie`) that routes to first-class product `wish`/`work`/`review` skills and standalone board/task commands. The former plugin-local duplicates are retired.
@@ -51,10 +51,10 @@ Every tool returns a JSON string with one uniform envelope:
 | `genie_status` | `genie doctor --json` | gap tool (default). `data` wraps the doctor report as `data.doctor` plus `data.genie_dir` / `data.genie_dir_present` for the resolved cwd |
 | `genie_work_plan` | `genie context --wish <slug> --plan [--group <g>]` | gap tool (default). Plan mode prints the versioned spawn-context payload (branch + base SHA + ready tasks, raw JSON capture) without touching anything |
 | `genie_review_plan` | board + task-list composite, then reads `.genie/wishes/<slug>/WISH.md` | gap tool (default). Extracts the `## Success Criteria` and `## QA Criteria` sections into `data.criteria`; `source` is the wish-file path |
-| `genie_board` | `genie board --json [--wish <slug>]` | legacy (flag-gated). Duplicates the MCP board tool; prefer the MCP surface |
-| `genie_wish_status` | `genie board --wish <slug> --json` + `genie task list --wish <slug> --json` | legacy (flag-gated). Composite: `data.board` and `data.tasks` are full leg payloads |
-| `genie_task_list` | `genie task list --json [--wish <slug>] [--status <status>]` | legacy (flag-gated). `status` is one of `blocked`, `ready`, `in_progress`, `done` |
-| `genie_task_status` | `genie task status <id>` | legacy (flag-gated). Raw text capture (`parsed: false` expected) |
+| `genie_board` | `genie board --json [--wish <slug>]` | retired duplicate native name; use the standalone command directly |
+| `genie_wish_status` | `genie board --wish <slug> --json` + `genie task list --wish <slug> --json` | retired duplicate native name |
+| `genie_task_list` | `genie task list --json [--wish <slug>] [--status <status>]` | retired duplicate native name |
+| `genie_task_status` | `genie task status <id>` | retired duplicate native name |
 
 ## Input safety
 

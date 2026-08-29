@@ -18,7 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
-import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
+import { resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import {
@@ -66,6 +66,15 @@ async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string;
 }
 
 const NO_CODEX = { cliAvailable: false, status: 'unavailable' as const, installed: false, detail: 'fixture absent' };
+
+function seedRetiredCodexMarker(root: string): void {
+  const directory = join(root, '.codex');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, 'config.toml'),
+    '# BEGIN GENIE MCP FALLBACK\nmcp_servers.genie.command = "/absolute/genie"\nmcp_servers.genie.args = ["mcp"]\n# END GENIE MCP FALLBACK\n',
+  );
+}
 const ISOLATED_ENV_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HERMES_HOME'] as const;
 let isolatedHome: string;
 let savedIsolatedEnv: Partial<Record<(typeof ISOLATED_ENV_KEYS)[number], string>>;
@@ -198,11 +207,7 @@ describe('Codex doctor lifecycle results', () => {
     const root = mkdtempSync(join(tmpdir(), 'doctor-node-availability-'));
     try {
       trustProjectInCodexConfig(root);
-      reconcileCodexProjectMcp(
-        root,
-        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
-        { command: '/absolute/genie', args: ['mcp'] },
-      );
+      seedRetiredCodexMarker(root);
       const checks = await checkCodexIntegration(root, {
         cliAvailable: true,
         status: 'ok',
@@ -215,8 +220,8 @@ describe('Codex doctor lifecycle results', () => {
       const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
       const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
       expect(plugin?.detail).toContain('"node" is not available on PATH');
-      expect(route).toMatchObject({ status: 'pass' });
-      expect(route?.detail).toContain('fallback');
+      expect(route).toMatchObject({ status: 'warn' });
+      expect(route?.detail).toContain('retired route remains');
       expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -288,7 +293,7 @@ describe('Codex doctor lifecycle results', () => {
         usabilityDetail: 'active plugin cache root is missing',
         detail: 'active plugin cache root is missing',
       };
-      reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] });
+      seedRetiredCodexMarker(root);
       const checks = await checkCodexIntegration(root, probe);
       const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
       const capability = checks.find((check) => check.name === 'Codex Genie MCP capability');
@@ -296,8 +301,8 @@ describe('Codex doctor lifecycle results', () => {
       expect(plugin).toMatchObject({ status: 'warn' });
       expect(capability).toMatchObject({ status: 'warn' });
       expect(capability?.detail).toContain('source-bundle declarations do not establish runtime health');
-      expect(route).toMatchObject({ status: 'pass' });
-      expect(route?.detail).toContain('fallback');
+      expect(route).toMatchObject({ status: 'warn' });
+      expect(route?.detail).toContain('retired route remains');
     } finally {
       if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
       else process.env.CODEX_HOME = priorCodexHome;
@@ -360,11 +365,7 @@ describe('Codex doctor lifecycle results', () => {
       if (roots === null) throw new Error('linked worktree roots were not resolved');
       expect(realpathSync(roots.worktreeRoot)).toBe(realpathSync(linked));
       expect(realpathSync(roots.commonRoot)).toBe(realpathSync(repo));
-      reconcileCodexProjectMcp(
-        linked,
-        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
-        { command: '/absolute/genie', args: ['mcp'] },
-      );
+      seedRetiredCodexMarker(linked);
       expect(existsSync(join(linked, '.codex', 'config.toml'))).toBe(true);
       expect(existsSync(join(repo, '.codex', 'config.toml'))).toBe(false);
 

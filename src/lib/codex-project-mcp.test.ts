@@ -2,11 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  preflightCodexPluginMutation,
-  registerProjectMcpConfigs,
-  retireProjectMcpConfigs,
-} from './codex-project-mcp.js';
+import * as projectMcp from './codex-project-mcp.js';
+import { retireProjectMcpConfigs } from './codex-project-mcp.js';
 
 let root: string;
 
@@ -17,9 +14,16 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe('retireProjectMcpConfigs', () => {
-  test('retirement remains distinct from the legacy registration helpers', () => {
-    expect(typeof preflightCodexPluginMutation).toBe('function');
-    expect(typeof registerProjectMcpConfigs).toBe('function');
+  test('exports no registration or revival API', () => {
+    for (const name of [
+      'genieMcpEntry',
+      'mergeCodexMcpFallback',
+      'preflightCodexPluginMutation',
+      'reconcileCodexProjectMcp',
+      'registerProjectMcpConfigs',
+    ]) {
+      expect(Object.hasOwn(projectMcp, name), name).toBe(false);
+    }
   });
   test('never parses or rewrites .mcp.json', () => {
     for (const original of [

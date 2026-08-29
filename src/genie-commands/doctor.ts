@@ -445,8 +445,8 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
     };
   }
   const current = state.version === VERSION;
-  // Post-Group-A the plugin ships NO MCP declaration — the marker-owned project
-  // route is the only Codex route — so plugin health is installed+enabled+current.
+  // A7 ships no MCP declaration or project route, so plugin health is
+  // installed+enabled+current.
   // The probe still reports the OLD manifest expectation ("does not point
   // mcpServers to ./.mcp.json"): on a post-A generation that IS the healthy
   // shape, so it is filtered from diagnostics; every other usability detail
@@ -458,7 +458,7 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
   return {
     name: 'Codex Genie plugin',
     status: healthy ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; MCP route: marker-owned project route (plugin declares none)${diagnostics} (CLI v${VERSION})`,
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; standalone task/board (plugin declares no MCP route)${diagnostics} (CLI v${VERSION})`,
     suggestion: healthy ? undefined : 'Run `genie setup --codex` to activate the delivered generation.',
   };
 }
@@ -524,20 +524,21 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
     const trust = findings.filter(
       (finding) => finding.kind === 'untrusted-config' || finding.kind === 'project-trust-required',
     );
-    const status: CheckStatus = !route.ok || hard.length > 0 ? 'fail' : trust.length > 0 ? 'warn' : 'pass';
+    const retired = route.route !== 'none' && route.route !== 'plugin';
+    const status: CheckStatus = retired || hard.length > 0 || trust.length > 0 ? 'warn' : 'pass';
     const findingText = findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ');
     return {
       name: 'Codex Genie MCP registration',
       status,
-      detail: `${route.route}: ${route.detail ?? 'no detail'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
+      detail: `${retired ? 'retired route remains preserved' : 'retired routes absent'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
       suggestion:
         status === 'pass'
           ? undefined
           : hard.length > 0
-            ? 'Resolve the reported same-key/shadowing layer yourself (Genie never edits user-owned config), then run `genie init`.'
+            ? 'Resolve the reported user-owned same-key/shadowing layer if desired; Genie never edits it.'
             : trust.length > 0 && route.ok
               ? 'Trust this project in Codex, then start a new Codex task.'
-              : 'Run `genie init` in this worktree to reconcile the project fallback.',
+              : 'Run `genie init` to remove a marker-owned historical route; user-owned routes are preserved.',
       ...(findings.length > 0 ? { routeLayers: findings } : {}),
     };
   } catch (error) {
@@ -663,7 +664,7 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
       status: manifestState === 'declares-none' ? 'pass' : 'warn',
       detail:
         manifestState === 'declares-none'
-          ? `plugin declares no MCP route (marker-owned project route is authoritative) at ${probe.activePluginRoot}`
+          ? `plugin declares no MCP route; standalone task/board commands are authoritative at ${probe.activePluginRoot}`
           : manifestState === 'declares-route'
             ? `active plugin manifest still declares mcpServers — a second Genie route risks cache-root routing: ${manifest}`
             : manifestState === 'unreadable'

@@ -17,13 +17,9 @@ import type { Command } from 'commander';
 import {
   type ArtifactAction,
   type McpConfigResult,
-  mergeCodexMcpFallback,
-  removeCodexMcpFallback,
   resolveGitWorktreeRoot,
   retireProjectMcpConfigs,
 } from '../lib/codex-project-mcp.js';
-
-export { mergeCodexMcpFallback, removeCodexMcpFallback };
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in source)
