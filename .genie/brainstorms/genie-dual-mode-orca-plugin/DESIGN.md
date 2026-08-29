@@ -91,7 +91,7 @@ prefix, argument order, and one final `--json`; callers cannot supply any other 
 | `worker-read` | `dispatch`, `[source]`, `[cursor]`, `[limit]` | `--dispatch <dispatch-id> [--source <worker-source>] [--cursor <cursor>] [--limit <limit:1..100>]` | Validated bounded read envelope |
 | `worker-release` | `dispatch` | `--dispatch <dispatch-id>` | `worker-show --dispatch <requested-id>` and verify the public released/retained terminal disposition |
 | `send` | `subject`, `[body]`, `[type]`, `[priority]`, `[threadId]`, `[payload]` | `--subject <text> [--body <text>] [--type <message-type>] [--priority <priority>] [--thread-id <thread-id>] [--payload <send-payload>]` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
-| `check` | `[ack]`, `[unread]`, `[peek]`, `[all]`, `[types]`, `[wait]`, `[timeoutMs]` | `[--ack <delivery-id>] [--unread\|--peek\|--all] [--types <message-type-csv>] [--wait [--timeout-ms <timeout-ms:250..600000>]]` | Validated bounded read envelope |
+| `check` | `[ack]`, `[unread]`, `[peek]`, `[all]`, `[types]`, `[wait]`, `[timeoutMs]` | `[--ack <delivery-id>] [--unread\|--peek\|--all] [--types <message-type-csv>] [--wait [--timeout-ms <timeout-ms:250..600000>]]` | Without `ack`, validated bounded read envelope; with `ack`, validated bounded acknowledgement receipt naming the requested delivery ID and an explicit acknowledged state |
 | `reply` | `id`, `body` | `--id <message-id> --body <text>` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
 | `ask` | exactly one of `question` or `resume`, `[options]`, `[timeoutMs]` | `--question <text>\|--resume <message-id> [--options <option-csv>] [--timeout-ms <timeout-ms:250..600000>]` | Validated answer/pending receipt; recovery resumes the same message ID |
 | `gate-create` | `task`, `question`, `[options]` | `--task <task-id> --question <text> [--options <option-array>]` | `gate-list --task <requested-task>`, locate `receipt.gateId`, and compare question/options |
@@ -115,8 +115,12 @@ points:
   grok | opencode`; and effort is exactly `low | medium | high | xhigh`. `check.types` is a unique, non-empty
   subset of the message-type domain, serialized in caller order as CSV. `ready`, `brief`, `wait`, and exactly one
   of `unread | peek | all` are booleans; `timeoutMs` is accepted only with `wait` for `check`.
-- `deps` is a unique array of 0-64 Task IDs. Ask options are 1-10 unique option strings; gate options are a JSON
-  array with the same domain. `result` is either absent or the exact object `{ summary, artifacts? }`, where
+- `deps` is a unique array of 0-64 Task IDs. Ask options are 1-10 unique option strings. The public CLI's ask
+  encoding is a comma-delimited, single-record list with `,` as its field delimiter and CR (`U+000D`) and LF
+  (`U+000A`) as its record delimiters; an ask option containing any of those three code points is rejected, and
+  the validated options are joined with literal commas without quoting or escaping. Gate options retain the
+  lossless JSON array encoding and the same option count/text domain, without the ask-only delimiter exclusion.
+  `result` is either absent or the exact object `{ summary, artifacts? }`, where
   `summary` is bounded result-summary text and `artifacts` is a unique array of 0-32 bounded path values.
   `send.payload` is either absent or the exact object `{ taskId?, dispatchId?, phase?, outcome?, filesModified?,
   reportPath? }`: IDs use their domains, `phase` is bounded phase text, `outcome` is `succeeded | failed`,
@@ -139,6 +143,13 @@ unknown flags, positional spillover, values containing a flag in place of data, 
 and a caller-provided `--json` are rejected before process launch. The adapter appends exactly one final
 `--json` and never interpolates values into a shell program.
 
+The exact flag-shaped predicate is `value.length > 0 && value[0] === '-'`, where `value` is the normalized
+string and `'-'` is ASCII hyphen-minus (`U+002D`). It is applied after domain validation to every
+caller-derived scalar serialized as the argv token immediately following a flag, including text, IDs, cursors,
+enum values, numeric strings, CSV strings, and serialized JSON strings; a match rejects the operation before
+spawn. It does not inspect scalar contents inside JSON as separate argv tokens, because the emitted JSON token
+begins with `[` or `{` and structured schemas validate those contents independently.
+
 Contract tests cover every row and must negatively prove rejection before spawn of malformed IDs/cursors/text,
 out-of-range limits/timeouts, unknown enum members, duplicate/out-of-domain array members, sparse or oversized
 arrays, malformed JSON, duplicate JSON keys, `null`, wrong JSON scalar types, excess nesting/size, and missing or
@@ -147,7 +158,12 @@ extra `result`/`send.payload` fields. They also reject all terminal flags
 `--name`, `--repo`, `--base-branch`), routing/impersonation flags (`--on`, `--to`, `--run`, `--from`,
 `--dispatch-capability`, `--takeover-legacy`), executable selection or wrapper inputs, raw argv/command
 strings, recovery-only `--retry-request`, caller-supplied `--json`, and every unknown flag or field. Values
-are also tested against flag-shaped substitution. The sole emitted `--worktree current` is an adapter
+are also tested against flag-shaped substitution. Boundary fixtures reject `-`, `--`, `-x`, `--json`, `-1`,
+and `-\u00e9`, while accepting `x-y`, an initial Unicode en dash (`U+2013`), and a serialized JSON token whose
+nested string begins with `-`; the same predicate fixture is generated for every scalar-following-flag slot in
+every row. Ask fixtures reject comma, CR, and LF in each option and prove distinct accepted option arrays
+round-trip through the emitted CSV; gate-option fixtures prove those characters remain lossless through JSON.
+The sole emitted `--worktree current` is an adapter
 constant for `worker-start`, never caller input or a general placement surface.
 
 ## Runtime, receipts, and failure contract
@@ -184,10 +200,18 @@ requested effect. In particular, `run-current` must return the requested Run ID 
 identity equal to both the binding reported by `run-use` and the runtime-attested invoking terminal; `run-show`
 alone is not proof of terminal binding. If a supported Orca compatibility range lacks one of those public fields,
 that mutation is unsupported for that range unless a narrow design amendment documents why no public read exists
-and permits a receipt-only exception for that verb. Today the only receipt-only mutations are `send` and `reply`, whose
-allowed public subset has no stable message-by-ID read. Mutations are never retried automatically because a
-timeout can hide a committed mutation. Recovery names the exact allowed public read command that can
-establish state before another mutation, or identifies the documented receipt-only ambiguity.
+and permits a receipt-only exception for that verb. Today the receipt-only mutations are `send`, `reply`, and
+`check --ack`: the allowed public subset has no stable message-by-ID read for `send`/`reply` and no separate
+delivery-by-ID acknowledgement read for `check --ack`. An acknowledgement success is accepted only from a
+bounded normalized receipt whose operation is `check`, delivery ID equals the requested `ack`, acknowledged
+state is explicitly true, and runtime/version metadata and timestamp satisfy the common receipt schema; a read
+envelope or an omitted/mismatched acknowledgement field is `missing_receipt`/`readback_mismatch`, not success.
+Mutations, including `check --ack`, are never retried automatically because a timeout can hide a committed
+mutation. A `check --ack` timeout is therefore classified `ambiguous_after_possible_commit`; recovery instructs
+the operator to run non-mutating `check --all` (optionally narrowed by the original types) and inspect whether the
+delivery remains visible before deciding whether to issue the acknowledgement again. Recovery otherwise names
+the exact allowed public read command that can establish state before another mutation, or identifies the
+documented receipt-only ambiguity.
 
 The stable error taxonomy is:
 
@@ -285,7 +309,10 @@ inspected before promotion.
 - [ ] A packaged-plugin smoke against a real supported Orca runtime creates and reads back a disposable Run/
   Task flow; cleanup uses only allowed public operations. An unavailable/incompatible runtime creates no
   Genie lifecycle state and returns a bounded typed error.
-- [ ] Timeout-after-commit tests prove there is no automatic mutation retry and diagnostics direct the
+- [ ] `check --ack` tests accept only the bounded acknowledgement receipt with the exact requested delivery ID
+  and explicit acknowledged state, reject read/missing/mismatched receipts, and simulate timeout after commit to
+  prove there is no automatic retry and recovery directs the operator through non-mutating `check --all`.
+- [ ] Other timeout-after-commit tests prove there is no automatic mutation retry and diagnostics direct the
   operator to a read-back before another mutation.
 - [ ] `genie mcp` and Genie-owned MCP wiring are retired with a stable non-zero diagnostic; standalone CLI
   parity remains green and no hidden MCP compatibility server starts.
