@@ -6,8 +6,7 @@ import {
   createOrcaOrchestrationAdapter,
 } from '../../src/lib/orca-orchestration-adapter';
 
-export const ORCA_AGENT_PLUGIN_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
-export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.192';
+export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.193';
 export const ORCA_REQUIRED_CONTRACT = 'orchestration.contract.v1';
 
 export interface OrcaPluginCompatibility {
