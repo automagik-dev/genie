@@ -398,4 +398,6 @@ dependency-gated A3–A7 sequence.
 - **Reviewed content SHA-256:** `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`
 - **Reviewer:** PENDING
 - **Reviewed at:** PENDING
+- **Lifecycle:** REVIEW-PENDING; approval/completion language in the reviewable candidate is subject to fresh review
+  and does not authorize A1–A7 until this evidence block is validly stamped.
 <!-- genie-design-review:end -->
