@@ -1024,7 +1024,12 @@ async function finalizeMutation(
   validateMutationReceipt(operation, envelope);
   const plan = readbackPlan(operation, envelope.result);
   if (plan !== undefined) {
-    const readback = await invoke(plan.operation);
+    let readback: OrcaJsonEnvelope;
+    try {
+      readback = await invoke(plan.operation);
+    } catch (error) {
+      throw mapReadbackFailure(operation.operation, plan.operation.operation, error);
+    }
     if (!plan.matches(readback.result)) {
       throw new OrcaAdapterError(
         'readback_mismatch',
@@ -1047,6 +1052,32 @@ async function finalizeMutation(
     readbackVerb: plan?.operation.operation ?? null,
   });
   return Object.freeze({ ...envelope, receipt });
+}
+
+function mapReadbackFailure(
+  mutation: OrcaOrchestrationVerb,
+  readback: OrcaOrchestrationVerb,
+  error: unknown,
+): OrcaAdapterError {
+  if (!(error instanceof OrcaAdapterError)) {
+    return new OrcaAdapterError(
+      'unexpected_response',
+      mutation,
+      'readback',
+      'unrecoverably-ambiguous',
+      `Inspect state with orchestration ${readback}; do not retry the mutation automatically.`,
+      `${readback} failed after Orca returned a valid mutation receipt`,
+    );
+  }
+  return new OrcaAdapterError(
+    error.code,
+    mutation,
+    'readback',
+    'readback-required',
+    `Repeat or inspect orchestration ${readback}; do not retry the mutation automatically.`,
+    `${readback} failed after Orca returned a valid mutation receipt: ${error.message}`,
+    error.stderr,
+  );
 }
 
 function validateMutationReceipt(operation: ValidatedOrcaOperation, envelope: OrcaJsonEnvelope): void {

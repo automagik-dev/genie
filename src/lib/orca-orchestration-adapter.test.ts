@@ -378,6 +378,101 @@ describe('runtime and executor boundary', () => {
     expect(verbs).toEqual(['run-use', 'run-current']);
   });
 
+  test('maps every post-receipt readback failure onto the mutation and never makes it safe to retry', async () => {
+    const failures: ReadonlyArray<{
+      name: string;
+      result?: Awaited<ReturnType<OrcaProcessExecutor>>;
+      rejection?: Error;
+      code: string;
+    }> = [
+      {
+        name: 'timeout',
+        result: { exitCode: null, stdout: '', stderr: '', timedOut: true },
+        code: 'timeout',
+      },
+      {
+        name: 'process exit',
+        result: { exitCode: 7, stdout: '', stderr: 'read failed' },
+        code: 'process_exit',
+      },
+      {
+        name: 'launch transport',
+        rejection: Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+        code: 'executable_unavailable',
+      },
+      {
+        name: 'transport loss',
+        result: { exitCode: null, stdout: '', stderr: '', transportLost: true },
+        code: 'process_exit',
+      },
+      {
+        name: 'output limit',
+        result: { exitCode: null, stdout: '', stderr: '', outputLimited: true },
+        code: 'output_limit',
+      },
+      {
+        name: 'malformed JSON',
+        result: { exitCode: 0, stdout: 'not-json', stderr: '' },
+        code: 'malformed_json',
+      },
+      {
+        name: 'invalid JSON envelope',
+        result: { exitCode: 0, stdout: '{"id":"r","ok":true,"result":{}}', stderr: '' },
+        code: 'unexpected_response',
+      },
+      {
+        name: 'error envelope',
+        result: {
+          exitCode: 0,
+          stdout: '{"id":"r","ok":false,"error":{"code":"read_failed","message":"failed"}}',
+          stderr: '',
+        },
+        code: 'unexpected_response',
+      },
+    ];
+    for (const failure of failures) {
+      const verbs: string[] = [];
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async (request) => {
+          const verb = request.argv[1] as string;
+          verbs.push(verb);
+          if (verb === 'run-current') {
+            if (failure.rejection !== undefined) throw failure.rejection;
+            return failure.result as Awaited<ReturnType<OrcaProcessExecutor>>;
+          }
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              id: 'request_a',
+              ok: true,
+              result: { runId: 'run_a', coordinatorTerminalHandle: 'term_a' },
+              _meta: {
+                runtimeId: 'runtime_a',
+                runtimeVersion: '1.2.3',
+                invokingTerminal: 'term_a',
+              },
+            }),
+            stderr: '',
+          };
+        },
+      });
+      try {
+        await adapter.execute({ operation: 'run-use', id: 'run_a' });
+        throw new Error(`expected ${failure.name} failure`);
+      } catch (error) {
+        expect(error).toBeInstanceOf(OrcaAdapterError);
+        expect(error).toMatchObject({
+          code: failure.code,
+          operation: 'run-use',
+          phase: 'readback',
+          retrySafety: 'readback-required',
+        });
+        expect((error as OrcaAdapterError).recovery).toContain('do not retry the mutation automatically');
+      }
+      expect(verbs).toEqual(['run-use', 'run-current']);
+    }
+  });
+
   test('returns receipt-only proofs for send/reply and supported check --ack', async () => {
     for (const input of [
       { operation: 'send', subject: 'hello' },
