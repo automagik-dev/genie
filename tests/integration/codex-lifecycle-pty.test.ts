@@ -411,7 +411,7 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
     expect(quarantinedSiblings.length).toBe(1);
   }, 180_000);
 
-  test('stage 7 — route collision and nested shadowing are typed doctor failures, never green', () => {
+  test('stage 7 — preserved route collision and nested shadowing are typed doctor warnings, never green', () => {
     // Unmanaged same-key route: replace the project config with a user-owned one.
     const projectConfig = join(repo, '.codex', 'config.toml');
     mkdirSync(join(repo, '.codex'), { recursive: true });
@@ -420,8 +420,14 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
     try {
       const collision = doctorJson();
       const route = collision.json.checks.find((check) => check.name === 'Codex Genie MCP registration');
-      expect(route?.status).toBe('fail');
-      expect(JSON.stringify(route?.routeLayers ?? [])).toContain('route-collision');
+      expect(route?.status).toBe('warn');
+      expect(route?.detail).toContain('retired route remains preserved');
+      expect(route?.routeLayers).toContainEqual(
+        expect.objectContaining({
+          kind: 'route-collision',
+          detail: expect.stringContaining('user-owned [mcp_servers.genie] project route is preserved'),
+        }),
+      );
     } finally {
       if (prior === null) rmSync(projectConfig);
       else writeFileSync(projectConfig, prior);
@@ -434,8 +440,8 @@ describe.skipIf(!CAN_PTY)('codex lifecycle over a real PTY (Group E deliverable 
     try {
       const shadowed = doctorJson({ cwd: nested });
       const route = shadowed.json.checks.find((check) => check.name === 'Codex Genie MCP registration');
-      expect(route?.status).toBe('fail');
-      expect(JSON.stringify(route?.routeLayers ?? [])).toContain('route-shadowed');
+      expect(route?.status).toBe('warn');
+      expect(route?.routeLayers).toContainEqual(expect.objectContaining({ kind: 'route-shadowed' }));
     } finally {
       rmSync(join(repo, 'packages'), { recursive: true, force: true });
     }
