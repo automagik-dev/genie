@@ -7,11 +7,55 @@ import {
   hasDuplicateMcpGenieKeys,
   mergeMcpServersGenie,
   resolveGenieBinaryPath,
+  retireMcpServersGenie,
 } from './hermes-mcp-config.js';
 
 const roots: string[] = [];
+const MARKER_BEGIN_FOR_TEST = '# genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)';
+const MARKER_END_FOR_TEST = '# genie:managed:mcp_servers.genie — end';
+const managedBlock = (command: string) =>
+  `  ${MARKER_BEGIN_FOR_TEST}\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n  ${MARKER_END_FOR_TEST}\n`;
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('retireMcpServersGenie', () => {
+  test('removes exactly one marker pair backup-first and is idempotent', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = `before: true\nmcp_servers:\n${managedBlock('/old/genie')}after: true\n`;
+    writeFileSync(configPath, original);
+
+    const first = retireMcpServersGenie({ configPath, now: new Date('2026-08-29T00:00:00Z') });
+    expect(first.status).toBe('updated');
+    expect(readFileSync(first.backupPath as string, 'utf8')).toBe(original);
+    const retired = readFileSync(configPath, 'utf8');
+    expect(retired).toBe('before: true\nmcp_servers:\nafter: true\n');
+    expect(retireMcpServersGenie({ configPath }).status).toBe('unchanged');
+    expect(readFileSync(configPath, 'utf8')).toBe(retired);
+  });
+
+  test('duplicate complete marker blocks fail closed and preserve bytes without backup', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = `mcp_servers:\n${managedBlock('/one')}${managedBlock('/two')}`;
+    writeFileSync(configPath, original);
+
+    expect(() => retireMcpServersGenie({ configPath })).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
+
+  test('incomplete markers fail closed and preserve bytes without backup', () => {
+    const root = tmp();
+    const configPath = join(root, 'config.yaml');
+    const original = `mcp_servers:\n  ${MARKER_BEGIN_FOR_TEST}\n`;
+    writeFileSync(configPath, original);
+
+    expect(() => retireMcpServersGenie({ configPath })).toThrow(HermesConfigError);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+    expect(hasBackup(root)).toBe(false);
+  });
 });
 
 function tmp(): string {
@@ -393,11 +437,6 @@ describe('mergeMcpServersGenie', () => {
 });
 
 describe('DF-1: duplicate mcp_servers.genie key repair', () => {
-  const markerBegin = '  # genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)';
-  const markerEnd = '  # genie:managed:mcp_servers.genie — end';
-  const managedBlock = (command: string) =>
-    `${markerBegin}\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n${markerEnd}\n`;
-
   test('an empty stray unmarked genie: key alongside the marker-wrapped region repairs to ONE entry, parseable, backup written', () => {
     const root = tmp();
     const configPath = join(root, 'config.yaml');

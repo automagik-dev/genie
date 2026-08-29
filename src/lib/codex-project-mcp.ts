@@ -140,7 +140,7 @@ export interface RegisterProjectMcpOptions {
 }
 
 export interface RetireProjectMcpOptions {
-  /** Exact historical entries Genie may remove from `.mcp.json`. */
+  /** @deprecated `.mcp.json` entries are never ownership-authoritative and are always preserved. */
   ownedEntries?: McpServerEntry[];
 }
 
@@ -152,7 +152,6 @@ export interface GitProjectRoots {
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
-const MCP_WRAPPER_KEYS = ['mcpServers', 'mcp_servers', 'servers'] as const;
 const FALLBACK_BEGIN = '# BEGIN GENIE MCP FALLBACK';
 const FALLBACK_END = '# END GENIE MCP FALLBACK';
 const GENIE_PLUGIN_ID = 'genie@automagik';
@@ -661,85 +660,9 @@ function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseMcpConfig(raw: string | null, path: string): JsonObject {
-  if (raw === null || raw.trim() === '') return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Cannot register genie MCP server: ${path} is not valid JSON.`);
-  }
-  if (!isJsonObject(parsed)) {
-    throw new Error(`Cannot register genie MCP server: ${path} must contain a JSON object.`);
-  }
-  return parsed;
-}
-
-/**
- * Locate an existing server map without overwriting wrong-shaped valid JSON.
- * A known wrapper key with an array/string/null is a configuration error, not
- * an invitation to replace user data with a new object.
- */
-function locateServerMap(config: JsonObject, path: string): JsonObject {
-  for (const key of MCP_WRAPPER_KEYS) {
-    if (!(key in config)) continue;
-    const existing = config[key];
-    if (!isJsonObject(existing)) {
-      throw new Error(`Cannot register genie MCP server: ${path} field ${JSON.stringify(key)} must be an object.`);
-    }
-    return existing;
-  }
-
-  if ('mcp' in config) {
-    if (!isJsonObject(config.mcp)) {
-      throw new Error(`Cannot register genie MCP server: ${path} field "mcp" must be an object.`);
-    }
-    if ('servers' in config.mcp) {
-      if (!isJsonObject(config.mcp.servers)) {
-        throw new Error(`Cannot register genie MCP server: ${path} field "mcp.servers" must be an object.`);
-      }
-      return config.mcp.servers;
-    }
-  }
-
-  const created: JsonObject = {};
-  config.mcpServers = created;
-  return created;
-}
-
-function prepareJsonMcpConfig(configPath: string, entry: McpServerEntry): PreparedWrite {
+function preparePreservedJsonMcpConfig(configPath: string): PreparedWrite {
   assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : null;
-  const config = parseMcpConfig(raw, configPath);
-  locateServerMap(config, configPath).genie = entry;
-  const content = `${JSON.stringify(config, null, 2)}\n`;
-  if (raw === content) return { path: configPath, action: 'skipped' };
-  return { path: configPath, action: raw === null ? 'created' : 'updated', content };
-}
-
-function sameMcpEntry(value: unknown, expected: McpServerEntry): boolean {
-  if (!isJsonObject(value) || value.command !== expected.command || !Array.isArray(value.args)) return false;
-  return value.args.length === expected.args.length && value.args.every((arg, index) => arg === expected.args[index]);
-}
-
-function existingServerMap(config: JsonObject): JsonObject | null {
-  for (const key of MCP_WRAPPER_KEYS) {
-    if (isJsonObject(config[key])) return config[key];
-  }
-  return isJsonObject(config.mcp) && isJsonObject(config.mcp.servers) ? config.mcp.servers : null;
-}
-
-function prepareRetiredJsonMcpConfig(configPath: string, ownedEntries: readonly McpServerEntry[]): PreparedWrite {
-  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  if (!existsSync(configPath)) return { path: configPath, action: 'skipped' };
-  const raw = readFileSync(configPath, 'utf8');
-  const config = parseMcpConfig(raw, configPath);
-  const servers = existingServerMap(config);
-  if (servers === null || !ownedEntries.some((entry) => sameMcpEntry(servers.genie, entry))) {
-    return { path: configPath, action: 'skipped', detail: 'no proven Genie-owned registration' };
-  }
-  Reflect.deleteProperty(servers, 'genie');
-  return { path: configPath, action: 'updated', content: `${JSON.stringify(config, null, 2)}\n` };
+  return { path: configPath, action: 'skipped', detail: 'unmarked .mcp.json is always user-owned and preserved' };
 }
 
 function applyPreparedWrite(prepared: PreparedWrite, root = configProjectRoot(prepared.path)): McpConfigResult {
@@ -1028,15 +951,11 @@ export function reconcileCodexProjectMcp(
   return prepared;
 }
 
-/**
- * Register the shared stdio entry for Claude Code, then reconcile exactly one
- * Codex route. All files are parsed before any write, so valid-but-wrong-shaped
- * JSON cannot leave one sibling config partially updated.
- */
+/** Preserve `.mcp.json` and reconcile exactly one marker-owned Codex route. */
 export function registerProjectMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
   const entry = options.entry ?? genieMcpEntry();
   const codexEntry = options.codexEntry ?? entry;
-  const preparedJson = [join(root, '.mcp.json')].map((path) => prepareJsonMcpConfig(path, entry));
+  const preparedJson = [preparePreservedJsonMcpConfig(join(root, '.mcp.json'))];
   // Trusted init reconciles the marker-owned Codex route independent of plugin
   // state (`forceCodexFallback`) — the `||` short-circuits so a forced call never
   // spends a Codex query. Otherwise the marker is retained only when no usable
@@ -1050,17 +969,15 @@ export function registerProjectMcpConfigs(root: string, options: RegisterProject
     throw new Error(`Cannot reconcile Codex project MCP at ${preparedCodex.path}: ${preparedCodex.detail}`);
   }
 
-  // Parsing/planning above is intentionally complete before the first write.
   const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
   if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
   results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
   return results;
 }
 
-/** Retire only project registrations whose ownership is proven by markers or an exact historical entry. */
-export function retireProjectMcpConfigs(root: string, options: RetireProjectMcpOptions = {}): McpConfigResult[] {
-  const ownedEntries = options.ownedEntries ?? [genieMcpEntry(), genieFacadeMcpEntry()];
-  const json = prepareRetiredJsonMcpConfig(join(root, '.mcp.json'), ownedEntries);
+/** Preserve `.mcp.json`; retire only the marker-owned Codex fallback. */
+export function retireProjectMcpConfigs(root: string, _options: RetireProjectMcpOptions = {}): McpConfigResult[] {
+  const json = preparePreservedJsonMcpConfig(join(root, '.mcp.json'));
   const results = [applyPreparedWrite(json, root)];
   const codexPath = join(root, '.codex', 'config.toml');
   results.push({

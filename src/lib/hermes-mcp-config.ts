@@ -201,13 +201,19 @@ export function retireMcpServersGenie(opts: Pick<MergeMcpGenieOptions, 'configPa
   if (!existsSync(opts.configPath)) return { status: 'unchanged', path: opts.configPath };
   const original = readFileSync(opts.configPath, 'utf8');
   const lines = original.split('\n');
-  const range = findMarkerRange(lines);
-  const hasBegin = lines.some((line) => line.trim() === MARKER_BEGIN);
-  const hasEnd = lines.some((line) => line.trim() === MARKER_END);
-  if (range === null) {
-    if (hasBegin || hasEnd) throw new HermesConfigError('incomplete-managed-marker', 'incomplete Genie MCP marker');
+  const beginCount = lines.filter((line) => line.trim() === MARKER_BEGIN).length;
+  const endCount = lines.filter((line) => line.trim() === MARKER_END).length;
+  if (beginCount !== endCount || beginCount > 1) {
+    throw new HermesConfigError(
+      'ambiguous-managed-marker',
+      `expected exactly one complete Genie MCP marker pair, found ${beginCount} begin and ${endCount} end markers`,
+    );
+  }
+  if (beginCount === 0) {
     return { status: 'unchanged', path: opts.configPath };
   }
+  const range = findMarkerRange(lines);
+  if (range === null) throw new HermesConfigError('incomplete-managed-marker', 'incomplete Genie MCP marker');
   lines.splice(range.begin, range.end - range.begin + 1);
   const next = lines.join('\n');
   const backupPath = original.length > 0 ? writeBackup(opts.configPath, opts.now ?? new Date()) : undefined;

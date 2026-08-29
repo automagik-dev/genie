@@ -695,6 +695,7 @@ describe('Group E release and documentation contracts', () => {
     const postExtractVersion = build.lastIndexOf('scripts/release-payload-version.ts');
     expect(archive).toBeGreaterThan(-1);
     expect(extract).toBeGreaterThan(archive);
+    expect(build).toContain('( umask 000; tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}" )');
     expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
     expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
     expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');

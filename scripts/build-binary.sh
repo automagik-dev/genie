@@ -167,7 +167,7 @@ tar czf "${TARBALL}" -C "${STAGE}" .
 # contract before size checks or upload.
 VERIFY_ROOT="$(mktemp -d "${DIST_DIR}/.verify-${PLATFORM}.XXXXXX")"
 trap 'rm -rf "${VERIFY_ROOT}"' EXIT
-tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}"
+( umask 000; tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}" )
 assert_no_release_tests "${VERIFY_ROOT}"
 
 assert_release_tree_equal() {

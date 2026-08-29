@@ -193,9 +193,8 @@ function handleInit(opts: InitOptions): void {
     // journal, plugin-enabled, agent, or cache state. A route name is not proof of
     // ownership, so an unmanaged same-key route is preserved and reported.
     //
-    // MCP config is planned and schema-checked before any scaffold mutation, so a
-    // wrong-shaped existing JSON file fails without leaving a new INDEX or
-    // gitignore rules behind.
+    // `.mcp.json` has no ownership marker and is therefore never parsed or
+    // changed; only the explicit Codex marker block is eligible for retirement.
     const mcp = retireMcpConfigs(root);
     const index = scaffoldIndex(root);
     const gitignore = scaffoldGitignore(root);
@@ -216,9 +215,7 @@ function handleInit(opts: InitOptions): void {
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
-    .description(
-      'Initialize Genie state and retire owned project MCP routing (.mcp.json and marker-owned .codex/config.toml)',
-    )
+    .description('Initialize Genie state, preserve .mcp.json, and retire marker-owned .codex/config.toml routing')
     .option('--json', 'Emit the created/skipped result as JSON')
     .action((opts: InitOptions) => handleInit(opts));
 }

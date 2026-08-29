@@ -211,19 +211,16 @@ describe('genie init', () => {
       expect(actions).toEqual(['skipped', 'skipped']);
     });
 
-    test('malformed .mcp.json is surfaced, not clobbered', () => {
+    test('malformed .mcp.json is ignored and preserved byte-for-byte', () => {
       initGitRepo(dir);
       writeFileSync(mcpPath(dir), 'not json {');
-      const { code, stderr } = runInit(dir);
-      expect(code).toBe(1);
-      expect(stderr).toContain('.mcp.json');
-      // The bad file is left untouched.
+      const { code } = runInit(dir);
+      expect(code).toBe(0);
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
-      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
-      expect(existsSync(join(dir, '.gitignore'))).toBe(false);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
     });
 
-    test('valid but wrong-shaped server maps are preserved because no owned entry can be proven', () => {
+    test('valid but wrong-shaped server maps are preserved because .mcp.json is unmarked', () => {
       initGitRepo(dir);
       writeFileSync(mcpPath(dir), '{"mcpServers":[]}');
       const { code } = runInit(dir);

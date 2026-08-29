@@ -26,6 +26,7 @@ import {
   registerProjectMcpConfigs,
   resolveGitProjectRoots,
   resolveGitWorktreeRoot,
+  retireProjectMcpConfigs,
 } from './codex-project-mcp.js';
 
 let root: string;
@@ -49,6 +50,28 @@ const disabled: CodexPluginProbe = {
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'genie-project-mcp-'));
+});
+
+describe('retireProjectMcpConfigs', () => {
+  test('preserves every unmarked .mcp.json byte even for a former exact Genie entry', () => {
+    const original = '{\n  "mcpServers": { "genie": { "command": "/old/genie", "args": ["mcp"] } }\n}\n';
+    writeFileSync(join(root, '.mcp.json'), original);
+
+    const results = retireProjectMcpConfigs(root, {
+      ownedEntries: [{ command: '/old/genie', args: ['mcp'] }],
+    });
+
+    expect(results[0]).toMatchObject({ action: 'skipped' });
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe(original);
+  });
+
+  test('preserves malformed .mcp.json bytes without attempting to parse them', () => {
+    const original = '{ definitely not json\n';
+    writeFileSync(join(root, '.mcp.json'), original);
+
+    expect(() => retireProjectMcpConfigs(root)).not.toThrow();
+    expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe(original);
+  });
 });
 
 afterEach(() => {
@@ -720,14 +743,11 @@ describe('registerProjectMcpConfigs', () => {
     expect(readFileSync(codexPath, 'utf8')).toContain('/absolute/genie');
   });
 
-  test('preflights the JSON config and rejects wrong-shaped valid JSON before any sibling write', () => {
+  test('preserves wrong-shaped valid JSON without parsing it', () => {
     writeFileSync(join(root, '.mcp.json'), '{"mcpServers":[]}');
     expect(() =>
-      registerProjectMcpConfigs(root, {
-        pluginProbe: enabled,
-        entry: { command: '/g', args: ['mcp'] },
-      }),
-    ).toThrow(/mcpServers.*must be an object/);
+      registerProjectMcpConfigs(root, { pluginProbe: enabled, entry: { command: '/g', args: ['mcp'] } }),
+    ).not.toThrow();
     expect(readFileSync(join(root, '.mcp.json'), 'utf8')).toBe('{"mcpServers":[]}');
     expect(existsSync(join(root, '.codex', 'config.toml'))).toBe(false);
   });
