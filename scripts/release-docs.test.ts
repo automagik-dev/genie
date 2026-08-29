@@ -824,8 +824,8 @@ describe('Group E release and documentation contracts', () => {
     }
     expect(operator).toContain('Genie does not open `.genie/genie.db`');
     expect(operator).toContain('roadmap');
-    expect(operator).toContain('The legacy `genie mcp`');
-    expect(operator).toContain('until the later A7 PR');
+    expect(operator).toContain('The legacy Genie MCP server is retired');
+    expect(operator).toContain('pre-A7 signed release');
     expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
 
     for (const topic of [
@@ -914,7 +914,7 @@ describe('Group E release and documentation contracts', () => {
       '22 physical',
       'Seven optional',
       '36 adapted skills',
-      '.codex/config.toml',
+      'MCP retirement',
       'H3',
       'H4',
       'H6',
@@ -927,8 +927,8 @@ describe('Group E release and documentation contracts', () => {
     expect(read('README.md')).toContain('the **sole** Genie-managed skill provider');
     expect(read('README.md')).toContain('Fallback retirement');
     expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
-    expect(read('README.md')).toContain('the plugin declares no Codex MCP route');
-    expect(read('plugins/genie/README.md')).toContain('the plugin declares no Codex MCP route');
+    expect(read('README.md')).toContain('No product MCP route or launcher');
+    expect(read('plugins/genie/README.md')).toContain('No launcher or registration ships');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
@@ -1138,8 +1138,8 @@ describe('Group E release and documentation contracts', () => {
     expect(omni).toContain('{instance, chat, repo, agent, persona?}');
     expect(omni).toContain('"agent": "codex"');
     const readme = read('README.md');
-    expect(readme).toContain('The Codex route is plugin-independent');
-    for (const path of ['.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
+    expect(readme).toContain('registrations proven to be Genie-owned');
+    expect(readme).toContain('unowned same-name routes');
   });
 
   test('the retired homolog channel never reappears in any workflow', () => {

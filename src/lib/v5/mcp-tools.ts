@@ -39,7 +39,7 @@ import { BUSY_TIMEOUT_MS, isBusyError, openWithWalIndexRecovery } from './sqlite
 // Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
 // the SAME lazy dynamic import that already loads the tool registry — keeping
 // the bun:sqlite opens out of the eager genie.ts import graph.
-export { isCurrentGenieDb, type ProjectContext, resolveProjectContext } from './genie-db.js';
+export { type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type BlockKind,
   CheckoutConflictError,

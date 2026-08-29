@@ -1396,33 +1396,32 @@ describe('checkAgentSync', () => {
     `mcp_servers:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
   const skillsConfig = (dir: string) => `skills:\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
 
-  test('hermes mcp leg: absolute executable command → pass; each unhealthy shape → warn', () => {
+  test('hermes mcp leg: any remaining route warns; absence is the retired healthy state', () => {
     presentHermes();
     const bin = presentGenieBinary();
 
     writeHermesConfig(mcpConfig(bin));
     let mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
-    expect(mcp?.status).toBe('pass');
+    expect(mcp?.status).toBe('warn');
     expect(mcp?.detail).toContain(bin);
 
     // Relative command → warn.
     writeHermesConfig(mcpConfig('genie'));
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('not absolute');
+    expect(mcp?.detail).toContain('retired');
 
     // Absolute but non-existent/non-executable → warn.
     writeHermesConfig(mcpConfig(join(tmp, 'bin', 'nope')));
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('not executable');
+    expect(mcp?.detail).toContain('retired');
 
-    // Config absent entirely → warn advising genie update.
+    // Config absent entirely is the converged A7 state.
     rmSync(join(hermesHome, 'config.yaml'), { force: true });
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
-    expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('config.yaml absent');
-    expect(mcp?.suggestion).toContain('genie update');
+    expect(mcp?.status).toBe('pass');
+    expect(mcp?.detail).toContain('retired route absent');
   });
 
   test('hermes skills leg: external_dirs contains the product root → pass', () => {
@@ -1455,13 +1454,13 @@ describe('checkAgentSync', () => {
     expect(skills?.suggestion).toContain('genie update');
   });
 
-  test('hermes legs are independent: healthy MCP + unhealthy skills', () => {
+  test('hermes legs are independent: stale MCP + unhealthy skills', () => {
     presentHermes();
     const bin = presentGenieBinary();
-    // MCP block healthy, skills block absent → mcp pass, skills warn.
+    // A stale MCP block and absent skills are independent warnings.
     writeHermesConfig(mcpConfig(bin));
     const results = checkAgentSync(paths());
-    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('warn');
     expect(find(results, 'agent sync: hermes skills')?.status).toBe('warn');
     // The link leg stays independently healthy.
     expect(find(results, 'agent sync: hermes')?.status).toBe('pass');
@@ -1572,10 +1571,9 @@ describe('checkAgentSync', () => {
     expect(skills?.suggestion).toContain('genie update');
   });
 
-  test('after repair (single key, no duplicate): both legs pass, no duplicate warning', () => {
+  test('after retirement repair (no MCP key): both legs pass, no duplicate warning', () => {
     presentHermes();
-    const bin = presentGenieBinary();
-    writeHermesConfig(`${mcpConfig(bin)}${skillsConfig(productSkillsRoot())}`);
+    writeHermesConfig(skillsConfig(productSkillsRoot()));
 
     const results = checkAgentSync(paths());
     expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');

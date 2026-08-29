@@ -2562,7 +2562,6 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     codexHome,
     expectedVersion: VERSION,
     verifyCodexPayload: () => undefined,
-    runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
     skillInventory: [...CANONICAL_GENIE_SKILL_NAMES],
   });
 
@@ -2570,7 +2569,7 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     const proof = proveCodexPluginHealth(healthyOpts());
     expect(proof.version).toBe(1);
     expect(proof.payload).toHaveLength(CANONICAL_GENIE_SKILL_NAMES.length);
-    expect(proof.mcp.wishStatusReadOnly).toBe(true);
+    expect(proof.mcp).toEqual({ initialized: false, tools: [], wishStatusReadOnly: false, retired: true });
     expect(Object.isFrozen(proof)).toBe(true);
     expect(Object.isFrozen(proof.payload)).toBe(true);
     expect(() => {
@@ -2592,16 +2591,12 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     });
   }
 
-  test('accepts a snapshot with no Codex MCP route (usable:false) — plugin MCP is Claude-only now', () => {
-    // Group A removed the plugin's Codex MCP route, so a post-A snapshot reports
-    // usable:false. Plugin health is decoupled from Codex-MCP-route usability: a
-    // proven active root + verified payload + a working launcher session is
-    // healthy. The launcher (retained for Claude) is exercised by runSession.
+  test('accepts a snapshot with no Codex MCP route because A7 retired the runtime', () => {
     const opts = healthyOpts();
     opts.snapshot = { ...opts.snapshot, usable: false, usabilityDetail: 'plugin ships no Codex MCP route' };
     const proof = proveCodexPluginHealth(opts);
     expect(proof.version).toBe(1);
-    expect(proof.mcp.wishStatusReadOnly).toBe(true);
+    expect(proof.mcp.retired).toBe(true);
   });
 
   test('rejects payload identity drift (verifyCodexPayload throws)', () => {
@@ -2618,21 +2613,12 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
   });
 
-  test('rejects a bounded MCP session failure (missing tool)', () => {
+  test('does not invoke the retired MCP session seam', () => {
     const opts = healthyOpts();
-    opts.runSession = () => ({ ok: false, detail: 'missing required Genie tools: genie_wish_status' });
-    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
-  });
-
-  test('rejects a non-read-only wish_status even when the session reports ok', () => {
-    const opts = healthyOpts();
-    opts.runSession = () => ({
-      ok: true,
-      detail: 'ok',
-      tools: [...REQUIRED_GENIE_MCP_TOOLS],
-      wishStatusReadOnly: false,
-    });
-    expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
+    opts.runSession = () => {
+      throw new Error('retired session seam invoked');
+    };
+    expect(proveCodexPluginHealth(opts).mcp.retired).toBe(true);
   });
 
   test('rejects an activePluginRoot diverging from the derived canonical cache path before any digest or MCP launch', () => {

@@ -131,7 +131,6 @@ for required in \
   "plugins/genie/.kimi-plugin/plugin.json" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
-  "plugins/genie/scripts/mcp-launcher.cjs" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \
   "plugins/genie/hooks/codex-hooks.json"; do

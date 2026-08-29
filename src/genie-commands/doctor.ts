@@ -15,18 +15,9 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import {
-  constants,
-  accessSync,
-  existsSync,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import {
   type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
@@ -1601,11 +1592,11 @@ function checkPiSync(input: PiCheckInput): CheckResult[] {
   ];
 }
 
-/** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
+/** A7 health: no Hermes Genie MCP route is the converged state; any surviving route is preserved but stale. */
 function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
   const name = 'agent sync: hermes mcp';
   if (configText === null) {
-    return { name, status: 'warn', detail: `config.yaml absent (${configPath})`, suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: `retired route absent (${configPath})` };
   }
   const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
   if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
@@ -1619,25 +1610,14 @@ function checkHermesMcp(configText: string | null, configPath: string): CheckRes
   }
   const command = readMcpGenieCommand(configText);
   if (command === null) {
-    return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: 'retired mcp_servers.genie route absent' };
   }
-  if (!isAbsolute(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command not absolute (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  if (!isExecutableFile(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command missing or not executable (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  return { name, status: 'pass', detail: `mcp_servers.genie → ${command}` };
+  return {
+    name,
+    status: 'warn',
+    detail: `retired mcp_servers.genie route remains preserved (${command})`,
+    suggestion: SYNC_SUGGESTION,
+  };
 }
 
 /**
@@ -1775,16 +1755,6 @@ function safeResolveProductSkillsRoot(genieHome: string): string | null {
 
 function countSkillDirs(dir: string): number {
   return listSubdirs(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
-}
-
-function isExecutableFile(path: string): boolean {
-  try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readTextOrNull(path: string): string | null {

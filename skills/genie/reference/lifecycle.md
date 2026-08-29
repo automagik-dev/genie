@@ -94,7 +94,7 @@ The checkout claim is atomic: exactly one concurrent claimant wins; the loser ge
 genie board [--wish <slug>] [--json]   # kanban of current state
 genie task status <id>                 # detail, dependencies, stage log
 genie task list --status in_progress   # active claims
-genie mcp                              # stdio MCP server over the task DB (read + write tools)
+genie mcp                              # stable non-zero retirement diagnostic (no server starts)
 ```
 
 No terminal scraping, no sleep-polling — subagents notify on completion, and a retired orchestration-guard hook used to flag scraping patterns.

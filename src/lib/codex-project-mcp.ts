@@ -139,6 +139,11 @@ export interface RegisterProjectMcpOptions {
   forceCodexFallback?: boolean;
 }
 
+export interface RetireProjectMcpOptions {
+  /** Exact historical entries Genie may remove from `.mcp.json`. */
+  ownedEntries?: McpServerEntry[];
+}
+
 export interface GitProjectRoots {
   /** Root of the working tree that contains cwd (linked worktrees stay linked). */
   worktreeRoot: string;
@@ -712,6 +717,31 @@ function prepareJsonMcpConfig(configPath: string, entry: McpServerEntry): Prepar
   return { path: configPath, action: raw === null ? 'created' : 'updated', content };
 }
 
+function sameMcpEntry(value: unknown, expected: McpServerEntry): boolean {
+  if (!isJsonObject(value) || value.command !== expected.command || !Array.isArray(value.args)) return false;
+  return value.args.length === expected.args.length && value.args.every((arg, index) => arg === expected.args[index]);
+}
+
+function existingServerMap(config: JsonObject): JsonObject | null {
+  for (const key of MCP_WRAPPER_KEYS) {
+    if (isJsonObject(config[key])) return config[key];
+  }
+  return isJsonObject(config.mcp) && isJsonObject(config.mcp.servers) ? config.mcp.servers : null;
+}
+
+function prepareRetiredJsonMcpConfig(configPath: string, ownedEntries: readonly McpServerEntry[]): PreparedWrite {
+  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
+  if (!existsSync(configPath)) return { path: configPath, action: 'skipped' };
+  const raw = readFileSync(configPath, 'utf8');
+  const config = parseMcpConfig(raw, configPath);
+  const servers = existingServerMap(config);
+  if (servers === null || !ownedEntries.some((entry) => sameMcpEntry(servers.genie, entry))) {
+    return { path: configPath, action: 'skipped', detail: 'no proven Genie-owned registration' };
+  }
+  Reflect.deleteProperty(servers, 'genie');
+  return { path: configPath, action: 'updated', content: `${JSON.stringify(config, null, 2)}\n` };
+}
+
 function applyPreparedWrite(prepared: PreparedWrite, root = configProjectRoot(prepared.path)): McpConfigResult {
   if (prepared.content === undefined) return { path: prepared.path, action: prepared.action, detail: prepared.detail };
   assertSafeProjectConfigPath(root, prepared.path);
@@ -1024,5 +1054,19 @@ export function registerProjectMcpConfigs(root: string, options: RegisterProject
   const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
   if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
   results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
+  return results;
+}
+
+/** Retire only project registrations whose ownership is proven by markers or an exact historical entry. */
+export function retireProjectMcpConfigs(root: string, options: RetireProjectMcpOptions = {}): McpConfigResult[] {
+  const ownedEntries = options.ownedEntries ?? [genieMcpEntry(), genieFacadeMcpEntry()];
+  const json = prepareRetiredJsonMcpConfig(join(root, '.mcp.json'), ownedEntries);
+  const results = [applyPreparedWrite(json, root)];
+  const codexPath = join(root, '.codex', 'config.toml');
+  results.push({
+    path: codexPath,
+    action: removeCodexMcpFallback(codexPath),
+    detail: 'retired marker-owned project registration',
+  });
   return results;
 }

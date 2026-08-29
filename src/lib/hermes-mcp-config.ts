@@ -120,6 +120,12 @@ export interface MergeMcpGenieResult {
   entry: McpGenieEntry;
 }
 
+export interface RetireMcpGenieResult {
+  status: 'updated' | 'unchanged';
+  path: string;
+  backupPath?: string;
+}
+
 const MARKER_BEGIN = '# genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)';
 const MARKER_END = '# genie:managed:mcp_servers.genie — end';
 
@@ -188,6 +194,25 @@ export function mergeMcpServersGenie(opts: MergeMcpGenieOptions): MergeMcpGenieR
   mkdirSync(dirname(opts.configPath), { recursive: true });
   writeFileSync(opts.configPath, nextText, 'utf8');
   return { status, path: opts.configPath, backupPath, entry };
+}
+
+/** Remove only Genie's marker-owned Hermes registration, preserving every other byte. */
+export function retireMcpServersGenie(opts: Pick<MergeMcpGenieOptions, 'configPath' | 'now'>): RetireMcpGenieResult {
+  if (!existsSync(opts.configPath)) return { status: 'unchanged', path: opts.configPath };
+  const original = readFileSync(opts.configPath, 'utf8');
+  const lines = original.split('\n');
+  const range = findMarkerRange(lines);
+  const hasBegin = lines.some((line) => line.trim() === MARKER_BEGIN);
+  const hasEnd = lines.some((line) => line.trim() === MARKER_END);
+  if (range === null) {
+    if (hasBegin || hasEnd) throw new HermesConfigError('incomplete-managed-marker', 'incomplete Genie MCP marker');
+    return { status: 'unchanged', path: opts.configPath };
+  }
+  lines.splice(range.begin, range.end - range.begin + 1);
+  const next = lines.join('\n');
+  const backupPath = original.length > 0 ? writeBackup(opts.configPath, opts.now ?? new Date()) : undefined;
+  writeFileSync(opts.configPath, next, 'utf8');
+  return { status: 'updated', path: opts.configPath, backupPath };
 }
 
 /** Read the parsed `mcp_servers.genie` object, or undefined if absent/malformed. */

@@ -2,7 +2,7 @@
  * genie ui-bridge — the UI-owned stdio channel into CLI-only genie.
  *
  * A long-lived stdio MCP server the separate-repo genie UI (the dash fork)
- * spawns and OWNS: it reuses `genie mcp`'s newline-JSON-RPC transport + five
+ * spawns and OWNS: it retains the shared newline-JSON-RPC transport + five
  * read tools, and ADDS the net-new surface — a version-negotiating `initialize`
  * handshake, two roster write tools (`roster_hire` / `roster_unhire`) calling
  * genie's own `task-state.ts` code, and change-push notifications driven by an
@@ -12,7 +12,7 @@
  * Contract: `src/lib/v5/UI-BRIDGE.md` (protocol version, tools, notifications,
  * skew policy, lifetime).
  *
- * LAZY-LOAD contract: like `genie mcp`, the shared mcp-tools registry
+ * LAZY-LOAD contract: the shared read-tool registry
  * (write-capable open + read registry) is `await import`-ed inside the action,
  * so it never enters the genie startup import graph. The transport loop,
  * watcher, and state ops are ordinary static imports (none pulls in
