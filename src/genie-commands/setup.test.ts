@@ -384,9 +384,24 @@ describe('setup Codex activation (Group D)', () => {
     expect(exitCode).not.toBe(2);
     expect(out).toContain('Activated Codex plugin');
     expect(out).toContain('/hooks');
+    expect(out).toContain('Project MCP route retired');
+    expect(existsSync(join(root, 'repo', '.codex', 'config.toml'))).toBe(false);
     expect((await loadGenieConfig()).codex?.configured).toBe(true);
     // Durable maintenance consent merged claude → all.
     expect(readIntegrationConsent(genieHome)).toBe('all');
+  });
+
+  test('setup retires an owned route while preserving adjacent user config bytes', async () => {
+    const configPath = join(root, 'repo', '.codex', 'config.toml');
+    mkdirSync(join(root, 'repo', '.codex'));
+    writeFileSync(
+      configPath,
+      'model = "keep"\n# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old/genie"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n[mcp_servers.personal]\ncommand = "mine"\n',
+    );
+    const cap = capture();
+    await setupCommand({ codex: true }, grantedDeps(ACTIVATED));
+    cap.restore();
+    expect(readFileSync(configPath, 'utf8')).toBe('model = "keep"\n[mcp_servers.personal]\ncommand = "mine"\n');
   });
 
   test('fresh activation revalidates current before committing consent and converging roles', async () => {

@@ -3,10 +3,8 @@
 Registers three read-only *gap* tools that bridge Hermes to the Genie CLI
 through a safe subprocess layer (argv lists only, mutation always "none") —
 ``genie_status``, ``genie_work_plan``, and ``genie_review_plan`` — the surface
-the genie MCP board tools do not already cover. Four legacy board/task tools
-(``genie_board``, ``genie_wish_status``, ``genie_task_list``,
-``genie_task_status``) duplicate MCP truth and register only when
-``GENIE_HERMES_LEGACY_TOOLS=1`` is set, for one transition release.
+needed by the Hermes cockpit. Board/task handlers remain available to the
+standalone slash-command surface, but are never exposed as duplicate tools.
 
 Also registers slash commands, advisory hooks, a thin cockpit skill, and a CLI
 command tree. Only ``ctx.register_tool`` is required; every other registration
@@ -17,18 +15,8 @@ tool surface.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
-
-#: Env flag that restores the four legacy board/task tools for one transition
-#: release. Off by default so the native surface stays the three MCP gap tools.
-LEGACY_TOOLS_ENV = "GENIE_HERMES_LEGACY_TOOLS"
-
-
-def _legacy_tools_enabled() -> bool:
-    """True when the legacy board/task tools should register (transition flag)."""
-    return os.environ.get(LEGACY_TOOLS_ENV) == "1"
 
 try:  # package import (Hermes loads plugins as packages)
     from . import schemas
@@ -292,9 +280,7 @@ def register(ctx) -> None:
     Hermes context exposes the matching ``register_*`` method, so a
     tool-only context still completes cleanly.
 
-    Default registration exposes exactly the three MCP gap tools. Setting
-    ``GENIE_HERMES_LEGACY_TOOLS=1`` restores the four legacy board/task tools
-    that duplicate MCP truth, for one transition release.
+    Registration exposes exactly the three native planning/status tools.
     """
     # Gap tools the genie MCP board surface does not cover — always registered.
     gap_tool_defs: list[tuple[dict[str, Any], Any, str]] = [
@@ -302,17 +288,7 @@ def register(ctx) -> None:
         (schemas.GENIE_WORK_PLAN_SCHEMA, _genie_work_plan, "🛠️"),
         (schemas.GENIE_REVIEW_PLAN_SCHEMA, _genie_review_plan, "🔎"),
     ]
-    # Legacy board/task tools — duplicate MCP truth; behind the transition flag.
-    legacy_tool_defs: list[tuple[dict[str, Any], Any, str]] = [
-        (schemas.GENIE_BOARD_SCHEMA, _genie_board, "📋"),
-        (schemas.GENIE_WISH_STATUS_SCHEMA, _genie_wish_status, "🌠"),
-        (schemas.GENIE_TASK_LIST_SCHEMA, _genie_task_list, "🧩"),
-        (schemas.GENIE_TASK_STATUS_SCHEMA, _genie_task_status, "📌"),
-    ]
-    tool_defs = list(gap_tool_defs)
-    if _legacy_tools_enabled():
-        tool_defs.extend(legacy_tool_defs)
-    for schema, handler, emoji in tool_defs:
+    for schema, handler, emoji in gap_tool_defs:
         ctx.register_tool(
             name=schema["name"],
             toolset="genie",

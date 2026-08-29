@@ -23,7 +23,6 @@ import {
   planCodexFallbackRetirement,
   recoverCodexFallbackRetirements,
 } from './agent-sync.js';
-import { REQUIRED_GENIE_MCP_TOOLS } from './codex-mcp-health-session.js';
 import type { CodexPluginProbe } from './codex-project-mcp.js';
 import {
   CANONICAL_CODEX_REVIEWER_DIGEST,
@@ -98,7 +97,6 @@ function healthyCodexProof(activePluginRoot = '/fixture/plugin/root'): CodexHeal
     expectedVersion: VERSION,
     skillInventory: CANONICAL_GENIE_SKILL_NAMES,
     payload: [],
-    mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
   }) as CodexHealthProof;
 }
 
@@ -106,17 +104,11 @@ function canonicalTempDir(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
-/** Default plugin-only seams: healthy probe/proof/session against a fresh isolated fallback tier. */
+/** Default plugin-only seams: healthy proof against a fresh isolated fallback tier. */
 function healthyCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
   return {
     probe: () => healthyCodexProbe(),
     prove: () => healthyCodexProof(),
-    runSession: () => ({
-      ok: true,
-      detail: 'fixture session',
-      tools: [...REQUIRED_GENIE_MCP_TOOLS],
-      wishStatusReadOnly: true,
-    }),
     fallbackSkillsDir: canonicalTempDir('genie-fallback-skills-'),
     ...overrides,
   };
@@ -2268,7 +2260,6 @@ function baseConvergeOptions(fallbackSkillsDir: string, overrides: Partial<Codex
       converge: () => healthyPluginResult(),
       probe: () => healthyCodexProbe(),
       prove: () => healthyCodexProof(),
-      runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
       installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
       fallbackSkillsDir,
       ...overrides,
@@ -2394,7 +2385,6 @@ describe('convergeCodexPluginOnly ordering and single-proof (R1)', () => {
         expectedVersion: VERSION,
         skillInventory: ['wish'],
         payload: [{ skillName: 'wish', path: target, physicalDigest: targetDigest, canonicalVerified: true as const }],
-        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
       }) as CodexHealthProof;
 
     const first = convergeCodexPluginOnly(baseConvergeOptions(fallback, { prove: proofWithTarget }));
@@ -2492,12 +2482,6 @@ describe('describeCodexIntegration reports unrecognized fallbacks distinctly fro
         converge: () => healthyPluginResult(),
         probe: () => healthyCodexProbe(),
         prove: () => healthyCodexProof(),
-        runSession: () => ({
-          ok: true,
-          detail: 'ok',
-          tools: [...REQUIRED_GENIE_MCP_TOOLS],
-          wishStatusReadOnly: true,
-        }),
         installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
         fallbackSkillsDir: fallback,
       },
@@ -2527,12 +2511,6 @@ describe('describeCodexIntegration reports unrecognized fallbacks distinctly fro
         converge: () => healthyPluginResult(),
         probe: () => healthyCodexProbe(),
         prove: () => healthyCodexProof(),
-        runSession: () => ({
-          ok: true,
-          detail: 'ok',
-          tools: [...REQUIRED_GENIE_MCP_TOOLS],
-          wishStatusReadOnly: true,
-        }),
         installAgents: () => ({ installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
         fallbackSkillsDir: fallback,
       },
@@ -2569,7 +2547,6 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     const proof = proveCodexPluginHealth(healthyOpts());
     expect(proof.version).toBe(1);
     expect(proof.payload).toHaveLength(CANONICAL_GENIE_SKILL_NAMES.length);
-    expect(proof.mcp).toEqual({ initialized: false, tools: [], wishStatusReadOnly: false, retired: true });
     expect(Object.isFrozen(proof)).toBe(true);
     expect(Object.isFrozen(proof.payload)).toBe(true);
     expect(() => {
@@ -2596,7 +2573,6 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     opts.snapshot = { ...opts.snapshot, usable: false, usabilityDetail: 'plugin ships no Codex MCP route' };
     const proof = proveCodexPluginHealth(opts);
     expect(proof.version).toBe(1);
-    expect(proof.mcp.retired).toBe(true);
   });
 
   test('rejects payload identity drift (verifyCodexPayload throws)', () => {
@@ -2613,15 +2589,7 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
   });
 
-  test('does not invoke the retired MCP session seam', () => {
-    const opts = healthyOpts();
-    opts.runSession = () => {
-      throw new Error('retired session seam invoked');
-    };
-    expect(proveCodexPluginHealth(opts).mcp.retired).toBe(true);
-  });
-
-  test('rejects an activePluginRoot diverging from the derived canonical cache path before any digest or MCP launch', () => {
+  test('rejects an activePluginRoot diverging from the derived canonical cache path before any digest', () => {
     // Simulate a future Codex emitting an installedPath that is physically valid
     // but lives OUTSIDE codexHome/plugins/cache/automagik/genie/<version>.
     const divergent = mkdtempSync(join(tmpdir(), 'genie-divergent-plugin-root-'));
@@ -2633,22 +2601,15 @@ describe('proveCodexPluginHealth reject-before-retirement matrix (R4)', () => {
     const opts = healthyOpts();
     opts.snapshot = healthyCodexProbe(divergent);
     let digested = false;
-    let launched = false;
     opts.verifyCodexPayload = () => {
       digested = true;
-    };
-    opts.runSession = () => {
-      launched = true;
-      return { ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true };
     };
     // Health must reject (no proof returned → no retirement is ever authorized)
     // and the actionable error must name the divergent root.
     expect(() => proveCodexPluginHealth(opts)).toThrow('rejected before retirement');
     expect(() => proveCodexPluginHealth(opts)).toThrow(divergent);
-    // The rejection lands BEFORE the payload verifier, the skill digesting, and
-    // the MCP session launch.
+    // The rejection lands before the payload verifier and skill digesting.
     expect(digested).toBe(false);
-    expect(launched).toBe(false);
   });
 });
 
@@ -3009,7 +2970,6 @@ function realConvergeOptions(input: {
       converge: () => healthyPluginResult(),
       probe: () => healthyCodexProbe(),
       prove: () => healthyCodexProof(),
-      runSession: () => ({ ok: true, detail: 'ok', tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true }),
       fallbackSkillsDir: canonicalTempDir('genie-fallback-conv-'),
       ...input.deps,
     } as CodexPluginOnlyDeps,
@@ -3037,7 +2997,6 @@ describe('setup Codex fallback-retirement consumer', () => {
         expectedVersion: VERSION,
         skillInventory: [...names],
         payload,
-        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
       }) as CodexHealthProof,
     };
   }

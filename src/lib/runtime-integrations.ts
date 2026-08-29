@@ -40,7 +40,6 @@ import {
   resolveAgentsSkillsDir,
 } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
-import type { BoundedCodexMcpSessionOptions, McpSessionResult } from './codex-mcp-health-session.js';
 import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from './codex-project-mcp.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
 import { validateTrustedExecutablePath } from './trusted-executable.js';
@@ -3024,12 +3023,6 @@ export interface CodexHealthProof {
   readonly expectedVersion: string;
   readonly skillInventory: readonly string[];
   readonly payload: readonly VerifiedCodexSkillPayload[];
-  readonly mcp: {
-    readonly initialized: boolean;
-    readonly tools: readonly string[];
-    readonly wishStatusReadOnly: boolean;
-    readonly retired?: true;
-  };
 }
 
 export interface ProveCodexPluginHealthOptions {
@@ -3039,12 +3032,8 @@ export interface ProveCodexPluginHealthOptions {
   expectedVersion: string;
   /** Deterministic test seam; production binds the installed cache to the canonical bundle. */
   verifyCodexPayload?: CodexPayloadVerifier;
-  /** Retained test seam for source compatibility; A7 never invokes it. */
-  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
-  sessionTimeoutMs?: number;
   /** Exact expected inventory; defaults to the canonical 22 Genie product skills. */
   skillInventory?: readonly string[];
-  nodePath?: string;
 }
 
 function rejectHealth(detail: string): never {
@@ -3158,7 +3147,6 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
     expectedVersion: options.expectedVersion,
     skillInventory: Object.freeze([...skillInventory]),
     payload: frozenPayload,
-    mcp: Object.freeze({ initialized: false, tools: Object.freeze([]), wishStatusReadOnly: false, retired: true }),
   }) as CodexHealthProof;
 }
 
@@ -3236,7 +3224,6 @@ export interface CodexFallbackRetirementDeps {
   recover?: (fallbackSkillsDir: string) => CodexFallbackRetirementResult[];
   plan?: (options: PlanCodexFallbackRetirementOptions) => CodexFallbackRetirementPlan;
   apply?: (plan: CodexFallbackRetirementPlan) => CodexFallbackRetirementResult;
-  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
   /** Live Codex user-skills tier; defaults to resolveAgentsSkillsDir() (env-isolated in tests). */
   fallbackSkillsDir?: string;
   probeCwd?: string;
@@ -3382,7 +3369,6 @@ export function createSetupCodexFallbackRetirementConsumer(
       codexHome,
       expectedVersion: options.expectedVersion,
       verifyCodexPayload: options.verifyCodexPayload,
-      runSession: deps.runSession,
     });
     return {
       status: 'verified',
@@ -3451,7 +3437,6 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     codexHome,
     expectedVersion: options.expectedVersion,
     verifyCodexPayload: options.verifyCodexPayload,
-    runSession: deps.runSession,
   });
 
   const retirement = retireProvenCodexFallbacks(proof, fallbackSkillsDir, deps);

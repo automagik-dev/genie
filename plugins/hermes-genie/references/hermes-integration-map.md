@@ -83,7 +83,7 @@ manual dual system, and no lifecycle hook installs, updates, or synchronizes the
 
 | Path | Effect on Hermes |
 |------|------------------|
-| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, best-effort `hermes plugins enable genie`, then converges the `skills.external_dirs` entry for `$GENIE_HOME/skills` and the `mcp_servers.genie` command into the live profile's `config.yaml`. Proven per-leg by `genie doctor`. |
+| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, best-effort enables it, converges `skills.external_dirs`, and retires only a marker-owned historical `mcp_servers.genie` block. |
 | `genie update` | Re-runs the same convergence inside the already-reviewed parent process; refreshes the linked surface. |
 | `genie setup` / `genie setup --hermes` | Configures + persists Hermes maintenance consent used by later explicit updates. |
 

@@ -7,18 +7,16 @@
  * Design contract (wish `repair-genie-codex-hooks-and-dedupe-skills`, Group C):
  *
  * - The BUILT CLI performs the isolated non-Codex bootstrap install and remains
- *   the system under test for init/MCP surfaces. Fixture delivery publication,
+ *   the system under test for init and retirement surfaces. Fixture delivery publication,
  *   activation, and delivery-aware doctor assertions use one unshipped lifecycle
  *   driver because the deterministic Sigstore bundle is intentionally rejected
  *   without its same-process crypto seam. Setup still runs through a real PTY
  *   and the production consent/authorization/executor/store path. The black-box
  *   inspector imports no runtime-integration oracle (`proveCodexPluginHealth`,
- *   `runBoundedCodexMcpSession`, `inspectCodexFallbackTier`,
+ *   `inspectCodexFallbackTier`,
  *   `inspectManagedSkillTree`) — those would re-run the code under test against
  *   the harness's OWN `process.env`
- *   (the developer's real `~/.codex`/`~/.agents`). MCP health is proven
- *   black-box by driving `<activePluginRoot>/scripts/mcp-launcher.cjs` over a
- *   hand-rolled JSON-RPC session.
+ *   (the developer's real `~/.codex`/`~/.agents`).
  * - This harness module's ONLY direct `src/` imports are deterministic FIXTURE
  *   BUILDERS with explicit path arguments and no env resolution:
  *   `computeDirDigest` (marker digest) and
@@ -77,15 +75,6 @@ export function repositoryRootFromModuleUrl(moduleUrl: string): string {
 export const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 export const DIST_CLI = join(REPO_ROOT, 'dist', 'genie.js');
 const LIFECYCLE_TEST_RUNNER = join(REPO_ROOT, 'tests', 'support', 'codex-lifecycle-test-runner.ts');
-
-/** The five read-only Genie MCP tools a healthy plugin launcher must expose. */
-export const REQUIRED_GENIE_MCP_TOOLS = [
-  'genie_board',
-  'genie_wish_status',
-  'genie_worktree_context',
-  'genie_task',
-  'genie_active',
-] as const;
 
 /** Committed retirement on-disk contract (mirrors agent-sync + doctor). */
 export const RETIREMENT_ROOT_NAME = '.genie-codex-fallback-retirement';
@@ -345,124 +334,14 @@ export function trustIsolatedCodexProject(iso: IsolatedHome): void {
   appendFileSync(join(iso.codexHome, 'config.toml'), `\n${trust}`);
 }
 
-export interface EffectiveCodexMcpRoute {
-  name: 'genie';
-  enabled: true;
-  transport: {
-    type: 'stdio';
-    command: string;
-    args: ['mcp'];
-    cwd: null;
-  };
-}
-
-export interface EffectiveCodexMcpSnapshot {
-  route: EffectiveCodexMcpRoute;
-  getJson: string;
-  listJson: string;
-}
-
-function parseCodexJson(result: CliResult, command: string): unknown {
-  if (result.exitCode !== 0) {
-    fail(
-      `${command} failed with exit ${result.exitCode}: ${result.stderr.trim() || result.stdout.trim() || '<no output>'}`,
-    );
-  }
-  try {
-    return JSON.parse(result.stdout) as unknown;
-  } catch (error) {
-    fail(`${command} returned malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
-
-function assertGenieTransport(value: Record<string, unknown>, expectedCommand: string, source: string): void {
-  if (value.name !== 'genie') fail(`${source} route name must be "genie"`);
-  if (value.enabled !== true) fail(`${source} genie route must be enabled`);
-  const transport = asRecord(value.transport, `${source} genie transport is not an object`);
-  if (transport.type !== 'stdio') fail(`${source} genie transport type must be "stdio"`);
-  if (typeof transport.command !== 'string') fail(`${source} genie transport command must be a string`);
-  const normalizedCommand = transport.command.replaceAll('\\', '/');
-  if (normalizedCommand.includes('/plugins/cache/') || normalizedCommand.includes('/.codex/plugins/')) {
-    fail(`${source} genie command must not resolve through a plugin cache: ${transport.command}`);
-  }
-  if (transport.command !== expectedCommand) {
-    fail(
-      `${source} genie command is ${JSON.stringify(transport.command)}, expected ${JSON.stringify(expectedCommand)}`,
-    );
-  }
-  if (!Array.isArray(transport.args) || transport.args.length !== 1 || transport.args[0] !== 'mcp') {
-    fail(`${source} genie args must be exactly ["mcp"]`);
-  }
-  if ('cwd' in transport && transport.cwd !== null) {
-    fail(`${source} genie cwd must be absent or null`);
-  }
-}
-
-/**
- * Parse and structurally prove Codex's effective project MCP route from both
- * official JSON surfaces. This is intentionally independent of Genie's TOML
- * parser and rejects duplicate, disabled, non-stdio, cache-root, cwd-overridden,
- * or get/list-divergent routes.
- */
-export function assertEffectiveCodexProjectRoute(
-  getResult: CliResult,
-  listResult: CliResult,
-  expectedCommand: string,
-): EffectiveCodexMcpSnapshot {
-  const getParsed = parseCodexJson(getResult, 'codex mcp get genie --json');
-  const listParsed = parseCodexJson(listResult, 'codex mcp list --json');
-  const getRoute = asRecord(getParsed, 'codex mcp get genie --json is not an object');
-  if (!Array.isArray(listParsed)) fail('codex mcp list --json is not an array');
-  const genieRoutes = listParsed
-    .map((entry) => asRecord(entry, 'codex mcp list --json entry is not an object'))
-    .filter((entry) => entry.name === 'genie');
-  if (genieRoutes.length !== 1) {
-    fail(`codex mcp list --json must contain exactly one genie route, found ${genieRoutes.length}`);
-  }
-  const listRoute = genieRoutes[0];
-  assertGenieTransport(getRoute, expectedCommand, 'codex mcp get');
-  assertGenieTransport(listRoute, expectedCommand, 'codex mcp list');
-  return {
-    route: {
-      name: 'genie',
-      enabled: true,
-      transport: { type: 'stdio', command: expectedCommand, args: ['mcp'], cwd: null },
-    },
-    getJson: canonicalJson(getParsed),
-    listJson: canonicalJson(listParsed),
-  };
-}
-
-/** Require one complete marker-owned route block, with no duplicate marker. */
-export function assertSingleCodexProjectRouteMarker(toml: string): void {
-  const begin = '# BEGIN GENIE MCP FALLBACK';
-  const end = '# END GENIE MCP FALLBACK';
-  const begins = toml.split(begin).length - 1;
-  const ends = toml.split(end).length - 1;
-  if (begins !== 1 || ends !== 1 || toml.indexOf(begin) >= toml.indexOf(end)) {
-    fail(`Codex project config must contain exactly one intact ${begin}/${end} block`);
-  }
-}
-
 // ============================================================================
 // Fixture builders
 // ============================================================================
 
 /**
  * Populate `$GENIE_HOME` as the installed marketplace/bundle root and place the
- * BUILT binary at `$GENIE_HOME/bin/genie` (A14 — the MCP launcher and update
- * self-version both resolve this exact path). Then run the finishing install
+ * BUILT binary at `$GENIE_HOME/bin/genie` (the update self-version resolves
+ * this exact path). Then run the finishing install
  * step with no integrations so consent + genie.db exist.
  */
 export function installGenieHome(iso: IsolatedHome): void {
@@ -766,115 +645,24 @@ export function readCodexGeniePlugin(iso: IsolatedHome): CodexPluginEntry {
 /** Resolve the active plugin cache root Codex loads from. */
 export function activePluginRoot(iso: IsolatedHome, version: string): string {
   const root = join(iso.codexHome, 'plugins', 'cache', 'automagik', 'genie', version);
-  if (!existsSync(join(root, 'scripts', 'mcp-launcher.cjs'))) {
-    fail(`active plugin launcher missing at ${root}/scripts/mcp-launcher.cjs`);
+  if (!existsSync(join(root, '.codex-plugin', 'plugin.json'))) {
+    fail(`active plugin manifest missing at ${root}/.codex-plugin/plugin.json`);
   }
   return root;
 }
 
-// ============================================================================
-// Black-box MCP JSON-RPC probe (A1 replacement for proveCodexPluginHealth)
-// ============================================================================
-
-interface JsonRpcReply {
-  id?: number | string | null;
-  result?: unknown;
-  error?: { message?: string; code?: number };
-}
-
-export interface McpProbeResult {
-  initialized: boolean;
-  tools: string[];
-  wishStatusReadOnly: boolean;
-  detail: string;
-}
-
-function buildMcpRequestStream(): string {
-  const requests = [
-    {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'codex-smoke', version: '1' } },
-    },
-    { jsonrpc: '2.0', method: 'notifications/initialized' },
-    { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'genie_wish_status', arguments: {} } },
-  ];
-  return `${requests.map((request) => JSON.stringify(request)).join('\n')}\n`;
-}
-
-function indexReplies(stdout: string): Map<number, JsonRpcReply> {
-  const byId = new Map<number, JsonRpcReply>();
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const reply = JSON.parse(trimmed) as JsonRpcReply;
-      if (typeof reply.id === 'number') byId.set(reply.id, reply);
-    } catch {
-      // ignore non-JSON framing noise
-    }
-  }
-  return byId;
-}
-
-/**
- * Drive a bounded JSON-RPC session through the installed launcher — the exact
- * `<activePluginRoot>/scripts/mcp-launcher.cjs` that Codex would spawn — and
- * prove `initialize` → `tools/list` (5 Genie tools) → read-only
- * `genie_wish_status` without importing any runtime-integration oracle.
- */
-export function probePluginMcp(iso: IsolatedHome, launcherRoot: string): McpProbeResult {
-  const launcher = join(launcherRoot, 'scripts', 'mcp-launcher.cjs');
-  const cwd = mkdtempSync(join(iso.home, 'mcp-cwd-'));
-  try {
-    const spawned = Bun.spawnSync(['node', launcher], {
-      cwd,
-      env: iso.env,
-      stdin: Buffer.from(buildMcpRequestStream(), 'utf8'),
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 10_000,
-    });
-    if (spawned.exitedDueToTimeout === true) {
-      return { initialized: false, tools: [], wishStatusReadOnly: false, detail: 'bounded MCP session timed out' };
-    }
-    const byId = indexReplies(spawned.stdout.toString());
-    const init = byId.get(1);
-    const initialized = init !== undefined && init.error === undefined && isRecord(init.result);
-    const listResult = byId.get(2)?.result;
-    const tools =
-      isRecord(listResult) && Array.isArray(listResult.tools)
-        ? listResult.tools
-            .map((tool) => (isRecord(tool) && typeof tool.name === 'string' ? tool.name : null))
-            .filter((name): name is string => name !== null)
-            .sort()
-        : [];
-    const call = byId.get(3);
-    const wishStatusReadOnly = call !== undefined && call.error === undefined && isRecord(call.result);
-    return {
-      initialized,
-      tools,
-      wishStatusReadOnly,
-      detail: `exit=${spawned.exitCode} stderr=${spawned.stderr.toString().trim().slice(0, 200)}`,
-    };
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-}
-
-/** Full black-box health assertion: exactly one enabled target-version plugin + usable MCP. */
+/** Black-box health assertion for the surviving plugin payload. */
 export function assertPluginHealthy(iso: IsolatedHome, version: string): void {
   const entry = readCodexGeniePlugin(iso);
   if (!entry.installed || !entry.enabled) fail(`plugin is not installed+enabled: ${JSON.stringify(entry)}`);
   if (entry.version !== version) fail(`plugin version ${entry.version} != expected ${version}`);
   const root = activePluginRoot(iso, version);
-  const probe = probePluginMcp(iso, root);
-  if (!probe.initialized) fail(`MCP initialize failed: ${probe.detail}`);
-  const missing = REQUIRED_GENIE_MCP_TOOLS.filter((tool) => !probe.tools.includes(tool));
-  if (missing.length > 0) fail(`MCP tools/list missing ${missing.join(', ')} (got ${probe.tools.join(', ')})`);
-  if (!probe.wishStatusReadOnly) fail(`read-only genie_wish_status did not return a result: ${probe.detail}`);
+  if (existsSync(join(root, '.mcp.json'))) fail('retired plugin payload still ships .mcp.json');
+  const manifest = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+  if ('mcpServers' in manifest) fail('retired plugin manifest still declares mcpServers');
 }
 
 // ============================================================================

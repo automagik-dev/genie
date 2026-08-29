@@ -45,12 +45,7 @@ import {
 // Group E: the shared Decision-9 delivery gate — the same assessment the
 // executor's `beginActivation` inner guard re-applies before its first write.
 import { assessSnapshotDelivery } from '../lib/codex-lifecycle-truth.js';
-import {
-  type CodexPluginProbe,
-  genieFacadeMcpEntry,
-  reconcileCodexProjectMcp,
-  resolveGitWorktreeRoot,
-} from '../lib/codex-project-mcp.js';
+import { removeCodexMcpFallback, resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
 import {
   contractPath,
   getGenieConfigPath,
@@ -371,35 +366,12 @@ function buildConsentContext(deps: SetupDeps, quick: boolean): ConsentContext {
   };
 }
 
-function reconcileSetupCodexProject(root: string | null, plugin: CodexPluginProbe): string {
+function retireSetupCodexProjectRoute(root: string | null): string {
   if (root === null) {
-    return '  \x1b[2mNo Git worktree detected; project MCP fallback was not changed.\x1b[0m';
+    return '  \x1b[2mNo Git worktree detected; no project MCP route exists to retire.\x1b[0m';
   }
-  // Decision 2: the marker route carries the stable absolute GENIE_HOME facade,
-  // exactly as trusted `genie init` writes it.
-  const project = reconcileCodexProjectMcp(root, plugin, genieFacadeMcpEntry());
-  if (!project.ok) throw new SetupIntegrationError(project.detail ?? 'Codex project MCP reconciliation failed');
-  return `  \x1b[32m✓\x1b[0m Project MCP route: ${project.route} (${project.detail ?? project.action})`;
-}
-
-/**
- * Post-activation route probe (Group E). The installed Codex plugin ships NO
- * MCP route (Group A removed the manifest declaration), so for ROUTE purposes
- * an activated plugin is never "usable" and the marker-owned project route
- * remains required. Decision 1: plugin availability never creates or removes
- * the project route — the pre-A behavior of removing the fallback after
- * activation left a repository with no Codex route at all.
- */
-function verifiedCurrentPluginProbe(): CodexPluginProbe {
-  return {
-    cliAvailable: true,
-    status: 'ok',
-    installed: true,
-    enabled: true,
-    usable: false,
-    usabilityDetail: 'installed plugin contributes no Codex MCP route; the marker-owned project route is authoritative',
-    detail: 'activation verified-current; project route remains marker-owned',
-  };
+  const action = removeCodexMcpFallback(join(root, '.codex', 'config.toml'));
+  return `  \x1b[32m✓\x1b[0m Project MCP route retired (${action}).`;
 }
 
 /** Merge explicit Codex activation into the durable client-home maintenance scope. */
@@ -785,7 +757,7 @@ async function finalizeCodexSetup(
     const assets = convergePostActivationCodexAssetsUnderLease(deps, prepared.codexPath, prepared.outcome, codexLease);
     deps.codexFinalizationHooks?.afterAssets?.();
 
-    const projectLine = reconcileSetupCodexProject(resolveGitWorktreeRoot(prepared.cwd), verifiedCurrentPluginProbe());
+    const projectLine = retireSetupCodexProjectRoute(resolveGitWorktreeRoot(prepared.cwd));
     deps.codexFinalizationHooks?.afterRoute?.();
 
     const nextConfig = structuredClone(config);

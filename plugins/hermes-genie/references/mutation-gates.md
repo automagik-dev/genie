@@ -5,8 +5,8 @@ The rules that keep the Hermes-native surface read-only, and the gate every futu
 ## Read-only MVP boundary
 
 - Every tool, slash command, hook, and skill in this plugin reports `mutation: "none"` and performs no state writes — no task claims, no dispatch, no sends, no writes under `.genie/`.
-- The default native surface is the three gap tools the MCP board surface does not cover: `genie_status` (`doctor --json` plus `.genie/` presence), `genie_work_plan` (`context --wish <slug> --plan`), and `genie_review_plan` (board/task composite plus the WISH.md acceptance sections). Board and task truth come from the genie MCP tools.
-- The four legacy board/task tools (`genie_board`, `genie_wish_status`, `genie_task_list`, `genie_task_status`) still exist behind `GENIE_HERMES_LEGACY_TOOLS=1` for one transition release; they wrap the same read-only subcommands (`board --json`, `task list --json`, `task status <id>`) and remain `mutation: "none"`. All subprocess calls use the argv-only bridge.
+- The native surface is exactly three read-only tools: `genie_status`, `genie_work_plan`, and `genie_review_plan`. Board/task truth remains available through standalone `genie board` and `genie task` commands.
+- Historical duplicate board/task tool registrations and their flag gate are retired. All surviving subprocess calls use the argv-only bridge.
 - `genie board --json` writes in exactly one shape: scoped with `--board <ref>` to a lane-defining board, it reconciles sync-owned card lanes from WISH.md statuses before rendering. This surface never passes `--board` — `genie_board` accepts only `cwd` and `wish`, and `genie_wish_status`/`genie_review_plan`/`session_context` are wish-scoped or unscoped — so every board read here takes the laneless path and writes nothing. Exposing a `board` parameter would make the tool mutation-capable and requires the gate below.
 - The plan line is the boundary: `genie_work_plan` runs `genie context --wish <slug> --plan`, which prints the spawn-context payload (branch + base SHA + ready tasks) and touches nothing. Materializing a worktree or spawning an agent is a mutation and is out of scope here.
 

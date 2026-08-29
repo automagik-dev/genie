@@ -125,9 +125,7 @@ export interface RegisterProjectMcpOptions {
   /**
    * Dedicated command for the marker-owned Codex `.codex/config.toml` route.
    * Defaults to {@link RegisterProjectMcpOptions.entry}. Trusted `genie init`
-   * passes the stable {@link genieFacadeMcpEntry} facade here so the Codex marker
-   * uses the version-independent `<GENIE_HOME>/bin/genie` command even while
-   * Claude Code keeps the running-executable entry.
+   * Historical callers could provide a distinct Codex entry during migration.
    */
   codexEntry?: McpServerEntry;
   /**
@@ -638,22 +636,6 @@ export function genieMcpEntry(command?: string, argv = process.argv): McpServerE
   const executable = realpathSync(process.execPath);
   const script = interpretedGenieEntry(argv);
   return { command: executable, args: script ? [script, 'mcp'] : ['mcp'] };
-}
-
-/**
- * The stable marker-owned Codex route command: the canonical absolute
- * `<GENIE_HOME>/bin/genie` facade with `args = ["mcp"]` and NO effective cwd
- * override. Unlike {@link genieMcpEntry} (which records the running executable
- * for Claude Code), this facade path is deliberately version- and
- * plugin-independent: it survives plugin updates and symlinked invocation, and
- * is rewritten only by trusted `genie init` after an explicit GENIE_HOME
- * relocation. It never resolves to a versioned plugin-cache path.
- */
-export function genieFacadeMcpEntry(
-  genieHome: string = resolveGenieHome(),
-  platform: NodeJS.Platform = process.platform,
-): McpServerEntry {
-  return { command: join(genieHome, 'bin', platform === 'win32' ? 'genie.exe' : 'genie'), args: ['mcp'] };
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
