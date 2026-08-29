@@ -229,4 +229,164 @@ describe('runtime and executor boundary', () => {
       expect((error as OrcaAdapterError).retrySafety).toBe('unrecoverably-ambiguous');
     }
   });
+
+  test('classifies every mutation timeout as ambiguous and does not retry', async () => {
+    let calls = 0;
+    const adapter = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      executor: async () => {
+        calls += 1;
+        return { exitCode: null, stdout: '', stderr: '', timedOut: true };
+      },
+    });
+    try {
+      await adapter.execute({ operation: 'send', subject: 'once' });
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as OrcaAdapterError).code).toBe('ambiguous_after_possible_commit');
+      expect((error as OrcaAdapterError).retrySafety).toBe('unrecoverably-ambiguous');
+    }
+    expect(calls).toBe(1);
+  });
+
+  test('rejects verb-specific malformed and identifier-free mutation JSON without retry', async () => {
+    for (const [stdout, code] of [
+      ['not-json', 'malformed_json'],
+      ['{"id":"request_a","ok":true,"result":{"released":true}}', 'missing_receipt'],
+    ] as const) {
+      let calls = 0;
+      const adapter = createOrcaOrchestrationAdapter({
+        executable: 'orca-test',
+        executor: async () => {
+          calls += 1;
+          return { exitCode: 0, stdout, stderr: '' };
+        },
+      });
+      try {
+        await adapter.execute({ operation: 'worker-release', dispatch: 'dispatch_a' });
+        throw new Error('expected failure');
+      } catch (error) {
+        expect(error).toBeInstanceOf(OrcaAdapterError);
+        expect((error as OrcaAdapterError).code).toBe(code);
+        expect((error as OrcaAdapterError).retrySafety).toBe('readback-required');
+      }
+      expect(calls).toBe(1);
+    }
+  });
+
+  test('normalizes run-use identifiers, runtime metadata, timestamps, and run-current proof', async () => {
+    const requests: string[][] = [];
+    const instants = [new Date('2026-08-29T00:00:00.000Z'), new Date('2026-08-29T00:00:01.000Z')];
+    const adapter = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      now: () => instants.shift() as Date,
+      executor: async (request) => {
+        requests.push([...request.argv]);
+        const result = request.argv[1] === 'run-use' ? { runId: 'run_a' } : { run: { id: 'run_a' } };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: true,
+            result,
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3' },
+          }),
+          stderr: '',
+        };
+      },
+    });
+    const response = await adapter.execute({ operation: 'run-use', id: 'run_a' });
+    expect(requests.map((argv) => argv[1])).toEqual(['run-use', 'run-current']);
+    expect(response.receipt).toEqual({
+      verb: 'run-use',
+      ids: { runId: 'run_a' },
+      runtimeId: 'runtime_a',
+      runtimeVersion: '1.2.3',
+      startedAt: '2026-08-29T00:00:00.000Z',
+      completedAt: '2026-08-29T00:00:01.000Z',
+      readbackVerb: 'run-current',
+    });
+  });
+
+  test('verifies gate task context and worker release through their required public readbacks', async () => {
+    const run = async (input: OrcaOperation, results: Record<string, object>) => {
+      const verbs: string[] = [];
+      const adapter = createOrcaOrchestrationAdapter({
+        executable: 'orca-test',
+        executor: async (request) => {
+          const verb = request.argv[1] as string;
+          verbs.push(verb);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({ id: `request_${verb}`, ok: true, result: results[verb] }),
+            stderr: '',
+          };
+        },
+      });
+      const response = await adapter.execute(input);
+      return { verbs, response };
+    };
+    const gate = await run(
+      { operation: 'gate-resolve', id: 'gate_a', resolution: 'yes', task: 'task_a' },
+      {
+        'gate-resolve': { gateId: 'gate_a', taskId: 'task_a' },
+        'gate-list': { gates: [{ id: 'gate_a', taskId: 'task_a', status: 'resolved', resolution: 'yes' }] },
+      },
+    );
+    expect(gate.verbs).toEqual(['gate-resolve', 'gate-list']);
+    expect(gate.response.receipt?.ids).toEqual({ gateId: 'gate_a', taskId: 'task_a' });
+
+    const worker = await run(
+      { operation: 'worker-release', dispatch: 'dispatch_a' },
+      {
+        'worker-release': { dispatchId: 'dispatch_a', released: true },
+        'worker-show': { dispatch: { id: 'dispatch_a', state: 'released' } },
+      },
+    );
+    expect(worker.verbs).toEqual(['worker-release', 'worker-show']);
+    expect(worker.response.receipt?.readbackVerb).toBe('worker-show');
+  });
+
+  test('fails on readback disagreement and never retries either call', async () => {
+    const verbs: string[] = [];
+    const adapter = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      executor: async (request) => {
+        const verb = request.argv[1] as string;
+        verbs.push(verb);
+        const result = verb === 'run-use' ? { runId: 'run_a' } : { run: { id: 'run_other' } };
+        return { exitCode: 0, stdout: JSON.stringify({ id: 'request_a', ok: true, result }), stderr: '' };
+      },
+    });
+    try {
+      await adapter.execute({ operation: 'run-use', id: 'run_a' });
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as OrcaAdapterError).code).toBe('readback_mismatch');
+    }
+    expect(verbs).toEqual(['run-use', 'run-current']);
+  });
+
+  test('returns receipt-only proofs for send/reply and supported check --ack', async () => {
+    for (const input of [
+      { operation: 'send', subject: 'hello' },
+      { operation: 'reply', id: 'message_a', body: 'yes' },
+      { operation: 'check', ack: 'delivery_a' },
+    ] satisfies OrcaOperation[]) {
+      let calls = 0;
+      const adapter = createOrcaOrchestrationAdapter({
+        executable: 'orca-test',
+        executor: async (request) => {
+          calls += 1;
+          const result =
+            request.argv[1] === 'check' ? { deliveryId: 'delivery_a', messages: [] } : { messageId: 'message_a' };
+          return { exitCode: 0, stdout: JSON.stringify({ id: 'request_a', ok: true, result }), stderr: '' };
+        },
+      });
+      const response = await adapter.execute(input);
+      expect(response.receipt?.verb).toBe(input.operation);
+      expect(response.receipt?.readbackVerb).toBeNull();
+      expect(calls).toBe(1);
+    }
+  });
 });
