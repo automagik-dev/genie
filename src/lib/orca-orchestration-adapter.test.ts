@@ -282,14 +282,17 @@ describe('runtime and executor boundary', () => {
       now: () => instants.shift() as Date,
       executor: async (request) => {
         requests.push([...request.argv]);
-        const result = request.argv[1] === 'run-use' ? { runId: 'run_a' } : { run: { id: 'run_a' } };
+        const result =
+          request.argv[1] === 'run-use'
+            ? { runId: 'run_a', coordinatorTerminalHandle: 'term_a' }
+            : { run: { id: 'run_a' }, coordinatorTerminalHandle: 'term_a' };
         return {
           exitCode: 0,
           stdout: JSON.stringify({
             id: 'request_a',
             ok: true,
             result,
-            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3' },
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3', invokingTerminal: 'term_a' },
           }),
           stderr: '',
         };
@@ -318,7 +321,12 @@ describe('runtime and executor boundary', () => {
           verbs.push(verb);
           return {
             exitCode: 0,
-            stdout: JSON.stringify({ id: `request_${verb}`, ok: true, result: results[verb] }),
+            stdout: JSON.stringify({
+              id: `request_${verb}`,
+              ok: true,
+              result: results[verb],
+              _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3' },
+            }),
             stderr: '',
           };
         },
@@ -330,7 +338,9 @@ describe('runtime and executor boundary', () => {
       { operation: 'gate-resolve', id: 'gate_a', resolution: 'yes', task: 'task_a' },
       {
         'gate-resolve': { gateId: 'gate_a', taskId: 'task_a' },
-        'gate-list': { gates: [{ id: 'gate_a', taskId: 'task_a', status: 'resolved', resolution: 'yes' }] },
+        'gate-list': {
+          gates: [{ id: 'gate_a', taskId: 'task_a', question: 'Choose', status: 'resolved', resolution: 'yes' }],
+        },
       },
     );
     expect(gate.verbs).toEqual(['gate-resolve', 'gate-list']);
@@ -339,8 +349,10 @@ describe('runtime and executor boundary', () => {
     const worker = await run(
       { operation: 'worker-release', dispatch: 'dispatch_a' },
       {
-        'worker-release': { dispatchId: 'dispatch_a', released: true },
-        'worker-show': { dispatch: { id: 'dispatch_a', state: 'released' } },
+        'worker-release': { dispatchId: 'dispatch_a' },
+        'worker-show': {
+          dispatch: { id: 'dispatch_a', taskId: 'task_a', terminalDisposition: 'released' },
+        },
       },
     );
     expect(worker.verbs).toEqual(['worker-release', 'worker-show']);
@@ -354,8 +366,20 @@ describe('runtime and executor boundary', () => {
       executor: async (request) => {
         const verb = request.argv[1] as string;
         verbs.push(verb);
-        const result = verb === 'run-use' ? { runId: 'run_a' } : { run: { id: 'run_other' } };
-        return { exitCode: 0, stdout: JSON.stringify({ id: 'request_a', ok: true, result }), stderr: '' };
+        const result =
+          verb === 'run-use'
+            ? { runId: 'run_a', coordinatorTerminalHandle: 'term_a' }
+            : { run: { id: 'run_other' }, coordinatorTerminalHandle: 'term_a' };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: true,
+            result,
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3', invokingTerminal: 'term_a' },
+          }),
+          stderr: '',
+        };
       },
     });
     try {
@@ -379,13 +403,124 @@ describe('runtime and executor boundary', () => {
         executor: async (request) => {
           calls += 1;
           const result =
-            request.argv[1] === 'check' ? { deliveryId: 'delivery_a', messages: [] } : { messageId: 'message_a' };
-          return { exitCode: 0, stdout: JSON.stringify({ id: 'request_a', ok: true, result }), stderr: '' };
+            request.argv[1] === 'check'
+              ? { deliveryId: 'delivery_a', acknowledged: true, messages: [] }
+              : { messageId: 'message_a' };
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              id: 'request_a',
+              ok: true,
+              result,
+              _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3' },
+            }),
+            stderr: '',
+          };
         },
       });
       const response = await adapter.execute(input);
       expect(response.receipt?.verb).toBe(input.operation);
       expect(response.receipt?.readbackVerb).toBeNull();
+      expect(calls).toBe(1);
+    }
+  });
+
+  test('rejects duplicate JSON keys and arbitrary nested identifiers', async () => {
+    for (const stdout of [
+      '{"id":"request_a","ok":true,"result":{"runs":[],"runs":[]}}',
+      '{"id":"request_a","ok":true,"result":{"nested":{"runId":"run_a"}}}',
+    ]) {
+      let calls = 0;
+      const adapter = createOrcaOrchestrationAdapter({
+        executable: 'orca-test',
+        executor: async () => {
+          calls += 1;
+          return { exitCode: 0, stdout, stderr: '' };
+        },
+      });
+      await expect(adapter.execute({ operation: 'run-create', objective: 'x' })).rejects.toBeInstanceOf(
+        OrcaAdapterError,
+      );
+      expect(calls).toBe(1);
+    }
+  });
+
+  test('requires exact acknowledgement state and runtime-attested terminal binding', async () => {
+    const ack = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      executor: async () => ({
+        exitCode: 0,
+        stdout:
+          '{"id":"request_a","ok":true,"result":{"deliveryId":"delivery_a","acknowledged":false},"_meta":{"runtimeId":"runtime_a","runtimeVersion":"1.2.3"}}',
+        stderr: '',
+      }),
+    });
+    await expect(ack.execute({ operation: 'check', ack: 'delivery_a' })).rejects.toMatchObject({
+      code: 'missing_receipt',
+    });
+
+    const terminal = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          id: 'request_a',
+          ok: true,
+          result: { runId: 'run_a', coordinatorTerminalHandle: 'term_wrong' },
+          _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3', invokingTerminal: 'term_a' },
+        }),
+        stderr: '',
+      }),
+    });
+    await expect(terminal.execute({ operation: 'run-use', id: 'run_a' })).rejects.toMatchObject({
+      code: 'readback_mismatch',
+    });
+  });
+
+  test('accepts the public retained worker disposition', async () => {
+    const verbs: string[] = [];
+    const adapter = createOrcaOrchestrationAdapter({
+      executable: 'orca-test',
+      executor: async (request) => {
+        const verb = request.argv[1] as string;
+        verbs.push(verb);
+        const result =
+          verb === 'worker-release'
+            ? { dispatchId: 'dispatch_a' }
+            : { dispatch: { id: 'dispatch_a', taskId: 'task_a', terminalDisposition: 'retained' } };
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: true,
+            result,
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3' },
+          }),
+          stderr: '',
+        };
+      },
+    });
+    await adapter.execute({ operation: 'worker-release', dispatch: 'dispatch_a' });
+    expect(verbs).toEqual(['worker-release', 'worker-show']);
+  });
+
+  test('classifies output and transport loss after mutation spawn as ambiguous without persistence or retry', async () => {
+    for (const result of [
+      { exitCode: null, stdout: '', stderr: '', outputLimited: true },
+      { exitCode: null, stdout: '', stderr: '', transportLost: true },
+    ]) {
+      let calls = 0;
+      const adapter = createOrcaOrchestrationAdapter({
+        executable: 'orca-test',
+        executor: async () => {
+          calls += 1;
+          return result;
+        },
+      });
+      await expect(adapter.execute({ operation: 'send', subject: 'once' })).rejects.toMatchObject({
+        code: 'ambiguous_after_possible_commit',
+        retrySafety: 'unrecoverably-ambiguous',
+      });
       expect(calls).toBe(1);
     }
   });

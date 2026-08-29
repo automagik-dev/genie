@@ -403,6 +403,7 @@ export interface OrcaProcessResult {
   stderr: string;
   timedOut?: boolean;
   outputLimited?: boolean;
+  transportLost?: boolean;
 }
 
 export type OrcaProcessExecutor = (request: OrcaProcessRequest) => Promise<OrcaProcessResult>;
@@ -410,6 +411,7 @@ export type OrcaProcessExecutor = (request: OrcaProcessRequest) => Promise<OrcaP
 export const DEFAULT_ORCA_TIMEOUT_MS = 30_000;
 export const MAX_ORCA_STDOUT_BYTES = 1_048_576;
 export const MAX_ORCA_STDERR_BYTES = 65_536;
+const ORCA_KILL_GRACE_MS = 1_000;
 
 export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
   new Promise((resolve, reject) => {
@@ -426,7 +428,11 @@ export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
     let settled = false;
     let timedOut = false;
     let outputLimited = false;
-    const stop = () => child.kill('SIGTERM');
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      child.kill('SIGTERM');
+      killTimer ??= setTimeout(() => child.kill('SIGKILL'), ORCA_KILL_GRACE_MS);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       stop();
@@ -449,12 +455,14 @@ export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
       reject(error);
     });
     child.once('close', (exitCode, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
       resolve({
         exitCode,
         signal,
@@ -466,47 +474,66 @@ export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
     });
   });
 
-const jsonScalar = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
-type JsonValue = z.infer<typeof jsonScalar> | JsonValue[] | { [key: string]: JsonValue };
-const jsonValue: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([jsonScalar, z.array(jsonValue).max(10_000), z.record(jsonValue)]),
-);
-const boundedResult = z
-  .record(jsonValue)
-  .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= MAX_ORCA_STDOUT_BYTES);
-
-/*
- * Orca deliberately evolves the fields inside its public result objects.  The
- * adapter still keeps a finite contract: every supported verb is named here,
- * every result is an object, and mutations must expose the identifiers needed
- * for their receipt/readback proof.  No verb falls through to `unknown`.
- */
-const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodType<Record<string, JsonValue>>>> = {
-  'run-create': boundedResult.refine((value) => findString(value, ['runId', 'id']) !== undefined),
-  'run-list': boundedResult,
-  'run-show': boundedResult,
-  'run-current': boundedResult,
-  'run-use': boundedResult.refine((value) => findString(value, ['runId', 'id']) !== undefined),
-  'task-create': boundedResult.refine((value) => findString(value, ['taskId', 'id']) !== undefined),
-  'task-list': boundedResult,
-  'task-update': boundedResult.refine((value) => findString(value, ['taskId', 'id']) !== undefined),
-  'worker-start': boundedResult.refine(
-    (value) => findString(value, ['dispatchId', 'id']) !== undefined && findString(value, ['taskId']) !== undefined,
-  ),
-  'worker-show': boundedResult,
-  'worker-read': boundedResult,
-  'worker-release': boundedResult.refine((value) => findString(value, ['dispatchId', 'id']) !== undefined),
-  send: boundedResult.refine((value) => findString(value, ['messageId', 'id']) !== undefined),
-  check: boundedResult,
-  reply: boundedResult.refine((value) => findString(value, ['messageId', 'id']) !== undefined),
-  ask: boundedResult.refine((value) => findString(value, ['messageId', 'id']) !== undefined),
-  'gate-create': boundedResult.refine(
-    (value) => findString(value, ['gateId', 'id']) !== undefined && findString(value, ['taskId']) !== undefined,
-  ),
-  'gate-list': boundedResult,
-  'gate-resolve': boundedResult.refine(
-    (value) => findString(value, ['gateId', 'id']) !== undefined && findString(value, ['taskId']) !== undefined,
-  ),
+const terminalId = id;
+const receipt = (shape: z.ZodRawShape) => z.object(shape).strict();
+const runEntity = receipt({ id, objective: longText.optional(), coordinatorTerminalHandle: terminalId.optional() });
+const taskEntity = receipt({
+  id,
+  spec: longText,
+  title: shortText.optional(),
+  deps: uniqueArray(id, 64).optional(),
+  parent: id.optional(),
+  status: taskStatus,
+  result: result.optional(),
+});
+const workerEntity = receipt({
+  id,
+  taskId: id,
+  agent: agent.optional(),
+  model: model.optional(),
+  effort: effort.optional(),
+  state: itemText.optional(),
+  terminalDisposition: z.enum(['released', 'retained']).optional(),
+});
+const gateEntity = receipt({
+  id,
+  taskId: id,
+  question: shortText,
+  options: uniqueArray(itemText, 10, 1).optional(),
+  status: gateStatus,
+  resolution: longText.optional(),
+});
+const messageReceipt = receipt({ messageId: id });
+const askReceipt = receipt({ messageId: id, state: z.enum(['answered', 'pending']), answer: longText.optional() });
+const checkResult = receipt({
+  deliveryId: id.optional(),
+  acknowledged: z.boolean().optional(),
+  messages: z
+    .array(receipt({ id, type: messageType, subject: shortText }))
+    .max(50)
+    .optional(),
+  count: z.number().int().min(0).max(50).optional(),
+});
+const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
+  'run-create': receipt({ runId: id }),
+  'run-list': receipt({ runs: z.array(runEntity).max(100), cursor: cursor.optional() }),
+  'run-show': receipt({ run: runEntity }),
+  'run-current': receipt({ run: runEntity, coordinatorTerminalHandle: terminalId }),
+  'run-use': receipt({ runId: id, coordinatorTerminalHandle: terminalId }),
+  'task-create': receipt({ taskId: id }),
+  'task-list': receipt({ tasks: z.array(taskEntity).max(100) }),
+  'task-update': receipt({ taskId: id }),
+  'worker-start': receipt({ dispatchId: id, taskId: id }),
+  'worker-show': receipt({ dispatch: workerEntity }),
+  'worker-read': receipt({ dispatchId: id, source: workerSource, output: longText, cursor: cursor.optional() }),
+  'worker-release': receipt({ dispatchId: id }),
+  send: messageReceipt,
+  check: checkResult,
+  reply: messageReceipt,
+  ask: askReceipt,
+  'gate-create': receipt({ gateId: id, taskId: id }),
+  'gate-list': receipt({ gates: z.array(gateEntity).max(100) }),
+  'gate-resolve': receipt({ gateId: id, taskId: id }),
 };
 
 const envelopeSchema = z
@@ -518,7 +545,15 @@ const envelopeSchema = z
       .object({ code: z.string().min(1).max(128), message: z.string().min(1).max(4096) })
       .passthrough()
       .optional(),
-    _meta: z.record(z.unknown()).optional(),
+    _meta: z
+      .object({
+        runtimeId: id,
+        runtimeVersion: shortText.optional(),
+        version: shortText.optional(),
+        invokingTerminal: terminalId.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .refine((value) => (value.ok ? value.result !== undefined && value.error === undefined : value.error !== undefined));
@@ -541,7 +576,7 @@ function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string): OrcaJs
   const mutation = mutationVerbs.has(operation);
   let decoded: unknown;
   try {
-    decoded = JSON.parse(stdout);
+    decoded = parseJsonRejectingDuplicateKeys(stdout);
   } catch {
     throw new OrcaAdapterError(
       'malformed_json',
@@ -581,6 +616,40 @@ function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string): OrcaJs
   return parsed.data;
 }
 
+function parseJsonRejectingDuplicateKeys(text: string): unknown {
+  const stack: Array<Set<string> | null> = [];
+  let expectingKey = false;
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char === '"') {
+      const start = index;
+      index += 1;
+      while (index < text.length) {
+        if (text[index] === '\\') index += 2;
+        else if (text[index] === '"') break;
+        else index += 1;
+      }
+      if (index >= text.length) throw new Error('unterminated JSON string');
+      if (expectingKey) {
+        const key = JSON.parse(text.slice(start, index + 1)) as string;
+        const keys = stack.at(-1);
+        if (keys === null || keys === undefined || keys.has(key)) throw new Error('duplicate JSON key');
+        keys.add(key);
+        expectingKey = false;
+      }
+    } else if (char === '{') {
+      stack.push(new Set());
+      expectingKey = true;
+    } else if (char === '[') stack.push(null);
+    else if (char === '}') stack.pop();
+    else if (char === ']') stack.pop();
+    else if (char === ',' && stack.at(-1) instanceof Set) expectingKey = true;
+    index += 1;
+  }
+  return JSON.parse(text);
+}
+
 export interface OrcaAdapterOptions {
   executor?: OrcaProcessExecutor;
   executable?: string;
@@ -613,83 +682,145 @@ function hasAcknowledgement(operation: OrcaOrchestrationVerb, input: unknown): b
   return operation === 'check' && typeof input === 'object' && input !== null && 'ack' in input;
 }
 
-function findString(value: unknown, keys: readonly string[]): string | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  if (Array.isArray(value)) {
-    for (const member of value) {
-      const found = findString(member, keys);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of keys) if (typeof record[key] === 'string') return record[key];
-  for (const member of Object.values(record)) {
-    const found = findString(member, keys);
-    if (found !== undefined) return found;
-  }
-  return undefined;
+function recordOf(value: unknown): Record<string, unknown> {
+  return value as Record<string, unknown>;
 }
 
-function collectIds(value: unknown): Readonly<Record<string, string>> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return Object.freeze({});
-  const ids: Record<string, string> = {};
-  const visit = (entry: unknown): void => {
-    if (typeof entry !== 'object' || entry === null) return;
-    if (Array.isArray(entry)) {
-      entry.forEach(visit);
-      return;
-    }
-    for (const [key, member] of Object.entries(entry)) {
-      if ((key === 'id' || key.endsWith('Id')) && typeof member === 'string' && id.safeParse(member).success)
-        ids[key] = member;
-      else visit(member);
-    }
+function receiptIds(operation: OrcaOrchestrationVerb, value: unknown): Readonly<Record<string, string>> {
+  const result = recordOf(value);
+  const fields: Partial<Record<OrcaOrchestrationVerb, readonly string[]>> = {
+    'run-create': ['runId'],
+    'run-use': ['runId'],
+    'task-create': ['taskId'],
+    'task-update': ['taskId'],
+    'worker-start': ['dispatchId', 'taskId'],
+    'worker-release': ['dispatchId'],
+    send: ['messageId'],
+    reply: ['messageId'],
+    ask: ['messageId'],
+    check: ['deliveryId'],
+    'gate-create': ['gateId', 'taskId'],
+    'gate-resolve': ['gateId', 'taskId'],
   };
-  visit(value);
-  return Object.freeze(ids);
+  return Object.freeze(
+    Object.fromEntries(
+      (fields[operation] ?? []).flatMap((key) => (typeof result[key] === 'string' ? [[key, result[key]]] : [])),
+    ),
+  );
 }
 
 type ReadbackPlan = { operation: ValidatedOrcaOperation; matches: (result: unknown) => boolean };
 
 function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): ReadbackPlan | undefined {
   if (operation.operation === 'run-use') {
-    const runId = findString(result, ['runId', 'id']);
+    const receipt = recordOf(result);
     return {
       operation: { operation: 'run-current' },
-      matches: (readback) => runId === operation.id && findString(readback, ['runId', 'id']) === operation.id,
+      matches: (readback) => {
+        const current = recordOf(readback);
+        const run = recordOf(current.run);
+        return (
+          receipt.runId === operation.id &&
+          run.id === operation.id &&
+          receipt.coordinatorTerminalHandle === current.coordinatorTerminalHandle
+        );
+      },
     };
   }
   if (operation.operation === 'gate-resolve') {
-    const gateId = findString(result, ['gateId', 'id']);
-    const taskId = findString(result, ['taskId']);
+    const mutation = recordOf(result);
     return {
       operation: { operation: 'gate-list', task: operation.task },
       matches: (readback) => {
-        if (gateId !== operation.id || taskId !== operation.task) return false;
-        const gates =
-          typeof readback === 'object' && readback !== null ? (readback as Record<string, unknown>).gates : undefined;
+        if (mutation.gateId !== operation.id || mutation.taskId !== operation.task) return false;
+        const gates = recordOf(readback).gates;
         return (
           Array.isArray(gates) &&
-          gates.some(
-            (gate) =>
-              findString(gate, ['gateId', 'id']) === gateId &&
-              findString(gate, ['taskId']) === operation.task &&
-              findString(gate, ['status']) === 'resolved' &&
-              findString(gate, ['resolution']) === operation.resolution,
-          )
+          gates.some((value) => {
+            const gate = recordOf(value);
+            return (
+              gate.id === operation.id &&
+              gate.taskId === operation.task &&
+              gate.status === 'resolved' &&
+              gate.resolution === operation.resolution
+            );
+          })
         );
       },
     };
   }
   if (operation.operation === 'worker-release') {
-    const dispatchId = findString(result, ['dispatchId', 'id']);
+    const mutation = recordOf(result);
     return {
       operation: { operation: 'worker-show', dispatch: operation.dispatch },
-      matches: (readback) =>
-        dispatchId === operation.dispatch &&
-        findString(readback, ['dispatchId', 'id']) === operation.dispatch &&
-        findString(readback, ['releaseState', 'state', 'status']) === 'released',
+      matches: (readback) => {
+        const worker = recordOf(recordOf(readback).dispatch);
+        return (
+          mutation.dispatchId === operation.dispatch &&
+          worker.id === operation.dispatch &&
+          ['released', 'retained'].includes(String(worker.terminalDisposition))
+        );
+      },
+    };
+  }
+  if (operation.operation === 'run-create') {
+    const runId = recordOf(result).runId;
+    return {
+      operation: { operation: 'run-show', id: String(runId) },
+      matches: (readback) => {
+        const run = recordOf(recordOf(readback).run);
+        return run.id === runId && run.objective === operation.objective;
+      },
+    };
+  }
+  if (operation.operation === 'task-create' || operation.operation === 'task-update') {
+    const taskId = operation.operation === 'task-create' ? recordOf(result).taskId : operation.id;
+    return {
+      operation: { operation: 'task-list' },
+      matches: (readback) => {
+        const tasks = recordOf(readback).tasks;
+        if (!Array.isArray(tasks)) return false;
+        const task = tasks.map(recordOf).find((candidate) => candidate.id === taskId);
+        if (task === undefined) return false;
+        return operation.operation === 'task-create'
+          ? task.spec === operation.spec &&
+              task.title === operation.title &&
+              JSON.stringify(task.deps ?? []) === JSON.stringify(operation.deps ?? []) &&
+              task.parent === operation.parent
+          : task.status === operation.status && JSON.stringify(task.result) === JSON.stringify(operation.result);
+      },
+    };
+  }
+  if (operation.operation === 'worker-start') {
+    const dispatchId = recordOf(result).dispatchId;
+    return {
+      operation: { operation: 'worker-show', dispatch: String(dispatchId) },
+      matches: (readback) => {
+        const worker = recordOf(recordOf(readback).dispatch);
+        return (
+          worker.id === dispatchId &&
+          worker.taskId === operation.task &&
+          worker.agent === operation.agent &&
+          worker.model === operation.model &&
+          worker.effort === operation.effort
+        );
+      },
+    };
+  }
+  if (operation.operation === 'gate-create') {
+    const gateId = recordOf(result).gateId;
+    return {
+      operation: { operation: 'gate-list', task: operation.task },
+      matches: (readback) => {
+        const gates = recordOf(readback).gates;
+        if (!Array.isArray(gates)) return false;
+        const gate = gates.map(recordOf).find((candidate) => candidate.id === gateId);
+        return (
+          gate?.taskId === operation.task &&
+          gate.question === operation.question &&
+          JSON.stringify(gate.options) === JSON.stringify(operation.options)
+        );
+      },
     };
   }
   return undefined;
@@ -702,14 +833,16 @@ function processFailure(
 ): OrcaAdapterError | undefined {
   const acknowledgement = hasAcknowledgement(operation, input);
   const mutation = mutationVerbs.has(operation) || acknowledgement;
-  if (result.outputLimited) {
+  if (result.outputLimited || result.transportLost) {
     return new OrcaAdapterError(
-      'output_limit',
+      mutation ? 'ambiguous_after_possible_commit' : result.outputLimited ? 'output_limit' : 'process_exit',
       operation,
       'execute',
-      mutation ? 'readback-required' : 'safe',
-      'Inspect state with the documented read operation before retrying.',
-      'Orca output exceeded the adapter limit',
+      mutation ? 'unrecoverably-ambiguous' : 'safe',
+      mutation
+        ? 'Do not retry automatically; inspect the documented public read before choosing another mutation.'
+        : 'Retry the read-only operation when Orca is healthy.',
+      result.outputLimited ? 'Orca output exceeded the adapter limit' : 'Orca transport closed before a valid response',
     );
   }
   if (result.timedOut) {
@@ -763,12 +896,18 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       });
     } catch (error) {
       throw new OrcaAdapterError(
-        'executable_unavailable',
+        mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation)
+          ? 'ambiguous_after_possible_commit'
+          : 'executable_unavailable',
         operation.operation,
         'execute',
-        'safe',
-        `Verify that ${executable} is installed and available to the plugin host.`,
-        error instanceof Error ? error.message : 'failed to launch Orca',
+        mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation)
+          ? 'unrecoverably-ambiguous'
+          : 'safe',
+        'Verify that the selected Orca executable is available; do not retry a mutation without public state proof.',
+        error instanceof Error && 'code' in error
+          ? `Orca execution failed (${String(error.code)})`
+          : 'Orca execution failed',
       );
     }
     const failure = processFailure(operation.operation, operation, result);
@@ -801,10 +940,21 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       if (!mutationVerbs.has(operation.operation) && !hasAcknowledgement(operation.operation, operation))
         return envelope;
 
+      if (envelope._meta?.runtimeId === undefined || envelope._meta.runtimeVersion === undefined) {
+        throw new OrcaAdapterError(
+          'missing_receipt',
+          operation.operation,
+          'receipt',
+          'readback-required',
+          'Use a compatible Orca CLI version and inspect the documented public state before retrying.',
+          'mutation receipt omitted bounded runtime identity/version metadata',
+        );
+      }
+
       if (
         operation.operation === 'check' &&
         operation.ack !== undefined &&
-        findString(envelope.result, ['deliveryId', 'id']) !== operation.ack
+        (recordOf(envelope.result).deliveryId !== operation.ack || recordOf(envelope.result).acknowledged !== true)
       ) {
         throw new OrcaAdapterError(
           'missing_receipt',
@@ -817,6 +967,19 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       }
 
       const plan = readbackPlan(operation, envelope.result);
+      if (operation.operation === 'run-use') {
+        const meta = envelope._meta as Record<string, unknown> | undefined;
+        if (recordOf(envelope.result).coordinatorTerminalHandle !== meta?.invokingTerminal) {
+          throw new OrcaAdapterError(
+            'readback_mismatch',
+            operation.operation,
+            'readback',
+            'unsafe',
+            'Inspect orchestration run-current; do not retry run-use automatically.',
+            'run-use terminal binding was not runtime-attested',
+          );
+        }
+      }
       if (plan !== undefined) {
         const readback = await invoke(plan.operation);
         if (!plan.matches(readback.result)) {
@@ -833,7 +996,7 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       const meta = envelope._meta as Record<string, unknown> | undefined;
       const receipt: OrcaMutationReceipt = Object.freeze({
         verb: operation.operation,
-        ids: collectIds(envelope.result),
+        ids: receiptIds(operation.operation, envelope.result),
         runtimeId: typeof meta?.runtimeId === 'string' ? meta.runtimeId : null,
         runtimeVersion:
           typeof meta?.runtimeVersion === 'string'
