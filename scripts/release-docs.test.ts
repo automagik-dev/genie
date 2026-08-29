@@ -832,14 +832,16 @@ describe('Group E release and documentation contracts', () => {
       'orca orchestration',
       '--json',
       'shell: false',
-      'ORCA_CLI_COMMAND',
+      'fixed by platform and managed-terminal state',
       'No fallback',
       'ambiguous_after_possible_commit',
       'Verb amendment checklist',
       'public read-back',
+      '`send`, `reply`, `ask`, and `check --ack`',
     ]) {
       expect(contributor).toContain(topic);
     }
+    expect(contributor).not.toContain('ORCA_CLI_COMMAND');
     for (const forbidden of ['terminal send', '--inject', 'internal RPC', 'private API']) {
       expect(contributor).toContain(`Reject \`${forbidden}\``);
     }

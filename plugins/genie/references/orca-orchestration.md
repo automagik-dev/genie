@@ -21,9 +21,9 @@ allowlist of `orca orchestration <verb> ... --json` argv. It owns the final `--j
 executable, and spawns with `shell: false`. Callers cannot provide executable names, raw argv, flags, placement,
 routing, terminal handles, or recovery commands.
 
-Runtime selection is fixed: a host-provided `ORCA_CLI_COMMAND` is accepted only as one validated executable token;
-otherwise Linux outside an Orca terminal selects `orca-ide`, Windows selects `orca.exe`, and macOS or an Orca-managed
-terminal selects `orca`. Failure of that selected executable is final—never probe a second candidate.
+Runtime selection is fixed by platform and managed-terminal state: Linux outside an Orca terminal selects `orca-ide`,
+Windows selects `orca.exe`, and macOS or an Orca-managed terminal selects `orca`. Failure of that selected executable
+is final—never probe a second candidate.
 
 The positive boundary currently contains these operations:
 
@@ -46,8 +46,8 @@ Execution has fixed time and output limits, and errors redact secrets and unboun
 
 A mutation succeeds only with a valid identifying receipt plus an exact public read-back where the official CLI exposes
 one. The read-back must prove the requested identity and immutable fields. Receipt-only exceptions are deliberately
-narrow: `send`, `reply`, and `check --ack`, because the allowed public subset has no stable exact-message or separate
-acknowledgement read.
+narrow: `send`, `reply`, `ask`, and `check --ack`, because the allowed public subset has no stable exact-message, ask,
+or separate acknowledgement read.
 
 After launch, timeout, output-limit, or transport loss without a complete identifying receipt is
 `ambiguous_after_possible_commit`. Never retry the mutation automatically, scrape a partial response, or enumerate a
