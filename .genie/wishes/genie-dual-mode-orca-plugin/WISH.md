@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — design SHIP and plan SHIP 2026-08-29 |
+| **Status** | DRAFT — amended post-stamp candidate pending fresh independent review |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -137,14 +137,15 @@ obtain fresh independent design review and digest stamping before approval or im
 **Deliverables:**
 1. Pending-review candidate `DRAFT.md`, `DESIGN.md`, `WISH.md`, and canonical `INDEX.md` entry; digest-bound evidence
    is added only after fresh independent review of the exact committed four-document set.
-2. Docs-only commit based on immutable amended-design candidate commit
-   `1923ce0955511b741eadabb3dc680bb462ce611b`.
+2. Docs-only commit containing the current amended four-document candidate; its committed SHA is recorded before
+   fresh independent review.
 
 **Acceptance Criteria:**
-- [x] Fresh independent review stamped reviewable DESIGN content SHA-256
-  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`; evidence verification passes and
-  all four canonical documents consistently advance from pending to approved.
-- [x] Wish and INDEX linters pass; diff contains only the four canonical planning documents.
+- [ ] Fresh independent review stamps amended reviewable DESIGN candidate SHA-256
+  `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`; evidence verification then passes and
+  all four canonical documents consistently advance from pending.
+- [ ] After fresh evidence is stamped, Wish and INDEX linters pass; the candidate diff contains only the four
+  canonical planning documents. Before stamping, their evidence-gate failure is expected and recorded.
 
 **Validation:**
 ```bash
@@ -360,14 +361,16 @@ done
 
 ## Review Results
 
-- **Current amended candidate — SHIP:** independent reviewer
-  `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394` returned SHIP at `2026-08-29T17:47:21Z` for reviewable DESIGN
-  content SHA-256 `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36` and plan SHIP. Evidence: the diff
-  is limited to the four canonical planning documents; their pending-to-approved lifecycle is consistent; P1
-  remains no-retry with recovery reads limited to an exact identifier known before launch; no fallback, store, or
-  private API is introduced; and the digest and diff checks are clean.
-- **Superseded plan-review provenance (not approval for the amended candidate):** on 2026-08-29 at 17:04 UTC,
-  independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698` returned SHIP for the prior plan at
+- **Current amended candidate — pending:** reviewable DESIGN content SHA-256
+  `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`. Fresh independent review and a new
+  evidence stamp are required; the plan remains unauthorized for implementation or further lifecycle advancement
+  until then.
+- **Superseded post-stamp provenance:** reviewer `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394` reviewed the prior
+  candidate at `2026-08-29T17:47:21Z`, digest
+  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. The substantive DESIGN next-step
+  correction invalidated that stamp; it grants no authority for the amended candidate.
+- **Earlier superseded plan-review provenance:** on 2026-08-29 at 17:04 UTC, independent reviewer
+  `term_62af8174-811d-4720-911e-a2891f6a0698` accepted the prior plan at
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest
   `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`. The P1 contract correction superseded
   that evidence; it does not approve or verify the amended design or this current plan.

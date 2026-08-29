@@ -347,8 +347,9 @@ are shallow; no PR mixes the dirty v6 evidence or unrelated roadmap/Khal changes
 1. **A0 — canonical planning set and evidence gate:** reconcile the four canonical planning documents —
    `DRAFT.md`, this `DESIGN.md`, `WISH.md`, and the `INDEX.md` entry — in one docs-only commit. Compute the
    reviewable DESIGN digest after the set is final, then obtain fresh independent review of the exact committed
-   candidate before stamping evidence or opening a documentation PR. The WISH exists only as a DRAFT plan;
-   neither it nor any past review authorizes implementation.
+   candidate before stamping evidence. The existing WISH and this A0 plan remain the current planning lifecycle,
+   but this substantive amendment returns the four-document set to pending review; neither the plan nor any
+   superseded review authorizes implementation or further lifecycle advancement.
 2. **A1 — mode schema and authority barriers:** config/resolver, DB pre-open guard, roadmap pre-write guard,
    typed diagnostic, and standalone/Orca negative fixtures. Depends only on freshly reviewed and stamped A0.
 3. **A2 — closed Orca CLI adapter:** schemas, argv table, runtime resolution, bounded runner, errors,
@@ -388,16 +389,17 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 
 ## Next step
 
-An independent reviewer must review the exact committed four-document planning set and return
-SHIP/FIX-FIRST/BLOCKED plus the reviewable DESIGN content SHA-256. The existing WISH remains DRAFT pending that
-fresh review/evidence stamp. No past review or approval authorizes implementation: only after the orchestrator
-persists valid fresh evidence and verifies the digest may it open the documentation PR or authorize A1–A7 work.
+The existing WISH and A0 decomposition are the current plan, but the four canonical documents are amended-DRAFT
+and pending fresh independent review of their exact committed state. The reviewer must return a verdict plus the
+reviewable DESIGN content SHA-256; the orchestrator must then persist and verify that new evidence before any
+further plan-lifecycle transition or A1–A7 authorization. The prior stamp is superseded and grants no authority.
 
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-- **Verdict:** SHIP
-- **Reviewed content SHA-256:** `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`
-- **Reviewer:** term_e6f3cbf4-2e03-4a62-9a72-54812cc92394
-- **Reviewed at:** 2026-08-29T17:47:21.000Z
+- **Status:** PENDING — substantive post-stamp amendment requires fresh independent review
+- **Candidate content SHA-256:** `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe`
+- **Prior stamp:** SUPERSEDED — reviewer `term_e6f3cbf4-2e03-4a62-9a72-54812cc92394`, reviewed at
+  `2026-08-29T17:47:21.000Z`, digest
+  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`
 <!-- genie-design-review:end -->
