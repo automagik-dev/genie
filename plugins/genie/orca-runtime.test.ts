@@ -11,6 +11,28 @@ const response = (runtimeVersion = ORCA_MINIMUM_RUNTIME_VERSION) => ({
   _meta: { runtimeId: 'runtime_1', runtimeVersion },
 });
 
+const status = (
+  runtimeVersion = ORCA_MINIMUM_RUNTIME_VERSION,
+  capabilities: string[] = ['orchestration.contract.v1'],
+) => ({
+  id: 'local-status',
+  ok: true as const,
+  result: {
+    target: { kind: 'local' as const },
+    app: { running: true as const, pid: 123, desktopWindowStatus: 'available' as const },
+    runtime: {
+      state: 'ready' as const,
+      reachable: true as const,
+      runtimeId: 'runtime_1',
+      appVersion: runtimeVersion,
+      remoteUpdateSupport: { installMode: 'manual', automatic: false, reason: 'manual-update' },
+      capabilities,
+    },
+    graph: { state: 'ready' as const },
+  },
+  _meta: { runtimeId: 'runtime_1' },
+});
+
 describe('native Orca plugin contract', () => {
   test('discovers, loads, and invokes the public adapter through the native Orca entrypoint', async () => {
     const manifest = JSON.parse(await readFile(resolve(import.meta.dir, 'orca-plugin.json'), 'utf8'));
@@ -35,6 +57,7 @@ describe('native Orca plugin contract', () => {
     const handlers = new Map<string, (args?: unknown) => Promise<unknown>>();
     const adapter: OrcaOrchestrationAdapter = {
       executable: 'opaque-to-plugin',
+      status: async () => status(),
       execute: async (operation) => {
         calls.push(operation as OrcaOperation);
         return response();
@@ -45,16 +68,14 @@ describe('native Orca plugin contract', () => {
     });
 
     expect(await handlers.get('genie.orca.run-list')?.()).toEqual(response());
-    expect(calls).toEqual([
-      { operation: 'run-list', limit: 1 },
-      { operation: 'run-list', limit: 100 },
-    ]);
+    expect(calls).toEqual([{ operation: 'run-list', limit: 100 }]);
   });
 
   test('probes with one read-only public adapter call before allowing operations', async () => {
     const calls: OrcaOperation[] = [];
     const adapter: OrcaOrchestrationAdapter = {
       executable: 'opaque-to-plugin',
+      status: async () => status(),
       execute: async (operation) => {
         calls.push(operation as OrcaOperation);
         return response();
@@ -67,18 +88,21 @@ describe('native Orca plugin contract', () => {
       runtimeVersion: ORCA_MINIMUM_RUNTIME_VERSION,
       contract: 'orchestration.contract.v1',
     });
-    expect(calls).toEqual([{ operation: 'run-list', limit: 1 }]);
+    expect(calls).toEqual([]);
   });
 
-  test('converts every probe failure to unsupported_environment and never mutates', async () => {
-    for (const failure of [new Error('spawn denied'), response('1.3.999'), { ...response(), _meta: undefined }]) {
+  test('converts status, version, and capability failures to unsupported_environment and never mutates', async () => {
+    for (const failure of [new Error('spawn denied'), status('1.3.999'), status(undefined, [])]) {
       const calls: OrcaOperation[] = [];
       const adapter: OrcaOrchestrationAdapter = {
         executable: 'opaque-to-plugin',
-        execute: async (operation) => {
-          calls.push(operation as OrcaOperation);
+        status: async () => {
           if (failure instanceof Error) throw failure;
           return failure;
+        },
+        execute: async (operation) => {
+          calls.push(operation as OrcaOperation);
+          return response();
         },
       };
 
@@ -88,7 +112,7 @@ describe('native Orca plugin contract', () => {
         phase: 'resolve',
         retrySafety: 'safe',
       });
-      expect(calls).toEqual([{ operation: 'run-list', limit: 1 }]);
+      expect(calls).toEqual([]);
     }
   });
 
