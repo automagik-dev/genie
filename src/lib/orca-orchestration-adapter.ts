@@ -1181,7 +1181,10 @@ function sanitizeDiagnosticText(
       ([key, value]) => value !== undefined && /(?:TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL|AUTH|COOKIE)/i.test(key),
     )
     .map(([, value]) => value as string);
-  for (const value of [...requestValues, ...secrets]
+  const connectionCredentials = Object.values(env).flatMap((value) =>
+    value === undefined ? [] : credentialValuesFromUrl(value),
+  );
+  for (const value of [...requestValues, ...secrets, ...connectionCredentials]
     .filter((candidate) => candidate.length >= 3)
     .sort((a, b) => b.length - a.length)) {
     safe = safe.split(value).join('[REDACTED]');
@@ -1190,6 +1193,20 @@ function sanitizeDiagnosticText(
   return bytes.length <= 4096
     ? safe
     : Buffer.concat([Buffer.from('[truncated] '), bytes.subarray(bytes.length - 4084)]).toString('utf8');
+}
+
+function credentialValuesFromUrl(value: string): string[] {
+  try {
+    const url = new URL(value);
+    if (url.password.length === 0) return [];
+    try {
+      return [url.password, decodeURIComponent(url.password)];
+    } catch {
+      return [url.password];
+    }
+  } catch {
+    return [];
+  }
 }
 
 function collectStringValues(value: unknown): string[] {

@@ -701,19 +701,24 @@ describe('runtime and executor boundary', () => {
   });
 
   test('redacts secrets and request values echoed by a direct error envelope', async () => {
-    const secret = 'direct-api-secret';
+    const secret = 'credential';
+    const databaseUrl = `postgres://brain:${secret}@db/internal`;
     const requestedId = 'run_private';
+    let calls = 0;
     const adapter = __orcaAdapterTestOnly.createAdapter({
-      env: { API_TOKEN: secret },
-      executor: async () => ({
-        exitCode: 0,
-        stdout: JSON.stringify({
-          id: 'request_a',
-          ok: false,
-          error: { code: 'read_failed', message: `could not read ${requestedId} with ${secret}` },
-        }),
-        stderr: '',
-      }),
+      env: { DATABASE_URL: databaseUrl },
+      executor: async () => {
+        calls += 1;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: false,
+            error: { code: 'read_failed', message: `could not read ${requestedId} via ${databaseUrl}` },
+          }),
+          stderr: '',
+        };
+      },
     });
 
     try {
@@ -723,17 +728,23 @@ describe('runtime and executor boundary', () => {
       expect(error).toBeInstanceOf(OrcaAdapterError);
       expect((error as OrcaAdapterError).message).not.toContain(requestedId);
       expect((error as OrcaAdapterError).message).not.toContain(secret);
+      expect((error as OrcaAdapterError).message).not.toContain(databaseUrl);
       expect((error as OrcaAdapterError).message).toContain('[REDACTED]');
+      expect((error as OrcaAdapterError).message).toContain('postgres://brain:[REDACTED]@db/internal');
+      expect(calls).toBe(1);
     }
   });
 
   test('keeps error-envelope diagnostics redacted when reattributing a post-receipt readback failure', async () => {
-    const secret = 'postreceipt-secret';
+    const secret = 'credential';
+    const databaseUrl = `postgres://brain:${secret}@db/internal`;
     const requestedId = 'run_private';
+    const calls: string[] = [];
     const adapter = __orcaAdapterTestOnly.createAdapter({
-      env: { AUTH_PASSWORD: secret },
-      executor: async (request) =>
-        request.argv[1] === 'run-use'
+      env: { DATABASE_URL: databaseUrl },
+      executor: async (request) => {
+        calls.push(request.argv[1] ?? '');
+        return request.argv[1] === 'run-use'
           ? {
               exitCode: 0,
               stdout: JSON.stringify({
@@ -749,10 +760,11 @@ describe('runtime and executor boundary', () => {
               stdout: JSON.stringify({
                 id: 'request_b',
                 ok: false,
-                error: { code: 'read_failed', message: `could not read ${requestedId} with ${secret}` },
+                error: { code: 'read_failed', message: `could not read ${requestedId} via ${databaseUrl}` },
               }),
               stderr: '',
-            },
+            };
+      },
     });
 
     try {
@@ -763,7 +775,11 @@ describe('runtime and executor boundary', () => {
       expect(error).toMatchObject({ operation: 'run-use', phase: 'readback', retrySafety: 'readback-required' });
       expect((error as OrcaAdapterError).message).not.toContain(requestedId);
       expect((error as OrcaAdapterError).message).not.toContain(secret);
+      expect((error as OrcaAdapterError).message).not.toContain(databaseUrl);
       expect((error as OrcaAdapterError).message).toContain('[REDACTED]');
+      expect((error as OrcaAdapterError).message).toContain('postgres://brain:[REDACTED]@db/internal');
+      expect((error as OrcaAdapterError).recovery).toContain('do not retry the mutation automatically');
+      expect(calls).toEqual(['run-use', 'run-current']);
     }
   });
 
