@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { OrchestrationConfigSchema } from '../types/genie-config.js';
 import { getGenieConfigPath } from './genie-config.js';
 
 export type OrchestrationMode = 'standalone' | 'orca';
@@ -10,7 +9,10 @@ export const INVALID_ORCHESTRATION_AUTHORITY_CODE = 'invalid_orchestration_autho
 
 const OrchestrationAuthoritySchema = z
   .object({
-    orchestration: OrchestrationConfigSchema.strict().optional(),
+    orchestration: z
+      .object({ mode: z.enum(['standalone', 'orca']) })
+      .strict()
+      .optional(),
   })
   .passthrough();
 

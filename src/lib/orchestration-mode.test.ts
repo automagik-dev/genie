@@ -63,6 +63,7 @@ describe('orchestration authority mode', () => {
 
   for (const config of [
     { orchestration: { mode: 'automatic' }, runtime: { defaultAgent: 'invalid' } },
+    { orchestration: {} },
     { orchestration: { mod: 'orca' } },
     { orchestration: { mode: 'orca', extra: true } },
   ]) {

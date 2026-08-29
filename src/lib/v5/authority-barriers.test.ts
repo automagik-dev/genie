@@ -137,6 +137,12 @@ describe('Orca authority barriers', () => {
       code: 'invalid_orchestration_authority',
     },
     {
+      name: 'missing authority mode',
+      config: { orchestration: {} },
+      error: InvalidOrchestrationAuthorityError,
+      code: 'invalid_orchestration_authority',
+    },
+    {
       name: 'misspelled authority field',
       config: { orchestration: { mod: 'orca' } },
       error: InvalidOrchestrationAuthorityError,
