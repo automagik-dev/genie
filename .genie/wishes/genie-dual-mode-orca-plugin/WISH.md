@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — review-pending; current design digest and plan require fresh independent review |
+| **Status** | APPROVED — independent review SHIP at `2026-08-29T18:13:16Z` |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -95,9 +95,9 @@ its lifecycle and release support, and documentation before retiring the superse
 
 There is no stacked-PR requirement. Each PR branches from then-current `dev`; a semantic dependency must merge first,
 then the dependent branch rebases or is recreated on updated `dev`. A0 is the docs-only commit containing the
-canonical DRAFT, DESIGN, WISH, and INDEX entry plus pending evidence for current reviewable DESIGN digest
+canonical DRAFT, DESIGN, WISH, and INDEX entry plus SHIP evidence for current reviewable DESIGN digest
 `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`; fresh independent review and a valid
-digest stamp gate its documentation set and all later work. After that gate, A1 and A2 can run in parallel and be green
+digest stamp approve its documentation set and authorize all later work. After that gate, A1 and A2 can run in parallel and be green
 against dev independently. A3 is independently green after A2; A4 after A1+A3; A5 after A3+A4; A6 after A4+A5; A7
 after A1–A6. The merge graph, not cross-branch imports, supplies required semantics.
 
@@ -105,7 +105,7 @@ after A1–A6. The merge graph, not cross-branch imports, supplies required sema
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| A0 | wish author + independent reviewer | 1 — documentation contract | engineer-trivial / low | Commit the four canonical review-pending docs; fresh review then stamps the current DESIGN digest before implementation. |
+| A0 | wish author + independent reviewer | 1 — documentation contract | engineer-trivial / low | Commit the four canonical docs; fresh review stamped the current DESIGN digest before implementation. |
 
 ### Wave 1 (parallel after A0 merges)
 
@@ -130,22 +130,22 @@ evidence attach to the final SHA. Release promotion remains separately authorize
 
 ## Execution Groups
 
-### Group A0: Canonical plan documents pending fresh review
+### Group A0: Canonical plan documents approved by fresh review
 
 **Goal:** Make the current Option-A design and executable plan canonical without operational state changes, then
 obtain fresh independent design review and digest stamping before approval or implementation.
 
 **Deliverables:**
-1. Review-pending `DRAFT.md`, `DESIGN.md`, `WISH.md`, and canonical `INDEX.md` entry; digest-bound evidence is added
-   only after fresh independent review of the exact committed four-document set.
+1. Approved `DRAFT.md`, `DESIGN.md`, `WISH.md`, and canonical `INDEX.md` entry; digest-bound evidence records the
+   fresh independent review of the exact committed four-document set.
 2. Docs-only canonical four-document candidate whose exact state can be reviewed before A1–A7 implementation begins.
 
 **Acceptance Criteria:**
-- [ ] Fresh independent review stamps current reviewable DESIGN SHA-256
+- [x] Fresh independent review stamps current reviewable DESIGN SHA-256
   `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`; evidence verification then passes and
-  all four canonical documents consistently advance from review-pending.
-- [ ] After fresh evidence is stamped, Wish and INDEX linters pass; the candidate diff contains only the four
-  canonical planning documents. Before stamping, the evidence-helper verification failure is expected.
+  all four canonical documents consistently record approval.
+- [x] After fresh evidence is stamped, Wish and INDEX linters pass; the candidate diff contains only the four
+  canonical planning documents.
 
 **Validation:**
 ```bash
@@ -361,10 +361,9 @@ done
 
 ## Review Results
 
-- **Current canonical candidate — review pending:** reviewable DESIGN content SHA-256
-  `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9` has no recorded reviewer, verdict, or
-  review timestamp. Fresh independent review of the exact committed four-document set is required before approval
-  or A1–A7 authorization.
+- **Current canonical plan — SHIP:** independent reviewer `term_6c98a3c8-7ac8-4274-a8e9-ade35e2d82dd` reviewed
+  reviewable DESIGN content SHA-256 `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`
+  at `2026-08-29T18:13:16Z`. The exact four-document set is approved and A1–A7 are authorized in the recorded DAG.
 - **Superseded historical review:** independent reviewer `term_fb7838bc-745e-45ba-9d62-becc5d842e07` returned SHIP
   at `2026-08-29T17:57:45Z` for reviewable DESIGN content SHA-256
   `1b8b6c034310fab2699214866893658a4c041d9269a971bb685d57bc359f7dfe` and the then-current plan. That factual
