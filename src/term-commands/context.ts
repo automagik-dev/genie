@@ -56,6 +56,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, statSync } from 'node:fs';
 import type { Command } from 'commander';
 import { resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
+import { assertLocalLifecycleEnabled } from '../lib/orchestration-mode.js';
 import {
   type IntegrationBranch,
   peelCommit,
@@ -175,6 +176,7 @@ function failClosed(code: string, reason: string): never {
  * wrong about the resolved base policy.
  */
 export function openReadonlyHandle(dbPath: string): Database | null {
+  assertLocalLifecycleEnabled();
   try {
     let walBytes = 0;
     try {

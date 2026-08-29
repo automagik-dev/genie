@@ -23,6 +23,7 @@ import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
 import { SnapshotFormatError, type StateExport, exportState, hasOperationalState, importState } from './task-state.js';
 
@@ -73,6 +74,7 @@ function readMarker(path: string): SyncMarker | null {
 }
 
 function writeMarker(path: string, marker: SyncMarker): void {
+  assertLocalLifecycleEnabled();
   writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`);
 }
 
@@ -86,6 +88,7 @@ function serializeSnapshot(state: unknown): string {
  * canonical board would otherwise read as invalid JSON on the next sync.
  */
 export function writeSnapshotFile(target: string, state: unknown): void {
+  assertLocalLifecycleEnabled();
   const tmp = `${target}.${process.pid}.tmp`;
   writeFileSync(tmp, serializeSnapshot(state));
   renameSync(tmp, target);
@@ -102,6 +105,7 @@ export function writeSnapshotFile(target: string, state: unknown): void {
  * produced `state` and wrote the file.
  */
 export function recordExportBaseline(state: StateExport, cwd?: string): void {
+  assertLocalLifecycleEnabled();
   // The file holds exactly `serializeSnapshot(state)`, and sync hashes the
   // PARSED file — structurally identical to `state`, so one hash covers both.
   const hash = canonicalHash(state);
@@ -116,6 +120,7 @@ export function recordExportBaseline(state: StateExport, cwd?: string): void {
  * happen under the caller's immediate transaction, alongside the import itself.
  */
 export function recordImportBaseline(db: Database, snapshot: unknown, cwd?: string): void {
+  assertLocalLifecycleEnabled();
   writeMarker(resolveSyncMarkerPath(cwd), {
     fileHash: canonicalHash(snapshot),
     dbHash: canonicalHash(roadmapSnapshot(db)),
@@ -129,6 +134,7 @@ export function recordImportBaseline(db: Database, snapshot: unknown, cwd?: stri
  * on pull (post-merge / post-rewrite) and before commit (pre-commit).
  */
 export function syncRoadmap(db: Database, cwd?: string): SyncResult {
+  assertLocalLifecycleEnabled();
   // BEGIN IMMEDIATE for the whole compare-and-act sequence: the db-side hash
   // must not go stale between comparison and a replace-import, or a task write
   // committed in that window would be silently destroyed. Holding the write
