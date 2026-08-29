@@ -385,8 +385,9 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 ## Next step
 
 An independent reviewer must review this exact design and return SHIP/FIX-FIRST/BLOCKED plus the reviewed
-content SHA-256. Only after the orchestrator authorizes review, persists valid evidence, and verifies the
-digest may it open this documentation PR or create the implementation WISH.
+content SHA-256. The existing implementation WISH remains pending a fresh review/evidence stamp; only after the
+orchestrator authorizes review, persists valid evidence, and verifies the digest may it open this documentation PR
+or authorize implementation planning to proceed.
 
 <!-- genie-design-review:start -->
 ## Design Review Evidence
