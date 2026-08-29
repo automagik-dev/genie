@@ -10,6 +10,7 @@ import {
 
 describe('release payload version contract', () => {
   const roots: string[] = [];
+  const repoRoot = join(import.meta.dir, '..');
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -50,6 +51,15 @@ describe('release payload version contract', () => {
     });
     return root;
   }
+
+  test('the committed release metadata exactly matches the package version', () => {
+    const packageVersion = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version;
+
+    expect(verifyCommittedReleaseVersions(repoRoot)).toBe(packageVersion);
+    expect(JSON.parse(readFileSync(join(repoRoot, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe(
+      packageVersion,
+    );
+  });
 
   test('stamps and verifies VERSION plus every copied version-bearing manifest', () => {
     const root = fixture();
@@ -104,8 +114,9 @@ describe('release payload version contract', () => {
     const root = fixture();
     expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
 
-    writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version: '5.999999.1' });
-    expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch');
+    writeJson(root, 'plugins/genie/orca-plugin.json', { name: 'genie', version: '5.999999.1' });
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch in');
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('orca-plugin.json');
   });
 
   test('fails closed on missing metadata, malformed versions, and an invalid Codex marketplace target', () => {
