@@ -59,6 +59,10 @@ const RuntimeConfigSchema = z.object({
   defaultAgent: z.enum(['auto', 'claude', 'codex']).default('auto'),
 });
 
+export const OrchestrationConfigSchema = z.object({
+  mode: z.enum(['standalone', 'orca']).default('standalone'),
+});
+
 // Worker profile configuration
 // Defines how to launch a Claude worker
 // Uses preprocess to migrate legacy "claudio" launcher values to "claude"
@@ -213,6 +217,7 @@ export const GenieConfigSchema = z.object({
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),
   runtime: RuntimeConfigSchema.default({}),
+  orchestration: OrchestrationConfigSchema.default({}),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
   // Release channel preference. Canonical values: 'latest' (stable) or
   // 'dev' (pre-release). Two read-time aliases are accepted so configs

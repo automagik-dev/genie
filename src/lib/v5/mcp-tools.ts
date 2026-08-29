@@ -20,6 +20,7 @@
 import { constants, Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
 import { accessSync, constants as fsConstants } from 'node:fs';
+import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import {
   BusyDbError,
   type ProjectContext,
@@ -127,6 +128,7 @@ export function openReadonlyDb(
   target?: string | ProjectDatabaseBinding,
   dependencies: ReadonlyDbOpenDependencies = {},
 ): Database | null {
+  assertLocalLifecycleEnabled();
   const initial =
     typeof target === 'object'
       ? resolveProjectDatabaseBinding(target.logicalPath, target)

@@ -17,6 +17,7 @@ import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, normalize } from 'node:path';
+import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
@@ -402,6 +403,7 @@ export interface OpenOptions {
  * errors. Idempotent: safe to call on every CLI invocation.
  */
 export function openDb(opts: OpenOptions = {}): Database {
+  assertLocalLifecycleEnabled();
   return openSqlite({
     path: opts.path ?? resolveDbPath(opts.cwd),
     schemaVersion: CURRENT_SCHEMA_VERSION,
