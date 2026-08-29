@@ -96,7 +96,7 @@ function stage(id: (typeof REQUIRED_STAGE_IDS)[number]) {
     ],
     'activation-consent': [0, 'activated', 'current', null],
     'assets-converged': [0, 'current', 'current', null],
-    'untouched-b-before-init': [1, 'project-database-unavailable', 'project-database-unavailable', null],
+    'untouched-b-before-init': [0, 'empty', 'empty', null],
     'untouched-b-after-init': [0, 'current', 'current', null],
     'new-thread-sentinel': [0, 'current', 'current', null],
     'doctor-current': [0, 'current', 'current', null],
@@ -104,8 +104,8 @@ function stage(id: (typeof REQUIRED_STAGE_IDS)[number]) {
   const [exit, humanState, jsonState, trailer] = states[id] as [number, string, string, unknown];
   const generation = id === 't-delivery-repair' || candidateStages.includes(id) ? 'candidate' : 'previous';
   const executable = `/tmp/dogfood/bin/${generation}`;
-  const native = ['untouched-b-before-init', 'untouched-b-after-init', 'new-thread-sentinel'].includes(id);
-  const argv = native ? ['mcpServer/tool/call', id] : [id];
+  const standalone = ['untouched-b-before-init', 'untouched-b-after-init', 'new-thread-sentinel'].includes(id);
+  const argv = standalone ? ['task', 'list', '--json'] : [id];
   const command = {
     executable,
     executableSha256: generation === 'candidate' ? HEX('c') : HEX('7'),
@@ -116,13 +116,18 @@ function stage(id: (typeof REQUIRED_STAGE_IDS)[number]) {
     requestedCwd: '/tmp/dogfood/repo-a',
     cwdIdentity: '9:2001',
     exit,
-    stdout: native ? JSON.stringify({ schemaVersion: 1, kind: 'verified-local-fixture-direct-mcp', payload: {} }) : '',
+    stdout: standalone ? JSON.stringify({ tasks: [] }) : '',
     stderr: '',
   };
-  const observation = { schemaVersion: 1, commands: [command] };
+  const observation = {
+    schemaVersion: 1,
+    commands: standalone
+      ? [command, { ...command, argv: ['board', '--json'], stdout: JSON.stringify({ tasks: [] }) }]
+      : [command],
+  };
   return {
     id,
-    command: [executable, ...argv].join(' '),
+    command: observation.commands.map((entry) => [executable, ...entry.argv].join(' ')).join(' && '),
     exit,
     humanState,
     jsonState,
@@ -190,7 +195,12 @@ function validManifest(): Record<string, any> {
         canonicalPayloadSha256: candidate.payloadSha256,
       },
       convergence: {
-        route: { state: 'managed-project', command: '/tmp/dogfood/genie-home/bin/genie', cwdOverride: null },
+        standalone: {
+          state: 'standalone',
+          command: '/tmp/dogfood/genie-home/bin/genie',
+          taskArgs: ['task', 'list', '--json'],
+          boardArgs: ['board', '--json'],
+        },
         roles: { expectedCount: 7, observedCount: 7, current: true, reviewerSha256: HEX('e') },
       },
       stages: REQUIRED_STAGE_IDS.map(stage),
@@ -201,12 +211,11 @@ function validManifest(): Record<string, any> {
       b: {
         root: b.root,
         beforeInit: {
-          routeState: 'absent',
-          fallbackUsed: false,
-          result: 'project-database-unavailable',
+          databaseState: 'absent',
+          result: 'empty',
           returnedTasks: 0,
         },
-        afterInit: { ...b, routeState: 'managed-project' },
+        afterInit: { ...b, evidenceMode: 'standalone' },
       },
     },
   };
@@ -244,6 +253,16 @@ function errorsAfter(mutator: (manifest: Record<string, any>) => void): string[]
 describe('validate-live-dogfood-evidence schema v2', () => {
   test('accepts the real nested doctor topology and complete bound entry', () => {
     expect(validateLiveDogfoodEvidence(evidence())).toEqual([]);
+  });
+
+  test('accepts standalone task/board evidence and rejects retired MCP evidence', () => {
+    expect(validateLiveDogfoodEvidence(evidence())).toEqual([]);
+    expect(
+      errorsAfter((manifest) => {
+        const stage = manifest.lifecycle.stages.find((entry: { id: string }) => entry.id === 'new-thread-sentinel');
+        stage.observation.commands[0].argv = ['mcpServer/tool/call', 'genie', 'genie_board'];
+      }).join('\n'),
+    ).toContain('must reject retired MCP evidence');
   });
 
   test('rejects obsolete flat integrationSummary.state', () => {
@@ -365,17 +384,17 @@ describe('validate-live-dogfood-evidence schema v2', () => {
     ).toContain('distinct child');
   });
 
-  test('requires untouched B absent/no-fallback before init and managed after', () => {
+  test('requires untouched B database absence before init and standalone evidence after', () => {
     expect(
       errorsAfter((m) => {
-        m.repositories.b.beforeInit.fallbackUsed = true;
+        m.repositories.b.beforeInit.databaseState = 'present';
       }).join('\n'),
-    ).toContain('fallbackUsed');
+    ).toContain('databaseState');
     expect(
       errorsAfter((m) => {
-        m.repositories.b.afterInit.routeState = 'absent';
+        m.repositories.b.afterInit.evidenceMode = 'mcp';
       }).join('\n'),
-    ).toContain('routeState');
+    ).toContain('evidenceMode');
   });
 });
 

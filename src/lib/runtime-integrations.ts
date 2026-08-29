@@ -18,8 +18,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import historicalRoleAgentAllowlist from '../fixtures/codex-role-agent-allowlist.json';
@@ -42,12 +40,6 @@ import {
   resolveAgentsSkillsDir,
 } from './agent-sync.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
-import {
-  type BoundedCodexMcpSessionOptions,
-  type McpSessionResult,
-  REQUIRED_GENIE_MCP_TOOLS,
-  runBoundedCodexMcpSession,
-} from './codex-mcp-health-session.js';
 import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from './codex-project-mcp.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
 import { validateTrustedExecutablePath } from './trusted-executable.js';
@@ -3031,7 +3023,6 @@ export interface CodexHealthProof {
   readonly expectedVersion: string;
   readonly skillInventory: readonly string[];
   readonly payload: readonly VerifiedCodexSkillPayload[];
-  readonly mcp: { readonly initialized: true; readonly tools: readonly string[]; readonly wishStatusReadOnly: true };
 }
 
 export interface ProveCodexPluginHealthOptions {
@@ -3041,13 +3032,8 @@ export interface ProveCodexPluginHealthOptions {
   expectedVersion: string;
   /** Deterministic test seam; production binds the installed cache to the canonical bundle. */
   verifyCodexPayload?: CodexPayloadVerifier;
-  /** Deterministic test seam; production launches the plugin MCP through its launcher. */
-  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
-  sessionTimeoutMs?: number;
   /** Exact expected inventory; defaults to the canonical 22 Genie product skills. */
   skillInventory?: readonly string[];
-  /** Node command that runs the plugin `.cjs` launcher; defaults to `node`. */
-  nodePath?: string;
 }
 
 function rejectHealth(detail: string): never {
@@ -3114,17 +3100,13 @@ function bindActiveRootToCanonicalCache(activePluginRoot: string, codexHome: str
 /**
  * Reject health BEFORE any retirement unless the single snapshot is exactly one
  * enabled target-version plugin with a proven active cache root, a
- * canonically-verified installed payload and exact inventory, and a bounded MCP
- * session that completes initialize / tools-list (all five tools) / read-only
- * wish_status. Returns a frozen {@link CodexHealthProof} whose payload feeds
+ * canonically-verified installed payload and exact inventory. Returns a frozen
+ * {@link CodexHealthProof} whose payload feeds
  * retirement.
  *
  * Plugin health is deliberately DECOUPLED from Codex-MCP-route usability
  * (`snapshot.usable`). The plugin no longer registers a Codex MCP route — that
- * path is the marker-owned project `.codex/config.toml` reconciled by `genie
- * init`. A healthy plugin provides skills + hooks + the retained Claude
- * `mcp-launcher.cjs`; the launcher's ability to spawn and speak MCP is proven by
- * the bounded session below, not by a plugin-declared MCP registration.
+ * runtime was retired in A7, so health proves only the surviving plugin payload.
  */
 export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): CodexHealthProof {
   const { snapshot } = options;
@@ -3157,32 +3139,6 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
   const skillInventory = options.skillInventory ?? CANONICAL_GENIE_SKILL_NAMES;
   const payload = buildVerifiedCodexPayload(activePluginRoot, skillInventory);
 
-  // A7: the session runs through the snapshot's own proven launcher (derived
-  // from the single activePluginRoot, not a re-read), in an isolated throwaway
-  // cwd that is not a project. The fail-closed MCP server there returns a typed
-  // "no project context" result rather than a fabricated empty board; the health
-  // session accepts that as read-only-healthy — the launcher spawning and
-  // speaking MCP IS the signal, an absent board there is expected.
-  const runSession = options.runSession ?? runBoundedCodexMcpSession;
-  const sessionCwd = mkdtempSync(join(tmpdir(), 'genie-mcp-health-'));
-  let session: McpSessionResult;
-  try {
-    session = runSession({
-      launcherPath: join(activePluginRoot, 'scripts', 'mcp-launcher.cjs'),
-      cwd: sessionCwd,
-      nodePath: options.nodePath,
-      timeoutMs: options.sessionTimeoutMs,
-      requiredTools: REQUIRED_GENIE_MCP_TOOLS,
-    });
-  } finally {
-    try {
-      rmSync(sessionCwd, { recursive: true, force: true });
-    } catch {
-      // best-effort; the throwaway cwd never held real state.
-    }
-  }
-  if (!session.ok || session.wishStatusReadOnly !== true) rejectHealth(session.detail);
-
   const frozenPayload = Object.freeze(payload.map((entry) => Object.freeze(entry)));
   return Object.freeze({
     version: 1,
@@ -3191,11 +3147,6 @@ export function proveCodexPluginHealth(options: ProveCodexPluginHealthOptions): 
     expectedVersion: options.expectedVersion,
     skillInventory: Object.freeze([...skillInventory]),
     payload: frozenPayload,
-    mcp: Object.freeze({
-      initialized: true,
-      tools: Object.freeze([...(session.tools ?? [])]),
-      wishStatusReadOnly: true,
-    }),
   }) as CodexHealthProof;
 }
 
@@ -3273,7 +3224,6 @@ export interface CodexFallbackRetirementDeps {
   recover?: (fallbackSkillsDir: string) => CodexFallbackRetirementResult[];
   plan?: (options: PlanCodexFallbackRetirementOptions) => CodexFallbackRetirementPlan;
   apply?: (plan: CodexFallbackRetirementPlan) => CodexFallbackRetirementResult;
-  runSession?: (options: BoundedCodexMcpSessionOptions) => McpSessionResult;
   /** Live Codex user-skills tier; defaults to resolveAgentsSkillsDir() (env-isolated in tests). */
   fallbackSkillsDir?: string;
   probeCwd?: string;
@@ -3419,7 +3369,6 @@ export function createSetupCodexFallbackRetirementConsumer(
       codexHome,
       expectedVersion: options.expectedVersion,
       verifyCodexPayload: options.verifyCodexPayload,
-      runSession: deps.runSession,
     });
     return {
       status: 'verified',
@@ -3488,7 +3437,6 @@ export function convergeCodexPluginOnly(options: ConvergeCodexPluginOnlyOptions)
     codexHome,
     expectedVersion: options.expectedVersion,
     verifyCodexPayload: options.verifyCodexPayload,
-    runSession: deps.runSession,
   });
 
   const retirement = retireProvenCodexFallbacks(proof, fallbackSkillsDir, deps);

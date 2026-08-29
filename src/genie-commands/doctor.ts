@@ -15,18 +15,9 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import {
-  constants,
-  accessSync,
-  existsSync,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import {
   type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
@@ -454,8 +445,8 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
     };
   }
   const current = state.version === VERSION;
-  // Post-Group-A the plugin ships NO MCP declaration — the marker-owned project
-  // route is the only Codex route — so plugin health is installed+enabled+current.
+  // A7 ships no MCP declaration or project route, so plugin health is
+  // installed+enabled+current.
   // The probe still reports the OLD manifest expectation ("does not point
   // mcpServers to ./.mcp.json"): on a post-A generation that IS the healthy
   // shape, so it is filtered from diagnostics; every other usability detail
@@ -467,7 +458,7 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
   return {
     name: 'Codex Genie plugin',
     status: healthy ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; MCP route: marker-owned project route (plugin declares none)${diagnostics} (CLI v${VERSION})`,
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; standalone task/board (plugin declares no MCP route)${diagnostics} (CLI v${VERSION})`,
     suggestion: healthy ? undefined : 'Run `genie setup --codex` to activate the delivered generation.',
   };
 }
@@ -533,20 +524,21 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
     const trust = findings.filter(
       (finding) => finding.kind === 'untrusted-config' || finding.kind === 'project-trust-required',
     );
-    const status: CheckStatus = !route.ok || hard.length > 0 ? 'fail' : trust.length > 0 ? 'warn' : 'pass';
+    const retired = route.route !== 'none' && route.route !== 'plugin';
+    const status: CheckStatus = retired || hard.length > 0 || trust.length > 0 ? 'warn' : 'pass';
     const findingText = findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ');
     return {
       name: 'Codex Genie MCP registration',
       status,
-      detail: `${route.route}: ${route.detail ?? 'no detail'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
+      detail: `${retired ? 'retired route remains preserved' : 'retired routes absent'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
       suggestion:
         status === 'pass'
           ? undefined
           : hard.length > 0
-            ? 'Resolve the reported same-key/shadowing layer yourself (Genie never edits user-owned config), then run `genie init`.'
+            ? 'Resolve the reported user-owned same-key/shadowing layer if desired; Genie never edits it.'
             : trust.length > 0 && route.ok
               ? 'Trust this project in Codex, then start a new Codex task.'
-              : 'Run `genie init` in this worktree to reconcile the project fallback.',
+              : 'Run `genie init` to remove a marker-owned historical route; user-owned routes are preserved.',
       ...(findings.length > 0 ? { routeLayers: findings } : {}),
     };
   } catch (error) {
@@ -672,7 +664,7 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
       status: manifestState === 'declares-none' ? 'pass' : 'warn',
       detail:
         manifestState === 'declares-none'
-          ? `plugin declares no MCP route (marker-owned project route is authoritative) at ${probe.activePluginRoot}`
+          ? `plugin declares no MCP route; standalone task/board commands are authoritative at ${probe.activePluginRoot}`
           : manifestState === 'declares-route'
             ? `active plugin manifest still declares mcpServers — a second Genie route risks cache-root routing: ${manifest}`
             : manifestState === 'unreadable'
@@ -1601,11 +1593,11 @@ function checkPiSync(input: PiCheckInput): CheckResult[] {
   ];
 }
 
-/** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
+/** A7 health: no Hermes Genie MCP route is the converged state; any surviving route is preserved but stale. */
 function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
   const name = 'agent sync: hermes mcp';
   if (configText === null) {
-    return { name, status: 'warn', detail: `config.yaml absent (${configPath})`, suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: `retired route absent (${configPath})` };
   }
   const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
   if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
@@ -1619,25 +1611,14 @@ function checkHermesMcp(configText: string | null, configPath: string): CheckRes
   }
   const command = readMcpGenieCommand(configText);
   if (command === null) {
-    return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: 'retired mcp_servers.genie route absent' };
   }
-  if (!isAbsolute(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command not absolute (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  if (!isExecutableFile(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command missing or not executable (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  return { name, status: 'pass', detail: `mcp_servers.genie → ${command}` };
+  return {
+    name,
+    status: 'warn',
+    detail: `retired mcp_servers.genie route remains preserved (${command})`,
+    suggestion: SYNC_SUGGESTION,
+  };
 }
 
 /**
@@ -1775,16 +1756,6 @@ function safeResolveProductSkillsRoot(genieHome: string): string | null {
 
 function countSkillDirs(dir: string): number {
   return listSubdirs(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
-}
-
-function isExecutableFile(path: string): boolean {
-  try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readTextOrNull(path: string): string | null {

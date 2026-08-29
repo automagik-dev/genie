@@ -78,7 +78,7 @@ describe('musl dogfood execution adapter', () => {
       GENIE_HOME: join(fx.root, 'genie-home'),
       CODEX_HOME: join(fx.root, 'codex-home'),
     };
-    const result = Bun.spawnSync(['bash', SCRIPT, fx.binary, 'mcp'], {
+    const result = Bun.spawnSync(['bash', SCRIPT, fx.binary, 'board', '--json'], {
       cwd: repo,
       env,
       stdout: 'pipe',

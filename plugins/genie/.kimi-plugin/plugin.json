@@ -15,11 +15,6 @@
     "skill": "genie"
   },
   "commands": "./.kimi-plugin/commands/",
-  "mcpServers": {
-    "genie": {
-      "command": "./scripts/mcp-launcher.cjs"
-    }
-  },
   "hooks": [
     {
       "event": "SessionStart",
@@ -49,7 +44,7 @@
   "interface": {
     "displayName": "Genie",
     "shortDescription": "Plan, execute, review, and ship with Genie",
-    "longDescription": "First-class Genie workflows for Kimi Code CLI, including shared skills, lifecycle hooks, and MCP task state. Role agents can be installed optionally by copying agents/*.md into ~/.kimi-code/agents/.",
+    "longDescription": "First-class Genie workflows for Kimi Code CLI, including shared skills and lifecycle hooks. Role agents can be installed optionally by copying agents/*.md into ~/.kimi-code/agents/.",
     "developerName": "Namastex Labs",
     "websiteURL": "https://github.com/automagik-dev/genie"
   }

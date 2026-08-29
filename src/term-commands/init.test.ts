@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mergeCodexMcpFallback, removeCodexMcpFallback } from './init.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
-const INTERPRETED_MCP_ARGS = [realpathSync(CLI), 'mcp'];
 const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
 
 let dir: string;
@@ -187,119 +185,49 @@ describe('genie init', () => {
     expect(second.rulesAdded).toEqual([]);
   });
 
-  describe('MCP server registration', () => {
+  describe('MCP retirement', () => {
     const mcpPath = (root: string) => join(root, '.mcp.json');
 
-    test('fresh repo: writes .mcp.json with the genie entry', () => {
+    test('fresh repo creates no MCP registration', () => {
       initGitRepo(dir);
       expect(runInit(dir).code).toBe(0);
-
-      for (const path of [mcpPath(dir)]) {
-        expect(existsSync(path)).toBe(true);
-        const servers = JSON.parse(readFileSync(path, 'utf-8')).mcpServers;
-        expect(servers.genie).toBeDefined();
-        expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
-        // Absolute command resolved from the running executable — never bare "genie".
-        expect(servers.genie.command).not.toBe('genie');
-        expect(servers.genie.command.startsWith('/')).toBe(true);
-      }
+      expect(existsSync(mcpPath(dir))).toBe(false);
+      expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(false);
     });
 
-    test('pre-populated .mcp.json: preserves the other server and adds genie', () => {
+    test('preserves unrelated and unowned same-name registrations byte-for-byte', () => {
       initGitRepo(dir);
-      writeFileSync(mcpPath(dir), '{"mcpServers":{"other":{"command":"x"}}}');
-
+      const original = '{"mcpServers":{"other":{"command":"x"},"genie":{"command":"/personal","args":["mcp"]}}}';
+      writeFileSync(mcpPath(dir), original);
       expect(runInit(dir).code).toBe(0);
-
-      const servers = JSON.parse(readFileSync(mcpPath(dir), 'utf-8')).mcpServers;
-      expect(servers.other).toEqual({ command: 'x' });
-      expect(servers.genie).toBeDefined();
-      expect(servers.genie.args).toEqual(INTERPRETED_MCP_ARGS);
+      expect(readFileSync(mcpPath(dir), 'utf8')).toBe(original);
     });
 
-    test('preserves other top-level keys and an alternate wrapper key', () => {
-      initGitRepo(dir);
-      // Existing file uses the `servers` wrapper + carries an unrelated top-level key.
-      writeFileSync(mcpPath(dir), '{"$schema":"./s.json","servers":{"other":{"command":"x"}}}');
-
-      expect(runInit(dir).code).toBe(0);
-
-      const parsed = JSON.parse(readFileSync(mcpPath(dir), 'utf-8'));
-      expect(parsed.$schema).toBe('./s.json');
-      // Whichever wrapper key already held servers is preserved — no new mcpServers key.
-      expect(parsed.mcpServers).toBeUndefined();
-      expect(parsed.servers.other).toEqual({ command: 'x' });
-      expect(parsed.servers.genie).toBeDefined();
-    });
-
-    test('rerun is byte-identical for both fresh and pre-populated configs', () => {
-      initGitRepo(dir);
-      writeFileSync(mcpPath(dir), '{"mcpServers":{"other":{"command":"x"}}}');
-      expect(runInit(dir).code).toBe(0);
-
-      const mcpBefore = readFileSync(mcpPath(dir));
-
-      expect(runInit(dir).code).toBe(0);
-
-      expect(readFileSync(mcpPath(dir)).equals(mcpBefore)).toBe(true);
-    });
-
-    test('--json reports the mcp config writes as created then skipped', () => {
+    test('--json reports both registration classes skipped on a fresh repo', () => {
       initGitRepo(dir);
       const first = JSON.parse(runInit(dir, ['--json']).stdout);
       const actions = first.mcp.map((c: { path: string; action: string }) => c.action);
-      expect(actions).toEqual(['created', 'created']);
-
-      const second = JSON.parse(runInit(dir, ['--json']).stdout);
-      expect(second.mcp.map((c: { action: string }) => c.action)).toEqual(['skipped', 'skipped']);
+      expect(actions).toEqual(['skipped', 'skipped']);
     });
 
-    test('malformed .mcp.json is surfaced, not clobbered', () => {
+    test('malformed .mcp.json is ignored and preserved byte-for-byte', () => {
       initGitRepo(dir);
       writeFileSync(mcpPath(dir), 'not json {');
-      const { code, stderr } = runInit(dir);
-      expect(code).toBe(1);
-      expect(stderr).toContain('.mcp.json');
-      // The bad file is left untouched.
+      const { code } = runInit(dir);
+      expect(code).toBe(0);
       expect(readFileSync(mcpPath(dir), 'utf-8')).toBe('not json {');
-      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
-      expect(existsSync(join(dir, '.gitignore'))).toBe(false);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
     });
 
-    test('valid but wrong-shaped server maps are rejected without partial scaffold writes', () => {
+    test('valid but wrong-shaped server maps are preserved because .mcp.json is unmarked', () => {
       initGitRepo(dir);
       writeFileSync(mcpPath(dir), '{"mcpServers":[]}');
-      const { code, stderr } = runInit(dir);
-      expect(code).toBe(1);
-      expect(stderr).toContain('mcpServers');
+      const { code } = runInit(dir);
+      expect(code).toBe(0);
       expect(readFileSync(mcpPath(dir), 'utf8')).toBe('{"mcpServers":[]}');
       expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(false);
-      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
     });
-  });
-});
-
-describe('Codex MCP fallback merge', () => {
-  test('does not duplicate an existing unowned genie server', () => {
-    const path = join(dir, '.codex', 'config.toml');
-    mkdirSync(join(dir, '.codex'), { recursive: true });
-    const original = '[mcp_servers.genie]\ncommand = "/existing/genie"\nargs = ["mcp"]\n';
-    writeFileSync(path, original);
-    expect(mergeCodexMcpFallback(path, { command: '/new/genie', args: ['mcp'] })).toBe('skipped');
-    expect(readFileSync(path, 'utf8')).toBe(original);
-  });
-
-  test('removes only the marker-owned fallback', () => {
-    const path = join(dir, '.codex', 'config.toml');
-    mkdirSync(join(dir, '.codex'), { recursive: true });
-    writeFileSync(
-      path,
-      'model = "x"\n\n# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/g"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n\n[mcp_servers.other]\ncommand = "x"\n',
-    );
-    expect(removeCodexMcpFallback(path)).toBe('updated');
-    const updated = readFileSync(path, 'utf8');
-    expect(updated).not.toContain('GENIE MCP FALLBACK');
-    expect(updated).toContain('[mcp_servers.other]');
   });
 });
 
@@ -319,39 +247,17 @@ function runInitWithHome(cwd: string, genieHome: string): { code: number; stderr
   return { code: res.exitCode, stderr: res.stderr.toString() };
 }
 
-describe('init marker-owned Codex route', () => {
-  test('writes the stable <GENIE_HOME>/bin/genie facade with args ["mcp"] and no cwd override', () => {
+describe('init marker-owned Codex retirement', () => {
+  test('removes an owned marker and preserves unrelated TOML', () => {
     initGitRepo(dir);
-    const home = join(dir, 'home-a');
-    expect(runInitWithHome(dir, home).code).toBe(0);
-    const toml = readFileSync(join(dir, '.codex', 'config.toml'), 'utf8');
-    expect(toml).toContain('# BEGIN GENIE MCP FALLBACK');
-    // The marker command is the canonical stable facade, never a versioned cache path.
-    expect(toml).toContain(`mcp_servers.genie.command = "${join(home, 'bin', 'genie')}"`);
-    expect(toml).toContain('mcp_servers.genie.args = ["mcp"]');
-    // No effective cwd override is written.
-    expect(toml).not.toContain('cwd');
-  });
-
-  test('is created even with no Codex CLI present (plugin- and delivery-independent)', () => {
-    initGitRepo(dir);
-    // Default runInit already strips codex from PATH; the marker must still exist.
-    expect(runInit(dir).code).toBe(0);
-    expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(true);
-    expect(readFileSync(join(dir, '.codex', 'config.toml'), 'utf8')).toContain('mcp_servers.genie');
-  });
-
-  test('an explicit GENIE_HOME relocation is reconciled to the new facade by init', () => {
-    initGitRepo(dir);
-    const homeA = join(dir, 'home-a');
-    const homeB = join(dir, 'home-b');
-    expect(runInitWithHome(dir, homeA).code).toBe(0);
-    expect(runInitWithHome(dir, homeB).code).toBe(0);
-    const toml = readFileSync(join(dir, '.codex', 'config.toml'), 'utf8');
-    expect(toml).toContain(`mcp_servers.genie.command = "${join(homeB, 'bin', 'genie')}"`);
-    expect(toml).not.toContain(join(homeA, 'bin', 'genie'));
-    // Exactly one owned marker block — reconciliation never duplicates.
-    expect(toml.match(/BEGIN GENIE MCP FALLBACK/g)).toHaveLength(1);
+    const codexPath = join(dir, '.codex', 'config.toml');
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    writeFileSync(
+      codexPath,
+      '# BEGIN GENIE MCP FALLBACK\nmcp_servers.genie.command = "/g"\nmcp_servers.genie.args = ["mcp"]\n# END GENIE MCP FALLBACK\n\nmodel = "x"\n',
+    );
+    expect(runInitWithHome(dir, join(dir, 'home')).code).toBe(0);
+    expect(readFileSync(codexPath, 'utf8')).toBe('model = "x"\n');
   });
 
   test('an unowned same-key Codex route is preserved byte-for-byte and reported, never overwritten', () => {
@@ -360,12 +266,10 @@ describe('init marker-owned Codex route', () => {
     mkdirSync(join(dir, '.codex'), { recursive: true });
     const personal = '[mcp_servers.genie]\ncommand = "/my/own/genie"\nargs = ["mcp"]\n';
     writeFileSync(codexPath, personal);
-    const { code, stderr } = runInitWithHome(dir, join(dir, 'home-a'));
-    expect(code).toBe(1);
-    expect(stderr.toLowerCase()).toMatch(/unverified|preserved/);
-    // The user file is untouched, and no scaffold leaked past the collision.
+    const { code } = runInitWithHome(dir, join(dir, 'home-a'));
+    expect(code).toBe(0);
     expect(readFileSync(codexPath, 'utf8')).toBe(personal);
-    expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(false);
+    expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
   });
 
   test('init.ts never mints an assertion/permit and never touches the lifecycle lease or delivery', () => {

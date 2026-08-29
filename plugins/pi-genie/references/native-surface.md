@@ -48,17 +48,11 @@ Every tool result carries the Hermes-style envelope:
 Failures surface the actual genie stderr text (e.g. `genie context --wish <slug> --plan failed:
 {"error": "...", "reason": "..."}`) instead of a raw capture.
 
-## MCP parity
+## Standalone parity
 
-The Claude/Codex MCP server (`genie mcp`) exposes five read tools plus twelve
-operative write tools (`genie_task_create`, `genie_task_checkout`,
-`genie_task_done`, `genie_task_move`, `genie_task_block`, `genie_task_unblock`,
-`genie_task_release`, `genie_task_comment`, `genie_task_report`,
-`genie_task_heartbeat`, `genie_task_set_wish`, `genie_task_add_dependency`).
-pi has no MCP client; this plugin reaches the same state
-through the CLI the MCP server wraps, plus the two review/planning tools that
-the MCP surface does not cover (`genie_work_plan`, `genie_review_plan`) —
-matching the Hermes gap-tool rationale.
+The shared Genie MCP runtime is retired. This plugin reaches Genie state through
+the standalone `genie task`, `genie board`, and `genie context` commands, plus
+the two review/planning tools (`genie_work_plan`, `genie_review_plan`).
 
 ## Bounding (context hook)
 

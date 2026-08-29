@@ -44,7 +44,6 @@ import {
   type HeldLifecycleLease,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../../lib/codex-lifecycle-lease';
-import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
 import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
@@ -139,14 +138,7 @@ function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): Code
         expectedVersion: '5.260711.3',
         skillInventory: CANONICAL_GENIE_SKILL_NAMES,
         payload: [],
-        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
       }) as CodexHealthProof,
-    runSession: () => ({
-      ok: true,
-      detail: 'fixture session',
-      tools: [...REQUIRED_GENIE_MCP_TOOLS],
-      wishStatusReadOnly: true,
-    }),
     installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
     fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
     ...overrides,
@@ -2930,7 +2922,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     };
   }
 
-  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+  test('selection auto converges Hermes skills without recreating the retired MCP route', () => {
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
@@ -2942,8 +2934,8 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
 
     const configPath = join(hermesHome, 'config.yaml');
     const text = readFileSync(configPath, 'utf8');
-    expect(text).toContain('mcp_servers:');
-    expect(text).toContain(genieBin);
+    expect(text).not.toContain('mcp_servers:');
+    expect(text).not.toContain(genieBin);
     expect(text).toContain('skills:');
     expect(text).toContain('external_dirs:');
     expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));

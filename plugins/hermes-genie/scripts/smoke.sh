@@ -5,7 +5,7 @@
 # the homogeneous contract:
 #
 #   1. plugin link converged + plugin.yaml version == genie release version
-#   2. mcp_servers.genie present with an absolute, existing, executable command
+#   2. historical marker-owned route retired; no standalone Genie MCP route added
 #   3. skills.external_dirs holds the product skills root (or a managed copy)
 #   4. no khaw-bridge skill in the payload; pre_llm_call hook, not post_tool_call
 #   5. `genie doctor` reports every hermes leg green
@@ -119,24 +119,13 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2) mcp_servers.genie present with an absolute, existing, executable command
+# 2) Historical marker-owned route absent; standalone task/board needs no MCP config.
 # ---------------------------------------------------------------------------
 if [ -f "$CONFIG" ]; then
-  mcp_cmd="$(awk '/genie:managed:mcp_servers.genie/{f=1} f&&/^[[:space:]]*command:/{print;exit}' "$CONFIG" \
-            | sed -E 's/.*command:[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/')"
-  if [ -z "$mcp_cmd" ]; then
-    # Fall back to an unmarked genie entry if the managed marker block is absent.
-    mcp_cmd="$(awk '/^mcp_servers:/{m=1} m&&/^[[:space:]]+genie:/{g=1} g&&/^[[:space:]]*command:/{print;exit}' "$CONFIG" \
-              | sed -E 's/.*command:[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/')"
-  fi
-  if [ -z "$mcp_cmd" ]; then
-    fail "mcp_servers.genie.command absent in $CONFIG"
-  elif [ "${mcp_cmd#/}" = "$mcp_cmd" ]; then
-    fail "mcp_servers.genie.command not absolute ($mcp_cmd)"
-  elif [ ! -x "$mcp_cmd" ]; then
-    fail "mcp_servers.genie.command missing or not executable ($mcp_cmd)"
+  if grep -Eq 'genie:managed:mcp_servers\.genie|^[[:space:]]+genie:[[:space:]]*$' "$CONFIG"; then
+    fail "retired mcp_servers.genie route remains in $CONFIG"
   else
-    pass "mcp_servers.genie -> $mcp_cmd (absolute, executable)"
+    pass "mcp_servers.genie absent"
   fi
 else
   fail "isolated Hermes config absent: $CONFIG"

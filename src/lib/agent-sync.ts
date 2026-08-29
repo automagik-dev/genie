@@ -61,7 +61,7 @@ import {
   resolveHermesHome,
   resolvePiExtensionsDir,
 } from './genie-home.js';
-import { HermesConfigError, mergeMcpServersGenie } from './hermes-mcp-config.js';
+import { HermesConfigError, retireMcpServersGenie } from './hermes-mcp-config.js';
 import { mergeSkillsExternalDir } from './hermes-skills-config.js';
 
 // ============================================================================
@@ -5801,11 +5801,7 @@ function resolveHermesProfileHome(hermesHome: string): string {
 function convergeHermesConfig(ctx: RunContext, hermesHome: string, report: AgentReport): void {
   const configPath = resolveHermesConfigPath(hermesHome);
   const base = ctx.now().getTime();
-  convergeHermesLeg(
-    'mcp-config',
-    report,
-    () => mergeMcpServersGenie({ configPath, genieHome: ctx.genieHome, now: new Date(base) }).status,
-  );
+  convergeHermesLeg('mcp-config', report, () => retireMcpServersGenie({ configPath, now: new Date(base) }).status);
   convergeHermesLeg(
     'skills-dir',
     report,

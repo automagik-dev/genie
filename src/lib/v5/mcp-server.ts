@@ -1,8 +1,7 @@
 /**
  * Genie v5 shared stdio MCP server loop — the newline-delimited JSON-RPC 2.0
- * transport extracted verbatim from `src/term-commands/mcp.ts` so that both
- * `genie mcp` (write-capable) and `genie ui-bridge` (read + roster writes +
- * push) ride ONE transport with zero copy-paste drift.
+ * transport originally extracted from the retired MCP command. The live
+ * `genie ui-bridge` (read + roster writes + push) remains its supported caller.
  *
  * Transport: one JSON object per line on stdin/stdout — NOT LSP
  * `Content-Length` framing. Speaks MCP protocol `2024-11-05`.
@@ -124,8 +123,8 @@ export interface McpServerConfig {
   /**
    * DB open (net-new; returns `null` when the file is absent or cannot be
    * opened). MUST NOT THROW — return `null` for every failure; the loop calls
-   * this outside any `try`. May be write-capable (`genie mcp`'s hardened write
-   * path) or read-only (`genie ui-bridge`) — the loop itself never writes
+   * this outside any `try`. The live ui-bridge uses a read-only handle; injected
+   * test seams may use other handles. The loop itself never writes
    * through the handle; read tools read and write tools mutate through it. A
    * fail-closed consumer with `resolveContext` turns null into
    * `project-database-unavailable`; legacy consumers may still degrade to an

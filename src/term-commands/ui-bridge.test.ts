@@ -468,54 +468,19 @@ describe('ui-bridge lifetime', () => {
   });
 });
 
-// ============================================================================
-// Success Criterion 6 — genie mcp unchanged by the plumbing extraction
-// ============================================================================
+describe('genie mcp retirement remains separate from ui-bridge', () => {
+  test('rejects MCP input with the stable diagnostic instead of starting a server', () => {
+    const invocation = Bun.spawnSync([process.execPath, GENIE, 'mcp'], {
+      cwd: repo,
+      stdin: Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
 
-describe('genie mcp regression (unchanged by extraction)', () => {
-  test('initialize response is byte-for-byte the pinned read-only reply', async () => {
-    const [res] = await driveOnce('mcp', repo, [
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
-    ]);
-    const result = res.result as Record<string, unknown>;
-    // Pin the exact shape + key order the read-only server has always sent.
-    expect(Object.keys(result)).toEqual(['protocolVersion', 'capabilities', 'serverInfo']);
-    expect(result.protocolVersion).toBe('2024-11-05');
-    expect(result.capabilities).toEqual({ tools: {} });
-    const serverInfo = result.serverInfo as { name: string; version: string };
-    expect(serverInfo.name).toBe('genie');
-    // Read-only server never advertises the bridge fields.
-    expect(result.bridgeProtocolVersion).toBeUndefined();
-    expect(result.genieVersion).toBeUndefined();
-  });
-
-  test('registers exactly the 17-tool surface (5 read + 12 write) and no roster tools', async () => {
-    const responses = await driveOnce('mcp', repo, [
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
-      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-    ]);
-    const tools = responses.find((r) => r.id === 2)?.result?.tools as Array<{ name: string }>;
-    const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual([
-      'genie_active',
-      'genie_board',
-      'genie_task',
-      'genie_task_add_dependency',
-      'genie_task_block',
-      'genie_task_checkout',
-      'genie_task_comment',
-      'genie_task_create',
-      'genie_task_done',
-      'genie_task_heartbeat',
-      'genie_task_move',
-      'genie_task_release',
-      'genie_task_report',
-      'genie_task_set_wish',
-      'genie_task_unblock',
-      'genie_wish_status',
-      'genie_worktree_context',
-    ]);
-    // No roster_* tool leaked into the genie mcp server (bridge-only surface).
-    expect(names.some((n) => n.startsWith('roster_'))).toBe(false);
+    expect(invocation.exitCode).toBe(1);
+    expect(invocation.stdout.toString()).toBe('');
+    expect(invocation.stderr.toString()).toBe(
+      'Error: genie mcp has been retired; use `genie task` and `genie board`, or roll back to a pre-A7 signed release.\n',
+    );
   });
 });

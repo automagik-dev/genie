@@ -4,7 +4,7 @@
  * Drives a stub server (stub tools + injected open) as a subprocess to prove
  * the two seam contracts this group owns:
  *   - the injected open is general — whatever handle `openDb` produces is
- *     validated and served (write-capable `genie mcp` / read-only ui-bridge);
+ *     validated and served (the live read-only ui-bridge plus isolated seams);
  *   - the opt-in per-result error channel UNWRAPS tagged results before
  *     serialization — the wire payload is the inner value and the envelope
  *     sets `isError: true`, while every untagged result keeps `isError: false`

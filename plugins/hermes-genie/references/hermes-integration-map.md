@@ -26,23 +26,17 @@ skills, same MCP tool set, same agent-sync convergence, same doctor coverage.
 | Plugin manifest | `.claude-plugin/plugin.json` (Skills, Hooks, MCP) — **current** | `plugins/genie/.codex-plugin/plugin.json` — **current** | `plugins/hermes-genie/plugin.yaml` declared 7 native tools + hooks + commands + 4 skills — **pre-wish** | `plugins/hermes-genie/plugin.yaml` declares 3 native tools + MCP + hooks; skills sourced via `skills.external_dirs` — **current** |
 | Skills path | canonical `skills/` (23) — **current** | `skills/` canonical + `plugins/genie/skills/` mirror (23) — **current** | 4 plugin-local skills (`genie`, `genie-work`, `genie-review`, `genie-khaw-bridge`) — **pre-wish** | the 23 product skills via `skills.external_dirs` pointed at the release-converged **`$GENIE_HOME/skills`** root (resolver fallback chain: explicit override → `$GENIE_HOME/skills` → `$GENIE_HOME/plugins/genie/skills`); ≤1 thin cockpit adapter via `ctx.register_skill` — **current** |
 | Hooks | Claude hook set — **current** | `codex-hooks.json` H3/H4/H6 — **current** | `on_session_start`, `pre_tool_call`, `post_tool_call` (advisory KHAW bridge) — **pre-wish** | `on_session_start`, `pre_tool_call`, `pre_llm_call` (advisory, read-only, no mutation; KHAW bridge removed) — **current** |
-| MCP | `.mcp.json` → `genie mcp` (5 read + 12 write tools) — **current** | `plugins/genie/.mcp.json` → `genie mcp` (5 read + 12 write tools) — **current** | none — native tools only — **pre-wish** | `genie mcp` wired as the shared 17-tool read + write server — **current** |
-| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **pre-wish** | same lane, now also converging (after link/enable) the `skills.external_dirs` entry for `$GENIE_HOME/skills` + the `mcp_servers.genie` wiring into the live profile's `config.yaml`; inline top-level `mcp_servers:`/`skills:` degrade to a non-fatal WARN skip — **current** |
-| Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **pre-wish** | Hermes lane + MCP + skills-dir checks in `genie doctor` — **current** |
+| MCP | Retired | Retired | none — native tools only — **pre-wish** | Retired; no Genie-owned route is converged |
+| Agent-sync lane | `syncClaude` — **current** | `syncCodex` — **current** | `syncHermes` symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, runs `hermes plugins enable genie` — **pre-wish** | link/enable plus `skills.external_dirs`; historical owned MCP markers are removed |
+| Doctor coverage | `agent sync: claude` — **current** | `agent sync: codex` — **current** | `agent sync: hermes — linked → …` — **pre-wish** | Hermes lane + skills-dir checks in `genie doctor` |
 
 ## Tool map
 
-Convergence, shipped: the shared **MCP** server (`genie mcp`, read + write tools) provides the board/wish/task
-surface for every client; Hermes keeps only the tools that have no MCP equivalent. **No duplicates** —
-a tool is either an MCP tool or a native Hermes tool, never both.
+The shared MCP server is retired. Hermes uses its native tools and the standalone
+Genie CLI; no MCP compatibility route is registered.
 
 | Kind | Tool | Wraps (read-only) | Status |
 |------|------|-------------------|--------|
-| MCP (shared) | `genie_board` | `genie board --json` | **current** — provided by `genie mcp` |
-| MCP (shared) | `genie_wish_status` | board slice + task list for one slug | **current** — provided by `genie mcp` |
-| MCP (shared) | `genie_task` | task list / task detail | **current** — provided by `genie mcp` |
-| MCP (shared) | `genie_active` | active wishes/tasks snapshot | **current** — provided by `genie mcp` |
-| MCP (shared) | `genie_worktree_context` | resolved worktree/branch/cwd context | **current** — provided by `genie mcp` |
 | Native Hermes | `genie_status` | `genie doctor --json` + `.genie/` presence | **current** — remains native |
 | Native Hermes | `genie_work_plan` | `genie context --wish <slug> --plan` | **current** — remains native |
 | Native Hermes | `genie_review_plan` | board/tasks + Success/QA criteria from WISH.md | **current** — remains native |
@@ -50,11 +44,6 @@ a tool is either an MCP tool or a native Hermes tool, never both.
 **Retired natives** (present in the pre-wish `plugin.yaml`, removed once the MCP tools shipped to
 replace them — do not re-add): `genie_board`, `genie_wish_status`, `genie_task_list`,
 `genie_task_status`.
-
-**Transitional gate:** `GENIE_HERMES_LEGACY_TOOLS=1` re-exposes the retired native tools for one
-migration window so a host pinned to the old surface does not break mid-upgrade. It is opt-in,
-off by default, and slated for removal once all hosts are on the MCP path. It never changes the
-read-only contract — every tool still reports `mutation: "none"`.
 
 Pre-wish baseline: `plugin.yaml` shipped all 7 tools natively and there was no MCP server on
 the Hermes side. See baseline notes.
@@ -94,7 +83,7 @@ manual dual system, and no lifecycle hook installs, updates, or synchronizes the
 
 | Path | Effect on Hermes |
 |------|------------------|
-| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, best-effort `hermes plugins enable genie`, then converges the `skills.external_dirs` entry for `$GENIE_HOME/skills` and the `mcp_servers.genie` command into the live profile's `config.yaml`. Proven per-leg by `genie doctor`. |
+| `genie install --integrations hermes` | Runs the `syncHermes` lane: symlinks `$HERMES_HOME/plugins/genie` → sibling `hermes-genie`, best-effort enables it, converges `skills.external_dirs`, and retires only a marker-owned historical `mcp_servers.genie` block. |
 | `genie update` | Re-runs the same convergence inside the already-reviewed parent process; refreshes the linked surface. |
 | `genie setup` / `genie setup --hermes` | Configures + persists Hermes maintenance consent used by later explicit updates. |
 

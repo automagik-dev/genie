@@ -50,11 +50,9 @@ import {
   SmokeFailure,
   TARGET_VERSION,
   activePluginRoot,
-  assertEffectiveCodexProjectRoute,
   assertNoStaleTempHomes,
   assertPluginHealthy,
   assertProtectedUnchanged,
-  assertSingleCodexProjectRouteMarker,
   buildCliOnce,
   captureProtected,
   diffTree,
@@ -69,12 +67,10 @@ import {
   runCli,
   runLifecycleCli,
   runLifecycleSetup,
-  runRealCodex,
   seedPersonalFixtures,
   seedShippedFallbackLayout,
   snapshotNode,
   snapshotTree,
-  trustIsolatedCodexProject,
   withIsolatedHome,
 } from './codex-smoke-harness.ts';
 
@@ -229,10 +225,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function assertInstalledPluginMcpShape(iso: IsolatedHome, version: string): void {
   const root = join(iso.codexHome, 'plugins', 'cache', 'automagik', 'genie', version);
-  // Group A removed the Codex plugin MCP route: the installed manifest declares no
-  // mcpServers and no MCP capability, and ships no `.mcp.json`. Codex MCP now comes
-  // ONLY from the marker-owned project route reconciled by `genie init` (asserted
-  // separately as the project `.mcp.json`/`.codex/config.toml`).
+  // A7 removed every Codex Genie MCP route. The installed payload must contain
+  // neither route metadata nor a launcher capable of reviving the server.
   const manifest: unknown = JSON.parse(readFileSync(join(root, '.codex-plugin', 'plugin.json'), 'utf8'));
   const manifestRecord = isRecord(manifest) ? manifest : {};
   if ('mcpServers' in manifestRecord) {
@@ -243,8 +237,7 @@ function assertInstalledPluginMcpShape(iso: IsolatedHome, version: string): void
     fail('installed Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
   }
   if (existsSync(join(root, '.mcp.json'))) fail('installed Codex plugin must not ship a .mcp.json route file');
-  // The plugin-local launcher stays — Claude drives it via its own inline manifest entry.
-  if (!existsSync(join(root, 'scripts', 'mcp-launcher.cjs'))) fail('plugin MCP launcher (Claude) is missing');
+  if (existsSync(join(root, 'scripts', 'mcp-launcher.cjs'))) fail('retired MCP launcher must not be installed');
 }
 
 function assertSessionStartHook(iso: IsolatedHome, version: string): void {
@@ -618,53 +611,28 @@ function stepEnvDependentSuites(notes: string[]): void {
   withIsolatedHome((iso) => {
     installGenieHome(iso);
     linkRealCodex(iso);
-    // C8 black-box proofs exercise the built artifact and real installed plugin
-    // inside the isolated home. First prove route-only init creates the route
-    // from actual absence, before delivery/setup has any opportunity to
-    // reconcile it as part of activation finalization.
+    // C8 proves init/setup never resurrect a project MCP route.
     const codexConfig = join(iso.project, '.codex', 'config.toml');
-    if (existsSync(codexConfig)) fail('C8 project route must be absent before the first genie init');
+    if (existsSync(codexConfig)) fail('C8 project config must be absent before the first genie init');
     const init = runCli(iso, ['init', '--json']);
     if (init.exitCode !== 0) fail(`genie init failed: ${init.stderr.trim() || init.stdout.trim()}`);
-    if (!existsSync(codexConfig)) fail('genie init did not create the Codex project config');
-    const firstToml = readFileSync(codexConfig, 'utf8');
-    assertSingleCodexProjectRouteMarker(firstToml);
+    if (existsSync(codexConfig)) fail('genie init resurrected a Codex project MCP config');
     publishDelivery(iso, '(C8)');
     setupCodex(iso, '(C8)');
-    const afterSetupToml = readFileSync(codexConfig, 'utf8');
-    if (afterSetupToml !== firstToml) {
-      fail('authenticated setup changed the already-current marker-owned route bytes');
-    }
-    trustIsolatedCodexProject(iso);
-    const firstRoute = assertEffectiveCodexProjectRoute(
-      runRealCodex(iso, ['mcp', 'get', 'genie', '--json']),
-      runRealCodex(iso, ['mcp', 'list', '--json']),
-      iso.genieBin,
-    );
+    if (existsSync(codexConfig)) fail('authenticated setup resurrected a Codex project MCP config');
 
     const secondInit = runCli(iso, ['init', '--json']);
     if (secondInit.exitCode !== 0) {
       fail(`second genie init failed: ${secondInit.stderr.trim() || secondInit.stdout.trim()}`);
     }
-    const secondToml = readFileSync(codexConfig, 'utf8');
-    if (secondToml !== firstToml) fail('second genie init changed the marker-owned Codex project config bytes');
-    assertSingleCodexProjectRouteMarker(secondToml);
-    const secondRoute = assertEffectiveCodexProjectRoute(
-      runRealCodex(iso, ['mcp', 'get', 'genie', '--json']),
-      runRealCodex(iso, ['mcp', 'list', '--json']),
-      iso.genieBin,
-    );
-    if (secondRoute.getJson !== firstRoute.getJson || secondRoute.listJson !== firstRoute.listJson) {
-      fail('Codex mcp get/list JSON changed after byte-idempotent second init');
-    }
+    if (existsSync(codexConfig)) fail('second genie init resurrected a Codex project MCP config');
     // 2b. Manifest MCP shape via direct inspection of the installed plugin cache.
     assertInstalledPluginMcpShape(iso, readCodexGeniePlugin(iso).version);
-    // 2c. The launcher's end-to-end MCP usability is already proven by the
-    //     JSON-RPC session in every assertPluginHealthy call above.
+    // 2c. The surviving plugin payload has no launcher or MCP declaration.
     assertPluginHealthy(iso, TARGET_VERSION);
     // 2d. SessionStart hook context emission (covers the codex-manifest criteria).
     assertSessionStartHook(iso, readCodexGeniePlugin(iso).version);
-    notes.push('C8: black-box project-MCP + manifest-shape + MCP-usability + SessionStart proofs passed');
+    notes.push('C8: no project route + no manifest/launcher + SessionStart proofs passed');
   });
 }
 

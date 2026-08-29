@@ -29,7 +29,7 @@ The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the
 
 The installer detects Claude Code and Codex and delivers the selected, version-matched payloads. Control this with `--integrations auto|codex|claude|all|none` or `--skip-integrations`. Codex delivery is deliberately separate from activation: install/update verify the signed release and publish a complete authenticated delivery record, but never advance the Codex cache, change its enabled state, reconcile its project route, or write role agents. A delivered generation that still needs activation exits with an action-required result directing the operator to `genie setup --codex`.
 
-From inside a trusted initialized repo, run `genie init` to reconcile the marker-owned project MCP route. Then run `genie setup --codex` from an external interactive terminal. Setup requires a matching authenticated delivery record before its first prompt or mutation; it activates the delivered plugin, proves the exact enabled payload and bounded MCP launcher, retires only clean historical user-tier fallbacks, converges seven optional role agents, and reconciles the project route. An already-current deliberately disabled plugin stays disabled, skips fallback retirement, and still repairs managed roles. Personal, modified, malformed-marker, and symlinked collisions remain untouched. Successful setup persists Codex delivery scope for later explicit updates, but those updates still deliver only; a new generation requires a fresh setup assertion. No hook installs software, activates plugins, synchronizes skills, or writes project instructions.
+From inside a trusted initialized repo, run `genie init` to scaffold state and retire proven-owned historical MCP routes. Then run `genie setup --codex` from an external interactive terminal. Setup requires a matching authenticated delivery record before its first prompt or mutation; it activates the delivered plugin, proves the exact enabled payload, retires only clean historical user-tier fallbacks, and converges seven optional role agents. An already-current deliberately disabled plugin stays disabled, skips fallback retirement, and still repairs managed roles. Personal, modified, malformed-marker, and symlinked collisions remain untouched. Successful setup persists Codex delivery scope for later explicit updates, but those updates still deliver only; a new generation requires a fresh setup assertion. No hook installs software, activates plugins, synchronizes skills, or writes project instructions.
 
 Codex never auto-trusts plugin hooks. H4/H6 definitions bind the exact plugin launcher SHA-256 and the launcher verifies itself before spawning, so launcher changes produce new definitions; the current hook schema still cannot transitively bind the mutable platform-specific Genie binary. After successful Codex setup, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
@@ -87,13 +87,12 @@ the exact public read operation named by the error only when the identifier was 
 the outcome with an Orca operator before deciding whether to issue a new mutation. Genie never guesses an identifier
 from a collection or infers success from a partial response.
 
-### Staged MCP retirement
+### MCP retirement
 
-The Orca plugin does not make the current MCP surface disappear in this documentation release. The legacy `genie mcp`
-remains available, and `genie init` continues to manage only Genie-owned project registrations, until the later A7 PR
-lands after dual-mode parity and migration gates. Do not remove project MCP routes pre-emptively. A7 will retire the
-server and proved-owned registrations with a stable non-zero diagnostic while preserving unrelated configuration and
-standalone history; rollback to a pre-A7 signed release remains the migration escape hatch.
+The legacy Genie MCP server is retired. `genie mcp` exits non-zero with a stable diagnostic and never starts a server;
+use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or exact
+Genie-owned historical project registrations and preserves unrelated or unproven user configuration byte-for-byte.
+Rollback to a pre-A7 signed release remains the migration escape hatch.
 
 Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
 before changing the adapter or its operator guidance.
@@ -131,14 +130,14 @@ genie --help
 
 | Command | What it does |
 |---------|-------------|
-| `genie init` | Scaffold per-repo state and reconcile project MCP files (`.mcp.json` and the marker-owned `.codex/config.toml` stable-facade route) |
+| `genie init` | Scaffold per-repo state and retire proven Genie-owned project MCP registrations |
 | `genie context` | Resolve spawn context — wish/group branch + base SHA, or the integration branch (versioned JSON; `--plan` previews) |
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie idea` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
 | `genie ui-bridge` | Run the UI-owned stdio MCP bridge into genie.db (reads + roster writes + change-push) |
 | `genie install` | Finish a verified install and deliver selected integrations; Codex activation is deferred to setup |
-| `genie mcp` | Serve Genie task/board state over stdio MCP (read + write tools) |
+| `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
 | `genie setup` | Configure Genie; `setup --codex` activates an authenticated delivery and converges Codex-owned surfaces |
 | `genie doctor` | Run diagnostic checks on the installation |
@@ -172,7 +171,7 @@ These five inventories are intentionally separate:
 | Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Not written on fresh setup. After authenticated activation, setup moves only provably clean historical copies here after one health proof; evidence is retained for recovery |
 | CLI integration | Seven optional `genie_*` role-agent TOMLs under `~/.codex/agents/` | Installed/repaired only by successful `genie setup --codex`, after authenticated-root revalidation and fallback retirement |
 | Personal skills | This maintainer currently has 36 separately adapted skills under `~/.agents/skills` | User-owned; not bundled with Genie and never implied by plugin installation; preserved byte-for-byte even on same-name collision |
-| Project MCP route | Marker-owned `.codex/config.toml` entry for `genie mcp` | Points at the stable absolute `$GENIE_HOME/bin/genie` facade with no `cwd` override; the plugin declares no Codex MCP route |
+| MCP retirement | No product MCP route or launcher | `genie init` removes only proven-owned historical routes and preserves personal/unrelated configuration |
 
 The plugin's 22 skills and a user's personal 36-skill library are separate inventories even when names overlap. Genie never seeds the user tier and preserves unmanaged, modified, malformed-marker, and symlinked user copies instead of adopting them; use `$genie:<skill>` when the plugin copy is intended.
 
@@ -218,9 +217,9 @@ After a real convergence, verify from a restarted Codex session:
 
 ```text
 genie --version matches the enabled genie@automagik plugin
-genie doctor reports plugin-only Codex skills and usable MCP
+genie doctor reports plugin-only Codex skills and retired MCP routing
 Codex SessionStart and PreToolUse complete without hook failure
-Genie MCP wish_status returns live data
+genie mcp returns the stable non-zero retirement diagnostic
 loaded catalog contains genie:wish/genie:work and no managed bare duplicates
 ```
 
@@ -246,26 +245,16 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 - Approval-gated agents launched with `--permission-mode default`. Under `auto` mode a passthrough `ask` can auto-resolve to allow, which defeats the timeout→ask fail-safe.
 - `genie omni serve` running as the one resident process. It is the *only* NATS client — `--help`, `task`, `board`, and every other command stay transport-free (`nats` never initializes on those paths).
 
-## MCP server (Claude Code + Codex)
+## MCP retirement
 
-`genie mcp` is a zero-dependency [MCP](https://modelcontextprotocol.io) server over stdio exposing the operative task/board state: five read tools plus twelve `genie_task_*` write tools mirroring `genie task`. Codex does not launch it from the versioned plugin cache. Instead, every trusted initialized repository owns one marker-managed `.codex/config.toml` route pointing at the stable absolute `$GENIE_HOME/bin/genie mcp` facade, with no `cwd` override. Missing, symlinked, or path-escaped executables fail closed.
+The legacy cross-client MCP server, its write tools, plugin launchers, and Genie-owned registrations are retired.
+`genie mcp` prints `Error: genie mcp has been retired; use \`genie task\` and \`genie board\`, or roll back to a
+pre-A7 signed release.` to stderr and exits 1 without reading or speaking MCP. `genie init` removes only historical
+registrations proven to be Genie-owned; unowned same-name routes and every unrelated config key remain untouched.
 
-**How it gets picked up.** `genie init` reconciles Claude Code and Codex project configs and may change the two project files named below; review those project-scoped commands before trusting the workspace. The Codex route is plugin-independent and is created or repaired only when its marker proves Genie ownership. Unowned same-key routes, damaged markers, nested shadowing, and untrusted repositories are preserved and reported rather than overwritten.
-
-- `.mcp.json` — Claude Code's project MCP config. Project-scope servers are *pending approval* until you trust the workspace (accept the trust dialog in an interactive `claude` session) — expected, not a bug.
-- `.codex/config.toml` — marker-owned absolute stable-facade route with no effective `cwd` override.
-
-The Claude JSON config uses the `mcpServers` shape and is merged idempotently; the Codex TOML route uses marker-owned root-level dotted assignments so it cannot capture following keys. Re-running `genie init` preserves every other server and top-level key and rewrites byte-identical. A compiled Genie records the absolute executable plus `mcp`; an interpreted `bun src/genie.ts` or `bun dist/genie.js` run records the absolute Bun executable plus the absolute script and `mcp`. No route relies on bare `genie`, which is not reliably on PATH. Because `genie init` runs on the box that owns the repo, the recorded paths are correct there.
-
-**What it exposes** — five read tools backed by the per-repo `.genie/genie.db`, plus twelve operative write tools (`genie_task_create`, `genie_task_checkout`, `genie_task_done`, `genie_task_move`, `genie_task_block`, `genie_task_unblock`, `genie_task_release`, `genie_task_comment`, `genie_task_report`, `genie_task_heartbeat`, `genie_task_set_wish`, `genie_task_add_dependency`) that mirror the `genie task` CLI:
-
-- `genie_board` — board counts + tasks (optional wish filter)
-- `genie_wish_status` — a wish's group/DAG progress
-- `genie_worktree_context` — resolves the pane's `wish/<slug>-<group>` branch to its wish, group, and tasks (the per-pane "what am I here for")
-- `genie_task` — full task detail by id
-- `genie_active` — every in-progress task and who claimed it
-
-**Pull, not push.** Genie never injects state into a client session. The flow is pull: the agent *asks* genie over MCP (`genie_worktree_context`, `genie_board`, …) when it wants board state.
+The UI-owned `genie ui-bridge` is not the retired product MCP integration. It retains its private stdio transport and
+read/roster surface for the Genie UI. Standalone `genie task` and `genie board` retain their existing behavior in
+standalone mode; Orca mode continues to use the public `orca orchestration ... --json` adapter as its sole authority.
 
 ## Hermes-native surface
 

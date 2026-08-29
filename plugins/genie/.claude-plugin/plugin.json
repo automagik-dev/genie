@@ -7,11 +7,5 @@
   },
   "repository": "https://github.com/automagik-dev/genie",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"],
-  "mcpServers": {
-    "genie": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs"]
-    }
-  }
+  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"]
 }

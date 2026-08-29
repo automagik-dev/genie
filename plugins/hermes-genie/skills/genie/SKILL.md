@@ -1,6 +1,6 @@
 ---
 name: genie
-description: Thin cockpit pointer for driving Genie from Hermes — load the product wish/work/review skills via the first-class skill path, use the MCP board tools for task truth, keep mutations human-gated.
+description: Thin cockpit pointer for driving Genie from Hermes — load product wish/work/review skills, use standalone board/task commands for task truth, and keep mutations human-gated.
 ---
 
 # Genie Cockpit Pointer
@@ -15,11 +15,10 @@ as canonical over anything scraped from a terminal.
   skills directly: `wish`, `work`, and `review`. This plugin no longer ships
   `genie-work`/`genie-review` duplicates — the product skills are canonical.
 
-## Use MCP for board truth
+## Use standalone board/task truth
 
-- Read board and task state through the genie MCP tools (`genie_board`,
-  `genie_wish_status`, `genie_task`) rather than terminal scraping. The native
-  Hermes surface only adds the gap tools MCP does not cover: `genie_status`
+- Read board and task state through standalone `genie board` and `genie task`
+  commands rather than terminal scraping. The native Hermes surface adds `genie_status`
   (doctor plus `.genie` presence), `genie_work_plan` (`context --plan` spawn preview), and
   `genie_review_plan` (wish status plus acceptance criteria).
 - Never poll panes with `tmux capture-pane` or `sleep` loops to infer worker
