@@ -66,7 +66,7 @@ survived only through this negotiated handshake.
 
 ## Tools
 
-### Read tools (reused from `genie mcp`, identical semantics)
+### Read tools (retained after MCP retirement, identical semantics)
 
 | Tool | Purpose | Required args |
 |------|---------|---------------|
@@ -149,4 +149,4 @@ the honest daemon-free ceiling, and is ample for a kanban.
 - **No socket, ever.** The bridge holds zero listening sockets; it speaks only on
   stdio. Verify with `ss -tlnp` / `lsof` against the child pid — no rows.
 - **Zero-daemon.** Nothing survives the UI; the child is fork-and-die under the
-  same trust model `genie mcp` shipped with.
+  the validated trust model retained from the retired MCP implementation.

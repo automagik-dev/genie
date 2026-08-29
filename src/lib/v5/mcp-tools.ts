@@ -1,20 +1,15 @@
 /**
- * Genie v5 MCP tools — the projection + dispatch surface of `.genie/genie.db`
- * exposed over the hand-rolled stdio MCP server (see
- * `src/term-commands/mcp.ts`): 5 read tools (`MCP_TOOLS`) + 12 operative write
- * tools (`MCP_WRITE_TOOLS`).
+ * Genie v5 tool projections and historical dispatch handlers for
+ * `.genie/genie.db`: 5 read tools (`MCP_TOOLS`) plus the retained 12 operative
+ * write handlers (`MCP_WRITE_TOOLS`). The public write-capable MCP command is
+ * retired; standalone board/task commands remain authoritative.
  *
- * This module is intentionally LAZY-LOADED: `genie mcp` dynamic-imports it
- * inside the command body so that non-mcp code paths (`genie board`, `genie
- * task`, `genie --help`) never touch the `bun:sqlite` opens here. The
- * import-graph probe in `mcp.test.ts` locks that contract.
+ * The live read-only bridge loads this module without pulling its SQLite opens
+ * into unrelated `genie board`, `genie task`, or `genie --help` paths.
  *
- * `genie mcp` opens through {@link openWriteableDb} — the standard hardened CLI
- * write path (`openDb` + binding revalidation), degrading to the readonly
- * healing open only when the write is impossible (see the degrade section
- * below). The readonly open internals (`openReadonlyDb`, ...) stay in
- * production for that fallback and for `genie ui-bridge`, which injects its own
- * readonly open.
+ * The retained {@link openWriteableDb} contract covers the historical hardened
+ * write path and its degrade behavior. Readonly open internals remain live for
+ * `genie ui-bridge`, which injects its own readonly open.
  */
 
 import { constants, Database } from 'bun:sqlite';
@@ -36,9 +31,8 @@ import { type ToolErrorResult, isToolError, toolError } from './mcp-server.js';
 import { resolveWishBranch } from './resolve-wish-branch.js';
 import { BUSY_TIMEOUT_MS, isBusyError, openWithWalIndexRecovery } from './sqlite-open.js';
 
-// Re-exported so `genie mcp` (mcp.ts) pulls the fail-closed context resolver in
-// the SAME lazy dynamic import that already loads the tool registry — keeping
-// the bun:sqlite opens out of the eager genie.ts import graph.
+// Re-exported for the fail-closed bridge context path while keeping bun:sqlite
+// opens out of the eager genie.ts import graph.
 export { type ProjectContext, resolveProjectContext } from './genie-db.js';
 import {
   type BlockKind,
@@ -167,8 +161,7 @@ export function openReadonlyDb(
  * Additive columns land within `user_version = 1` and are backfilled only by
  * write-path opens (`openDb` → `ensureSchema`), so a database stamped by an
  * earlier build stays permanently rejected by `isCurrentGenieDb` for a consumer
- * that only ever reads — exactly the post-update Codex plugin, whose first
- * contact with the repo is `genie mcp`. When (and only when) a successful
+ * that only ever reads — such as the read-only bridge. When (and only when) a successful
  * readonly open validates stale, run the same idempotent write-path open every
  * CLI command already performs, then reopen readonly through the full hardened
  * binding path.
@@ -265,7 +258,7 @@ export function openDegradedReadonlyDb(target?: string | ProjectDatabaseBinding)
 /**
  * Open the repo's shared `.genie/genie.db` WRITE-CAPABLE through the standard
  * hardened CLI path, degrading to the readonly healing open when the write is
- * impossible. This is the open `genie mcp` injects into the shared loop.
+ * impossible. Retained for its hardened open/degrade contract tests.
  *
  * 1. WRITE PATH — revalidate the exact `resolveProjectDatabaseBinding` binding
  *    (Decision 4: writes into a substituted/symlinked db are strictly worse

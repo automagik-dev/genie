@@ -2922,7 +2922,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     };
   }
 
-  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+  test('selection auto converges Hermes skills without recreating the retired MCP route', () => {
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
@@ -2934,8 +2934,8 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
 
     const configPath = join(hermesHome, 'config.yaml');
     const text = readFileSync(configPath, 'utf8');
-    expect(text).toContain('mcp_servers:');
-    expect(text).toContain(genieBin);
+    expect(text).not.toContain('mcp_servers:');
+    expect(text).not.toContain(genieBin);
     expect(text).toContain('skills:');
     expect(text).toContain('external_dirs:');
     expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));

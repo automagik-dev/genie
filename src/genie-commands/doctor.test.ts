@@ -1522,10 +1522,10 @@ describe('checkAgentSync', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Textual duplicate-key detection (DF-1): the mcp/skills legs must WARN when
+  // Textual duplicate-key detection (DF-1): the retired-route/skills legs must WARN when
   // a spec-invalid duplicate child key is present under mcp_servers:/skills: —
-  // even when the last-wins PARSED value looks perfectly healthy, since that
-  // is exactly what let the duplicate persist forever before the repair.
+  // even when the parser accepts the last value, since duplicate legacy keys
+  // are still stale retirement residue.
   // -------------------------------------------------------------------------
 
   const dupMcpConfig = (command: string) =>
@@ -1533,18 +1533,11 @@ describe('checkAgentSync', () => {
   const dupSkillsConfig = (dir: string) =>
     `skills:\n  external_dirs: []\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
 
-  test('hermes mcp leg: textual duplicate genie key → warn naming the config path, even though the parsed value is healthy', () => {
+  test('hermes mcp leg: duplicate retired genie keys warn and name the config path', () => {
     presentHermes();
     const bin = presentGenieBinary();
     writeHermesConfig(dupMcpConfig(bin));
 
-    // The parsed (last-wins) value looks completely correct...
-    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
-      mcp_servers: { genie: { command: string } };
-    };
-    expect(parsed.mcp_servers.genie.command).toBe(bin);
-
-    // ...but doctor must still flag the textual duplicate.
     const mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
     expect(mcp?.detail).toContain('duplicate');

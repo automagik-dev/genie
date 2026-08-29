@@ -2,10 +2,9 @@
  * mcp-tools — the fail-closed project-context resolver (Group A) and the
  * read-only tool projections it guards.
  *
- * The resolver is re-exported from mcp-tools.ts on purpose: `genie mcp` pulls it
- * through the SAME lazy dynamic import that loads the tool registry, so the read
- * server can refuse to serialize an outer/cache-root empty board without dragging
- * the readonly bun:sqlite open into the eager genie.ts import graph.
+ * The resolver remains re-exported from mcp-tools.ts for the read-only bridge
+ * adapter, which can refuse to serialize an outer/cache-root empty board without
+ * dragging the readonly bun:sqlite open into the eager genie.ts import graph.
  *
  * Every fixture is a real git repo in a tmpdir (per repo convention) so the four
  * production values — effectiveLaunchCwd, worktreeConfigRoot, absolute
@@ -607,7 +606,7 @@ function poisonShmHeader(): Buffer {
 
 // ============================================================================
 // openWriteableDb — hardened write path + read-only-degrade fallback (Group 1
-// of wish mcp-write-tools: `genie mcp` now serves against a WRITABLE handle)
+// retained from the historical mcp-write-tools contract)
 // ============================================================================
 
 describe('openWriteableDb', () => {
@@ -855,82 +854,27 @@ describe('openWriteableDb', () => {
 // MCP_WRITE_TOOLS — the 12 operative write tools (Group 2)
 // ============================================================================
 //
-// Every verb is driven through the same in-process registry `genie mcp`
-// serves, then its observable db effect is read back via `task-state.ts`
-// queries — the parity assertion that each write equals its CLI counterpart.
+// Every verb is driven through the retired registry in-process, then its
+// observable db effect is read back via `task-state.ts` queries. Standalone
+// cross-process behavior is anchored separately through the supported task CLI.
 
-interface RpcResponse {
-  jsonrpc: '2.0';
-  id: number | string | null;
-  result?: { isError?: boolean; content?: Array<{ type: string; text: string }> };
-  error?: { code: number; message: string };
-}
-
-/** One spawned `genie mcp` run: its responses plus the evidence for missing ones. */
-interface McpServerRun {
-  responses: RpcResponse[];
-  /** stdout lines that were not parseable JSON — what a child killed mid-write leaves. */
-  unparsedStdout: string[];
+interface TaskCliRun {
+  stdout: string;
   stderr: string;
-  exitCode: number | null;
-  /** Set when the OS killed the child; SIGBUS/SIGSEGV escape every JS handler. */
-  signal: string | null;
+  exitCode: number;
 }
 
-/** Spawn a real `genie mcp` server subprocess (as an MCP client would). */
-async function spawnMcpServer(cwd: string, requests: Record<string, unknown>[]): Promise<McpServerRun> {
-  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', '..', 'genie.ts'), 'mcp'], {
+/** Spawn one supported standalone `genie task` command. */
+async function spawnTaskCli(cwd: string, args: string[]): Promise<TaskCliRun> {
+  const proc = Bun.spawn(['bun', join(import.meta.dir, '..', '..', 'genie.ts'), 'task', ...args], {
     cwd,
-    stdin: 'pipe',
     stdout: 'pipe',
     stderr: 'pipe',
     env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
   });
-  proc.stdin.write(`${requests.map((r) => JSON.stringify(r)).join('\n')}\n`);
-  await proc.stdin.end();
-  // Drain both pipes concurrently: a child that fills stderr while we block on
-  // stdout would wedge, and stderr is the only record a native death leaves.
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-  await proc.exited;
-  const responses: RpcResponse[] = [];
-  const unparsedStdout: string[] = [];
-  for (const line of stdout.split('\n')) {
-    if (line.trim().length === 0) continue;
-    try {
-      responses.push(JSON.parse(line) as RpcResponse);
-    } catch {
-      unparsedStdout.push(line);
-    }
-  }
-  return { responses, unparsedStdout, stderr, exitCode: proc.exitCode, signal: proc.signalCode };
+  return { stdout, stderr, exitCode: await proc.exited };
 }
-
-/**
- * The response for `id`, or a failure naming what the child actually did. A
- * server the kernel killed exits with stdout unflushed, so a bare
- * `expect(res).toBeDefined()` reports only that the response is missing — never
- * that the process died, with what signal, or what it printed first.
- */
-function mcpResponse(run: McpServerRun, id: number): RpcResponse {
-  const found = run.responses.find((r) => r.id === id);
-  if (found) return found;
-  throw new Error(
-    [
-      `no JSON-RPC response id=${id} (exit=${run.exitCode} signal=${run.signal})`,
-      `  ids seen: ${JSON.stringify(run.responses.map((r) => r.id))}`,
-      `  unparsed stdout: ${JSON.stringify(run.unparsedStdout)}`,
-      `  stderr: ${run.stderr.trim() || '(empty)'}`,
-    ].join('\n'),
-  );
-}
-
-const MCP_INIT = {
-  jsonrpc: '2.0',
-  id: 1,
-  method: 'initialize',
-  params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '0' } },
-};
-const MCP_INITIALIZED = { jsonrpc: '2.0', method: 'notifications/initialized' };
 
 describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
   let repo: string;
@@ -1329,7 +1273,7 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     }
   });
 
-  test('cross-process claim contention: two spawned servers — exactly one winner, loser gets typed claim_conflict', async () => {
+  test('cross-process claim contention through standalone task CLI: exactly one winner and one conflict', async () => {
     const race = initRepo(join(base, 'race-repo'));
     const seed = openDb({ cwd: race });
     createBoard(seed, 'repo');
@@ -1337,34 +1281,18 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     seed.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     seed.close();
 
-    const drive = (worker: string) =>
-      spawnMcpServer(race, [
-        MCP_INIT,
-        MCP_INITIALIZED,
-        {
-          jsonrpc: '2.0',
-          id: 2,
-          method: 'tools/call',
-          params: { name: 'genie_task_checkout', arguments: { id: task.id, worker } },
-        },
-      ]);
+    const drive = (worker: string) => spawnTaskCli(race, ['checkout', task.id, '--worker', worker]);
 
     const [a, b] = await Promise.all([drive('w1'), drive('w2')]);
-    // Accessors, not `toBeDefined()`: a missing response must report the child's
-    // exit status, signal and stderr, not just its own absence.
-    const aRes = mcpResponse(a, 2);
-    const bRes = mcpResponse(b, 2);
-    expect(aRes.error).toBeUndefined(); // no JSON-RPC error, no -32603
-    expect(bRes.error).toBeUndefined();
-    const outcomes = [aRes, bRes];
-    const winners = outcomes.filter((r) => r.result?.isError === false);
-    const losers = outcomes.filter((r) => r.result?.isError === true);
+    const outcomes = [a, b];
+    const winners = outcomes.filter((run) => run.exitCode === 0);
+    const losers = outcomes.filter((run) => run.exitCode === 1);
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
-    const loserPayload = JSON.parse((losers[0].result?.content as Array<{ type: string; text: string }>)[0].text) as {
-      error: string;
-    };
-    expect(loserPayload.error).toBe('claim_conflict');
+    expect(winners[0].stdout).toContain('in_progress');
+    expect(winners[0].stderr).toBe('');
+    expect(losers[0].stdout).toBe('');
+    expect(losers[0].stderr).toContain('not claimable');
     const check = openDb({ cwd: race });
     try {
       const claimedBy = getTask(check, task.id)?.claimedBy ?? null;
@@ -1373,7 +1301,7 @@ describe('MCP_WRITE_TOOLS — the 12 operative write tools', () => {
     } finally {
       check.close();
     }
-  }, 30_000); // two cold `bun src/genie.ts mcp` boots race here; loaded CI runners exceed the 5s default
+  }, 30_000); // two cold standalone CLI boots race here; loaded CI runners exceed the 5s default
 });
 
 function callOn(ctx: ToolContext, name: string, args: Record<string, unknown>): unknown {
