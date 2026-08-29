@@ -5,6 +5,7 @@ import {
   OrcaAdapterError,
   type OrcaOperation,
   type OrcaProcessExecutor,
+  __orcaAdapterTestOnly,
   buildOrcaOrchestrationArgv,
   createOrcaOrchestrationAdapter,
   resolveOrcaExecutable,
@@ -167,22 +168,18 @@ describe('closed Orca orchestration argv grammar', () => {
 
 describe('runtime and executor boundary', () => {
   test('resolves one deterministic executable without fallback', () => {
-    expect(resolveOrcaExecutable({ platform: 'win32', env: {} })).toBe('orca.exe');
-    expect(resolveOrcaExecutable({ platform: 'darwin', env: {} })).toBe('orca');
-    expect(resolveOrcaExecutable({ platform: 'linux', env: {}, managedTerminal: false })).toBe('orca-ide');
-    expect(resolveOrcaExecutable({ platform: 'linux', env: {}, managedTerminal: true })).toBe('orca');
-    expect(resolveOrcaExecutable({ platform: 'linux', env: { ORCA_CLI_COMMAND: '/opt/orca/bin/orca' } })).toBe(
-      '/opt/orca/bin/orca',
-    );
-    expect(() => resolveOrcaExecutable({ platform: 'linux', env: { ORCA_CLI_COMMAND: 'wrapper --flag' } })).toThrow(
-      OrcaAdapterError,
+    expect(resolveOrcaExecutable({ platform: 'win32' })).toBe('orca.exe');
+    expect(resolveOrcaExecutable({ platform: 'darwin' })).toBe('orca');
+    expect(resolveOrcaExecutable({ platform: 'linux', managedTerminal: false })).toBe('orca-ide');
+    expect(resolveOrcaExecutable({ platform: 'linux', managedTerminal: true })).toBe('orca');
+    expect(createOrcaOrchestrationAdapter().executable).toBe(
+      resolveOrcaExecutable({ managedTerminal: process.env.TERM_PROGRAM === 'Orca' }),
     );
   });
 
   test('does not spawn on invalid input and owns all process controls', async () => {
     const requests: Parameters<OrcaProcessExecutor>[0][] = [];
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       env: { SAFE: 'yes' },
       executor: async (request) => {
         requests.push(request);
@@ -194,7 +191,7 @@ describe('runtime and executor boundary', () => {
     await adapter.execute({ operation: 'run-list' });
     expect(requests).toEqual([
       {
-        executable: 'orca-test',
+        executable: 'orca-ide',
         argv: ['orchestration', 'run-list', '--json'],
         shell: false,
         timeoutMs: 30_000,
@@ -207,8 +204,7 @@ describe('runtime and executor boundary', () => {
 
   test('requires one strict success envelope', async () => {
     for (const stdout of ['', '{}', '{"id":"x","ok":true}', '{"id":"x","ok":true,"result":{},"extra":1}', '{}\n{}']) {
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async () => ({ exitCode: 0, stdout, stderr: '' }),
       });
       await expect(adapter.execute({ operation: 'run-list' })).rejects.toBeInstanceOf(OrcaAdapterError);
@@ -216,8 +212,7 @@ describe('runtime and executor boundary', () => {
   });
 
   test('classifies an acknowledgement timeout as unrecoverably ambiguous', async () => {
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       executor: async () => ({ exitCode: null, stdout: '', stderr: '', timedOut: true }),
     });
     try {
@@ -232,8 +227,7 @@ describe('runtime and executor boundary', () => {
 
   test('classifies every mutation timeout as ambiguous and does not retry', async () => {
     let calls = 0;
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       executor: async () => {
         calls += 1;
         return { exitCode: null, stdout: '', stderr: '', timedOut: true };
@@ -250,13 +244,9 @@ describe('runtime and executor boundary', () => {
   });
 
   test('rejects verb-specific malformed and identifier-free mutation JSON without retry', async () => {
-    for (const [stdout, code] of [
-      ['not-json', 'malformed_json'],
-      ['{"id":"request_a","ok":true,"result":{"released":true}}', 'missing_receipt'],
-    ] as const) {
+    for (const stdout of ['not-json', '{"id":"request_a","ok":true,"result":{"released":true}}']) {
       let calls = 0;
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async () => {
           calls += 1;
           return { exitCode: 0, stdout, stderr: '' };
@@ -267,8 +257,8 @@ describe('runtime and executor boundary', () => {
         throw new Error('expected failure');
       } catch (error) {
         expect(error).toBeInstanceOf(OrcaAdapterError);
-        expect((error as OrcaAdapterError).code).toBe(code);
-        expect((error as OrcaAdapterError).retrySafety).toBe('readback-required');
+        expect((error as OrcaAdapterError).code).toBe('ambiguous_after_possible_commit');
+        expect((error as OrcaAdapterError).retrySafety).toBe('unrecoverably-ambiguous');
       }
       expect(calls).toBe(1);
     }
@@ -277,8 +267,7 @@ describe('runtime and executor boundary', () => {
   test('normalizes run-use identifiers, runtime metadata, timestamps, and run-current proof', async () => {
     const requests: string[][] = [];
     const instants = [new Date('2026-08-29T00:00:00.000Z'), new Date('2026-08-29T00:00:01.000Z')];
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       now: () => instants.shift() as Date,
       executor: async (request) => {
         requests.push([...request.argv]);
@@ -314,8 +303,7 @@ describe('runtime and executor boundary', () => {
   test('verifies gate task context and worker release through their required public readbacks', async () => {
     const run = async (input: OrcaOperation, results: Record<string, object>) => {
       const verbs: string[] = [];
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async (request) => {
           const verb = request.argv[1] as string;
           verbs.push(verb);
@@ -361,8 +349,7 @@ describe('runtime and executor boundary', () => {
 
   test('fails on readback disagreement and never retries either call', async () => {
     const verbs: string[] = [];
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       executor: async (request) => {
         const verb = request.argv[1] as string;
         verbs.push(verb);
@@ -398,8 +385,7 @@ describe('runtime and executor boundary', () => {
       { operation: 'check', ack: 'delivery_a' },
     ] satisfies OrcaOperation[]) {
       let calls = 0;
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async (request) => {
           calls += 1;
           const result =
@@ -431,8 +417,7 @@ describe('runtime and executor boundary', () => {
       '{"id":"request_a","ok":true,"result":{"nested":{"runId":"run_a"}}}',
     ]) {
       let calls = 0;
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async () => {
           calls += 1;
           return { exitCode: 0, stdout, stderr: '' };
@@ -446,8 +431,7 @@ describe('runtime and executor boundary', () => {
   });
 
   test('requires exact acknowledgement state and runtime-attested terminal binding', async () => {
-    const ack = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const ack = __orcaAdapterTestOnly.createAdapter({
       executor: async () => ({
         exitCode: 0,
         stdout:
@@ -456,11 +440,10 @@ describe('runtime and executor boundary', () => {
       }),
     });
     await expect(ack.execute({ operation: 'check', ack: 'delivery_a' })).rejects.toMatchObject({
-      code: 'missing_receipt',
+      code: 'ambiguous_after_possible_commit',
     });
 
-    const terminal = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const terminal = __orcaAdapterTestOnly.createAdapter({
       executor: async () => ({
         exitCode: 0,
         stdout: JSON.stringify({
@@ -479,8 +462,7 @@ describe('runtime and executor boundary', () => {
 
   test('accepts the public retained worker disposition', async () => {
     const verbs: string[] = [];
-    const adapter = createOrcaOrchestrationAdapter({
-      executable: 'orca-test',
+    const adapter = __orcaAdapterTestOnly.createAdapter({
       executor: async (request) => {
         const verb = request.argv[1] as string;
         verbs.push(verb);
@@ -510,8 +492,7 @@ describe('runtime and executor boundary', () => {
       { exitCode: null, stdout: '', stderr: '', transportLost: true },
     ]) {
       let calls = 0;
-      const adapter = createOrcaOrchestrationAdapter({
-        executable: 'orca-test',
+      const adapter = __orcaAdapterTestOnly.createAdapter({
         executor: async () => {
           calls += 1;
           return result;
@@ -522,6 +503,169 @@ describe('runtime and executor boundary', () => {
         retrySafety: 'unrecoverably-ambiguous',
       });
       expect(calls).toBe(1);
+    }
+  });
+
+  test('classifies every verb failure by whether the invocation could mutate', async () => {
+    const mutation = new Set([
+      'run-create',
+      'run-use',
+      'task-create',
+      'task-update',
+      'worker-start',
+      'worker-release',
+      'send',
+      'check',
+      'reply',
+      'ask',
+      'gate-create',
+      'gate-resolve',
+    ]);
+    const failures = [
+      { exitCode: 7, stdout: '', stderr: 'failed' },
+      { exitCode: 0, stdout: 'not-json', stderr: '' },
+      { exitCode: 0, stdout: '{"id":"r","ok":true,"result":{}}', stderr: '' },
+      { exitCode: null, stdout: '', stderr: '', timedOut: true },
+      { exitCode: null, stdout: '', stderr: '', outputLimited: true },
+      {
+        exitCode: 0,
+        stdout: '{"id":"r","ok":false,"error":{"code":"nope","message":"failed"}}',
+        stderr: '',
+      },
+    ];
+    for (const [, input] of cases) {
+      for (const failure of failures) {
+        const adapter = __orcaAdapterTestOnly.createAdapter({ executor: async () => failure });
+        try {
+          await adapter.execute(input);
+          throw new Error('expected adapter failure');
+        } catch (error) {
+          expect(error).toBeInstanceOf(OrcaAdapterError);
+          if (mutation.has(input.operation)) {
+            expect((error as OrcaAdapterError).code).toBe('ambiguous_after_possible_commit');
+            expect((error as OrcaAdapterError).retrySafety).toBe('unrecoverably-ambiguous');
+          } else {
+            expect((error as OrcaAdapterError).retrySafety).toBe('safe');
+          }
+        }
+      }
+    }
+  });
+
+  test('treats executor rejection as safe pre-spawn executable unavailability', async () => {
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    await expect(adapter.execute({ operation: 'send', subject: 'once' })).rejects.toMatchObject({
+      code: 'executable_unavailable',
+      phase: 'resolve',
+      retrySafety: 'safe',
+    });
+  });
+
+  test('bounds timeout termination through the kill escalation path', async () => {
+    const started = Date.now();
+    const result = await __orcaAdapterTestOnly.spawnOrcaProcess({
+      executable: process.execPath,
+      argv: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      shell: false,
+      timeoutMs: 20,
+      maxStdoutBytes: MAX_ORCA_STDOUT_BYTES,
+      maxStderrBytes: MAX_ORCA_STDERR_BYTES,
+      env: process.env,
+    });
+    expect(result.timedOut).toBeTrue();
+    expect(result.signal).toBe('SIGKILL');
+    expect(Date.now() - started).toBeLessThan(2500);
+  });
+
+  test('redacts secrets and request values, strips controls, and truncates stderr', async () => {
+    const secret = 'super-secret-token';
+    const body = 'private request body';
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      env: { API_TOKEN: secret },
+      executor: async () => ({
+        exitCode: 2,
+        stdout: '',
+        stderr: `${'x'.repeat(5000)}\u0001 ${secret} ${body}`,
+      }),
+    });
+    try {
+      await adapter.execute({ operation: 'send', subject: 'subject', body });
+      throw new Error('expected failure');
+    } catch (error) {
+      const stderr = (error as OrcaAdapterError).stderr ?? '';
+      expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(4096);
+      expect(stderr).not.toContain(secret);
+      expect(stderr).not.toContain(body);
+      expect(stderr).not.toContain('\u0001');
+      expect(stderr).toContain('[REDACTED]');
+    }
+  });
+
+  test('rejects non-finite ask states and mixed success/error envelopes', async () => {
+    for (const stdout of [
+      '{"id":"r","ok":true,"result":{"messageId":"message_a","state":"pending","answer":"no"},"_meta":{"runtimeId":"runtime_a","runtimeVersion":"1"}}',
+      '{"id":"r","ok":true,"result":{"messageId":"message_a","state":"answered"},"_meta":{"runtimeId":"runtime_a","runtimeVersion":"1"}}',
+      '{"id":"r","ok":true,"result":{"messageId":"message_a","state":"other"},"_meta":{"runtimeId":"runtime_a","runtimeVersion":"1"}}',
+      '{"id":"r","ok":false,"result":{},"error":{"code":"x","message":"x"}}',
+      '{"id":"r","ok":false,"error":{"code":"x","message":"x","extra":true}}',
+    ]) {
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({ exitCode: 0, stdout, stderr: '' }),
+      });
+      await expect(adapter.execute({ operation: 'ask', question: 'q' })).rejects.toMatchObject({
+        code: 'ambiguous_after_possible_commit',
+      });
+    }
+  });
+
+  test('rejects mismatched receipt identities and duplicate readback rows', async () => {
+    const scenarios: Array<{ input: OrcaOperation; mutationResult: object; readResult?: object }> = [
+      {
+        input: { operation: 'task-update', id: 'task_a', status: 'completed' },
+        mutationResult: { taskId: 'task_other' },
+      },
+      {
+        input: { operation: 'worker-start', task: 'task_a', agent: 'codex' },
+        mutationResult: { dispatchId: 'dispatch_a', taskId: 'task_other' },
+      },
+      {
+        input: { operation: 'gate-create', task: 'task_a', question: 'q' },
+        mutationResult: { gateId: 'gate_a', taskId: 'task_other' },
+      },
+      {
+        input: { operation: 'reply', id: 'message_a', body: 'yes' },
+        mutationResult: { messageId: 'message_other' },
+      },
+      {
+        input: { operation: 'task-create', spec: 'spec' },
+        mutationResult: { taskId: 'task_a' },
+        readResult: {
+          tasks: [
+            { id: 'task_a', spec: 'spec', status: 'ready' },
+            { id: 'task_a', spec: 'spec', status: 'ready' },
+          ],
+        },
+      },
+    ];
+    for (const scenario of scenarios) {
+      let call = 0;
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: true,
+            result: call++ === 0 ? scenario.mutationResult : scenario.readResult,
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1' },
+          }),
+          stderr: '',
+        }),
+      });
+      await expect(adapter.execute(scenario.input)).rejects.toMatchObject({ code: 'readback_mismatch' });
     }
   });
 });

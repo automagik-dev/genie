@@ -343,36 +343,13 @@ function buildArguments(operation: ValidatedOrcaOperation): string[] {
   }
 }
 
-const executableToken = z
-  .string()
-  .min(1)
-  .max(1024)
-  .refine((value) => !/[\s;&|`$<>\r\n\0]/.test(value))
-  .refine((value) => !value.includes('..'));
-
 export function resolveOrcaExecutable(
   options: {
     platform?: NodeJS.Platform;
-    env?: Readonly<Record<string, string | undefined>>;
     managedTerminal?: boolean;
   } = {},
 ): string {
   const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-  if (env.ORCA_CLI_COMMAND !== undefined) {
-    const parsed = executableToken.safeParse(env.ORCA_CLI_COMMAND);
-    if (!parsed.success) {
-      throw new OrcaAdapterError(
-        'unsupported_environment',
-        'runtime',
-        'resolve',
-        'safe',
-        'Provide ORCA_CLI_COMMAND as one executable token without flags.',
-        'ORCA_CLI_COMMAND is not a safe executable token',
-      );
-    }
-    return parsed.data;
-  }
   if (platform === 'win32') return 'orca.exe';
   if (platform === 'darwin') return 'orca';
   if (platform === 'linux') return options.managedTerminal === true ? 'orca' : 'orca-ide';
@@ -412,8 +389,9 @@ export const DEFAULT_ORCA_TIMEOUT_MS = 30_000;
 export const MAX_ORCA_STDOUT_BYTES = 1_048_576;
 export const MAX_ORCA_STDERR_BYTES = 65_536;
 const ORCA_KILL_GRACE_MS = 1_000;
+const ORCA_CLOSE_GRACE_MS = 1_000;
 
-export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
+const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
   new Promise((resolve, reject) => {
     const child = spawn(request.executable, [...request.argv], {
       shell: request.shell,
@@ -428,10 +406,35 @@ export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
     let settled = false;
     let timedOut = false;
     let outputLimited = false;
+    let spawned = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (result: OrcaProcessResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      if (closeTimer !== undefined) clearTimeout(closeTimer);
+      resolve(result);
+    };
     const stop = () => {
       child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => child.kill('SIGKILL'), ORCA_KILL_GRACE_MS);
+      killTimer ??= setTimeout(() => {
+        child.kill('SIGKILL');
+        closeTimer ??= setTimeout(
+          () =>
+            finish({
+              exitCode: null,
+              signal: 'SIGKILL',
+              stdout: Buffer.concat(stdout).toString('utf8'),
+              stderr: Buffer.concat(stderr).toString('utf8'),
+              timedOut,
+              outputLimited,
+              transportLost: true,
+            }),
+          ORCA_CLOSE_GRACE_MS,
+        );
+      }, ORCA_KILL_GRACE_MS);
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -451,19 +454,31 @@ export const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
         stop();
       } else stderr.push(chunk);
     });
+    child.once('spawn', () => {
+      spawned = true;
+    });
     child.once('error', (error) => {
       if (settled) return;
+      if (spawned) {
+        finish({
+          exitCode: null,
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: `${Buffer.concat(stderr).toString('utf8')}\nprocess transport error: ${error.message}`,
+          timedOut,
+          outputLimited,
+          transportLost: true,
+        });
+        return;
+      }
       settled = true;
       clearTimeout(timer);
       if (killTimer !== undefined) clearTimeout(killTimer);
+      if (closeTimer !== undefined) clearTimeout(closeTimer);
       reject(error);
     });
     child.once('close', (exitCode, signal) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (killTimer !== undefined) clearTimeout(killTimer);
-      resolve({
+      finish({
         exitCode,
         signal,
         stdout: Buffer.concat(stdout).toString('utf8'),
@@ -504,7 +519,10 @@ const gateEntity = receipt({
   resolution: longText.optional(),
 });
 const messageReceipt = receipt({ messageId: id });
-const askReceipt = receipt({ messageId: id, state: z.enum(['answered', 'pending']), answer: longText.optional() });
+const askReceipt = z.union([
+  receipt({ messageId: id, state: z.literal('answered'), answer: longText }),
+  receipt({ messageId: id, state: z.literal('pending') }),
+]);
 const checkResult = receipt({
   deliveryId: id.optional(),
   acknowledged: z.boolean().optional(),
@@ -543,7 +561,7 @@ const envelopeSchema = z
     result: z.unknown().optional(),
     error: z
       .object({ code: z.string().min(1).max(128), message: z.string().min(1).max(4096) })
-      .passthrough()
+      .strict()
       .optional(),
     _meta: z
       .object({
@@ -556,7 +574,11 @@ const envelopeSchema = z
       .optional(),
   })
   .strict()
-  .refine((value) => (value.ok ? value.result !== undefined && value.error === undefined : value.error !== undefined));
+  .refine((value) =>
+    value.ok
+      ? value.result !== undefined && value.error === undefined
+      : value.result === undefined && value.error !== undefined,
+  );
 
 export type OrcaJsonEnvelope = z.infer<typeof envelopeSchema>;
 
@@ -572,30 +594,44 @@ export interface OrcaMutationReceipt {
 
 export type OrcaAdapterResponse = OrcaJsonEnvelope & { readonly receipt?: OrcaMutationReceipt };
 
-function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string): OrcaJsonEnvelope {
-  const mutation = mutationVerbs.has(operation);
+function ambiguousMutationError(
+  operation: OrcaOrchestrationVerb,
+  phase: 'execute' | 'decode' | 'receipt',
+  message: string,
+): OrcaAdapterError {
+  return new OrcaAdapterError(
+    'ambiguous_after_possible_commit',
+    operation,
+    phase,
+    'unrecoverably-ambiguous',
+    'Do not retry automatically; inspect the documented public read operation before choosing another mutation.',
+    message,
+  );
+}
+
+function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string, mutation: boolean): OrcaJsonEnvelope {
   let decoded: unknown;
   try {
     decoded = parseJsonRejectingDuplicateKeys(stdout);
   } catch {
+    if (mutation) throw ambiguousMutationError(operation, 'decode', 'stdout was not one JSON document');
     throw new OrcaAdapterError(
       'malformed_json',
       operation,
       'decode',
-      mutation ? 'readback-required' : 'safe',
-      mutation
-        ? 'Inspect state with the documented public read operation; do not retry the mutation automatically.'
-        : 'Inspect Orca health and retry this read-only operation when safe.',
+      'safe',
+      'Inspect Orca health and retry this read-only operation when safe.',
       'stdout was not one JSON document',
     );
   }
   const parsed = envelopeSchema.safeParse(decoded);
   if (!parsed.success) {
+    if (mutation) throw ambiguousMutationError(operation, 'decode', 'stdout did not match the Orca envelope contract');
     throw new OrcaAdapterError(
       'unexpected_response',
       operation,
       'decode',
-      mutation ? 'readback-required' : 'safe',
+      'safe',
       'Use a compatible Orca CLI version.',
       'stdout did not match the Orca envelope contract',
     );
@@ -603,11 +639,17 @@ function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string): OrcaJs
   if (parsed.data.ok) {
     const result = responseSchemas[operation].safeParse(parsed.data.result);
     if (!result.success) {
+      if (mutation)
+        throw ambiguousMutationError(
+          operation,
+          'receipt',
+          `success result did not match the finite ${operation} response contract`,
+        );
       throw new OrcaAdapterError(
-        mutationVerbs.has(operation) ? 'missing_receipt' : 'unexpected_response',
+        'unexpected_response',
         operation,
-        mutationVerbs.has(operation) ? 'receipt' : 'decode',
-        mutationVerbs.has(operation) ? 'readback-required' : 'safe',
+        'decode',
+        'safe',
         'Use a compatible Orca CLI version and inspect the public operation result.',
         `success result did not match the finite ${operation} response contract`,
       );
@@ -650,11 +692,11 @@ function parseJsonRejectingDuplicateKeys(text: string): unknown {
   return JSON.parse(text);
 }
 
-export interface OrcaAdapterOptions {
+interface OrcaAdapterTestOptions {
   executor?: OrcaProcessExecutor;
-  executable?: string;
   env?: Readonly<Record<string, string | undefined>>;
   managedTerminal?: boolean;
+  platform?: NodeJS.Platform;
   timeoutMs?: number;
   now?: () => Date;
 }
@@ -734,17 +776,13 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
       matches: (readback) => {
         if (mutation.gateId !== operation.id || mutation.taskId !== operation.task) return false;
         const gates = recordOf(readback).gates;
+        if (!Array.isArray(gates)) return false;
+        const matching = gates.map(recordOf).filter((gate) => gate.id === operation.id);
         return (
-          Array.isArray(gates) &&
-          gates.some((value) => {
-            const gate = recordOf(value);
-            return (
-              gate.id === operation.id &&
-              gate.taskId === operation.task &&
-              gate.status === 'resolved' &&
-              gate.resolution === operation.resolution
-            );
-          })
+          matching.length === 1 &&
+          matching[0].taskId === operation.task &&
+          matching[0].status === 'resolved' &&
+          matching[0].resolution === operation.resolution
         );
       },
     };
@@ -774,14 +812,17 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
     };
   }
   if (operation.operation === 'task-create' || operation.operation === 'task-update') {
-    const taskId = operation.operation === 'task-create' ? recordOf(result).taskId : operation.id;
+    const mutation = recordOf(result);
+    const taskId = operation.operation === 'task-create' ? mutation.taskId : operation.id;
     return {
       operation: { operation: 'task-list' },
       matches: (readback) => {
+        if (mutation.taskId !== taskId) return false;
         const tasks = recordOf(readback).tasks;
         if (!Array.isArray(tasks)) return false;
-        const task = tasks.map(recordOf).find((candidate) => candidate.id === taskId);
-        if (task === undefined) return false;
+        const matching = tasks.map(recordOf).filter((candidate) => candidate.id === taskId);
+        if (matching.length !== 1) return false;
+        const task = matching[0];
         return operation.operation === 'task-create'
           ? task.spec === operation.spec &&
               task.title === operation.title &&
@@ -792,12 +833,14 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
     };
   }
   if (operation.operation === 'worker-start') {
-    const dispatchId = recordOf(result).dispatchId;
+    const mutation = recordOf(result);
+    const dispatchId = mutation.dispatchId;
     return {
       operation: { operation: 'worker-show', dispatch: String(dispatchId) },
       matches: (readback) => {
         const worker = recordOf(recordOf(readback).dispatch);
         return (
+          mutation.taskId === operation.task &&
           worker.id === dispatchId &&
           worker.taskId === operation.task &&
           worker.agent === operation.agent &&
@@ -808,13 +851,17 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
     };
   }
   if (operation.operation === 'gate-create') {
-    const gateId = recordOf(result).gateId;
+    const mutation = recordOf(result);
+    const gateId = mutation.gateId;
     return {
       operation: { operation: 'gate-list', task: operation.task },
       matches: (readback) => {
         const gates = recordOf(readback).gates;
         if (!Array.isArray(gates)) return false;
-        const gate = gates.map(recordOf).find((candidate) => candidate.id === gateId);
+        if (mutation.taskId !== operation.task) return false;
+        const matching = gates.map(recordOf).filter((candidate) => candidate.id === gateId);
+        if (matching.length !== 1) return false;
+        const gate = matching[0];
         return (
           gate?.taskId === operation.task &&
           gate.question === operation.question &&
@@ -834,32 +881,36 @@ function processFailure(
   const acknowledgement = hasAcknowledgement(operation, input);
   const mutation = mutationVerbs.has(operation) || acknowledgement;
   if (result.outputLimited || result.transportLost) {
-    return new OrcaAdapterError(
-      mutation ? 'ambiguous_after_possible_commit' : result.outputLimited ? 'output_limit' : 'process_exit',
+    if (mutation)
+      return ambiguousMutationError(
+        operation,
+        'execute',
+        result.outputLimited
+          ? 'Orca output exceeded the adapter limit'
+          : 'Orca transport closed before a valid response',
+      );
+    return safeProcessError(
       operation,
-      'execute',
-      mutation ? 'unrecoverably-ambiguous' : 'safe',
-      mutation
-        ? 'Do not retry automatically; inspect the documented public read before choosing another mutation.'
-        : 'Retry the read-only operation when Orca is healthy.',
+      result.outputLimited ? 'output_limit' : 'process_exit',
       result.outputLimited ? 'Orca output exceeded the adapter limit' : 'Orca transport closed before a valid response',
     );
   }
   if (result.timedOut) {
-    return new OrcaAdapterError(
-      mutation ? 'ambiguous_after_possible_commit' : 'timeout',
-      operation,
-      'execute',
-      mutation ? 'unrecoverably-ambiguous' : 'safe',
-      mutation
-        ? acknowledgement
-          ? 'Do not acknowledge again automatically; only external confirmation can establish whether it committed.'
-          : 'Do not retry automatically; use the documented public readback before choosing another mutation.'
-        : 'Retry the read-only operation when Orca is healthy.',
-      'Orca did not finish before the deadline',
-    );
+    return mutation
+      ? ambiguousMutationError(operation, 'execute', 'Orca did not finish before the deadline')
+      : safeProcessError(operation, 'timeout', 'Orca did not finish before the deadline');
   }
   if (result.exitCode !== 0) {
+    if (mutation)
+      return new OrcaAdapterError(
+        'ambiguous_after_possible_commit',
+        operation,
+        'execute',
+        'unrecoverably-ambiguous',
+        'Do not retry automatically; inspect the documented public read operation before choosing another mutation.',
+        `Orca exited with status ${result.exitCode ?? 'signal'}`,
+        result.stderr,
+      );
     return new OrcaAdapterError(
       'process_exit',
       operation,
@@ -873,11 +924,27 @@ function processFailure(
   return undefined;
 }
 
-export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {}): OrcaOrchestrationAdapter {
+function safeProcessError(
+  operation: OrcaOrchestrationVerb,
+  code: 'timeout' | 'output_limit' | 'process_exit',
+  message: string,
+): OrcaAdapterError {
+  return new OrcaAdapterError(
+    code,
+    operation,
+    'execute',
+    'safe',
+    'Retry the read-only operation when Orca is healthy.',
+    message,
+  );
+}
+
+function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationAdapter {
   const env = Object.freeze({ ...(options.env ?? process.env) });
-  const executable =
-    options.executable ??
-    resolveOrcaExecutable({ env, managedTerminal: options.managedTerminal ?? env.TERM_PROGRAM === 'Orca' });
+  const executable = resolveOrcaExecutable({
+    platform: options.platform,
+    managedTerminal: options.managedTerminal ?? env.TERM_PROGRAM === 'Orca',
+  });
   const executor = options.executor ?? spawnOrcaProcess;
   const defaultTimeout = options.timeoutMs ?? DEFAULT_ORCA_TIMEOUT_MS;
   const now = options.now ?? (() => new Date());
@@ -896,25 +963,28 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       });
     } catch (error) {
       throw new OrcaAdapterError(
-        mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation)
-          ? 'ambiguous_after_possible_commit'
-          : 'executable_unavailable',
+        'executable_unavailable',
         operation.operation,
-        'execute',
-        mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation)
-          ? 'unrecoverably-ambiguous'
-          : 'safe',
-        'Verify that the selected Orca executable is available; do not retry a mutation without public state proof.',
+        'resolve',
+        'safe',
+        'Verify that the deterministic Orca executable is installed and available, then retry.',
         error instanceof Error && 'code' in error
           ? `Orca execution failed (${String(error.code)})`
           : 'Orca execution failed',
       );
     }
+    result = { ...result, stderr: sanitizeStderr(result.stderr, operation, env) };
+    const isMutation = mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation);
     const failure = processFailure(operation.operation, operation, result);
     if (failure !== undefined) throw failure;
-    const envelope = parseEnvelope(operation.operation, result.stdout);
+    const envelope = parseEnvelope(operation.operation, result.stdout, isMutation);
     if (!envelope.ok) {
-      const isMutation = mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation);
+      if (isMutation)
+        throw ambiguousMutationError(
+          operation.operation,
+          'decode',
+          envelope.error?.message ?? 'Orca returned an error envelope',
+        );
       throw new OrcaAdapterError(
         'unexpected_response',
         operation.operation,
@@ -939,76 +1009,154 @@ export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {})
       const envelope = await invoke(operation);
       if (!mutationVerbs.has(operation.operation) && !hasAcknowledgement(operation.operation, operation))
         return envelope;
-
-      if (envelope._meta?.runtimeId === undefined || envelope._meta.runtimeVersion === undefined) {
-        throw new OrcaAdapterError(
-          'missing_receipt',
-          operation.operation,
-          'receipt',
-          'readback-required',
-          'Use a compatible Orca CLI version and inspect the documented public state before retrying.',
-          'mutation receipt omitted bounded runtime identity/version metadata',
-        );
-      }
-
-      if (
-        operation.operation === 'check' &&
-        operation.ack !== undefined &&
-        (recordOf(envelope.result).deliveryId !== operation.ack || recordOf(envelope.result).acknowledged !== true)
-      ) {
-        throw new OrcaAdapterError(
-          'missing_receipt',
-          operation.operation,
-          'receipt',
-          'unrecoverably-ambiguous',
-          'Do not acknowledge again automatically; only external confirmation can establish whether it committed.',
-          'check --ack success did not contain its matching delivery identifier',
-        );
-      }
-
-      const plan = readbackPlan(operation, envelope.result);
-      if (operation.operation === 'run-use') {
-        const meta = envelope._meta as Record<string, unknown> | undefined;
-        if (recordOf(envelope.result).coordinatorTerminalHandle !== meta?.invokingTerminal) {
-          throw new OrcaAdapterError(
-            'readback_mismatch',
-            operation.operation,
-            'readback',
-            'unsafe',
-            'Inspect orchestration run-current; do not retry run-use automatically.',
-            'run-use terminal binding was not runtime-attested',
-          );
-        }
-      }
-      if (plan !== undefined) {
-        const readback = await invoke(plan.operation);
-        if (!plan.matches(readback.result)) {
-          throw new OrcaAdapterError(
-            'readback_mismatch',
-            operation.operation,
-            'readback',
-            'unsafe',
-            `Inspect state with orchestration ${plan.operation.operation}; do not retry the mutation automatically.`,
-            `${plan.operation.operation} disagreed with the mutation receipt`,
-          );
-        }
-      }
-      const meta = envelope._meta as Record<string, unknown> | undefined;
-      const receipt: OrcaMutationReceipt = Object.freeze({
-        verb: operation.operation,
-        ids: receiptIds(operation.operation, envelope.result),
-        runtimeId: typeof meta?.runtimeId === 'string' ? meta.runtimeId : null,
-        runtimeVersion:
-          typeof meta?.runtimeVersion === 'string'
-            ? meta.runtimeVersion
-            : typeof meta?.version === 'string'
-              ? meta.version
-              : null,
-        startedAt,
-        completedAt: now().toISOString(),
-        readbackVerb: plan?.operation.operation ?? null,
-      });
-      return Object.freeze({ ...envelope, receipt });
+      return finalizeMutation(operation, envelope, startedAt, invoke, now);
     },
   });
 }
+
+async function finalizeMutation(
+  operation: ValidatedOrcaOperation,
+  envelope: OrcaJsonEnvelope,
+  startedAt: string,
+  invoke: (operation: ValidatedOrcaOperation) => Promise<OrcaJsonEnvelope>,
+  now: () => Date,
+): Promise<OrcaAdapterResponse> {
+  validateMutationReceipt(operation, envelope);
+  const plan = readbackPlan(operation, envelope.result);
+  if (plan !== undefined) {
+    const readback = await invoke(plan.operation);
+    if (!plan.matches(readback.result)) {
+      throw new OrcaAdapterError(
+        'readback_mismatch',
+        operation.operation,
+        'readback',
+        'unsafe',
+        `Inspect state with orchestration ${plan.operation.operation}; do not retry the mutation automatically.`,
+        `${plan.operation.operation} disagreed with the mutation receipt`,
+      );
+    }
+  }
+  const meta = envelope._meta as Record<string, unknown>;
+  const receipt: OrcaMutationReceipt = Object.freeze({
+    verb: operation.operation,
+    ids: receiptIds(operation.operation, envelope.result),
+    runtimeId: meta.runtimeId as string,
+    runtimeVersion: meta.runtimeVersion as string,
+    startedAt,
+    completedAt: now().toISOString(),
+    readbackVerb: plan?.operation.operation ?? null,
+  });
+  return Object.freeze({ ...envelope, receipt });
+}
+
+function validateMutationReceipt(operation: ValidatedOrcaOperation, envelope: OrcaJsonEnvelope): void {
+  if (envelope._meta?.runtimeId === undefined || envelope._meta.runtimeVersion === undefined) {
+    throw ambiguousMutationError(
+      operation.operation,
+      'receipt',
+      'mutation receipt omitted bounded runtime identity/version metadata',
+    );
+  }
+  if (!receiptMatchesRequest(operation, envelope.result)) {
+    throw new OrcaAdapterError(
+      'readback_mismatch',
+      operation.operation,
+      'receipt',
+      'unsafe',
+      'Inspect the requested entity with its documented public read operation; do not retry automatically.',
+      'mutation receipt identity disagreed with the requested entity',
+    );
+  }
+  if (
+    operation.operation === 'check' &&
+    operation.ack !== undefined &&
+    recordOf(envelope.result).acknowledged !== true
+  ) {
+    throw ambiguousMutationError(
+      operation.operation,
+      'receipt',
+      'check --ack success did not contain its matching delivery identifier',
+    );
+  }
+  if (
+    operation.operation === 'run-use' &&
+    recordOf(envelope.result).coordinatorTerminalHandle !== envelope._meta.invokingTerminal
+  ) {
+    throw new OrcaAdapterError(
+      'readback_mismatch',
+      operation.operation,
+      'readback',
+      'unsafe',
+      'Inspect orchestration run-current; do not retry run-use automatically.',
+      'run-use terminal binding was not runtime-attested',
+    );
+  }
+}
+
+function receiptMatchesRequest(operation: ValidatedOrcaOperation, result: unknown): boolean {
+  const value = recordOf(result);
+  switch (operation.operation) {
+    case 'run-use':
+      return value.runId === operation.id;
+    case 'task-update':
+      return value.taskId === operation.id;
+    case 'worker-start':
+      return value.taskId === operation.task;
+    case 'worker-release':
+      return value.dispatchId === operation.dispatch;
+    case 'reply':
+      return value.messageId === operation.id;
+    case 'ask':
+      return operation.resume === undefined || value.messageId === operation.resume;
+    case 'check':
+      return operation.ack === undefined || value.deliveryId === operation.ack;
+    case 'gate-create':
+      return value.taskId === operation.task;
+    case 'gate-resolve':
+      return value.gateId === operation.id && value.taskId === operation.task;
+    default:
+      return true;
+  }
+}
+
+function sanitizeStderr(
+  stderr: string,
+  operation: ValidatedOrcaOperation,
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  let safe = [...stderr]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127 && code < 128) || code > 159;
+    })
+    .join('');
+  const requestValues = collectStringValues(operation);
+  const secrets = Object.entries(env)
+    .filter(
+      ([key, value]) => value !== undefined && /(?:TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL|AUTH|COOKIE)/i.test(key),
+    )
+    .map(([, value]) => value as string);
+  for (const value of [...requestValues, ...secrets]
+    .filter((candidate) => candidate.length >= 3)
+    .sort((a, b) => b.length - a.length)) {
+    safe = safe.split(value).join('[REDACTED]');
+  }
+  const bytes = Buffer.from(safe, 'utf8');
+  return bytes.length <= 4096
+    ? safe
+    : Buffer.concat([Buffer.from('[truncated] '), bytes.subarray(bytes.length - 4084)]).toString('utf8');
+}
+
+function collectStringValues(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(collectStringValues);
+  if (typeof value === 'object' && value !== null) return Object.values(value).flatMap(collectStringValues);
+  return [];
+}
+
+export function createOrcaOrchestrationAdapter(): OrcaOrchestrationAdapter {
+  return createAdapter();
+}
+
+/** Test-only dependency seam. Production callers must use createOrcaOrchestrationAdapter. */
+export const __orcaAdapterTestOnly = Object.freeze({ createAdapter, spawnOrcaProcess });
