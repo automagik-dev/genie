@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | DRAFT — amended design pending fresh independent review and digest stamping |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -127,16 +127,21 @@ evidence attach to the final SHA. Release promotion remains separately authorize
 
 ## Execution Groups
 
-### Group A0: Canonical reviewed plan documents
+### Group A0: Canonical plan documents pending fresh review
 
-**Goal:** Make the approved Option-A design and executable plan canonical without operational state changes.
+**Goal:** Make the amended Option-A design and executable plan canonical without operational state changes, then
+obtain fresh independent design review and digest stamping before approval or implementation.
 
 **Deliverables:**
-1. Digest-bound SHIP evidence in DESIGN.md, reconciled DRAFT.md, canonical INDEX entry, and template-derived WISH.md.
-2. Docs-only commit based on immutable design commit `3c17272fc7c9a0f3c85f3feab28f80aec3f5ce06`.
+1. Pending-review candidate DESIGN.md, reconciled DRAFT.md, canonical INDEX entry, and template-derived WISH.md;
+   digest-bound evidence is added only after fresh independent review.
+2. Docs-only commit based on immutable amended-design candidate commit
+   `6854499139aee60c1fdcaaeb057515c7e3d92399`.
 
 **Acceptance Criteria:**
-- [ ] Design evidence verifies against reviewed SHA-256 `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`.
+- [ ] Fresh independent review stamps candidate content SHA-256
+  `a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`; until then, evidence verification is
+  expected to fail and the wish remains DRAFT.
 - [ ] Wish and INDEX linters pass; diff contains only the four canonical planning documents.
 
 **Validation:**
@@ -353,10 +358,15 @@ done
 
 ## Review Results
 
-- **2026-08-29 17:04 UTC — SHIP.** Independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698`
+- **Current amended candidate:** fresh independent design review, digest stamping, and plan review are pending for
+  candidate content SHA-256 `a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`. No current verdict,
+  reviewer identity, or review timestamp is recorded, and implementation remains blocked on that evidence.
+- **Superseded plan-review provenance (not approval for the amended candidate):** on 2026-08-29 at 17:04 UTC,
+  independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698` returned SHIP for the prior plan at
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest
-  `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`.
-- **Durable baseline receipt for the unrelated release-assets timeout:** reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`
+  `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`. The P1 contract correction superseded
+  that evidence; it does not approve or verify the amended design or this current plan.
+- **Historical baseline receipt for the unrelated release-assets timeout:** reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`
   and its baseline parent `3c17272fc7c9a0f3c85f3feab28f80aec3f5ce06` contain the byte-identical
   `scripts/reconcile-release-assets.test.ts` Git blob `698fdc3334cf5271702d621d533f029775c0021c`. The exact focused command
   `bun test scripts/reconcile-release-assets.test.ts` produced **2 fail / 3 pass / exit 1** on both trees: the empty-draft
