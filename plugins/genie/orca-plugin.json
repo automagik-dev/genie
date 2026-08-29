@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 1,
+  "id": "genie",
+  "publisher": "automagik",
+  "name": "Genie",
+  "version": "5.260829.1",
+  "description": "Genie workflows backed by Orca as the sole lifecycle authority.",
+  "author": {
+    "name": "Namastex Labs",
+    "url": "https://github.com/automagik-dev"
+  },
+  "repository": "https://github.com/automagik-dev/genie",
+  "engines": {
+    "orca": ">=1.4.193"
+  },
+  "pluginApi": 1,
+  "main": "orca-entrypoint.min.js",
+  "contributes": {
+    "commands": [
+      {
+        "id": "genie.orca.run-list",
+        "title": "Genie: List Orca Runs"
+      }
+    ]
+  },
+  "capabilities": []
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "genie",
+  "description": "Genie workflows backed by Orca as the sole lifecycle authority.",
+  "author": {
+    "name": "Namastex Labs",
+    "url": "https://github.com/automagik-dev"
+  },
+  "homepage": "https://github.com/automagik-dev/genie",
+  "repository": "https://github.com/automagik-dev/genie",
+  "license": "MIT",
+  "keywords": ["workflow", "orchestration", "orca", "skills", "agents"],
+  "extensions": {
+    "dev.orca.compatibility": {
+      "minimumRuntimeVersion": "1.4.193",
+      "requiredContract": "orchestration.contract.v1",
+      "transport": "public-cli"
+    }
+  }
+}
