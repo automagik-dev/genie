@@ -79,23 +79,54 @@ prefix, argument order, and one final `--json`; callers cannot supply any other 
 | Public verb | Accepted semantic inputs | Exact emitted flags, in order | Post-mutation proof |
 |-------------|--------------------------|-------------------------------|---------------------|
 | `run-create` | `objective` | `--objective <text>` | `run-show --id <receipt.runId>` |
-| `run-list` | `[limit]`, `[cursor]` | `[--limit <positive-int>] [--cursor <opaque>]` | Validated read envelope |
+| `run-list` | `[limit]`, `[cursor]` | `[--limit <limit:1..100>] [--cursor <cursor>]` | Validated read envelope |
 | `run-show` | `id` | `--id <run-id>` | Validated identified read envelope |
-| `run-use` | `id` | `--id <run-id>` | `run-show --id <requested-id>` and verify the returned binding/run identity |
-| `task-create` | `spec`, `[title]`, `[deps]`, `[parent]` | `--spec <text> [--task-title <text>] [--deps <json-array>] [--parent <task-id>]` | `task-list`, locate `receipt.taskId`, and compare immutable fields |
-| `task-list` | `[status]`, `[ready]`, `[brief]` | `[--status <enum>] [--ready] [--brief]` | Validated read envelope |
-| `task-update` | `id`, `status`, `[result]` | `--id <task-id> --status <enum> [--result <json>]` | `task-list`, locate the requested ID, and compare status/result |
-| `worker-start` | `task`, `agent`, `[model]`, `[effort]`, `[timeoutMs]` | `--task <task-id> --worktree current --agent <enum> [--model <opaque-id> [--effort <enum>]] [--timeout-ms <bounded-int>]` | `worker-show --dispatch <receipt.dispatchId>` |
+| `run-current` | none | none | Validated identified read envelope containing the invoking terminal's current Run binding |
+| `run-use` | `id` | `--id <run-id>` | `run-current` and verify both the requested Run ID and the requested invoking-terminal binding |
+| `task-create` | `spec`, `[title]`, `[deps]`, `[parent]` | `--spec <text> [--task-title <text>] [--deps <task-id-array>] [--parent <task-id>]` | `task-list`, locate `receipt.taskId`, and compare immutable fields |
+| `task-list` | `[status]`, `[ready]`, `[brief]` | `[--status <task-status>] [--ready] [--brief]` | Validated read envelope |
+| `task-update` | `id`, `status`, `[result]` | `--id <task-id> --status <task-status> [--result <task-result>]` | `task-list`, locate the requested ID, and compare status/result |
+| `worker-start` | `task`, `agent`, `[model]`, `[effort]`, `[timeoutMs]` | `--task <task-id> --worktree current --agent <agent> [--model <model-id> [--effort <effort>]] [--timeout-ms <timeout-ms:250..600000>]` | `worker-show --dispatch <receipt.dispatchId>` |
 | `worker-show` | `dispatch` | `--dispatch <dispatch-id>` | Validated identified read envelope |
-| `worker-read` | `dispatch`, `[source]`, `[cursor]`, `[limit]` | `--dispatch <dispatch-id> [--source <enum>] [--cursor <opaque>] [--limit <positive-int>]` | Validated bounded read envelope |
+| `worker-read` | `dispatch`, `[source]`, `[cursor]`, `[limit]` | `--dispatch <dispatch-id> [--source <worker-source>] [--cursor <cursor>] [--limit <limit:1..100>]` | Validated bounded read envelope |
 | `worker-release` | `dispatch` | `--dispatch <dispatch-id>` | `worker-show --dispatch <requested-id>` and verify the public released/retained terminal disposition |
-| `send` | `subject`, `[body]`, `[type]`, `[priority]`, `[threadId]`, `[payload]` | `--subject <text> [--body <text>] [--type <enum>] [--priority <enum>] [--thread-id <id>] [--payload <json>]` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
-| `check` | `[ack]`, `[unread]`, `[peek]`, `[all]`, `[types]`, `[wait]`, `[timeoutMs]` | `[--ack <delivery-id>] [--unread\|--peek\|--all] [--types <csv-enum>] [--wait [--timeout-ms <bounded-int>]]` | Validated bounded read envelope |
+| `send` | `subject`, `[body]`, `[type]`, `[priority]`, `[threadId]`, `[payload]` | `--subject <text> [--body <text>] [--type <message-type>] [--priority <priority>] [--thread-id <thread-id>] [--payload <send-payload>]` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
+| `check` | `[ack]`, `[unread]`, `[peek]`, `[all]`, `[types]`, `[wait]`, `[timeoutMs]` | `[--ack <delivery-id>] [--unread\|--peek\|--all] [--types <message-type-csv>] [--wait [--timeout-ms <timeout-ms:250..600000>]]` | Validated bounded read envelope |
 | `reply` | `id`, `body` | `--id <message-id> --body <text>` | Validated bounded mutation receipt; receipt-only exception because the allowed public subset has no stable message-by-ID read |
-| `ask` | exactly one of `question` or `resume`, `[options]`, `[timeoutMs]` | `--question <text>\|--resume <message-id> [--options <csv>] [--timeout-ms <bounded-int>]` | Validated answer/pending receipt; recovery resumes the same message ID |
-| `gate-create` | `task`, `question`, `[options]` | `--task <task-id> --question <text> [--options <json-array>]` | `gate-list --task <requested-task>`, locate `receipt.gateId`, and compare question/options |
-| `gate-list` | `[task]`, `[status]` | `[--task <task-id>] [--status <enum>]` | Validated read envelope |
+| `ask` | exactly one of `question` or `resume`, `[options]`, `[timeoutMs]` | `--question <text>\|--resume <message-id> [--options <option-csv>] [--timeout-ms <timeout-ms:250..600000>]` | Validated answer/pending receipt; recovery resumes the same message ID |
+| `gate-create` | `task`, `question`, `[options]` | `--task <task-id> --question <text> [--options <option-array>]` | `gate-list --task <requested-task>`, locate `receipt.gateId`, and compare question/options |
+| `gate-list` | `[task]`, `[status]` | `[--task <task-id>] [--status <gate-status>]` | Validated read envelope |
 | `gate-resolve` | `id`, `resolution`, `task` | `--id <gate-id> --resolution <text>` (`task` is proof context and is not emitted) | `gate-list --task <task-id>`, locate the requested gate ID, and compare resolved status/resolution |
+
+The placeholders above name these closed, versioned scalar and structured domains; they are not open extension
+points:
+
+- Every Run, Task, Dispatch, Delivery, Message, Thread, and Gate ID is 1-128 ASCII characters matching
+  `[A-Za-z][A-Za-z0-9_-]*`. A cursor is 1-512 printable ASCII characters, excluding whitespace, control
+  characters, a leading `-`, and shell metacharacters. A model ID uses the same cursor grammar with a 128-byte
+  maximum. Limits are integers from 1 through 100; timeouts are integers from 250 through 600,000 milliseconds.
+- `<text>` means normalized UTF-8 with no NUL or unpaired surrogate: objective/spec/body/result summary/resolution
+  are 1-16,384 bytes, title/subject/question are 1-512 bytes, and option/phase/path values are 1-256 bytes.
+  Optional text, when present, cannot be empty. Boolean fields are actual booleans, never string coercions.
+- Task status is exactly `pending | ready | dispatched | completed | failed | blocked`; gate status is exactly
+  `pending | resolved`; message type is exactly `status | dispatch | worker_done | merge_ready | escalation |
+  handoff | question | decision_gate | heartbeat`; priority is exactly `low | normal | high | urgent`; worker
+  source is exactly `auto | transcript | terminal`; agent is exactly `claude | codex | cursor | droid | gemini |
+  grok | opencode`; and effort is exactly `low | medium | high | xhigh`. `check.types` is a unique, non-empty
+  subset of the message-type domain, serialized in caller order as CSV. `ready`, `brief`, `wait`, and exactly one
+  of `unread | peek | all` are booleans; `timeoutMs` is accepted only with `wait` for `check`.
+- `deps` is a unique array of 0-64 Task IDs. Ask options are 1-10 unique option strings; gate options are a JSON
+  array with the same domain. `result` is either absent or the exact object `{ summary, artifacts? }`, where
+  `summary` is bounded result-summary text and `artifacts` is a unique array of 0-32 bounded path values.
+  `send.payload` is either absent or the exact object `{ taskId?, dispatchId?, phase?, outcome?, filesModified?,
+  reportPath? }`: IDs use their domains, `phase` is bounded phase text, `outcome` is `succeeded | failed`,
+  `filesModified` is a unique array of 0-128 bounded path values, and `reportPath` is one bounded path value.
+  Payload requires at least one property; extra properties and JSON `null`, numbers, nested objects, or arrays
+  other than the two named arrays are rejected. All JSON objects reject duplicate keys and all structured
+  values must serialize to at most 32 KiB.
+- `worker-start.effort` requires `model`; `ask` accepts exactly one of `question` or `resume`, and options only
+  with `question`. Every array is copied after validation and has the per-item bounds above; sparse arrays,
+  duplicate entries, non-string elements, and extra object fields are invalid.
 
 `dispatch`, `dispatch-show`, terminal handles as message destinations, `worker-stop`, `worker-abandon`,
 `worker-retain`, `reset`, and every other unlisted verb are outside the plugin. Adding a verb requires a
@@ -108,7 +139,10 @@ unknown flags, positional spillover, values containing a flag in place of data, 
 and a caller-provided `--json` are rejected before process launch. The adapter appends exactly one final
 `--json` and never interpolates values into a shell program.
 
-Contract tests cover every row and must negatively prove rejection before spawn of all terminal flags
+Contract tests cover every row and must negatively prove rejection before spawn of malformed IDs/cursors/text,
+out-of-range limits/timeouts, unknown enum members, duplicate/out-of-domain array members, sparse or oversized
+arrays, malformed JSON, duplicate JSON keys, `null`, wrong JSON scalar types, excess nesting/size, and missing or
+extra `result`/`send.payload` fields. They also reject all terminal flags
 (`--terminal`, terminal handles, `--format`), setup/placement flags (`--setup`, `--worktree` from callers,
 `--name`, `--repo`, `--base-branch`), routing/impersonation flags (`--on`, `--to`, `--run`, `--from`,
 `--dispatch-capability`, `--takeover-legacy`), executable selection or wrapper inputs, raw argv/command
@@ -144,11 +178,13 @@ Mutations require all of the following:
 4. a normalized receipt returned to the caller with verb, Orca identifiers, runtime/version metadata, and
    timestamps, but no second-store persistence.
 
-The named read-back probes are `run-show` after `run-use`, `gate-list --task` after `gate-resolve`, and
+The named read-back probes are `run-current` after `run-use`, `gate-list --task` after `gate-resolve`, and
 `worker-show` after `worker-release`; their response schemas must expose enough public state to prove the
-requested effect. If a supported Orca compatibility range lacks one of those public fields, that mutation is
-unsupported for that range unless a narrow design amendment documents why no public read exists and permits
-a receipt-only exception for that verb. Today the only receipt-only mutations are `send` and `reply`, whose
+requested effect. In particular, `run-current` must return the requested Run ID and a coordinator terminal
+identity equal to both the binding reported by `run-use` and the runtime-attested invoking terminal; `run-show`
+alone is not proof of terminal binding. If a supported Orca compatibility range lacks one of those public fields,
+that mutation is unsupported for that range unless a narrow design amendment documents why no public read exists
+and permits a receipt-only exception for that verb. Today the only receipt-only mutations are `send` and `reply`, whose
 allowed public subset has no stable message-by-ID read. Mutations are never retried automatically because a
 timeout can hide a committed mutation. Recovery names the exact allowed public read command that can
 establish state before another mutation, or identifies the documented receipt-only ambiguity.
@@ -242,7 +278,8 @@ inspected before promotion.
   JSON, timeout, output-cap, resolution, receipt, and applicable read-back tests; negative argv fixtures for
   every row reject terminal, setup/placement, routing/impersonation, executable override, raw-argv, recovery,
   caller-`--json`, and unknown inputs before spawn.
-- [ ] Public contract probes specifically prove `run-use` with `run-show`, `gate-resolve` with `gate-list`
+- [ ] Public contract probes specifically prove `run-use` with `run-current` (requested Run ID and attested
+  invoking-terminal binding), `gate-resolve` with `gate-list`
   plus `--task`, and `worker-release` with `worker-show`; a missing public proof field makes that mutation
   incompatible unless a later narrow design amendment documents the absence and receipt-only exception.
 - [ ] A packaged-plugin smoke against a real supported Orca runtime creates and reads back a disposable Run/
