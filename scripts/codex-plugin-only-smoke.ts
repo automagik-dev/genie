@@ -125,7 +125,11 @@ function assertFallbacksRetired(iso: IsolatedHome, seeded: readonly string[]): v
 function payloadShippedSkills(iso: IsolatedHome): Set<string> {
   const skillsRoot = join(activePluginRoot(iso, TARGET_VERSION), 'skills');
   if (!existsSync(skillsRoot)) fail(`payload skills root absent: ${skillsRoot}`);
-  return new Set(readdirSync(skillsRoot));
+  return new Set(
+    readdirSync(skillsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(skillsRoot, entry.name, 'SKILL.md')))
+      .map((entry) => entry.name),
+  );
 }
 
 /** Split seeded fallbacks into retirable (payload ships the skill) vs preserved (skill dropped). */

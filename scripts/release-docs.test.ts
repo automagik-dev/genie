@@ -943,6 +943,28 @@ describe('Group E release and documentation contracts', () => {
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
+  test('ships quick as the bounded fast path and no longer distributes pm', () => {
+    const quick = read('skills/quick/SKILL.md');
+    const router = read('skills/genie/SKILL.md');
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const overview = read('skills/README.md');
+    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'SKILL.md')))
+      .map((entry) => entry.name);
+
+    expect(quick).toContain('request → deployed-dev read-back within 60 minutes');
+    expect(quick).toContain('existing merge authority');
+    expect(quick).toContain('quick-missed');
+    expect(skillNames).toContain('quick');
+    expect(skillNames).not.toContain('pm');
+    expect(router).toContain('"quick"');
+    expect(router).not.toContain('"pm"');
+    expect(lifecycle).toContain('| `quick` |');
+    expect(lifecycle).not.toContain('| `pm` |');
+    expect(overview).toContain('`quick`');
+    expect(overview).not.toContain('`pm`');
+  });
+
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
     const lifecycle = read('skills/genie/reference/lifecycle.md');
     for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
@@ -952,7 +974,7 @@ describe('Group E release and documentation contracts', () => {
     const review = read('skills/review/SKILL.md');
     const dream = read('skills/dream/SKILL.md');
     const wish = read('skills/wish/templates/wish-template.md');
-    const pm = read('skills/pm/SKILL.md');
+
     expect(dream).toContain('Status field is exactly `APPROVED`');
     expect(brainstorm).toContain('Do not move it to Poured before a WISH.md exists');
     expect(brainstorm).toContain('single brainstorm/planning index is `.genie/INDEX.md`');
@@ -963,8 +985,6 @@ describe('Group E release and documentation contracts', () => {
     expect(wish).toContain('**depends-on:** none');
     expect(dream).toContain('wish-level `**depends-on:**`');
     expect(dream).not.toContain('depends_on');
-    expect(pm).toContain('Explicit task-scoped grant');
-    expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
   });
 
   test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {

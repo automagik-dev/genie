@@ -57,8 +57,8 @@ separately installed personal skills remain user-owned and are never adopted by 
 
 | Area | Skills |
 |------|--------|
-| Lifecycle | `brainstorm`, `wish`, `review`, `work`, `fix`, `trace` |
-| Orchestration | `genie`, `pm`, `dream`, `council`, `omni` |
+| Lifecycle | `brainstorm`, `quick`, `wish`, `review`, `work`, `fix`, `trace` |
+| Orchestration | `genie`, `dream`, `council`, `omni` |
 | Quality lanes | `architecture`, `code-quality`, `dx-docs`, `perf`, `qa`, `repo-hygiene`, `supply-chain` |
 | Supporting workflows | `docs`, `refine`, `report`, `genie-hacks` |
 
