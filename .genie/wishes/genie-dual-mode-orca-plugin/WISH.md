@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — amended design pending fresh independent review and digest stamping |
+| **Status** | DRAFT — four canonical planning documents pending fresh independent review and evidence stamp; no past approval authorizes work |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -94,15 +94,17 @@ its lifecycle and release support, and documentation before retiring the superse
 ## Execution Strategy
 
 There is no stacked-PR requirement. Each PR branches from then-current `dev`; a semantic dependency must merge first,
-then the dependent branch rebases or is recreated on updated `dev`. A0 is this docs-only commit. A1 and A2 can run in
-parallel and each be green against dev independently. A3 is independently green after A2; A4 after A1+A3; A5 after
-A3+A4; A6 after A4+A5; A7 after A1–A6. The merge graph, not cross-branch imports, supplies required semantics.
+then the dependent branch rebases or is recreated on updated `dev`. A0 is the docs-only commit containing the
+canonical DRAFT, DESIGN, WISH, and INDEX entry plus the pending evidence block; fresh independent review and a valid
+digest stamp gate its documentation PR and all later work. A1 and A2 can then run in parallel and each be green
+against dev independently. A3 is independently green after A2; A4 after A1+A3; A5 after A3+A4; A6 after A4+A5; A7
+after A1–A6. The merge graph, not cross-branch imports, supplies required semantics.
 
 ### Wave 0 (authoritative plan)
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| A0 | wish author + independent reviewer | 1 — documentation contract | engineer-trivial / low | Stamp design and land canonical DRAFT/WISH/INDEX only. |
+| A0 | wish author + independent reviewer | 1 — documentation contract | engineer-trivial / low | Commit the four canonical pending-review docs; fresh review then stamps the DESIGN digest before any PR or implementation. |
 
 ### Wave 1 (parallel after A0 merges)
 
@@ -133,15 +135,16 @@ evidence attach to the final SHA. Release promotion remains separately authorize
 obtain fresh independent design review and digest stamping before approval or implementation.
 
 **Deliverables:**
-1. Pending-review candidate DESIGN.md, reconciled DRAFT.md, canonical INDEX entry, and template-derived WISH.md;
-   digest-bound evidence is added only after fresh independent review.
+1. Pending-review candidate `DRAFT.md`, `DESIGN.md`, `WISH.md`, and canonical `INDEX.md` entry; digest-bound evidence
+   is added only after fresh independent review of the exact committed four-document set.
 2. Docs-only commit based on immutable amended-design candidate commit
-   `6854499139aee60c1fdcaaeb057515c7e3d92399`.
+   `1923ce0955511b741eadabb3dc680bb462ce611b`.
 
 **Acceptance Criteria:**
-- [ ] Fresh independent review stamps candidate content SHA-256
-  `a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`; until then, evidence verification is
-  expected to fail and the wish remains DRAFT.
+- [ ] Fresh independent review stamps reviewable DESIGN content SHA-256
+  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`; until then, evidence
+  verification is expected to fail, all four canonical documents remain pending review, and no past approval
+  authorizes a documentation PR or implementation.
 - [ ] Wish and INDEX linters pass; diff contains only the four canonical planning documents.
 
 **Validation:**
@@ -359,8 +362,9 @@ done
 ## Review Results
 
 - **Current amended candidate:** fresh independent design review, digest stamping, and plan review are pending for
-  candidate content SHA-256 `a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`. No current verdict,
-  reviewer identity, or review timestamp is recorded, and implementation remains blocked on that evidence.
+  reviewable DESIGN content SHA-256
+  `99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. No current verdict, reviewer identity,
+  or review timestamp is recorded; no past approval authorizes a documentation PR or implementation.
 - **Superseded plan-review provenance (not approval for the amended candidate):** on 2026-08-29 at 17:04 UTC,
   independent reviewer `term_62af8174-811d-4720-911e-a2891f6a0698` returned SHIP for the prior plan at
   reviewed commit `57a732da11de9d0816afd3e51cb7c05056ec04f4`, including design digest

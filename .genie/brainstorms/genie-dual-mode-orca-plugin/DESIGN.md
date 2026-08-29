@@ -344,12 +344,16 @@ inspected before promotion.
 Each PR starts from then-current `origin/dev`, has one owner, and is independently reviewable. Dependencies
 are shallow; no PR mixes the dirty v6 evidence or unrelated roadmap/Khal changes.
 
-1. **A0 — authoritative design (this PR):** add only this `DESIGN.md`; run design/template validation and
-   obtain independent design review before creating a WISH. No PR is opened until that review is authorized.
+1. **A0 — canonical planning set and evidence gate:** reconcile the four canonical planning documents —
+   `DRAFT.md`, this `DESIGN.md`, `WISH.md`, and the `INDEX.md` entry — in one docs-only commit. Compute the
+   reviewable DESIGN digest after the set is final, then obtain fresh independent review of the exact committed
+   candidate before stamping evidence or opening a documentation PR. The WISH exists only as a DRAFT plan;
+   neither it nor any past review authorizes implementation.
 2. **A1 — mode schema and authority barriers:** config/resolver, DB pre-open guard, roadmap pre-write guard,
-   typed diagnostic, and standalone/Orca negative fixtures. Depends only on approved A0.
+   typed diagnostic, and standalone/Orca negative fixtures. Depends only on freshly reviewed and stamped A0.
 3. **A2 — closed Orca CLI adapter:** schemas, argv table, runtime resolution, bounded runner, errors,
-   receipts/read-backs, and hermetic fake-process tests. Depends only on approved A0 and can proceed beside A1.
+   receipts/read-backs, and hermetic fake-process tests. Depends only on freshly reviewed and stamped A0 and can
+   proceed beside A1.
 4. **A3 — plugin payload and real-runtime smoke:** manifests/marketplace, adapter wiring, compatibility probe,
    and disposable Run/Task smoke. Depends on A2; does not own install transitions.
 5. **A4 — lifecycle preservation and transitions:** standalone parity plus install/update/rollback/uninstall,
@@ -384,16 +388,16 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 
 ## Next step
 
-An independent reviewer must review this exact design and return SHIP/FIX-FIRST/BLOCKED plus the reviewed
-content SHA-256. The existing implementation WISH remains pending a fresh review/evidence stamp; only after the
-orchestrator authorizes review, persists valid evidence, and verifies the digest may it open this documentation PR
-or authorize implementation planning to proceed.
+An independent reviewer must review the exact committed four-document planning set and return
+SHIP/FIX-FIRST/BLOCKED plus the reviewable DESIGN content SHA-256. The existing WISH remains DRAFT pending that
+fresh review/evidence stamp. No past review or approval authorizes implementation: only after the orchestrator
+persists valid fresh evidence and verifies the digest may it open the documentation PR or authorize A1–A7 work.
 
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
 Independent review is pending for candidate content SHA-256
-`a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`. The prior SHIP evidence was removed
-because this P1 contract correction changes reviewed content; a follow-up must stamp the exact committed candidate
-with fresh independent evidence before implementation begins.
+`99b71f578979363b2f582d346c786de077fc0f08fc2fe8920f06d01367642e36`. Any prior SHIP evidence or approval is
+superseded because the candidate content and canonical document lifecycle changed; a follow-up must stamp this exact
+committed candidate with fresh independent evidence before a documentation PR or implementation begins.
 <!-- genie-design-review:end -->
