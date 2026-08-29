@@ -63,6 +63,7 @@ describe('Group E release and documentation contracts', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
+      'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
       '.claude-plugin/marketplace.json',

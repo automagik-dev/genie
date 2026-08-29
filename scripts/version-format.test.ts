@@ -49,6 +49,7 @@ describe('manifest version formatting', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
+      'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
     ]) {
@@ -120,6 +121,7 @@ describe('manifest version formatting', () => {
       );
       // The pi plugin manifest carries the same release version.
       expect(JSON.parse(readFileSync(join(root, 'plugins/pi-genie/package.json'), 'utf8')).version).toBe('5.260711.3');
+      expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
 
       rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
       await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(

@@ -129,6 +129,8 @@ for required in \
   ".claude-plugin/marketplace.json" \
   "plugins/genie/.codex-plugin/plugin.json" \
   "plugins/genie/.kimi-plugin/plugin.json" \
+  "plugins/genie/orca-plugin.json" \
+  "plugins/genie/orca-entrypoint.min.js" \
   "plugins/genie/scripts/mcp-launcher.cjs" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \
