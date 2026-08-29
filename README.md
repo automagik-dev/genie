@@ -33,6 +33,71 @@ From inside a trusted initialized repo, run `genie init` to reconcile the marker
 
 Codex never auto-trusts plugin hooks. H4/H6 definitions bind the exact plugin launcher SHA-256 and the launcher verifies itself before spawning, so launcher changes produce new definitions; the current hook schema still cannot transitively bind the mutable platform-specific Genie binary. After successful Codex setup, inspect the three Genie definitions with `/hooks`, approve only the hashes you understand, and start a new task so the reviewed definitions take effect. Until then they remain untrusted and do not run.
 
+## Standalone and Orca authority
+
+Genie has two explicit lifecycle modes. `standalone` is the default, including when the configuration omits
+`orchestration.mode`; merely installing or opening Orca never changes authority. Standalone keeps the existing local
+task, board, and roadmap behavior. Select Orca only when you intend Orca to become the sole lifecycle authority:
+
+```bash
+genie setup --orchestration-mode orca
+genie doctor
+```
+
+The switch first verifies the shipped plugin payload and a compatible Orca runtime (Orca `1.4.192` or newer with
+`orchestration.contract.v1`). Only after that probe succeeds does Genie back up its configuration and atomically select
+Orca. In Orca mode, Genie does not open `.genie/genie.db` for lifecycle reads or writes and refuses roadmap writes,
+syncs, and exports before they can create or change local files. Existing local history is preserved in place, but it is
+not imported, mirrored, or treated as current. The plugin keeps no fallback database: if Orca is unavailable, the
+operation fails instead of silently returning to standalone.
+
+Switching back is also deliberate and does not import Orca state:
+
+```bash
+genie setup --orchestration-mode standalone
+genie doctor
+```
+
+`genie doctor` reports the selected authority, plugin ownership state, resolved runtime version, and compatibility.
+`unsupported_environment` means the host cannot provide the supported public CLI/child-process boundary; install or
+start a compatible Orca runtime and repeat the Orca selection. Do not work around it with a private API, internal RPC,
+terminal injection, or a local fallback.
+
+### Install, update, rollback, and uninstall
+
+Signed release tarballs include `plugins/genie/orca-plugin.json` and the compiled Orca entrypoint on every supported
+platform. The normal installer stages and verifies that payload; authority remains standalone until the explicit setup
+command above. `genie update` preserves the selected mode and lifecycle history, verifies the replacement payload, and
+refreshes a prior Genie ownership claim only after an Orca compatibility probe. Run `genie doctor` after installation or
+update before resuming lifecycle mutations.
+
+`genie update --rollback` checks the retained rollback state and prints signed-version reinstall guidance when a safe
+in-place rollback is unavailable; follow that guidance, then run `genie doctor`. A failed update, rollback, or mode
+preflight leaves the prior configuration and authority unchanged. `genie uninstall` removes only ownership-proven Genie
+artifacts and registrations. Modified or unproven files are preserved, and neither local Genie history nor Orca records
+are deleted. Review the command's backup/recovery output before removing any retained files manually.
+
+### Ambiguous Orca receipts and recovery
+
+The plugin invokes only a closed subset of official `orca orchestration ... --json` commands. Successful mutations
+require a bounded receipt and, where the public CLI supports it, an immediate public read-back. If the process times out,
+exceeds its output cap, or loses transport after launch without a complete identifying receipt, Genie reports
+`ambiguous_after_possible_commit`. Do not automatically retry: Orca may already have committed the operation. Inspect
+the exact public read operation named by the error only when the identifier was known before launch; otherwise confirm
+the outcome with an Orca operator before deciding whether to issue a new mutation. Genie never guesses an identifier
+from a collection or infers success from a partial response.
+
+### Staged MCP retirement
+
+The Orca plugin does not make the current MCP surface disappear in this documentation release. The legacy `genie mcp`
+remains available, and `genie init` continues to manage only Genie-owned project registrations, until the later A7 PR
+lands after dual-mode parity and migration gates. Do not remove project MCP routes pre-emptively. A7 will retire the
+server and proved-owned registrations with a stable non-zero diagnostic while preserving unrelated configuration and
+standalone history; rollback to a pre-A7 signed release remains the migration escape hatch.
+
+Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
+before changing the adapter or its operator guidance.
+
 ## Quickstart
 
 The lifecycle is shared by Claude Code and Codex. Claude uses slash skills. A Codex plugin install uses the unambiguous owner-qualified `$genie:<skill>` selector; bare `$<skill>` resolves the user tier, which now only ever holds a separately installed personal copy (Genie no longer seeds the user tier):

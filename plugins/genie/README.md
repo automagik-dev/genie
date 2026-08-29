@@ -2,6 +2,10 @@
 
 This directory is the shared release payload for Claude Code and Codex. The two clients load different manifests, but the 22 product skills have one canonical source (`/skills`) and one committed, byte-checked plugin mirror (`plugins/genie/skills`).
 
+For Orca installation, authority selection, recovery, compatibility, and contribution rules, see the
+[Orca dual-mode operator and contributor contract](references/orca-orchestration.md). Standalone remains the default;
+the packaged Orca payload is inert until the operator explicitly selects Orca authority.
+
 ## What Codex gets
 
 | Surface | Delivery | Contract |
