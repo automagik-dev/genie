@@ -207,11 +207,23 @@ bounded normalized receipt whose operation is `check`, delivery ID equals the re
 state is explicitly true, and runtime/version metadata and timestamp satisfy the common receipt schema; a read
 envelope or an omitted/mismatched acknowledgement field is `missing_receipt`/`readback_mismatch`, not success.
 Mutations, including `check --ack`, are never retried automatically because a timeout can hide a committed
-mutation. A `check --ack` timeout is therefore classified `ambiguous_after_possible_commit`; recovery instructs
-the operator not to retry automatically because the allowed public subset cannot distinguish a committed
-acknowledgement from an uncommitted one after the response is lost. The result is unrecoverably ambiguous within
-the adapter; only external or operator confirmation may justify a later acknowledgement attempt. Recovery for
-other mutations names the exact allowed public read command that must establish state before another mutation.
+mutation. After spawn, a timeout, output-limit failure, or transport loss before a schema-valid receipt supplies
+the operation's unique entity ID is `ambiguous_after_possible_commit`, not a recoverable `timeout` or
+`output_limit`. The adapter must not guess an ID, enumerate a collection to infer one, issue an entity-specific
+read-back, or retry the mutation. This makes every receipt-only mutation and every create mutation without its
+valid identifying receipt ambiguous within the adapter; only external or operator confirmation may justify a
+later attempt.
+
+An immediate automated recovery read-back is permitted only when the mutation's exact entity identifier was
+independently known and validated before launch, the capability table names a public read command for that exact
+identifier, and the read is not itself a mutation. The read-back may establish committed or uncommitted state
+before the caller decides whether to issue a new mutation; it never authorizes an automatic retry. A valid receipt
+may supply the unique ID used by the normal success-path read-back, but bytes from a truncated, over-limit,
+malformed, or transport-failed response do not. `check --ack` remains receipt-only despite its independently known
+delivery ID because the allowed public subset has no exact acknowledgement read: a response loss is therefore
+`ambiguous_after_possible_commit`, and only external or operator confirmation may justify a later acknowledgement
+attempt. Pre-spawn validation/resolution failures retain their specific safe-to-retry errors because no process was
+launched; post-spawn failures carry the ambiguity classification whenever commit cannot be excluded.
 
 The stable error taxonomy is:
 
@@ -314,8 +326,10 @@ inspected before promotion.
   and explicit acknowledged state, reject read/missing/mismatched receipts, and simulate timeout after commit to
   prove the exact `ambiguous_after_possible_commit` error, no automatic retry, no claimed in-adapter recovery,
   and guidance that only external or operator confirmation may justify a later acknowledgement attempt.
-- [ ] Other timeout-after-commit tests prove there is no automatic mutation retry and diagnostics direct the
-  operator to the exact read-back; recovery tests prove that read-back establishes state before another mutation.
+- [ ] Other post-spawn timeout/output/transport-loss tests prove there is no automatic mutation retry: receipt-only
+  mutations and creates lacking a valid identifying receipt return `ambiguous_after_possible_commit` with only
+  operator/external-confirmation guidance, while only mutations whose exact identifiers were independently known
+  before launch may name and perform their table-defined exact public read-back before another mutation.
 - [ ] `genie mcp` and Genie-owned MCP wiring are retired with a stable non-zero diagnostic; standalone CLI
   parity remains green and no hidden MCP compatibility server starts.
 - [ ] Fresh install, update, interrupted update, rollback, uninstall, and both mode switches are repeatable
@@ -362,7 +376,7 @@ its SHA. Fixes receive a fresh review; release promotion remains a separate expl
 | 1 | The packaged plugin host may forbid child processes. | High | A3 probes the real host; fail `unsupported_environment`, never change transport. |
 | 2 | Orca CLI grammar or envelopes drift. | High | Manifest compatibility range, exact contract fixtures, live smoke, fail closed on unknown shapes. |
 | 3 | A writable Genie path bypasses mode routing. | High | Guard low-level seams and independently inventory all DB/roadmap callers in A1 review. |
-| 4 | Timeout hides a committed mutation. | High | No automatic retry; require public read-back before another mutation where it proves state, otherwise report unrecoverable ambiguity. |
+| 4 | Timeout/output/transport loss hides a committed mutation. | High | No automatic retry or inferred identity; exact read-back only for an identifier known before launch, otherwise report operator-confirmed ambiguity. |
 | 5 | Install/uninstall adopts or removes user-owned state. | High | Ownership proof, backups, atomic transitions, isolated-home fixtures, narrow deletion inventory. |
 | 6 | MCP retirement breaks an unrecorded client. | Medium | Inventory first, parity gate retirement, retain explicit diagnostic and rollback path. |
 | 7 | Runtime resolution reaches the wrong Orca installation. | Medium | One documented platform choice, validate host override, no candidate fallback, report resolved version. |
@@ -377,8 +391,8 @@ digest may it open this documentation PR or create the implementation WISH.
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-- **Verdict:** SHIP
-- **Reviewed content SHA-256:** `dbc9f025e10ceba93b424fcf7fe0d38203c1fb82f5d94a980b9a8614d67d0c4d`
-- **Reviewer:** term_0400ca58-2231-423c-8bec-6084435ea9e6
-- **Reviewed at:** 2026-08-29T16:53:09.000Z
+Independent review is pending for candidate content SHA-256
+`a03c2f557b6a99d5e6e910adc0d5235b37e50f8f308e08e1c6e352e36a02fff8`. The prior SHIP evidence was removed
+because this P1 contract correction changes reviewed content; a follow-up must stamp the exact committed candidate
+with fresh independent evidence before implementation begins.
 <!-- genie-design-review:end -->

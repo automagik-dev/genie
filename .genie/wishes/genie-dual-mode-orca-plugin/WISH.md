@@ -74,7 +74,10 @@ its lifecycle and release support, and documentation before retiring the superse
 - [ ] Every approved verb has exact positive argv and negative schema/flag-shaped-input tests; unlisted verbs,
   terminal/routing/placement flags, raw argv, caller `--json`, malformed data, and shell evaluation fail pre-spawn.
 - [ ] Runtime selection is deterministic; execution is bounded; stdout is one valid envelope; errors are typed; mutation
-  read-backs prove identity and immutable fields wherever the public CLI offers a read path.
+  read-backs prove identity and immutable fields wherever the public CLI offers a read path. A post-spawn timeout,
+  output-limit, or transport failure before a valid receipt supplies a newly created ID never triggers inferred
+  entity lookup or retry: receipt-only mutations and unidentified creates return `ambiguous_after_possible_commit`
+  for operator/external confirmation, and only an identifier known before launch permits its exact table-defined read.
 - [ ] A packaged-plugin smoke against supported real Orca creates and reads back a disposable Run/Task without changing
   local Genie lifecycle state; an unsupported host fails `unsupported_environment` without fallback.
 - [ ] Install/update/rollback/uninstall and mode switches preserve user config/history, touch only Genie-owned
@@ -181,6 +184,9 @@ bun run check
 **Acceptance Criteria:**
 - [ ] Every design table row emits exactly its documented argv and one final `--json`.
 - [ ] Forbidden fields/flags and malformed/boundary inputs fail before spawn; transport/read-back failures are typed.
+- [ ] Hermetic post-spawn failure fixtures prove no mutation retry or collection-based identity inference; receipt-only
+  mutations and creates without a valid identifying receipt return `ambiguous_after_possible_commit`, while only
+  mutations with an independently known identifier may issue their exact allowlisted public read-back.
 
 **Validation:**
 ```bash
