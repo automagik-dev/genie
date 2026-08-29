@@ -1,6 +1,6 @@
 {
   "name": "genie",
-  "version": "5.260829.7",
+  "version": "5.260829.8",
   "description": "Human-AI partnership for Kimi Code CLI. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, turn them into wishes, execute with /genie:work, validate with /genie:review, and ship as one team.",
   "author": {
     "name": "Namastex Labs",

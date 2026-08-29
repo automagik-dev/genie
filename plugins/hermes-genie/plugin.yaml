@@ -1,5 +1,5 @@
 name: genie
-version: 5.260829.7
+version: 5.260829.8
 description: "Native Hermes surface for Genie orchestration: read-only status, work-plan and review-plan tools, hooks, commands, and a thin cockpit skill."
 provides_tools:
   # Exactly three native read-only planning/status tools.
