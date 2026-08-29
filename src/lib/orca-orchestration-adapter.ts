@@ -979,19 +979,19 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
     if (failure !== undefined) throw failure;
     const envelope = parseEnvelope(operation.operation, result.stdout, isMutation);
     if (!envelope.ok) {
-      if (isMutation)
-        throw ambiguousMutationError(
-          operation.operation,
-          'decode',
-          envelope.error?.message ?? 'Orca returned an error envelope',
-        );
+      const message = sanitizeDiagnosticText(
+        envelope.error?.message ?? 'Orca returned an error envelope',
+        operation,
+        env,
+      );
+      if (isMutation) throw ambiguousMutationError(operation.operation, 'decode', message);
       throw new OrcaAdapterError(
         'unexpected_response',
         operation.operation,
         'decode',
         isMutation ? 'readback-required' : 'safe',
         'Follow the public Orca diagnostic and inspect state before retrying.',
-        envelope.error?.message ?? 'Orca returned an error envelope',
+        message,
       );
     }
     return envelope;
@@ -1009,7 +1009,7 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
       const envelope = await invoke(operation);
       if (!mutationVerbs.has(operation.operation) && !hasAcknowledgement(operation.operation, operation))
         return envelope;
-      return finalizeMutation(operation, envelope, startedAt, invoke, now);
+      return finalizeMutation(operation, envelope, startedAt, invoke, now, env);
     },
   });
 }
@@ -1020,6 +1020,7 @@ async function finalizeMutation(
   startedAt: string,
   invoke: (operation: ValidatedOrcaOperation) => Promise<OrcaJsonEnvelope>,
   now: () => Date,
+  env: Readonly<Record<string, string | undefined>>,
 ): Promise<OrcaAdapterResponse> {
   validateMutationReceipt(operation, envelope);
   const plan = readbackPlan(operation, envelope.result);
@@ -1028,7 +1029,7 @@ async function finalizeMutation(
     try {
       readback = await invoke(plan.operation);
     } catch (error) {
-      throw mapReadbackFailure(operation.operation, plan.operation.operation, error);
+      throw mapReadbackFailure(operation, plan.operation.operation, error, env);
     }
     if (!plan.matches(readback.result)) {
       throw new OrcaAdapterError(
@@ -1055,14 +1056,15 @@ async function finalizeMutation(
 }
 
 function mapReadbackFailure(
-  mutation: OrcaOrchestrationVerb,
+  mutation: ValidatedOrcaOperation,
   readback: OrcaOrchestrationVerb,
   error: unknown,
+  env: Readonly<Record<string, string | undefined>>,
 ): OrcaAdapterError {
   if (!(error instanceof OrcaAdapterError)) {
     return new OrcaAdapterError(
       'unexpected_response',
-      mutation,
+      mutation.operation,
       'readback',
       'unrecoverably-ambiguous',
       `Inspect state with orchestration ${readback}; do not retry the mutation automatically.`,
@@ -1071,11 +1073,15 @@ function mapReadbackFailure(
   }
   return new OrcaAdapterError(
     error.code,
-    mutation,
+    mutation.operation,
     'readback',
     'readback-required',
     `Repeat or inspect orchestration ${readback}; do not retry the mutation automatically.`,
-    `${readback} failed after Orca returned a valid mutation receipt: ${error.message}`,
+    sanitizeDiagnosticText(
+      `${readback} failed after Orca returned a valid mutation receipt: ${error.message}`,
+      mutation,
+      env,
+    ),
     error.stderr,
   );
 }
@@ -1155,7 +1161,15 @@ function sanitizeStderr(
   operation: ValidatedOrcaOperation,
   env: Readonly<Record<string, string | undefined>>,
 ): string {
-  let safe = [...stderr]
+  return sanitizeDiagnosticText(stderr, operation, env);
+}
+
+function sanitizeDiagnosticText(
+  text: string,
+  operation: ValidatedOrcaOperation,
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  let safe = [...text]
     .filter((character) => {
       const code = character.charCodeAt(0);
       return code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127 && code < 128) || code > 159;

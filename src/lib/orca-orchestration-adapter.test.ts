@@ -700,6 +700,73 @@ describe('runtime and executor boundary', () => {
     }
   });
 
+  test('redacts secrets and request values echoed by a direct error envelope', async () => {
+    const secret = 'direct-api-secret';
+    const requestedId = 'run_private';
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      env: { API_TOKEN: secret },
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          id: 'request_a',
+          ok: false,
+          error: { code: 'read_failed', message: `could not read ${requestedId} with ${secret}` },
+        }),
+        stderr: '',
+      }),
+    });
+
+    try {
+      await adapter.execute({ operation: 'run-show', id: requestedId });
+      throw new Error('expected failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(OrcaAdapterError);
+      expect((error as OrcaAdapterError).message).not.toContain(requestedId);
+      expect((error as OrcaAdapterError).message).not.toContain(secret);
+      expect((error as OrcaAdapterError).message).toContain('[REDACTED]');
+    }
+  });
+
+  test('keeps error-envelope diagnostics redacted when reattributing a post-receipt readback failure', async () => {
+    const secret = 'postreceipt-secret';
+    const requestedId = 'run_private';
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      env: { AUTH_PASSWORD: secret },
+      executor: async (request) =>
+        request.argv[1] === 'run-use'
+          ? {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                id: 'request_a',
+                ok: true,
+                result: { runId: requestedId, coordinatorTerminalHandle: 'term_a' },
+                _meta: { runtimeId: 'runtime_a', runtimeVersion: '1.2.3', invokingTerminal: 'term_a' },
+              }),
+              stderr: '',
+            }
+          : {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                id: 'request_b',
+                ok: false,
+                error: { code: 'read_failed', message: `could not read ${requestedId} with ${secret}` },
+              }),
+              stderr: '',
+            },
+    });
+
+    try {
+      await adapter.execute({ operation: 'run-use', id: requestedId });
+      throw new Error('expected failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(OrcaAdapterError);
+      expect(error).toMatchObject({ operation: 'run-use', phase: 'readback', retrySafety: 'readback-required' });
+      expect((error as OrcaAdapterError).message).not.toContain(requestedId);
+      expect((error as OrcaAdapterError).message).not.toContain(secret);
+      expect((error as OrcaAdapterError).message).toContain('[REDACTED]');
+    }
+  });
+
   test('rejects non-finite ask states and mixed success/error envelopes', async () => {
     for (const stdout of [
       '{"id":"r","ok":true,"result":{"messageId":"message_a","state":"pending","answer":"no"},"_meta":{"runtimeId":"runtime_a","runtimeVersion":"1"}}',
