@@ -383,14 +383,35 @@ done
   outside the wish scope during the same review: `version.yml` executes from `main` under `workflow_run`, so the
   ninth version field never synced on dev and no dev tarball shipped after v5.260829.4; `tar -xzf` without `-p` broke
   `genie update` under umask 077.
-- **Fix disposition (2026-08-30):** merged to `dev` — #2821 (admission tolerates umask-restricted payloads),
-  #2823 (committed Orca manifest version no longer gates dev releases), #2825 (H6 esbuild parity gate for
-  `orca-entrypoint.min.js`, wired into `check`/CI/`build-binary.sh`). Open — #2824 (`tar -xzpf` in both extractors),
-  #2827 (H3: ownership refresh runs after `publishCodexDeliveryFacts`, advisory), #2822 (`version.yml` ninth field →
-  `main`), #2826 (M7/M8 docs, Kimi `pm.md`→`quick.md`, orphan check); in flight — `fix/orca-adapter-readback`
-  (H4, H5, M1) and `fix/orca-mode-guards` (H1, H2, M6). Per-group acceptance boxes stay unticked until the clean
-  re-review; #2817 is not approved for human promotion before that re-review returns SHIP.
-
+- **Fix disposition (2026-08-30, refreshed after re-review #1):** merged to `dev` — #2821 (admission tolerates
+  umask-restricted payloads), #2823 (committed Orca manifest version no longer gates dev releases), #2824 (`tar -xzpf`
+  in both extractors), #2825 (H6 esbuild parity gate for `orca-entrypoint.min.js`), #2826 (M7/M8 docs, Kimi
+  `pm.md`→`quick.md`, orphan check), #2827 (H3 ownership refresh after `publishCodexDeliveryFacts`, advisory),
+  #2828 (ledger), #2829 (H4 `timeoutMs` bound, H5 `run:null` read-back, M1 flaky test, stream faults, doctor
+  resilience), #2830 (H1 doctor + M6 board/idea guards, dead `genie mcp` entry retired from `.mcp.json`),
+  #2834 (H2 resolved by retiring `genie ui-bridge` outright — see the decision below). Open to `dev` — #2835 (H7
+  SessionStart hook), #2836 (M12 gate wiring, M15 `.mcp.json.genie-backup-*` ignore). Open to `main` (human merge;
+  the release pipeline runs `version.yml`, `release-guard.sh` and the dogfood harness from `main`, so these cannot
+  take effect from dev) — #2822 (ninth version field), #2833 (harness accepts the retired Codex project route; why
+  `v5.260830.2/.3` built, signed and never published). Follow-ups recorded, not blocking promotion — M2 (real-runtime
+  smoke never executes; needs one transcript against a real Orca host), M3/M4 (read-back over-strictness:
+  uncapped `task-list`, optional `model`/`effort` compared strictly), M9 (Hermes model surface lost board/task
+  tools), M10 (dead launcher validator in `src/lib/codex-project-mcp.ts`).
+- **Re-review #1 of #2817 (dev→main) — FIX-FIRST (2026-08-30):** same reviewer profile, pinned snapshot
+  `f45d634b856a834bf0660e2b1cdbe1eda21edb04` (dev tip incl. #2834). All six previous HIGH gaps and both root causes
+  verified closed with evidence (doctor, ui-bridge, update probe, adapter deadline, `run:null` read-back, bundle
+  parity, `--verify-source` OK at 5.260830.5, `-xzpf`). Validation: `bun run check:fast` PASS; `bun run build` PASS;
+  `bun test src` 2772/0, `bun test scripts` 432 pass / 5 fail (all `reconcile-release-assets` timeouts, byte-identical
+  on `main`), `bun test tests plugins` 779 pass / 1 skip — aggregate 3983 pass. One NEW HIGH: **H7** the shipped
+  SessionStart hook (`plugins/genie/scripts/session-context.cjs`, registered by all three manifests) opened
+  `.genie/genie.db` without consulting `orchestration.mode`, creating `-wal`/`-shm` and injecting local task state
+  under Orca authority (A1 breach, same class as H1) — fixed in #2835 with a fail-closed in-hook authority read and a
+  fixture that fails on the previous bundle. New MEDIUM: M12 Kimi orphan check unwired (#2836), M13 this ledger stale
+  (this entry), M14 `ui-bridge` retirement is outside the wish scope and orphaned three INDEX entries (decision and
+  corrections below), M15 `genie init` backup untracked (#2836). Re-review #2 required after #2835/#2836 land.
+- **Decision (M14, recorded by the orchestrator):** Felipe's words to the fixing session on 2026-08-30 — *"theres no
+  more genie ui, only 'ui' is orca integration"*. `genie ui-bridge` and the MCP transport it kept alive are retired
+  (#2834); INDEX entries for `genie-ui-bridge`, `genie-ui-dash` and `genie-boards-ui` now record the retirement.
 - **Current canonical plan — SHIP:** independent reviewer `term_6c98a3c8-7ac8-4274-a8e9-ade35e2d82dd` reviewed
   reviewable DESIGN content SHA-256 `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`
   at `2026-08-29T18:13:16Z`. The exact four-document set is approved and A1–A7 are authorized in the recorded DAG.
