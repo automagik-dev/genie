@@ -3,7 +3,7 @@
   "id": "genie",
   "publisher": "automagik",
   "name": "Genie",
-  "version": "5.260830.8",
+  "version": "5.260830.9",
   "description": "Genie workflows backed by Orca as the sole lifecycle authority.",
   "author": {
     "name": "Namastex Labs",
