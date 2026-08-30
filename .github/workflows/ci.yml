@@ -132,6 +132,9 @@ jobs:
       - name: Shipped plugin executable static checks
         run: bun run lint:plugin-executables
 
+      - name: Plugin skill mirror + Kimi command orphan check
+        run: bun run lint:plugin-skills
+
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
 

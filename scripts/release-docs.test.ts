@@ -732,6 +732,9 @@ describe('Group E release and documentation contracts', () => {
     expect(pkg.scripts['check:fast']).toContain('bun run lint:orca-bundle');
     expect(workflow).toContain('bun run lint:hook-content');
     expect(workflow).toContain('bun run lint:plugin-executables');
+    expect(workflow).toContain('bun run lint:plugin-skills');
+    expect(pkg.scripts.check).toContain('bun run lint:plugin-skills');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-skills');
     expect(pkg.scripts.check).toContain('bun run lint:hook-content');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:hook-content');
     expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');

@@ -14,7 +14,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
+const GITIGNORE_RULES = [
+  '.genie/genie.db',
+  '.genie/genie.db-wal',
+  '.genie/genie.db-shm',
+  '.genie/launch/',
+  '.mcp.json.genie-backup-*',
+];
 
 let dir: string;
 
