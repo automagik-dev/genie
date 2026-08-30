@@ -220,10 +220,27 @@ describe('Orca authority barriers', () => {
     expect(orca.stderr).toContain('Orca is the selected lifecycle authority');
     expect(orca.sidecars).toEqual([]);
 
-    // Malformed authority config fails closed the same way — never a guess.
-    const invalid = await run('{ not json');
-    expect(invalid.exitCode).toBe(0);
-    expect(invalid.stderr).toContain('orchestration authority config is unreadable');
-    expect(invalid.sidecars).toEqual([]);
+    // Every shape the CLI's strict schema rejects fails closed here too —
+    // never a guess, and never a fail-open divergence between the two readers.
+    for (const config of [
+      '{ not json',
+      JSON.stringify({ orchestration: {} }),
+      JSON.stringify({ orchestration: { mode: 'standalone', extra: 1 } }),
+      JSON.stringify({ orchestration: { mode: 'kraken' } }),
+      JSON.stringify({ orchestration: null }),
+      JSON.stringify([]),
+    ]) {
+      const invalid = await run(config);
+      expect(invalid.exitCode, config).toBe(0);
+      expect(invalid.stderr, config).toContain('orchestration authority config is unreadable');
+      expect(invalid.sidecars, config).toEqual([]);
+    }
+
+    // And the shapes the CLI accepts as standalone still open the database.
+    for (const config of [JSON.stringify({}), JSON.stringify({ orchestration: { mode: 'standalone' } })]) {
+      const standalone = await run(config);
+      expect(standalone.exitCode, config).toBe(0);
+      expect(standalone.stderr, config).not.toContain('not opened');
+    }
   });
 });
