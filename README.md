@@ -63,6 +63,26 @@ genie doctor
 start a compatible Orca runtime and repeat the Orca selection. Do not work around it with a private API, internal RPC,
 terminal injection, or a local fallback.
 
+### Installing the plugin in Orca
+
+`genie setup --orchestration-mode orca` selects Orca as Genie's lifecycle authority. It does **not** register the Genie
+plugin with Orca — that is a separate, Orca-side install. Orca accepts exactly two kinds of source:
+
+- a **marketplace source**: a git repo whose *root* holds `orca-marketplace.json`;
+- a **plugin source**: a git repo whose *root* holds `orca-plugin.json`, or a local folder containing `orca-plugin.json`.
+
+This repository root carries both, so all three routes work:
+
+| Route | What to give Orca |
+|-------|-------------------|
+| Marketplace source | `https://github.com/automagik-dev/genie.git`, ref `main` — lists `automagik.genie` |
+| Plugin git source | `https://github.com/automagik-dev/genie.git`, ref `main` |
+| Local folder | `~/.genie/plugins/genie` (what `genie update` ships), or this repo's checkout root for contributors |
+
+The root `orca-plugin.json` is the same manifest as the shipped `plugins/genie/orca-plugin.json`, differing only in
+`main`, which is re-rooted to `plugins/genie/orca-entrypoint.min.js`. It is source-only: no release tarball contains it,
+and `scripts/orca-manifest-parity.test.ts` fails the build if the two manifests, or the marketplace entry, ever drift.
+
 ### Install, update, rollback, and uninstall
 
 Signed release tarballs include `plugins/genie/orca-plugin.json` and the compiled Orca entrypoint on every supported

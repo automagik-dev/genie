@@ -185,7 +185,7 @@ jobs:
       # SECURITY: every command in this step is trusted workflow control loaded
       # from main. Do not run package scripts, dependency installers, hooks, or
       # any executable from the dev checkout in this write-capable workflow.
-      - name: Synchronize the exact nine version fields
+      - name: Synchronize the exact ten version fields
         if: steps.context.outputs.should_bump == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -193,6 +193,7 @@ jobs:
           set -euo pipefail
           JSON_FILES=(
             package.json
+            orca-plugin.json
             plugins/genie/.claude-plugin/plugin.json
             plugins/genie/.codex-plugin/plugin.json
             plugins/genie/.kimi-plugin/plugin.json
@@ -269,7 +270,7 @@ jobs:
           EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
           ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error ::release-version.delta_untrusted expected exactly nine version files"
+            echo "::error ::release-version.delta_untrusted expected exactly ten version files"
             printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
             exit 1
           fi
