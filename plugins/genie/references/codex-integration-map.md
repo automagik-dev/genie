@@ -97,8 +97,8 @@ genie init
 ```
 
 Run it from the trusted Git worktree that should own the state. It scaffolds repository state and retires the
-historical marker-owned Genie project MCP route; it does not deliver or activate a plugin, and it never parses
-or writes `.mcp.json`. Nothing reinstates a project MCP route. Linked worktrees keep their local
+historical marker-owned Genie project MCP route; it does not deliver or activate a plugin, and in `.mcp.json` it retires only the dead `genie mcp` entry (backup-first, every other
+server preserved byte-for-byte; a symlinked file is skipped with a warning). Nothing reinstates a project MCP route. Linked worktrees keep their local
 `.codex/config.toml` but resolve the shared task database from the Git common directory. An initialized nested
 repository is a hard boundary: `genie task` and `genie board` fail against that repository's own database rather
 than falling through to an outer repository or an empty board.
@@ -221,7 +221,9 @@ that bypasses the Codex activation gate.
   marker-owned project MCP route in a trusted initialized repository. It is
   independent of plugin availability and activation state; init never requests an
   assertion/permit or mutates delivery, journal, registration, cache, enabled state,
-  fallbacks, or roles, and it never parses or writes `.mcp.json`.
+  fallbacks, or roles. In `.mcp.json` it retires exactly one entry — a `genie` server launching a genie binary
+  with args exactly `["mcp"]` — after writing a timestamped backup; the `genie` key alone is not
+  proof of ownership, and a user wrapper, extra args, or any other server is preserved byte-for-byte.
 - **Uninstall** (`genie uninstall`) is a deliberately separate, user-requested
   destructive-removal authority — not part of the activation protocol. It warns
   before its confirmation that current or resumable tasks can break, keeps every
