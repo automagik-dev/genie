@@ -31,7 +31,6 @@ describe('synchronizeVersionFiles CI staging', () => {
     };
     for (const path of [
       'package.json',
-      'orca-plugin.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
@@ -74,9 +73,6 @@ describe('synchronizeVersionFiles CI staging', () => {
     expect(staged).toContain('plugins/hermes-genie/plugin.yaml');
     expect(staged).toContain('plugins/pi-genie/package.json');
     expect(staged).toContain('plugins/genie/orca-plugin.json');
-    // The repo-root Orca manifest ships in no tarball, so this staging list is
-    // the only thing that keeps its committed version current.
-    expect(staged).toContain('orca-plugin.json');
     expect(staged).toContain('package.json');
     expect(staged).toContain('.claude-plugin/marketplace.json');
     // The rewritten value is actually on disk (staging did not mask a no-op).

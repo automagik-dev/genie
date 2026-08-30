@@ -7,7 +7,7 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/automagik-dev/genie.git",
-        "ref": "main"
+        "ref": "orca-plugin"
       },
       "description": "Genie workflows backed by Orca as the sole lifecycle authority.",
       "categories": ["workflows"]

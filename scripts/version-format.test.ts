@@ -46,7 +46,6 @@ describe('manifest version formatting', () => {
     };
     for (const path of [
       'package.json',
-      'orca-plugin.json',
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
@@ -123,8 +122,6 @@ describe('manifest version formatting', () => {
       // The pi plugin manifest carries the same release version.
       expect(JSON.parse(readFileSync(join(root, 'plugins/pi-genie/package.json'), 'utf8')).version).toBe('5.260711.3');
       expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
-      // Repo-root Orca manifest (marketplace/git-source entry point) too.
-      expect(JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
 
       rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
       await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(

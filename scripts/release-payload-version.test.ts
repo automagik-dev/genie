@@ -135,30 +135,6 @@ describe('release payload version contract', () => {
     expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.10');
   });
 
-  // The repo-root `orca-plugin.json` exists so the public repo root is itself a
-  // valid Orca git plugin source (and `orca-marketplace.json` a valid
-  // marketplace source). build-binary.sh copies neither into the tarball, so
-  // payload stamping must ignore both: they are source-only, kept current by
-  // scripts/version.ts and the version.yml bump list instead.
-  test('the repo-root Orca manifest and marketplace are outside the release payload', () => {
-    const root = fixture();
-    writeJson(root, 'orca-plugin.json', {
-      id: 'genie',
-      version: '5.000000.0-lagging',
-      main: 'plugins/genie/orca-entrypoint.min.js',
-    });
-    expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
-
-    stampReleasePayloadVersion(root, '5.260711.10');
-    verifyReleasePayloadVersion(root, '5.260711.10');
-    expect(JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')).version).toBe('5.000000.0-lagging');
-
-    // A payload with no root manifest at all still stamps and verifies.
-    const bare = fixture();
-    stampReleasePayloadVersion(bare, '5.260711.11');
-    expect(() => verifyReleasePayloadVersion(bare, '5.260711.11')).not.toThrow();
-  });
-
   test('fails closed on missing metadata, malformed versions, and an invalid Codex marketplace target', () => {
     const root = fixture();
     rmSync(join(root, 'plugins/genie/package.json'));
