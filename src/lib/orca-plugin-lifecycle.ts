@@ -23,7 +23,7 @@ interface Ownership {
 
 export interface OrcaLifecycleInspection {
   mode: OrchestrationMode | 'invalid';
-  payload: 'absent' | 'unmanaged' | 'owned-clean' | 'owned-modified' | 'unsafe-ownership';
+  payload: 'absent' | 'unmanaged' | 'owned-clean' | 'owned-modified' | 'unsafe-ownership' | 'unreadable';
   hostRegistration: 'not-managed';
   manifestPath: string;
   recovery?: string;
@@ -199,7 +199,21 @@ export function inspectOrcaPluginLifecycle(): OrcaLifecycleInspection {
   if (existing === 'unsafe') {
     return { ...base, payload: 'unsafe-ownership', recovery: 'review the ownership marker; Genie will not replace it' };
   }
-  return sameOwnership(existing, expectedOwnership())
+  // Digesting the payload reads two real files. On a payload the caller cannot
+  // read (EACCES, a mid-update rename, a broken symlink) that throw escaped
+  // doctor entirely — the ONE command an operator runs to find out what is
+  // wrong. Report the unreadable state instead; nothing here mutates.
+  let expected: Ownership;
+  try {
+    expected = expectedOwnership();
+  } catch (cause) {
+    return {
+      ...base,
+      payload: 'unreadable',
+      recovery: `the Orca plugin payload could not be read (${cause instanceof Error ? cause.message : String(cause)}); restore access under ${dirname(target.manifest)} or reinstall Genie`,
+    };
+  }
+  return sameOwnership(existing, expected)
     ? { ...base, payload: 'owned-clean' }
     : { ...base, payload: 'owned-modified', recovery: 'reinstall or update Genie; modified payload was preserved' };
 }

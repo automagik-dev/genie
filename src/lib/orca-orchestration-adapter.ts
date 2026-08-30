@@ -386,108 +386,141 @@ export interface OrcaProcessResult {
 export type OrcaProcessExecutor = (request: OrcaProcessRequest) => Promise<OrcaProcessResult>;
 
 export const DEFAULT_ORCA_TIMEOUT_MS = 30_000;
+/**
+ * Headroom over an operation's own `--timeout-ms` so the CLI gets to render its
+ * documented timeout response instead of being killed mid-write.
+ */
+const ORCA_TIMEOUT_GRACE_MS = 5_000;
+/**
+ * Hard ceiling on the process bound: the operation schema's own maximum wait
+ * (600_000 ms) plus the grace. A caller can never push the adapter past it, so
+ * widening the schema later cannot silently unbound the child.
+ */
+const MAX_ORCA_TIMEOUT_MS = 605_000;
 export const MAX_ORCA_STDOUT_BYTES = 1_048_576;
 export const MAX_ORCA_STDERR_BYTES = 65_536;
 const ORCA_KILL_GRACE_MS = 1_000;
 const ORCA_CLOSE_GRACE_MS = 1_000;
 
-const spawnOrcaProcess: OrcaProcessExecutor = async (request) =>
-  new Promise((resolve, reject) => {
-    const child = spawn(request.executable, [...request.argv], {
-      shell: request.shell,
-      env: request.env as NodeJS.ProcessEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let settled = false;
-    let timedOut = false;
-    let outputLimited = false;
-    let spawned = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    let closeTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (result: OrcaProcessResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (killTimer !== undefined) clearTimeout(killTimer);
-      if (closeTimer !== undefined) clearTimeout(closeTimer);
-      resolve(result);
-    };
-    const stop = () => {
-      child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => {
-        child.kill('SIGKILL');
-        closeTimer ??= setTimeout(
-          () =>
-            finish({
-              exitCode: null,
-              signal: 'SIGKILL',
-              stdout: Buffer.concat(stdout).toString('utf8'),
-              stderr: Buffer.concat(stderr).toString('utf8'),
-              timedOut,
-              outputLimited,
-              transportLost: true,
-            }),
-          ORCA_CLOSE_GRACE_MS,
-        );
-      }, ORCA_KILL_GRACE_MS);
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stop();
-    }, request.timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > request.maxStdoutBytes) {
-        outputLimited = true;
+/**
+ * `spawnChild` is the only seam: it lets a test drive the post-spawn failure
+ * paths (stream faults, transport loss) that a real child cannot be made to
+ * produce portably. Production always binds `node:child_process.spawn`.
+ */
+function createOrcaProcessExecutor(spawnChild: typeof spawn = spawn): OrcaProcessExecutor {
+  return (request) =>
+    new Promise((resolve, reject) => {
+      const child = spawnChild(request.executable, [...request.argv], {
+        shell: request.shell,
+        env: request.env as NodeJS.ProcessEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let settled = false;
+      let timedOut = false;
+      let outputLimited = false;
+      let spawned = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let closeTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (result: OrcaProcessResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (closeTimer !== undefined) clearTimeout(closeTimer);
+        resolve(result);
+      };
+      const stop = () => {
+        child.kill('SIGTERM');
+        killTimer ??= setTimeout(() => {
+          child.kill('SIGKILL');
+          closeTimer ??= setTimeout(
+            () =>
+              finish({
+                exitCode: null,
+                signal: 'SIGKILL',
+                stdout: Buffer.concat(stdout).toString('utf8'),
+                stderr: Buffer.concat(stderr).toString('utf8'),
+                timedOut,
+                outputLimited,
+                transportLost: true,
+              }),
+            ORCA_CLOSE_GRACE_MS,
+          );
+        }, ORCA_KILL_GRACE_MS);
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
         stop();
-      } else stdout.push(chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes > request.maxStderrBytes) {
-        outputLimited = true;
-        stop();
-      } else stderr.push(chunk);
-    });
-    child.once('spawn', () => {
-      spawned = true;
-    });
-    child.once('error', (error) => {
-      if (settled) return;
-      if (spawned) {
+      }, request.timeoutMs);
+      // A post-spawn stream fault settles exactly like the post-spawn child
+      // 'error' below: an ambiguous transport loss, never an unhandled 'error'
+      // event that would crash the process and leave this promise pending.
+      const settleTransportLoss = (detail: string) => {
+        if (settled) return;
         finish({
           exitCode: null,
           stdout: Buffer.concat(stdout).toString('utf8'),
-          stderr: `${Buffer.concat(stderr).toString('utf8')}\nprocess transport error: ${error.message}`,
+          stderr: `${Buffer.concat(stderr).toString('utf8')}\n${detail}`,
           timedOut,
           outputLimited,
           transportLost: true,
         });
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      if (killTimer !== undefined) clearTimeout(killTimer);
-      if (closeTimer !== undefined) clearTimeout(closeTimer);
-      reject(error);
-    });
-    child.once('close', (exitCode, signal) => {
-      if (settled) return;
-      finish({
-        exitCode,
-        signal,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        timedOut,
-        outputLimited,
+      };
+      child.stdout.on('error', (error: Error) => {
+        settleTransportLoss(`stdout stream error: ${error.message}`);
+      });
+      child.stderr.on('error', (error: Error) => {
+        settleTransportLoss(`stderr stream error: ${error.message}`);
+      });
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdoutBytes += chunk.length;
+        if (stdoutBytes > request.maxStdoutBytes) {
+          outputLimited = true;
+          stop();
+        } else stdout.push(chunk);
+      });
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderrBytes += chunk.length;
+        if (stderrBytes > request.maxStderrBytes) {
+          outputLimited = true;
+          stop();
+        } else stderr.push(chunk);
+      });
+      child.once('spawn', () => {
+        spawned = true;
+      });
+      child.once('error', (error) => {
+        if (settled) return;
+        if (spawned) {
+          settleTransportLoss(`process transport error: ${error.message}`);
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        if (killTimer !== undefined) clearTimeout(killTimer);
+        if (closeTimer !== undefined) clearTimeout(closeTimer);
+        reject(error);
+      });
+      child.once('close', (exitCode, signal) => {
+        if (settled) return;
+        finish({
+          exitCode,
+          signal,
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+          timedOut,
+          outputLimited,
+        });
       });
     });
-  });
+}
+
+const spawnOrcaProcess: OrcaProcessExecutor = createOrcaProcessExecutor();
 
 const terminalId = id;
 const receipt = (shape: z.ZodRawShape) => z.object(shape).strict();
@@ -812,7 +845,18 @@ function hasAcknowledgement(operation: OrcaOrchestrationVerb, input: unknown): b
   return operation === 'check' && typeof input === 'object' && input !== null && 'ack' in input;
 }
 
+/**
+ * Property-access view over a decoded response fragment.
+ *
+ * Several documented readbacks are legitimately nullable (`run-current` answers
+ * `{ run: null }` when nothing is bound), and this used to be a bare cast: the
+ * next `.id` threw a raw TypeError straight out of `execute`, bypassing the
+ * adapter's typed error contract entirely. A non-object collapses to an empty
+ * record instead, so every field read yields `undefined` and the caller's own
+ * comparison decides the outcome.
+ */
 function recordOf(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 }
 
@@ -862,6 +906,10 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
       operation: { operation: 'run-current' },
       matches: (readback) => {
         const current = recordOf(readback);
+        // `{ run: null }` is a valid run-current answer: nothing is bound. The
+        // run-use binding therefore did NOT take effect, which is a readback
+        // disagreement (typed readback_mismatch), not a decoding accident.
+        if (current.run === null || current.run === undefined) return false;
         const run = recordOf(current.run);
         return receiptRunId === operation.id && run.id === operation.id;
       },
@@ -936,9 +984,7 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
               task.title === operation.title &&
               JSON.stringify(task.deps ?? []) === JSON.stringify(operation.deps ?? []) &&
               task.parent === operation.parent
-          : task.status === operation.status &&
-              (JSON.stringify(task.result) === JSON.stringify(operation.result) ||
-                task.result === JSON.stringify(operation.result));
+          : task.status === operation.status && taskResultMatches(task.result, operation.result);
       },
     };
   }
@@ -981,6 +1027,22 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
     };
   }
   return undefined;
+}
+
+/**
+ * `task-update.result` is optional. A status-only update asserts nothing about
+ * the stored result, so requiring equality would compare `JSON.stringify(undefined)`
+ * (the value `undefined`) against the readback's `null` — or against a previously
+ * stored payload — and fail every status-only readback. Only compare the result
+ * when the mutation actually carried one; the public projection stores it as a
+ * JSON string, the private one as the object itself.
+ */
+function taskResultMatches(readbackResult: unknown, operationResult: unknown): boolean {
+  if (operationResult === undefined) return true;
+  return (
+    JSON.stringify(readbackResult) === JSON.stringify(operationResult) ||
+    readbackResult === JSON.stringify(operationResult)
+  );
 }
 
 function processFailure(
@@ -1049,6 +1111,21 @@ function safeProcessError(
   );
 }
 
+/**
+ * Process wall clock for one invocation.
+ *
+ * `worker-start`, `check --wait`, and `ask` accept their own `--timeout-ms` (up
+ * to 600_000 ms) and legitimately block for it. A fixed 30s process bound killed
+ * every one of those before Orca could answer, turning a supported long wait into
+ * a `timeout`/`ambiguous_after_possible_commit`. Honour the requested wait plus a
+ * grace, never shrink below the adapter default (a 250 ms `--timeout-ms` must not
+ * shrink the budget the CLI needs just to start), and never exceed the ceiling.
+ */
+function resolveProcessTimeoutMs(requestedMs: number | undefined, defaultMs: number): number {
+  if (requestedMs === undefined) return defaultMs;
+  return Math.min(MAX_ORCA_TIMEOUT_MS, Math.max(defaultMs, requestedMs + ORCA_TIMEOUT_GRACE_MS));
+}
+
 function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationAdapter {
   const env = Object.freeze({ ...(options.env ?? process.env) });
   const executable = resolveOrcaExecutable({
@@ -1058,13 +1135,17 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
   const executor = options.executor ?? spawnOrcaProcess;
   const defaultTimeout = options.timeoutMs ?? DEFAULT_ORCA_TIMEOUT_MS;
   const now = options.now ?? (() => new Date());
-  const executeProcess = async (argv: readonly string[], operation: OrcaOrchestrationVerb | 'runtime') => {
+  const executeProcess = async (
+    argv: readonly string[],
+    operation: OrcaOrchestrationVerb | 'runtime',
+    timeoutMs = defaultTimeout,
+  ) => {
     try {
       return await executor({
         executable,
         argv,
         shell: false,
-        timeoutMs: defaultTimeout,
+        timeoutMs,
         maxStdoutBytes: MAX_ORCA_STDOUT_BYTES,
         maxStderrBytes: MAX_ORCA_STDERR_BYTES,
         env,
@@ -1084,7 +1165,12 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
   };
   const invoke = async (operation: ValidatedOrcaOperation): Promise<OrcaJsonEnvelope> => {
     const argv = buildOrcaOrchestrationArgv(operation);
-    let result = await executeProcess(argv, operation.operation);
+    const requestedTimeoutMs = 'timeoutMs' in operation ? operation.timeoutMs : undefined;
+    let result = await executeProcess(
+      argv,
+      operation.operation,
+      resolveProcessTimeoutMs(requestedTimeoutMs, defaultTimeout),
+    );
     result = { ...result, stderr: sanitizeStderr(result.stderr, operation, env) };
     const isMutation = mutationVerbs.has(operation.operation) || hasAcknowledgement(operation.operation, operation);
     const failure = processFailure(operation.operation, operation, result);
@@ -1372,4 +1458,4 @@ export function createOrcaOrchestrationAdapter(): OrcaOrchestrationAdapter {
 }
 
 /** Test-only dependency seam. Production callers must use createOrcaOrchestrationAdapter. */
-export const __orcaAdapterTestOnly = Object.freeze({ createAdapter, spawnOrcaProcess });
+export const __orcaAdapterTestOnly = Object.freeze({ createAdapter, createOrcaProcessExecutor, spawnOrcaProcess });

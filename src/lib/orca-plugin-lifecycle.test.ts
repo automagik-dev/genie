@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkOrcaLifecycle } from '../genie-commands/doctor.js';
@@ -156,6 +156,59 @@ describe('Orca plugin lifecycle transitions', () => {
     expect(readFileSync(markerPath, 'utf8')).toBe(previousMarker);
     expect(await refreshOwnedOrcaPluginMetadata(compatible)).toBe('refreshed');
     expect(inspectOrcaPluginLifecycle().payload).toBe('owned-clean');
+  });
+
+  // Digesting the payload reads two real files. An unreadable one (EACCES, or a
+  // path that is no longer a regular file) used to throw straight out of
+  // inspectOrcaPluginLifecycle — and therefore out of `genie doctor`, the one
+  // command an operator runs to find out what is broken.
+  test('reports an unreadable payload instead of throwing out of doctor', async () => {
+    writePayload();
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode: 'standalone' } }));
+    await switchOrchestrationMode('orca', {
+      probe: async () => ({
+        runtimeId: 'runtime_1',
+        runtimeVersion: '1.4.193',
+        contract: 'orchestration.contract.v1',
+      }),
+    });
+    expect(inspectOrcaPluginLifecycle().payload).toBe('owned-clean');
+
+    // A path that exists but cannot be read as a file — uid-independent, so it
+    // behaves identically for a root CI container and a normal user.
+    const manifest = join(home, 'plugins', 'genie', 'orca-plugin.json');
+    rmSync(manifest);
+    mkdirSync(manifest);
+
+    const inspection = inspectOrcaPluginLifecycle();
+    expect(inspection.payload).toBe('unreadable');
+    expect(inspection.mode).toBe('orca');
+    expect(inspection.recovery).toContain('could not be read');
+
+    // doctor still renders a check line instead of exploding.
+    const checks = await checkOrcaLifecycle({}, false);
+    expect(checks[0]).toMatchObject({ name: 'orchestration authority', status: 'fail' });
+    expect(checks[0]?.detail).toContain('payload=unreadable');
+  });
+
+  test('reports an EACCES payload as unreadable', async () => {
+    if (process.getuid?.() === 0) return; // root ignores the mode bits
+    writePayload();
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode: 'standalone' } }));
+    await switchOrchestrationMode('orca', {
+      probe: async () => ({
+        runtimeId: 'runtime_1',
+        runtimeVersion: '1.4.193',
+        contract: 'orchestration.contract.v1',
+      }),
+    });
+    const entrypoint = join(home, 'plugins', 'genie', 'orca-entrypoint.min.js');
+    chmodSync(entrypoint, 0o000);
+    try {
+      expect(inspectOrcaPluginLifecycle().payload).toBe('unreadable');
+    } finally {
+      chmodSync(entrypoint, 0o600);
+    }
   });
 
   test('setup mode surface reports success, idempotency, and error exit/stderr', async () => {
