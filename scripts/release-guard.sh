@@ -151,11 +151,13 @@ check_ci_run_record() {
 # normalized documents prevents an allowlisted package.json from smuggling a
 # script or dependency change past the parent commit's successful CI run.
 #
-# The native Orca manifest is an OPTIONAL member of that delta: `workflow_run`
+# Both native Orca manifests are OPTIONAL members of that delta: `workflow_run`
 # executes the `version.yml` on main, so a bump field added on dev is inert
-# until promotion. A child that omits it is still the deterministic bump of
-# the workflow that produced it; when present it must be version-only like
-# every other member. Its shipped copy is stamped inside the payload anyway.
+# until promotion. A child that omits either is still the deterministic bump of
+# the workflow that produced it; when present each must be version-only like
+# every other member. The payload manifest's shipped copy is stamped inside the
+# payload anyway, and the repo-root manifest (`orca-plugin.json`, which makes
+# the public repo root an Orca git plugin source) ships in no tarball at all.
 version_child_matches_parent() {
   local parent_sha="$1" child_sha="$2" version="$3" path changed expected child_yaml
   local -a json_paths=(
@@ -167,6 +169,9 @@ version_child_matches_parent() {
     plugins/pi-genie/package.json
   )
   changed="$(git diff --name-only "$parent_sha" "$child_sha" -- | LC_ALL=C sort)" || return 1
+  if grep -qx 'orca-plugin.json' <<<"$changed"; then
+    json_paths+=(orca-plugin.json)
+  fi
   if grep -qx 'plugins/genie/orca-plugin.json' <<<"$changed"; then
     json_paths+=(plugins/genie/orca-plugin.json)
   fi

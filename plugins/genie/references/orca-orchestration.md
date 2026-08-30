@@ -76,6 +76,35 @@ A new verb or field changes the trust boundary. Before implementation:
 No fallback, cache, retry ledger, mirror, queue, lifecycle store, private host API, or background synchronization may be
 added without a separately approved design.
 
+## Installing the plugin in Orca
+
+Selecting the authority (`genie setup --orchestration-mode orca`) and registering the plugin with Orca are two separate
+acts. Genie never registers itself with Orca; the operator adds a source. Orca accepts exactly two:
+
+1. a **marketplace source** — a git repo whose ROOT holds `orca-marketplace.json`;
+2. a **plugin source** — a git repo whose ROOT holds `orca-plugin.json`, or a local folder containing `orca-plugin.json`.
+
+Genie's shipped manifest lives at `plugins/genie/orca-plugin.json`, which satisfies neither git-source rule on its own —
+a nested manifest is invisible to both. The repository root therefore carries two additional source-only files:
+
+- `orca-plugin.json` — byte-identical to the payload manifest except for `main`, which is re-rooted to
+  `plugins/genie/orca-entrypoint.min.js`. Same `id`, `publisher`, `version`, `engines`, and contribution set: it is the
+  same plugin, not a second one.
+- `orca-marketplace.json` — a single-entry index publishing `automagik.genie` from
+  `https://github.com/automagik-dev/genie.git` at ref `main`. The ref is the stable branch, not a tag; Orca pins the
+  fetched commit itself.
+
+Operator routes, all equivalent: marketplace source `https://github.com/automagik-dev/genie.git` (ref `main`); plugin git
+source, same URL and ref; or a local folder — `~/.genie/plugins/genie` for an installed Genie, or this repo's checkout
+root for contributors (the latter exercises the root manifest's nested `main` resolution).
+
+Maintenance contract: neither root file is copied into any release tarball, so `release-payload-version.ts` deliberately
+does not stamp or gate them. Their version currency comes from `scripts/version.ts` and the `version.yml` bump list
+instead, and `release-guard.sh` treats the root manifest as an OPTIONAL version-only member of the auto-version child
+delta for the same reason the payload manifest is optional: `workflow_run` executes main's `version.yml`, so a field
+added on dev is inert until promotion. Drift between the two manifests, or between the marketplace entry and the
+manifest identity, fails `scripts/orca-manifest-parity.test.ts`.
+
 ## Lifecycle and release maintenance
 
 Install and update stage the complete payload, verify its inventory and version, preflight the selected authority, and

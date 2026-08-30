@@ -305,6 +305,7 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
       'package.json',
       { name: '@automagik/genie', version, ...(packageScript ? { scripts: { postinstall: packageScript } } : {}) },
     ],
+    ['orca-plugin.json', { id: 'genie', version, main: 'plugins/genie/orca-entrypoint.min.js' }],
     ['plugins/genie/.claude-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version }],
@@ -357,10 +358,47 @@ describe('check-version-child (parent CI inheritance)', () => {
     git(fixture.root, 'add', '.');
     git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
     const child = git(fixture.root, 'rev-parse', 'HEAD');
-    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child)).not.toContain('orca-plugin.json');
+    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child).split('\n')).not.toContain(
+      'plugins/genie/orca-plugin.json',
+    );
 
     const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
     expect(result.exitCode).toBe(0);
+  });
+
+  // Same optional-member posture for the repo-root Orca manifest, which makes
+  // the public repo root a valid Orca marketplace / git plugin source and ships
+  // in no tarball.
+  test('accepts a version-only child that omits the repo-root Orca manifest', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '5.260714.2');
+    git(fixture.root, 'checkout', '-q', fixture.parent, '--', 'orca-plugin.json');
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child).split('\n')).not.toContain(
+      'orca-plugin.json',
+    );
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('still rejects a child whose repo-root Orca manifest bump is not version-only', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '5.260714.2');
+    writeFileSync(
+      join(fixture.root, 'orca-plugin.json'),
+      `${JSON.stringify({ id: 'genie', version: '5.260714.2', main: 'evil.js' }, null, 2)}\n`,
+    );
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(3);
   });
 
   test('still rejects a child whose Orca manifest bump is not version-only', () => {

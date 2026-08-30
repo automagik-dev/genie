@@ -71,6 +71,11 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(workflow).toContain(path);
     }
+    // The repo-root Orca manifest joined the bump list; it is a bare root path,
+    // so assert its exact position in JSON_FILES rather than a substring that
+    // 'plugins/genie/orca-plugin.json' would satisfy on its own.
+    expect(workflow).toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
+    expect(workflow).toContain('expected exactly ten version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
@@ -836,6 +841,20 @@ describe('Group E release and documentation contracts', () => {
     expect(operator).toContain('The legacy Genie MCP server is retired');
     expect(operator).toContain('pre-A7 signed release');
     expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
+    // Registering the plugin with Orca is a separate, operator-side act, and
+    // both root source files must be documented on both surfaces.
+    for (const topic of [
+      'Installing the plugin in Orca',
+      'orca-marketplace.json',
+      'https://github.com/automagik-dev/genie.git',
+      '~/.genie/plugins/genie',
+      'scripts/orca-manifest-parity.test.ts',
+    ]) {
+      expect(operator).toContain(topic);
+      expect(contributor).toContain(topic);
+    }
+    expect(operator).toContain('does **not** register the Genie');
+    expect(contributor).toContain('Genie never registers itself with Orca');
 
     for (const topic of [
       'orca orchestration',
