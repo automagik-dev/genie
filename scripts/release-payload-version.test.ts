@@ -56,8 +56,11 @@ describe('release payload version contract', () => {
     const packageVersion = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version;
 
     expect(verifyCommittedReleaseVersions(repoRoot)).toBe(packageVersion);
-    expect(JSON.parse(readFileSync(join(repoRoot, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe(
-      packageVersion,
+    // The committed native Orca manifest is advisory (stamped inside the payload);
+    // it only has to be a well-formed version string, not the package version —
+    // main's workflow_run bump list may lag dev's by a field.
+    expect(JSON.parse(readFileSync(join(repoRoot, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toMatch(
+      /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/,
     );
   });
 
@@ -114,9 +117,22 @@ describe('release payload version contract', () => {
     const root = fixture();
     expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
 
-    writeJson(root, 'plugins/genie/orca-plugin.json', { name: 'genie', version: '5.999999.1' });
+    writeJson(root, 'plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version: '5.999999.1' });
     expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch in');
-    expect(() => verifyCommittedReleaseVersions(root)).toThrow('orca-plugin.json');
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('.kimi-plugin/plugin.json');
+  });
+
+  // The Orca manifest's shipped copy is stamped inside the payload; the
+  // committed value is advisory. Gating it coupled dev CI to the bump list of
+  // the `version.yml` on main (workflow_run runs main's copy), which blocked
+  // every dev release between 5.260829.5 and .8 on 2026-08-30.
+  test('source preflight tolerates a lagging committed native Orca manifest', () => {
+    const root = fixture();
+    writeJson(root, 'plugins/genie/orca-plugin.json', { id: 'genie', version: '5.000000.0-lagging' });
+    expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
+
+    stampReleasePayloadVersion(root, '5.260711.10');
+    expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.10');
   });
 
   test('fails closed on missing metadata, malformed versions, and an invalid Codex marketplace target', () => {

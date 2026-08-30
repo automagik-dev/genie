@@ -150,29 +150,34 @@ check_ci_run_record() {
 # delta is the deterministic version bump produced by version.yml. Comparing
 # normalized documents prevents an allowlisted package.json from smuggling a
 # script or dependency change past the parent commit's successful CI run.
+#
+# The native Orca manifest is an OPTIONAL member of that delta: `workflow_run`
+# executes the `version.yml` on main, so a bump field added on dev is inert
+# until promotion. A child that omits it is still the deterministic bump of
+# the workflow that produced it; when present it must be version-only like
+# every other member. Its shipped copy is stamped inside the payload anyway.
 version_child_matches_parent() {
   local parent_sha="$1" child_sha="$2" version="$3" path changed expected child_yaml
+  local -a json_paths=(
+    package.json
+    plugins/genie/.claude-plugin/plugin.json
+    plugins/genie/.codex-plugin/plugin.json
+    plugins/genie/.kimi-plugin/plugin.json
+    plugins/genie/package.json
+    plugins/pi-genie/package.json
+  )
+  changed="$(git diff --name-only "$parent_sha" "$child_sha" -- | LC_ALL=C sort)" || return 1
+  if grep -qx 'plugins/genie/orca-plugin.json' <<<"$changed"; then
+    json_paths+=(plugins/genie/orca-plugin.json)
+  fi
   expected="$(printf '%s\n' \
     '.claude-plugin/marketplace.json' \
-    'package.json' \
-    'plugins/genie/.claude-plugin/plugin.json' \
-    'plugins/genie/.codex-plugin/plugin.json' \
-    'plugins/genie/.kimi-plugin/plugin.json' \
-    'plugins/genie/orca-plugin.json' \
-    'plugins/genie/package.json' \
-    'plugins/pi-genie/package.json' \
-    'plugins/hermes-genie/plugin.yaml' | LC_ALL=C sort)"
-  changed="$(git diff --name-only "$parent_sha" "$child_sha" -- | LC_ALL=C sort)" || return 1
+    'plugins/hermes-genie/plugin.yaml' \
+    "${json_paths[@]}" | LC_ALL=C sort)"
   [[ "$changed" == "$expected" ]] || return 1
   [[ "$(git show -s --format=%s "$child_sha")" == "chore(version): bump to ${version} [auto-version]" ]] || return 1
 
-  for path in package.json \
-    plugins/genie/.claude-plugin/plugin.json \
-    plugins/genie/.codex-plugin/plugin.json \
-    plugins/genie/.kimi-plugin/plugin.json \
-    plugins/genie/orca-plugin.json \
-    plugins/genie/package.json \
-    plugins/pi-genie/package.json; do
+  for path in "${json_paths[@]}"; do
     git show "${child_sha}:${path}" |
       jq -e --arg version "$version" '.version == $version' >/dev/null || return 1
     cmp -s \
