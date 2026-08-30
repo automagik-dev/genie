@@ -76,6 +76,62 @@ A new verb or field changes the trust boundary. Before implementation:
 No fallback, cache, retry ledger, mirror, queue, lifecycle store, private host API, or background synchronization may be
 added without a separately approved design.
 
+## Installing the plugin in Orca
+
+Selecting the authority (`genie setup --orchestration-mode orca`) and registering the plugin with Orca are two separate
+acts. Genie never registers itself with Orca; the operator adds a source. Orca accepts exactly two:
+
+1. a **marketplace source** — a git repo whose ROOT holds `orca-marketplace.json`;
+2. a **plugin source** — a git repo whose ROOT holds `orca-plugin.json`, or a local folder containing `orca-plugin.json`.
+
+### Why the repo root is not the plugin tree
+
+Orca's loader imposes three constraints that this repository root cannot satisfy:
+
+- **No symlinks.** Any symlink anywhere in the tree fails the whole install with "unsafe file path or symlink". `docs`
+  is a symlink into the `.docs-vendor` submodule.
+- **2000 files / 50 MB.** A dev checkout is roughly 14,000 files.
+- **The manifest must be at the ROOT.** Genie's manifest is nested at `plugins/genie/orca-plugin.json`, and a git plugin
+  source only ever looks at the root of the fetched tree.
+
+Adding a second, re-rooted `orca-plugin.json` at the repo root does not help: it fixes only the third constraint and
+leaves the first two fatal. `plugins/genie` on its own satisfies all three — symlink-free, ~132 files, ~1.3 MB, manifest
+at its root — so that subtree is what gets published.
+
+### The published refs
+
+`.github/workflows/orca-plugin-ref.yml` mirrors `plugins/genie` into two refs of this same repository:
+
+| Source branch | Published ref | Channel |
+|---------------|---------------|---------|
+| `main` | `refs/heads/orca-plugin` | stable — what `orca-marketplace.json` points at |
+| `dev` | `refs/heads/orca-plugin-dev` | pre-release |
+
+Each publish is a parentless commit created with `git commit-tree` over `HEAD:plugins/genie` and force-pushed. The refs
+are **tree-only by design**: no history, no shared ancestry with `main` or `dev`, and never merged back. The workflow is
+idempotent — it compares the branch's subtree hash against the published ref's tree and exits without pushing when they
+match. Orca pins the commit it fetched, so a republish cannot retroactively change an existing install.
+
+### Operator routes
+
+- Marketplace source: `https://github.com/automagik-dev/genie.git` at ref `main` (the index lives at the repo root); the
+  entry it lists resolves the plugin from the same URL at ref `orca-plugin`.
+- Plugin git source: `https://github.com/automagik-dev/genie.git` at ref `orca-plugin`, or `orca-plugin-dev` for the
+  pre-release channel. Never `main` or `dev` — those roots are not installable trees.
+- Local folder: `~/.genie/plugins/genie`, the payload `genie install` / `genie update` ships. A contributor can point
+  Orca at the `plugins/genie` directory of a checkout for the same reason; the checkout ROOT is not a valid folder
+  source.
+
+### Maintenance contract
+
+`orca-marketplace.json` is source-only: `build-binary.sh` copies it into no tarball, so `release-payload-version.ts`
+deliberately does not stamp or gate it. It carries no version field — it names an identity and a ref, both stable across
+releases — so it is absent from `scripts/version.ts` and the `version.yml` bump list, and the repo root holds no
+`orca-plugin.json` for either to stamp. `scripts/orca-manifest-parity.test.ts` is the drift guard: it fails when the
+marketplace entry stops matching `publisher.id` or the description of `plugins/genie/orca-plugin.json`, when the source
+ref stops being `orca-plugin`, when a root `orca-plugin.json` reappears, or when `plugins/genie` grows a symlink or
+crosses Orca's 2000-file cap and stops being installable.
+
 ## Lifecycle and release maintenance
 
 Install and update stage the complete payload, verify its inventory and version, preflight the selected authority, and

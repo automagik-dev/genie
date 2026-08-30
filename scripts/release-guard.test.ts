@@ -357,7 +357,9 @@ describe('check-version-child (parent CI inheritance)', () => {
     git(fixture.root, 'add', '.');
     git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
     const child = git(fixture.root, 'rev-parse', 'HEAD');
-    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child)).not.toContain('orca-plugin.json');
+    expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child).split('\n')).not.toContain(
+      'plugins/genie/orca-plugin.json',
+    );
 
     const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
     expect(result.exitCode).toBe(0);
