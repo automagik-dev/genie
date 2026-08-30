@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — independent review SHIP at `2026-08-29T18:13:16Z` |
+| **Status** | IN_PROGRESS — A1–A7 merged to `dev` (#2808–#2820); rolling promotion #2817 (dev→main) reviewed **FIX-FIRST** at `2026-08-30` on `eccf0ae4a`; fix PRs in flight, re-review pending |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -360,6 +360,36 @@ done
 ---
 
 ## Review Results
+
+- **PR review of #2817 (dev→main) — FIX-FIRST (2026-08-30):** independent reviewer (`genie:reviewer` subagent dispatched
+  from session `session_018QrkgYMEEhrWTUo5E7Nkjg`, plus supply-chain and architecture lens panels) reviewed the pinned
+  read-only snapshot `eccf0ae4a038850896cd6bea5051301c45d5fec5` (base `origin/main` = `e0e0a32cb`; 125 files,
+  +5728/−7886, 19 commits) against A1–A7 and the repository contracts. Validation on the snapshot:
+  `bun install --frozen-lockfile` PASS; every `bun run check` gate except tests PASS on a mode-normalized tree
+  (typecheck, lint, knip, skills/wishes lint, complexity budget, council workflow, hook-bundle parity, hook content,
+  plugin executables); `bun test` 3303 pass / 19 fail / 1 skip — 1 real failure (committed `orca-plugin.json`
+  version-sync), 6 pre-existing `scripts/reconcile-release-assets.test.ts` timeouts (byte-identical blob fails the same
+  way on `origin/main`), 12 umask-077 snapshot artifacts (516/516 pass when re-run at umask 022); `bun run build` PASS
+  (single 2.29 MB bundle, Orca dynamic imports inlined). CRITICAL: none. HIGH: H1 `doctor` `checkCodexProjectContext`
+  opens `genie.db` in Orca mode (creates `-wal`/`-shm`; A1 breach); H2 `genie ui-bridge` dies on an uncaught
+  `LocalLifecycleDisabledError`; H3 `genie update` aborted delivery after the payload swap when the Orca ownership
+  refresh/probe failed; H4 adapter `executeProcess` pins a 30 s deadline and ignores validated `timeoutMs`
+  (`ask`/`check --wait`); H5 untyped `TypeError` on the `run-use` read-back when `run-current` returns `run: null`;
+  H6 shipped `orca-entrypoint.min.js` had no source-parity gate. MEDIUM: M1 flaky `bounds timeout termination` test
+  (20 ms); M2 A3 real-runtime smoke never executes anywhere; M3/M4 read-back over-strictness (100-capped `task-list`,
+  optional `model`/`effort`); M5 `pi-genie`/`hermes-genie` manifests outside the version gate; M6 `board`/`idea` raw
+  stack traces in Orca mode; M7/M8 stale MCP/`pm` references (CLAUDE.md, plugin references, Kimi `pm.md`); M9 Hermes
+  loses all tool-surface board access; M10 dead launcher validator; M11 this ledger not advanced. Root causes fixed
+  outside the wish scope during the same review: `version.yml` executes from `main` under `workflow_run`, so the
+  ninth version field never synced on dev and no dev tarball shipped after v5.260829.4; `tar -xzf` without `-p` broke
+  `genie update` under umask 077.
+- **Fix disposition (2026-08-30):** merged to `dev` — #2821 (admission tolerates umask-restricted payloads),
+  #2823 (committed Orca manifest version no longer gates dev releases), #2825 (H6 esbuild parity gate for
+  `orca-entrypoint.min.js`, wired into `check`/CI/`build-binary.sh`). Open — #2824 (`tar -xzpf` in both extractors),
+  #2827 (H3: ownership refresh runs after `publishCodexDeliveryFacts`, advisory), #2822 (`version.yml` ninth field →
+  `main`), #2826 (M7/M8 docs, Kimi `pm.md`→`quick.md`, orphan check); in flight — `fix/orca-adapter-readback`
+  (H4, H5, M1) and `fix/orca-mode-guards` (H1, H2, M6). Per-group acceptance boxes stay unticked until the clean
+  re-review; #2817 is not approved for human promotion before that re-review returns SHIP.
 
 - **Current canonical plan — SHIP:** independent reviewer `term_6c98a3c8-7ac8-4274-a8e9-ade35e2d82dd` reviewed
   reviewable DESIGN content SHA-256 `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9`
