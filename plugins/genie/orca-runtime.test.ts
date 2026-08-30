@@ -116,6 +116,47 @@ describe('native Orca plugin contract', () => {
     }
   });
 
+  // A prerelease of the minimum is NOT the minimum. The version gate dropped the
+  // `-rc.1` suffix, so `1.4.192-rc.1` compared equal to the released `1.4.192`
+  // and satisfied `>=1.4.192` — the plugin then ran against a runtime whose
+  // orchestration contract is still in flux.
+  test('rejects a prerelease of the minimum runtime version and accepts real successors', async () => {
+    const accepted = [
+      ORCA_MINIMUM_RUNTIME_VERSION,
+      '1.4.193',
+      '1.5.0',
+      '2.0.0',
+      '1.4.193-rc.1',
+      `${ORCA_MINIMUM_RUNTIME_VERSION}+build.7`,
+    ];
+    const rejected = [
+      '1.4.192-rc.1',
+      '1.4.192-0',
+      '1.4.192-alpha',
+      '1.4.191',
+      '1.3.999',
+      '0.9.9',
+      'not-a-version',
+      '1.4',
+    ];
+    const probeWith = async (runtimeVersion: string) => {
+      const adapter: OrcaOrchestrationAdapter = {
+        executable: 'opaque-to-plugin',
+        status: async () => status(runtimeVersion),
+        execute: async () => response(),
+      };
+      return createOrcaPluginRuntime(adapter).probe();
+    };
+    for (const runtimeVersion of accepted) {
+      expect(await probeWith(runtimeVersion), runtimeVersion).toMatchObject({ runtimeVersion });
+    }
+    for (const runtimeVersion of rejected) {
+      await expect(probeWith(runtimeVersion), runtimeVersion).rejects.toMatchObject({
+        code: 'unsupported_environment',
+      });
+    }
+  });
+
   test('does not expose stores, fallback, argv, shells, dispatch injection, or executable selection', async () => {
     const source = await readFile(resolve(import.meta.dir, 'orca-runtime.ts'), 'utf8');
     for (const forbidden of [
