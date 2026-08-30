@@ -183,7 +183,18 @@ interface CapturedCommand {
   executableSha256: string;
   candidateBinary: string | null;
   candidateBinarySha256: string | null;
+  /**
+   * The CANDIDATE's own arguments, never the adapter spawn vector. Evidence
+   * consumers assert on what the genie binary was asked to do, so this stays
+   * identical on every platform whether or not an execution adapter wraps it.
+   */
   argv: string[];
+  /**
+   * Present only when an execution adapter ran the candidate (linux-x64-musl
+   * goes through scripts/run-musl-dogfood.sh): the real argv handed to
+   * `executable`, i.e. [candidateBinary, ...argv].
+   */
+  adapterArgv?: string[];
   pid: number;
   requestedCwd: string;
   cwdIdentity: string;
@@ -776,7 +787,26 @@ function verifyLegacyReleaseProvenance(input: {
   }
 }
 
-function captureCommand(input: {
+/**
+ * Split one candidate invocation into the evidence argv (always the
+ * candidate's own arguments) and the real spawn vector. Without an execution
+ * adapter the two coincide; with one, the adapter takes the candidate binary
+ * as its first positional argument.
+ */
+export function resolveInvocation(input: { binary: string; args: string[]; executionAdapter?: string }): {
+  command: string;
+  argv: string[];
+  adapterArgv?: string[];
+  spawnArgv: string[];
+} {
+  if (input.executionAdapter === undefined) {
+    return { command: input.binary, argv: input.args, spawnArgv: input.args };
+  }
+  const adapterArgv = [input.binary, ...input.args];
+  return { command: input.executionAdapter, argv: input.args, adapterArgv, spawnArgv: adapterArgv };
+}
+
+export function captureCommand(input: {
   root: string;
   binary: string;
   args: string[];
@@ -786,13 +816,12 @@ function captureCommand(input: {
   stdin?: Uint8Array;
   timeoutMs?: number;
 }): CapturedCommand {
-  const command = input.executionAdapter ?? input.binary;
-  const argv = input.executionAdapter === undefined ? input.args : [input.binary, ...input.args];
+  const { command, argv, adapterArgv, spawnArgv } = resolveInvocation(input);
   const env =
     input.executionAdapter === undefined
       ? input.env
       : { ...input.env, DOGFOOD_ROOT: input.root, DOGFOOD_ADAPTER_CWD: realpathSync(input.cwd) };
-  const result = Bun.spawnSync([command, ...argv], {
+  const result = Bun.spawnSync([command, ...spawnArgv], {
     cwd: input.cwd,
     env,
     stdin: input.stdin,
@@ -801,7 +830,7 @@ function captureCommand(input: {
     timeout: input.timeoutMs ?? 120_000,
   });
   if (result.exitedDueToTimeout === true) {
-    throw new Error(`bounded candidate command timed out: ${[command, ...argv].join(' ')}`);
+    throw new Error(`bounded candidate command timed out: ${[command, ...spawnArgv].join(' ')}`);
   }
   const cwdStat = statSync(realpathSync(input.cwd));
   return {
@@ -810,6 +839,7 @@ function captureCommand(input: {
     candidateBinary: realpathSync(input.binary),
     candidateBinarySha256: sha256File(realpathSync(input.binary)),
     argv,
+    ...(adapterArgv === undefined ? {} : { adapterArgv }),
     pid: result.pid,
     requestedCwd: realpathSync(input.cwd),
     cwdIdentity: `${cwdStat.dev}:${cwdStat.ino}`,
@@ -826,11 +856,12 @@ function capturePtySetup(input: {
   env: Record<string, string>;
   executionAdapter?: string;
 }): CapturedCommand {
-  const command = input.executionAdapter ?? input.binary;
-  const commandArgs =
-    input.executionAdapter === undefined
-      ? [input.binary, 'setup', '--codex']
-      : [input.executionAdapter, input.binary, 'setup', '--codex'];
+  const { command, argv, adapterArgv, spawnArgv } = resolveInvocation({
+    binary: input.binary,
+    args: ['setup', '--codex'],
+    executionAdapter: input.executionAdapter,
+  });
+  const commandArgs = [command, ...spawnArgv];
   const env = {
     ...input.env,
     CI: '',
@@ -879,7 +910,8 @@ function capturePtySetup(input: {
     executableSha256: sha256File(realpathSync(command)),
     candidateBinary: realpathSync(input.binary),
     candidateBinarySha256: sha256File(realpathSync(input.binary)),
-    argv: commandArgs.slice(1),
+    argv,
+    ...(adapterArgv === undefined ? {} : { adapterArgv }),
     pid: result.pid,
     requestedCwd: realpathSync(input.cwd),
     cwdIdentity: `${cwdStat.dev}:${cwdStat.ino}`,
@@ -898,7 +930,7 @@ function requireExit(observation: CapturedCommand, expected: number, label: stri
     throw new Error(
       `${label} exited ${observation.exit}, expected ${expected}\n` +
         `  exe: ${observation.executable}\n` +
-        `  argv: ${JSON.stringify(observation.argv)}\n` +
+        `  argv: ${JSON.stringify(observation.adapterArgv ?? observation.argv)}\n` +
         `  stderr[${observation.stderr.length}B]: ${observation.stderr.trim() || '<empty>'}\n` +
         `  stdout[${observation.stdout.length}B]: ${observation.stdout.trim() || '<empty>'}`,
     );
@@ -1119,7 +1151,9 @@ function stage(
   const observation = { schemaVersion: 1 as const, commands };
   return {
     id,
-    command: commands.map((command) => [command.executable, ...command.argv].join(' ')).join(' && '),
+    command: commands
+      .map((command) => [command.executable, ...(command.adapterArgv ?? command.argv)].join(' '))
+      .join(' && '),
     ...projection,
     observationPath: `observations/${id}.json`,
     observationSha256: sha256Bytes(Buffer.from(serializeStageObservation(observation))),
