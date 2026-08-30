@@ -32,6 +32,15 @@ export default {
     // require rebasing dev, which we avoid. Ignoring unblocks the dev→main
     // promotion PR. Do NOT reuse this exact subject — keep new headers ≤100.
     (message: string) => message.startsWith('fix(deps+doctor): pin every runtime dep + bump pgserve 1.1.10'),
+    // Historical exception: two docs(wish) ledger commits for the dual-mode
+    // Orca promotion (#2828, #2840) passed the local hook at ≤100 chars, then
+    // GitHub's squash merge appended " (#NNNN)" and pushed the subjects to 102
+    // and 104. Rebasing dev is avoided; ignoring unblocks the dev→main
+    // promotion PR #2817. Keep new PR titles ≤ 92 chars so the suffix fits.
+    (message: string) =>
+      message.startsWith('docs(wish): record the #2817 FIX-FIRST review and fix disposition in the dual-mode Orca ledger'),
+    (message: string) =>
+      message.startsWith('docs(wish): promotion sequence without #2833; record staging-leak follow-up and dogfood evidence'),
     // Historical exception: docs(sec) round-2 fixes commit (#1385) landed on
     // dev with a 110-char squash-merge subject. The original PR title was
     // ~103 chars and GitHub appended `(#1385)` to push it over the limit.
