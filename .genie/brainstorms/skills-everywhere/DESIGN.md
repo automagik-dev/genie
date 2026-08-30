@@ -1,8 +1,8 @@
-# Design: Skills via skills.sh + CLI everywhere — plugins only for Orca
+# Design: skills-everywhere — skills.sh + CLI for every agent, plugins only for Orca
 
 | Field | Value |
 |-------|-------|
-| **Slug** | `codex-skill-installer` |
+| **Slug** | `skills-everywhere` (renamed 2026-08-30 from `codex-skill-installer`, minted before the scope widened past Codex) |
 | **Date** | 2026-08-30 (rev. 6 after five FIX-FIRST design review rounds) |
 | **WRS** | 100/100 |
 | **Base branch** | `dev` (this brainstorm was written on `v6/corpo-leve`, 2 commits ahead of an older `dev`; the Orca plugin named below exists on `dev`/`main`, not on this branch — see Risk 12) |
@@ -127,7 +127,7 @@ After an independent design review returns SHIP, persist the evidence below and 
 ## Design Review Evidence
 
 - **Verdict:** SHIP
-- **Reviewed content SHA-256:** `500ebbc93c7c47a4bdf8ef24a3aca6c5eec690d75f04ccb33735149b0117491d`
-- **Reviewer:** genie:reviewer (claude-opus-5[1m]) session e7edce9e/a382a524
-- **Reviewed at:** 2026-08-30T16:23:41.000Z
+- **Reviewed content SHA-256:** `fafaef247298d0f9fce4a0499cf5ce983f4c9be8f14ea6df1dd7d6ec4fd5d22c`
+- **Reviewer:** genie:reviewer (claude-opus-5[1m]) session e7edce9e/a382a524 (rename re-stamp)
+- **Reviewed at:** 2026-08-30T16:51:55.000Z
 <!-- genie-design-review:end -->

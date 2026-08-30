@@ -1,6 +1,6 @@
-# Brainstorm: codex-skill-installer
+# Brainstorm: skills-everywhere (renamed 2026-08-30 from codex-skill-installer)
 
-**Slug:** `codex-skill-installer` · **Started:** 2026-08-30 · **WRS:** 100/100 — crystallized to DESIGN.md
+**Slug:** `skills-everywhere` · **Started:** 2026-08-30 · **WRS:** 100/100 — crystallized to DESIGN.md
 
 ## Request (verbatim)
 "replace codex plugin, make it a light weight skill installer, also, i want to adopt skills.sh in the skill distribution method"
@@ -71,3 +71,13 @@ N1 six check gates + orca-bundle/wishes:lint kept; N2 C9 restated to what rulese
 ## Review round 4 (2026-08-30T16:19Z) — FIX-FIRST (F6–F9) → rev. 5: Kimi integration added to deletions; build/release toolchain enumerated from full `git grep plugins/genie` consumer trace as its own Wish-B group + C11; validate-wish.ts rehomed for wishes:lint; mcp-launcher.cjs (nonexistent) replaced by validate-wish.cjs.
 
 ## Review round 5 (2026-08-30T16:22Z) — FIX-FIRST (G1–G4) → rev. 6: C11 rewritten (version.ts --check read-only mode as a deliverable; version.yml evidence via existing tests + first post-promotion bump; --verify-source takes repo root); seven toolchain test files listed; C11 after C10.
+
+## Review rounds 2–5 (2026-08-30, genie:reviewer) — FIX-FIRST ×4 → SHIP at rev. 6
+- Round 2 (16:13Z): six `check` gates incl. `lint:plugin-skills`; `lint:orca-bundle`/`wishes:lint` kept; C9 restated to what rulesets prove + actor gap; dual-mode WISH.md amendment + Risk 15; correct `wc` command; Orca OUT list + three surviving call sites; v6→dev before Wish B; clean-archive sizes; dispatch-runtime path; land on dev.
+- Round 3 (16:16Z): push-vs-merge control named correctly; C4 baseline 57,771 re-measured at the Wish-A merge; stale counts; risk order; plugin executables enumerated.
+- Round 4 (16:19Z): Kimi integration added to deletions; build/release toolchain enumerated from the full `git grep plugins/genie` consumer trace (24 files) as its own Wish-B group + C11; validate-wish.ts rehomed for wishes:lint; validate-wish.cjs replaces the nonexistent mcp-launcher.cjs.
+- Round 5 (16:22Z): C11 rewritten — `version.ts --check` read-only mode as a deliverable; version.yml evidence via existing tests + first post-promotion bump; `--verify-source .`; seven toolchain test files; C11 after C10.
+- SHIP (16:23Z) digest `500ebbc9…`; re-stamped `fafaef24…` (16:51Z) after the rename to `skills-everywhere`.
+
+## Wish A
+`.genie/wishes/skills-everywhere/WISH.md` — plan review SHIP at rev. 5 (`10495bc5…`, 16:54Z) after four FIX-FIRST rounds; status APPROVED; wave base `b52dfff2b`.
