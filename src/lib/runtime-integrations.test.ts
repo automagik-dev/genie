@@ -63,6 +63,7 @@ import {
   readIntegrationConsentState,
   recoverCodexAgentTransactions,
   removeCodexAgents,
+  removeCodexPluginRegistration,
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   resolveBundleRoot,
   runBoundedIntegrationCommand,
@@ -3528,5 +3529,99 @@ describe('convergeCodexPluginOnly role adoption + fallback (Group C)', () => {
       realConvergeOptions({ codexHome, genieHome, bundleRoot: bundle, deps: { adoptHistoricalRoleAgents: true } }),
     );
     expect(outcome?.agents.adoptedLegacy?.sort()).toEqual([...names]);
+  });
+});
+
+describe('removeCodexPluginRegistration — plugin-era retirement preserves every unrelated byte', () => {
+  function configWith(body: string): string {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-retire-'));
+    const path = join(root, 'config.toml');
+    writeFileSync(path, body, { encoding: 'utf8', mode: 0o600 });
+    return path;
+  }
+
+  test('drops the plugin table and both hooks.state shapes, keeping unrelated tables byte-for-byte', () => {
+    const path = configWith(
+      [
+        '# operator preamble',
+        'disable_paste_burst = true',
+        '',
+        '[otel]',
+        'exporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }',
+        '',
+        '[plugins."genie@automagik"]',
+        'enabled = true',
+        'version = "5.260830.19"',
+        '',
+        '[plugins."other@market"]  # keep me',
+        'enabled = true',
+        '',
+        '[hooks.state]',
+        '"genie@automagik:session_start" = "approved"',
+        '"other@market:pre_tool_use" = "approved"',
+        '',
+        '[hooks.state."genie@automagik:pre_tool_use"]',
+        'decision = "allow"',
+        '',
+        '[profiles.work]',
+        'model = "gpt-5"',
+        '',
+      ].join('\n'),
+    );
+
+    const result = removeCodexPluginRegistration(path);
+    expect(result).toMatchObject({ ok: true, status: 'removed' });
+    expect(result.removed).toEqual([
+      '[plugins."genie@automagik"]',
+      '"genie@automagik:session_start" = "approved"',
+      '[hooks.state."genie@automagik:pre_tool_use"]',
+    ]);
+    expect(readFileSync(path, 'utf8')).toBe(
+      [
+        '# operator preamble',
+        'disable_paste_burst = true',
+        '',
+        '[otel]',
+        'exporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }',
+        '',
+        '[plugins."other@market"]  # keep me',
+        'enabled = true',
+        '',
+        '[hooks.state]',
+        '"other@market:pre_tool_use" = "approved"',
+        '',
+        '[profiles.work]',
+        'model = "gpt-5"',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  test('a config without any genie registration round-trips byte-identically', () => {
+    const body = '[otel]\nexporter = "keep"\n\n[plugins."other@market"]\nenabled = true\n';
+    const path = configWith(body);
+    expect(removeCodexPluginRegistration(path)).toMatchObject({ ok: true, status: 'unchanged', removed: [] });
+    expect(readFileSync(path, 'utf8')).toBe(body);
+  });
+
+  test('a second run is a no-op: retirement is idempotent, and file mode survives', () => {
+    const path = configWith('[plugins."genie@automagik"]\nenabled = true\n');
+    expect(removeCodexPluginRegistration(path).status).toBe('removed');
+    const after = readFileSync(path, 'utf8');
+    expect(removeCodexPluginRegistration(path)).toMatchObject({ status: 'unchanged' });
+    expect(readFileSync(path, 'utf8')).toBe(after);
+    expect(lstatSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  test('an absent config succeeds (nothing to retire); a symlinked one is refused untouched', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-codex-retire-edge-'));
+    expect(removeCodexPluginRegistration(join(root, 'config.toml'))).toMatchObject({ ok: true, status: 'absent' });
+
+    const real = join(root, 'real.toml');
+    writeFileSync(real, '[plugins."genie@automagik"]\nenabled = true\n');
+    const link = join(root, 'config.toml');
+    symlinkSync(real, link);
+    expect(removeCodexPluginRegistration(link)).toMatchObject({ ok: false, status: 'error' });
+    expect(readFileSync(real, 'utf8')).toBe('[plugins."genie@automagik"]\nenabled = true\n');
   });
 });

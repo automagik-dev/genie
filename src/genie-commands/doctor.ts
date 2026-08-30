@@ -68,6 +68,7 @@ import {
 } from '../lib/genie-home.js';
 import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
 import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
+import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import {
@@ -76,6 +77,14 @@ import {
   inspectCodexAgentOwnership,
   inspectCodexFallbackTier,
 } from '../lib/runtime-integrations.js';
+import {
+  type AgentSkillHomeSpec,
+  KNOWN_AGENT_SKILL_HOMES,
+  inventoryFromSkillsDir,
+  isSafeSkillName,
+  readSkillsInstallRecord,
+  releaseTag,
+} from '../lib/skills-installer.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
@@ -163,6 +172,25 @@ export interface CheckResult {
    * Diagnostic metadata only — never a policy decision (Decision 11).
    */
   advisory?: string;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].skillsChannel`).
+   * Only the per-agent `skills: <agent>` lines set it; the record-less
+   * `skills: channel` line carries no agent and therefore no rider.
+   */
+  skillsChannel?: SkillsChannelStatus;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].legacyIntegrations`).
+   * Only the `legacy integrations` check sets it: the marker-owned assets still
+   * awaiting retirement. Doctor only OBSERVES them — retirement is `genie update`'s.
+   */
+  legacyIntegrations?: {
+    pending: Array<{ surface: string; path: string }>;
+    /**
+     * A classifier actually ran. `false` means the check could not observe
+     * anything, so an empty `pending` is ignorance, not proof of retirement.
+     */
+    available: boolean;
+  };
 }
 
 // ============================================================================
@@ -320,6 +348,267 @@ function checkSkills(root: string | null): CheckResult[] {
       status: 'warn',
       detail: 'skills/ directory not found',
       suggestion: 'Reinstall genie or run from the repo root so skill prompts resolve.',
+    },
+  ];
+}
+
+// ============================================================================
+// skills.sh channel (wish `skills-everywhere`, group 3)
+//
+// Doctor is a READ-ONLY observer here: it compares what the skills-install
+// record claims against what is on disk under each detected agent's skill home
+// and reports the drift. It never installs, retires, or repairs anything — not
+// even under `--fix`; `genie update` owns every mutation on this surface.
+// ============================================================================
+
+/**
+ * Machine-readable per-agent skills-channel state (`checks[].skillsChannel`).
+ * `detected:false` means the agent's config HOME is absent on this host, which
+ * is a perfectly healthy state — it reports `pass`, never a warning.
+ */
+export interface SkillsChannelStatus {
+  agent: string;
+  present: number;
+  total: number;
+  /** Release tag the comparison is made against (the record's, or the binary's). */
+  ref: string;
+  /** The record's ref no longer matches this binary's release tag. */
+  stale: boolean;
+  detected: boolean;
+  /**
+   * An install record exists, so `ref` is the release the skills were actually
+   * installed from. When false, `ref` is only this binary's own tag — doctor
+   * has no provenance for what is on disk and says so.
+   */
+  recorded: boolean;
+}
+
+const SKILLS_CHANNEL_SUGGESTION = 'Run `genie update` to install the skills.sh channel';
+
+/** `~/.claude` for `['.claude','skills']`, `~/.config/goose` for the goose spec, ... */
+function agentConfigHome(spec: AgentSkillHomeSpec, home: string): string {
+  return join(home, ...spec.segments.slice(0, -1));
+}
+
+/** Home used to resolve agent skill homes. Bun's `homedir()` ignores a mutated `$HOME`. */
+function resolveHostHome(explicit?: string): string {
+  // `||`, not `??`: an empty `$HOME` is not a home, and joining onto `''`
+  // would silently resolve agent skill homes relative to the CWD.
+  return explicit ?? (process.env.HOME || homedir());
+}
+
+/** Same predicate `existingAgentSkillHomes` uses: a FILE at the path is not a home. */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function countInstalledSkills(skillsDir: string, inventory: readonly string[]): number {
+  let present = 0;
+  for (const name of inventory) {
+    // Same traversal floor the record's own consumers use: a name that could
+    // climb out of the agent dir is never joined onto it.
+    if (!isSafeSkillName(name)) continue;
+    if (existsSync(join(skillsDir, name, 'SKILL.md'))) present += 1;
+  }
+  return present;
+}
+
+interface SkillsChannelContext {
+  home: string;
+  inventory: readonly string[];
+  ref: string;
+  stale: boolean;
+  recorded: boolean;
+  binaryTag: string;
+}
+
+function evaluateAgentSkillHome(spec: AgentSkillHomeSpec, context: SkillsChannelContext): CheckResult {
+  const name = `skills: ${spec.agent}`;
+  const total = context.inventory.length;
+  if (!isDirectory(agentConfigHome(spec, context.home))) {
+    return {
+      name,
+      status: 'pass',
+      detail: 'not detected',
+      skillsChannel: {
+        agent: spec.agent,
+        present: 0,
+        total,
+        ref: context.ref,
+        stale: context.stale,
+        detected: false,
+        recorded: context.recorded,
+      },
+    };
+  }
+  const present = countInstalledSkills(join(context.home, ...spec.segments), context.inventory);
+  const rider: SkillsChannelStatus = {
+    agent: spec.agent,
+    present,
+    total,
+    ref: context.ref,
+    stale: context.stale,
+    detected: true,
+    recorded: context.recorded,
+  };
+  // Without a record `ref` is only this binary's tag: the line must not read as
+  // if doctor knew which release put those skills on disk.
+  const provenanceSuffix = context.recorded
+    ? context.stale
+      ? ` (stale, binary is ${context.binaryTag})`
+      : ''
+    : ' (unrecorded)';
+  const detail = `${present}/${total} @ ${context.ref}${provenanceSuffix}`;
+  if (present === total && !context.stale) return { name, status: 'pass', detail, skillsChannel: rider };
+  return { name, status: 'warn', detail, suggestion: SKILLS_CHANNEL_SUGGESTION, skillsChannel: rider };
+}
+
+/**
+ * One line per known agent skill home, plus a `skills: channel` warning when no
+ * install record exists at all.
+ *
+ * The comparison inventory is the record's when there is one; without a record
+ * the delivered tree under `<GENIE_HOME>/skills` is the only remaining truth
+ * source, so it is used as the fallback. When BOTH are empty there is nothing
+ * to compare against and the single record-less warning is the whole answer.
+ */
+export function checkSkillsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+  const home = resolveHostHome(options.home);
+  const genieHome = options.genieHome ?? resolveGlobalGenieHome();
+  const record = readSkillsInstallRecord(genieHome);
+  const binaryTag = releaseTag(VERSION);
+  const inventory =
+    record !== null && record.inventory.length > 0
+      ? record.inventory
+      : inventoryFromSkillsDir(join(genieHome, 'skills'));
+  const results: CheckResult[] = [];
+  if (record === null) {
+    results.push({
+      name: 'skills: channel',
+      status: 'warn',
+      detail: 'no install record',
+      suggestion: SKILLS_CHANNEL_SUGGESTION,
+    });
+    if (inventory.length === 0) return results;
+  }
+  const context: SkillsChannelContext = {
+    home,
+    inventory,
+    ref: record?.ref ?? binaryTag,
+    stale: record !== null && record.ref !== binaryTag,
+    recorded: record !== null,
+    binaryTag,
+  };
+  for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
+  return results;
+}
+
+// ============================================================================
+// Legacy marker-owned integration assets (wish `skills-everywhere`, group 3)
+// ============================================================================
+
+/** Classification of one marker-owned legacy asset. Mirrors the group-2 module. */
+export type LegacyIntegrationState = 'managed-clean' | 'managed-modified' | 'unmanaged' | 'absent';
+
+export interface LegacyIntegrationEntry {
+  surface: string;
+  path: string;
+  state: LegacyIntegrationState;
+}
+
+/**
+ * The narrow shape doctor consumes: structurally satisfied by the real
+ * `classifyLegacyIntegrations` (its `surface` union widens to `string` and its
+ * extra optional homes are not required here), while staying injectable by
+ * tests. Doctor observes the classification; it does not own the engine.
+ */
+export type LegacyClassifier = (homes: { home: string; genieHome: string }) => { entries: LegacyIntegrationEntry[] };
+
+/**
+ * Compile-time proof that the real group-2 export satisfies doctor's seam. If
+ * `classifyLegacyIntegrations`'s signature or its `LegacyIntegrationState`
+ * union ever drifts from doctor's, this assignment fails to typecheck.
+ */
+const DEFAULT_LEGACY_CLASSIFIER: LegacyClassifier = classifyLegacyIntegrations;
+
+const LEGACY_RETIREMENT_SUGGESTION = 'Run `genie update` to retire them';
+/** How many pending paths the check names before summarizing the rest. */
+const MAX_LEGACY_PENDING_PATHS = 5;
+
+/**
+ * The retirement module is a permanent fixture of the tree, so it is imported
+ * statically: a non-literal dynamic specifier is invisible to `bun build`, and
+ * the shipped single-file bundle would have degraded to a silent, permanent
+ * "classifier unavailable" pass. `deps.legacyClassifier` remains the only seam
+ * — `null` forces the unavailable path for tests of that branch.
+ */
+function resolveLegacyClassifier(deps: DoctorDeps): LegacyClassifier | null {
+  if (deps.legacyClassifier !== undefined) return deps.legacyClassifier;
+  return DEFAULT_LEGACY_CLASSIFIER;
+}
+
+/**
+ * The one shape of the unavailable answer: a pass (doctor never fails on its
+ * own blindness) that still carries the rider, with `available:false` so a
+ * machine reader can tell "nothing pending" from "nothing observed".
+ */
+function unavailableLegacyResult(reason?: string): CheckResult {
+  return {
+    name: 'legacy integrations',
+    status: 'pass',
+    detail: reason === undefined ? 'classifier unavailable' : `classifier unavailable (${reason})`,
+    legacyIntegrations: { pending: [], available: false },
+  };
+}
+
+/**
+ * Read-only classification of marker-owned legacy assets still on disk.
+ * `managed-clean` is the ONLY pending state: a modified or unmanaged asset is
+ * never genie's to retire, and an absent one is already gone.
+ */
+export async function checkLegacyIntegrations(
+  deps: DoctorDeps = {},
+  options: { home?: string; genieHome?: string } = {},
+): Promise<CheckResult[]> {
+  const classifier = resolveLegacyClassifier(deps);
+  if (classifier === null) return [unavailableLegacyResult()];
+  let entries: LegacyIntegrationEntry[];
+  try {
+    entries = classifier({
+      home: resolveHostHome(options.home),
+      genieHome: options.genieHome ?? resolveGlobalGenieHome(),
+    }).entries;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return [unavailableLegacyResult(reason)];
+  }
+  const pending = entries
+    .filter((entry) => entry.state === 'managed-clean')
+    .map((entry) => ({ surface: entry.surface, path: entry.path }));
+  if (pending.length === 0) {
+    return [
+      {
+        name: 'legacy integrations',
+        status: 'pass',
+        detail: 'retired',
+        legacyIntegrations: { pending, available: true },
+      },
+    ];
+  }
+  const named = pending.slice(0, MAX_LEGACY_PENDING_PATHS).map((entry) => entry.path);
+  const remainder = pending.length - named.length;
+  const tail = remainder > 0 ? `${named.join(', ')}, …and ${remainder} more` : named.join(', ');
+  return [
+    {
+      name: 'legacy integrations',
+      status: 'warn',
+      detail: `${pending.length} marker-owned assets pending: ${tail}`,
+      suggestion: LEGACY_RETIREMENT_SUGGESTION,
+      legacyIntegrations: { pending, available: true },
     },
   ];
 }
@@ -2175,6 +2464,12 @@ export interface DoctorDeps {
   deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
   /** A3 public compatibility probe seam for Orca-mode diagnostics. */
   orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
+  /**
+   * Legacy marker-owned asset classifier. Omitted = the real statically-imported
+   * group-2 classifier; explicit `null` = force the "classifier unavailable"
+   * branch (tests only).
+   */
+  legacyClassifier?: LegacyClassifier | null;
 }
 
 export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
@@ -2352,6 +2647,8 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
     ...checkSkills(root),
+    ...checkSkillsChannel(),
+    ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...checkSubagentModelOverride(),
     ...(await checkCodexIntegration(root, pluginProbe, hostObservation?.advisory ?? null)),

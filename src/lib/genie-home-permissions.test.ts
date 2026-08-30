@@ -238,10 +238,13 @@ const MKDIR_CALL = /mkdirSync\(\s*([^;]+?),\s*\{([^;]*?)\}\s*,?\s*\)/g;
  */
 const SCAN_EXEMPTIONS = new Map<string, string>([
   [
-    'src/lib/agent-sync.ts:5171',
+    // NOTE: this key is LINE-anchored, so it must be re-pointed whenever
+    // agent-sync.ts grows or shrinks above the call (it last moved when the
+    // atomic-fs / lifecycle-lease rehome shortened the file).
+    'src/lib/agent-sync.ts:4962',
     // Triggered by the identifier `before`: the scan's file-scoped const map
-    // resolves it to the file's FIRST `const before = lstatSync(path)`
-    // (agent-sync.ts:883), whose `path` cascades into a genieHome token. The
+    // resolves it to the file's FIRST `const before = lstatSync(path)`,
+    // whose `path` cascades into a genieHome token. The
     // real target here is `join(transactionDir, 'before')` inside a council
     // workflow transaction dir the preceding renameSync already published, so
     // GENIE_HOME is never created.

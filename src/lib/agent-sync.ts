@@ -19,7 +19,6 @@
  * failures.
  */
 
-import { dlopen } from 'bun:ffi';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -28,7 +27,6 @@ import {
   type Stats,
   chmodSync,
   closeSync,
-  copyFileSync,
   cpSync,
   existsSync,
   fstatSync,
@@ -49,11 +47,26 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
-import { homedir, hostname } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
+import {
+  ManagedArtifactConflictError,
+  type NoClobberDeps,
+  NoClobberPublishError,
+  type Renameat2,
+  atomicRenameDirectoryNoClobber,
+  fsyncPath,
+  lstatSafe,
+  probeLinuxRenameat2,
+  publishRegularFileNoClobber,
+  readTrimmed,
+  resolveDarwinRenameExclusive,
+  rmSyncSafe,
+  selectedNoClobberPlatform,
+  writeAllSync,
+} from './atomic-fs.js';
 import {
   resolveClaudeDir,
   resolveCodexDir,
@@ -63,6 +76,48 @@ import {
 } from './genie-home.js';
 import { HermesConfigError, retireMcpServersGenie } from './hermes-mcp-config.js';
 import { mergeSkillsExternalDir } from './hermes-skills-config.js';
+import {
+  acquireFileLock,
+  currentSyncLockHostId,
+  isStaleOrInvalidLockTime,
+  lockHasLiveOwner,
+  lockOwnerIsLive,
+  parseLockOwner,
+  processStartIdentity,
+  sleepSyncMs,
+  tryInitializeFileLock,
+} from './lifecycle-lease.js';
+// Writer-arm suppression only (see `skillsChannelSupersedesWriters`). This closes
+// an import cycle — skills-installer → runtime-integrations → agent-sync — that
+// is safe because every module in it initializes its own top-level bindings
+// without reading the others'; the two symbols below are read lazily, per run.
+import { readSkillsInstallRecord, releaseTag } from './skills-installer.js';
+import { VERSION } from './version.js';
+
+// Re-exported for compatibility: these primitives moved to './atomic-fs.js' and
+// './lifecycle-lease.js'. Import them from their own modules in new code.
+/** @public Stable compatibility facade for the primitives that moved to './atomic-fs.js'. */
+export {
+  atomicRenameDirectoryNoClobber,
+  fsyncPathForTest,
+  publishDirectoryViaNameClaim,
+  publishRegularFileNoClobber,
+  resolveLinuxRenameat2,
+  writeAllSync,
+} from './atomic-fs.js';
+/** @public Stable compatibility facade for the types that moved to './atomic-fs.js'. */
+export type { FsyncPathDeps, NoClobberDeps } from './atomic-fs.js';
+/** @public Stable compatibility facade for the lease API that moved to './lifecycle-lease.js'. */
+export {
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+  currentSyncLockHostId,
+  lifecycleLockPath,
+} from './lifecycle-lease.js';
+/** @public Stable compatibility facade for the lease types that moved to './lifecycle-lease.js'. */
+export type { LifecycleLease, LifecycleLeaseSkip } from './lifecycle-lease.js';
 
 // ============================================================================
 // Constants
@@ -136,20 +191,6 @@ const RETIREMENT_EVIDENCE_DIR = 'evidence';
 /** Bounded blocking wait before the retirement lock wrapper fails closed. Test-overridable via env for fast reentry proofs. */
 const RETIREMENT_LOCK_WAIT_MS = 30_000;
 /**
- * Bounded blocking wait before a lifecycle command gives up on a LIVE lease
- * holder. A dead same-host holder is stolen immediately and never waited on, so
- * this window only ever covers a genuinely concurrent lifecycle command.
- * Override with `GENIE_LIFECYCLE_LEASE_WAIT_MS`; `0` restores the historical
- * single-attempt fail-fast.
- */
-const LIFECYCLE_LEASE_WAIT_MS = 15_000;
-/** Feature-detected glibc/musl sonames for the Linux renameat2 no-clobber fast path (x86_64). */
-const LINUX_LIBC_CANDIDATES = ['libc.so.6', 'ld-musl-x86_64.so.1', 'libc.musl-x86_64.so.1'] as const;
-/** Borrowed lifecycle-lease path passed from a shell owner to its child process. */
-export const LIFECYCLE_LEASE_PATH_ENV = 'GENIE_LIFECYCLE_LEASE_PATH';
-/** Exact on-disk owner record paired with {@link LIFECYCLE_LEASE_PATH_ENV}. */
-export const LIFECYCLE_LEASE_OWNER_ENV = 'GENIE_LIFECYCLE_LEASE_OWNER';
-/**
  * Suffix a preserved managed object gets when its original pathname must be
  * released (uninstall keep, conflict preservation): the runtime stops loading
  * it, the user's bytes survive. Exported: uninstall shares the convention.
@@ -157,8 +198,6 @@ export const LIFECYCLE_LEASE_OWNER_ENV = 'GENIE_LIFECYCLE_LEASE_OWNER';
 export const KEPT_SUFFIX = '.genie-kept';
 /** Cross-process mutual-exclusion lockfile under genieHome — one sync writer per GENIE_HOME. */
 export const AGENT_SYNC_LOCK_NAME = '.agent-sync.lock';
-/** A lock older than this is a crashed run's debris and may be stolen. */
-const LOCK_STALE_MS = 10 * 60 * 1000;
 /**
  * Live Codex user-skills tier — codex-rs loads `~/.agents/skills/<name>`
  * top-level. Exported so doctor/uninstall share the exact target agent-sync
@@ -392,10 +431,38 @@ interface SyncManifest {
   targetMode?: number;
 }
 
+/**
+ * The one detail every suppressed writer arm reports, so `genie update` output
+ * names the same cause once per arm.
+ */
+const SKILLS_CHANNEL_SUPPRESSION_DETAIL = 'skills.sh channel active';
+
+/**
+ * True only when THIS release's skills.sh channel record is on disk.
+ *
+ * The record is the skills channel's own success receipt (written only after a
+ * zero-exit install, see `skills-installer.ts`), and `ref` pins it to a release
+ * tag. Requiring `ref === releaseTag(VERSION)` — not mere existence — is what
+ * makes suppression safe to fail open: a host whose record is STALE (an older
+ * release's skills, e.g. a partially-applied update) or ABSENT still gets the
+ * legacy writer arms, so it can never be left with neither channel's assets.
+ */
+function skillsChannelSupersedesWriters(genieHome: string): boolean {
+  const record = readSkillsInstallRecord(genieHome);
+  return record !== null && record.ref === releaseTag(VERSION);
+}
+
 interface RunContext {
   genieHome: string;
   pluginRoot: string;
   hermesRoot: string | null;
+  /**
+   * Set when {@link skillsChannelSupersedesWriters} holds: the plugin-era writer
+   * arms (claude role-agent fan-out, council stamp, hermes/pi links, hermes
+   * `skills.external_dirs`) stand down so they cannot re-create what
+   * `legacy-integration-retirement.ts` just retired.
+   */
+  skillsChannelActive: boolean;
   version: string | null;
   now: () => Date;
   targets: { claude: string; codex: string; hermes: string; pi: string; agentsSkills: string };
@@ -1130,33 +1197,6 @@ interface ManagedDirTransactionJournal {
 interface ManagedDirExpectedIdentity {
   contentDigest: string | null;
   manifestDigest: string | null;
-}
-
-class ManagedArtifactConflictError extends Error {}
-
-class NoClobberPublishError extends ManagedArtifactConflictError {}
-
-/**
- * Atomically reserve an absent regular-file pathname with a hard link. The
- * linked candidate is a disposable copy, so the original staged bytes remain
- * immutable evidence if a concurrent writer changes the published inode.
- */
-export function publishRegularFileNoClobber(stagedPath: string, targetPath: string): void {
-  const stagedStat = lstatSync(stagedPath);
-  if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) {
-    throw new Error(`publish source is not a physical regular file: ${stagedPath}`);
-  }
-  const candidate = `${stagedPath}.publish-${process.pid}-${randomBytes(6).toString('hex')}`;
-  copyFileSync(stagedPath, candidate, constants.COPYFILE_EXCL);
-  chmodSync(candidate, stagedStat.mode & 0o7777);
-  try {
-    linkSync(candidate, targetPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-    throw new NoClobberPublishError(`exclusive publish failed (${code}); target was preserved: ${targetPath}`);
-  } finally {
-    rmSync(candidate, { force: true });
-  }
 }
 
 function buildAgentFileManifestEntry(ctx: RunContext, digest: string): AgentFileManifestEntry {
@@ -1910,75 +1950,6 @@ export interface CodexFallbackRetirementResult {
   retired: string[];
 }
 
-/** Errors a DIRECTORY-metadata flush may legitimately raise on platforms/filesystems that refuse it. */
-function isTolerableDirectoryFsyncError(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === 'EISDIR' || code === 'EPERM' || code === 'EINVAL' || code === 'ENOTSUP';
-}
-
-/**
- * Test seam for {@link fsyncPath}: inject the open/fsync syscalls (and platform)
- * so a directory-metadata flush can be forced to throw the way Windows and some
- * network filesystems do. Real callers pass nothing.
- */
-export interface FsyncPathDeps {
-  open?: typeof openSync;
-  fsync?: typeof fsyncSync;
-  platform?: NodeJS.Platform;
-}
-
-/**
- * fsync a path's metadata to disk. FILE fsync is STRICT — journal and staging
- * byte durability is the load-bearing crash-safety guarantee, so a failure
- * propagates. DIRECTORY-metadata flush is best-effort: Windows (and some network
- * filesystems) refuse to open/fsync a directory fd (EISDIR/EPERM/EINVAL/ENOTSUP),
- * which must NOT brick Codex setup at retirement-journal preparation. On
- * win32 a directory fsync is skipped entirely; elsewhere the tolerable errors are
- * swallowed. A durable rename still lands; only the extra directory-entry flush
- * is skipped, exactly as on filesystems that never guaranteed it.
- */
-function fsyncPath(path: string, deps: FsyncPathDeps = {}): void {
-  const open = deps.open ?? openSync;
-  const fsync = deps.fsync ?? fsyncSync;
-  const platform = deps.platform ?? process.platform;
-  const isDirectory = lstatSafe(path)?.isDirectory() ?? false;
-  if (isDirectory && platform === 'win32') return; // never fsync a directory fd on Windows
-  let fd: number;
-  try {
-    fd = open(path, constants.O_RDONLY);
-  } catch (error) {
-    if (isDirectory && isTolerableDirectoryFsyncError(error)) return; // best-effort directory flush
-    throw error;
-  }
-  try {
-    fsync(fd);
-  } catch (error) {
-    if (!(isDirectory && isTolerableDirectoryFsyncError(error))) throw error; // FILE fsync stays strict
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Directly exercisable {@link fsyncPath} for the directory-fsync-tolerance proof (Windows/network-fs failpoint). */
-export function fsyncPathForTest(path: string, deps: FsyncPathDeps = {}): void {
-  fsyncPath(path, deps);
-}
-
-/**
- * Write a whole buffer to a descriptor, tolerating partial `writeSync` results.
- * Exported for a direct unit proof (a `writeFn` that returns a partial count
- * once, then delegates). The `<= 0` guard turns a stuck writer into a thrown
- * error rather than an infinite loop.
- */
-export function writeAllSync(fd: number, buffer: Buffer, writeFn: typeof writeSync = writeSync): void {
-  let offset = 0;
-  while (offset < buffer.length) {
-    const written = writeFn(fd, buffer, offset, buffer.length - offset);
-    if (written <= 0) throw new Error(`journal write made no progress at offset ${offset}/${buffer.length}`);
-    offset += written;
-  }
-}
-
 function writeDurableRetirementJournal(
   transactionDir: string,
   journal: CodexFallbackRetirementJournal,
@@ -2193,177 +2164,6 @@ function matchesRestoreIdentity(
     : exactPhysicalDirectoryDigest(path) === observedTreeDigest;
 }
 
-const AT_FDCWD = -100;
-const LINUX_RENAME_NOREPLACE = 1;
-const DARWIN_RENAME_EXCL = 4;
-
-type Renameat2 = (staged: Buffer, target: Buffer) => number;
-type LibcRenameOpener = (soname: string) => Renameat2 | null;
-interface RenameProbe {
-  resolved?: Renameat2 | null;
-}
-/** Native no-clobber capability seams — no global mutable state or test-only setter. */
-export interface NoClobberDeps {
-  opener?: LibcRenameOpener;
-  candidates?: readonly string[];
-  probe?: RenameProbe;
-  /** Deterministically select the native no-clobber family without mutating global process state. */
-  platform?: NodeJS.Platform;
-  /** Regular-file and lock-home callers use an explicit opener to select the Darwin branch on test hosts. */
-  darwinOpener?: () => ((staged: Buffer, target: Buffer) => number) | null;
-}
-
-const defaultLibcOpener: LibcRenameOpener = (soname) => {
-  try {
-    const libc = dlopen(soname, {
-      renameat2: { args: ['i32', 'cstring', 'i32', 'cstring', 'u32'], returns: 'i32' },
-    } as const);
-    // Handle intentionally retained for process lifetime via the closure (single memoized detection).
-    return (s, t) => libc.symbols.renameat2(AT_FDCWD, s, AT_FDCWD, t, LINUX_RENAME_NOREPLACE);
-  } catch {
-    return null;
-  }
-};
-
-/** First soname whose renameat2 resolves, else null (musl / no renameat2). Exported for candidate fall-through proofs. */
-export function resolveLinuxRenameat2(
-  opener: LibcRenameOpener = defaultLibcOpener,
-  candidates: readonly string[] = LINUX_LIBC_CANDIDATES,
-): Renameat2 | null {
-  for (const soname of candidates) {
-    const fn = opener(soname);
-    if (fn) return fn;
-  }
-  return null;
-}
-
-const defaultLinuxProbe: RenameProbe = {};
-function probeLinuxRenameat2(deps: NoClobberDeps): Renameat2 | null {
-  const hasInjectedResolution = deps.opener !== undefined || deps.candidates !== undefined;
-  const probe = deps.probe ?? (hasInjectedResolution ? {} : defaultLinuxProbe);
-  if (!('resolved' in probe)) {
-    try {
-      probe.resolved = resolveLinuxRenameat2(deps.opener, deps.candidates);
-    } catch {
-      probe.resolved = null;
-    }
-  }
-  return probe.resolved ?? null;
-}
-
-const defaultDarwinRenameOpener: NonNullable<NoClobberDeps['darwinOpener']> = () => {
-  try {
-    const libc = dlopen('/usr/lib/libSystem.B.dylib', {
-      renamex_np: { args: ['cstring', 'cstring', 'u32'], returns: 'i32' },
-    } as const);
-    try {
-      const renamex = libc.symbols.renamex_np;
-      if (typeof renamex !== 'function') {
-        libc.close();
-        return null;
-      }
-      return (staged, target) => {
-        let result: number;
-        try {
-          result = renamex(staged, target, DARWIN_RENAME_EXCL);
-        } catch (error) {
-          try {
-            libc.close();
-          } catch {
-            // Preserve the native invocation error; cleanup cannot authorize a portable retry.
-          }
-          throw error;
-        }
-        try {
-          libc.close();
-        } catch {
-          // The native result is already known; close-only failure cannot rewrite the commit outcome.
-        }
-        return result;
-      };
-    } catch {
-      try {
-        libc.close();
-      } catch {
-        // Setup already failed; inability to close the incomplete handle does not make the capability available.
-      }
-      return null;
-    }
-  } catch {
-    return null;
-  }
-};
-
-function resolveDarwinRenameExclusive(deps: NoClobberDeps): ((staged: Buffer, target: Buffer) => number) | null {
-  try {
-    return (deps.darwinOpener ?? defaultDarwinRenameOpener)();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Portable, always-available, directory-ONLY, provably no-clobber publish.
- * `mkdir` reserves the target name atomically (EEXIST => a real target is
- * present and never touched); `rename` then replaces only the empty dir we just
- * claimed. A concurrently-populated claim makes `rename` fail and only the
- * still-empty claim is removed.
- */
-export function publishDirectoryViaNameClaim(stagedDir: string, targetDir: string): void {
-  try {
-    mkdirSync(targetDir);
-  } catch (e) {
-    throw new NoClobberPublishError(
-      `portable directory claim failed (${(e as NodeJS.ErrnoException).code}); target preserved: ${targetDir}`,
-    );
-  }
-  try {
-    renameSync(stagedDir, targetDir);
-  } catch (e) {
-    if (readdirSync(targetDir).length === 0) rmSyncSafe(targetDir); // remove only our own still-empty claim
-    throw new NoClobberPublishError(
-      `portable directory publish failed (${(e as NodeJS.ErrnoException).code}); target preserved: ${targetDir}`,
-    );
-  }
-}
-
-/** Publish one complete same-filesystem directory while atomically rejecting every existing target inode. */
-export function atomicRenameDirectoryNoClobber(stagedDir: string, targetDir: string, deps: NoClobberDeps = {}): void {
-  const stagedStat = lstatSync(stagedDir);
-  if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) {
-    throw new Error(`atomic publish source is not a physical directory: ${stagedDir}`);
-  }
-  const stagedPath = Buffer.from(`${stagedDir}\0`);
-  const targetPath = Buffer.from(`${targetDir}\0`);
-  const platform = selectedNoClobberPlatform(deps);
-  if (platform === 'linux') {
-    const rn = probeLinuxRenameat2(deps);
-    if (rn === null) {
-      publishDirectoryViaNameClaim(stagedDir, targetDir); // musl / no renameat2 => portable
-      return;
-    }
-    if (rn(stagedPath, targetPath) !== 0) {
-      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
-      throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
-    }
-    return;
-  }
-  if (platform === 'darwin') {
-    const renameExclusive = resolveDarwinRenameExclusive(deps);
-    if (renameExclusive === null) {
-      publishDirectoryViaNameClaim(stagedDir, targetDir);
-      return;
-    }
-    const result = renameExclusive(stagedPath, targetPath);
-    if (result !== 0) {
-      const detail = lstatSafe(targetDir) === null ? 'rename failed' : 'target exists';
-      throw new NoClobberPublishError(`atomic no-clobber publish failed (${detail}); target preserved: ${targetDir}`);
-    }
-    return;
-  }
-  publishDirectoryViaNameClaim(stagedDir, targetDir); // was: throw unsupported — now portable & no-clobber
-}
-
 type RegularFileNoClobberPublish = 'renamed' | 'linked';
 
 /** Reconcile an exception only when the exact staged payload moved completely onto the target name. */
@@ -2383,10 +2183,6 @@ function exactFileStageMovedToTarget(stage: FileStage, targetFile: string): bool
   } catch {
     return false;
   }
-}
-
-function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
-  return deps.platform ?? (deps.darwinOpener === undefined ? process.platform : 'darwin');
 }
 
 /** Null means native setup was unavailable before invocation, so the portable commit remains safe to select. */
@@ -3015,11 +2811,6 @@ function commitRetirementJournal(
   failpoint?.('after-commit-journal');
   fsyncPath(transactionRoot);
   failpoint?.('after-commit-durable');
-}
-
-/** Portable synchronous bounded sleep — no dependency on the Bun global. */
-function sleepSyncMs(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function retirementLockWaitMs(): number {
@@ -5694,6 +5485,16 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
       detail: 'genie@automagik plugin enabled — bare-name skills mirror pruned; skills load as genie:* from the plugin',
     });
   }
+  // The bare-name SKILL mirror above deliberately still runs: once the skills.sh
+  // channel has populated `~/.claude/skills`, every source name already exists
+  // there as an unmanaged copy, so the mirror is inert (`skipped-unmanaged-kept`)
+  // rather than a competing writer. The two arms below genuinely write, so they
+  // are the ones that stand down.
+  if (ctx.skillsChannelActive) {
+    report.extras.push({ kind: 'agents-mirror', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    report.extras.push({ kind: 'stamp', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    return;
+  }
   syncClaudeAgentFiles(ctx, claudeDir, report, pluginEnabled);
   if (pluginEnabled) {
     report.extras.push({
@@ -5740,6 +5541,16 @@ function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport
   const binary = detectHermesBinary(opts);
   if (!existsSync(hermesHome) && binary === null) return;
   report.detected = true;
+  if (ctx.skillsChannelActive) {
+    // Link + `skills.external_dirs` are the two Hermes WRITE arms; the MCP leg is
+    // a pure retirement (it only ever removes genie's own marker block), so it
+    // keeps running — suppression retires writers, never cleanups.
+    report.extras.push({ kind: 'symlink', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    report.extras.push({ kind: 'skills-dir', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    const configPath = resolveHermesConfigPath(hermesHome);
+    convergeHermesLeg('mcp-config', report, () => retireMcpServersGenie({ configPath, now: ctx.now() }).status);
+    return;
+  }
   if (ctx.hermesRoot === null) {
     report.advisories.push('hermes source (hermes-genie) not found next to plugins/genie; skipping link');
     return;
@@ -5955,6 +5766,10 @@ function syncPi(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): v
   const binary = detectPiBinary(opts);
   if (!existsSync(dirname(extensionsDir)) && binary === null) return;
   report.detected = true;
+  if (ctx.skillsChannelActive) {
+    report.extras.push({ kind: 'symlink', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    return;
+  }
   if (ctx.piRoot === null) {
     report.advisories.push('pi source (pi-genie) not found next to plugins/genie; skipping link');
     return;
@@ -5972,515 +5787,6 @@ function detectPiBinary(opts: AgentSyncOptions): string | null {
   } catch {
     return null;
   }
-}
-
-// ============================================================================
-// Cross-process lock
-// ============================================================================
-
-/**
- * Acquire the per-GENIE_HOME sync lock via O_EXCL create. Returns a release
- * handle or a fail-closed skip reason.
- *
- * Two stealing rules, in this order:
- *   1. DEATH-PROVEN (no staleness wait): the record names THIS host and its
- *      process is provably gone. A lifecycle command that crashed one second ago
- *      leaves a FRESH-mtime lock, so gating that case on {@link LOCK_STALE_MS}
- *      turns a dead holder into ten minutes of downtime for every subsequent
- *      `genie update`/`install`/`setup`/`uninstall`. Death is the proof;
- *      age adds nothing to it.
- *   2. STALE (unchanged legacy rule): every other record — live, unprovable
- *      (EPERM), cross-host, host-less, unparsable, or a lock created but not yet
- *      written — is stealable only once its mtime is outside the ± staleness
- *      window AND its recorded PID is not live.
- *
- * Both rules re-verify under the token-owned `.steal` guard before unlinking.
- * Any other lock I/O failure fails closed; a destructive sync never runs
- * without ownership.
- */
-function acquireFileLock(lockPath: string): { release: () => void } | LifecycleLeaseSkip {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const created = tryInitializeFileLock(lockPath);
-    if (created.status === 'acquired') return created.lock;
-    if (created.status === 'failed') return { skipped: created.reason, cause: 'io' };
-    const stat = statSafe(lockPath);
-    if (stat === null) continue; // holder released between open and stat — retry
-    const deathProvenRecord = sameHostDeadOwnerRecord(lockPath);
-    if (deathProvenRecord !== null) {
-      if (stealStaleFileLock(lockPath, deathProvenRecord) === 'contended') return heldLockSkip(lockPath);
-      continue; // proven-dead debris cleared — retry the exclusive create
-    }
-    if (!isStaleOrInvalidLockTime(stat.mtimeMs)) return heldLockSkip(lockPath);
-    // Age alone never proves abandonment. A slow or clock-skewed live owner
-    // retains the lock regardless of whether its timestamp is old or future.
-    if (lockHasLiveOwner(lockPath)) return heldLockSkip(lockPath);
-    if (stealStaleFileLock(lockPath) === 'contended') return heldLockSkip(lockPath);
-    // stale debris cleared — loop and retry the exclusive create
-  }
-  return { skipped: 'agent-sync lock remained contended after retries; skipped safely', cause: 'contended' };
-}
-
-/**
- * The exact on-disk record of a lock whose owner is PROVABLY dead on THIS host,
- * or null when no such proof exists. The positive host match is load-bearing:
- * a host-less legacy/shell record, a cross-host record, an unparsable record,
- * and a lock created but not yet written (which parses to null) all return null
- * and keep the conservative staleness rule. PID reuse is rejected inside
- * {@link lockOwnerIsLive} through the process-start identity, and an unprovable
- * liveness probe (EPERM) counts as alive. The returned record is the value the
- * steal guard re-compares against, mirroring the shell's `current == observed`
- * re-read in `recover_stale_lifecycle_lock`.
- */
-function sameHostDeadOwnerRecord(lockPath: string): string | null {
-  const record = readTrimmed(lockPath);
-  const owner = parseLockOwner(record);
-  if (record === null || owner === null) return null;
-  if (owner.host === null || owner.host !== currentSyncLockHostId()) return null;
-  return lockOwnerIsLive(owner) ? null : record;
-}
-
-type LockCreateAttempt =
-  | { status: 'acquired'; lock: { release: () => void } }
-  | { status: 'exists' }
-  | { status: 'failed'; reason: string };
-
-function tryInitializeFileLock(lockPath: string): LockCreateAttempt {
-  let fd: number;
-  const token = randomBytes(16).toString('hex');
-  const processIdentity = processStartIdentity(process.pid) ?? 'unknown';
-  // Host identity is appended as a 4th field so a lock created on one host can
-  // never be stolen from another on an NFS / pid-namespace-shared $HOME. The
-  // shell installer (install.sh) writes only the 3-field `pid:token:unknown`
-  // form and parses just the leading pid, so a 4th field is backward-compatible
-  // both ways: {@link lockOwner} reads it, the shell ignores it.
-  const ownerRecord = `${process.pid}:${token}:${processIdentity}:${currentSyncLockHostId()}`;
-  try {
-    fd = openSync(lockPath, 'wx');
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
-    return code === 'EEXIST'
-      ? { status: 'exists' }
-      : { status: 'failed', reason: `could not acquire agent-sync lock (${code}); skipped safely` };
-  }
-  let failure: unknown;
-  try {
-    writeSync(fd, `${ownerRecord}\n`);
-  } catch (error) {
-    failure = error;
-  }
-  try {
-    closeSync(fd);
-  } catch (error) {
-    failure ??= error;
-  }
-  if (failure === undefined) {
-    return { status: 'acquired', lock: { release: () => releaseOwnedLock(lockPath, ownerRecord) } };
-  }
-  // A failed initializer never unlinks by pathname alone: if another process
-  // replaced the record, only our token may release it. Partial debris safely
-  // fails closed and is handled by the stale-lock path later.
-  releaseOwnedLock(lockPath, ownerRecord);
-  const code = (failure as NodeJS.ErrnoException).code ?? 'unknown';
-  return { status: 'failed', reason: `could not initialize agent-sync lock (${code}); skipped safely` };
-}
-
-/**
- * The lock is held by someone we may not displace: a live owner, a cross-host
- * owner, or a record whose liveness could not be disproved. The message names
- * the exact file so an operator can inspect or remove it. The previous wording
- * reassured the reader that the holder was converging the same targets — true
- * for the agent-sync report skip (which keeps its own literal), FALSE for this
- * lease, where the holder may be an unrelated update/install/setup/uninstall.
- * It also gave the reader nothing actionable.
- */
-function heldLockSkip(lockPath: string): LifecycleLeaseSkip {
-  return {
-    skipped: `another Genie process holds the lock at ${lockPath}; retry shortly, or remove the file if its owner has crashed`,
-    cause: 'held',
-  };
-}
-
-/** Old locks and far-future timestamps cannot suppress synchronization indefinitely. */
-function isStaleOrInvalidLockTime(mtimeMs: number, nowMs = Date.now()): boolean {
-  const ageMs = nowMs - mtimeMs;
-  return ageMs > LOCK_STALE_MS || ageMs < -LOCK_STALE_MS;
-}
-
-/**
- * Parse current `pid:token:start:host` locks plus every legacy form
- * (`pid:token:start`, `pid:token`, `pid`) and the shell's `pid:token:unknown`.
- * `host` is absent (→ null) for any record written before this field existed or
- * by the shell installer; a null host is treated as "unknown host" downstream.
- */
-interface LockOwner {
-  pid: number;
-  processIdentity: string | null;
-  host: string | null;
-}
-
-function parseLockOwner(raw: string | null): LockOwner | null {
-  const match = raw?.match(/^(\d+)(?::[a-f0-9]{32})?(?::([a-f0-9]{64}|unknown))?(?::([a-f0-9]{64}))?$/);
-  if (!match) return null;
-  const pid = Number(match[1]);
-  return Number.isSafeInteger(pid) && pid > 0
-    ? { pid, processIdentity: match[2] ?? null, host: match[3] ?? null }
-    : null;
-}
-
-function lockOwner(lockPath: string): LockOwner | null {
-  return parseLockOwner(readTrimmed(lockPath));
-}
-
-/**
- * Never steal a live lock. Beyond PID-reuse rejection via the process-start
- * identity, a recorded HOST identity that DIFFERS from this host is treated as a
- * live owner and never stolen: `process.kill`/`ps` liveness on THIS host says
- * nothing about a peer on an NFS- or pid-namespace-shared $HOME, so a locally
- * "dead" pid cannot authorize stealing a lock a remote host may still hold. The
- * fail-closed asymmetry is deliberate — a wrongly-kept stale lock costs one
- * manual `rm`; a wrongly-stolen live lock costs a silent double writer.
- *
- * Deliberate scope decision (host-less records): a record with NO host field —
- * pre-this-change debris OR the shell installer's `pid:token:unknown` — falls
- * through to the legacy pid + start-identity liveness rather than being refused
- * outright. This preserves the shipped, tested shell<->TS lifecycle-lock parity
- * contract (install.sh writes and reaps host-less records by pid+mtime; the
- * guard-debris parity test in update.test.ts pins it). Refusing host-less steals
- * in TS alone would desynchronize the two acquirers AND still leave the shell
- * able to cross-host-steal — trading a real regression for incomplete safety.
- * Because every lock written after this change carries a host field — INCLUDING
- * every retirement lock (TS-only) and every post-upgrade agent-sync/lifecycle
- * lock — cross-host steal is prevented everywhere it can actually occur; only
- * transient legacy/shell-shaped records retain the prior semantics, in lockstep
- * with the shell.
- */
-function lockHasLiveOwner(
-  lockPath: string,
-  resolveProcessStartIdentity: (pid: number) => string | null = processStartIdentity,
-): boolean {
-  return lockOwnerIsLive(lockOwner(lockPath), resolveProcessStartIdentity);
-}
-
-function lockOwnerIsLive(
-  owner: LockOwner | null,
-  resolveProcessStartIdentity: (pid: number) => string | null = processStartIdentity,
-): boolean {
-  if (owner === null) return false; // empty / unparseable record is genuine dead-writer debris
-  if (owner.host !== null && owner.host !== currentSyncLockHostId()) return true; // host-bearing + cross-host → never steal
-  try {
-    process.kill(owner.pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
-  }
-  if (owner.processIdentity === null || owner.processIdentity === 'unknown') return true;
-  const currentIdentity = resolveProcessStartIdentity(owner.pid);
-  return currentIdentity === null || currentIdentity === owner.processIdentity;
-}
-
-/** Release only the exact owner record created by this acquisition. */
-function releaseOwnedLock(lockPath: string, ownerRecord: string): void {
-  if (readTrimmed(lockPath) !== ownerRecord) return;
-  rmSyncSafe(lockPath);
-}
-
-let cachedSyncLockHostId: string | null = null;
-
-/**
- * A stable identity for THIS host, embedded in every lock owner record so a
- * cross-host stealer can recognize "not my host" and refuse to steal. It is the
- * sha256 of the hostname plus, on linux, the kernel boot id
- * (`/proc/sys/kernel/random/boot_id`) — so a reused hostname across reboots
- * still yields distinct identities where the boot id is readable. Coverage is
- * scoped to distinct-hostname/distinct-kernel hosts: same-kernel containers
- * SHARE the boot id (runc/containerd do not namespace it), so two containers
- * with a pinned identical hostname and a shared $HOME collapse to one host id
- * and fall back to pid-liveness semantics across pid namespaces. The boot id is
- * best-effort: an empty read degrades to hostname-only, which is still
- * host-scoped. Exported for tests that must forge same-host vs cross-host owner
- * records.
- */
-export function currentSyncLockHostId(): string {
-  if (cachedSyncLockHostId !== null) return cachedSyncLockHostId;
-  let bootId = '';
-  if (process.platform === 'linux') {
-    try {
-      bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
-    } catch {
-      bootId = '';
-    }
-  }
-  cachedSyncLockHostId = createHash('sha256').update(`${hostname()}\0${bootId}`).digest('hex');
-  return cachedSyncLockHostId;
-}
-
-function processStartIdentity(pid: number): string | null {
-  let marker: string;
-  try {
-    if (process.platform === 'linux') {
-      const raw = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const closeParen = raw.lastIndexOf(')');
-      const fields = raw
-        .slice(closeParen + 2)
-        .trim()
-        .split(/\s+/);
-      marker = `linux:${fields[19] ?? ''}`;
-    } else if (process.platform === 'win32') {
-      marker = `windows:${execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`],
-        { encoding: 'utf8', timeout: 1_000 },
-      ).trim()}`;
-    } else {
-      marker = `ps:${execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-        encoding: 'utf8',
-        timeout: 1_000,
-      }).trim()}`;
-    }
-    if (marker.endsWith(':')) return null;
-    return createHash('sha256').update(marker).digest('hex');
-  } catch {
-    return null;
-  }
-}
-
-export interface LifecycleLease {
-  path: string;
-  release: () => void;
-}
-
-/**
- * Why a lease was refused. Only `held` and `contended` describe a condition
- * that can clear on its own, so only those authorize the bounded wait in
- * {@link acquireLifecycleLeaseWithWait}. `borrow-mismatch` (a child's borrowed
- * lease does not match the live owner) and `io` (the lock file could not be
- * created or written) are permanent for this invocation and must fail fast.
- */
-type LifecycleLeaseSkipCause = 'borrow-mismatch' | 'held' | 'io' | 'contended';
-
-/**
- * A refused lease. `cause` is DELIBERATELY optional: hand-built fixtures and
- * pre-existing callers construct a bare `{ skipped }`, and a missing cause is
- * treated as "not retryable" so no caller silently gains a wait it never asked
- * for.
- */
-export interface LifecycleLeaseSkip {
-  skipped: string;
-  cause?: LifecycleLeaseSkipCause;
-}
-
-const ACTIVE_LIFECYCLE_LEASES = new Map<string, { count: number; releaseUnderlying: () => void }>();
-
-/** Stable sibling-of-GENIE_HOME lease shared by lifecycle commands. */
-export function lifecycleLockPath(genieHome = resolveGenieHome()): string {
-  const canonical = resolve(genieHome);
-  const suffix = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
-  return join(dirname(canonical), `.genie-lifecycle-${suffix}.lock`);
-}
-
-export function acquireLifecycleLease(genieHome = resolveGenieHome()): LifecycleLease | LifecycleLeaseSkip {
-  const path = lifecycleLockPath(genieHome);
-  const borrowedPath = process.env[LIFECYCLE_LEASE_PATH_ENV];
-  const borrowedOwner = process.env[LIFECYCLE_LEASE_OWNER_ENV];
-  if (borrowedPath !== undefined || borrowedOwner !== undefined) {
-    if (
-      borrowedPath !== path ||
-      borrowedOwner === undefined ||
-      borrowedOwner.length === 0 ||
-      borrowedOwner.includes('\n') ||
-      borrowedOwner.includes('\r') ||
-      readTrimmed(path) !== borrowedOwner
-    ) {
-      return {
-        skipped: 'borrowed lifecycle lease did not exactly match the expected live owner; skipped safely',
-        cause: 'borrow-mismatch',
-      };
-    }
-    // The shell parent remains the sole owner. A child must neither register
-    // an exit handler nor unlink/decrement the parent lease when it finishes.
-    return { path, release: () => undefined };
-  }
-  const active = ACTIVE_LIFECYCLE_LEASES.get(path);
-  if (active) {
-    active.count += 1;
-    let released = false;
-    return {
-      path,
-      release: () => {
-        if (released) return;
-        released = true;
-        active.count -= 1;
-        if (active.count === 0) {
-          ACTIVE_LIFECYCLE_LEASES.delete(path);
-          active.releaseUnderlying();
-        }
-      },
-    };
-  }
-  const acquired = acquireFileLock(path);
-  if ('skipped' in acquired) return acquired;
-  const releaseOnExit = () => acquired.release();
-  process.once('exit', releaseOnExit);
-  const state = {
-    count: 1,
-    releaseUnderlying: () => {
-      process.removeListener('exit', releaseOnExit);
-      acquired.release();
-    },
-  };
-  ACTIVE_LIFECYCLE_LEASES.set(path, state);
-  let released = false;
-  return {
-    path,
-    release: () => {
-      if (released) return;
-      released = true;
-      state.count -= 1;
-      if (state.count === 0) {
-        ACTIVE_LIFECYCLE_LEASES.delete(path);
-        state.releaseUnderlying();
-      }
-    },
-  };
-}
-
-function lifecycleLeaseWaitMs(): number {
-  const override = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
-  const parsed = override === undefined ? Number.NaN : Number(override);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : LIFECYCLE_LEASE_WAIT_MS;
-}
-
-/**
- * Bounded-blocking wrapper over ANY lifecycle-lease acquirer (the default one,
- * or a DI-injected seam), mirroring {@link acquireRetirementLock}'s sleep-poll.
- *
- * The wait is deliberately narrow: only a `held`/`contended` refusal describes a
- * holder that can go away on its own, so only those are retried. A
- * `borrow-mismatch` or `io` refusal — and any fixture-built skip with NO cause —
- * returns on the first attempt without a single sleep. `deadlineMs` of 0 makes
- * exactly one attempt, restoring the historical fail-fast for operators and
- * tests via `GENIE_LIFECYCLE_LEASE_WAIT_MS=0`.
- *
- * A dead same-host holder never reaches this loop: {@link acquireFileLock}
- * steals it on the first attempt. This window covers only a genuinely live
- * concurrent lifecycle command.
- */
-export function acquireLifecycleLeaseWithWait(
-  acquirer: () => LifecycleLease | LifecycleLeaseSkip,
-  deadlineMs: number = lifecycleLeaseWaitMs(),
-): LifecycleLease | LifecycleLeaseSkip {
-  const deadline = Date.now() + deadlineMs;
-  for (;;) {
-    const result = acquirer();
-    if (!('skipped' in result)) return result;
-    if (result.cause !== 'held' && result.cause !== 'contended') return result;
-    if (Date.now() >= deadline) return result;
-    sleepSyncMs(25);
-  }
-}
-
-/**
- * Clear a stale lock safely under a `.steal` guard file. The previous
- * unlink-then-retry steal let two processes both "win": between one stealer's
- * unlink and its re-create, a second stealer's unlink silently removed the
- * first's FRESH lock (observed as two concurrent writers in the regression
- * test). The guard closes that hole with two properties: (a) the O_EXCL guard
- * admits exactly one stealer at a time, and (b) the caller's grounds for
- * stealing are RE-verified while holding the guard, so a lock that changed after
- * the caller's first observation is never removed. A guard left by a crashed
- * stealer ages out via {@link LOCK_STALE_MS} like the lock itself.
- *
- * `deathProvenRecord` selects WHICH re-verification runs; the guard and the
- * `lockHasLiveOwner` re-check below are common to both and must never be
- * dropped:
- *   - undefined (staleness mode): re-verify the mtime is still outside the
- *     staleness window.
- *   - a record string (death-proven mode): re-verify the record on disk is
- *     BYTE-IDENTICAL to what the caller proved dead and still names this host —
- *     the same `current == observed` re-read the shell performs at
- *     install.sh:267-269. mtime is deliberately NOT consulted, because the whole
- *     point of this mode is a fresh-mtime lock whose owner is already gone.
- *
- * ONE protocol, two acquirers — this function and the shell installer
- * (recover_stale_lifecycle_lock in install.sh) must stay byte-compatible:
- *   - Lock path: `<dirname(canonical GENIE_HOME)>/.genie-lifecycle-<sha256(canonical)[:16]>.lock`
- *     ({@link lifecycleLockPath}); guard path is `<lock>.steal`.
- *   - Owner record: `pid:token32[:sha64|unknown]` — a decimal pid, an optional
- *     32-hex token, and an optional process-start identity (64-hex, or the
- *     literal `unknown` the shell always writes). {@link lockOwner} parses it;
- *     an empty or otherwise unparseable record yields `null`.
- *   - Staleness window: ±{@link LOCK_STALE_MS} (10 min) around the mtime; a
- *     timestamp too old OR implausibly far future is "stale".
- *   - Guard reap rule (the aged-guard-recovery branch below, mirrored by the
- *     shell's foreign_lock_record_is_stale): reap an existing guard we did not
- *     create only when its mtime is stale AND its owner is dead. An empty or
- *     unparseable record counts as dead (`lockOwner` → null). A live pid —
- *     including another user's process, where `process.kill(pid, 0)` throws
- *     EPERM — counts as alive and is never reaped ({@link lockHasLiveOwner}). A
- *     symlinked/non-regular guard OR lock is never reaped (lstat, never follow —
- *     parity with the shell's `! -L`). Reaping only unlinks; it never renames or
- *     quarantines.
- *   - Residual race (accepted): a process suspended (e.g. SIGSTOP, GC, swap)
- *     across BOTH the guard read→rm window and the lock read→rm window can
- *     still let two acquirers proceed as concurrent owners. This is pre-existing
- *     in the TS path; the shell matches it at parity rather than widening it.
- *   - DIVERGENCE (deliberate, one-sided): TS additionally steals a FRESH
- *     same-host lock whose owner is provably dead
- *     ({@link sameHostDeadOwnerRecord}); the shell's
- *     recover_stale_lifecycle_lock stays staleness-gated and still waits out
- *     {@link LOCK_STALE_MS} on the same debris. Safe in one direction only: TS
- *     steals a strict SUBSET of "abandoned" (dead ⊂ dead-or-stale), never a lock
- *     the shell would consider live, and the shell keeps refusing locks TS would
- *     take — the worst outcome is the shell waiting, never two writers. Do NOT
- *     "fix" the asymmetry by teaching install.sh to steal fresh locks: bash
- *     cannot reject PID reuse (it has no process-start identity), so a death
- *     proof there would be strictly weaker than the one made here.
- *   - {@link acquireRetirementLock} inherits the early steal through
- *     {@link acquireFileLock}. Benign and desirable: a retirement lock is TS-only
- *     and always carries a host field, so a crashed retirement no longer blocks
- *     the next one for ten minutes, while the cross-host refusal is unchanged (a
- *     cross-host record never yields a death proof).
- */
-function stealStaleFileLock(lockPath: string, deathProvenRecord?: string): 'cleared' | 'contended' {
-  const guardPath = `${lockPath}.steal`;
-  const guardAttempt = tryInitializeFileLock(guardPath);
-  if (guardAttempt.status !== 'acquired') {
-    // lstat (never follow): a symlinked or otherwise non-regular guard is never
-    // ours to reap — refuse it, matching the shell's `! -L` guard, so neither
-    // acquirer can be redirected into unlinking a target it does not own.
-    const guardStat = lstatSafe(guardPath);
-    if (guardStat?.isFile() && isStaleOrInvalidLockTime(guardStat.mtimeMs) && !lockHasLiveOwner(guardPath)) {
-      rmSyncSafe(guardPath);
-    }
-    return 'contended'; // another stealer holds the guard — back off like a live lock
-  }
-  try {
-    const stat = statSafe(lockPath);
-    if (stat !== null && !stealGroundsStillHold(lockPath, stat, deathProvenRecord)) return 'contended';
-    if (stat !== null && lockHasLiveOwner(lockPath)) return 'contended';
-    // Same fail-closed refusal for the lock: never unlink through a symlink or
-    // other non-regular node (a symlinked lock is not ours to steal).
-    const lockStat = lstatSafe(lockPath);
-    if (lockStat !== null && !lockStat.isFile()) return 'contended';
-    rmSyncSafe(lockPath); // re-verified stealable (or already gone) under the guard
-    return 'cleared';
-  } finally {
-    guardAttempt.lock.release();
-  }
-}
-
-/**
- * The under-guard half of the steal re-verification. Staleness mode re-reads the
- * mtime; death-proven mode re-reads the RECORD and requires it byte-identical to
- * the one the caller proved dead and still same-host. Either way a lock that was
- * replaced between the caller's observation and the guard is refused — that is
- * the property closing the double-writer hole.
- */
-function stealGroundsStillHold(lockPath: string, stat: Stats, deathProvenRecord?: string): boolean {
-  if (deathProvenRecord === undefined) return isStaleOrInvalidLockTime(stat.mtimeMs); // refreshed under us — live
-  const current = readTrimmed(lockPath);
-  if (current !== deathProvenRecord) return false; // a different owner published under us
-  const owner = parseLockOwner(current);
-  return owner !== null && owner.host !== null && owner.host === currentSyncLockHostId();
 }
 
 // ============================================================================
@@ -7242,6 +6548,7 @@ function createRunContext(
   return {
     genieHome,
     pluginRoot,
+    skillsChannelActive: skillsChannelSupersedesWriters(genieHome),
     hermesRoot: source.hermesRoot,
     piRoot: source.piRoot,
     version: source.version,
@@ -7407,14 +6714,6 @@ function quarantineTransactionDebris(parent: string, path: string): void {
   renameSync(path, destination);
 }
 
-function lstatSafe(path: string): Stats | null {
-  try {
-    return lstatSync(path);
-  } catch {
-    return null;
-  }
-}
-
 /** Absence-aware lstat for commit authorization; non-ENOENT errors are not absence. */
 function lstatOrNull(path: string): Stats | null {
   try {
@@ -7422,30 +6721,6 @@ function lstatOrNull(path: string): Stats | null {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
-  }
-}
-
-function statSafe(path: string): Stats | null {
-  try {
-    return statSync(path);
-  } catch {
-    return null;
-  }
-}
-
-function rmSyncSafe(path: string): void {
-  try {
-    rmSync(path, { force: true });
-  } catch {
-    // best-effort: a leftover lock ages out via LOCK_STALE_MS anyway.
-  }
-}
-
-function readTrimmed(path: string): string | null {
-  try {
-    return readFileSync(path, 'utf8').trim();
-  } catch {
-    return null;
   }
 }
 

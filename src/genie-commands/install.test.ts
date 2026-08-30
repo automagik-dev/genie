@@ -27,6 +27,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
+import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
 import { VERSION } from '../lib/version.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
 import {
@@ -66,9 +67,17 @@ const noopConsent = () => undefined;
 const noopDeliveryRepair = async () => ({ action: 'proceed-current' as const });
 const currentCodexTarget = () => ({ installedVersion: VERSION });
 
+/**
+ * The production skills.sh step shells out to the pinned CLI over the network,
+ * which no command-wiring test may do. Group 1's own behavior lives in
+ * `src/lib/skills-installer.test.ts`; the describe below only proves the seam.
+ */
+const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
+
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
   args[10] ??= () => undefined;
+  args[11] ??= noSkillsChannel;
   return runInstallCommand(...args);
 }
 
@@ -1279,6 +1288,84 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
     expect(output).not.toContain('action-required');
     expect(output).not.toContain('the holder converges the same targets');
     expect(output).not.toMatch(/\n\s+at /);
+  });
+});
+
+describe('installCommand — skills.sh channel seam (wish skills-everywhere, group 1)', () => {
+  test('runs the skills install immediately BEFORE agent-sync', async () => {
+    const calls: string[] = [];
+    await installCommand(
+      { integrations: 'claude' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      (selection) => calls.push(`agent-sync:${selection}`),
+      () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
+      noopLease,
+      noopCodexLease,
+      noopConsent,
+      () => null,
+      noopDeliveryRepair,
+      () => undefined,
+      (selection) => {
+        calls.push(`skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+    );
+    expect(calls).toEqual(['skills:claude', 'agent-sync:claude']);
+  });
+
+  test('every non-none selection reaches the channel unnarrowed (decision 3)', async () => {
+    const seen: string[] = [];
+    const runFor = (integrations: 'auto' | 'all' | 'claude' | 'codex' | 'none') =>
+      installCommand(
+        { integrations },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => undefined,
+        () => [],
+        noopLease,
+        noopCodexLease,
+        noopConsent,
+        integrations === 'codex' || integrations === 'all' ? currentCodexTarget : () => null,
+        noopDeliveryRepair,
+        () => undefined,
+        (selection) => {
+          seen.push(selection);
+          return { status: 'skipped', reason: 'test fixture' };
+        },
+      );
+    await runFor('auto');
+    await runFor('all');
+    await runFor('claude');
+    await runFor('codex');
+    // `none` still reaches the channel, which reports `skipped (consent: none)`
+    // itself — agent-sync, by contrast, is never called for `none`.
+    await runFor('none');
+    expect(seen).toEqual(['auto', 'all', 'claude', 'codex', 'none']);
+  });
+
+  test('a failed explicit integration is still fatal before the channel runs', async () => {
+    let skills = 0;
+    await expect(
+      installCommand(
+        { integrations: 'claude' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        () => undefined,
+        () => [{ runtime: 'claude' as const, ok: false, detail: 'missing' }],
+        noopLease,
+        noopCodexLease,
+        noopConsent,
+        () => null,
+        noopDeliveryRepair,
+        () => undefined,
+        () => {
+          skills += 1;
+          return { status: 'skipped', reason: 'test fixture' };
+        },
+      ),
+    ).rejects.toThrow('Requested integration failed: claude');
+    expect(skills).toBe(0);
   });
 });
 

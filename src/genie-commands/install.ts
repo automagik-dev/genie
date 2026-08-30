@@ -16,12 +16,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type LifecycleLease,
-  type LifecycleLeaseSkip,
-  acquireLifecycleLease,
-  acquireLifecycleLeaseWithWait,
-} from '../lib/agent-sync.js';
 import type { DeliveryEvidenceChannel } from '../lib/codex-delivery-evidence.js';
 import {
   type HeldLifecycleLease,
@@ -30,6 +24,12 @@ import {
 } from '../lib/codex-lifecycle-lease.js';
 import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
+import {
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+} from '../lib/lifecycle-lease.js';
 import {
   acquireOrderedLifecycleLeases,
   lifecycleBusyMessage,
@@ -45,6 +45,7 @@ import {
   resolveRuntimeExecutable,
   runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
+import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import { VERSION } from '../lib/version.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import {
@@ -88,6 +89,8 @@ export interface InstallOptions {
 type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | undefined;
 type AgentSyncRunner = (selection: IntegrationSelection) => void;
+/** The skills.sh channel step; production pins it to the running binary's VERSION. */
+type SkillsChannelRunner = (selection: IntegrationSelection) => SkillsChannelConvergenceResult;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
 type CodexLifecycleLeaseAcquirer = () => LifecycleLeaseResult;
@@ -352,6 +355,7 @@ function runPermittedPostDeliveryIntegrations(
   actionRequired: boolean,
   runIntegrations: IntegrationRunner,
   runSync: AgentSyncRunner,
+  runSkills: SkillsChannelRunner,
 ): void {
   const results = buildInstallResults(target, selection, runIntegrations, actionRequired);
   for (const result of results) {
@@ -365,6 +369,12 @@ function runPermittedPostDeliveryIntegrations(
     if (failed.length > 0)
       throw new Error(`Requested integration failed: ${failed.map((result) => result.runtime).join(', ')}`);
   }
+  // Skills BEFORE agent-sync (wish `skills-everywhere` decision 2), and for
+  // every non-`none` consent with `--all` (decision 3: an explicit, accepted
+  // widening of the install-consent contract for skills only). A failure sets
+  // exit 1 with the remedy command and never throws — the delivered bytes stay
+  // committed.
+  runSkills(selection);
   const agentSyncSelection = narrowAgentSyncSelection(selection);
   if (agentSyncSelection !== null) {
     if (!codexFailed) {
@@ -398,6 +408,8 @@ export async function installCommand(
   repairDelivery: InstallDeliveryRepair = (channel, platformId, lease) =>
     attemptAlreadyCurrentDeliveryRepair(channel, platformId, lease),
   retireMarker: InstallMarkerRetirer = () => retireInstallVersionMarker(GENIE_HOME),
+  runSkills: SkillsChannelRunner = (selection) =>
+    runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
 ): Promise<void> {
   // install.sh passes the exact channel whose manifest selected the installed
   // bytes. Resolve and validate it before acquiring either lifecycle lease or
@@ -457,7 +469,7 @@ export async function installCommand(
     // record exists. Only unrelated Claude/Hermes integration and sync work is
     // permitted here; `setup --codex` owns every Codex activation mutation.
     const actionRequired = installActionRequired(codexTarget, delivery);
-    runPermittedPostDeliveryIntegrations(selection, codexTarget, actionRequired, runIntegrations, runSync);
+    runPermittedPostDeliveryIntegrations(selection, codexTarget, actionRequired, runIntegrations, runSync, runSkills);
     // Decision 14: marker retirement is the LAST successful finisher. A later
     // consent, legacy cleanup, permitted integration, or sync failure must leave
     // the marker intact so the whole install remains retryable.

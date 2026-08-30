@@ -42,13 +42,9 @@ import {
   type FlatAgentOp,
   type FlatAgentOutcome,
   KEPT_SUFFIX,
-  type LifecycleLease,
-  type LifecycleLeaseSkip,
   MANIFEST_NAME,
   TARGET_NAME,
   acquireAgentSyncLock,
-  acquireLifecycleLease,
-  acquireLifecycleLeaseWithWait,
   allocateExclusiveBackupRoot,
   captureAgentPathSnapshot,
   codexLegacyCuratedDir,
@@ -84,6 +80,12 @@ import {
   resolvePiExtensionsDir,
 } from '../lib/genie-home.js';
 import {
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+} from '../lib/lifecycle-lease.js';
+import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
   lifecycleBusyMessage,
@@ -96,6 +98,12 @@ import {
   removeRuntimeIntegrations,
   resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
+import {
+  type SkillsInstallRecord,
+  deleteSkillsInstallRecord,
+  isSafeSkillName,
+  readSkillsInstallRecord,
+} from '../lib/skills-installer.js';
 import { detectV4Install } from './legacy-v4.js';
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
@@ -3341,6 +3349,58 @@ function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
   };
 }
 
+/**
+ * What `genie uninstall` removed from the skills.sh channel.
+ *
+ * Removal is record-driven and nothing else: only `<agentDir>/<inventory name>`
+ * directories named by `<GENIE_HOME>/skills-install.json` are deleted, so a
+ * foreign skill sharing an agent dir is structurally out of reach. No record
+ * (never installed through the channel, or already uninstalled) is a no-op.
+ */
+export interface SkillsChannelRemoval {
+  record: SkillsInstallRecord | null;
+  removed: string[];
+  failures: string[];
+  recordRemoved: boolean;
+}
+
+export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
+  const record = readSkillsInstallRecord(genieHome);
+  if (record === null) return { record: null, removed: [], failures: [], recordRemoved: false };
+  const removed: string[] = [];
+  const failures: string[] = [];
+  for (const agentDir of record.agentDirs) {
+    if (!isAbsolute(agentDir)) continue;
+    for (const name of record.inventory) {
+      // One traversal guard, owned by the module that also writes the record.
+      if (!isSafeSkillName(name)) continue;
+      const target = join(agentDir, name);
+      const stat = lstatOrNull(target);
+      // Only real directories genie recorded; a symlink or file at that name
+      // was not written by `--copy` and stays untouched.
+      if (stat === null || !stat.isDirectory()) continue;
+      try {
+        rmSync(target, { recursive: true, force: true });
+        removed.push(target);
+      } catch (error) {
+        failures.push(`${target}: ${errorMessage(error)}`);
+      }
+    }
+  }
+  return { record, removed, failures, recordRemoved: deleteSkillsInstallRecord(genieHome) };
+}
+
+function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
+  if (removal.record === null) {
+    console.log('\x1b[36mi\x1b[0m skills.sh channel: no install record; nothing to remove.');
+    return;
+  }
+  console.log(
+    `  \x1b[32m+\x1b[0m skills.sh channel: removed ${removal.removed.length} recorded skill dir(s) (${removal.record.ref})`,
+  );
+  for (const failure of removal.failures) console.log(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
+}
+
 export function performFreshUninstallPlan(
   genieDir: string,
   removeMarketplace: boolean,
@@ -3353,6 +3413,9 @@ export function performFreshUninstallPlan(
   // sibling while an owned object is parked. Recover all published transaction
   // roots under the lifecycle lease before this authoritative enumeration.
   recoverUninstallTransactions();
+  // Record-driven and outside GENIE_HOME, so it must run before the batch
+  // deletes the home that holds the record.
+  reportSkillsChannelRemoval(removeSkillsChannelInstall(genieDir));
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
     ...(execution.claudeAgentManifest.kind === 'unsafe'
