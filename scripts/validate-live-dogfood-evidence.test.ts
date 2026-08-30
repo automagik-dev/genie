@@ -244,6 +244,34 @@ function evidence(manifest = validManifest(), doctor: unknown = DOCTOR): string 
   )}\n\`\`\`\n`;
 }
 
+const ADAPTER = '/tmp/dogfood/bin/run-musl-dogfood.sh';
+
+/**
+ * Reshape every stage observation the way an execution adapter records it:
+ * the adapter is the executable, the candidate binary moves into adapterArgv,
+ * and argv stays the candidate's OWN arguments. Only linux-x64-musl runs this
+ * way, which is why the pre-fix binary-prefixed argv escaped every other leg.
+ */
+function adapterShaped(manifest: Record<string, any>): void {
+  for (const stage of manifest.lifecycle.stages) {
+    for (const command of stage.observation.commands) {
+      command.adapterArgv = [command.candidateBinary, ...command.argv];
+      command.executable = ADAPTER;
+      command.executableSha256 = HEX('9');
+    }
+    reprojectStage(stage);
+  }
+}
+
+function reprojectStage(stage: Record<string, any>): void {
+  stage.command = stage.observation.commands
+    .map((entry: Record<string, any>) => [entry.executable, ...(entry.adapterArgv ?? entry.argv)].join(' '))
+    .join(' && ');
+  stage.observationSha256 = createHash('sha256')
+    .update(`${JSON.stringify(stage.observation, null, 2)}\n`)
+    .digest('hex');
+}
+
 function errorsAfter(mutator: (manifest: Record<string, any>) => void): string[] {
   const manifest = validManifest();
   mutator(manifest);
@@ -261,6 +289,39 @@ describe('validate-live-dogfood-evidence schema v2', () => {
       errorsAfter((manifest) => {
         const stage = manifest.lifecycle.stages.find((entry: { id: string }) => entry.id === 'new-thread-sentinel');
         stage.observation.commands[0].argv = ['mcpServer/tool/call', 'genie', 'genie_board'];
+      }).join('\n'),
+    ).toContain('must reject retired MCP evidence');
+  });
+
+  test('accepts adapter-shaped observations and rejects binary-prefixed argv', () => {
+    expect(errorsAfter(adapterShaped)).toEqual([]);
+    // The linux-x64-musl regression: argv carried [<candidate binary>, 'task',
+    // 'list', '--json'], so the standalone assertion could never match.
+    const prefixed = errorsAfter((manifest) => {
+      adapterShaped(manifest);
+      for (const stage of manifest.lifecycle.stages) {
+        for (const command of stage.observation.commands) command.argv = [...command.adapterArgv];
+        reprojectStage(stage);
+      }
+    });
+    for (const index of [5, 6, 7]) {
+      expect(prefixed).toContain(
+        `stages[${index}].standalone must contain standalone task list --json and board --json observations`,
+      );
+    }
+    expect(
+      errorsAfter((manifest) => {
+        adapterShaped(manifest);
+        manifest.lifecycle.stages[0].observation.commands[0].adapterArgv = ['ok', 7];
+        reprojectStage(manifest.lifecycle.stages[0]);
+      }).join('\n'),
+    ).toContain('commands[0].adapterArgv must be a string array');
+    expect(
+      errorsAfter((manifest) => {
+        adapterShaped(manifest);
+        const stage = manifest.lifecycle.stages.find((entry: { id: string }) => entry.id === 'new-thread-sentinel');
+        stage.observation.commands[0].adapterArgv.push('genie_board@mcp');
+        reprojectStage(stage);
       }).join('\n'),
     ).toContain('must reject retired MCP evidence');
   });

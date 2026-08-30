@@ -483,6 +483,12 @@ const STAGE_EXPECTATIONS: Record<(typeof REQUIRED_STAGE_IDS)[number], StageExpec
   },
 };
 
+/** The real spawned vector: the adapter's argv when one wrapped the candidate. */
+function spawnArgv(command: JsonRecord): unknown[] {
+  if (Array.isArray(command.adapterArgv)) return command.adapterArgv;
+  return Array.isArray(command.argv) ? command.argv : [];
+}
+
 function validateCapturedCommand(
   errors: string[],
   label: string,
@@ -506,6 +512,15 @@ function validateCapturedCommand(
   if (!Array.isArray(command.argv) || command.argv.some((arg) => typeof arg !== 'string')) {
     errors.push(`${label}.argv must be a string array`);
   }
+  // Optional: present only when an execution adapter (linux-x64-musl Alpine)
+  // spawned the candidate. `argv` stays the candidate's own arguments on every
+  // platform; `adapterArgv` records the real vector handed to `executable`.
+  if (
+    command.adapterArgv !== undefined &&
+    (!Array.isArray(command.adapterArgv) || command.adapterArgv.some((arg) => typeof arg !== 'string'))
+  ) {
+    errors.push(`${label}.adapterArgv must be a string array`);
+  }
   if (typeof command.pid !== 'number' || !Number.isInteger(command.pid) || command.pid <= 0) {
     errors.push(`${label}.pid must be a positive integer`);
   }
@@ -518,7 +533,7 @@ function validateCapturedCommand(
   if (typeof command.stderr !== 'string') errors.push(`${label}.stderr must be a string`);
   return {
     record: command,
-    summary: [String(command.executable), ...(Array.isArray(command.argv) ? command.argv.map(String) : [])].join(' '),
+    summary: [String(command.executable), ...spawnArgv(command).map(String)].join(' '),
     exit: typeof command.exit === 'number' && Number.isInteger(command.exit) ? command.exit : null,
     candidateSha256: command.candidateBinarySha256,
   };
@@ -544,7 +559,8 @@ function validateStandaloneObservation(
   const hasBoard = argv.some((args) => Array.isArray(args) && args.join(' ') === 'board --json');
   if (!hasTask || !hasBoard)
     errors.push(`${label} must contain standalone task list --json and board --json observations`);
-  if (argv.some((args) => Array.isArray(args) && args.some((arg) => String(arg).toLowerCase().includes('mcp')))) {
+  const vectors = commands.flatMap((value) => [value.record.argv, value.record.adapterArgv]);
+  if (vectors.some((args) => Array.isArray(args) && args.some((arg) => String(arg).toLowerCase().includes('mcp')))) {
     errors.push(`${label} must reject retired MCP evidence`);
   }
 }
