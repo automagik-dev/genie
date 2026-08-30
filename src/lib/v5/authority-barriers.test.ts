@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { openReadonlyHandle } from '../../term-commands/context.js';
 import { InvalidOrchestrationAuthorityError, LocalLifecycleDisabledError } from '../orchestration-mode.js';
 import { openDb } from './genie-db.js';
-import { openReadonlyDb } from './mcp-tools.js';
 import { writeSnapshotFile } from './roadmap-sync.js';
 
 const originalGenieHome = process.env.GENIE_HOME;
@@ -87,7 +86,6 @@ describe('Orca authority barriers', () => {
     const beforeMtime = statSync(dbPath).mtimeMs;
 
     expect(() => openReadonlyHandle(dbPath)).toThrow(LocalLifecycleDisabledError);
-    expect(() => openReadonlyDb(join(root, 'repo'))).toThrow(LocalLifecycleDisabledError);
 
     expect(readdirSync(directory)).toEqual(beforeNames);
     expect(readFileSync(dbPath)).toEqual(beforeBytes);
@@ -177,7 +175,6 @@ describe('Orca authority barriers', () => {
 
       expect(() => openDb({ path: dbPath })).toThrow(fixtureCase.error);
       expect(() => openReadonlyHandle(dbPath)).toThrow(fixtureCase.error);
-      expect(() => openReadonlyDb(repo)).toThrow(fixtureCase.error);
       expect(() => writeSnapshotFile(roadmap, { forbidden: true })).toThrow(fixtureCase.error);
 
       expect(existsSync(dbPath)).toBe(false);

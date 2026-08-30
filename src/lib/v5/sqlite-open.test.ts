@@ -3,11 +3,11 @@
  * poisoned-WAL-index recovery helper it deliberately does NOT call.
  *
  * `openSqlite` is the fleet hot path (`genie task`, `task sync`, the git-hook
- * sync, the global omni database, MCP reads) and stays churn-free; the recovery
- * is opt-in and wired only into the MCP write open, the path that creates the
- * poison. These tests drive the helper directly — predicates, retry contract,
- * and the live-peer skips that keep it from touching a contended database. The
- * real end-to-end poison is exercised where it is scoped, in mcp-tools.test.ts;
+ * sync, the global omni database) and stays churn-free; the recovery is opt-in
+ * and was wired only into the retired MCP write open, the path that created the
+ * poison. No shipped caller remains, so these tests are the whole contract:
+ * they drive the helper directly — predicates, retry contract, and the
+ * live-peer skips that keep it from touching a contended database.
  * genie-db.test.ts pins that the shared path does not heal it.
  */
 

@@ -225,10 +225,13 @@ function openInitialized(opts: OpenSqliteOptions): Database {
 // plain WAL open/close never performs; run from every process of a live fleet
 // (`genie task` workers, omni-queue resolvers, git-hook sync) it drove bun's
 // Linux shm handling into SIGBUS. Recovery therefore belongs to the ONE
-// component that CREATES the poison: the MCP server's degraded read-only
-// session, whose close writes the header (`openWriteableDb` in mcp-tools.ts,
-// re-opened by `promoteDegradedHandle` in mcp-server.ts). That path is
-// single-owner and low-concurrency — the fleet never runs the probe.
+// component that CREATES the poison: a degraded read-only session whose close
+// writes the header. That component was the retired MCP/ui-bridge server pair,
+// so today NO shipped path creates the poison and NO shipped path calls the
+// recovery below (see {@link openWithWalIndexRecovery}). The scoping contract is
+// retained verbatim because it is the reason the fleet primitive must stay
+// churn-free: any future single-owner, low-concurrency writer that reintroduces
+// a degraded read-only session opts in here and nowhere else.
 //
 // "Single-owner" is an assumption about the CALLER, and one MCP server per
 // database does honour it. Two MCP servers on one `.genie/genie.db` do not: both
@@ -473,8 +476,11 @@ function releaseRecoveryLock(lockPath: string | null): void {
  * from scratch rather than assuming anything: by then the previous holder has
  * usually healed the database, and the ordinary healthy path just proceeds.
  *
- * CALLERS: the MCP write path only (`tryWriteOpen` in mcp-tools.ts). See the
- * section header above for why this must never wrap the fleet-wide
+ * CALLERS: none shipped. The sole caller was the MCP write path (`tryWriteOpen`
+ * in `mcp-tools.ts`), retired together with `genie mcp` and `genie ui-bridge`;
+ * with it went the only component that creates the poison. The helper and its
+ * tests are retained as the opt-in seam for a future single-owner writer. See
+ * the section header above for why this must never wrap the fleet-wide
  * {@link openSqlite}.
  *
  * Never runs for a contended database. Two independent guards enforce that: a

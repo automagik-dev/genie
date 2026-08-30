@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6.29.0/schema.json",
   "entry": ["src/hooks/dispatch-command.ts"],
   "project": ["src/**/*.ts"],
-  "ignoreBinaries": ["ldd", "omni", "ss"],
+  "ignoreBinaries": ["ldd", "omni"],
   "ignoreExportsUsedInFile": true,
   "ignore": ["src/term-commands/hook/trust.ts"]
 }
