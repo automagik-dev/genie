@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
@@ -481,6 +481,28 @@ describe('genie mcp retirement remains separate from ui-bridge', () => {
     expect(invocation.stdout.toString()).toBe('');
     expect(invocation.stderr.toString()).toBe(
       'Error: genie mcp has been retired; use `genie task` and `genie board`, or roll back to a pre-A7 signed release.\n',
+    );
+  });
+});
+
+describe('orca lifecycle authority', () => {
+  test('refuses with one clean Error line and exit 1 instead of an uncaught throw', () => {
+    writeFileSync(join(genieHome, 'config.json'), '{"orchestration":{"mode":"orca"}}');
+
+    const invocation = Bun.spawnSync([process.execPath, GENIE, 'ui-bridge'], {
+      cwd: repo,
+      stdin: Buffer.from('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: bridgeEnv(),
+    });
+
+    expect(invocation.exitCode).toBe(1);
+    // Refused BEFORE any handle, watcher, or backstop exists — no protocol
+    // traffic, and no raw stack trace out of the first lazy read-only open.
+    expect(invocation.stdout.toString()).toBe('');
+    expect(invocation.stderr.toString()).toBe(
+      'Error: local_lifecycle_disabled_in_orca_mode: local Genie lifecycle state is disabled because orchestration.mode is "orca"\n',
     );
   });
 });
