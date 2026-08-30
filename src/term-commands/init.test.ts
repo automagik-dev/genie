@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -197,10 +206,73 @@ describe('genie init', () => {
 
     test('preserves unrelated and unowned same-name registrations byte-for-byte', () => {
       initGitRepo(dir);
+      // `/personal` is a user wrapper, not the Genie binary: the `genie` KEY is
+      // not proof of ownership, so this entry is never eligible for retirement.
       const original = '{"mcpServers":{"other":{"command":"x"},"genie":{"command":"/personal","args":["mcp"]}}}';
       writeFileSync(mcpPath(dir), original);
       expect(runInit(dir).code).toBe(0);
       expect(readFileSync(mcpPath(dir), 'utf8')).toBe(original);
+    });
+
+    test('retires the dead `genie mcp` entry and preserves every other server byte-for-byte', () => {
+      initGitRepo(dir);
+      writeFileSync(
+        mcpPath(dir),
+        [
+          '{',
+          '  "mcpServers": {',
+          '    "genie": { "command": "/home/u/.genie/bin/genie", "args": ["mcp"] },',
+          '    "other": { "command": "node",  "args": ["srv.js"] }',
+          '  }',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      const { code, stdout } = runInit(dir);
+      expect(code).toBe(0);
+      expect(readFileSync(mcpPath(dir), 'utf8')).toBe(
+        ['{', '  "mcpServers": {', '    "other": { "command": "node",  "args": ["srv.js"] }', '  }', '}', ''].join(
+          '\n',
+        ),
+      );
+      // Backup-first: the pre-retirement bytes survive next to the file.
+      const backups = readdirSync(dir).filter((n) => n.startsWith('.mcp.json.genie-backup-'));
+      expect(backups).toHaveLength(1);
+      expect(readFileSync(join(dir, backups[0]), 'utf8')).toContain('"genie"');
+      expect(stdout).toContain('retired the dead `genie mcp` registration');
+
+      // Idempotent: a second run finds nothing and writes no second backup.
+      expect(runInit(dir).code).toBe(0);
+      expect(readdirSync(dir).filter((n) => n.startsWith('.mcp.json.genie-backup-'))).toHaveLength(1);
+    });
+
+    test('--json only claims retirement when it actually happened', () => {
+      initGitRepo(dir);
+      const fresh = JSON.parse(runInit(dir, ['--json']).stdout).mcp;
+      expect(fresh[0]).toMatchObject({ action: 'skipped' });
+      expect(fresh[1]).toMatchObject({ action: 'skipped', detail: 'no marker-owned project registration to retire' });
+
+      writeFileSync(mcpPath(dir), '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]},"k":{"command":"k"}}}');
+      const retired = JSON.parse(runInit(dir, ['--json']).stdout).mcp;
+      expect(retired[0]).toMatchObject({ action: 'updated' });
+      expect(retired[0].detail).toContain('retired the dead `genie mcp` registration');
+    });
+
+    test('a symlinked .mcp.json never aborts init: it is skipped with a warning and .genie/ is still scaffolded', () => {
+      initGitRepo(dir);
+      const real = join(dir, 'real-mcp.json');
+      writeFileSync(real, '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]}}}');
+      symlinkSync('real-mcp.json', mcpPath(dir));
+
+      const { code, stdout } = runInit(dir);
+      expect(code).toBe(0);
+      expect(stdout).toContain('symlink');
+      // The link and its target are both untouched — Genie never follows it.
+      expect(readFileSync(real, 'utf8')).toBe('{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]}}}');
+      expect(readdirSync(dir).filter((n) => n.includes('.genie-backup-'))).toHaveLength(0);
+      expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
+      expect(existsSync(join(dir, '.gitignore'))).toBe(true);
     });
 
     test('--json reports both registration classes skipped on a fresh repo', () => {

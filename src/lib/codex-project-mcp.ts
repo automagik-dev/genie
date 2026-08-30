@@ -8,7 +8,9 @@ import { randomUUID } from 'node:crypto';
 import {
   constants,
   accessSync,
+  chmodSync,
   closeSync,
+  copyFileSync,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -583,11 +585,6 @@ function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function preparePreservedJsonMcpConfig(configPath: string): PreparedWrite {
-  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  return { path: configPath, action: 'skipped', detail: 'unmarked .mcp.json is always user-owned and preserved' };
-}
-
 function applyPreparedWrite(prepared: PreparedWrite, root = configProjectRoot(prepared.path)): McpConfigResult {
   if (prepared.content === undefined) return { path: prepared.path, action: prepared.action, detail: prepared.detail };
   assertSafeProjectConfigPath(root, prepared.path);
@@ -714,6 +711,302 @@ export function removeCodexMcpFallback(configPath: string): ArtifactAction {
   return 'updated';
 }
 
+// ============================================================================
+// `.mcp.json` — the retired `genie mcp` registration
+// ============================================================================
+
+/**
+ * The `.mcp.json` filename every Claude Code project uses. It carries NO
+ * ownership marker, so only one exactly-shaped entry is ever eligible for
+ * retirement (see {@link isRetiredGenieMcpServer}); everything else in the
+ * file is user-owned.
+ */
+const PROJECT_JSON_MCP_FILE = '.mcp.json';
+
+/**
+ * True when `command` names the Genie binary itself rather than a user wrapper.
+ * Both separators are recognized because a `.mcp.json` is committed and read on
+ * whatever platform its author used, not only on the one running this check.
+ */
+function isGenieBinaryCommand(command: string): boolean {
+  const trimmed = command.trim();
+  const name = trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1);
+  return name === 'genie' || name === 'genie.exe';
+}
+
+/**
+ * True for EXACTLY the registration a pre-retirement `genie init` wrote: the
+ * Genie binary invoked with the single argument `mcp`. `genie mcp` is retired
+ * and now exits 1, so this entry can only ever render as a failed MCP server.
+ *
+ * Anything else under the `genie` key is user-owned and never touched — a
+ * different command (a personal wrapper, another binary), extra or different
+ * args, or a non-object value.
+ */
+export function isRetiredGenieMcpServer(entry: unknown): boolean {
+  if (!isJsonObject(entry)) return false;
+  if (typeof entry.command !== 'string' || !isGenieBinaryCommand(entry.command)) return false;
+  return Array.isArray(entry.args) && entry.args.length === 1 && entry.args[0] === 'mcp';
+}
+
+/**
+ * What a project `.mcp.json` holds with respect to the retired registration.
+ * `present` is the ONLY state that permits a write; every other state is a
+ * reported no-op, so neither doctor nor init can ever be blocked by it.
+ */
+export type RetiredJsonMcpState = 'absent' | 'symlink' | 'unreadable' | 'clean' | 'present';
+
+export interface RetiredJsonMcpFinding {
+  path: string;
+  state: RetiredJsonMcpState;
+  /** Human reason, safe to print verbatim in doctor and init output. */
+  detail: string;
+}
+
+/** Read-only `.mcp.json` inspection shared by doctor and init. Never throws. */
+export function inspectRetiredJsonMcpEntry(root: string): RetiredJsonMcpFinding {
+  const path = join(root, PROJECT_JSON_MCP_FILE);
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return { path, state: 'absent', detail: 'no .mcp.json in this repository' };
+    }
+    return { path, state: 'unreadable', detail: `.mcp.json is unreadable: ${diagnostic(error)}` };
+  }
+  // A symlinked .mcp.json is repository-controlled indirection: Genie neither
+  // follows it nor rewrites it, and says so instead of failing.
+  if (stat.isSymbolicLink()) {
+    return {
+      path,
+      state: 'symlink',
+      detail: '.mcp.json is a symlink; left untouched (retire the `genie` entry by hand)',
+    };
+  }
+  if (!stat.isFile()) return { path, state: 'unreadable', detail: '.mcp.json is not a regular file; left untouched' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    return {
+      path,
+      state: 'unreadable',
+      detail: `.mcp.json is not valid JSON, so it is preserved: ${diagnostic(error)}`,
+    };
+  }
+  if (!isJsonObject(parsed) || !isJsonObject(parsed.mcpServers)) {
+    return { path, state: 'clean', detail: 'no retired `genie mcp` registration in .mcp.json' };
+  }
+  if (!isRetiredGenieMcpServer(parsed.mcpServers[GENIE_PLUGIN_NAME])) {
+    return { path, state: 'clean', detail: 'no retired `genie mcp` registration in .mcp.json' };
+  }
+  return { path, state: 'present', detail: 'a `genie` server still launches the retired `genie mcp` command' };
+}
+
+function diagnostic(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The document's own indentation, so the re-serialization fallback keeps the
+ * shape the author chose instead of reformatting a file Genie only removes one
+ * key from.
+ */
+function detectJsonIndent(raw: string): string | number {
+  const match = /\n([ \t]+)"/.exec(raw);
+  return match === null ? 2 : match[1];
+}
+
+// ---------------------------------------------------------------------------
+// Byte-surgical property removal
+//
+// Removing one dead server must not reformat a git-tracked file the user owns,
+// so the retirement splices exactly that property's bytes out of the original
+// text and every other byte survives untouched. These scanners run only on
+// text `JSON.parse` has ALREADY accepted, so they need to agree with it, not
+// validate it — and the caller re-parses and compares the spliced result
+// against the intended object before writing, falling back to a plain
+// re-serialization if it ever disagrees.
+// ---------------------------------------------------------------------------
+
+function skipJsonWhitespace(raw: string, index: number): number {
+  let i = index;
+  while (i < raw.length && (raw[i] === ' ' || raw[i] === '\t' || raw[i] === '\n' || raw[i] === '\r')) i += 1;
+  return i;
+}
+
+/** Index just past the string literal that starts at `index` (a `"`). */
+function scanJsonString(raw: string, index: number): number {
+  let i = index + 1;
+  while (i < raw.length) {
+    if (raw[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (raw[i] === '"') return i + 1;
+    i += 1;
+  }
+  throw new Error('unterminated JSON string');
+}
+
+/** Index just past the value that starts at `index`. */
+function scanJsonValue(raw: string, index: number): number {
+  const start = skipJsonWhitespace(raw, index);
+  const first = raw[start];
+  if (first === '"') return scanJsonString(raw, start);
+  if (first === '{' || first === '[') return scanJsonContainer(raw, start).end;
+  let i = start;
+  while (i < raw.length && !',}] \t\r\n'.includes(raw[i])) i += 1;
+  return i;
+}
+
+interface JsonPropertySpan {
+  key: string;
+  /** Index of the property key's opening quote. */
+  start: number;
+  /** Index just past the property's value. */
+  end: number;
+}
+
+/**
+ * Walk the container that starts at `index`, returning where it ends and — for
+ * an object — the span of every property it declares directly.
+ */
+function scanJsonContainer(raw: string, index: number): { end: number; properties: JsonPropertySpan[] } {
+  const isObject = raw[index] === '{';
+  const close = isObject ? '}' : ']';
+  const properties: JsonPropertySpan[] = [];
+  let i = index + 1;
+  for (;;) {
+    i = skipJsonWhitespace(raw, i);
+    if (i >= raw.length) throw new Error('unterminated JSON container');
+    if (raw[i] === close) return { end: i + 1, properties };
+    if (raw[i] === ',') {
+      i += 1;
+      continue;
+    }
+    if (!isObject) {
+      i = scanJsonValue(raw, i);
+      continue;
+    }
+    const keyStart = i;
+    const keyEnd = scanJsonString(raw, i);
+    i = skipJsonWhitespace(raw, keyEnd);
+    if (raw[i] !== ':') throw new Error('malformed JSON member');
+    const valueEnd = scanJsonValue(raw, i + 1);
+    properties.push({ key: JSON.parse(raw.slice(keyStart, keyEnd)) as string, start: keyStart, end: valueEnd });
+    i = valueEnd;
+  }
+}
+
+/**
+ * `raw` with `container[property]` spliced out — key, value, and exactly one
+ * adjacent comma — or null when the property (or its container) is not a
+ * directly declared top-level member. Every surviving byte is untouched.
+ */
+function spliceJsonProperty(raw: string, containerKey: string, propertyKey: string): string | null {
+  const documentStart = skipJsonWhitespace(raw, 0);
+  if (raw[documentStart] !== '{') return null;
+  const root = scanJsonContainer(raw, documentStart);
+  const container = root.properties.find((prop) => prop.key === containerKey);
+  if (container === undefined) return null;
+  const containerStart = skipJsonWhitespace(raw, raw.indexOf(':', container.start + containerKey.length) + 1);
+  if (raw[containerStart] !== '{') return null;
+  const target = scanJsonContainer(raw, containerStart).properties.find((prop) => prop.key === propertyKey);
+  if (target === undefined) return null;
+
+  // Take the FOLLOWING comma when there is one; otherwise the preceding one,
+  // so removing the last member never leaves a dangling comma.
+  const afterValue = skipJsonWhitespace(raw, target.end);
+  if (raw[afterValue] === ',') {
+    const nextMember = skipJsonWhitespace(raw, afterValue + 1);
+    const targetLineStart = raw.lastIndexOf('\n', target.start) + 1;
+    const nextMemberLineStart = raw.lastIndexOf('\n', nextMember - 1) + 1;
+    // Members on separate lines: drop the target's whole line, indentation
+    // included, so the survivor keeps the indentation its author gave it.
+    // Members sharing a line: drop exactly the target's bytes and its comma.
+    return nextMemberLineStart > targetLineStart
+      ? `${raw.slice(0, targetLineStart)}${raw.slice(nextMemberLineStart)}`
+      : `${raw.slice(0, target.start)}${raw.slice(nextMember)}`;
+  }
+  let start = target.start;
+  let before = start - 1;
+  while (before >= 0 && (raw[before] === ' ' || raw[before] === '\t' || raw[before] === '\n' || raw[before] === '\r')) {
+    before -= 1;
+  }
+  if (raw[before] === ',') start = before;
+  return `${raw.slice(0, start)}${raw.slice(target.end)}`;
+}
+
+/**
+ * The bytes to write after removing the dead `genie` server: the surgical
+ * splice when re-parsing it yields exactly `expected`, and a re-serialization
+ * that preserves key order, indentation, and the trailing newline otherwise.
+ */
+function rewriteWithoutGenieServer(raw: string, expected: JsonObject): string {
+  const spliced = spliceJsonProperty(raw, 'mcpServers', GENIE_PLUGIN_NAME);
+  if (spliced !== null) {
+    try {
+      if (JSON.stringify(JSON.parse(spliced)) === JSON.stringify(expected)) return spliced;
+    } catch {
+      // Fall through to re-serialization.
+    }
+  }
+  return `${JSON.stringify(expected, null, detectJsonIndent(raw))}${raw.endsWith('\n') ? '\n' : ''}`;
+}
+
+/**
+ * Retire ONLY the exactly-shaped dead `genie mcp` entry from `.mcp.json`,
+ * backing the file up first (`<path>.genie-backup-<stamp>`, the same
+ * backup-first pattern as the Codex OTel migration). Key order, every other
+ * server, every other top-level key, the file's indentation, its trailing
+ * newline, and its mode are preserved; the file itself is removed only when
+ * retiring the entry leaves an empty `mcpServers` and nothing else.
+ *
+ * Total by contract: any failure is reported as `skipped` with the reason, so
+ * `genie init` is never blocked by the state of a user-owned file.
+ */
+export function retireJsonMcpGenieEntry(root: string, now: Date = new Date()): McpConfigResult {
+  const finding = inspectRetiredJsonMcpEntry(root);
+  if (finding.state !== 'present') return { path: finding.path, action: 'skipped', detail: finding.detail };
+  try {
+    const raw = readFileSync(finding.path, 'utf8');
+    const parsed = JSON.parse(raw) as JsonObject;
+    const servers = { ...(parsed.mcpServers as JsonObject) };
+    delete servers[GENIE_PLUGIN_NAME];
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${finding.path}.genie-backup-${stamp}`;
+    copyFileSync(finding.path, backupPath);
+    const otherKeys = Object.keys(parsed).filter((key) => key !== 'mcpServers');
+    if (Object.keys(servers).length === 0 && otherKeys.length === 0) {
+      unlinkSync(finding.path);
+      return {
+        path: finding.path,
+        action: 'updated',
+        detail: `retired the dead \`genie mcp\` registration; .mcp.json held nothing else and was removed (backup: ${basename(backupPath)})`,
+      };
+    }
+    const next: JsonObject = {};
+    for (const key of Object.keys(parsed)) next[key] = key === 'mcpServers' ? servers : parsed[key];
+    const content = rewriteWithoutGenieServer(raw, next);
+    const mode = lstatSync(finding.path).mode & 0o777;
+    applyPreparedWrite({ path: finding.path, action: 'updated', content }, root);
+    chmodSync(finding.path, mode);
+    return {
+      path: finding.path,
+      action: 'updated',
+      detail: `retired the dead \`genie mcp\` registration; every other server preserved (backup: ${basename(backupPath)})`,
+    };
+  } catch (error) {
+    return {
+      path: finding.path,
+      action: 'skipped',
+      detail: `left untouched — could not retire the dead \`genie mcp\` registration: ${diagnostic(error)}`,
+    };
+  }
+}
+
 /** Read-only route inspection used by doctor. */
 export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): CodexProjectMcpResult {
   const path = join(root, '.codex', 'config.toml');
@@ -768,15 +1061,28 @@ export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): 
   };
 }
 
-/** Preserve `.mcp.json`; retire only the marker-owned Codex fallback. */
+/**
+ * Retire the two historical Genie project registrations and nothing else: the
+ * dead `genie mcp` entry a pre-retirement `genie init` wrote into `.mcp.json`,
+ * and the marker-owned Codex fallback block. Every other server, key, and byte
+ * in either file is user-owned and preserved.
+ *
+ * Neither step may abort init: the `.mcp.json` step is total (it reports a
+ * symlink, an unreadable file, or a failed rewrite as `skipped` with the
+ * reason), and the reported Codex detail states the outcome it actually
+ * produced rather than a fixed claim.
+ */
 export function retireProjectMcpConfigs(root: string, _options: RetireProjectMcpOptions = {}): McpConfigResult[] {
-  const json = preparePreservedJsonMcpConfig(join(root, '.mcp.json'));
-  const results = [applyPreparedWrite(json, root)];
+  const results = [retireJsonMcpGenieEntry(root)];
   const codexPath = join(root, '.codex', 'config.toml');
+  const action = removeCodexMcpFallback(codexPath);
   results.push({
     path: codexPath,
-    action: removeCodexMcpFallback(codexPath),
-    detail: 'retired marker-owned project registration',
+    action,
+    detail:
+      action === 'updated'
+        ? 'retired marker-owned project registration'
+        : 'no marker-owned project registration to retire',
   });
   return results;
 }
