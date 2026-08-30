@@ -41,6 +41,7 @@ import {
   readAgentFilesManifest,
   stampWorkflow,
 } from '../lib/agent-sync.js';
+import { SKILLS_CLI_VERSION, skillsInstallRecordPath, writeSkillsInstallRecord } from '../lib/skills-installer.js';
 import {
   type ProvenV4Rules,
   type UninstallBatchScope,
@@ -63,6 +64,7 @@ import {
   removeAgentSyncAssets,
   removeProvenV4Rules,
   removeRulesMember,
+  removeSkillsChannelInstall,
   removeSymlinkMembers,
   removeSymlinks,
   settleRuntimeIntegrationProgress,
@@ -73,6 +75,114 @@ import {
   uninstallBatchRuntimeTargets,
   updateUninstallBatchProgress,
 } from './uninstall.js';
+
+describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
+  let root: string;
+  let genieHome: string;
+  let claudeSkills: string;
+  let codexSkills: string;
+
+  function seedRecord(inventory: string[], agentDirs: string[]): void {
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory,
+      agentDirs,
+      installedAt: '2026-08-30T12:00:00.000Z',
+    });
+  }
+
+  function seedSkillDir(agentDir: string, name: string): string {
+    const dir = join(agentDir, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    return dir;
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-uninstall-skills-'));
+    genieHome = join(root, '.genie');
+    claudeSkills = join(root, 'home', '.claude', 'skills');
+    codexSkills = join(root, 'home', '.codex', 'skills');
+    mkdirSync(genieHome, { recursive: true });
+    mkdirSync(claudeSkills, { recursive: true });
+    mkdirSync(codexSkills, { recursive: true });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  test('removes exactly the recorded inventory dirs and leaves foreign skills untouched', () => {
+    const recorded = [seedSkillDir(claudeSkills, 'wish'), seedSkillDir(codexSkills, 'wish')];
+    const foreign = [seedSkillDir(claudeSkills, 'someone-elses-skill'), seedSkillDir(codexSkills, 'pdf-filler')];
+    seedRecord(['wish'], [claudeSkills, codexSkills]);
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed.sort()).toEqual([...recorded].sort());
+    expect(removal.failures).toEqual([]);
+    for (const dir of recorded) expect(existsSync(dir)).toBe(false);
+    for (const dir of foreign) expect(existsSync(dir)).toBe(true);
+    // The agent dirs themselves survive; only genie's own skill dirs go.
+    expect(existsSync(claudeSkills)).toBe(true);
+    expect(existsSync(codexSkills)).toBe(true);
+  });
+
+  test('deletes the record so a second run is a clean no-op', () => {
+    seedSkillDir(claudeSkills, 'work');
+    seedRecord(['work'], [claudeSkills]);
+
+    const first = removeSkillsChannelInstall(genieHome);
+    expect(first.recordRemoved).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
+
+    const second = removeSkillsChannelInstall(genieHome);
+    expect(second).toEqual({ record: null, removed: [], failures: [], recordRemoved: false });
+  });
+
+  test('no record is nothing to do', () => {
+    const foreign = seedSkillDir(claudeSkills, 'wish');
+    expect(removeSkillsChannelInstall(genieHome)).toEqual({
+      record: null,
+      removed: [],
+      failures: [],
+      recordRemoved: false,
+    });
+    expect(existsSync(foreign)).toBe(true);
+  });
+
+  test('a recorded name that is a file, a symlink, or absent is left alone', () => {
+    const outside = join(root, 'outside-target');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(claudeSkills, 'work'), 'not a skill dir\n', 'utf8');
+    symlinkSync(outside, join(claudeSkills, 'wish'));
+    seedRecord(['work', 'wish', 'never-installed'], [claudeSkills]);
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(existsSync(join(claudeSkills, 'work'))).toBe(true);
+    expect(existsSync(join(claudeSkills, 'wish'))).toBe(true);
+    expect(existsSync(outside)).toBe(true);
+  });
+
+  test('a traversal-carrying record is rejected wholesale, so nothing is removed', () => {
+    const sibling = seedSkillDir(join(root, 'home', '.claude'), 'agents');
+    writeFileSync(
+      skillsInstallRecordPath(genieHome),
+      JSON.stringify({
+        ref: 'v5.260830.16',
+        cliVersion: SKILLS_CLI_VERSION,
+        inventory: ['../agents'],
+        agentDirs: [claudeSkills],
+        installedAt: '2026-08-30T12:00:00.000Z',
+      }),
+      'utf8',
+    );
+
+    expect(removeSkillsChannelInstall(genieHome).record).toBeNull();
+    expect(existsSync(sibling)).toBe(true);
+  });
+});
 
 describe('path containment', () => {
   test('uses Windows path semantics without accepting sibling prefixes or cross-drive paths', () => {

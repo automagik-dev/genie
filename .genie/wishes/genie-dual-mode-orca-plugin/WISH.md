@@ -456,6 +456,13 @@ done
   immutable baseline, the reviewer classified the timeout as pre-existing/environmental rather than an Option-A
   planning-doc regression.
 
+### Superseded clause (2026-08-30, skills-everywhere)
+
+The dual-mode plan's assumption that supported hooks and role templates would be rehomed with parity fixtures after
+legacy plugin-delivery cleanup is superseded by `skills-everywhere` decision 2 (everywhere except Orca, Genie = skills
+via skills.sh + CLI; hooks and role templates are deleted, not rehomed). MCP-retirement ownership stays with this
+design. See `.genie/brainstorms/skills-everywhere/DESIGN.md`.
+
 ---
 
 ## Files to Create/Modify

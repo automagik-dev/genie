@@ -9,7 +9,6 @@ import { closeSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { confirm, input, select } from '@inquirer/prompts';
-import { acquireLifecycleLease } from '../lib/agent-sync.js';
 import {
   type ActivationExecutionResult,
   authorizeCodexActivation,
@@ -55,6 +54,7 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveCodexDir, resolveGenieHome } from '../lib/genie-home.js';
+import { acquireLifecycleLease } from '../lib/lifecycle-lease.js';
 import { type OrcaPluginCompatibilityResult, switchOrchestrationMode } from '../lib/orca-plugin-lifecycle.js';
 import { acquireOrderedLifecycleLeases, releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import {

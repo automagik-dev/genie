@@ -52,6 +52,7 @@ import {
   type CommandRunner,
   type IntegrationSelection,
 } from '../../lib/runtime-integrations';
+import type { SkillsChannelConvergenceResult } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import type { PinnedManifest } from '../codex-delivery-repair.js';
@@ -107,6 +108,14 @@ import {
   syncAuxiliaryContent,
   updateCommand,
 } from '../update.js';
+
+/**
+ * Every `runManualUpdateConvergence` test injects this: the production default
+ * shells out to the pinned skills CLI over the network, which no unit test may
+ * do. Group 1's own behavior is covered by the skills.sh describe below and by
+ * `src/lib/skills-installer.test.ts`.
+ */
+const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
 
 function healthyUpdateCodexProbe(): CodexPluginProbe {
   return {
@@ -2671,6 +2680,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
       bundleRoot: '/tmp/verified-bundle',
+      runSkills: noSkillsChannel,
       // Explicit selection: the default reads the host's persisted integration
       // consent, so omitting it makes the test depend on machine state (#2732).
       selection: 'all',
@@ -2684,6 +2694,29 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(calls[0]).toBe('parent-safe-sync');
     expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3:claude');
     expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }]);
+    expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+  });
+
+  test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
+    const savedExitCode = process.exitCode;
+    try {
+      const result = runManualUpdateConvergence({
+        expectedVersion: '5.260711.3',
+        selection: 'all',
+        runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
+        runSync: () => {},
+        refreshPlugins: () => [
+          { runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true },
+          { runtime: 'claude', ok: true, detail: 'plugin refreshed' },
+        ],
+        log: () => {},
+      });
+      expect(result.skills).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
+      applyConvergenceExitSignal(result, false);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = savedExitCode ?? 0;
+    }
   });
 
   test('structurally excludes Codex queries and writes while retaining Claude/Hermes convergence', () => {
@@ -2698,6 +2731,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const codexOnly = runManualUpdateConvergence({
       expectedVersion: VERSION,
       selection: 'codex',
+      runSkills: noSkillsChannel,
       runSync: () => {
         codexOnlySyncs += 1;
       },
@@ -2706,7 +2740,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         return [{ runtime: 'codex', ok: true, detail: 'must not run' }];
       },
     });
-    expect(codexOnly).toEqual({ integrations: [] });
+    // `codex` is not `none`: the skills channel still runs (fixture-skipped here),
+    // only agent-sync and the plugin refresh are narrowed away.
+    expect(codexOnly).toEqual({ integrations: [], skills: { status: 'skipped', reason: 'test fixture' } });
     expect(codexOnlySyncs).toBe(0);
     expect(codexOnlyRefreshes).toBe(0);
 
@@ -2714,6 +2750,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const auto = runManualUpdateConvergence({
       expectedVersion: VERSION,
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: () => {},
       refreshPlugins: (options) => {
         selectedRefresh = options.selection;
@@ -2843,6 +2880,28 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
+  test('D3: a fresh-child exit 1 (e.g. a failed skills install) stays a hard failure', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-failed-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      // Only exit 2 is the delivered-but-action-required carve-out. Exit 1 —
+      // what the skills channel sets — must never be mapped to it.
+      expect(() =>
+        runFreshBinaryPostDeliveryConvergence({
+          lifecycleLease: lease,
+          run: () => {
+            throw Object.assign(new Error('Command failed'), { status: 1 });
+          },
+        }),
+      ).toThrow(/fresh Genie integration convergence failed/);
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('D3: a converged fresh-child returns converged', () => {
     const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-ok-'));
     const lease = acquireLifecycleLease(home);
@@ -2900,6 +2959,115 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       }),
     ).not.toThrow();
     expect(synced).toBe(true);
+  });
+});
+
+describe('skills.sh channel in the post-delivery convergence (wish skills-everywhere, group 1)', () => {
+  let previousExitCode: number | string | undefined;
+
+  beforeEach(() => {
+    previousExitCode = process.exitCode ?? undefined;
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+  });
+
+  test('installs skills BEFORE agent-sync and the plugin refresh (decision 2 ordering)', () => {
+    const calls: string[] = [];
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: (selection) => {
+        calls.push(`skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => calls.push('agent-sync'),
+      refreshPlugins: () => {
+        calls.push('plugin-refresh');
+        return [];
+      },
+      log: () => undefined,
+    });
+    expect(calls).toEqual(['skills:all', 'agent-sync', 'plugin-refresh']);
+  });
+
+  test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
+    const seen: string[] = [];
+    for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {
+      runManualUpdateConvergence({
+        expectedVersion: VERSION,
+        selection,
+        runSkills: (received) => {
+          seen.push(received);
+          return { status: 'skipped', reason: 'test fixture' };
+        },
+        runSync: () => undefined,
+        refreshPlugins: () => [],
+        log: () => undefined,
+      });
+    }
+    expect(seen).toEqual(['auto', 'all', 'claude', 'codex']);
+  });
+
+  test('consent none skips the channel with the rest of the convergence', () => {
+    let skills = 0;
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'none',
+      runSkills: () => {
+        skills += 1;
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => undefined,
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+    expect(skills).toBe(0);
+  });
+
+  test('the channel logs through the convergence emitter', () => {
+    const lines: string[] = [];
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'claude',
+      runSkills: (_selection, emit) => {
+        emit('skills: fixture line');
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => undefined,
+      refreshPlugins: () => [],
+      log: (line) => lines.push(line),
+    });
+    expect(lines).toContain('skills: fixture line');
+  });
+
+  test('a skills failure never aborts the convergence — the promoted binary stays committed', () => {
+    const calls: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: () => {
+        calls.push('skills');
+        process.exitCode = 1;
+        return { status: 'failed', reason: 'skills CLI exited 1: boom' };
+      },
+      runSync: () => calls.push('agent-sync'),
+      refreshPlugins: () => [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
+      log: () => undefined,
+    });
+    expect(calls).toEqual(['skills', 'agent-sync']);
+    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test('D2 stays intact: --sync-only convergence never touches the skills channel', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const start = source.indexOf('export function runLegacySyncOnlyConvergence(');
+    const end = source.indexOf('function announceUpdatePlanOrExit(', start);
+    const convergence = source.slice(start, end);
+    expect(convergence).not.toContain('runSkills');
+    expect(convergence).not.toContain('SkillsChannel');
   });
 });
 
@@ -2993,6 +3161,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: realRunSync('auto'),
       refreshPlugins: () => [],
       log: () => undefined,
@@ -3020,6 +3189,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: realRunSync('auto'),
       refreshPlugins: () => [],
       log: () => undefined,
@@ -3584,13 +3754,13 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
   });
 
   test('a non-codex (claude) failure exits 1 and emits NO trailer', () => {
-    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }] });
+    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }], skills: null });
     expect(process.exitCode).toBe(1);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
   });
 
   test('an all-ok convergence sets no failure/action-required code and emits no trailer', () => {
-    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }] });
+    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }], skills: null });
     // Neither the exit-1 (failure) nor exit-2 (action-required) code is set.
     expect(process.exitCode).toBe(0);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
@@ -3599,6 +3769,7 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
   test('a codex action-required delivery exits 2 and emits the trailer exactly once', () => {
     applyConvergenceExitSignal({
       integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: null,
     });
     expect(process.exitCode).toBe(2);
     expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
@@ -3610,6 +3781,7 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
         { runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true },
         { runtime: 'claude', ok: false, detail: 'boom' },
       ],
+      skills: null,
     });
     expect(process.exitCode).toBe(1);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
@@ -3617,11 +3789,46 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
 
   test('emitTrailer=false (fresh-binary parent) sets exit 2 without printing the trailer', () => {
     applyConvergenceExitSignal(
-      { integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }] },
+      { integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }], skills: null },
       false,
     );
     expect(process.exitCode).toBe(2);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  // A pending `setup --codex` (action-required) is ROUTINE on a Codex host. It
+  // must never downgrade a real skills-channel failure from exit 1 to exit 2,
+  // which is what discarding the skills result used to do.
+  test('a failed skills install wins over action-required (exit 1, no trailer)', () => {
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: { status: 'failed', reason: 'skills CLI exited 1: boom' },
+    });
+    expect(process.exitCode).toBe(1);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('an installed skills channel leaves the action-required exit 2 intact', () => {
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: {
+        status: 'installed',
+        record: {
+          ref: 'v9.9.9',
+          cliVersion: '1.5.23',
+          inventory: ['wish'],
+          agentDirs: ['/home/tester/.claude/skills'],
+          installedAt: '2026-08-30T12:00:00.000Z',
+        },
+      },
+    });
+    expect(process.exitCode).toBe(2);
+    expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
+  });
+
+  test('a skills failure alone (no integrations) still exits 1', () => {
+    applyConvergenceExitSignal({ integrations: [], skills: { status: 'failed', reason: 'no skills found' } });
+    expect(process.exitCode).toBe(1);
   });
 });
 

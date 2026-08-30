@@ -28,20 +28,20 @@ import {
   type CodexFallbackRetirementResult,
   type PlanCodexFallbackRetirementOptions,
   type VerifiedCodexSkillPayload,
-  acquireLifecycleLease,
   applyCodexFallbackRetirement,
   classifyCodexFallback,
   computeDirDigest,
   inspectManagedSkillTree,
   loadHistoricalCodexFallbackTupleKeys,
   planCodexFallbackRetirement,
-  publishRegularFileNoClobber,
   recoverCodexFallbackRetirements,
   resolveAgentsSkillsDir,
 } from './agent-sync.js';
+import { publishRegularFileNoClobber } from './atomic-fs.js';
 import { getCodexConfigPath, getCodexHome, migrateDeadGenieOtel } from './codex-config.js';
 import { type CodexPluginProbe, type CodexPluginProbeDeps, probeCodexGeniePlugin } from './codex-project-mcp.js';
 import { resolveClaudeDir, resolveGenieHome } from './genie-home.js';
+import { acquireLifecycleLease } from './lifecycle-lease.js';
 import { validateTrustedExecutablePath } from './trusted-executable.js';
 import { VERSION } from './version.js';
 

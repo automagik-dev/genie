@@ -14,13 +14,6 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  LIFECYCLE_LEASE_OWNER_ENV,
-  LIFECYCLE_LEASE_PATH_ENV,
-  type LifecycleLease,
-  acquireLifecycleLease,
-  lifecycleLockPath,
-} from '../lib/agent-sync.js';
-import {
   type HeldLifecycleLease,
   type LifecycleLeaseResult,
   acquireLifecycleLease as acquireCodexLifecycleLease,
@@ -49,6 +42,13 @@ import {
   physicalPathIdentitiesEqual,
   renamePathNoClobber,
 } from '../lib/install-transaction.js';
+import {
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
+  type LifecycleLease,
+  acquireLifecycleLease,
+  lifecycleLockPath,
+} from '../lib/lifecycle-lease.js';
 import { releaseOrderedLifecycleLeases } from '../lib/ordered-lifecycle-leases.js';
 import { VERSION } from '../lib/version.js';
 

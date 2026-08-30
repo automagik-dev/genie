@@ -20,17 +20,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import {
-  type AgentSyncReport,
-  type AgentSyncSelection,
-  LIFECYCLE_LEASE_OWNER_ENV,
-  LIFECYCLE_LEASE_PATH_ENV,
-  type LifecycleLease,
-  type LifecycleLeaseSkip,
-  acquireLifecycleLease,
-  acquireLifecycleLeaseWithWait,
-  runAgentSync,
-} from '../lib/agent-sync.js';
+import { type AgentSyncReport, type AgentSyncSelection, runAgentSync } from '../lib/agent-sync.js';
 import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
 import { parseReleaseVersion, scanPhysicalTree } from '../lib/codex-activation.js';
 import {
@@ -59,6 +49,14 @@ import {
 } from '../lib/install-promotion.js';
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
+import {
+  LIFECYCLE_LEASE_OWNER_ENV,
+  LIFECYCLE_LEASE_PATH_ENV,
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+} from '../lib/lifecycle-lease.js';
 import { refreshOwnedOrcaPluginMetadata } from '../lib/orca-plugin-lifecycle.js';
 import {
   type HeldOrderedLifecycleLeases,
@@ -73,6 +71,7 @@ import {
   readIntegrationConsent,
   resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
+import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import {
   CODEX_ACTIVATION_PROTOCOL,
   printUpdateCapabilities,
@@ -1638,15 +1637,20 @@ function applyDowngradeGuard(
 
 /**
  * Map a convergence outcome to the process exit code (deliverable 3):
- *   - any failed integration  → exit 1 (retry)
+ *   - any failed integration, or a failed skills.sh install → exit 1 (retry)
  *   - else any action-required (delivered, activation deferred) → exit 2 with the
  *     result trailer and NO all-green footer
  *   - else success (exit 0), caller prints its own success line.
  * `emitTrailer` is false on the fresh-binary parent, whose child already printed
  * the trailer over inherited stdio — the parent only mirrors the exit code.
+ *
+ * A failed skills install is a FAILURE and outranks action-required: the skills
+ * channel already set `exitCode = 1` itself, and a routine pending
+ * `setup --codex` on a Codex host would otherwise downgrade that 1 to a 2 and
+ * hide a real retryable failure behind the delivery trailer.
  */
 export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
-  if (convergence.integrations.some((result) => !result.ok)) {
+  if (convergence.skills?.status === 'failed' || convergence.integrations.some((result) => !result.ok)) {
     process.exitCode = 1;
     return;
   }
@@ -2815,16 +2819,49 @@ export interface ManualUpdateConvergenceOptions {
   log?: (line: string) => void;
   /** Persisted operator scope; explicit Codex authority is written only by setup. */
   selection?: IntegrationSelection;
+  /** Test seam for the skills.sh channel step (production uses the pinned CLI). */
+  runSkills?: SkillsChannelRunner;
+}
+
+export type SkillsChannelRunner = (
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+) => SkillsChannelConvergenceResult;
+
+/**
+ * The skills.sh channel as `genie update` runs it: pinned to the RUNNING
+ * binary's VERSION, because this convergence executes inside the freshly
+ * promoted binary's `update --post-delivery-converge` child.
+ */
+export function runUpdateSkillsChannel(
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+): SkillsChannelConvergenceResult {
+  return runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
 }
 
 export interface ManualUpdateConvergenceResult {
   integrations: IntegrationResult[];
+  /**
+   * The skills.sh channel outcome, or `null` when the channel never ran
+   * (consent `none`). Surfaced rather than discarded because a failed skills
+   * install must not be silently overwritten by the action-required exit 2 —
+   * see {@link applyConvergenceExitSignal}.
+   */
+  skills: SkillsChannelConvergenceResult | null;
 }
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { integrations: [] };
+  if (selection === 'none') return { integrations: [], skills: null };
+  // Skills FIRST, before agent-sync: a host must never pass through a state
+  // with neither plugin skills nor skills.sh skills (wish `skills-everywhere`
+  // decision 2). Any non-`none` consent installs to every detected agent
+  // (`--all`) — the accepted consent widening of wish decision 3. A failure
+  // here reports the remedy and sets exit 1; it never rolls back the promoted
+  // binary and never blocks the remaining convergence.
+  const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
   // `runAgentSync` has no codex arm, so it structurally never writes Codex
   // product skills or roles. A full update passes the real non-Codex selection
   // through so auto/all still converge Claude + Hermes.
@@ -2847,7 +2884,7 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
       `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
     );
   }
-  return { integrations };
+  return { integrations, skills };
 }
 
 /**
