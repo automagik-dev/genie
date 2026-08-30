@@ -53,6 +53,7 @@ import { type RouteLayerFinding, assessSnapshotDelivery, classifyRouteLayers } f
 import {
   type CodexPluginProbe,
   inspectCodexProjectMcp,
+  inspectRetiredJsonMcpEntry,
   probeCodexGeniePlugin,
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
@@ -559,8 +560,21 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
  * warn (the MCP returns a typed error, never a healthy empty board); a
  * bare/submodule/external layout or an unresolvable context is a hard fail.
  */
-function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
+export function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
   if (root === null || injected === null) return [];
+  // Same stance as the `genie.db` check: under Orca the local store is not the
+  // lifecycle authority, so doctor neither resolves project context nor opens
+  // the database it would name — reporting a live DB there is a false claim,
+  // and opening it is exactly what the orca-mode guard forbids.
+  if (inspectOrcaPluginLifecycle().mode === 'orca') {
+    return [
+      {
+        name: 'Codex project context',
+        status: 'pass',
+        detail: 'not resolved — Orca is the selected lifecycle authority',
+      },
+    ];
+  }
   const context = injected ?? resolveProjectContext(root);
   if (context.kind === 'ok') {
     let db: Database | null = null;
@@ -2084,6 +2098,29 @@ export function checkIndexLaneDrift(root: string | null, databaseRoot: string | 
   ];
 }
 
+/**
+ * The `mcp: retired \`genie mcp\` registration` check. Every repo that ran
+ * `genie init` before the MCP server was retired carries a `genie` entry in
+ * `.mcp.json` that launches `genie mcp` — a command that now prints its
+ * retirement diagnostic and exits 1, so Claude Code shows it as a permanently
+ * failed MCP server. Warning-level: it never flips doctor `ok:false`, because
+ * `.mcp.json` is a user-owned file and the repair is one command away.
+ */
+export function checkRetiredJsonMcpEntry(root: string | null): CheckResult[] {
+  const name = 'mcp: retired `genie mcp` registration';
+  const finding = inspectRetiredJsonMcpEntry(root ?? process.cwd());
+  if (finding.state !== 'present') return [{ name, status: 'pass', detail: finding.detail }];
+  return [
+    {
+      name,
+      status: 'warn',
+      detail: `${finding.path} still registers the retired \`genie mcp\` server, which Claude Code shows as failed`,
+      suggestion:
+        'Run `genie init` in this repository to retire that entry (the file is backed up first and every other server is preserved), or delete the "genie" entry from .mcp.json by hand.',
+    },
+  ];
+}
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -2311,6 +2348,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOmniHookTimeout()),
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
+    ...checkRetiredJsonMcpEntry(root),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

@@ -20,6 +20,7 @@
  */
 
 import type { Command } from 'commander';
+import { assertLocalLifecycleEnabled } from '../lib/orchestration-mode.js';
 import { startChangeWatcher, startPpidBackstop } from '../lib/v5/bridge-watcher.js';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
 import {
@@ -230,6 +231,10 @@ function openWatchReader(
  * backstop over the shared transport loop, then exits promptly.
  */
 export async function runUiBridge(): Promise<void> {
+  // Lifecycle authority first: under Orca the local store is not this repo's
+  // truth, so the bridge refuses BEFORE any handle, watcher, or backstop
+  // exists instead of throwing out of the first lazy read-only open.
+  assertLocalLifecycleEnabled();
   // Lazy: keep the read-only bun:sqlite open + read tools out of genie startup.
   const { MCP_TOOLS, openReadonlyDb } = await import('../lib/v5/mcp-tools.js');
   const cwd = process.cwd();
@@ -290,6 +295,13 @@ export function registerUiBridgeCommand(program: Command): void {
     .command('ui-bridge')
     .description('Run the UI-owned stdio MCP bridge (reads + roster writes + change-push) into genie.db')
     .action(async () => {
-      await runUiBridge();
+      try {
+        await runUiBridge();
+      } catch (err) {
+        // The same one-line rendering `genie task`, `genie idea`, and `genie
+        // board` use — never a raw stack trace on a typed refusal.
+        process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(1);
+      }
     });
 }

@@ -255,6 +255,14 @@ function reconcileWishLanes(db: Database, filter: TaskFilter, board: BoardRow, r
 }
 
 function handleBoard(opts: BoardOptions): void {
+  // The whole body runs inside `run` so a typed failure raised while OPENING
+  // the state — an unreadable DB, or `LocalLifecycleDisabledError` when Orca is
+  // the lifecycle authority — renders as the same one-line `Error: …` + exit 1
+  // that `genie task` and `genie idea` print, never as a raw stack trace.
+  run(() => handleBoardWithDb(opts));
+}
+
+function handleBoardWithDb(opts: BoardOptions): void {
   // Resolved once and threaded to both the DB path and the reconciler, so one
   // board invocation costs exactly one `git rev-parse` child process.
   const repoRoot = resolveRepoRoot();
@@ -297,8 +305,6 @@ function handleBoard(opts: BoardOptions): void {
     }
 
     renderLanelessCards(db, filter, scopeLabel);
-  } catch (err) {
-    fail(err instanceof Error ? err.message : String(err));
   } finally {
     db.close();
   }
