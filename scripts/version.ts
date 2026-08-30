@@ -12,10 +12,6 @@
  *
  * Syncs versions across:
  * - package.json (root)
- * - orca-plugin.json (root Orca plugin manifest — source-only; it makes the
- *   public repo root a valid Orca git plugin source. It is NOT copied into the
- *   release tarball, so payload stamping does not cover it and this list is the
- *   only thing that keeps it current.)
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
  * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/orca-plugin.json (Orca)
@@ -201,7 +197,6 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
   const paths = [
     join(rootDir, 'package.json'),
-    join(rootDir, 'orca-plugin.json'),
     join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),

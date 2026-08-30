@@ -71,11 +71,10 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(workflow).toContain(path);
     }
-    // The repo-root Orca manifest joined the bump list; it is a bare root path,
-    // so assert its exact position in JSON_FILES rather than a substring that
-    // 'plugins/genie/orca-plugin.json' would satisfy on its own.
-    expect(workflow).toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
-    expect(workflow).toContain('expected exactly ten version files');
+    // There is no repo-root Orca manifest to stamp: the Orca plugin ships as the
+    // tree-only `plugins/genie` subtree ref, not from the repo root.
+    expect(workflow).not.toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
+    expect(workflow).toContain('expected exactly nine version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
@@ -841,14 +840,19 @@ describe('Group E release and documentation contracts', () => {
     expect(operator).toContain('The legacy Genie MCP server is retired');
     expect(operator).toContain('pre-A7 signed release');
     expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
-    // Registering the plugin with Orca is a separate, operator-side act, and
-    // both root source files must be documented on both surfaces.
+    // Registering the plugin with Orca is a separate, operator-side act, and the
+    // route is the tree-only subtree ref — never a branch of this repo, whose
+    // root Orca's loader rejects (symlink + file cap).
     for (const topic of [
       'Installing the plugin in Orca',
       'orca-marketplace.json',
       'https://github.com/automagik-dev/genie.git',
       '~/.genie/plugins/genie',
       'scripts/orca-manifest-parity.test.ts',
+      'orca-plugin-dev',
+      '.github/workflows/orca-plugin-ref.yml',
+      'symlink',
+      '2000 files',
     ]) {
       expect(operator).toContain(topic);
       expect(contributor).toContain(topic);
