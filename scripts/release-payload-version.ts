@@ -21,7 +21,24 @@ const TOP_LEVEL_VERSION_FILES = [
   'plugins/genie/orca-plugin.json',
 ] as const;
 
-const COMMITTED_VERSION_FILES = ['package.json', ...TOP_LEVEL_VERSION_FILES] as const;
+/**
+ * Committed files whose version must already equal package.json before a
+ * release is staged. The native Orca manifest is deliberately NOT gated here:
+ * its shipped copy is stamped by `--stamp` (and re-verified by `--verify`)
+ * inside the payload, which is the only copy Orca ever loads, so the committed
+ * value is advisory. Gating it would also couple dev CI to the auto-version
+ * bump list of the workflow on `main` — `workflow_run` jobs execute main's
+ * `version.yml`, so a bump field added on dev is inert until promotion, and
+ * every dev child in between failed this gate (observed 2026-08-30, dev
+ * releases 5.260829.5–.8 never shipped).
+ */
+const COMMITTED_VERSION_FILES = [
+  'package.json',
+  'plugins/genie/package.json',
+  'plugins/genie/.claude-plugin/plugin.json',
+  'plugins/genie/.codex-plugin/plugin.json',
+  'plugins/genie/.kimi-plugin/plugin.json',
+] as const;
 
 interface JsonObject {
   [key: string]: unknown;
