@@ -279,6 +279,45 @@ describe('runtime and executor boundary', () => {
     ]);
   });
 
+  test('decodes the real Orca 1.4.192 run-list page (unbound coordinators, nextCursor null)', async () => {
+    // Captured from `orca orchestration run-list --json --limit 5` against a live
+    // 1.4.192 runtime on 2026-08-30: runs whose coordinator terminal is gone list
+    // with null coordinator fields, and the page carries `nextCursor`, not `cursor`.
+    const realRun = (id: string, bound: boolean) => ({
+      id,
+      objective: 'Genie A3 disposable smoke 6b2dacf88b03',
+      home_database: 'this_database',
+      coordinator_handle: bound ? 'term_9479beab-e0e3-4ccd-8f4e-3a6374c293c1' : null,
+      coordinator_pane_key: bound ? 'e1dd5d83-902f-4170-a054-360834ff6bc2:b7b71158-894b-4235-a996-775f998c12d6' : null,
+      consumer_generation: 2,
+      legacy: 0,
+      created_at: '2026-08-29T20:38:02Z',
+      updated_at: '2026-08-29T20:38:07Z',
+    });
+    const page = { runs: [realRun('run_ca7f3f1c6a2d', false), realRun('run_4f9c0796c24a', true)], nextCursor: null };
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({ id: 'req_1', ok: true, result: page, _meta: { runtimeId: 'rt_1' } }),
+        stderr: '',
+      }),
+    });
+    const response = await adapter.execute({ operation: 'run-list', limit: 5 });
+    expect((response.result as { runs: unknown[] }).runs).toHaveLength(2);
+  });
+
+  test('decodes an unbound terminal run-current (run: null) as a valid empty binding', async () => {
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({ id: 'req_2', ok: true, result: { run: null }, _meta: { runtimeId: 'rt_1' } }),
+        stderr: '',
+      }),
+    });
+    const response = await adapter.execute({ operation: 'run-current' });
+    expect((response.result as { run: unknown }).run).toBeNull();
+  });
+
   test('requires one strict success envelope', async () => {
     for (const stdout of ['', '{}', '{"id":"x","ok":true}', '{"id":"x","ok":true,"result":{},"extra":1}', '{}\n{}']) {
       const adapter = __orcaAdapterTestOnly.createAdapter({
