@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `skills-everywhere` |
 | **Date** | 2026-08-30 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
