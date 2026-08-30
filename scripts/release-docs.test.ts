@@ -789,11 +789,11 @@ describe('Group E release and documentation contracts', () => {
     // Lease busy/retry semantics.
     expect(doc).toContain('exclusive lease');
     expect(doc).toContain('no force override');
-    // Rollback floor, sync-only, route-only init, uninstall isolation.
+    // Rollback floor, sync-only, state-scaffold init, uninstall isolation.
     expect(doc).toContain('### Rollback floor');
     expect(doc).toContain('cannot waive the protocol floor');
     expect(doc).toContain('**Sync-only**');
-    expect(doc).toContain('route-only init');
+    expect(doc).toContain('state-scaffold init');
     expect(doc).toContain('independent of plugin availability');
     expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
     // Dev candidate channel + the N-task non-guarantee.
