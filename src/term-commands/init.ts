@@ -72,8 +72,17 @@ const INDEX_SKELETON = `# Plans Index
  * Operational artifacts that must never be committed. The `.genie/launch/`
  * rule is legacy residue protection — nothing writes there since the launch
  * command was removed, but existing kickoff prompts stay ignored.
+ * `.mcp.json.genie-backup-*` is the backup-first copy `genie init` writes
+ * next to a user-owned `.mcp.json` when it retires a legacy `genie mcp`
+ * registration; it is an operational artifact, not project content.
  */
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
+const GITIGNORE_RULES = [
+  '.genie/genie.db',
+  '.genie/genie.db-wal',
+  '.genie/genie.db-shm',
+  '.genie/launch/',
+  '.mcp.json.genie-backup-*',
+];
 
 // ============================================================================
 // Git repo resolution
