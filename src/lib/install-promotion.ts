@@ -744,6 +744,36 @@ function copyPayloadIntoHeldStaging(externalStagingRoot: string, guard: InstallS
   if (operationError !== undefined) throw operationError;
 }
 
+/**
+ * Normalize the external payload's Genie binary to the canonical executable
+ * mode before its content is authenticated. The payload digest binds
+ * `mode & 0o777`, and admission always fchmods the held copy to 0755; on a
+ * host whose umask strips group/other bits (e.g. 077) `tar -xzf` extracts the
+ * binary as 0700, so digesting first and normalizing second could never agree.
+ * The external root is our own private extraction sandbox, so this mutates
+ * only an owned physical file we are about to copy anyway.
+ */
+function normalizeExternalBinaryMode(externalStagingRoot: string): void {
+  const path = join(externalStagingRoot, 'genie');
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new InstallPromotionError(`external install payload binary is not an openable physical file: ${path}`, {
+      cause: error,
+    });
+  }
+  try {
+    const stat = fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.uid !== currentUid() || stat.nlink !== 1n) {
+      throw new InstallPromotionError('external install payload binary is not an owned physical file');
+    }
+    if ((stat.mode & 0o777n) !== 0o755n) fchmodSync(fd, 0o755);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Admit an exact external release payload into the existing promotion engine's private direct-child contract. */
 export function admitExternalInstallStaging(options: AdmitExternalInstallStagingOptions): InstallStagingDirectoryGuard {
   const externalStagingRoot = resolve(options.externalStagingRoot);
@@ -757,6 +787,7 @@ export function admitExternalInstallStaging(options: AdmitExternalInstallStaging
   if (expectedVersion === null) {
     throw new InstallPromotionError('external install staging requires an expectedVersion to authenticate VERSION');
   }
+  normalizeExternalBinaryMode(externalStagingRoot);
   const externalBefore = verifyPayloadLayout(externalStagingRoot, dependencies);
   verifyPayloadVersionStamp(join(externalStagingRoot, 'VERSION'), expectedVersion);
   const authenticatedContentDigest = payloadContentDigest(externalStagingRoot);

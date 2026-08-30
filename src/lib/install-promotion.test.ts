@@ -127,13 +127,9 @@ function writeReceipt(
     phase,
     member,
   };
-  writeFileSync(
-    join(transactionRoot, 'receipts', `${sequence.toString().padStart(12, '0')}.json`),
-    `${JSON.stringify(body)}\n`,
-    {
-      mode,
-    },
-  );
+  const path = join(transactionRoot, 'receipts', `${sequence.toString().padStart(12, '0')}.json`);
+  writeFileSync(path, `${JSON.stringify(body)}\n`, { mode });
+  chmodSync(path, mode); // the create mode is umask-filtered; tests need the exact bits they asked for
 }
 
 afterEach(() => {
@@ -543,6 +539,7 @@ describe('installer promotion transaction', () => {
     const fixture = makeFixture();
     const previous = join(fixture.bin, '.previous');
     mkdirSync(previous, { mode: 0o755 });
+    chmodSync(previous, 0o755); // the create mode is umask-filtered; the test needs exactly 0755
 
     const report = promote(fixture);
 
@@ -799,6 +796,33 @@ describe('installer promotion transaction', () => {
     expect(readFileSync(join(quarantined, 'plugins', 'generation.txt'), 'utf8')).toBe('2.0.0:plugins\n');
     expect(readdirSync(victim)).toEqual(['sentinel']);
     expect(readFileSync(join(victim, 'sentinel'), 'utf8')).toBe('safe\n');
+  });
+
+  test('admission normalizes a umask-restricted external binary mode before authenticating content', () => {
+    // Regression: `tar -xzf` under umask 077 extracts `genie` as 0700. Admission
+    // used to digest the external payload (mode 0700), copy it, then fchmod the
+    // copy to 0755 — so the mode-bearing digests could never agree and every
+    // update on such a host failed with "does not match the authenticated source".
+    const root = makeRoot();
+    const home = join(root, 'home');
+    const external = join(root, 'external');
+    mkdirSync(join(home, 'bin'), { recursive: true, mode: 0o700 });
+    mkdirSync(external, { mode: 0o700 });
+    writePayload(external, '2.0.0');
+    chmodSync(join(external, 'genie'), 0o700);
+    const guard = admitExternalInstallStaging({
+      genieHome: home,
+      externalStagingRoot: external,
+      expectedVersion: '2.0.0',
+      randomId: () => '99999999-9999-4999-8999-999999999999',
+    });
+    try {
+      expect(Number(lstatSync(join(guard.stagingRoot, 'genie')).mode & 0o777)).toBe(0o755);
+      expect(Number(lstatSync(join(external, 'genie')).mode & 0o777)).toBe(0o755);
+      expect(() => verifyAdmittedInstallStagingPayload(guard)).not.toThrow();
+    } finally {
+      closeInstallStagingDirectory(guard);
+    }
   });
 
   test('post-admission same-root mutation breaks the authenticated payload guard', () => {
