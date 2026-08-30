@@ -16,12 +16,12 @@ Official references:
 | Surface | Location | Current contract |
 |---------|----------|------------------|
 | Plugin manifest | `plugins/genie/.codex-plugin/plugin.json` | Declares Skills and Hooks only. Plugins do not ship custom agents or the repository-scoped Genie MCP route |
-| Product skills | `skills/` canonical; `plugins/genie/skills/` committed mirror | Exactly 23 physical, in-root skills with valid `name`/`description` frontmatter and `agents/openai.yaml`; source/package parity is fail-closed |
+| Product skills | `skills/` canonical; `plugins/genie/skills/` committed mirror | Exactly 22 physical, in-root skills with valid `name`/`description` frontmatter and `agents/openai.yaml`; source/package parity is fail-closed |
 | Hooks | `plugins/genie/hooks/codex-hooks.json` | Exactly H3 SessionStart, H4 PreToolUse, H6 PermissionRequest; all require explicit `/hooks` review and a new task after definition changes |
 | MCP | Retired | No runtime or launcher ships; `genie mcp` returns the stable non-zero diagnostic and owned project markers are removed |
 | Optional roles | `plugins/genie/codex-agents/*.toml` -> `~/.codex/agents/` | Seven setup-installed profiles, gated behind matching delivery, current plugin health, and fallback retirement |
 | Fallback retirement | `~/.agents/skills/.genie-codex-fallback-retirement/` | No supported path writes Genie product skills to `~/.agents/skills`. Upgrades from a fallback-seeding release retire only provably clean, digest-owned historical copies into one durable quarantine transaction after a single plugin health proof; unmanaged, malformed, symlinked, or modified collisions are preserved and reported |
-| Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 23-skill product payload; survives update/uninstall byte-for-byte |
+| Personal migration | 36 adapted skills and 14 custom agents in the maintainer's user tier | Separate user-owned installation; not part of the 22-skill product payload; survives update/uninstall byte-for-byte |
 
 Codex invokes plugin skills with the owner-qualified `$genie:<skill>` selector.
 Bare `$<skill>` selectors intentionally select the user tier, which now only
@@ -79,8 +79,9 @@ fallbacks, and role profiles untouched. Delivery may exit 2 with `deliveryComple
 `genie setup --codex` owns activation and managed Codex convergence. It requires the matching record before its first
 prompt or mutation, uses a fresh real-TTY retirement assertion when the generation changes, and then revalidates the
 authenticated physical root around each one-shot operation. After the plugin is current, setup registers the canonical
-marketplace if needed, commits explicit Codex scope, proves the exact enabled plugin and bounded MCP launcher, retires
-only clean historical fallbacks, converges roles, and reconciles the marker-owned project route. A deliberately disabled
+marketplace if needed, commits explicit Codex scope, proves the exact enabled plugin, retires
+only clean historical fallbacks, and converges roles. There is no MCP launcher to prove and no project MCP route
+to reconcile. A deliberately disabled
 current plugin stays disabled; setup skips fallback retirement but still repairs managed roles. No supported path writes
 product skills into `~/.agents/skills`, and unmanaged, modified, symlinked, and personal copies are preserved.
 SessionStart performs no setup, delivery, activation, synchronization, or project write.
@@ -95,28 +96,28 @@ For an untouched repository, the reconciliation command is:
 genie init
 ```
 
-Run it from the trusted Git worktree that should own the route. It creates or repairs only Genie's
-marker-owned project route and repository state; it does not deliver or activate a plugin. The route has no
-`cwd` override, so a Codex-launched MCP child inherits the new task's effective working directory exactly.
-Linked worktrees keep their local `.codex/config.toml` but resolve the shared task database from the Git
-common directory. An initialized nested repository is a hard boundary: if its own database is absent or
-unopenable, MCP returns a structured error and never falls through to an outer repository or an empty board.
+Run it from the trusted Git worktree that should own the state. It scaffolds repository state and retires the
+historical marker-owned Genie project MCP route; it does not deliver or activate a plugin, and it never parses
+or writes `.mcp.json`. Nothing reinstates a project MCP route. Linked worktrees keep their local
+`.codex/config.toml` but resolve the shared task database from the Git common directory. An initialized nested
+repository is a hard boundary: `genie task` and `genie board` fail against that repository's own database rather
+than falling through to an outer repository or an empty board.
 
 Use `genie doctor --json` from that same worktree to classify recovery:
 
 | Finding | Recovery |
 |---------|----------|
 | Project trust required | Open the repository in interactive Codex, review and trust its project config, then start a new task. Never use a trust-bypass flag |
-| Unowned same-key route or nested/global shadow | Review the reported `routeLayers`, then rename or remove the user-owned `mcp_servers.genie` entry yourself. Genie preserves it. Rerun `genie init` |
-| Damaged/incomplete Genie marker | Back up `.codex/config.toml`, remove only the incomplete Genie marker fragment after reviewing it, preserve every other key, then rerun `genie init` |
+| Unowned same-key route or nested/global shadow | A user-owned `mcp_servers.genie` entry is never touched or resurrected by Genie; remove or rename it yourself if you no longer want it. Genie ships no route of its own |
+| Damaged/incomplete Genie marker | Back up `.codex/config.toml`, remove only the incomplete Genie marker fragment after reviewing it, preserve every other key. `genie init` retires only the complete Genie marker |
 | `delivery-incomplete` | Run `genie update` (or `genie install --integrations codex`) to authenticate the exact release, then run `genie setup --codex` from an external real terminal |
 | Activation pending or a task pinned to N | Close or retire the old task, complete `genie setup --codex`, review `/hooks`, and start a genuinely new task on T. Resuming N is not promised |
 | Role or skill collision | Compare the named personal/modified file and move or rename it only if you choose; Genie never overwrites it. Rerun `genie setup --codex` |
-| Relocated `GENIE_HOME` | Complete installation at the new physical home, then rerun `genie init` in every trusted worktree so the owned route names the new stable facade |
+| Relocated `GENIE_HOME` | Complete installation at the new physical home, then rerun `genie init` in every trusted worktree and repository state is scaffolded against the new stable facade |
 | Uninstall | Finish or retire open tasks first. `genie uninstall` removes only proven Genie-owned assets and keeps personal, modified, symlinked, collision, quarantine, and recovery evidence |
 
 Successful `genie init` or setup changes project/hook inputs for future tasks, not an already-running task.
-After any route, plugin, or hook change, review `/hooks` and start a new task before judging MCP identity.
+After any plugin or hook change, review `/hooks` and start a new task before judging the integration.
 
 ## Native orchestration
 
@@ -170,7 +171,7 @@ retry action.
 | `genie update --rollback` | Compatible rollback done | Rollback refused (capability floor) | `codex-lifecycle-busy` |
 | `genie uninstall` | Removed (or nothing to remove) | Safeguard/ownership failure | `codex-lifecycle-busy` (a lifecycle command holds the lease) |
 | `genie doctor` / `genie doctor --json` | All checks pass, Codex current | A hard check failed, or Codex broken (`query-failed`, `payload-mismatch`, …) | Codex `activation-pending`/`registration-absent`/recovery — `ok` stays a function of checks; `integrationSummary.actionRequired === true` |
-| `genie init` | Scaffolded | Not a git repo / MCP schema failure | — |
+| `genie init` | Scaffolded | Not a git repo / unreadable repository state | — |
 
 ### Result trailer
 
@@ -211,15 +212,16 @@ floor, tamper, or a TOCTOU replacement refuses with zero mutation — consent
 cannot waive the protocol floor, so a rollback can never reintroduce an updater
 that bypasses the Codex activation gate.
 
-### Lifecycle exceptions: sync-only, route-only init, and uninstall
+### Lifecycle exceptions: sync-only, state-scaffold init, and uninstall
 
 - **Sync-only** (`genie update --sync-only`, legacy automation) is intentionally
   limited to non-Codex agent synchronization; it performs no Codex observation,
   activation, fallback retirement, or role convergence and mints no assertion or permit.
-- **Init** (`genie init`) reconciles only the marker-owned project MCP route in a
-  trusted initialized repository. The route is independent of plugin availability
-  and activation state; init never requests an assertion/permit or mutates delivery,
-  journal, registration, cache, enabled state, fallbacks, or roles.
+- **Init** (`genie init`) scaffolds repository state and retires the historical
+  marker-owned project MCP route in a trusted initialized repository. It is
+  independent of plugin availability and activation state; init never requests an
+  assertion/permit or mutates delivery, journal, registration, cache, enabled state,
+  fallbacks, or roles, and it never parses or writes `.mcp.json`.
 - **Uninstall** (`genie uninstall`) is a deliberately separate, user-requested
   destructive-removal authority — not part of the activation protocol. It warns
   before its confirmation that current or resumable tasks can break, keeps every

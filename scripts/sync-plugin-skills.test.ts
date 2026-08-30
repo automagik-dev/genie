@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   type SkillMirrorOptions,
+  assertKimiCommandsMatchSkills,
   assertPluginSkillsInSync,
   assertShippedSkillInventory,
   repositoryRootFromModuleUrl,
@@ -123,5 +124,19 @@ describe('sync-plugin-skills', () => {
 
     expect(existsSync(join(options.pluginSkillsDir as string, 'stale.txt'))).toBe(false);
     expect(() => assertPluginSkillsInSync(options)).not.toThrow();
+  });
+
+  test('kimi command wrappers must name a shipped skill', () => {
+    const commandsDir = join(root, 'plugins', 'genie', '.kimi-plugin', 'commands');
+    mkdirSync(commandsDir, { recursive: true });
+    writeFileSync(join(commandsDir, 'alpha.md'), '# alpha\n');
+    expect(() => assertKimiCommandsMatchSkills(options)).not.toThrow();
+
+    writeFileSync(join(commandsDir, 'pm.md'), '# pm\n');
+    expect(() => assertKimiCommandsMatchSkills(options)).toThrow('pm');
+  });
+
+  test('a missing kimi commands directory is not a failure', () => {
+    expect(() => assertKimiCommandsMatchSkills(options)).not.toThrow();
   });
 });

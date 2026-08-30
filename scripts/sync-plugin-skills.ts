@@ -243,6 +243,29 @@ function assertSafeMirrorDestination(options: SkillMirrorOptions, sourceRoot: st
   }
 }
 
+/**
+ * Every Kimi slash command is a thin wrapper that invokes a shipped skill by
+ * name, so a command file whose skill no longer exists is a dead command the
+ * plugin still registers. Command coverage is deliberately a subset (only the
+ * lifecycle skills get wrappers) — this asserts the direction that can rot:
+ * command -> shipped skill.
+ */
+export function assertKimiCommandsMatchSkills(options: SkillMirrorOptions = {}): void {
+  const commandsDir = join(options.pluginRoot ?? DEFAULT_PLUGIN_ROOT, '.kimi-plugin', 'commands');
+  if (!existsSync(commandsDir)) return;
+  const shipped = new Set(expectedSkillNames(options));
+  const orphans = readdirSync(commandsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .map((entry) => entry.name.slice(0, -'.md'.length))
+    .filter((name) => !shipped.has(name))
+    .sort();
+  if (orphans.length > 0) {
+    throw new Error(
+      `Kimi command(s) reference skills that are not shipped: ${orphans.join(', ')} (remove the .md wrapper or restore the skill)`,
+    );
+  }
+}
+
 export function syncPluginSkills(options: SkillMirrorOptions = {}): void {
   assertShippedSkillInventory(options);
   const sourceRoot = canonicalDir(options);
@@ -265,6 +288,7 @@ function main(): void {
   try {
     if (args[0] === '--write') syncPluginSkills();
     else assertPluginSkillsInSync();
+    assertKimiCommandsMatchSkills();
     console.log(`sync-plugin-skills: OK (${SHIPPED_SKILL_NAMES.length} physical skills, byte-identical mirror)`);
   } catch (error) {
     console.error(`sync-plugin-skills: FAIL — ${error instanceof Error ? error.message : String(error)}`);
