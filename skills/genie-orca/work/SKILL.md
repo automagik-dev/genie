@@ -90,3 +90,7 @@ INDEPENDENT REVIEWER (read-only) for Group <n>. Do not edit or commit. Read the 
 Judge: correctness, failure-doctrine honesty, test coverage per behaviour change, minimal diff, no scope creep, no silent-green. Adversarial: how does this still fail in production?
 Body starts with "VERDICT: SHIP|FIX-FIRST|BLOCKED", then numbered [critical|major|minor] findings with file:line + concrete fix. One worker_done (outcome succeeded = review delivered).
 ```
+
+## Model rule (Felipe, 2026-08-23)
+
+- **Never** dispatch `haiku` or `sonnet` — forbidden for workers, scouts, reviewers, fixers, and every `model` column of a Dispatch plan. Heavy lifting goes to **gpt terra**: `orca orchestration worker-start --agent codex --model gpt-5.6-terra --effort xhigh`. Coordinator stays on Fable. Independent reviewers use a different model family from the engineer (Fable ↔ gpt-5.6-terra).

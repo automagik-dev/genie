@@ -41,7 +41,13 @@ export function resolveSyncMarkerPath(cwd?: string): string {
 
 /** Content hash over the canonical (whitespace-independent) JSON form. */
 function canonicalHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const canonical = JSON.stringify(value, (_key, current: unknown) => {
+    if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+    return Object.fromEntries(
+      Object.entries(current as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)),
+    );
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 /**

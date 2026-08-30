@@ -1063,7 +1063,13 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
   // Mirrors roadmap-sync's canonicalHash: sha256 over the parsed JSON form, so
   // whitespace/formatting differences never count as content changes.
   function canonicalHash(value: unknown): string {
-    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const canonical = JSON.stringify(value, (_key, current: unknown) => {
+      if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+      return Object.fromEntries(
+        Object.entries(current as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)),
+      );
+    });
+    return createHash('sha256').update(canonical).digest('hex');
   }
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
