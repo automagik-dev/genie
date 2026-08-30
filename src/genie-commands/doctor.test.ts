@@ -1010,11 +1010,16 @@ describe('checkAgentSync', () => {
     );
   }
 
-  function stampCouncil(lensRoot: string): void {
+  // Mirrors agent-sync `stampWorkflowTemplate`: the placeholder is replaced with
+  // `JSON.stringify(pluginRoot)`, i.e. a DOUBLE-quoted literal. Keep this in
+  // lockstep with the stamper — a single-quoted fixture once hid a doctor regex
+  // that reported every real stamp as `stale (LENS_ROOT unreadable)`.
+  function stampCouncil(lensRoot: string, quote: 'json' | 'legacy-single' = 'json'): void {
     mkdirSync(join(claudeDir, 'workflows'), { recursive: true });
+    const literal = quote === 'json' ? JSON.stringify(lensRoot) : `'${lensRoot}'`;
     writeFileSync(
       join(claudeDir, 'workflows', 'council.js'),
-      `export const meta = { name: 'council' };\nconst LENS_ROOT = '${lensRoot}';\n`,
+      `export const meta = { name: 'council' };\nconst LENS_ROOT = ${literal};\n`,
       'utf8',
     );
   }
@@ -1168,6 +1173,24 @@ describe('checkAgentSync', () => {
     expect(claude?.detail).toContain('1 stale');
     expect(claude?.detail).toContain('council.js stale');
     expect(claude?.suggestion).toContain('genie update');
+  });
+
+  test('legacy single-quoted council stamp for the current root reads as current, not unreadable', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil(pluginRoot, 'legacy-single');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.detail).not.toContain('unreadable');
+  });
+
+  test('wrong-root council stamp names the stamped root instead of unreadable', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil('/old/plugin/root');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('warn');
+    expect(claude?.detail).toContain('council.js stale (LENS_ROOT /old/plugin/root)');
   });
 
   test('unmanaged skill dirs are never counted (genie only speaks for what it shipped)', () => {

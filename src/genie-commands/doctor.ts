@@ -1188,6 +1188,27 @@ function skillsFreshness(summary: ManagedSkillsSummary): { detail: string; stale
   return { detail: `${summary.current}/${summary.sourceCount} source skills current${staleNote}`, stale };
 }
 
+/**
+ * Extract the stamped `LENS_ROOT` literal from a council.js body. The stamper
+ * (`agent-sync` `stampWorkflowTemplate`) writes `JSON.stringify(pluginRoot)` —
+ * a double-quoted JSON string — so that form is authoritative; the historical
+ * single-quoted spelling stays readable so older stamps classify as stale with a
+ * root instead of `unreadable`.
+ */
+function readStampedLensRoot(content: string): string | null {
+  const json = content.match(/const LENS_ROOT = ("(?:[^"\\]|\\.)*");/);
+  if (json) {
+    try {
+      const parsed: unknown = JSON.parse(json[1]);
+      return typeof parsed === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  const legacy = content.match(/const LENS_ROOT = '([^']*)';?/);
+  return legacy ? legacy[1] : null;
+}
+
 /** Whether `<claudeDir>/workflows/council.js` is stamped for the current stable source root. */
 function councilStampState(councilPath: string, pluginRoot: string): { stale: boolean; label: string } {
   let content: string;
@@ -1196,8 +1217,7 @@ function councilStampState(councilPath: string, pluginRoot: string): { stale: bo
   } catch {
     return { stale: true, label: 'absent' };
   }
-  const match = content.match(/const LENS_ROOT = '([^']*)'/);
-  const root = match ? match[1] : null;
+  const root = readStampedLensRoot(content);
   if (root === pluginRoot) return { stale: false, label: 'current' };
   return { stale: true, label: `stale (LENS_ROOT ${root ?? 'unreadable'})` };
 }
