@@ -291,13 +291,21 @@ function validateDelivery(
 function validateConvergence(errors: string[], value: unknown): void {
   const convergence = record(errors, 'lifecycle.convergence', value);
   if (convergence === null) return;
-  const route = record(errors, 'lifecycle.convergence.route', convergence.route);
-  same(errors, 'convergence.route.state', route?.state, 'managed-project');
-  absolute(errors, 'convergence.route.command', route?.command);
-  same(errors, 'convergence.route.cwdOverride', route?.cwdOverride, null);
-  if (typeof route?.command === 'string' && /[/\\]plugins[/\\]cache(?:[/\\]|$)/.test(route.command)) {
-    errors.push('convergence.route.command must use the stable facade, not a plugin cache path');
-  }
+  const standalone = record(errors, 'lifecycle.convergence.standalone', convergence.standalone);
+  same(errors, 'convergence.standalone.state', standalone?.state, 'standalone');
+  absolute(errors, 'convergence.standalone.command', standalone?.command);
+  same(
+    errors,
+    'convergence.standalone.taskArgs',
+    JSON.stringify(standalone?.taskArgs),
+    JSON.stringify(['task', 'list', '--json']),
+  );
+  same(
+    errors,
+    'convergence.standalone.boardArgs',
+    JSON.stringify(standalone?.boardArgs),
+    JSON.stringify(['board', '--json']),
+  );
   const roles = record(errors, 'lifecycle.convergence.roles', convergence.roles);
   const expected = roles?.expectedCount;
   if (typeof expected !== 'number' || !Number.isInteger(expected) || expected <= 0) {
@@ -379,12 +387,11 @@ function validateRepositories(errors: string[], value: unknown): void {
   if (repoB === null) return;
   absolute(errors, 'repositories.b.root', repoB.root);
   const before = record(errors, 'repositories.b.beforeInit', repoB.beforeInit);
-  same(errors, 'repositories.b.beforeInit.routeState', before?.routeState, 'absent');
-  same(errors, 'repositories.b.beforeInit.fallbackUsed', before?.fallbackUsed, false);
-  same(errors, 'repositories.b.beforeInit.result', before?.result, 'project-database-unavailable');
+  same(errors, 'repositories.b.beforeInit.databaseState', before?.databaseState, 'absent');
+  same(errors, 'repositories.b.beforeInit.result', before?.result, 'empty');
   same(errors, 'repositories.b.beforeInit.returnedTasks', before?.returnedTasks, 0);
   const after = validateRepoObservation(errors, 'repositories.b.afterInit', repoB.afterInit, repositories.cacheRoot);
-  same(errors, 'repositories.b.afterInit.routeState', after?.routeState, 'managed-project');
+  same(errors, 'repositories.b.afterInit.evidenceMode', after?.evidenceMode, 'standalone');
   if (repoA?.root === repoB.root) errors.push('repositories A and B must be different roots');
   const aToken = isRecord(repoA?.sentinel) ? repoA.sentinel.token : null;
   const bToken = isRecord(after?.sentinel) ? after.sentinel.token : null;
@@ -443,9 +450,9 @@ const STAGE_EXPECTATIONS: Record<(typeof REQUIRED_STAGE_IDS)[number], StageExpec
     trailer: null,
   },
   'untouched-b-before-init': {
-    exit: 1,
-    human: 'project-database-unavailable',
-    json: 'project-database-unavailable',
+    exit: 0,
+    human: 'empty',
+    json: 'empty',
     generation: 'candidate',
     binary: 'candidate',
     trailer: null,
@@ -517,86 +524,29 @@ function validateCapturedCommand(
   };
 }
 
-const NATIVE_MCP_STAGES = new Set<(typeof REQUIRED_STAGE_IDS)[number]>([
+const STANDALONE_STAGES = new Set<(typeof REQUIRED_STAGE_IDS)[number]>([
   'untouched-b-before-init',
   'untouched-b-after-init',
   'new-thread-sentinel',
 ]);
 
-function validateHostNativeRaw(
-  errors: string[],
-  label: string,
-  raw: JsonRecord,
-  command: JsonRecord,
-  expectError: boolean,
-): void {
-  same(errors, `${label}.schemaVersion`, raw.schemaVersion, 1);
-  const codex = record(errors, `${label}.codex`, raw.codex);
-  absolute(errors, `${label}.codex.executable`, codex?.executable);
-  nonempty(errors, `${label}.codex.version`, codex?.version);
-  if (typeof codex?.appServerPid !== 'number' || !Number.isInteger(codex.appServerPid) || codex.appServerPid <= 0) {
-    errors.push(`${label}.codex.appServerPid must be a positive integer`);
-  }
-  const candidate = record(errors, `${label}.candidate`, raw.candidate);
-  same(errors, `${label}.candidate.executable`, candidate?.executable, command.candidateBinary);
-  same(errors, `${label}.candidate execution`, candidate?.adapter ?? candidate?.executable, command.executable);
-  same(errors, `${label}.rawRequestedCwd`, raw.rawRequestedCwd, command.requestedCwd);
-  nonempty(errors, `${label}.threadId`, raw.threadId);
-  const launcher = record(errors, `${label}.launcher`, raw.launcher);
-  same(errors, `${label}.launcher.pid`, launcher?.pid, command.pid);
-  same(errors, `${label}.launcher.effectiveCwd`, launcher?.effectiveCwd, command.requestedCwd);
-  same(errors, `${label}.launcher.cwdIdentity`, launcher?.cwdIdentity, command.cwdIdentity);
-  same(errors, `${label}.launcher.candidate`, launcher?.candidate, command.candidateBinary);
-  same(errors, `${label}.launcher.adapter`, launcher?.adapter, candidate?.adapter);
-  const control = record(errors, `${label}.control`, raw.control);
-  same(errors, `${label}.control.effectiveCwd`, control?.effectiveCwd, launcher?.effectiveCwd);
-  same(errors, `${label}.control.cwdIdentity`, control?.cwdIdentity, launcher?.cwdIdentity);
-  const server = record(errors, `${label}.mcpServer`, raw.mcpServer);
-  same(errors, `${label}.mcpServer.name`, server?.name, 'genie');
-  if (!Array.isArray(server?.tools) || !server.tools.includes('genie_board')) {
-    errors.push(`${label}.mcpServer.tools must include genie_board`);
-  }
-  const response = record(errors, `${label}.toolResponse`, raw.toolResponse);
-  same(errors, `${label}.toolResponse.isError`, response?.isError === true, expectError);
-  const outcome = record(errors, `${label}.outcome`, raw.outcome);
-  same(errors, `${label}.outcome.kind`, outcome?.kind, expectError ? 'expected-error' : 'sentinel');
-}
-
-function validateNativeObservation(
+function validateStandaloneObservation(
   errors: string[],
   id: (typeof REQUIRED_STAGE_IDS)[number],
   index: number,
-  evidenceKind: unknown,
+  _evidenceKind: unknown,
   commands: Array<{ record: JsonRecord }>,
 ): void {
-  if (!NATIVE_MCP_STAGES.has(id)) return;
-  const label = `stages[${index}].nativeMcp`;
-  const command = commands.find(
-    (value) => Array.isArray(value.record.argv) && value.record.argv.includes('mcpServer/tool/call'),
-  )?.record;
-  if (command === undefined || typeof command.stdout !== 'string') {
-    errors.push(`${label} must contain a raw MCP command observation`);
-    return;
+  if (!STANDALONE_STAGES.has(id)) return;
+  const label = `stages[${index}].standalone`;
+  const argv = commands.map((value) => value.record.argv);
+  const hasTask = argv.some((args) => Array.isArray(args) && args.join(' ') === 'task list --json');
+  const hasBoard = argv.some((args) => Array.isArray(args) && args.join(' ') === 'board --json');
+  if (!hasTask || !hasBoard)
+    errors.push(`${label} must contain standalone task list --json and board --json observations`);
+  if (argv.some((args) => Array.isArray(args) && args.some((arg) => String(arg).toLowerCase().includes('mcp')))) {
+    errors.push(`${label} must reject retired MCP evidence`);
   }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(command.stdout);
-  } catch {
-    errors.push(`${label} stdout must be JSON`);
-    return;
-  }
-  const recordValue = record(errors, label, raw);
-  if (recordValue === null) return;
-  if (evidenceKind === 'verified-local-fixture') {
-    same(errors, `${label}.schemaVersion`, recordValue.schemaVersion, 1);
-    same(errors, `${label}.kind`, recordValue.kind, 'verified-local-fixture-direct-mcp');
-    return;
-  }
-  if (evidenceKind !== 'host-native') {
-    errors.push(`${label} has an unsupported evidence kind`);
-    return;
-  }
-  validateHostNativeRaw(errors, label, recordValue, command, id === 'untouched-b-before-init');
 }
 
 function validateStageObservation(
@@ -633,7 +583,7 @@ function validateStageObservation(
   if (!commands.some((command) => command.candidateSha256 === expectedBinarySha256)) {
     errors.push(`stages[${index}].observation must bind the authenticated generation binary digest`);
   }
-  validateNativeObservation(errors, id, index, evidenceKind, commands);
+  validateStandaloneObservation(errors, id, index, evidenceKind, commands);
   const serialized = `${JSON.stringify(observation, null, 2)}\n`;
   const observedDigest = createHash('sha256').update(serialized).digest('hex');
   same(errors, `stages[${index}].observation digest`, stage.observationSha256, observedDigest);
