@@ -138,18 +138,27 @@ describe('inventoryFromSkillsDir', () => {
 });
 
 describe('agent skill homes', () => {
-  test('the known table covers codex, claude and cursor at minimum', () => {
+  test('the known table covers claude and the shared agents home at minimum', () => {
     const agents = KNOWN_AGENT_SKILL_HOMES.map((entry) => entry.agent);
-    expect(agents).toContain('codex');
     expect(agents).toContain('claude');
-    expect(agents).toContain('cursor');
+    expect(agents).toContain('agents');
+  });
+
+  test('the table lists no `.codex/skills` or `.cursor/skills` home', () => {
+    // Verified against skills.sh 1.5.23 `--all --copy -g`: it creates neither
+    // directory. Codex reads `~/.agents/skills`, which the `agents` row covers.
+    // Listing them made doctor emit a permanent false `skills: codex 0/n` warn.
+    const segments = KNOWN_AGENT_SKILL_HOMES.map((entry) => entry.segments.join('/'));
+    expect(segments).not.toContain('.codex/skills');
+    expect(segments).not.toContain('.cursor/skills');
+    expect(segments).toContain('.agents/skills');
   });
 
   test('only homes that exist right now are reported', () => {
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-    mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
-    // ~/.cursor is deliberately absent.
-    expect(existingAgentSkillHomes(home).map((entry) => entry.agent)).toEqual(['claude', 'codex']);
+    mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
+    // ~/.config/goose is deliberately absent.
+    expect(existingAgentSkillHomes(home).map((entry) => entry.agent)).toEqual(['claude', 'agents']);
   });
 });
 
@@ -157,7 +166,9 @@ describe('runSkillsInstall', () => {
   test('records the tag, CLI version, inventory and existing agent dirs after a zero exit', () => {
     fixtureSkillsTree(['wish', 'work']);
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-    mkdirSync(join(home, '.codex', 'skills'), { recursive: true });
+    mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
+    // A bare `~/.codex` is NOT a skill home: skills.sh creates no `.codex/skills`.
+    mkdirSync(join(home, '.codex'), { recursive: true });
     const calls = { argv: [] as string[][] };
 
     const outcome = runSkillsInstall({
@@ -177,7 +188,7 @@ describe('runSkillsInstall', () => {
       ref: 'v5.260830.16',
       cliVersion: '1.5.23',
       inventory: ['wish', 'work'],
-      agentDirs: [join(home, '.claude', 'skills'), join(home, '.codex', 'skills')],
+      agentDirs: [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')],
       installedAt: '2026-08-30T12:00:00.000Z',
     });
 

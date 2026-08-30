@@ -8,6 +8,15 @@
  * The stamp-parity test loads the shipped council-stamp.cjs through
  * createRequire and asserts byte-identical output + identical skip semantics.
  *
+ * INVARIANT — every fixture home in this file is skills-install-RECORD-FREE
+ * unless a test writes one itself. `skillsChannelSupersedesWriters` stands the
+ * plugin-era writer arms down (claude role-agent fan-out, council stamp,
+ * hermes/pi links, hermes `skills.external_dirs`) as soon as
+ * `<genieHome>/skills-install.json` names THIS release, so every describe that
+ * asserts a writer FIRES depends on `setup()` never planting that record. The
+ * suppression contract itself is covered by the two describes at the end of this
+ * file: a fresh record suppresses, a stale one does not.
+ *
  * Run with: bun test src/lib/agent-sync.test.ts
  */
 
@@ -68,6 +77,8 @@ import {
   stampWorkflow,
 } from './agent-sync';
 import { currentSyncLockHostId } from './lifecycle-lease';
+import { SKILLS_CLI_VERSION, releaseTag, writeSkillsInstallRecord } from './skills-installer';
+import { VERSION } from './version';
 
 const require = createRequire(import.meta.url);
 const {
@@ -5184,5 +5195,111 @@ describe('Codex fallback allowlist generator', () => {
         physicalDigest: computeDirDigest(join(payloadRoot, 'skills', 'alpha')),
       },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// skills.sh channel writer suppression
+// ---------------------------------------------------------------------------
+
+/**
+ * Plant a skills-channel install record in the fixture GENIE_HOME.
+ *
+ * `ref` is what decides suppression: only THIS release's tag stands the writers
+ * down. Every other describe in this file deliberately never calls this — see
+ * the record-free invariant in the file header.
+ */
+function plantSkillsRecord(ref: string): void {
+  writeSkillsInstallRecord(fixture.genieHome, {
+    ref,
+    cliVersion: SKILLS_CLI_VERSION,
+    inventory: ['wish'],
+    agentDirs: [],
+    installedAt: '2026-08-30T12:00:00.000Z',
+  });
+}
+
+/** Detect claude + hermes + pi so all three adapters reach their writer arms. */
+function presentAllAgents(): void {
+  present(fixture.claudeDir);
+  present(fixture.hermesHome);
+  present(join(fixture.piHome, 'agent'));
+}
+
+describe('skills.sh channel suppression — a FRESH record stands every writer arm down', () => {
+  beforeEach(() => {
+    presentAllAgents();
+    plantSkillsRecord(releaseTag(VERSION));
+  });
+
+  test('claude: the role-agent fan-out and the council stamp report suppressed and write nothing', () => {
+    const claude = agentReport(run(), 'claude');
+    expect(extraAction(claude, 'agents-mirror')).toBe('suppressed');
+    expect(extraAction(claude, 'stamp')).toBe('suppressed');
+    expect(
+      claude.extras
+        .filter((extra) => extra.action === 'suppressed')
+        .every((extra) => extra.detail === 'skills.sh channel active'),
+    ).toBe(true);
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(false);
+    expect(existsSync(join(fixture.claudeDir, 'workflows', TARGET_NAME))).toBe(false);
+  });
+
+  test('claude: the bare-name SKILL mirror still runs — it is inert, not a competing writer', () => {
+    // skills.sh has already written the same names as plain, unmanaged copies;
+    // the mirror must preserve them rather than adopt or overwrite them.
+    writeFile(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), '# alpha from skills.sh\n');
+    const claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha from skills.sh\n',
+    );
+  });
+
+  test('hermes: link and skills.external_dirs are suppressed, while the MCP retirement leg still runs', () => {
+    const hermes = agentReport(run(), 'hermes');
+    expect(extraAction(hermes, 'symlink')).toBe('suppressed');
+    expect(extraAction(hermes, 'skills-dir')).toBe('suppressed');
+    // The MCP leg only ever REMOVES genie's marker block, so suppression never
+    // covers it: it stays wired and reports its (idempotent) outcome.
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'config.yaml'))).toBe(false);
+  });
+
+  test('pi: the extension link is suppressed', () => {
+    const pi = agentReport(run(), 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('suppressed');
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
+  });
+});
+
+describe('skills.sh channel suppression — a STALE or absent record leaves every writer armed', () => {
+  test('an older release ref does not suppress: the host would otherwise lose both channels', () => {
+    presentAllAgents();
+    plantSkillsRecord('v0.0.1');
+
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(extraAction(claude, 'stamp')).toBe('written');
+    expect(agentFileAction(claude, 'reviewer')).toBe('created');
+    expect(existsSync(join(fixture.claudeDir, 'workflows', TARGET_NAME))).toBe(true);
+
+    const hermes = agentReport(report, 'hermes');
+    expect(extraAction(hermes, 'symlink')).toBe('created');
+    expect(extraAction(hermes, 'skills-dir')).toBe('created');
+    expect(readlinkSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(fixture.hermesSource);
+
+    const pi = agentReport(report, 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('created');
+    expect(readlinkSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(fixture.piSource);
+  });
+
+  test('no record at all leaves the writers armed (the invariant every other describe relies on)', () => {
+    presentAllAgents();
+    const report = run();
+    expect(extraAction(agentReport(report, 'claude'), 'stamp')).toBe('written');
+    expect(extraAction(agentReport(report, 'hermes'), 'symlink')).toBe('created');
+    expect(extraAction(agentReport(report, 'pi'), 'symlink')).toBe('created');
   });
 });

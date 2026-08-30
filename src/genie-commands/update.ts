@@ -50,6 +50,11 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
+  type LegacyIntegrationHomes,
+  type LegacyIntegrationRetirementResult,
+  runLegacyIntegrationRetirement,
+} from '../lib/legacy-integration-retirement.js';
+import {
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   type LifecycleLease,
@@ -2821,6 +2826,11 @@ export interface ManualUpdateConvergenceOptions {
   selection?: IntegrationSelection;
   /** Test seam for the skills.sh channel step (production uses the pinned CLI). */
   runSkills?: SkillsChannelRunner;
+  /**
+   * Agent-home overrides for the plugin-era retirement step. Production resolves
+   * the real `$HOME` / `$GENIE_HOME`; tests point every root at one fixture home.
+   */
+  retirementHomes?: LegacyIntegrationHomes;
 }
 
 export type SkillsChannelRunner = (
@@ -2849,12 +2859,17 @@ export interface ManualUpdateConvergenceResult {
    * see {@link applyConvergenceExitSignal}.
    */
   skills: SkillsChannelConvergenceResult | null;
+  /**
+   * The plugin-era integration retirement outcome, or `null` when it did not run
+   * — which is every case except a FRESH skills-channel install (see below).
+   */
+  retirement: LegacyIntegrationRetirementResult | null;
 }
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { integrations: [], skills: null };
+  if (selection === 'none') return { integrations: [], skills: null, retirement: null };
   // Skills FIRST, before agent-sync: a host must never pass through a state
   // with neither plugin skills nor skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2884,7 +2899,19 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
       `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
     );
   }
-  return { integrations, skills };
+  // LAST, and only behind a FRESH skills-channel install: the plugin-era assets
+  // are retired exactly once the replacements are proven on disk. A `skipped` or
+  // `failed` channel deliberately leaves the legacy assets in place — a host must
+  // never pass through a state with neither channel's skills — and no other seam
+  // (install, doctor) ever runs this: retirement is an update-only mutation.
+  const retirement =
+    skills.status === 'installed'
+      ? runLegacyIntegrationRetirement({
+          homes: options.retirementHomes ?? { home: homedir(), genieHome: GENIE_HOME },
+          log: emit,
+        })
+      : null;
+  return { integrations, skills, retirement };
 }
 
 /**

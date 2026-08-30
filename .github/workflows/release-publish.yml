@@ -220,6 +220,7 @@ jobs:
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
       dogfood_matrix: ${{ steps.build.outputs.dogfood_matrix }}
+      update_path_matrix: ${{ steps.build.outputs.update_path_matrix }}
       candidate_manifest_name: ${{ steps.build.outputs.candidate_manifest_name }}
       candidate_manifest_sha256: ${{ steps.build.outputs.candidate_manifest_sha256 }}
       previous_version: ${{ steps.build.outputs.previous_version }}
@@ -289,6 +290,20 @@ jobs:
             --artifact-dir dist \
             --output candidate-dogfood-matrix.json
           DOGFOOD_MATRIX="$(tr -d '\n' < candidate-dogfood-matrix.json)"
+          # release-update-path-smoke runs the two Linux legs of the SAME
+          # manifest-derived inventory. It is a projection of
+          # candidate-dogfood-matrix.json, never a hand-written platform list:
+          # a platform the manifest did not admit cannot appear here, and a
+          # renamed or dropped platform fails this job instead of silently
+          # narrowing the smoke.
+          UPDATE_PATH_MATRIX="$(jq -c '{
+            include: [.include[] | select(.platform == "linux-x64-glibc" or .platform == "linux-x64-musl")
+                      | {platform, runner, execution}]
+          }' candidate-dogfood-matrix.json)"
+          [[ "$(jq -er '.include | length' <<<"$UPDATE_PATH_MATRIX")" == 2 ]] || {
+            echo "::error::update-path.matrix the candidate manifest admitted no linux-x64-glibc/linux-x64-musl pair"
+            exit 1
+          }
           CANDIDATE_MANIFEST_NAME="$(basename "$SELECTED_MANIFEST")"
           CANDIDATE_MANIFEST_SHA256="$(jq -er '
             [.include[].manifestSha256] | unique |
@@ -383,6 +398,7 @@ jobs:
           {
             echo "matrix={\"include\":${MATRIX}}"
             echo "dogfood_matrix=${DOGFOOD_MATRIX}"
+            echo "update_path_matrix=${UPDATE_PATH_MATRIX}"
             echo "candidate_manifest_name=${CANDIDATE_MANIFEST_NAME}"
             echo "candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}"
             echo "previous_version=${PREVIOUS_VERSION}"
@@ -801,6 +817,579 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  # ---------------------------------------------------------------------------
+  # Wish `skills-everywhere`, C5 — two candidate-facing smokes added ALONGSIDE
+  # the Codex dogfood matrix above (which is unchanged) and required by
+  # `publish` below.
+  # ---------------------------------------------------------------------------
+
+  # The skills.sh channel is the ONE supported way genie product skills reach an
+  # agent home, so a release candidate must prove the PRODUCTION argv from
+  # src/lib/skills-installer.ts actually lands byte-identical skills there.
+  #
+  # The ref is the candidate COMMIT, not the release tag: no `v<version>` tag
+  # exists yet at this point in the pipeline, and skills.sh resolves a full
+  # 40-hex SHA as a ref (verified 2026-08-30 against automagik-dev/genie).
+  #
+  # This job checks out `inputs.source_sha` rather than the admitted control
+  # commit because the candidate tree is the COMPARISON SUBJECT here, not
+  # executable release-control code: nothing from that checkout is run, only
+  # `cmp`ed against what the CLI wrote. Every other job's control/candidate
+  # split is untouched.
+  skills-install-smoke:
+    name: skills.sh channel install smoke
+    needs: prepare-delivery-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # `secrets` is not an allowed context in ANY `if:` expression, so the
+      # optional live `codex exec` leg below is gated on this BOOLEAN instead.
+      # Only the boolean is job-level: the secret itself is mapped onto the one
+      # step that runs `codex exec`, so the third-party `npx -y skills@...`
+      # download and every other step in this job run with no OPENAI_API_KEY in
+      # their environment. The repository ships no OPENAI_API_KEY today, so
+      # that leg normally skips; every file-level assertion below runs
+      # unconditionally and is what actually gates the release.
+      HAS_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+
+      # Same pin as codex-native-dogfood's app-server install and ci.yml's
+      # codex-smoke, so all three agree on exactly one Codex generation.
+      - name: Install pinned real Codex CLI
+        run: npm install -g @openai/codex@0.144.1
+
+      # No agent home is pre-created here. `--all -g` does not probe the host:
+      # the pinned CLI reports "Installing to all 77 agents" and creates every
+      # home itself. Verified 2026-08-30 against a HOME that contained no agent
+      # directory at all — the run created 55 of them, `~/.claude/skills`
+      # included — so a `mkdir -p ~/.claude` would assert nothing. The Claude
+      # Code CLI DOES install non-interactively (`npm install -g
+      # @anthropic-ai/claude-code`); it is left out because it would add a
+      # second unpinned npm install to a release gate without changing a single
+      # assertion below.
+      - name: Install the candidate's skills with the production argv
+        env:
+          SKILLS_REF: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/skills-evidence"
+          # Byte-for-byte the argv built by src/lib/skills-installer.ts
+          # (`npx -y skills@<SKILLS_CLI_VERSION> add automagik-dev/genie@<ref>
+          # --all --copy -g`), with the candidate SHA standing in for the
+          # not-yet-existing release tag.
+          # The argv is exact; only the ATTEMPT is bounded-retried, because the
+          # call clones over the network from npm and GitHub and a transport
+          # blip must not read as a release-blocking product failure.
+          attempt=1
+          until npx -y skills@1.5.23 add "automagik-dev/genie@${SKILLS_REF}" --all --copy -g \
+            >"${RUNNER_TEMP}/skills-evidence/install.log" 2>&1; do
+            if (( attempt >= 3 )); then
+              cat "${RUNNER_TEMP}/skills-evidence/install.log"
+              echo "::error::skills-install.failed the production skills.sh argv did not succeed in ${attempt} attempts"
+              exit 1
+            fi
+            echo "::warning::skills.sh install attempt ${attempt} failed; retrying"
+            tail -n 20 "${RUNNER_TEMP}/skills-evidence/install.log"
+            sleep $(( attempt * 15 ))
+            attempt=$(( attempt + 1 ))
+          done
+          tail -n 30 "${RUNNER_TEMP}/skills-evidence/install.log"
+
+      - name: Assert every created agent skill home holds byte-equal candidate skills
+        env:
+          SKILLS_REF: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          # The homes are READ OUT of the shipped table rather than restated
+          # here, so adding an entry to KNOWN_AGENT_SKILL_HOMES widens this gate
+          # automatically and a rename fails it loudly instead of silently
+          # narrowing it.
+          if [[ ! -f src/lib/skills-installer.ts ]]; then
+            echo "::error::skills-install.table candidate ${SKILLS_REF} predates src/lib/skills-installer.ts; this gate cannot bind its agent-home table"
+            exit 1
+          fi
+          mapfile -t AGENT_HOMES < <(
+            awk '/^export const KNOWN_AGENT_SKILL_HOMES/,/^\];/' src/lib/skills-installer.ts |
+              grep -oE "segments: \[[^]]*\]" |
+              sed -E "s/^segments: \[//; s/\]$//; s/'//g; s/, /\//g"
+          )
+          if [[ ${#AGENT_HOMES[@]} -lt 2 ]]; then
+            echo "::error::skills-install.table could not read KNOWN_AGENT_SKILL_HOMES from the candidate checkout"
+            exit 1
+          fi
+          printf 'agent skill homes declared by the candidate: %s\n' "${AGENT_HOMES[*]}"
+
+          shopt -s nullglob
+          SKILLS=()
+          for path in skills/*/SKILL.md; do
+            SKILLS+=("$(basename "$(dirname "$path")")")
+          done
+          if [[ ${#SKILLS[@]} -eq 0 ]]; then
+            echo "::error::skills-install.inventory the candidate checkout ships no skills/*/SKILL.md"
+            exit 1
+          fi
+
+          CHECKED=0
+          ABSENT=()
+          for rel in "${AGENT_HOMES[@]}"; do
+            home="${HOME}/${rel}"
+            if [[ ! -d "$home" ]]; then
+              ABSENT+=("$rel")
+              continue
+            fi
+            CHECKED=$((CHECKED + 1))
+            for name in "${SKILLS[@]}"; do
+              installed="${home}/${name}/SKILL.md"
+              if [[ ! -f "$installed" || -L "$installed" ]]; then
+                echo "::error::skills-install.missing ${rel}/${name}/SKILL.md was not installed as a physical file"
+                exit 1
+              fi
+              # The contract is the WHOLE `skills/<name>` tree, not its entry
+              # file: references/, scripts and templates are what a skill
+              # actually executes. `--no-dereference` compares any symlink as a
+              # link so a replaced file cannot pass as equal content.
+              if ! diff -r --no-dereference -- "skills/${name}" "${home}/${name}"; then
+                echo "::error::skills-install.drift ${rel}/${name}/ differs from the candidate checkout"
+                exit 1
+              fi
+            done
+          done
+          if [[ "$CHECKED" -eq 0 ]]; then
+            echo "::error::skills-install.no-home the pinned skills CLI created no known agent skill home"
+            exit 1
+          fi
+          if [[ ${#ABSENT[@]} -gt 0 ]]; then
+            echo "::notice::skills@1.5.23 creates no home for: ${ABSENT[*]}"
+          fi
+          printf 'verified %d skills byte-equal across %d agent skill home(s)\n' "${#SKILLS[@]}" "$CHECKED"
+          mkdir -p "${RUNNER_TEMP}/skills-evidence"
+          {
+            printf '{"schemaVersion":1,"ref":"%s","skills":%d,"homesChecked":%d,"homesAbsent":"%s"}\n' \
+              "$SKILLS_REF" "${#SKILLS[@]}" "$CHECKED" "${ABSENT[*]-}"
+          } >"${RUNNER_TEMP}/skills-evidence/summary.json"
+
+      # Ubuntu 24.04 images permit unprivileged user namespaces but AppArmor
+      # denies capability use inside them, so the real Codex sandbox dies at
+      # loopback setup. Same lift as codex-native-dogfood; only needed for the
+      # live `codex exec` below, so it is gated identically.
+      - name: Allow the Codex bubblewrap sandbox to configure its network namespace
+        if: ${{ env.HAS_OPENAI_KEY == 'true' }}
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Prove Codex can invoke an installed skill non-interactively
+        if: ${{ env.HAS_OPENAI_KEY == 'true' }}
+        env:
+          # The only step in this job that sees the real secret.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016  # `$wish` is the skill invocation Codex
+          # must resolve; the shell must NOT expand it.
+          if ! codex exec --full-auto 'Use $wish to print its own first heading and stop' \
+            >"${RUNNER_TEMP}/skills-evidence/codex-exec.log" 2>&1; then
+            cat "${RUNNER_TEMP}/skills-evidence/codex-exec.log"
+            echo "::error::skills-install.codex-exec the pinned Codex CLI could not run an installed skill"
+            exit 1
+          fi
+          cat "${RUNNER_TEMP}/skills-evidence/codex-exec.log"
+
+      - name: Upload skills channel evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: skills-install-smoke-evidence
+          path: ${{ runner.temp }}/skills-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  # WHAT THIS JOB PROVES THAT NO EARLIER JOB DOES.
+  #
+  # `prepare-delivery-evidence`, `delivery-evidence-compatibility` and
+  # `stable-release-security-gate` reason about the candidate's evidence.
+  # `codex-native-dogfood` does run the update-side delivery path, but only
+  # INSIDE the Codex-plugin harness, on a host that harness builds for itself:
+  # a fake Codex CLI on PATH, a trusted-projects config, and a plugin cache
+  # pre-seeded with N.
+  #
+  # This job runs that same update-side code path — `genie update
+  # --publish-local-delivery`, the candidate binary publishing an authenticated
+  # delivery out of verified local bytes — on a PLAIN host: no Codex home, no
+  # plugin registration, no harness, and a live generation that is the real
+  # previous stable N. Real N as the parent, real T as the binary, no Codex
+  # anywhere is the shape of an ordinary user's machine, and it is exercised
+  # nowhere else in this pipeline. The assertion is the delivery contract
+  # itself: exit 2, a `activation-pending` result trailer, `deliveryComplete`
+  # true — delivery published, activation still withheld until explicit
+  # consent.
+  #
+  # It is deliberately NOT a networked `genie update`: at this point in the
+  # pipeline the candidate has no GitHub Release and no
+  # `.well-known/<channel>.json` entry, so `update`'s normal resolve-and-
+  # download path has nothing to resolve. A true networked N->T update is only
+  # possible AFTER publication; the orchestrator records that run against the
+  # published release, not here.
+  #
+  # Everything downstream of the download is real: cosign + SLSA verification
+  # of both generations, delivery-evidence verification with the SHIPPED
+  # offline verifier, the generation layout, `--version`, the update-era
+  # capability report, the local delivery publication, and standalone
+  # task/board on both a repository seeded under N and an untouched one.
+  #
+  # The step sequence is copied from codex-native-dogfood (checkout of the
+  # admitted control commit, pinned bun, trusted dependencies, cosign, the
+  # platform-correct slsa-verifier, the digest-pinned Alpine pre-pull, the
+  # artifact downloads and the execution-adapter resolution); only the
+  # Codex-plugin harness and its evidence validators are dropped.
+  release-update-path-smoke:
+    name: Release update path smoke / ${{ matrix.platform }}
+    needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.update_path_matrix) }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Verifiers and the musl execution adapter are trusted release
+          # controls. The candidate is consumed only as a signed archive.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install the shipped production verifier dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Install cosign for release verification
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      # Same direct, ledger-pinned install codex-native-dogfood uses: the
+      # upstream installer action bootstraps through a linux-amd64 binary.
+      - name: Install slsa-verifier for release verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)  ASSET=slsa-verifier-linux-amd64  SHA256=946dbec729094195e88ef78e1734324a27869f03e2c6bd2f61cbc06bd5350339 ;;
+            Linux-aarch64) ASSET=slsa-verifier-linux-arm64  SHA256=5d3b2349ede7bfec19e7a21569f18b9f7410145ad12e9584b175370669e14061 ;;
+            Darwin-arm64)  ASSET=slsa-verifier-darwin-arm64 SHA256=39abfcf5f1d690c3e889ce3d2d6a8b87711424d83368511868d414e8f8bcb05c ;;
+            *)
+              echo "::error::unsupported runner platform for slsa-verifier: $(uname -s)-$(uname -m)"
+              exit 1
+              ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/slsa-verifier-bin"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" \
+            "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/${ASSET}"
+          echo "${SHA256}  ${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" | shasum -a 256 -c -
+          chmod +x "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier"
+          echo "${RUNNER_TEMP}/slsa-verifier-bin" >> "$GITHUB_PATH"
+
+      # Image pin must match scripts/run-musl-dogfood.sh — identical to the
+      # Codex matrix's pre-pull.
+      - name: Pre-pull the pinned Alpine image for the musl execution adapter
+        if: matrix.execution == 'alpine-container'
+        run: docker pull -q 'alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1'
+
+      - name: Download exact verified previous-stable inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codex-dogfood-previous-release
+          path: update-path/inputs/previous
+
+      - name: Download exact candidate signed triplet
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: genie-${{ inputs.version }}-${{ matrix.platform }}-signed
+          path: update-path/inputs/candidate
+
+      - name: Download exact candidate manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-candidate-manifests
+          path: update-path/inputs/candidate/manifests
+
+      - name: Download canonical candidate descriptors
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-descriptors
+          path: update-path/inputs/candidate/descriptors
+
+      - name: Download exact candidate delivery endorsement
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: delivery-endorsement-${{ inputs.channel }}-${{ matrix.platform }}
+          path: update-path/inputs/candidate/descriptors
+
+      - name: Resolve native execution adapter
+        id: adapter
+        shell: bash
+        env:
+          EXECUTION_KIND: ${{ matrix.execution }}
+        run: |
+          set -euo pipefail
+          case "$EXECUTION_KIND" in
+            host-native)
+              echo 'path=' >> "$GITHUB_OUTPUT"
+              ;;
+            alpine-container)
+              ADAPTER="${GITHUB_WORKSPACE}/scripts/run-musl-dogfood.sh"
+              [[ -f "$ADAPTER" && ! -L "$ADAPTER" && -x "$ADAPTER" ]] || {
+                echo "::error::pinned musl execution adapter is unavailable"
+                exit 1
+              }
+              echo "path=${ADAPTER}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::unknown execution kind ${EXECUTION_KIND}"
+              exit 1
+              ;;
+          esac
+
+      - name: Verify N and T, swap the live generation, and prove standalone task/board
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          PREVIOUS_VERSION: ${{ needs.prepare-delivery-evidence.outputs.previous_version }}
+          CANDIDATE_VERSION: ${{ inputs.version }}
+          CANDIDATE_CHANNEL: ${{ inputs.channel }}
+          CANDIDATE_MANIFEST_NAME: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_name }}
+          EXECUTION_ADAPTER: ${{ steps.adapter.outputs.path }}
+        run: |
+          set -euo pipefail
+          INPUTS="${GITHUB_WORKSPACE}/update-path/inputs"
+          PREVIOUS_ARTIFACT="${INPUTS}/previous/genie-${PREVIOUS_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_ARTIFACT="${INPUTS}/candidate/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz"
+          CANDIDATE_DESCRIPTOR="${INPUTS}/candidate/descriptors/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz.${CANDIDATE_CHANNEL}.delivery.json"
+          CANDIDATE_MANIFEST="${INPUTS}/candidate/manifests/${CANDIDATE_MANIFEST_NAME}"
+          for required in "$PREVIOUS_ARTIFACT" "$CANDIDATE_ARTIFACT" "$CANDIDATE_DESCRIPTOR" \
+            "${CANDIDATE_DESCRIPTOR}.sigstore.json" "$CANDIDATE_MANIFEST"; do
+            [[ -f "$required" && ! -L "$required" && -s "$required" ]] || {
+              echo "::error::update-path.inputs missing or unsafe input: ${required}"
+              exit 1
+            }
+          done
+
+          # 1. Both generations are signed release bytes (cosign + SLSA), the
+          #    same gate the Codex dogfood applies to its previous-stable parent.
+          bash scripts/verify-release.sh --local "$PREVIOUS_ARTIFACT"
+          bash scripts/verify-release.sh --local "$CANDIDATE_ARTIFACT"
+
+          # 2. The candidate's delivery evidence verifies with the SHIPPED
+          #    offline verifier — the same inputs the Codex dogfood consumes.
+          bun scripts/verify-delivery-evidence-pack.ts \
+            --descriptor "$CANDIDATE_DESCRIPTOR" \
+            --bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json" \
+            --manifest "$CANDIDATE_MANIFEST"
+
+          # 3. One canonical stateful root. run-musl-dogfood.sh requires the
+          #    candidate binary, the cwd and every state directory to be
+          #    physically contained in exactly this path.
+          ROOT="${RUNNER_TEMP}/update-path-root"
+          mkdir -p "$ROOT"
+          ROOT="$(cd -- "$ROOT" && pwd -P)"
+          export DOGFOOD_ROOT="$ROOT"
+          export HOME="${ROOT}/home"
+          export GENIE_HOME="${ROOT}/genie-home"
+          export CODEX_HOME="${ROOT}/codex-home"
+          export TMPDIR="${ROOT}/tmp"
+          export XDG_CONFIG_HOME="${ROOT}/home/.config"
+          export XDG_CACHE_HOME="${ROOT}/home/.cache"
+          export XDG_DATA_HOME="${ROOT}/home/.local/share"
+          export XDG_STATE_HOME="${ROOT}/home/.local/state"
+          export GIT_CONFIG_GLOBAL="${ROOT}/home/.gitconfig"
+          export GIT_CONFIG_NOSYSTEM=1
+          export NO_COLOR=1
+          mkdir -p "$HOME" "$CODEX_HOME" "$TMPDIR" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" \
+            "$XDG_DATA_HOME" "$XDG_STATE_HOME" "${GENIE_HOME}/bin" "${ROOT}/bin" "${ROOT}/repos"
+
+          install_generation() {
+            local tarball="$1" version="$2" stage
+            stage="$(mktemp -d "${ROOT}/stage-XXXXXX")"
+            tar -xzf "$tarball" -C "$stage"
+            [[ -f "${stage}/genie" && ! -L "${stage}/genie" ]] || {
+              echo "::error::update-path.payload ${tarball} carries no physical genie binary"
+              exit 1
+            }
+            [[ -d "${stage}/plugins/genie" && ! -L "${stage}/plugins/genie" ]] || {
+              echo "::error::update-path.payload ${tarball} carries no plugin payload"
+              exit 1
+            }
+            rm -rf -- "${GENIE_HOME}/plugins/genie"
+            mkdir -p "${GENIE_HOME}/bin" "${GENIE_HOME}/plugins"
+            cp -- "${stage}/genie" "${GENIE_HOME}/bin/genie"
+            chmod 0755 "${GENIE_HOME}/bin/genie"
+            cp -R -- "${stage}/plugins/genie" "${GENIE_HOME}/plugins/genie"
+            # A real release binary resolves its version from the VERSION file
+            # adjacent to the executable; the live layout keeps both copies.
+            printf '%s\n' "$version" >"${GENIE_HOME}/VERSION"
+            printf '%s\n' "$version" >"${GENIE_HOME}/bin/VERSION"
+            rm -rf -- "$stage"
+          }
+
+          run_genie() {
+            if [[ -n "$EXECUTION_ADAPTER" ]]; then
+              "$EXECUTION_ADAPTER" "${GENIE_HOME}/bin/genie" "$@"
+            else
+              "${GENIE_HOME}/bin/genie" "$@"
+            fi
+          }
+
+          init_repo() {
+            local path="$1"
+            mkdir -p "$path"
+            git -C "$path" init -q -b main
+            git -C "$path" config user.email 'update-path@test.invalid'
+            git -C "$path" config user.name 'Update Path Smoke'
+            git -C "$path" commit --allow-empty -q -m seed
+          }
+
+          assert_version() {
+            local expected="$1" observed
+            observed="$(run_genie --version)"
+            [[ "$observed" == *"$expected"* ]] || {
+              echo "::error::update-path.version expected v${expected}, genie reported '${observed}'"
+              exit 1
+            }
+            printf 'genie --version -> %s\n' "$observed"
+          }
+
+          # Safe to run against N as well as T: `--print-update-capabilities`
+          # landed in 4c1029cd1 (2026-07-21) and every N this job can select is
+          # >= 5.260816.2, so the flag is present on both generations. The Codex
+          # harness deliberately never probes N (it must not disturb the parent
+          # it is about to hand over); this job owns no plugin state to disturb,
+          # so the N-side probe is free evidence that the parent is intact.
+          assert_capabilities() {
+            local expected="$1" report reported
+            report="$(run_genie update --print-update-capabilities --json)"
+            reported="$(printf '%s' "$report" | jq -er '.reportedVersion')"
+            [[ "$reported" == "$expected" ]] || {
+              echo "::error::update-path.capabilities capability report claims ${reported}, expected ${expected}"
+              exit 1
+            }
+            printf 'genie update --print-update-capabilities -> %s\n' "$report"
+          }
+
+          assert_standalone() {
+            local label="$1" output
+            output="$(run_genie task list --json)" || {
+              echo "::error::update-path.task-list ${label}: 'genie task list --json' exited non-zero"
+              exit 1
+            }
+            printf '%s' "$output" | jq -e . >/dev/null || {
+              echo "::error::update-path.task-list ${label}: 'genie task list --json' emitted no JSON"
+              exit 1
+            }
+            output="$(run_genie board --json)" || {
+              echo "::error::update-path.board ${label}: 'genie board --json' exited non-zero"
+              exit 1
+            }
+            printf '%s' "$output" | jq -e '.columns' >/dev/null || {
+              echo "::error::update-path.board ${label}: 'genie board --json' emitted no columns"
+              exit 1
+            }
+            printf 'standalone task/board OK (%s)\n' "$label"
+          }
+
+          # The update-side delivery path itself, driven exactly as
+          # tests/support/codex-dogfood-harness.ts drives it (argv, request
+          # schema, GENIE_RELEASE_DOGFOOD=1, expected exit 2), but on this bare
+          # host. Inputs are copied under DOGFOOD_ROOT first because
+          # run-musl-dogfood.sh requires every path the candidate touches to be
+          # physically contained in that one canonical root.
+          publish_local_delivery() {
+            local inputs="${ROOT}/runtime-inputs" request output trailer status=0
+            rm -rf -- "$inputs"
+            mkdir -p "${inputs}/artifact" "${inputs}/manifest" "${inputs}/descriptor" "${inputs}/bundle"
+            cp -- "$CANDIDATE_ARTIFACT" "${inputs}/artifact/"
+            cp -- "$CANDIDATE_MANIFEST" "${inputs}/manifest/"
+            cp -- "$CANDIDATE_DESCRIPTOR" "${inputs}/descriptor/"
+            cp -- "${CANDIDATE_DESCRIPTOR}.sigstore.json" "${inputs}/bundle/"
+            request="$(jq -cn \
+              --arg platform "$PLATFORM" \
+              --arg artifact "${inputs}/artifact/$(basename -- "$CANDIDATE_ARTIFACT")" \
+              --arg manifest "${inputs}/manifest/$(basename -- "$CANDIDATE_MANIFEST")" \
+              --arg descriptor "${inputs}/descriptor/$(basename -- "$CANDIDATE_DESCRIPTOR")" \
+              --arg bundle "${inputs}/bundle/$(basename -- "$CANDIDATE_DESCRIPTOR").sigstore.json" \
+              '{schemaVersion: 1, platformId: $platform, artifact: $artifact,
+                manifest: $manifest, descriptor: $descriptor, bundle: $bundle}')"
+            export GENIE_RELEASE_DOGFOOD=1
+            output="$(run_genie update --publish-local-delivery "$request" 2>&1)" || status=$?
+            unset GENIE_RELEASE_DOGFOOD
+            printf '%s\n' "$output"
+            [[ "$status" -eq 2 ]] || {
+              echo "::error::update-path.delivery expected exit 2 (delivery published, activation pending), got ${status}"
+              exit 1
+            }
+            trailer="$(printf '%s\n' "$output" | grep -o '{.*}' | tail -n 1)"
+            printf '%s' "$trailer" | jq -e '
+              .schemaVersion == 1 and .code == "activation-pending" and
+              .deliveryComplete == true and .retry == false and (.nextAction | length) > 0
+            ' >/dev/null || {
+              echo "::error::update-path.delivery trailer is not the activation-pending delivery contract: ${trailer}"
+              exit 1
+            }
+            printf 'genie update --publish-local-delivery -> exit 2 %s\n' "$trailer"
+          }
+
+          SEEDED="${ROOT}/repos/seeded"
+          UNTOUCHED="${ROOT}/repos/untouched"
+          init_repo "$SEEDED"
+          init_repo "$UNTOUCHED"
+
+          # 4. N is the active parent and works standalone.
+          install_generation "$PREVIOUS_ARTIFACT" "$PREVIOUS_VERSION"
+          cd "$SEEDED"
+          assert_version "$PREVIOUS_VERSION"
+          assert_capabilities "$PREVIOUS_VERSION"
+          assert_standalone "previous stable N"
+
+          # 5. The update: the live generation becomes the verified candidate.
+          install_generation "$CANDIDATE_ARTIFACT" "$CANDIDATE_VERSION"
+          assert_version "$CANDIDATE_VERSION"
+          assert_capabilities "$CANDIDATE_VERSION"
+          assert_standalone "candidate T over a repository seeded under N"
+
+          # 6. The update-side delivery path, on a host with no Codex at all.
+          publish_local_delivery
+
+          cd "$UNTOUCHED"
+          assert_standalone "candidate T in an untouched repository"
+
+          mkdir -p "${RUNNER_TEMP}/update-path-evidence"
+          printf '{"schemaVersion":1,"platform":"%s","previous":"%s","candidate":"%s","channel":"%s","execution":"%s"}\n' \
+            "$PLATFORM" "$PREVIOUS_VERSION" "$CANDIDATE_VERSION" "$CANDIDATE_CHANNEL" \
+            "${EXECUTION_ADAPTER:-host-native}" \
+            >"${RUNNER_TEMP}/update-path-evidence/update-path-${PLATFORM}.json"
+
+      - name: Upload update-path evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-update-path-evidence-${{ matrix.platform }}
+          path: ${{ runner.temp }}/update-path-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
   stable-release-security-gate:
     name: Independent candidate security gate
     needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
@@ -1030,6 +1619,8 @@ jobs:
       - attest-delivery-evidence
       - delivery-evidence-compatibility
       - codex-dogfood-completeness
+      - skills-install-smoke
+      - release-update-path-smoke
       - stable-release-security-gate
     if: >-
       ${{
@@ -1038,6 +1629,8 @@ jobs:
         needs.attest-delivery-evidence.result == 'success' &&
         needs.delivery-evidence-compatibility.result == 'success' &&
         needs.codex-dogfood-completeness.result == 'success' &&
+        needs.skills-install-smoke.result == 'success' &&
+        needs.release-update-path-smoke.result == 'success' &&
         needs.stable-release-security-gate.result == 'success'
       }}
     runs-on: ubuntu-latest

@@ -2095,6 +2095,135 @@ export function setCodexPluginEnabled(enabled: boolean, configPath = getCodexCon
   }
 }
 
+// ============================================================================
+// Plugin-era Codex registration retirement (wish `skills-everywhere`, group 2)
+// ============================================================================
+
+/**
+ * The one `[plugins."genie@automagik"]` table Genie ever writes into
+ * `~/.codex/config.toml`. Restated from {@link setCodexPluginEnabled}'s header
+ * so both the enable mutation and the retirement mutation name the same table.
+ */
+const CODEX_GENIE_PLUGIN_TABLE = 'plugins."genie@automagik"';
+
+/**
+ * Codex's own per-hook approval rows for the retired plugin. Two on-disk shapes
+ * exist in the wild — a quoted key inside `[hooks.state]`, and a dedicated
+ * `[hooks.state."genie@automagik:<hook>"]` table — so both are retired.
+ */
+const CODEX_GENIE_HOOK_STATE_TABLE_PREFIX = 'hooks.state."genie@automagik:';
+const CODEX_GENIE_HOOK_STATE_KEY = /^\s*"genie@automagik:[^"]*"\s*=/;
+
+/** A whole-line TOML table (or array-of-tables) header, with its name captured. */
+const TOML_TABLE_HEADER = /^\s*\[\[?\s*([^[\]]*?)\s*\]\]?\s*(#.*)?$/;
+
+function isRetiredCodexGenieTable(header: string): boolean {
+  return (
+    header === CODEX_GENIE_PLUGIN_TABLE ||
+    header.startsWith(`${CODEX_GENIE_PLUGIN_TABLE}.`) ||
+    header.startsWith(CODEX_GENIE_HOOK_STATE_TABLE_PREFIX)
+  );
+}
+
+/**
+ * Pure line-level plan: drop every retired genie table (header + body) and every
+ * `genie@automagik:` row inside `[hooks.state]`, and keep every other byte.
+ *
+ * A dropped table takes its own body — including the blank lines that trail it —
+ * so exactly one separator survives between the neighbours it sat between, and a
+ * table dropped at EOF leaves no trailing blank paragraph. The file's original
+ * trailing-newline convention is restored by the `endsWith` repair below.
+ */
+function planCodexPluginRegistrationRemoval(content: string): { next: string; removed: string[] } {
+  const kept: string[] = [];
+  const removed: string[] = [];
+  let dropping = false;
+  let inHooksState = false;
+  for (const line of content.split('\n')) {
+    const header = TOML_TABLE_HEADER.exec(line)?.[1];
+    if (header !== undefined) {
+      dropping = isRetiredCodexGenieTable(header);
+      inHooksState = header === 'hooks.state';
+      if (!dropping) {
+        kept.push(line);
+        continue;
+      }
+      removed.push(`[${header}]`);
+      continue;
+    }
+    if (dropping) continue;
+    if (inHooksState && CODEX_GENIE_HOOK_STATE_KEY.test(line)) {
+      removed.push(line.trim());
+      continue;
+    }
+    kept.push(line);
+  }
+  let next = kept.join('\n');
+  if (next.trim() === '') next = '';
+  else if (content.endsWith('\n') && !next.endsWith('\n')) next += '\n';
+  return { next, removed };
+}
+
+export interface CodexPluginRegistrationRemoval {
+  ok: boolean;
+  status: 'removed' | 'unchanged' | 'absent' | 'error';
+  detail: string;
+  /** Table headers and `hooks.state` keys dropped, in document order. */
+  removed: string[];
+}
+
+/**
+ * Retire the marker-owned `genie@automagik` plugin registration from a Codex
+ * config, backup-first and atomically, exactly as {@link setCodexPluginEnabled}
+ * replaces the same file.
+ *
+ * Only Genie's own rows are touched: the `[plugins."genie@automagik"]` table
+ * (with any subtable) and the `hooks.state` rows keyed by `genie@automagik:`.
+ * Unrelated tables, values, and comments survive byte-for-byte — including the
+ * OTel settings owned by `migrateDeadGenieOtel`, which this function must never
+ * parse or rewrite. An absent config is a success, not an error: retirement is
+ * idempotent by construction, so a second run reports `unchanged`.
+ */
+export function removeCodexPluginRegistration(configPath = getCodexConfigPath()): CodexPluginRegistrationRemoval {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(configPath);
+  } catch {
+    return { ok: true, status: 'absent', detail: `Codex config is absent: ${configPath}`, removed: [] };
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    return { ok: false, status: 'error', detail: `Codex config is not a physical file: ${configPath}`, removed: [] };
+  }
+  const backup = `${configPath}.genie-retirement-backup`;
+  const staging = `${configPath}.genie-retirement-staging-${process.pid}`;
+  try {
+    const content = readFileSync(configPath, 'utf8');
+    const plan = planCodexPluginRegistrationRemoval(content);
+    if (plan.removed.length === 0) {
+      return {
+        ok: true,
+        status: 'unchanged',
+        detail: `no genie@automagik registration in ${configPath}`,
+        removed: [],
+      };
+    }
+    copyFileSync(configPath, backup);
+    writeFileSync(staging, plan.next, { encoding: 'utf8', mode: stat.mode & 0o777 });
+    chmodSync(staging, stat.mode & 0o777);
+    renameSync(staging, configPath);
+    rmSync(backup, { force: true });
+    return {
+      ok: true,
+      status: 'removed',
+      detail: `retired ${plan.removed.length} genie@automagik registration row(s) from ${configPath}`,
+      removed: plan.removed,
+    };
+  } catch (error) {
+    rmSync(staging, { force: true });
+    return { ok: false, status: 'error', detail: error instanceof Error ? error.message : String(error), removed: [] };
+  }
+}
+
 export interface IntegrationResult {
   runtime: RuntimeName;
   ok: boolean;

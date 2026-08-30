@@ -87,6 +87,12 @@ import {
   sleepSyncMs,
   tryInitializeFileLock,
 } from './lifecycle-lease.js';
+// Writer-arm suppression only (see `skillsChannelSupersedesWriters`). This closes
+// an import cycle — skills-installer → runtime-integrations → agent-sync — that
+// is safe because every module in it initializes its own top-level bindings
+// without reading the others'; the two symbols below are read lazily, per run.
+import { readSkillsInstallRecord, releaseTag } from './skills-installer.js';
+import { VERSION } from './version.js';
 
 // Re-exported for compatibility: these primitives moved to './atomic-fs.js' and
 // './lifecycle-lease.js'. Import them from their own modules in new code.
@@ -425,10 +431,38 @@ interface SyncManifest {
   targetMode?: number;
 }
 
+/**
+ * The one detail every suppressed writer arm reports, so `genie update` output
+ * names the same cause once per arm.
+ */
+const SKILLS_CHANNEL_SUPPRESSION_DETAIL = 'skills.sh channel active';
+
+/**
+ * True only when THIS release's skills.sh channel record is on disk.
+ *
+ * The record is the skills channel's own success receipt (written only after a
+ * zero-exit install, see `skills-installer.ts`), and `ref` pins it to a release
+ * tag. Requiring `ref === releaseTag(VERSION)` — not mere existence — is what
+ * makes suppression safe to fail open: a host whose record is STALE (an older
+ * release's skills, e.g. a partially-applied update) or ABSENT still gets the
+ * legacy writer arms, so it can never be left with neither channel's assets.
+ */
+function skillsChannelSupersedesWriters(genieHome: string): boolean {
+  const record = readSkillsInstallRecord(genieHome);
+  return record !== null && record.ref === releaseTag(VERSION);
+}
+
 interface RunContext {
   genieHome: string;
   pluginRoot: string;
   hermesRoot: string | null;
+  /**
+   * Set when {@link skillsChannelSupersedesWriters} holds: the plugin-era writer
+   * arms (claude role-agent fan-out, council stamp, hermes/pi links, hermes
+   * `skills.external_dirs`) stand down so they cannot re-create what
+   * `legacy-integration-retirement.ts` just retired.
+   */
+  skillsChannelActive: boolean;
   version: string | null;
   now: () => Date;
   targets: { claude: string; codex: string; hermes: string; pi: string; agentsSkills: string };
@@ -5451,6 +5485,16 @@ function syncClaude(ctx: RunContext, report: AgentReport): void {
       detail: 'genie@automagik plugin enabled — bare-name skills mirror pruned; skills load as genie:* from the plugin',
     });
   }
+  // The bare-name SKILL mirror above deliberately still runs: once the skills.sh
+  // channel has populated `~/.claude/skills`, every source name already exists
+  // there as an unmanaged copy, so the mirror is inert (`skipped-unmanaged-kept`)
+  // rather than a competing writer. The two arms below genuinely write, so they
+  // are the ones that stand down.
+  if (ctx.skillsChannelActive) {
+    report.extras.push({ kind: 'agents-mirror', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    report.extras.push({ kind: 'stamp', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    return;
+  }
   syncClaudeAgentFiles(ctx, claudeDir, report, pluginEnabled);
   if (pluginEnabled) {
     report.extras.push({
@@ -5497,6 +5541,16 @@ function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport
   const binary = detectHermesBinary(opts);
   if (!existsSync(hermesHome) && binary === null) return;
   report.detected = true;
+  if (ctx.skillsChannelActive) {
+    // Link + `skills.external_dirs` are the two Hermes WRITE arms; the MCP leg is
+    // a pure retirement (it only ever removes genie's own marker block), so it
+    // keeps running — suppression retires writers, never cleanups.
+    report.extras.push({ kind: 'symlink', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    report.extras.push({ kind: 'skills-dir', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    const configPath = resolveHermesConfigPath(hermesHome);
+    convergeHermesLeg('mcp-config', report, () => retireMcpServersGenie({ configPath, now: ctx.now() }).status);
+    return;
+  }
   if (ctx.hermesRoot === null) {
     report.advisories.push('hermes source (hermes-genie) not found next to plugins/genie; skipping link');
     return;
@@ -5712,6 +5766,10 @@ function syncPi(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): v
   const binary = detectPiBinary(opts);
   if (!existsSync(dirname(extensionsDir)) && binary === null) return;
   report.detected = true;
+  if (ctx.skillsChannelActive) {
+    report.extras.push({ kind: 'symlink', action: 'suppressed', detail: SKILLS_CHANNEL_SUPPRESSION_DETAIL });
+    return;
+  }
   if (ctx.piRoot === null) {
     report.advisories.push('pi source (pi-genie) not found next to plugins/genie; skipping link');
     return;
@@ -6490,6 +6548,7 @@ function createRunContext(
   return {
     genieHome,
     pluginRoot,
+    skillsChannelActive: skillsChannelSupersedesWriters(genieHome),
     hermesRoot: source.hermesRoot,
     piRoot: source.piRoot,
     version: source.version,

@@ -72,7 +72,14 @@ const SKILLS_INSTALL_OUTPUT_LIMIT_BYTES = 1024 * 1024;
  * `doctor` share one definition of "an agent skill home".
  *
  * Entries are candidates: only those that exist after a successful install are
- * recorded, so a host without cursor/goose/windsurf records nothing for them.
+ * recorded, so a host without goose/windsurf records nothing for them.
+ *
+ * `.codex/skills` and `.cursor/skills` are deliberately NOT in this table.
+ * Empirically verified against skills.sh 1.5.23 (`--all --copy -g`): that CLI
+ * never creates either directory. Codex reads the shared `~/.agents/skills`
+ * home — the `agents` row below IS the Codex home. Listing `.codex/skills`
+ * here made doctor report a permanent false `skills: codex 0/n` warning on
+ * every Codex host.
  */
 export interface AgentSkillHomeSpec {
   readonly agent: string;
@@ -81,8 +88,7 @@ export interface AgentSkillHomeSpec {
 
 export const KNOWN_AGENT_SKILL_HOMES: readonly AgentSkillHomeSpec[] = [
   { agent: 'claude', segments: ['.claude', 'skills'] },
-  { agent: 'codex', segments: ['.codex', 'skills'] },
-  { agent: 'cursor', segments: ['.cursor', 'skills'] },
+  // `agents` is also the Codex skill home; skills.sh creates no `.codex/skills`.
   { agent: 'agents', segments: ['.agents', 'skills'] },
   { agent: 'goose', segments: ['.config', 'goose', 'skills'] },
   { agent: 'windsurf', segments: ['.codeium', 'windsurf', 'skills'] },
