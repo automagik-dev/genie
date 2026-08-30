@@ -80,12 +80,12 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `idea <text...>` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `doctor` | Diagnostic checks on the genie installation |
 | `hook` | Hook middleware for Claude Code (`genie hook dispatch` runs in-process) |
-| `init` | Scaffold per-repo state and reconcile `.mcp.json` plus the marker-owned `.codex/config.toml` stable-facade route |
+| `init` | Scaffold per-repo state and retire proven Genie-owned project MCP registrations (the marker-owned `.codex/config.toml` route); `.mcp.json` is never parsed or changed |
 | `install` | Post-install finisher — authenticated delivery, v4 cleanup (`--skip-v4-cleanup`), and non-Codex convergence |
 | `context` | Resolve spawn context: wish/group branch + base SHA, or the integration branch (versioned JSON); `--plan` previews |
-| `mcp` | Stdio MCP server exposing genie.db task/board state (read + write tools) |
+| `mcp` | Retired — prints the stable non-zero MCP-retirement diagnostic (use `genie task` / `genie board`) |
 | `omni` | Omni integration — `serve`, `status`, `inbox`, `handshake` |
-| `setup` | Configure Genie; authenticated `setup --codex` owns Codex activation and managed convergence |
+| `setup` | Configure Genie; authenticated `setup --codex` owns Codex activation and managed convergence; `setup --orchestration-mode <standalone\|orca>` selects the lifecycle authority |
 | `shortcuts` | Manage tmux keyboard shortcuts |
 | `task` | Task state (SQLite, zero-daemon) |
 | `ui-bridge` | UI-owned stdio MCP bridge into genie.db (reads + roster writes + change-push) |
@@ -182,6 +182,8 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 - **Codex ships exactly H3/H4/H6, and all remain untrusted after an edit** — H3 is bounded read-only SessionStart context; H4 is deterministic local PreToolUse guarding; H6 is matcher-scoped PermissionRequest approval and is the only retained hook that may write approval-queue state. No Codex lifecycle hook installs, updates, synchronizes, or scaffolds. Run `genie update` to deliver signed bytes, then authenticated `genie setup --codex` to activate them; inspect changed hashes with `/hooks` and start a new task. Codex hook commands run outside the model sandbox, so hard controls still belong in sandbox permissions and server-side branch protection.
 - **Hook dispatch is provider-aware and fail-closed** — the plugin-local Codex launcher selects only the canonical `$GENIE_HOME/bin/genie`, preserves stdin/stdout/signals, bounds child time/output, validates event-specific JSON, and converts launch/timeout/schema failures into a reasoned deny. Claude dispatch remains a short-lived in-process `genie hook dispatch` fork. Neither path is a daemon.
 - **`AskUserQuestion` is the one PreToolUse carve-out** — it is in `NON_INTERCEPTABLE_PRE_TOOL_USE_TOOLS` and MUST get an EMPTY response, not the neutral `{ decision: 'block' }` block form. Empirically CC consumes any additionalContext as the synthesized answer, so a fail-closed block would corrupt the inline picker. The fail-closed envelope special-cases this tool.
+- **The product MCP server and its launchers are retired** — `genie mcp` is a stub that writes a stable diagnostic to stderr and exits 1; no plugin ships an MCP declaration or launcher, and `genie init` only retires proven Genie-owned historical routes (it never parses or writes `.mcp.json`). The UI-owned `genie ui-bridge` is a separate private stdio bridge and is NOT the retired product integration.
+- **Lifecycle authority is an explicit mode, never inferred** — `standalone` is the default (including when `orchestration.mode` is absent); installing or opening Orca changes nothing. `genie setup --orchestration-mode orca` probes the shipped plugin payload and a compatible Orca runtime before atomically switching, after which Genie refuses local `genie.db` lifecycle reads/writes and roadmap writes/syncs/exports. Switching back with `--orchestration-mode standalone` imports no Orca state. There is no fallback database in either direction.
 - **Two `genie.db` files, never cross-import** — per-repo `.genie/genie.db` (`genie-db.ts`, task/board/wish) and global `~/.genie/genie.db` (`global-db.ts`, omni queue + inbox) are independent databases with their own schemas and `user_version`. `global-db.ts` shares only `sqlite-open.ts` with the per-repo one — do not reach across for path constants.
 - **Codex integration health is native state, not OTel** — the old Genie exporter at `127.0.0.1:14318` has no relay and is removed by an exact-match, backup-first migration. Preserve unrelated OTel settings and `disable_paste_burst`.
 - **The Omni runner (`genie omni serve`) is the only optional daemon** — a foreground NATS bridge that drains the global approval queue. Everything else is fork-and-exit; no resident processes.

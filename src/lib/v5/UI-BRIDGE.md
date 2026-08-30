@@ -149,4 +149,4 @@ the honest daemon-free ceiling, and is ample for a kanban.
 - **No socket, ever.** The bridge holds zero listening sockets; it speaks only on
   stdio. Verify with `ss -tlnp` / `lsof` against the child pid — no rows.
 - **Zero-daemon.** Nothing survives the UI; the child is fork-and-die under the
-  the validated trust model retained from the retired MCP implementation.
+  validated trust model retained from the retired MCP implementation.

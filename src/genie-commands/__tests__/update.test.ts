@@ -2935,8 +2935,8 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     process.env.CODEX_HOME = join(isolatedHome, 'codex');
 
     // Minimal real genie plugin source: a populated skills root + VERSION +
-    // an executable bin/genie (resolveGenieBinaryPath / resolveProductSkillsRoot
-    // both require real files, not injected targets, since this test exercises
+    // an executable bin/genie (resolveProductSkillsRoot and the delivery checks
+    // require real files, not injected targets, since this test exercises
     // the default env-resolved paths exactly like production `genie update`).
     mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
     writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');

@@ -80,12 +80,12 @@ const WORKSPACE_EXEMPT = new Set([
   // `task`/`board` it self-resolves the global genie.db and never reads the
   // v4 workspace.json, so gating it on the legacy workspace concept is wrong.
   'omni',
-  // `mcp` is the stdio MCP server (read + write tools). It resolves the shared
-  // genie.db itself and fails closed when the file is absent, so the legacy
-  // workspace gate must not exit 2 before the JSON-RPC loop even starts.
+  // `mcp` is now a retirement stub: it writes the stable diagnostic to stderr and
+  // exits 1. It touches no workspace state, so the legacy workspace gate must not
+  // exit 2 and mask the retirement diagnostic callers are told to expect.
   'mcp',
   // `ui-bridge` is the UI-owned stdio MCP bridge (reads + roster writes + push).
-  // Like `mcp` it self-resolves the shared genie.db and speaks JSON-RPC on stdio;
+  // It self-resolves the shared genie.db and speaks JSON-RPC on stdio;
   // the legacy workspace gate must not exit 2 before the handshake can happen.
   'ui-bridge',
 ]);

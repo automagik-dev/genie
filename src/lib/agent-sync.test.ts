@@ -2345,7 +2345,7 @@ describe('hermes linking', () => {
 // ---------------------------------------------------------------------------
 
 describe('hermes config convergence', () => {
-  /** Materialize an executable genie binary so resolveGenieBinaryPath resolves it. */
+  /** Materialize an executable genie binary under the canonical GENIE_HOME bin path. */
   function presentGenieBinary(): string {
     const bin = join(fixture.genieHome, 'bin', 'genie');
     writeFile(bin, '#!/usr/bin/env bun\n');
@@ -2442,7 +2442,7 @@ describe('hermes config convergence', () => {
 
   test('retiring MCP does not require a Genie binary while skills still converge', () => {
     present(fixture.hermesHome);
-    // No genie binary materialized → resolveGenieBinaryPath cannot resolve one.
+    // No genie binary materialized under GENIE_HOME/bin.
     const hermes = agentReport(run(), 'hermes');
     expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
     expect(hermes.failures).toBeUndefined();
