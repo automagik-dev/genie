@@ -529,8 +529,10 @@ const publicRunEntity = receipt({
   id,
   objective: longText,
   home_database: z.string().min(1).max(128),
-  coordinator_handle: terminalId,
-  coordinator_pane_key: z.string().min(1).max(256),
+  // A Run whose coordinator terminal has gone away (or that was never bound
+  // from a terminal) lists with null coordinator fields on real Orca 1.4.192.
+  coordinator_handle: terminalId.nullable(),
+  coordinator_pane_key: z.string().min(1).max(256).nullable(),
   consumer_generation: z.number().int().positive(),
   legacy: z.number().int().min(0).max(1),
   created_at: z.string().min(1).max(64),
@@ -600,7 +602,13 @@ const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
     receipt({ runId: id }),
     receipt({ run: publicRunEntity, binding: bindingMetadata, mutation: mutationMetadata }),
   ]),
-  'run-list': receipt({ runs: z.array(runEntity).max(100), cursor: cursor.optional() }),
+  // Real Orca 1.4.192 pages with `nextCursor` (null on the last page); the
+  // legacy shape used `cursor`. Both are accepted, neither is required.
+  'run-list': receipt({
+    runs: z.array(z.union([runEntity, publicRunEntity])).max(100),
+    cursor: cursor.optional(),
+    nextCursor: cursor.nullable().optional(),
+  }),
   'run-show': receipt({ run: z.union([runEntity, publicRunEntity]) }),
   'run-current': z.union([
     receipt({ run: runEntity, coordinatorTerminalHandle: terminalId }),

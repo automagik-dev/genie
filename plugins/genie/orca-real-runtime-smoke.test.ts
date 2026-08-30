@@ -66,8 +66,11 @@ runRealSmoke(
       return;
     }
 
+    // A terminal that is not bound to a Run reads back `run: null`; the smoke
+    // must not dereference it — there is simply nothing to restore afterwards.
     const prior = await runtime.execute({ operation: 'run-current' });
-    const priorRunId = String(object(object(prior.result).run).id);
+    const priorRun = object(prior.result).run;
+    const priorRunId = priorRun === null || priorRun === undefined ? null : String(object(priorRun).id);
     const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
     let disposableTaskId: string | undefined;
 
@@ -94,12 +97,14 @@ runRealSmoke(
           tasks.some((task) => object(task).id === disposableTaskId && object(task).status === 'completed'),
       ).toBe(true);
     } finally {
-      await runtime.execute({ operation: 'run-use', id: priorRunId });
+      if (priorRunId !== null) await runtime.execute({ operation: 'run-use', id: priorRunId });
     }
 
     expect(disposableTaskId).toBeDefined();
-    const restored = await runtime.execute({ operation: 'run-current' });
-    expect(object(object(restored.result).run).id).toBe(priorRunId);
+    if (priorRunId !== null) {
+      const restored = await runtime.execute({ operation: 'run-current' });
+      expect(object(object(restored.result).run).id).toBe(priorRunId);
+    }
     expect(await snapshotLocalLifecycle()).toEqual(before);
   },
   30_000,
