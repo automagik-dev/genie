@@ -502,6 +502,7 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build.js'",
       "'scripts/json-top-level-string.js'",
       "'scripts/hook-bundle-parity.ts'",
+      "'scripts/orca-bundle-parity.ts'",
       "'scripts/hook-content-binding.ts'",
       "'scripts/plugin-executables-check.ts'",
       "'scripts/sync-plugin-skills.ts'",
@@ -688,6 +689,7 @@ describe('Group E release and documentation contracts', () => {
   test('release packaging validates generated hooks and the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
     expect(build).toContain('scripts/hook-bundle-parity.ts');
+    expect(build).toContain('scripts/orca-bundle-parity.ts');
     expect(build).toContain('scripts/hook-content-binding.ts');
     const archive = build.indexOf('tar czf "${TARBALL}"');
     const extract = build.indexOf('tar -xzf "${TARBALL}"');
@@ -725,6 +727,9 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:council-workflow');
     expect(workflow).toContain('bun run lint:hook-bundles');
+    expect(workflow).toContain('bun run lint:orca-bundle');
+    expect(pkg.scripts.check).toContain('bun run lint:orca-bundle');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:orca-bundle');
     expect(workflow).toContain('bun run lint:hook-content');
     expect(workflow).toContain('bun run lint:plugin-executables');
     expect(pkg.scripts.check).toContain('bun run lint:hook-content');
