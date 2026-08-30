@@ -135,7 +135,7 @@ genie --help
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie idea` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
-| `genie ui-bridge` | Run the UI-owned stdio MCP bridge into genie.db (reads + roster writes + change-push) |
+| `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and deliver selected integrations; Codex activation is deferred to setup |
 | `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
@@ -252,9 +252,12 @@ The legacy cross-client MCP server, its write tools, plugin launchers, and Genie
 pre-A7 signed release.` to stderr and exits 1 without reading or speaking MCP. `genie init` removes only historical
 registrations proven to be Genie-owned; unowned same-name routes and every unrelated config key remain untouched.
 
-The UI-owned `genie ui-bridge` is not the retired product MCP integration. It retains its private stdio transport and
-read/roster surface for the Genie UI. Standalone `genie task` and `genie board` retain their existing behavior in
-standalone mode; Orca mode continues to use the public `orca orchestration ... --json` adapter as its sole authority.
+The UI-owned `genie ui-bridge` is retired on the same terms: there is no separate Genie UI any more, the Orca
+integration is the supported UI surface, and the private stdio transport, tool registry, and change watcher behind the
+bridge are deleted. `genie ui-bridge` prints `Error: genie ui-bridge has been retired; the Orca integration is the
+supported UI surface, or roll back to a pre-retirement signed release.` to stderr and exits 1. Standalone `genie task`
+and `genie board` retain their existing behavior in standalone mode; Orca mode continues to use the public
+`orca orchestration ... --json` adapter as its sole authority.
 
 ## Hermes-native surface
 

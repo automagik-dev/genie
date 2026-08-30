@@ -243,16 +243,6 @@ export const DEFAULT_STALE_MS = 15 * 60 * 1000;
 
 export type WishGroupStatus = 'blocked' | 'ready' | 'in_progress' | 'done';
 
-export interface WishGroupRow {
-  wish: string;
-  name: string;
-  status: WishGroupStatus;
-  dependsOn: string[];
-  assignee: string | null;
-  startedAt: number | null;
-  completedAt: number | null;
-}
-
 /** A single hire-roster entry: one agent adapter hired into one wish. */
 export interface HireRosterRow {
   /** Wish slug this hire belongs to. */
@@ -1498,27 +1488,11 @@ export function linkTaskToWish(
 }
 
 // ============================================================================
-
-/**
- * Distinct known wish slugs (from tasks + wish_groups), longest first. Used to
- * disambiguate a `wish/<slug>-<group>` branch when the slug itself contains
- * hyphens (`genie-mcp` vs a `genie` wish with an `mcp` group).
- */
-export function listWishSlugs(db: Database): string[] {
-  const rows = db
-    .query(
-      // UNION already de-duplicates; order longest-first for prefix disambiguation.
-      `SELECT wish FROM (
-         SELECT wish FROM tasks WHERE wish IS NOT NULL
-         UNION SELECT wish FROM wish_groups WHERE wish IS NOT NULL
-       ) ORDER BY LENGTH(wish) DESC`,
-    )
-    .all() as Array<{ wish: string }>;
-  return rows.map((r) => r.wish);
-}
-
-// ============================================================================
-// Hire roster (single-row upsert / delete — the bridge's write surface)
+// Hire roster (single-row upsert / delete)
+//
+// The retired `genie ui-bridge` was this surface's only shipped writer; the rows
+// remain part of exported/imported board state (roadmap sync excludes them as
+// machine-local), so the accessors stay.
 // ============================================================================
 
 interface RawHire {

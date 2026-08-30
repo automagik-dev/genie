@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveWishBranch } from './resolve-wish-branch.js';
 
-// Longest-first ordering is part of the contract (listWishSlugs provides it).
+// Longest-first ordering is part of the contract (the caller provides it).
 const KNOWN = ['genie-mcp', 'genie', 'hooks-v2'];
 
 describe('resolveWishBranch — the one shared wish-branch resolver', () => {

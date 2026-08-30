@@ -1,9 +1,8 @@
 /**
  * Shared `wish/<slug>[-<group>]` branch resolution — the ONE implementation
- * every consumer uses. The board (`mcp-tools.ts`) resolves against genie.db
- * slugs; the SessionStart hook resolves against the same list read from
- * genie.db, falling back to the wish-file scan's slugs when the db is
- * unreadable. A second implementation is the drift class hooks-v2 exists to
+ * every consumer uses. Callers resolve against genie.db slugs; the SessionStart
+ * hook resolves against the same list read from genie.db, falling back to the
+ * wish-file scan's slugs when the db is unreadable. A second implementation is the drift class hooks-v2 exists to
  * kill, so this module is PURE: caller-supplied slugs, no sqlite import, no
  * filesystem, no environment — the esbuild hook bundle inlines it without ever
  * touching `bun:sqlite` (the hook runs as `node …/session-context.cjs`, where
@@ -26,7 +25,7 @@ export interface ResolvedWishBranch {
  *   3. no known wish (brand-new branch) → last-dash heuristic, else whole rest.
  * Returns `null` only when the branch is not a `wish/…` branch.
  *
- * The caller supplies `knownSlugs` longest-first (`listWishSlugs` orders it; the
+ * The caller supplies `knownSlugs` longest-first (the
  * hook re-sorts its merged db/file slug list). There is no
  * verified-launch-worktree step: wish-group rows are production-dead (no
  * writer), so a `<slug>-<group>` branch can never be confirmed against a live

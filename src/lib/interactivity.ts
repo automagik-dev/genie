@@ -84,9 +84,10 @@ const WORKSPACE_EXEMPT = new Set([
   // exits 1. It touches no workspace state, so the legacy workspace gate must not
   // exit 2 and mask the retirement diagnostic callers are told to expect.
   'mcp',
-  // `ui-bridge` is the UI-owned stdio MCP bridge (reads + roster writes + push).
-  // It self-resolves the shared genie.db and speaks JSON-RPC on stdio;
-  // the legacy workspace gate must not exit 2 before the handshake can happen.
+  // `ui-bridge` is now a retirement stub too: the Orca integration replaced the
+  // UI-owned stdio bridge, so the command only writes its stable diagnostic to
+  // stderr and exits 1. It touches no workspace state, so the legacy workspace
+  // gate must not exit 2 and mask the diagnostic callers are told to expect.
   'ui-bridge',
 ]);
 

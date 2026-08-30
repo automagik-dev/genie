@@ -2,18 +2,17 @@
  * Genie v5 acting-identity resolution — the ONE place the environment is read
  * to answer "who is writing this card change, and from what runtime".
  *
- * Every writer shares these resolvers: the CLI verbs in
- * `src/term-commands/v5-task.ts` and the operative MCP write tools in
- * `mcp-tools.ts`. They were duplicated once (the MCP copy was byte-for-byte the
- * CLI's) and the chains inside the CLI itself diverged before that — the claim
+ * Every writer shares these resolvers. They were duplicated once — the CLI
+ * verbs in `src/term-commands/v5-task.ts` and the since-retired MCP write tools
+ * kept byte-for-byte copies — and the chains inside the CLI itself diverged
+ * before that: the claim
  * chain ignored `GENIE_AGENT_ID` and floored at 'cli' while the complete chain
  * preferred NAME then ID and floored at null, so a `GENIE_AGENT_ID`-only runtime
  * claimed as 'cli' but attributed its events to the ID. One module, one chain,
  * no drift.
  *
  * Pure env reads: nothing here touches `bun:sqlite` (the `EventAuthor` import is
- * type-only and erased), so importing it costs the lazy-loaded MCP surface
- * nothing.
+ * type-only and erased), so importing it costs a startup-path module nothing.
  */
 
 import type { EventAuthor } from './task-state.js';
