@@ -51,9 +51,9 @@ export default {
         'spawn-context-contract#doctor-modes: mode-drift check + tighten-only --fix across all worktrees (#2779)',
         'feat(hooks): retire orchestration-guard, validate-completion, and hook trust (hooks-v2#retire) (#2780)',
       ].includes(message.split('\n')[0]),
-    // Historical exception (2026-08-30, #2817 review-fix wave): four squash
+    // Historical exception (2026-08-30, #2817 review-fix wave): five squash
     // subjects landed on dev over the 100-character gate once GitHub appended
-    // `(#NNNN)` (#2828/#2829/#2837), and one (#2830) has a capitalised
+    // `(#NNNN)` (#2828/#2829/#2837/#2840), and one (#2830) has a capitalised
     // "Orca-mode" subject that trips subject-case. Same posture as above:
     // exact full-subject pins, no rewrite of shared dev history, do not
     // reuse these subjects and do not broaden this to a pattern.
@@ -63,6 +63,7 @@ export default {
         'fix(orca): adapter readback, wait bound, stream faults, version gate, and doctor resilience (#2829)',
         'fix: Orca-mode lifecycle guards + retire the dead `genie mcp` entry in .mcp.json (#2830)',
         'docs(wish): record re-review #1 of #2817, refresh the fix disposition, retire the UI entries (#2837)',
+        'docs(wish): promotion sequence without #2833; record staging-leak follow-up and dogfood evidence (#2840)',
       ].includes(message.split('\n')[0]),
     // Historical exception: four `wish:`-prefixed wish-evolution commits on
     // the release-pipeline-collapse PR branch pre-date the engineering work.
