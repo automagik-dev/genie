@@ -185,4 +185,45 @@ describe('Orca authority barriers', () => {
       expect(existsSync(join(repo, '.genie'))).toBe(false);
     });
   }
+
+  test('the shipped SessionStart hook never opens genie.db under Orca authority (no -wal/-shm, no task injection)', async () => {
+    // Build a real standalone genie.db first, then hand authority to Orca.
+    const root = authorityFixture({ orchestration: { mode: 'standalone' } });
+    const repo = join(root, 'repo');
+    mkdirSync(repo);
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    openDb({ cwd: repo }).close();
+    const dbDir = join(repo, '.genie');
+    expect(existsSync(join(dbDir, 'genie.db'))).toBe(true);
+    for (const sidecar of ['genie.db-wal', 'genie.db-shm']) rmSync(join(dbDir, sidecar), { force: true });
+    const hook = join(import.meta.dir, '..', '..', '..', 'plugins', 'genie', 'scripts', 'session-context.cjs');
+
+    const run = async (config: string) => {
+      writeFileSync(join(process.env.GENIE_HOME as string, 'config.json'), config);
+      const proc = Bun.spawn(['node', hook], {
+        cwd: repo,
+        env: { ...process.env, GENIE_HOME: process.env.GENIE_HOME as string },
+        stdin: new Response(JSON.stringify({ cwd: repo })).body ?? undefined,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { exitCode, stdout, stderr, sidecars: readdirSync(dbDir).filter((name) => name.startsWith('genie.db-')) };
+    };
+
+    const orca = await run(JSON.stringify({ orchestration: { mode: 'orca' } }));
+    expect(orca.exitCode).toBe(0);
+    expect(orca.stderr).toContain('Orca is the selected lifecycle authority');
+    expect(orca.sidecars).toEqual([]);
+
+    // Malformed authority config fails closed the same way — never a guess.
+    const invalid = await run('{ not json');
+    expect(invalid.exitCode).toBe(0);
+    expect(invalid.stderr).toContain('orchestration authority config is unreadable');
+    expect(invalid.sidecars).toEqual([]);
+  });
 });
