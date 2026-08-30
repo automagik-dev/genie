@@ -389,8 +389,9 @@ done
   `pm.md`→`quick.md`, orphan check), #2827 (H3 ownership refresh after `publishCodexDeliveryFacts`, advisory),
   #2828 (ledger), #2829 (H4 `timeoutMs` bound, H5 `run:null` read-back, M1 flaky test, stream faults, doctor
   resilience), #2830 (H1 doctor + M6 board/idea guards, dead `genie mcp` entry retired from `.mcp.json`),
-  #2834 (H2 resolved by retiring `genie ui-bridge` outright — see the decision below). Open to `dev` — #2835 (H7
-  SessionStart hook), #2836 (M12 gate wiring, M15 `.mcp.json.genie-backup-*` ignore). Open to `main` (human merge;
+  #2834 (H2 resolved by retiring `genie ui-bridge` outright — see the decision below). Merged to `dev` — #2835 (H7
+  SessionStart hook), #2836 (M12 gate wiring, M15 `.mcp.json.genie-backup-*` ignore), #2837 (ledger). Open to `dev` —
+  #2838 (re-review #2 M16 authority-mirror fidelity, M17 plugin README H3 row). Open to `main` (human merge;
   the release pipeline runs `version.yml`, `release-guard.sh` and the dogfood harness from `main`, so these cannot
   take effect from dev) — #2822 (ninth version field), #2833 (harness accepts the retired Codex project route; why
   `v5.260830.2/.3` built, signed and never published). Follow-ups recorded, not blocking promotion — M2 (real-runtime
@@ -409,6 +410,24 @@ done
   fixture that fails on the previous bundle. New MEDIUM: M12 Kimi orphan check unwired (#2836), M13 this ledger stale
   (this entry), M14 `ui-bridge` retirement is outside the wish scope and orphaned three INDEX entries (decision and
   corrections below), M15 `genie init` backup untracked (#2836). Re-review #2 required after #2835/#2836 land.
+- **Re-review #2 of #2817 (dev→main) — SHIP (2026-08-30):** same reviewer profile, pinned snapshot
+  `0d0641f97b800f344349a1e97f47a8ffef0302e3` (dev tip after #2835/#2836/#2837). H7 closed with a negative control —
+  the pre-fix bundle injected task context and created `-wal`/`-shm` under Orca authority, the shipped bundle does
+  neither and standalone injection is unregressed; `session-context.cjs` is the only shipped script that touches
+  `genie.db`, registered identically by all three manifests. M12 (gate fails on an injected orphan command), M13, M14
+  (INDEX entries retired, `jar: index-lane drift` pass), M15 (`git status` clean after `genie init`, `check-ignore`
+  hits) closed. Validation: `bun run check:fast` PASS (13 steps), `bun run build` PASS, `bun test src` 2773/0,
+  `bun test tests plugins` 779 pass / 1 skip, `bun test scripts` 432 pass + 5 accepted `reconcile-release-assets`
+  timeouts, `--verify-source` OK at 5.260830.6, all hook/bundle/skill gates OK, `genie doctor` ok:true — aggregate
+  3984 pass. Zero CRITICAL, zero HIGH. Non-blocking: M16 (hook authority read failed open on `{"orchestration":{}}`,
+  extra keys, and an unimplemented `GENIE_CONFIG_FILE` — fixed in #2838 to mirror the CLI's strict schema with the
+  fixture asserting both readers agree), M17 (plugin README H3 row — #2838), L1 (ledger tense — this entry).
+- **Promotion gate (orchestrator):** #2817 is approved for human promotion on the reviewed content. Sequence for the
+  human: merge #2822 and #2833 to `main` first (the release pipeline runs `version.yml`, `release-guard.sh` and the
+  dogfood harness from `main`; without them no dev tarball publishes), then merge #2817 with a merge commit (never
+  squash). Per-group acceptance boxes remain the human promoter's to tick on merge; wish status moves to `SHIPPED`
+  only after the authorized merge plus the on-host dogfood (`genie update --dev` to a published v5.260830.x on
+  khal-labs — the old binary needs `(umask 022 && genie update --dev)` once).
 - **Decision (M14, recorded by the orchestrator):** Felipe's words to the fixing session on 2026-08-30 — *"theres no
   more genie ui, only 'ui' is orca integration"*. `genie ui-bridge` and the MCP transport it kept alive are retired
   (#2834); INDEX entries for `genie-ui-bridge`, `genie-ui-dash` and `genie-boards-ui` now record the retirement.
