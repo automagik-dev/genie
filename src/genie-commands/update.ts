@@ -741,13 +741,21 @@ export async function downloadAndVerifyDeliveryAssets(
 
 /**
  * Extract a tarball into a destination directory. Uses the system `tar` since
- * macOS bsdtar and GNU tar both accept `-xzf`. Throws on failure.
+ * macOS bsdtar and GNU tar both accept `-xzpf`. Throws on failure.
+ *
+ * `-p` (--preserve-permissions) is load-bearing: as non-root, both tars apply
+ * the process umask to every extracted member by default, so under `umask 077`
+ * the archived 0755 `genie` lands as 0700. Admission then fchmods only its
+ * private copy back to 0755 and the content digests (which cover mode bits)
+ * diverge — observed 2026-08-30 as "admitted install payload content does not
+ * match the authenticated source". The signed archive's recorded modes are the
+ * contract; extraction must reproduce them regardless of the caller's umask.
  */
 export async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
   mkdirSync(destDir, { recursive: true });
-  const result = await runCommandSilent('tar', ['-xzf', tarballPath, '-C', destDir], undefined, 30_000);
+  const result = await runCommandSilent('tar', ['-xzpf', tarballPath, '-C', destDir], undefined, 30_000);
   if (!result.success) {
-    throw new Error(`tar -xzf ${tarballPath} failed: ${result.output.trim() || 'no output'}`);
+    throw new Error(`tar -xzpf ${tarballPath} failed: ${result.output.trim() || 'no output'}`);
   }
 }
 

@@ -1826,8 +1826,40 @@ describe('extractTarball (G5 — corrupt artifact)', () => {
     try {
       const tarball = join(tmp, 'genie-5.260714.1-linux-x64-glibc.tar.gz');
       writeFileSync(tarball, 'this is not a gzip archive');
-      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzf/);
+      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzpf/);
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Regression (2026-08-30): under `umask 077` a bare `tar -xzf` extracted the
+  // archived 0755 binary as 0700; admission fchmods only its private copy back
+  // to 0755, so the mode-covering content digests diverged and every
+  // `genie update` failed with "admitted install payload content does not match
+  // the authenticated source". Extraction must reproduce archived modes.
+  test('preserves archived member modes regardless of the caller umask', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-extract-umask-'));
+    const priorUmask = process.umask(0o077);
+    try {
+      const stage = join(tmp, 'stage');
+      mkdirSync(join(stage, 'plugins'), { recursive: true });
+      writeFileSync(join(stage, 'genie'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(stage, 'genie'), 0o755);
+      writeFileSync(join(stage, 'plugins', 'note.md'), 'payload\n');
+      chmodSync(join(stage, 'plugins', 'note.md'), 0o644);
+      chmodSync(join(stage, 'plugins'), 0o755);
+      const tarball = join(tmp, 'genie-5.260830.1-linux-x64-glibc.tar.gz');
+      const packed = spawnSync('tar', ['-czf', tarball, '-C', stage, 'genie', 'plugins'], { stdio: 'ignore' });
+      expect(packed.status).toBe(0);
+
+      const extract = join(tmp, 'extract');
+      await extractTarball(tarball, extract);
+
+      expect(statSync(join(extract, 'genie')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(extract, 'plugins')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(extract, 'plugins', 'note.md')).mode & 0o777).toBe(0o644);
+    } finally {
+      process.umask(priorUmask);
       rmSync(tmp, { recursive: true, force: true });
     }
   });
