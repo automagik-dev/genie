@@ -644,7 +644,10 @@ extract_and_link() {
     die "install staging path is not a physical directory: $STAGING_DIR" 1
   validate_private_temp_root "$STAGING_DIR"
   log "extracting verified release in private temporary staging"
-  tar -xzf "$tarball" -C "$STAGING_DIR" ||
+  # -p: as non-root, tar applies the caller umask to extracted members; under
+  # umask 077 the archived 0755 binary would land as 0700 and the promoter's
+  # mode-covering content digest would reject the admitted copy.
+  tar -xzpf "$tarball" -C "$STAGING_DIR" ||
     die "extraction failed (corrupt tarball?): ${tarball}" 5
   # tar restores the archived root "./" entry's recorded mode (0755 on every
   # published tarball) onto the extraction directory, clobbering the 0700 we

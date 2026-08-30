@@ -1,6 +1,6 @@
 {
   "name": "genie",
-  "version": "5.260816.2",
+  "version": "5.260830.9",
   "description": "Plan, execute, review, and ship software with Genie workflows in Codex.",
   "author": {
     "name": "Namastex Labs",
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "Genie",
     "shortDescription": "Plan, execute, review, and ship with Genie",
-    "longDescription": "First-class Genie workflows for Codex, including shared skills, lifecycle hooks, and MCP task state. Genie CLI setup can install optional role agents.",
+    "longDescription": "First-class Genie workflows for Codex, including shared skills and lifecycle hooks. Genie CLI setup can install optional role agents.",
     "developerName": "Namastex Labs",
     "category": "Developer Tools",
     "capabilities": ["Skills", "Hooks"],

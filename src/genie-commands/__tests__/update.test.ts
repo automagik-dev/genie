@@ -44,7 +44,6 @@ import {
   type HeldLifecycleLease,
   acquireLifecycleLease as acquireCodexLifecycleLease,
 } from '../../lib/codex-lifecycle-lease';
-import { REQUIRED_GENIE_MCP_TOOLS } from '../../lib/codex-mcp-health-session';
 import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
@@ -87,6 +86,7 @@ import {
   narrowUpdatePluginRefreshSelection,
   normalizeVersion,
   persistChannel,
+  refreshOrcaOwnershipAfterDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
@@ -139,14 +139,7 @@ function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): Code
         expectedVersion: '5.260711.3',
         skillInventory: CANONICAL_GENIE_SKILL_NAMES,
         payload: [],
-        mcp: { initialized: true, tools: [...REQUIRED_GENIE_MCP_TOOLS], wishStatusReadOnly: true },
       }) as CodexHealthProof,
-    runSession: () => ({
-      ok: true,
-      detail: 'fixture session',
-      tools: [...REQUIRED_GENIE_MCP_TOOLS],
-      wishStatusReadOnly: true,
-    }),
     installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
     fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
     ...overrides,
@@ -1823,6 +1816,40 @@ describe('downloadAndVerifyTarball (G5)', () => {
 });
 
 // ============================================================================
+// A4 — the Orca ownership-marker refresh is advisory to delivery. It spawns
+// the live Orca CLI, so it can fail for reasons unrelated to the delivered
+// bytes (Orca closed, unsupported range, corrupted marker). It must never
+// abort an update whose delivery record is already published.
+// ============================================================================
+
+describe('refreshOrcaOwnershipAfterDelivery (A4 advisory marker refresh)', () => {
+  test('a failing probe is reported and does not reject', async () => {
+    const lines: string[] = [];
+    await expect(
+      refreshOrcaOwnershipAfterDelivery(
+        async () => {
+          throw new Error('Orca runtime probe timed out after 30000ms');
+        },
+        (line) => lines.push(line),
+      ),
+    ).resolves.toBeUndefined();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('ownership marker was not refreshed');
+    expect(lines[0]).toContain('probe timed out');
+    expect(lines[1]).toContain('genie doctor');
+  });
+
+  test('a successful refresh is silent', async () => {
+    const lines: string[] = [];
+    await refreshOrcaOwnershipAfterDelivery(
+      async () => 'refreshed',
+      (line) => lines.push(line),
+    );
+    expect(lines).toEqual([]);
+  });
+});
+
+// ============================================================================
 // G5 — Corrupt artifact (F31a destructive-failure fixture). A tarball that is
 // not a valid gzip archive must make `extractTarball` throw so the update never
 // reaches the atomic swap with a half-extracted payload.
@@ -1834,8 +1861,40 @@ describe('extractTarball (G5 — corrupt artifact)', () => {
     try {
       const tarball = join(tmp, 'genie-5.260714.1-linux-x64-glibc.tar.gz');
       writeFileSync(tarball, 'this is not a gzip archive');
-      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzf/);
+      await expect(extractTarball(tarball, join(tmp, 'extract'))).rejects.toThrow(/tar -xzpf/);
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Regression (2026-08-30): under `umask 077` a bare `tar -xzf` extracted the
+  // archived 0755 binary as 0700; admission fchmods only its private copy back
+  // to 0755, so the mode-covering content digests diverged and every
+  // `genie update` failed with "admitted install payload content does not match
+  // the authenticated source". Extraction must reproduce archived modes.
+  test('preserves archived member modes regardless of the caller umask', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'genie-extract-umask-'));
+    const priorUmask = process.umask(0o077);
+    try {
+      const stage = join(tmp, 'stage');
+      mkdirSync(join(stage, 'plugins'), { recursive: true });
+      writeFileSync(join(stage, 'genie'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(stage, 'genie'), 0o755);
+      writeFileSync(join(stage, 'plugins', 'note.md'), 'payload\n');
+      chmodSync(join(stage, 'plugins', 'note.md'), 0o644);
+      chmodSync(join(stage, 'plugins'), 0o755);
+      const tarball = join(tmp, 'genie-5.260830.1-linux-x64-glibc.tar.gz');
+      const packed = spawnSync('tar', ['-czf', tarball, '-C', stage, 'genie', 'plugins'], { stdio: 'ignore' });
+      expect(packed.status).toBe(0);
+
+      const extract = join(tmp, 'extract');
+      await extractTarball(tarball, extract);
+
+      expect(statSync(join(extract, 'genie')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(extract, 'plugins')).mode & 0o777).toBe(0o755);
+      expect(statSync(join(extract, 'plugins', 'note.md')).mode & 0o777).toBe(0o644);
+    } finally {
+      process.umask(priorUmask);
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -2876,8 +2935,8 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     process.env.CODEX_HOME = join(isolatedHome, 'codex');
 
     // Minimal real genie plugin source: a populated skills root + VERSION +
-    // an executable bin/genie (resolveGenieBinaryPath / resolveProductSkillsRoot
-    // both require real files, not injected targets, since this test exercises
+    // an executable bin/genie (resolveProductSkillsRoot and the delivery checks
+    // require real files, not injected targets, since this test exercises
     // the default env-resolved paths exactly like production `genie update`).
     mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
     writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
@@ -2930,7 +2989,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     };
   }
 
-  test('selection auto converges the hermes leg (mcp_servers.genie + skills.external_dirs) into a fresh config', () => {
+  test('selection auto converges Hermes skills without recreating the retired MCP route', () => {
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
@@ -2942,8 +3001,8 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
 
     const configPath = join(hermesHome, 'config.yaml');
     const text = readFileSync(configPath, 'utf8');
-    expect(text).toContain('mcp_servers:');
-    expect(text).toContain(genieBin);
+    expect(text).not.toContain('mcp_servers:');
+    expect(text).not.toContain(genieBin);
     expect(text).toContain('skills:');
     expect(text).toContain('external_dirs:');
     expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));

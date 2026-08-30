@@ -2345,7 +2345,7 @@ describe('hermes linking', () => {
 // ---------------------------------------------------------------------------
 
 describe('hermes config convergence', () => {
-  /** Materialize an executable genie binary so resolveGenieBinaryPath resolves it. */
+  /** Materialize an executable genie binary under the canonical GENIE_HOME bin path. */
   function presentGenieBinary(): string {
     const bin = join(fixture.genieHome, 'bin', 'genie');
     writeFile(bin, '#!/usr/bin/env bun\n');
@@ -2358,21 +2358,18 @@ describe('hermes config convergence', () => {
     return join(fixture.pluginRoot, 'skills');
   }
 
-  test('default HERMES_HOME: MCP + skills legs converge into config.yaml, idempotent on re-run', () => {
+  test('default HERMES_HOME: retired MCP stays absent while skills converge idempotently', () => {
     present(fixture.hermesHome);
-    const bin = presentGenieBinary();
+    presentGenieBinary();
 
     const first = agentReport(run(), 'hermes');
-    expect(extraAction(first, 'mcp-config')).toBe('created');
-    // The skills leg writes into the config.yaml the MCP leg just created, so a
-    // fresh run reports 'updated' (existing non-empty file) — never 'failed'.
-    expect(extraAction(first, 'skills-dir')).toBe('updated');
+    expect(extraAction(first, 'mcp-config')).toBe('unchanged');
+    expect(extraAction(first, 'skills-dir')).toBe('created');
     expect(first.failures).toBeUndefined();
 
     const configPath = join(fixture.hermesHome, 'config.yaml');
     const text = readFileSync(configPath, 'utf8');
-    expect(text).toContain('mcp_servers:');
-    expect(text).toContain(bin);
+    expect(text).not.toContain('mcp_servers:');
     expect(text).toContain('skills:');
     expect(text).toContain('external_dirs:');
     expect(text).toContain(skillsRoot());
@@ -2390,15 +2387,15 @@ describe('hermes config convergence', () => {
     presentGenieBinary();
 
     const hermes = agentReport(run(), 'hermes');
-    expect(extraAction(hermes, 'mcp-config')).toBe('created');
-    expect(extraAction(hermes, 'skills-dir')).toBe('updated');
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
+    expect(extraAction(hermes, 'skills-dir')).toBe('created');
 
     const profileConfig = join(fixture.hermesHome, 'profiles', 'work', 'config.yaml');
     expect(existsSync(profileConfig)).toBe(true);
     // The default-home config is NOT written while a sticky profile is active.
     expect(existsSync(join(fixture.hermesHome, 'config.yaml'))).toBe(false);
     const text = readFileSync(profileConfig, 'utf8');
-    expect(text).toContain('mcp_servers:');
+    expect(text).not.toContain('mcp_servers:');
     expect(text).toContain('external_dirs:');
     expect(text).toContain(skillsRoot());
 
@@ -2416,10 +2413,7 @@ describe('hermes config convergence', () => {
 
     const hermes = agentReport(run(), 'hermes');
     // The inline-shaped MCP key is a non-fatal skip carrying the remediation hint.
-    expect(extraAction(hermes, 'mcp-config')).toBe('skipped');
-    const mcp = hermes.extras.find((e) => e.kind === 'mcp-config');
-    expect(mcp?.detail).toContain('block mapping');
-    expect(hermes.advisories.some((a) => a.includes('inline top-level key'))).toBe(true);
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
     // Non-fatal: no hermes failure recorded, so a strict `genie update` never throws.
     expect(hermes.failures).toBeUndefined();
     // The other legs still converge: plugin link created + skills external dir written.
@@ -2441,17 +2435,17 @@ describe('hermes config convergence', () => {
     expect(skills?.detail).toContain('block mapping');
     expect(hermes.failures).toBeUndefined();
     // MCP leg converges over the pre-existing (non-genie) file.
-    expect(extraAction(hermes, 'mcp-config')).toBe('created');
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
     expect(readFileSync(configPath, 'utf8')).toContain('skills: {}');
-    expect(readFileSync(configPath, 'utf8')).toContain('mcp_servers:');
+    expect(readFileSync(configPath, 'utf8')).not.toContain('mcp_servers:');
   });
 
-  test('a missing genie binary fails the MCP leg non-fatally while skills still converge', () => {
+  test('retiring MCP does not require a Genie binary while skills still converge', () => {
     present(fixture.hermesHome);
-    // No genie binary materialized → resolveGenieBinaryPath cannot resolve one.
+    // No genie binary materialized under GENIE_HOME/bin.
     const hermes = agentReport(run(), 'hermes');
-    expect(extraAction(hermes, 'mcp-config')).toBe('failed');
-    expect(hermes.failures).toBeUndefined(); // failed leg is non-fatal to the run
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
+    expect(hermes.failures).toBeUndefined();
     expect(extraAction(hermes, 'skills-dir')).toBe('created');
     expect(extraAction(hermes, 'symlink')).toBe('created');
   });
@@ -2460,10 +2454,10 @@ describe('hermes config convergence', () => {
     // WRITE: runAgentSync → syncHermes converges the plugin link + config.yaml
     // (mcp_servers.genie + skills.external_dirs) into the fixture's HERMES_HOME.
     present(fixture.hermesHome);
-    const bin = presentGenieBinary();
+    presentGenieBinary();
     const wrote = agentReport(run(), 'hermes');
-    expect(extraAction(wrote, 'mcp-config')).toBe('created');
-    expect(extraAction(wrote, 'skills-dir')).toBe('updated');
+    expect(extraAction(wrote, 'mcp-config')).toBe('unchanged');
+    expect(extraAction(wrote, 'skills-dir')).toBe('created');
 
     // READ-BACK: the doctor's read-only agent-sync check, pointed at the SAME
     // converged tmpdir fixture, must confirm every hermes leg the writer produced.
@@ -2482,7 +2476,7 @@ describe('hermes config convergence', () => {
     expect(byName('agent sync: hermes')?.status).toBe('pass'); // plugin symlink leg
     expect(byName('agent sync: hermes')?.detail).toContain(fixture.hermesSource);
     expect(byName('agent sync: hermes mcp')?.status).toBe('pass');
-    expect(byName('agent sync: hermes mcp')?.detail).toContain(bin);
+    expect(byName('agent sync: hermes mcp')?.detail).toContain('retired');
     expect(byName('agent sync: hermes skills')?.status).toBe('pass');
     expect(byName('agent sync: hermes skills')?.detail).toContain(skillsRoot());
     // Every emitted hermes leg is a pass — the writer and the doctor agree end-to-end.

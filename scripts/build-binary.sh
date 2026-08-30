@@ -57,6 +57,7 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
 bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
+bun "${REPO_ROOT}/scripts/orca-bundle-parity.ts" --check
 bun "${REPO_ROOT}/scripts/hook-content-binding.ts" --check
 bun "${REPO_ROOT}/scripts/plugin-executables-check.ts"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
@@ -129,7 +130,8 @@ for required in \
   ".claude-plugin/marketplace.json" \
   "plugins/genie/.codex-plugin/plugin.json" \
   "plugins/genie/.kimi-plugin/plugin.json" \
-  "plugins/genie/scripts/mcp-launcher.cjs" \
+  "plugins/genie/orca-plugin.json" \
+  "plugins/genie/orca-entrypoint.min.js" \
   "plugins/genie/.claude-plugin/plugin.json" \
   "plugins/genie/hooks/hooks.json" \
   "plugins/genie/hooks/codex-hooks.json"; do
@@ -166,7 +168,7 @@ tar czf "${TARBALL}" -C "${STAGE}" .
 # contract before size checks or upload.
 VERIFY_ROOT="$(mktemp -d "${DIST_DIR}/.verify-${PLATFORM}.XXXXXX")"
 trap 'rm -rf "${VERIFY_ROOT}"' EXIT
-tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}"
+( umask 000; tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}" )
 assert_no_release_tests "${VERIFY_ROOT}"
 
 assert_release_tree_equal() {

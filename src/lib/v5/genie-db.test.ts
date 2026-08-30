@@ -440,9 +440,10 @@ describe('busy classification', () => {
 // index, so probing for it fleet-wide fires on healthy contended databases and
 // the journal-mode churn that follows crashed bun's Linux shm handling under a
 // live multi-process fleet. `openDb` therefore stays exactly what it was before
-// the heal: open, pragma, ensure schema. The heal is scoped to the component
-// that CREATES the poison — see "the REAL poison a degraded session leaves
-// behind heals on the next write open" in mcp-tools.test.ts.
+// the heal: open, pragma, ensure schema. The heal stays scoped to a component
+// that CREATES the poison — a degraded read-only session, a shape the retired
+// MCP/ui-bridge servers were the last to have; see sqlite-open.test.ts for the
+// recovery helper's own contract.
 //
 // This test fails the moment the heal is re-wired into the shared primitive.
 // ---------------------------------------------------------------------------

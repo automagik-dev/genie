@@ -440,9 +440,7 @@ function checkStarterPrompts(manifest: Record<string, unknown>, names: string[])
 }
 
 function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unknown>): void {
-  // Group A removed the Codex plugin MCP route: the manifest declares no mcpServers
-  // and no MCP capability, and the payload ships no `.mcp.json`. Codex MCP is
-  // provided ONLY by the marker-owned project route reconciled by `genie init`.
+  // A7 removed every plugin MCP route and launcher.
   if ('mcpServers' in manifest) fail('Codex plugin manifest must not declare mcpServers (plugin MCP route removed)');
   const iface = manifest.interface;
   const capabilities =
@@ -453,47 +451,15 @@ function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unkno
     fail('Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
   }
   if (existsSync(join(pluginRoot, '.mcp.json'))) fail('Codex plugin must not ship a .mcp.json route file');
-  // The plugin-local launcher persists — Claude drives it via its own inline
-  // ${CLAUDE_PLUGIN_ROOT}-anchored manifest entry (checked in checkClaudePluginMcpLayout).
   const launcher = resolve(pluginRoot, 'scripts', 'mcp-launcher.cjs');
-  if (!isWithin(resolve(pluginRoot), launcher)) fail('Codex MCP launcher escapes the plugin root');
-  if (!existsSync(launcher) || !lstatSync(launcher).isFile() || lstatSync(launcher).isSymbolicLink()) {
-    fail(`plugin-local MCP launcher must be a physical file: ${launcher}`);
-  }
-  if (!isWithin(realpathSync(pluginRoot), realpathSync(launcher))) {
-    fail('plugin-local MCP launcher resolves outside the plugin root');
-  }
+  if (existsSync(launcher)) fail(`retired MCP launcher must not ship: ${launcher}`);
 }
 
-// Claude Code spawns plugin MCP servers from the project cwd (the root
-// .mcp.json's relative launcher path only works for Codex), so the Claude
-// manifest must carry its own ${CLAUDE_PLUGIN_ROOT}-anchored entry that
-// overrides the shared root config.
 function checkClaudePluginMcpLayout(pluginRoot: string): void {
   const manifestPath = join(pluginRoot, '.claude-plugin', 'plugin.json');
   if (!existsSync(manifestPath)) fail(`Claude plugin manifest missing: ${manifestPath}`);
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-  const servers = manifest.mcpServers;
-  const serverMap =
-    typeof servers === 'object' && servers !== null && !Array.isArray(servers)
-      ? (servers as Record<string, unknown>)
-      : undefined;
-  const rawEntry = serverMap?.genie;
-  const entry =
-    typeof rawEntry === 'object' && rawEntry !== null && !Array.isArray(rawEntry)
-      ? (rawEntry as { command?: unknown; args?: unknown; cwd?: unknown })
-      : undefined;
-  if (
-    entry?.command !== 'node' ||
-    !Array.isArray(entry.args) ||
-    entry.args.length !== 1 ||
-    entry.args[0] !== '${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs' ||
-    'cwd' in entry
-  ) {
-    fail(
-      'Claude plugin manifest must declare an inline genie MCP server running node ${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs',
-    );
-  }
+  if ('mcpServers' in manifest) fail('Claude plugin manifest must not declare retired MCP servers');
 }
 
 // The exact bounded read-only H3 launcher, pinned identically across the source

@@ -6,7 +6,7 @@
  * payloads go through production physical-tree hashing and capability parsing,
  * the candidate delivery is published by the production deep store, activation
  * uses the real consent/permit/executor path, role agents use the production
- * convergence function, and repository observations use the real stdio MCP
+ * convergence function, and repository observations use standalone task/board JSON
  * server. The only injectable seam is the cryptographic bundle verifier and is
  * exposed to tests through this support module, never by the CLI runner.
  */
@@ -86,8 +86,8 @@ export interface DogfoodHarnessDependencies {
     version: string;
     root: string;
   }) => LegacyProvenanceFacts;
-  /** Test-only substitute for the real Codex app-server → exact-binary MCP proof. */
-  observeNativeMcp?: (input: NativeMcpEvidenceInput) => Promise<NativeMcpEvidence>;
+  /** Test-only substitute for exact-binary standalone task/board proof. */
+  observeStandalone?: (input: StandaloneEvidenceInput) => Promise<StandaloneEvidence>;
   root?: string;
 }
 
@@ -151,16 +151,10 @@ interface RepoObservation {
     observed: TaskIdentity;
     boardCount: 1;
   };
-  routeState?: 'managed-project';
+  evidenceMode?: 'standalone';
 }
 
-interface BoardResult {
-  pid: number;
-  isError: boolean;
-  payload: Record<string, unknown>;
-}
-
-export interface NativeMcpEvidenceInput {
+export interface StandaloneEvidenceInput {
   tag: string;
   requestedCwd: string;
   candidateBinary: string;
@@ -170,7 +164,7 @@ export interface NativeMcpEvidenceInput {
   env: Record<string, string>;
 }
 
-export interface NativeMcpEvidence {
+export interface StandaloneEvidence {
   requestedCwd: string;
   effectiveCwd: string;
   cwdIdentity: string;
@@ -181,6 +175,7 @@ export interface NativeMcpEvidence {
   isError: boolean;
   payload: Record<string, unknown>;
   raw: Record<string, unknown>;
+  commands?: CapturedCommand[];
 }
 
 interface CapturedCommand {
@@ -941,7 +936,12 @@ interface LifecycleResult {
   stages: StageProjection[];
   repositories: { cacheRoot: string; a: RepoObservation; b: Record<string, unknown> };
   convergence: {
-    route: { state: 'managed-project'; command: string; cwdOverride: null };
+    standalone: {
+      state: 'standalone';
+      command: string;
+      taskArgs: ['task', 'list', '--json'];
+      boardArgs: ['board', '--json'];
+    };
     roles: { expectedCount: number; observedCount: number; current: true; reviewerSha256: string };
   };
 }
@@ -1131,81 +1131,72 @@ function serializeStageObservation(observation: StageProjection['observation']):
   return `${JSON.stringify(observation, null, 2)}\n`;
 }
 
-function parseBoardFromMcp(stdout: string): BoardResult {
-  const response = stdout
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
-    .find((message) => message.id === 2);
-  const result = response?.result as { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
-  if (result === undefined) throw new Error(`MCP board returned no response: ${stdout}`);
-  return {
-    pid: 0,
-    isError: result.isError === true,
-    payload: JSON.parse(result.content?.[0]?.text ?? '{}') as Record<string, unknown>,
-  };
+function parseStandaloneJson(command: CapturedCommand): Record<string, unknown> {
+  const raw = command.exit === 0 ? command.stdout : command.stderr || command.stdout;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { error: raw.includes('project-database-unavailable') ? 'project-database-unavailable' : raw.trim() };
+  }
 }
 
-function directMcpEvidence(input: NativeMcpEvidenceInput): NativeMcpEvidence {
-  const requests = [
-    {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'dogfood', version: '2' } },
-    },
-    { jsonrpc: '2.0', method: 'notifications/initialized' },
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'genie_board', arguments: {} } },
-  ];
-  const command = captureCommand({
+function standaloneEvidence(input: StandaloneEvidenceInput): StandaloneEvidence {
+  const task = captureCommand({
     root: input.root,
     binary: input.candidateBinary,
-    args: ['mcp'],
+    args: ['task', 'list', '--json'],
     cwd: input.requestedCwd,
     env: input.env,
     executionAdapter: input.executionAdapter,
-    stdin: Buffer.from(`${requests.map((request) => JSON.stringify(request)).join('\n')}\n`),
   });
-  requireExit(command, 0, `${input.tag} direct MCP`);
-  const board = parseBoardFromMcp(command.stdout);
+  const board = captureCommand({
+    root: input.root,
+    binary: input.candidateBinary,
+    args: ['board', '--json'],
+    cwd: input.requestedCwd,
+    env: input.env,
+    executionAdapter: input.executionAdapter,
+  });
   const cwd = realpathSync(input.requestedCwd);
   return {
     requestedCwd: input.requestedCwd,
     effectiveCwd: cwd,
-    cwdIdentity: command.cwdIdentity,
+    cwdIdentity: board.cwdIdentity,
     controlCwd: cwd,
-    controlCwdIdentity: command.cwdIdentity,
-    childPid: command.pid,
-    threadId: `local-${input.tag}-${command.pid}`,
-    isError: board.isError,
-    payload: board.payload,
+    controlCwdIdentity: board.cwdIdentity,
+    childPid: board.pid,
+    threadId: `standalone-${input.tag}-${board.pid}`,
+    isError: board.exit !== 0,
+    payload: parseStandaloneJson(board),
+    commands: [task, board],
     raw: {
       schemaVersion: 1,
-      kind: 'verified-local-fixture-direct-mcp',
-      command,
-      payload: board.payload,
+      kind: 'standalone-genie-task-board',
+      task: parseStandaloneJson(task),
+      board: parseStandaloneJson(board),
     },
   };
 }
 
-async function observeMcp(
-  input: NativeMcpEvidenceInput,
+async function observeStandalone(
+  input: StandaloneEvidenceInput,
   dependencies: DogfoodHarnessDependencies,
-  evidenceKind: DogfoodEntryInput['evidenceKind'],
-): Promise<NativeMcpEvidence> {
-  if (dependencies.observeNativeMcp !== undefined) return dependencies.observeNativeMcp(input);
-  if (evidenceKind === 'verified-local-fixture') return directMcpEvidence(input);
-  const native = await import('./codex-native-mcp-evidence.js');
-  return native.captureCodexNativeMcpEvidenceForDogfood(input);
+): Promise<StandaloneEvidence> {
+  if (dependencies.observeStandalone !== undefined) return dependencies.observeStandalone(input);
+  return standaloneEvidence(input);
 }
 
 function observedRepo(
   repo: string,
   expected: TaskIdentity & { token: string },
-  board: NativeMcpEvidence,
+  board: StandaloneEvidence,
 ): RepoObservation {
   if (board.isError) throw new Error(`seeded board failed: ${JSON.stringify(board.payload)}`);
-  const tasks = board.payload.tasks;
+  const columns = board.payload.columns;
+  const tasks =
+    columns !== null && typeof columns === 'object' && !Array.isArray(columns)
+      ? Object.values(columns).flatMap((value) => (Array.isArray(value) ? value : []))
+      : [];
   if (!Array.isArray(tasks) || tasks.length !== 1) throw new Error('seeded board must return exactly one task');
   const task = tasks[0] as Record<string, unknown>;
   const observed: TaskIdentity = {
@@ -1228,7 +1219,7 @@ function observedRepo(
     board.cwdIdentity !== board.controlCwdIdentity ||
     board.effectiveCwd !== realpathSync(repo)
   ) {
-    throw new Error('Codex-launched candidate MCP CWD differs from its control process');
+    throw new Error('standalone candidate task/board CWD differs from its control process');
   }
   return {
     root: repo,
@@ -1240,26 +1231,29 @@ function observedRepo(
   };
 }
 
-function nativeObservationCommand(
-  evidence: NativeMcpEvidence,
+function standaloneObservationCommands(
+  evidence: StandaloneEvidence,
   candidateBinary: string,
   candidateBinarySha256: string,
   executionAdapter?: string,
-): CapturedCommand {
+): CapturedCommand[] {
+  if (evidence.commands !== undefined) return evidence.commands;
   const executable = executionAdapter ?? candidateBinary;
-  return {
-    executable,
-    executableSha256: executionAdapter === undefined ? candidateBinarySha256 : sha256File(executionAdapter),
-    candidateBinary,
-    candidateBinarySha256,
-    argv: ['mcpServer/tool/call', 'genie', 'genie_board', evidence.threadId],
-    pid: evidence.childPid,
-    requestedCwd: evidence.requestedCwd,
-    cwdIdentity: evidence.cwdIdentity,
-    exit: evidence.isError ? 1 : 0,
-    stdout: JSON.stringify(evidence.raw),
-    stderr: '',
-  };
+  return [
+    {
+      executable,
+      executableSha256: executionAdapter === undefined ? candidateBinarySha256 : sha256File(executionAdapter),
+      candidateBinary,
+      candidateBinarySha256,
+      argv: ['board', '--json'],
+      pid: evidence.childPid,
+      requestedCwd: evidence.requestedCwd,
+      cwdIdentity: evidence.cwdIdentity,
+      exit: evidence.isError ? 1 : 0,
+      stdout: JSON.stringify(evidence.raw),
+      stderr: '',
+    },
+  ];
 }
 
 function copyRuntimeInput(root: string, label: string, path: string): string {
@@ -1321,15 +1315,8 @@ function observeAssetConvergence(input: {
     throw new Error('candidate binary did not report the authenticated T generation');
   }
   const routePath = join(input.repo, '.codex', 'config.toml');
-  const routeBytes = readFileSync(routePath, 'utf8');
-  const routeCommand = routeBytes.match(/mcp_servers\.genie\.command\s*=\s*"([^"]+)"/)?.[1];
-  if (
-    routeCommand === undefined ||
-    realpathSync(routeCommand) !== input.candidateBinary ||
-    !routeBytes.includes('args = ["mcp"]') ||
-    /\.cwd\s*=/.test(routeBytes)
-  ) {
-    throw new Error(`candidate project route did not converge to the exact stable facade: ${routeBytes}`);
+  if (existsSync(routePath) && /mcp_servers\.genie/.test(readFileSync(routePath, 'utf8'))) {
+    throw new Error('candidate convergence retained a retired Codex Genie MCP route');
   }
   const sourceRoles = join(input.candidate.releaseRoot, 'plugins', 'genie', 'codex-agents');
   const targetRoles = join(input.codexHome, 'agents');
@@ -1346,7 +1333,12 @@ function observeAssetConvergence(input: {
   return {
     commands: [plugin, version],
     convergence: {
-      route: { state: 'managed-project', command: routeCommand, cwdOverride: null },
+      standalone: {
+        state: 'standalone',
+        command: input.candidateBinary,
+        taskArgs: ['task', 'list', '--json'],
+        boardArgs: ['board', '--json'],
+      },
       roles: {
         expectedCount: roleNames.length,
         observedCount: installedRoleNames.length,
@@ -1544,7 +1536,7 @@ async function runLifecycle(
     ),
   );
 
-  const nativeInput = (tag: string, requestedCwd: string): NativeMcpEvidenceInput => ({
+  const standaloneInput = (tag: string, requestedCwd: string): StandaloneEvidenceInput => ({
     tag,
     requestedCwd,
     candidateBinary,
@@ -1553,22 +1545,28 @@ async function runLifecycle(
     root,
     env,
   });
-  const bBefore = await observeMcp(nativeInput('b-before-init', repoB), dependencies, input.evidenceKind);
-  if (!bBefore.isError || bBefore.payload.error !== 'project-database-unavailable') {
-    throw new Error('untouched B did not fail closed through real Codex before init');
+  const bBefore = await observeStandalone(standaloneInput('b-before-init', repoB), dependencies);
+  const beforeColumns = bBefore.payload.columns;
+  const beforeTasks =
+    beforeColumns !== null && typeof beforeColumns === 'object' && !Array.isArray(beforeColumns)
+      ? Object.values(beforeColumns).flatMap((value) => (Array.isArray(value) ? value : []))
+      : null;
+  if (bBefore.isError || beforeTasks === null || beforeTasks.length !== 0) {
+    throw new Error(
+      `untouched B standalone board must return an empty task list before seeding: ${JSON.stringify(bBefore.payload)}`,
+    );
   }
-  if ('tasks' in bBefore.payload || 'counts' in bBefore.payload) throw new Error('untouched B returned an empty board');
   stages.push(
     stage(
       'untouched-b-before-init',
       {
-        exit: 1,
-        humanState: 'project-database-unavailable',
-        jsonState: 'project-database-unavailable',
+        exit: 0,
+        humanState: 'empty',
+        jsonState: 'empty',
         activeVersion: candidate.facts.version,
         trailer: null,
       },
-      [nativeObservationCommand(bBefore, candidateBinary, candidate.binarySha256, input.executionAdapter)],
+      standaloneObservationCommands(bBefore, candidateBinary, candidate.binarySha256, input.executionAdapter),
     ),
   );
 
@@ -1581,8 +1579,8 @@ async function runLifecycle(
     label: 'b',
     initialize: true,
   });
-  const bAfterEvidence = await observeMcp(nativeInput('b-after-init', repoB), dependencies, input.evidenceKind);
-  const bAfter = { ...observedRepo(repoB, seededB.expected, bAfterEvidence), routeState: 'managed-project' as const };
+  const bAfterEvidence = await observeStandalone(standaloneInput('b-after-init', repoB), dependencies);
+  const bAfter = { ...observedRepo(repoB, seededB.expected, bAfterEvidence), evidenceMode: 'standalone' as const };
   stages.push(
     stage(
       'untouched-b-after-init',
@@ -1595,12 +1593,17 @@ async function runLifecycle(
       },
       [
         ...seededB.commands,
-        nativeObservationCommand(bAfterEvidence, candidateBinary, candidate.binarySha256, input.executionAdapter),
+        ...standaloneObservationCommands(
+          bAfterEvidence,
+          candidateBinary,
+          candidate.binarySha256,
+          input.executionAdapter,
+        ),
       ],
     ),
   );
 
-  const aEvidence = await observeMcp(nativeInput('a-new-thread', repoA), dependencies, input.evidenceKind);
+  const aEvidence = await observeStandalone(standaloneInput('a-new-thread', repoA), dependencies);
   const a = observedRepo(repoA, seededA.expected, aEvidence);
   if (a.sentinel.token === bAfter.sentinel.token) throw new Error('two-repo sentinels collided');
   if (JSON.stringify(a.sentinel.observed).includes(bAfter.sentinel.token)) throw new Error('B sentinel leaked into A');
@@ -1615,7 +1618,7 @@ async function runLifecycle(
         activeVersion: candidate.facts.version,
         trailer: null,
       },
-      [nativeObservationCommand(aEvidence, candidateBinary, candidate.binarySha256, input.executionAdapter)],
+      standaloneObservationCommands(aEvidence, candidateBinary, candidate.binarySha256, input.executionAdapter),
     ),
   );
 
@@ -1661,9 +1664,8 @@ async function runLifecycle(
       b: {
         root: repoB,
         beforeInit: {
-          routeState: 'absent',
-          fallbackUsed: false,
-          result: 'project-database-unavailable',
+          databaseState: 'absent',
+          result: 'empty',
           returnedTasks: 0,
         },
         afterInit: bAfter,

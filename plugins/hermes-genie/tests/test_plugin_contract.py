@@ -18,14 +18,13 @@ GAP_TOOL_NAMES = [
     "genie_work_plan",
     "genie_review_plan",
 ]
-# Legacy board/task tools — register only behind GENIE_HERMES_LEGACY_TOOLS=1.
+# Board/task names belong to standalone commands and must never register as tools.
 LEGACY_TOOL_NAMES = [
     "genie_board",
     "genie_wish_status",
     "genie_task_list",
     "genie_task_status",
 ]
-ALL_TOOL_NAMES = GAP_TOOL_NAMES + LEGACY_TOOL_NAMES
 
 
 def _release_version() -> str:
@@ -39,13 +38,6 @@ def load_plugin_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _register_with_legacy(module, ctx, monkeypatch):
-    """Register with the legacy board/task tools enabled (transition flag on)."""
-    monkeypatch.setenv("GENIE_HERMES_LEGACY_TOOLS", "1")
-    module.register(ctx)
-    return ctx
 
 
 class FakeCtx:
@@ -133,14 +125,12 @@ def test_register_adds_only_gap_tools_by_default(monkeypatch):
         assert isinstance(schema["parameters"]["properties"], dict)
 
 
-def test_legacy_flag_restores_the_four_legacy_tools(monkeypatch):
+def test_stale_legacy_flag_cannot_restore_duplicate_tools(monkeypatch):
     module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    assert sorted(ctx.tools) == sorted(ALL_TOOL_NAMES)
-    for name in ALL_TOOL_NAMES:
-        entry = ctx.tools[name]
-        assert callable(entry["handler"])
-        assert entry["schema"]["name"] == name
+    monkeypatch.setenv("GENIE_HERMES_LEGACY_TOOLS", "1")
+    ctx = FakeCtx()
+    module.register(ctx)
+    assert sorted(ctx.tools) == sorted(GAP_TOOL_NAMES)
 
 
 def test_register_completes_with_tool_only_ctx(monkeypatch):
@@ -167,35 +157,6 @@ def test_status_handler_payload_shape(tmp_path):
     assert data["cwd"] == str(Path(str(tmp_path)).resolve())
     assert "command" in data
     assert data["data"]["genie_dir_present"] is False
-
-
-def test_wish_status_handler_payload_shape(tmp_path, monkeypatch):
-    module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    data = _invoke(ctx, "genie_wish_status", {"cwd": str(tmp_path), "slug": "no-such-wish"})
-    assert "success" in data
-    assert data["mutation"] == "none"
-    assert data["cwd"] == str(Path(str(tmp_path)).resolve())
-    assert "command" in data
-    assert "board" in data["data"]
-    assert "tasks" in data["data"]
-
-
-def test_wish_status_requires_slug(tmp_path, monkeypatch):
-    module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    data = _invoke(ctx, "genie_wish_status", {"cwd": str(tmp_path)})
-    assert data["success"] is False
-    assert data["mutation"] == "none"
-    assert "slug" in data["error"]
-
-
-def test_task_status_requires_id(tmp_path, monkeypatch):
-    module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    data = _invoke(ctx, "genie_task_status", {"cwd": str(tmp_path)})
-    assert data["success"] is False
-    assert "id" in data["error"]
 
 
 def test_work_plan_rejects_unsafe_group_items(tmp_path):
@@ -238,29 +199,12 @@ def test_work_plan_rejects_traversal_and_dash_slugs(tmp_path):
         assert "data" not in data
 
 
-def test_remaining_tools_reject_invalid_refs(tmp_path, monkeypatch):
-    module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    cases = [
-        ("genie_wish_status", {"slug": "--help"}),
-        ("genie_task_status", {"id": "../../x"}),
-        ("genie_board", {"wish": "../../x"}),
-        ("genie_task_list", {"wish": "a/b"}),
-        ("genie_task_list", {"status": "--help"}),
-        ("genie_work_plan", {"slug": "ok-wish", "group": "--help"}),
-    ]
-    for name, extra in cases:
-        data = _invoke(ctx, name, {"cwd": str(tmp_path), **extra})
-        assert data["success"] is False, f"{name} with {extra} must be rejected"
-        assert "invalid" in data["error"].lower()
-        assert data["source"] == "input-validation"
-
-
 def test_validation_error_payloads_carry_source(tmp_path, monkeypatch):
     """Every input-validation early return must satisfy the command|source invariant."""
     module = load_plugin_module()
-    ctx = _register_with_legacy(module, FakeCtx(), monkeypatch)
-    for name in ["genie_wish_status", "genie_task_status", "genie_work_plan", "genie_review_plan"]:
+    ctx = FakeCtx()
+    module.register(ctx)
+    for name in ["genie_work_plan", "genie_review_plan"]:
         data = _invoke(ctx, name, {"cwd": str(tmp_path)})  # missing required ref
         assert data["success"] is False
         assert data["mutation"] == "none"

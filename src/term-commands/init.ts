@@ -3,9 +3,8 @@
  *
  * Bootstraps the things a fresh repo needs before the genie lifecycle can run:
  * the plans jar (`.genie/INDEX.md`), the `.gitignore` rules that keep the
- * SQLite state files out of version control, and the MCP server registration
- * that lets Claude Code discover the `genie mcp` server (read + write
- * tools). Every
+ * SQLite state files out of version control, and retirement of historical
+ * Genie-owned MCP registrations. Every
  * step is idempotent — re-running `genie init` on an already-scaffolded repo
  * produces zero diff.
  *
@@ -18,15 +17,10 @@ import type { Command } from 'commander';
 import {
   type ArtifactAction,
   type McpConfigResult,
-  type RegisterProjectMcpOptions,
-  genieFacadeMcpEntry,
-  mergeCodexMcpFallback,
-  registerProjectMcpConfigs,
-  removeCodexMcpFallback,
   resolveGitWorktreeRoot,
+  retireProjectMcpConfigs,
 } from '../lib/codex-project-mcp.js';
-
-export { mergeCodexMcpFallback, removeCodexMcpFallback };
+import { padRight } from '../lib/term-format.js';
 
 // ============================================================================
 // Output helpers (process.stdout/stderr — no console.* in source)
@@ -78,8 +72,17 @@ const INDEX_SKELETON = `# Plans Index
  * Operational artifacts that must never be committed. The `.genie/launch/`
  * rule is legacy residue protection — nothing writes there since the launch
  * command was removed, but existing kickoff prompts stay ignored.
+ * `.mcp.json.genie-backup-*` is the backup-first copy `genie init` writes
+ * next to a user-owned `.mcp.json` when it retires a legacy `genie mcp`
+ * registration; it is an operational artifact, not project content.
  */
-const GITIGNORE_RULES = ['.genie/genie.db', '.genie/genie.db-wal', '.genie/genie.db-shm', '.genie/launch/'];
+const GITIGNORE_RULES = [
+  '.genie/genie.db',
+  '.genie/genie.db-wal',
+  '.genie/genie.db-shm',
+  '.genie/launch/',
+  '.mcp.json.genie-backup-*',
+];
 
 // ============================================================================
 // Git repo resolution
@@ -133,18 +136,17 @@ function scaffoldGitignore(root: string): { action: ArtifactAction; added: strin
   return { action: exists ? 'updated' : 'created', added: missing };
 }
 
-/**
- * Register the `genie mcp` server into the project-scope `<root>/.mcp.json`
- * config (Claude Code). The merge is idempotent and preserves existing
- * servers.
- */
-export function registerMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
-  return registerProjectMcpConfigs(root, options);
+/** Retire only project MCP registrations whose Genie ownership is proven. */
+export function retireMcpConfigs(root: string): McpConfigResult[] {
+  return retireProjectMcpConfigs(root);
 }
 
 // ============================================================================
 // Reporting
 // ============================================================================
+
+/** Column the human report's action words line up in (widest label + 2). */
+const REPORT_COLUMN = 20;
 
 function actionLabel(action: ArtifactAction): string {
   return action === 'skipped' ? 'already present' : action;
@@ -159,17 +161,19 @@ function mcpConfigLabel(configPath: string): string {
 function printHumanReport(result: InitResult): void {
   out('Initialized genie in this repository.');
   out('');
-  out(`  .genie/INDEX.md   ${actionLabel(result.index)}`);
-  if (result.rulesAdded.length > 0) {
-    out(`  .gitignore        ${actionLabel(result.gitignore)} (${result.rulesAdded.join(', ')})`);
-  } else {
-    out(`  .gitignore        ${actionLabel(result.gitignore)}`);
-  }
+  out(`  ${padRight('.genie/INDEX.md', REPORT_COLUMN)}${actionLabel(result.index)}`);
+  const rules = result.rulesAdded.length > 0 ? ` (${result.rulesAdded.join(', ')})` : '';
+  out(`  ${padRight('.gitignore', REPORT_COLUMN)}${actionLabel(result.gitignore)}${rules}`);
   for (const cfg of result.mcp) {
-    out(`  ${mcpConfigLabel(cfg.path)}        ${actionLabel(cfg.action)}`);
+    // `skipped` on an MCP config means "nothing of Genie's was there", not
+    // "already scaffolded" — and the detail is the only place a skip reason
+    // (symlink, unreadable file, failed rewrite) or a backup filename ever
+    // reaches the operator.
+    const label = cfg.action === 'skipped' ? 'unchanged' : cfg.action;
+    out(`  ${padRight(mcpConfigLabel(cfg.path), REPORT_COLUMN)}${label}${cfg.detail ? ` — ${cfg.detail}` : ''}`);
   }
   out('');
-  out('Claude Code and Codex will discover the `genie mcp` server (read + write tools).');
+  out('Legacy Genie-owned MCP registrations are retired; standalone `genie task` and `genie board` remain available.');
   out('');
   out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
   out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');
@@ -194,18 +198,24 @@ function handleInit(opts: InitOptions): void {
     const root = resolveGitRoot(process.cwd());
     if (!root) throw new NotAGitRepoError();
 
-    // Trusted init ALWAYS reconciles one intact marker-owned Codex route using the
-    // stable `<GENIE_HOME>/bin/genie` facade with no effective cwd override —
+    // Init RETIRES historical Genie MCP registrations and never creates one —
     // independent of plugin and delivery state, and never touching delivery,
-    // journal, plugin-enabled, agent, or cache state. A route name is not proof of
+    // journal, plugin-enabled, agent, or cache state. In `.codex/config.toml`
+    // only the explicit marker block is eligible: a route NAME is not proof of
     // ownership, so an unmanaged same-key route is preserved and reported.
     //
-    // MCP config is planned and schema-checked before any scaffold mutation, so a
-    // wrong-shaped existing JSON file fails without leaving a new INDEX or
-    // gitignore rules behind.
-    const mcp = registerMcpConfigs(root, { codexEntry: genieFacadeMcpEntry(), forceCodexFallback: true });
+    // `.mcp.json` has no ownership marker, so exactly ONE entry is eligible:
+    // a `genie` server that launches the retired `genie mcp` command (the
+    // registration a pre-retirement `genie init` wrote, which now renders as a
+    // permanently failed MCP server). It is backed up before removal, every
+    // other server and key is preserved, and a symlinked or unreadable file is
+    // skipped with a reported reason — this step never fails init.
+    //
+    // Scaffolding runs FIRST so a repo whose Codex marker block is corrupt (a
+    // deliberate fail-closed) still gets its `.genie/` state.
     const index = scaffoldIndex(root);
     const gitignore = scaffoldGitignore(root);
+    const mcp = retireMcpConfigs(root);
     const result: InitResult = { root, index, gitignore: gitignore.action, rulesAdded: gitignore.added, mcp };
 
     if (opts.json) {
@@ -224,7 +234,7 @@ export function registerInitCommand(program: Command): void {
   program
     .command('init')
     .description(
-      'Initialize Genie state and reconcile project MCP routing (.mcp.json and the marker-owned .codex/config.toml)',
+      'Initialize Genie state and retire the dead genie mcp entry in .mcp.json plus marker-owned .codex/config.toml routing',
     )
     .option('--json', 'Emit the created/skipped result as JSON')
     .action((opts: InitOptions) => handleInit(opts));

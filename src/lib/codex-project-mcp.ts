@@ -1,13 +1,6 @@
 /**
- * Project-scoped MCP lifecycle for Codex and Claude Code.
- *
- * Codex has one supported route to Genie's stdio MCP server: the marker-owned
- * `<worktree>/.codex/config.toml` entry. The enabled `genie@automagik` plugin
- * deliberately declares no MCP server.
- *
- * This module is the sole owner of reconciling and inspecting that route. Its
- * legacy route-classification helpers remain fail-closed for older installed
- * payloads, but production init/setup always retain the stable absolute facade.
+ * Read-only Codex plugin discovery plus retirement of historical project MCP
+ * registrations. No API in this module can create or revive a Genie route.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -15,7 +8,9 @@ import { randomUUID } from 'node:crypto';
 import {
   constants,
   accessSync,
+  chmodSync,
   closeSync,
+  copyFileSync,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -32,11 +27,6 @@ import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from './trusted-executable.js';
 
 export type ArtifactAction = 'created' | 'updated' | 'skipped';
-
-export interface McpServerEntry {
-  command: string;
-  args: string[];
-}
 
 export interface McpConfigResult {
   path: string;
@@ -116,27 +106,8 @@ export interface CodexPluginMcpUsabilityOptions {
   cwd?: string;
 }
 
-export interface RegisterProjectMcpOptions {
-  /** Reuse a caller's one-shot probe so a multi-target reconciliation queries Codex once. */
-  pluginProbe?: CodexPluginProbe;
-  probeDeps?: CodexPluginProbeDeps;
-  /** Command written to the Claude Code JSON config (`.mcp.json`). */
-  entry?: McpServerEntry;
-  /**
-   * Dedicated command for the marker-owned Codex `.codex/config.toml` route.
-   * Defaults to {@link RegisterProjectMcpOptions.entry}. Trusted `genie init`
-   * passes the stable {@link genieFacadeMcpEntry} facade here so the Codex marker
-   * uses the version-independent `<GENIE_HOME>/bin/genie` command even while
-   * Claude Code keeps the running-executable entry.
-   */
-  codexEntry?: McpServerEntry;
-  /**
-   * Reconcile the marker-owned Codex route INDEPENDENT of plugin/delivery state
-   * (trusted `genie init`). A route name is not proof of ownership, so an
-   * unmanaged same-key route is still preserved and reported rather than
-   * overwritten.
-   */
-  forceCodexFallback?: boolean;
+export interface RetireProjectMcpOptions {
+  readonly retirementOnly?: true;
 }
 
 export interface GitProjectRoots {
@@ -147,7 +118,6 @@ export interface GitProjectRoots {
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
-const MCP_WRAPPER_KEYS = ['mcpServers', 'mcp_servers', 'servers'] as const;
 const FALLBACK_BEGIN = '# BEGIN GENIE MCP FALLBACK';
 const FALLBACK_END = '# END GENIE MCP FALLBACK';
 const GENIE_PLUGIN_ID = 'genie@automagik';
@@ -611,105 +581,8 @@ export function probeCodexGeniePlugin(deps: CodexPluginProbeDeps = {}): CodexPlu
   }
 }
 
-function interpretedGenieEntry(argv: string[]): string | null {
-  const candidate = argv[1];
-  if (!candidate || !isAbsolute(candidate)) return null;
-  try {
-    const stat = lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    return realpathSync(candidate);
-  } catch {
-    // Compiled binaries receive the first CLI argument in argv[1], not a script.
-    return null;
-  }
-}
-
-/**
- * The absolute stdio entry used by all project-scoped clients. A compiled Bun
- * executable directly receives `mcp`; an interpreted source/dist invocation
- * records both the absolute Bun executable and absolute entry script.
- */
-export function genieMcpEntry(command?: string, argv = process.argv): McpServerEntry {
-  if (command !== undefined) return { command, args: ['mcp'] };
-  const executable = realpathSync(process.execPath);
-  const script = interpretedGenieEntry(argv);
-  return { command: executable, args: script ? [script, 'mcp'] : ['mcp'] };
-}
-
-/**
- * The stable marker-owned Codex route command: the canonical absolute
- * `<GENIE_HOME>/bin/genie` facade with `args = ["mcp"]` and NO effective cwd
- * override. Unlike {@link genieMcpEntry} (which records the running executable
- * for Claude Code), this facade path is deliberately version- and
- * plugin-independent: it survives plugin updates and symlinked invocation, and
- * is rewritten only by trusted `genie init` after an explicit GENIE_HOME
- * relocation. It never resolves to a versioned plugin-cache path.
- */
-export function genieFacadeMcpEntry(
-  genieHome: string = resolveGenieHome(),
-  platform: NodeJS.Platform = process.platform,
-): McpServerEntry {
-  return { command: join(genieHome, 'bin', platform === 'win32' ? 'genie.exe' : 'genie'), args: ['mcp'] };
-}
-
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseMcpConfig(raw: string | null, path: string): JsonObject {
-  if (raw === null || raw.trim() === '') return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`Cannot register genie MCP server: ${path} is not valid JSON.`);
-  }
-  if (!isJsonObject(parsed)) {
-    throw new Error(`Cannot register genie MCP server: ${path} must contain a JSON object.`);
-  }
-  return parsed;
-}
-
-/**
- * Locate an existing server map without overwriting wrong-shaped valid JSON.
- * A known wrapper key with an array/string/null is a configuration error, not
- * an invitation to replace user data with a new object.
- */
-function locateServerMap(config: JsonObject, path: string): JsonObject {
-  for (const key of MCP_WRAPPER_KEYS) {
-    if (!(key in config)) continue;
-    const existing = config[key];
-    if (!isJsonObject(existing)) {
-      throw new Error(`Cannot register genie MCP server: ${path} field ${JSON.stringify(key)} must be an object.`);
-    }
-    return existing;
-  }
-
-  if ('mcp' in config) {
-    if (!isJsonObject(config.mcp)) {
-      throw new Error(`Cannot register genie MCP server: ${path} field "mcp" must be an object.`);
-    }
-    if ('servers' in config.mcp) {
-      if (!isJsonObject(config.mcp.servers)) {
-        throw new Error(`Cannot register genie MCP server: ${path} field "mcp.servers" must be an object.`);
-      }
-      return config.mcp.servers;
-    }
-  }
-
-  const created: JsonObject = {};
-  config.mcpServers = created;
-  return created;
-}
-
-function prepareJsonMcpConfig(configPath: string, entry: McpServerEntry): PreparedWrite {
-  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  const raw = existsSync(configPath) ? readFileSync(configPath, 'utf8') : null;
-  const config = parseMcpConfig(raw, configPath);
-  locateServerMap(config, configPath).genie = entry;
-  const content = `${JSON.stringify(config, null, 2)}\n`;
-  if (raw === content) return { path: configPath, action: 'skipped' };
-  return { path: configPath, action: raw === null ? 'created' : 'updated', content };
 }
 
 function applyPreparedWrite(prepared: PreparedWrite, root = configProjectRoot(prepared.path)): McpConfigResult {
@@ -750,6 +623,14 @@ function fallbackBounds(raw: string, path: string): { start: number; end: number
     );
   }
   if (start < 0) return null;
+  if (
+    raw.indexOf(FALLBACK_BEGIN, start + FALLBACK_BEGIN.length) >= 0 ||
+    raw.indexOf(FALLBACK_END, endMarker + FALLBACK_END.length) >= 0
+  ) {
+    throw new Error(
+      `Cannot reconcile genie MCP server: ${path} has duplicate ${FALLBACK_BEGIN}/${FALLBACK_END} blocks. Repair or remove those marker blocks and retry.`,
+    );
+  }
   let end = endMarker + FALLBACK_END.length;
   // The generated block owns its line ending and one blank separator. Include
   // those bytes in the marker bounds so update/remove is byte-idempotent and
@@ -775,10 +656,6 @@ function hasUnmanagedFallback(raw: string, owned: { start: number; end: number }
   }
   if (!isJsonObject(parsed)) return false;
   return isJsonObject(parsed.mcp_servers) && Object.hasOwn(parsed.mcp_servers, GENIE_PLUGIN_NAME);
-}
-
-function fallbackBlock(entry: McpServerEntry): string {
-  return `${FALLBACK_BEGIN}\nmcp_servers.genie.command = ${JSON.stringify(entry.command)}\nmcp_servers.genie.args = ${JSON.stringify(entry.args)}\n${FALLBACK_END}`;
 }
 
 function removeOwnedFallback(raw: string, owned: { start: number; end: number }): string {
@@ -821,86 +698,313 @@ function assertNonGenieTomlSemantics(raw: string, next: string, path: string): v
   }
 }
 
-function prepareCodexFallback(
-  configPath: string,
-  entry: McpServerEntry,
-  required: boolean,
-): CodexProjectMcpResult & {
-  content?: string;
-} {
-  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
-  const exists = existsSync(configPath);
-  const raw = exists ? readFileSync(configPath, 'utf8') : '';
-  const owned = fallbackBounds(raw, configPath);
-  const unmanaged = hasUnmanagedFallback(raw, owned);
-
-  if (!required) {
-    if (unmanaged) {
-      return {
-        path: configPath,
-        action: 'skipped',
-        ok: false,
-        route: 'conflict',
-        detail:
-          'enabled plugin and an unmanaged [mcp_servers.genie] entry are both present; remove one manually to avoid duplicate routing',
-      };
-    }
-    if (owned === null) {
-      return { path: configPath, action: 'skipped', ok: true, route: 'plugin', detail: 'enabled plugin' };
-    }
-    const content = removeOwnedFallback(raw, owned);
-    assertNonGenieTomlSemantics(raw, content, configPath);
-    return {
-      path: configPath,
-      action: 'updated',
-      ok: true,
-      route: 'plugin',
-      detail: 'enabled plugin; removed marker-owned project fallback',
-      content,
-    };
-  }
-
-  if (unmanaged) {
-    return {
-      path: configPath,
-      action: 'skipped',
-      ok: false,
-      route: 'unmanaged-fallback',
-      detail:
-        'preserved user-owned [mcp_servers.genie] fallback byte-for-byte, but its command is unverified; cannot claim a usable Genie MCP route',
-    };
-  }
-
-  const block = fallbackBlock(entry);
-  const unowned = owned === null ? raw : removeOwnedFallback(raw, owned);
-  const content = unowned.length === 0 ? `${block}\n` : `${block}\n\n${unowned}`;
-  assertNonGenieTomlSemantics(raw, content, configPath);
-  if (content === raw) {
-    return { path: configPath, action: 'skipped', ok: true, route: 'fallback', detail: 'project fallback current' };
-  }
-  return {
-    path: configPath,
-    action: exists ? 'updated' : 'created',
-    ok: true,
-    route: 'fallback',
-    detail: 'project fallback active',
-    content,
-  };
-}
-
-/** Merge only the marker-owned Codex fallback. Kept exported for migration callers/tests. */
-export function mergeCodexMcpFallback(configPath: string, entry: McpServerEntry): ArtifactAction {
-  const prepared = prepareCodexFallback(configPath, entry, true);
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared.action;
-}
-
 /** Remove only the marker-owned Codex fallback. */
 export function removeCodexMcpFallback(configPath: string): ArtifactAction {
-  const prepared = prepareCodexFallback(configPath, genieMcpEntry(), false);
-  if (prepared.route === 'conflict') return 'skipped';
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared.action;
+  assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
+  if (!existsSync(configPath)) return 'skipped';
+  const raw = readFileSync(configPath, 'utf8');
+  const owned = fallbackBounds(raw, configPath);
+  if (owned === null) return 'skipped';
+  const content = removeOwnedFallback(raw, owned);
+  assertNonGenieTomlSemantics(raw, content, configPath);
+  applyPreparedWrite({ path: configPath, action: 'updated', content });
+  return 'updated';
+}
+
+// ============================================================================
+// `.mcp.json` — the retired `genie mcp` registration
+// ============================================================================
+
+/**
+ * The `.mcp.json` filename every Claude Code project uses. It carries NO
+ * ownership marker, so only one exactly-shaped entry is ever eligible for
+ * retirement (see {@link isRetiredGenieMcpServer}); everything else in the
+ * file is user-owned.
+ */
+const PROJECT_JSON_MCP_FILE = '.mcp.json';
+
+/**
+ * True when `command` names the Genie binary itself rather than a user wrapper.
+ * Both separators are recognized because a `.mcp.json` is committed and read on
+ * whatever platform its author used, not only on the one running this check.
+ */
+function isGenieBinaryCommand(command: string): boolean {
+  const trimmed = command.trim();
+  const name = trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1);
+  return name === 'genie' || name === 'genie.exe';
+}
+
+/**
+ * True for EXACTLY the registration a pre-retirement `genie init` wrote: the
+ * Genie binary invoked with the single argument `mcp`. `genie mcp` is retired
+ * and now exits 1, so this entry can only ever render as a failed MCP server.
+ *
+ * Anything else under the `genie` key is user-owned and never touched — a
+ * different command (a personal wrapper, another binary), extra or different
+ * args, or a non-object value.
+ */
+export function isRetiredGenieMcpServer(entry: unknown): boolean {
+  if (!isJsonObject(entry)) return false;
+  if (typeof entry.command !== 'string' || !isGenieBinaryCommand(entry.command)) return false;
+  return Array.isArray(entry.args) && entry.args.length === 1 && entry.args[0] === 'mcp';
+}
+
+/**
+ * What a project `.mcp.json` holds with respect to the retired registration.
+ * `present` is the ONLY state that permits a write; every other state is a
+ * reported no-op, so neither doctor nor init can ever be blocked by it.
+ */
+export type RetiredJsonMcpState = 'absent' | 'symlink' | 'unreadable' | 'clean' | 'present';
+
+export interface RetiredJsonMcpFinding {
+  path: string;
+  state: RetiredJsonMcpState;
+  /** Human reason, safe to print verbatim in doctor and init output. */
+  detail: string;
+}
+
+/** Read-only `.mcp.json` inspection shared by doctor and init. Never throws. */
+export function inspectRetiredJsonMcpEntry(root: string): RetiredJsonMcpFinding {
+  const path = join(root, PROJECT_JSON_MCP_FILE);
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return { path, state: 'absent', detail: 'no .mcp.json in this repository' };
+    }
+    return { path, state: 'unreadable', detail: `.mcp.json is unreadable: ${diagnostic(error)}` };
+  }
+  // A symlinked .mcp.json is repository-controlled indirection: Genie neither
+  // follows it nor rewrites it, and says so instead of failing.
+  if (stat.isSymbolicLink()) {
+    return {
+      path,
+      state: 'symlink',
+      detail: '.mcp.json is a symlink; left untouched (retire the `genie` entry by hand)',
+    };
+  }
+  if (!stat.isFile()) return { path, state: 'unreadable', detail: '.mcp.json is not a regular file; left untouched' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    return {
+      path,
+      state: 'unreadable',
+      detail: `.mcp.json is not valid JSON, so it is preserved: ${diagnostic(error)}`,
+    };
+  }
+  if (!isJsonObject(parsed) || !isJsonObject(parsed.mcpServers)) {
+    return { path, state: 'clean', detail: 'no retired `genie mcp` registration in .mcp.json' };
+  }
+  if (!isRetiredGenieMcpServer(parsed.mcpServers[GENIE_PLUGIN_NAME])) {
+    return { path, state: 'clean', detail: 'no retired `genie mcp` registration in .mcp.json' };
+  }
+  return { path, state: 'present', detail: 'a `genie` server still launches the retired `genie mcp` command' };
+}
+
+function diagnostic(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The document's own indentation, so the re-serialization fallback keeps the
+ * shape the author chose instead of reformatting a file Genie only removes one
+ * key from.
+ */
+function detectJsonIndent(raw: string): string | number {
+  const match = /\n([ \t]+)"/.exec(raw);
+  return match === null ? 2 : match[1];
+}
+
+// ---------------------------------------------------------------------------
+// Byte-surgical property removal
+//
+// Removing one dead server must not reformat a git-tracked file the user owns,
+// so the retirement splices exactly that property's bytes out of the original
+// text and every other byte survives untouched. These scanners run only on
+// text `JSON.parse` has ALREADY accepted, so they need to agree with it, not
+// validate it — and the caller re-parses and compares the spliced result
+// against the intended object before writing, falling back to a plain
+// re-serialization if it ever disagrees.
+// ---------------------------------------------------------------------------
+
+function skipJsonWhitespace(raw: string, index: number): number {
+  let i = index;
+  while (i < raw.length && (raw[i] === ' ' || raw[i] === '\t' || raw[i] === '\n' || raw[i] === '\r')) i += 1;
+  return i;
+}
+
+/** Index just past the string literal that starts at `index` (a `"`). */
+function scanJsonString(raw: string, index: number): number {
+  let i = index + 1;
+  while (i < raw.length) {
+    if (raw[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (raw[i] === '"') return i + 1;
+    i += 1;
+  }
+  throw new Error('unterminated JSON string');
+}
+
+/** Index just past the value that starts at `index`. */
+function scanJsonValue(raw: string, index: number): number {
+  const start = skipJsonWhitespace(raw, index);
+  const first = raw[start];
+  if (first === '"') return scanJsonString(raw, start);
+  if (first === '{' || first === '[') return scanJsonContainer(raw, start).end;
+  let i = start;
+  while (i < raw.length && !',}] \t\r\n'.includes(raw[i])) i += 1;
+  return i;
+}
+
+interface JsonPropertySpan {
+  key: string;
+  /** Index of the property key's opening quote. */
+  start: number;
+  /** Index just past the property's value. */
+  end: number;
+}
+
+/**
+ * Walk the container that starts at `index`, returning where it ends and — for
+ * an object — the span of every property it declares directly.
+ */
+function scanJsonContainer(raw: string, index: number): { end: number; properties: JsonPropertySpan[] } {
+  const isObject = raw[index] === '{';
+  const close = isObject ? '}' : ']';
+  const properties: JsonPropertySpan[] = [];
+  let i = index + 1;
+  for (;;) {
+    i = skipJsonWhitespace(raw, i);
+    if (i >= raw.length) throw new Error('unterminated JSON container');
+    if (raw[i] === close) return { end: i + 1, properties };
+    if (raw[i] === ',') {
+      i += 1;
+      continue;
+    }
+    if (!isObject) {
+      i = scanJsonValue(raw, i);
+      continue;
+    }
+    const keyStart = i;
+    const keyEnd = scanJsonString(raw, i);
+    i = skipJsonWhitespace(raw, keyEnd);
+    if (raw[i] !== ':') throw new Error('malformed JSON member');
+    const valueEnd = scanJsonValue(raw, i + 1);
+    properties.push({ key: JSON.parse(raw.slice(keyStart, keyEnd)) as string, start: keyStart, end: valueEnd });
+    i = valueEnd;
+  }
+}
+
+/**
+ * `raw` with `container[property]` spliced out — key, value, and exactly one
+ * adjacent comma — or null when the property (or its container) is not a
+ * directly declared top-level member. Every surviving byte is untouched.
+ */
+function spliceJsonProperty(raw: string, containerKey: string, propertyKey: string): string | null {
+  const documentStart = skipJsonWhitespace(raw, 0);
+  if (raw[documentStart] !== '{') return null;
+  const root = scanJsonContainer(raw, documentStart);
+  const container = root.properties.find((prop) => prop.key === containerKey);
+  if (container === undefined) return null;
+  const containerStart = skipJsonWhitespace(raw, raw.indexOf(':', container.start + containerKey.length) + 1);
+  if (raw[containerStart] !== '{') return null;
+  const target = scanJsonContainer(raw, containerStart).properties.find((prop) => prop.key === propertyKey);
+  if (target === undefined) return null;
+
+  // Take the FOLLOWING comma when there is one; otherwise the preceding one,
+  // so removing the last member never leaves a dangling comma.
+  const afterValue = skipJsonWhitespace(raw, target.end);
+  if (raw[afterValue] === ',') {
+    const nextMember = skipJsonWhitespace(raw, afterValue + 1);
+    const targetLineStart = raw.lastIndexOf('\n', target.start) + 1;
+    const nextMemberLineStart = raw.lastIndexOf('\n', nextMember - 1) + 1;
+    // Members on separate lines: drop the target's whole line, indentation
+    // included, so the survivor keeps the indentation its author gave it.
+    // Members sharing a line: drop exactly the target's bytes and its comma.
+    return nextMemberLineStart > targetLineStart
+      ? `${raw.slice(0, targetLineStart)}${raw.slice(nextMemberLineStart)}`
+      : `${raw.slice(0, target.start)}${raw.slice(nextMember)}`;
+  }
+  let start = target.start;
+  let before = start - 1;
+  while (before >= 0 && (raw[before] === ' ' || raw[before] === '\t' || raw[before] === '\n' || raw[before] === '\r')) {
+    before -= 1;
+  }
+  if (raw[before] === ',') start = before;
+  return `${raw.slice(0, start)}${raw.slice(target.end)}`;
+}
+
+/**
+ * The bytes to write after removing the dead `genie` server: the surgical
+ * splice when re-parsing it yields exactly `expected`, and a re-serialization
+ * that preserves key order, indentation, and the trailing newline otherwise.
+ */
+function rewriteWithoutGenieServer(raw: string, expected: JsonObject): string {
+  const spliced = spliceJsonProperty(raw, 'mcpServers', GENIE_PLUGIN_NAME);
+  if (spliced !== null) {
+    try {
+      if (JSON.stringify(JSON.parse(spliced)) === JSON.stringify(expected)) return spliced;
+    } catch {
+      // Fall through to re-serialization.
+    }
+  }
+  return `${JSON.stringify(expected, null, detectJsonIndent(raw))}${raw.endsWith('\n') ? '\n' : ''}`;
+}
+
+/**
+ * Retire ONLY the exactly-shaped dead `genie mcp` entry from `.mcp.json`,
+ * backing the file up first (`<path>.genie-backup-<stamp>`, the same
+ * backup-first pattern as the Codex OTel migration). Key order, every other
+ * server, every other top-level key, the file's indentation, its trailing
+ * newline, and its mode are preserved; the file itself is removed only when
+ * retiring the entry leaves an empty `mcpServers` and nothing else.
+ *
+ * Total by contract: any failure is reported as `skipped` with the reason, so
+ * `genie init` is never blocked by the state of a user-owned file.
+ */
+export function retireJsonMcpGenieEntry(root: string, now: Date = new Date()): McpConfigResult {
+  const finding = inspectRetiredJsonMcpEntry(root);
+  if (finding.state !== 'present') return { path: finding.path, action: 'skipped', detail: finding.detail };
+  try {
+    const raw = readFileSync(finding.path, 'utf8');
+    const parsed = JSON.parse(raw) as JsonObject;
+    const servers = { ...(parsed.mcpServers as JsonObject) };
+    delete servers[GENIE_PLUGIN_NAME];
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${finding.path}.genie-backup-${stamp}`;
+    copyFileSync(finding.path, backupPath);
+    const otherKeys = Object.keys(parsed).filter((key) => key !== 'mcpServers');
+    if (Object.keys(servers).length === 0 && otherKeys.length === 0) {
+      unlinkSync(finding.path);
+      return {
+        path: finding.path,
+        action: 'updated',
+        detail: `retired the dead \`genie mcp\` registration; .mcp.json held nothing else and was removed (backup: ${basename(backupPath)})`,
+      };
+    }
+    const next: JsonObject = {};
+    for (const key of Object.keys(parsed)) next[key] = key === 'mcpServers' ? servers : parsed[key];
+    const content = rewriteWithoutGenieServer(raw, next);
+    const mode = lstatSync(finding.path).mode & 0o777;
+    applyPreparedWrite({ path: finding.path, action: 'updated', content }, root);
+    chmodSync(finding.path, mode);
+    return {
+      path: finding.path,
+      action: 'updated',
+      detail: `retired the dead \`genie mcp\` registration; every other server preserved (backup: ${basename(backupPath)})`,
+    };
+  } catch (error) {
+    return {
+      path: finding.path,
+      action: 'skipped',
+      detail: `left untouched — could not retire the dead \`genie mcp\` registration: ${diagnostic(error)}`,
+    };
+  }
 }
 
 /** Read-only route inspection used by doctor. */
@@ -958,71 +1062,27 @@ export function inspectCodexProjectMcp(root: string, plugin: CodexPluginProbe): 
 }
 
 /**
- * Refuse an install/enable mutation when it would collide with a user-owned
- * project registration. Marker-owned state is safe for reconciliation; an
- * unmanaged `[mcp_servers.genie]` entry is preserved byte-for-byte.
+ * Retire the two historical Genie project registrations and nothing else: the
+ * dead `genie mcp` entry a pre-retirement `genie init` wrote into `.mcp.json`,
+ * and the marker-owned Codex fallback block. Every other server, key, and byte
+ * in either file is user-owned and preserved.
+ *
+ * Neither step may abort init: the `.mcp.json` step is total (it reports a
+ * symlink, an unreadable file, or a failed rewrite as `skipped` with the
+ * reason), and the reported Codex detail states the outcome it actually
+ * produced rather than a fixed claim.
  */
-export function preflightCodexPluginMutation(root: string): { ok: boolean; path: string; detail: string } {
-  const path = join(root, '.codex', 'config.toml');
-  try {
-    assertSafeProjectConfigPath(root, path);
-    const raw = existsSync(path) ? readFileSync(path, 'utf8') : '';
-    const owned = fallbackBounds(raw, path);
-    if (hasUnmanagedFallback(raw, owned)) {
-      return {
-        ok: false,
-        path,
-        detail:
-          'user-owned [mcp_servers.genie] fallback is present; refusing to install or enable the plugin because that would create duplicate routing',
-      };
-    }
-    return { ok: true, path, detail: 'no unmanaged Genie MCP fallback' };
-  } catch (error) {
-    return { ok: false, path, detail: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/**
- * Reconcile the Codex route at an already-resolved worktree root.
- * Query failures fail safe to the absolute project fallback.
- */
-export function reconcileCodexProjectMcp(
-  root: string,
-  plugin: CodexPluginProbe,
-  entry = genieMcpEntry(),
-): CodexProjectMcpResult {
-  const path = join(root, '.codex', 'config.toml');
-  const effectivePlugin = isUsableCodexPlugin(plugin);
-  const prepared = prepareCodexFallback(path, entry, !effectivePlugin);
-  if ('content' in prepared && prepared.content !== undefined) applyPreparedWrite(prepared);
-  return prepared;
-}
-
-/**
- * Register the shared stdio entry for Claude Code, then reconcile exactly one
- * Codex route. All files are parsed before any write, so valid-but-wrong-shaped
- * JSON cannot leave one sibling config partially updated.
- */
-export function registerProjectMcpConfigs(root: string, options: RegisterProjectMcpOptions = {}): McpConfigResult[] {
-  const entry = options.entry ?? genieMcpEntry();
-  const codexEntry = options.codexEntry ?? entry;
-  const preparedJson = [join(root, '.mcp.json')].map((path) => prepareJsonMcpConfig(path, entry));
-  // Trusted init reconciles the marker-owned Codex route independent of plugin
-  // state (`forceCodexFallback`) — the `||` short-circuits so a forced call never
-  // spends a Codex query. Otherwise the marker is retained only when no usable
-  // plugin is proven. Either way an unowned same-key route is preserved.
-  const required =
-    options.forceCodexFallback === true ||
-    !isUsableCodexPlugin(options.pluginProbe ?? probeCodexGeniePlugin(options.probeDeps));
-  const preparedCodex = prepareCodexFallback(join(root, '.codex', 'config.toml'), codexEntry, required);
-
-  if (!preparedCodex.ok) {
-    throw new Error(`Cannot reconcile Codex project MCP at ${preparedCodex.path}: ${preparedCodex.detail}`);
-  }
-
-  // Parsing/planning above is intentionally complete before the first write.
-  const results = preparedJson.map((prepared) => applyPreparedWrite(prepared, root));
-  if ('content' in preparedCodex && preparedCodex.content !== undefined) applyPreparedWrite(preparedCodex);
-  results.push({ path: preparedCodex.path, action: preparedCodex.action, detail: preparedCodex.detail });
+export function retireProjectMcpConfigs(root: string, _options: RetireProjectMcpOptions = {}): McpConfigResult[] {
+  const results = [retireJsonMcpGenieEntry(root)];
+  const codexPath = join(root, '.codex', 'config.toml');
+  const action = removeCodexMcpFallback(codexPath);
+  results.push({
+    path: codexPath,
+    action,
+    detail:
+      action === 'updated'
+        ? 'retired marker-owned project registration'
+        : 'no marker-owned project registration to retire',
+  });
   return results;
 }

@@ -15,18 +15,12 @@ const CHECK_JS_TARGETS = [
   'validate-completion.cjs',
   'council-stamp.cjs',
   'dispatch-runtime.cjs',
-  'mcp-launcher.cjs',
   'smart-install.js',
   'src/session-context.ts',
   'src/validate-wish.ts',
 ].map((path) => join(SCRIPTS, path));
 
-/**
- * Scripts a runtime execs directly through their shebang rather than via
- * `node <path>`. Kimi's manifest runs `mcpServers.genie.command` as the
- * program itself, so a lost executable bit is a silent MCP outage.
- */
-const REQUIRED_EXECUTABLES = ['mcp-launcher.cjs'].map((path) => join(SCRIPTS, path));
+const REQUIRED_EXECUTABLES: string[] = [];
 
 function strictFixtureTargets(argv: string[]): string[] {
   const targets: string[] = [];

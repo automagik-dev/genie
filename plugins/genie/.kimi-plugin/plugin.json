@@ -1,6 +1,6 @@
 {
   "name": "genie",
-  "version": "5.260816.2",
+  "version": "5.260830.9",
   "description": "Human-AI partnership for Kimi Code CLI. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, turn them into wishes, execute with /genie:work, validate with /genie:review, and ship as one team.",
   "author": {
     "name": "Namastex Labs",
@@ -15,11 +15,6 @@
     "skill": "genie"
   },
   "commands": "./.kimi-plugin/commands/",
-  "mcpServers": {
-    "genie": {
-      "command": "./scripts/mcp-launcher.cjs"
-    }
-  },
   "hooks": [
     {
       "event": "SessionStart",
@@ -49,7 +44,7 @@
   "interface": {
     "displayName": "Genie",
     "shortDescription": "Plan, execute, review, and ship with Genie",
-    "longDescription": "First-class Genie workflows for Kimi Code CLI, including shared skills, lifecycle hooks, and MCP task state. Role agents can be installed optionally by copying agents/*.md into ~/.kimi-code/agents/.",
+    "longDescription": "First-class Genie workflows for Kimi Code CLI, including shared skills and lifecycle hooks. Role agents can be installed optionally by copying agents/*.md into ~/.kimi-code/agents/.",
     "developerName": "Namastex Labs",
     "websiteURL": "https://github.com/automagik-dev/genie"
   }

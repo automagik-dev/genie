@@ -1,6 +1,6 @@
 # Genie Hermes Plugin
 
-The Hermes-native surface for Genie orchestration: seven read-only tools, `/genie` slash commands, advisory hooks, a `hermes genie` CLI tree, and workflow skills — all wrapping the genie v5 CLI through an argv-only subprocess bridge. Every payload reports `mutation: "none"`.
+The Hermes-native surface for Genie orchestration: three read-only gap tools, `/genie` slash commands, advisory hooks, a `hermes genie` CLI tree, and workflow skills — all wrapping the Genie v5 CLI through an argv-only subprocess adapter. Every payload reports `mutation: "none"`.
 
 ## Install
 
@@ -40,23 +40,25 @@ Then, inside a Hermes session:
 /genie help
 ```
 
-## Tools
+## Tools and commands
 
-All seven tools are read-only — every payload carries `mutation: "none"`.
+The three registered tools are read-only — every payload carries `mutation: "none"`.
 
 | Tool | What it does | Mutation |
 |------|--------------|----------|
 | `genie_status` | Genie installation health (`genie doctor --json`) plus a `.genie/` presence check | none |
-| `genie_board` | Planning board (`genie board --json`), optionally scoped to one wish | none |
-| `genie_wish_status` | Composite wish status: board slice plus task list for one slug | none |
-| `genie_task_list` | Task list with optional wish and status filters | none |
-| `genie_task_status` | One task's detail, dependencies, and stage log (raw capture) | none |
 | `genie_work_plan` | Spawn-plan preview via `genie context --wish <slug> --plan` | none |
 | `genie_review_plan` | Board/tasks plus Success and QA Criteria extracted from the wish's WISH.md | none |
 
+The `/genie board` and `/genie wish` command paths read the same standalone `genie board --json` and
+`genie task list --json` data through the local argv adapter. They do not invoke a registered tool route.
+
 The full layer map (slash commands, CLI tree, hooks, skills), payload contract, and grounded tool-to-CLI mapping live in [`references/native-surface.md`](references/native-surface.md).
 
-The authoritative Claude/Codex/Hermes parity document — shipped surfaces per client, the MCP-vs-native tool map, skill invocation via `skills.external_dirs`, install/update convergence paths, and the mutation-gate pointer — lives in [`references/hermes-integration-map.md`](references/hermes-integration-map.md). It marks each row current vs the homogeneous target this integration builds.
+The authoritative Claude/Codex/Hermes parity document — shipped surfaces per client, retired-route history,
+skill invocation via `skills.external_dirs`, install/update convergence paths, and the mutation-gate pointer — lives in
+[`references/hermes-integration-map.md`](references/hermes-integration-map.md). It marks each row current versus the
+homogeneous target this integration builds.
 
 ## Boundary
 

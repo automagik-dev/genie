@@ -63,6 +63,7 @@ describe('Group E release and documentation contracts', () => {
       'plugins/genie/.claude-plugin/plugin.json',
       'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
+      'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
       '.claude-plugin/marketplace.json',
@@ -307,7 +308,7 @@ describe('Group E release and documentation contracts', () => {
     // Missing, skipped, duplicated, stale, or identity-mismatched native
     // entries fail the aggregate instead of degrading to representative proof.
     expect(completeness).toContain('if: ${{ always() }}');
-    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$NATIVE_RESULT" == success ]]');
+    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$STANDALONE_RESULT" == success ]]');
     expect(completeness).toContain('downloaded candidate matrix differs from the matrix used to schedule native jobs');
     expect(completeness).toContain('bun scripts/validate-dogfood-matrix-evidence.ts');
     expect(completeness).toContain('--evidence-dir aggregate/entries');
@@ -501,6 +502,7 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build.js'",
       "'scripts/json-top-level-string.js'",
       "'scripts/hook-bundle-parity.ts'",
+      "'scripts/orca-bundle-parity.ts'",
       "'scripts/hook-content-binding.ts'",
       "'scripts/plugin-executables-check.ts'",
       "'scripts/sync-plugin-skills.ts'",
@@ -687,6 +689,7 @@ describe('Group E release and documentation contracts', () => {
   test('release packaging validates generated hooks and the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
     expect(build).toContain('scripts/hook-bundle-parity.ts');
+    expect(build).toContain('scripts/orca-bundle-parity.ts');
     expect(build).toContain('scripts/hook-content-binding.ts');
     const archive = build.indexOf('tar czf "${TARBALL}"');
     const extract = build.indexOf('tar -xzf "${TARBALL}"');
@@ -694,6 +697,7 @@ describe('Group E release and documentation contracts', () => {
     const postExtractVersion = build.lastIndexOf('scripts/release-payload-version.ts');
     expect(archive).toBeGreaterThan(-1);
     expect(extract).toBeGreaterThan(archive);
+    expect(build).toContain('( umask 000; tar -xzf "${TARBALL}" -C "${VERIFY_ROOT}" )');
     expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
     expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
     expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');
@@ -723,8 +727,14 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:council-workflow');
     expect(workflow).toContain('bun run lint:hook-bundles');
+    expect(workflow).toContain('bun run lint:orca-bundle');
+    expect(pkg.scripts.check).toContain('bun run lint:orca-bundle');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:orca-bundle');
     expect(workflow).toContain('bun run lint:hook-content');
     expect(workflow).toContain('bun run lint:plugin-executables');
+    expect(workflow).toContain('bun run lint:plugin-skills');
+    expect(pkg.scripts.check).toContain('bun run lint:plugin-skills');
+    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-skills');
     expect(pkg.scripts.check).toContain('bun run lint:hook-content');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:hook-content');
     expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
@@ -787,11 +797,11 @@ describe('Group E release and documentation contracts', () => {
     // Lease busy/retry semantics.
     expect(doc).toContain('exclusive lease');
     expect(doc).toContain('no force override');
-    // Rollback floor, sync-only, route-only init, uninstall isolation.
+    // Rollback floor, sync-only, state-scaffold init, uninstall isolation.
     expect(doc).toContain('### Rollback floor');
     expect(doc).toContain('cannot waive the protocol floor');
     expect(doc).toContain('**Sync-only**');
-    expect(doc).toContain('route-only init');
+    expect(doc).toContain('state-scaffold init');
     expect(doc).toContain('independent of plugin availability');
     expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
     // Dev candidate channel + the N-task non-guarantee.
@@ -800,6 +810,52 @@ describe('Group E release and documentation contracts', () => {
     expect(doc).toContain('cannot resume activated N tasks without');
     expect(doc).toContain('scripts/validate-live-dogfood-evidence.ts');
     expect(doc).toContain('scripts/verify-codex-activation-payload.ts');
+  });
+
+  test('dual-mode docs preserve the operator and public Orca contributor contracts', () => {
+    const operator = read('README.md');
+    const contributor = read('plugins/genie/references/orca-orchestration.md');
+    const pluginReadme = read('plugins/genie/README.md');
+
+    for (const topic of [
+      '`standalone` is the default',
+      'genie setup --orchestration-mode orca',
+      'genie setup --orchestration-mode standalone',
+      'orchestration.contract.v1',
+      'genie doctor',
+      'ambiguous_after_possible_commit',
+      'unsupported_environment',
+      'genie update --rollback',
+      'genie uninstall',
+      'A7',
+    ]) {
+      expect(operator).toContain(topic);
+    }
+    expect(operator).toContain('Genie does not open `.genie/genie.db`');
+    expect(operator).toContain('roadmap');
+    expect(operator).toContain('The legacy Genie MCP server is retired');
+    expect(operator).toContain('pre-A7 signed release');
+    expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
+
+    for (const topic of [
+      'orca orchestration',
+      '--json',
+      'shell: false',
+      'fixed by platform and managed-terminal state',
+      'No fallback',
+      'ambiguous_after_possible_commit',
+      'Verb amendment checklist',
+      'public read-back',
+      '`send`, `reply`, `ask`, and `check --ack`',
+    ]) {
+      expect(contributor).toContain(topic);
+    }
+    expect(contributor).not.toContain('ORCA_CLI_COMMAND');
+    for (const forbidden of ['terminal send', '--inject', 'internal RPC', 'private API']) {
+      expect(contributor).toContain(`Reject \`${forbidden}\``);
+    }
+    expect(pluginReadme).toContain('[Orca dual-mode operator and contributor contract]');
+    expect(pluginReadme).toContain('references/orca-orchestration.md');
   });
 
   test('release build independently verifies each extracted activation payload', () => {
@@ -867,7 +923,7 @@ describe('Group E release and documentation contracts', () => {
       '22 physical',
       'Seven optional',
       '36 adapted skills',
-      '.codex/config.toml',
+      'MCP retirement',
       'H3',
       'H4',
       'H6',
@@ -880,8 +936,8 @@ describe('Group E release and documentation contracts', () => {
     expect(read('README.md')).toContain('the **sole** Genie-managed skill provider');
     expect(read('README.md')).toContain('Fallback retirement');
     expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
-    expect(read('README.md')).toContain('the plugin declares no Codex MCP route');
-    expect(read('plugins/genie/README.md')).toContain('the plugin declares no Codex MCP route');
+    expect(read('README.md')).toContain('No product MCP route or launcher');
+    expect(read('plugins/genie/README.md')).toContain('No launcher or registration ships');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
@@ -943,6 +999,28 @@ describe('Group E release and documentation contracts', () => {
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
+  test('ships quick as the bounded fast path and no longer distributes pm', () => {
+    const quick = read('skills/quick/SKILL.md');
+    const router = read('skills/genie/SKILL.md');
+    const lifecycle = read('skills/genie/reference/lifecycle.md');
+    const overview = read('skills/README.md');
+    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'SKILL.md')))
+      .map((entry) => entry.name);
+
+    expect(quick).toContain('request → deployed-dev read-back within 60 minutes');
+    expect(quick).toContain('existing merge authority');
+    expect(quick).toContain('quick-missed');
+    expect(skillNames).toContain('quick');
+    expect(skillNames).not.toContain('pm');
+    expect(router).toContain('"quick"');
+    expect(router).not.toContain('"pm"');
+    expect(lifecycle).toContain('| `quick` |');
+    expect(lifecycle).not.toContain('| `pm` |');
+    expect(overview).toContain('`quick`');
+    expect(overview).not.toContain('`pm`');
+  });
+
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
     const lifecycle = read('skills/genie/reference/lifecycle.md');
     for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
@@ -952,7 +1030,7 @@ describe('Group E release and documentation contracts', () => {
     const review = read('skills/review/SKILL.md');
     const dream = read('skills/dream/SKILL.md');
     const wish = read('skills/wish/templates/wish-template.md');
-    const pm = read('skills/pm/SKILL.md');
+
     expect(dream).toContain('Status field is exactly `APPROVED`');
     expect(brainstorm).toContain('Do not move it to Poured before a WISH.md exists');
     expect(brainstorm).toContain('single brainstorm/planning index is `.genie/INDEX.md`');
@@ -963,8 +1041,6 @@ describe('Group E release and documentation contracts', () => {
     expect(wish).toContain('**depends-on:** none');
     expect(dream).toContain('wish-level `**depends-on:**`');
     expect(dream).not.toContain('depends_on');
-    expect(pm).toContain('Explicit task-scoped grant');
-    expect(pm).toMatch(/Selecting Autopilot\s+does not itself authorize external repository writes/);
   });
 
   test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {
@@ -1071,8 +1147,8 @@ describe('Group E release and documentation contracts', () => {
     expect(omni).toContain('{instance, chat, repo, agent, persona?}');
     expect(omni).toContain('"agent": "codex"');
     const readme = read('README.md');
-    expect(readme).toContain('The Codex route is plugin-independent');
-    for (const path of ['.mcp.json', '.codex/config.toml']) expect(readme).toContain(path);
+    expect(readme).toContain('registrations proven to be Genie-owned');
+    expect(readme).toContain('unowned same-name routes');
   });
 
   test('the retired homolog channel never reappears in any workflow', () => {

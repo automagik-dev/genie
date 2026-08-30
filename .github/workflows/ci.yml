@@ -123,11 +123,17 @@ jobs:
       - name: Generated hook bundle parity
         run: bun run lint:hook-bundles
 
+      - name: Native Orca bundle parity
+        run: bun run lint:orca-bundle
+
       - name: Codex hook launcher content binding
         run: bun run lint:hook-content
 
       - name: Shipped plugin executable static checks
         run: bun run lint:plugin-executables
+
+      - name: Plugin skill mirror + Kimi command orphan check
+        run: bun run lint:plugin-skills
 
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts

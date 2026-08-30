@@ -969,3 +969,38 @@ describe('deterministic runtime badges (laneless render)', () => {
     expect(r.stdout).not.toContain('── Blocked');
   });
 });
+
+// ============================================================================
+// Orchestration authority — the refusal is an error line, never a stack trace
+// ============================================================================
+
+describe('orca lifecycle authority', () => {
+  /** A throwaway GENIE_HOME whose config hands lifecycle authority to Orca. */
+  function orcaHome(): string {
+    const home = mkdtempSync(join(tmpdir(), 'genie-board-home-'));
+    homes.push(home);
+    writeFileSync(join(home, 'config.json'), '{"orchestration":{"mode":"orca"}}');
+    return home;
+  }
+
+  const homes: string[] = [];
+  afterEach(() => {
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  });
+
+  test.each([[[]], [['--json']], [['list']]])(
+    'renders `genie board %j` as one clean Error line with exit 1',
+    async (args: string[]) => {
+      const result = await boardWithEnv(repo, { GENIE_HOME: orcaHome() }, ...args);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe(
+        'Error: local_lifecycle_disabled_in_orca_mode: local Genie lifecycle state is disabled because orchestration.mode is "orca"\n',
+      );
+      // The regression: the open happened OUTSIDE the handler's try, so bun
+      // printed a raw stack trace and a source excerpt instead.
+      expect(result.stderr).not.toContain('at openDb');
+      expect(result.stderr).not.toContain('LocalLifecycleDisabledError:');
+    },
+  );
+});

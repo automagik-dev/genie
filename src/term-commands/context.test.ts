@@ -537,6 +537,68 @@ describe('wish context', () => {
 });
 
 // ============================================================================
+// Orchestration authority — Orca owns lifecycle state, so every form refuses
+// ============================================================================
+
+/** Spawn `genie context ...` with a throwaway GENIE_HOME holding `config`. */
+async function cliWithMode(cwd: string, config: string, ...args: string[]): Promise<CliResult> {
+  const home = mkdtempSync(join(tmpdir(), 'genie-context-home-'));
+  scratchRoots.push(home);
+  writeFileSync(join(home, 'config.json'), config);
+  const env: Record<string, string> = { NO_COLOR: '1' };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key === 'FORCE_COLOR' || key === 'NO_COLOR' || key === 'GENIE_HOME') continue;
+    if (value !== undefined) env[key] = value;
+  }
+  env.GENIE_HOME = home;
+  const proc = Bun.spawn(['bun', GENIE, 'context', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env });
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  return { stdout, stderr, code: await proc.exited };
+}
+
+const ORCA_CONFIG = '{"orchestration":{"mode":"orca"}}';
+
+describe('orca lifecycle authority', () => {
+  // Every form must degrade IDENTICALLY. Before the guard moved ahead of option
+  // resolution the code reported three different things: the wishless form exited
+  // 0 with a standalone payload (it never opens the DB), `--wish` reported
+  // `unreadable-db`, and `--wish --plan` reported `internal`.
+  test.each([[[]], [['--wish', 'foo']], [['--wish', 'foo', '--group', 'g']], [['--wish', 'foo', '--plan']]])(
+    'refuses `genie context %j` with one stable machine-readable line',
+    async (args: string[]) => {
+      const fx = makeFixture();
+      seedTasks(fx, 'foo', ['g']);
+      const failure = failureOf(await cliWithMode(fx.root, ORCA_CONFIG, ...args));
+      expect(failure.error).toBe('local_lifecycle_disabled_in_orca_mode');
+      expect(failure.reason).toContain('orchestration.mode');
+      // The reason never repeats the code the consumer already branched on.
+      expect(failure.reason.startsWith('local_lifecycle_disabled_in_orca_mode')).toBe(false);
+    },
+  );
+
+  test('the refusal precedes option validation, so a bad option cannot change the code', async () => {
+    const fx = makeFixture();
+    // `--group` without `--wish` is normally `group-requires-wish`.
+    expect((await cliWithMode(fx.root, ORCA_CONFIG, '--group', 'g')).stderr).toContain(
+      'local_lifecycle_disabled_in_orca_mode',
+    );
+  });
+
+  test('a malformed orchestration authority keeps its own code, never `internal`', async () => {
+    const fx = makeFixture();
+    const failure = failureOf(await cliWithMode(fx.root, '{"orchestration":{"mode":"nonsense"}}'));
+    expect(failure.error).toBe('invalid_orchestration_authority');
+  });
+
+  test('standalone mode is untouched — the payload still resolves', async () => {
+    const fx = makeFixture();
+    const payload = payloadOf(await cliWithMode(fx.root, '{"orchestration":{"mode":"standalone"}}'));
+    expect(payload.branch).toBe('dev');
+  });
+});
+
+// ============================================================================
 // Shared base-resolution policy (extracted from doctor)
 // ============================================================================
 

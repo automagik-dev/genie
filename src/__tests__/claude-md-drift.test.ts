@@ -47,7 +47,6 @@ const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'setup',
   'shortcuts',
   'task',
-  'ui-bridge',
   'uninstall',
   'update',
 ];

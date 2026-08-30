@@ -2,6 +2,10 @@
 
 This directory is the shared release payload for Claude Code and Codex. The two clients load different manifests, but the 22 product skills have one canonical source (`/skills`) and one committed, byte-checked plugin mirror (`plugins/genie/skills`).
 
+For Orca installation, authority selection, recovery, compatibility, and contribution rules, see the
+[Orca dual-mode operator and contributor contract](references/orca-orchestration.md). Standalone remains the default;
+the packaged Orca payload is inert until the operator explicitly selects Orca authority.
+
 ## What Codex gets
 
 | Surface | Delivery | Contract |
@@ -9,7 +13,7 @@ This directory is the shared release payload for Claude Code and Codex. The two 
 | Product skills | The plugin contains 22 physical in-root skill directories, each with `SKILL.md` and `agents/openai.yaml` | The **sole** Genie-managed skill provider; no escaping symlink and no user-tier copy — nothing is written to `~/.agents/skills` |
 | Fallback retirement | Hidden `~/.agents/skills/.genie-codex-fallback-retirement/` quarantine transaction | Never written on fresh setup. Authenticated setup moves only provably clean, digest-owned historical copies here after one plugin health proof; `txn-<id>/evidence/` archives retain changed trees for recovery |
 | Hooks | `.codex-plugin/plugin.json` points to `hooks/codex-hooks.json` | Three untrusted definitions only: H3 SessionStart context, H4 local PreToolUse guardrails, H6 PermissionRequest approval |
-| MCP | Marker-owned project `.codex/config.toml` | Codex launches the stable absolute `$GENIE_HOME/bin/genie mcp` facade with no `cwd` override; the plugin declares no Codex MCP route |
+| MCP | Retired | No launcher or registration ships; use standalone task/board or the Orca adapter |
 | Role agents | Seven TOMLs are staged in `codex-agents/` | Plugins cannot install custom agents. Authenticated `genie setup --codex` copies the optional profiles into `~/.codex/agents/` after enabled-plugin health/retirement; an exact deliberately disabled plugin skips retirement but still repairs roles |
 
 The plugin is the only Genie-managed skill provider. A fresh Codex install writes zero user-tier skills; bare `$<skill>` now resolves only a personal copy the user installed themselves. A maintainer may separately have 36 adapted skills under `~/.agents/skills`; those are user-owned, are not bundled here, and must survive update/uninstall byte-for-byte. An upgrade from a release that seeded digest-managed fallbacks retires only provably clean, Genie-owned copies into the hidden quarantine transaction after one health proof — a physical non-symlink directory with a valid versioned `.genie-sync.json`, a recomputed digest equal to the marker, and a match against the verified target payload or a committed verified-release historical tuple. Modified-managed, malformed-marker, symlinked, and unmanaged same-name collisions are preserved in place and reported, never adopted or deleted.
@@ -47,7 +51,7 @@ H4 and H6 definitions carry the literal SHA-256 of `scripts/dispatch-runtime.cjs
 
 | ID | Event | Exact behavior | Allowed side effect |
 |----|-------|----------------|---------------------|
-| H3 | `SessionStart` | Reads `.genie/genie.db` read-only via `node:sqlite` (**minimum Node 22.13** — declared here because all three manifests run the hook as `node …/session-context.cjs`, where `bun:sqlite` does not exist) and resolves the session branch through the shared `resolveWishBranch`: a `wish/<slug>` branch injects exactly that wish's status, base/ready task counts, its task cards, and the plan path; otherwise the session agent's claimed tasks (`GENIE_AGENT_ID`, name fallback); otherwise one compact `repo, branch, active wishes` line — never a listing. An absent/unreadable genie.db, an unsupported .git layout, or a Node without `node:sqlite` degrades to a bounded wish-file scan (≤64 candidates/256 KiB), each cause logged distinguishably on stderr | Read-only filesystem + SQLite access, ≤2 KiB out |
+| H3 | `SessionStart` | Reads `.genie/genie.db` read-only via `node:sqlite` (**minimum Node 22.13** — declared here because all three manifests run the hook as `node …/session-context.cjs`, where `bun:sqlite` does not exist) and resolves the session branch through the shared `resolveWishBranch`: a `wish/<slug>` branch injects exactly that wish's status, base/ready task counts, its task cards, and the plan path; otherwise the session agent's claimed tasks (`GENIE_AGENT_ID`, name fallback); otherwise one compact `repo, branch, active wishes` line — never a listing. An absent/unreadable genie.db, an unsupported .git layout, a Node without `node:sqlite`, an Orca lifecycle authority (`orchestration.mode: "orca"` — the local database is never opened), or an unreadable/invalid orchestration config (fails closed the same way) degrades to a bounded wish-file scan (≤64 candidates/256 KiB), each cause logged distinguishably on stderr | Read-only filesystem + SQLite access, ≤2 KiB out |
 | H4 | `PreToolUse` | Verifies the definition-bound launcher, then runs branch/git-freeze checks for Bash and audit-context for Write/Edit/apply_patch | Deterministic local repository/Git reads only; no Codex network lookup, freshness/identity handler, Omni, install, update, global sync, or scaffolding |
 | H6 | `PermissionRequest` | Verifies the definition-bound launcher, applies the configured tool matcher, and invokes Omni once only when approvals are explicitly enabled | Bounded/redacted approval-queue state; timeout, interruption, malformed output, binding drift, and transport failure deny |
 
@@ -63,7 +67,7 @@ No hook installs or updates Genie. Operators use:
 
 ```bash
 genie install --integrations codex  # verify and publish the Codex delivery
-genie setup --codex                 # activate it, retire clean fallbacks, converge roles + project route
+genie setup --codex                 # activate it, retire clean fallbacks, converge roles
 genie update                        # deliver a newer signed binary/payload; never activate Codex
 ```
 
@@ -72,7 +76,7 @@ authenticated delivery facts but never advance the plugin cache, change enabled 
 write roles. When a delivered generation is pending, close or retire tasks pinned to the prior generation and run setup
 from an external real terminal. Setup requires the matching record before its first prompt or mutation, activates the
 exact delivered bytes, proves plugin health, retires only provably clean historical fallbacks, and then converges role
-profiles and the marker-owned project route. Unmanaged, modified, and personal skills stay user-owned; persisted scope
+profiles. Unmanaged, modified, and personal skills stay user-owned; persisted scope
 does not authorize hooks or background updates.
 
 ### 2026-07-11 update incident
@@ -86,10 +90,10 @@ Containment recovered all 22 adapted directories from Genie's automatic backup, 
 | Surface | Delivery | Contract |
 |---------|----------|----------|
 | Product skills | `.kimi-plugin/plugin.json` declares `skills: "./skills/"` — the same 22 physical in-root skill directories | Loaded as plugin-tier Skills; invoke with the Skill tool or `/skill:<name>` |
-| Slash commands | `.kimi-plugin/plugin.json` declares `commands: "./.kimi-plugin/commands/"` — thin wrappers for the core lifecycle skills, kept inside `.kimi-plugin/` so Claude Code's root-level `commands/` auto-discovery never loads them | `/genie:wish`, `/genie:work`, `/genie:review`, `/genie:brainstorm`, `/genie:fix`, `/genie:trace`, `/genie:report`, `/genie:docs`, `/genie:council`, `/genie:refine`, `/genie:pm` (the auto-router loads at session start, so no `/genie:genie` command) |
+| Slash commands | `.kimi-plugin/plugin.json` declares `commands: "./.kimi-plugin/commands/"` — thin wrappers for the core lifecycle skills, kept inside `.kimi-plugin/` so Claude Code's root-level `commands/` auto-discovery never loads them | `/genie:wish`, `/genie:work`, `/genie:review`, `/genie:brainstorm`, `/genie:fix`, `/genie:trace`, `/genie:report`, `/genie:docs`, `/genie:council`, `/genie:refine`, `/genie:quick` (the auto-router loads at session start, so no `/genie:genie` command) |
 | Session start | `sessionStart.skill: "genie"` in the manifest | Loads the auto-router skill into the main Agent at session start — the Kimi-native replacement for rule injection |
 | Hooks | Inline `hooks` array in `.kimi-plugin/plugin.json` | Same scripts as Claude (`session-context.cjs`, `dispatch-runtime.cjs claude`, `validate-wish.cjs`); the Stop-hook `validate-completion.cjs` was retired (see Retired hook surfaces below). Kimi's hook protocol is wire-compatible. Each command addresses its script as `"$KIMI_PLUGIN_ROOT/scripts/<name>.cjs"` rather than `./scripts/...`, so a hook can never resolve against the session cwd of a cloned repository. Note: Kimi `SessionStart` is observation-only, so wish-state context there is best-effort |
-| MCP | `mcpServers.genie` in the manifest runs `./scripts/mcp-launcher.cjs` | Same canonical `$GENIE_HOME/bin/genie mcp` facade as Claude; the launcher file ships executable. Kimi spawns this command directly rather than through a shell, and documents no manifest-level environment interpolation, so it stays `./`-relative and relies on Kimi's documented contract that an stdio `command` starting with `./` resolves inside the plugin root (a server whose `command` or `cwd` escapes that root is ignored) |
+| MCP | Retired | No Kimi MCP declaration or launcher ships |
 | Role agents | The seven `agents/*.md` profiles are Kimi-loadable as-is (Claude-style frontmatter is tolerated) | Plugin manifests cannot install agents. Optional manual step: copy `agents/*.md` into `~/.kimi-code/agents/` (or add the managed plugin's `agents/` dir to `extra_agent_dirs` in `config.toml`) |
 
 Kimi has no plugin surface for Claude's `settings.json` permissions, `scripts/statusline.sh`, or the stamped `workflows/council.js`; those remain Claude-only. Install with `/plugins install <path-to-this-directory>` in the Kimi TUI, then `/reload`.
@@ -135,7 +139,7 @@ bun run skills:lint
 bun scripts/fresh-install-smoke.ts
 ```
 
-Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, MCP launcher, role-agent staging, and the 22-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
+Release tarballs contain the compiled `genie` executable, the complete `plugins/` tree (including hooks, role-agent staging, and the 22-skill mirror), root `skills/`, `templates/`, both runtime marketplace manifests, and `VERSION`. Build/version paths verify source-to-plugin parity, required component inventory, generated-hook parity, and version equality before packaging, then extract the finished archive and repeat the inventory/mode/resource/version checks against the extracted payload.
 
 ## Claude Code and Hermes
 

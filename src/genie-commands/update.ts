@@ -59,6 +59,7 @@ import {
 } from '../lib/install-promotion.js';
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
+import { refreshOwnedOrcaPluginMetadata } from '../lib/orca-plugin-lifecycle.js';
 import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
@@ -740,13 +741,21 @@ export async function downloadAndVerifyDeliveryAssets(
 
 /**
  * Extract a tarball into a destination directory. Uses the system `tar` since
- * macOS bsdtar and GNU tar both accept `-xzf`. Throws on failure.
+ * macOS bsdtar and GNU tar both accept `-xzpf`. Throws on failure.
+ *
+ * `-p` (--preserve-permissions) is load-bearing: as non-root, both tars apply
+ * the process umask to every extracted member by default, so under `umask 077`
+ * the archived 0755 `genie` lands as 0700. Admission then fchmods only its
+ * private copy back to 0755 and the content digests (which cover mode bits)
+ * diverge — observed 2026-08-30 as "admitted install payload content does not
+ * match the authenticated source". The signed archive's recorded modes are the
+ * contract; extraction must reproduce them regardless of the caller's umask.
  */
 export async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
   mkdirSync(destDir, { recursive: true });
-  const result = await runCommandSilent('tar', ['-xzf', tarballPath, '-C', destDir], undefined, 30_000);
+  const result = await runCommandSilent('tar', ['-xzpf', tarballPath, '-C', destDir], undefined, 30_000);
   if (!result.success) {
-    throw new Error(`tar -xzf ${tarballPath} failed: ${result.output.trim() || 'no output'}`);
+    throw new Error(`tar -xzpf ${tarballPath} failed: ${result.output.trim() || 'no output'}`);
   }
 }
 
@@ -2841,6 +2850,31 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   return { integrations };
 }
 
+/**
+ * A4 ownership-marker refresh is advisory to delivery, never a delivery
+ * invariant. It spawns the live Orca CLI (public A3 compatibility probe,
+ * bounded at 30 s) and refuses on an unsafe marker, so it can fail for reasons
+ * unrelated to the bytes just delivered: Orca closed, below the supported
+ * range, or a corrupted marker. Before this the call sat unguarded between
+ * the payload swap and `publishCodexDeliveryFacts`, so an Orca-mode operator
+ * updating with Orca closed was left with a swapped binary and no delivery
+ * record — the exact state the delivery contract exists to prevent. The
+ * lifecycle function keeps its throwing contract (marker untouched on
+ * failure); the updater reports and moves on, and `genie doctor` owns the
+ * degraded case (`owned-modified` with a recovery line).
+ */
+export async function refreshOrcaOwnershipAfterDelivery(
+  refresh: () => Promise<unknown> = refreshOwnedOrcaPluginMetadata,
+  report: (message: string) => void = log,
+): Promise<void> {
+  try {
+    await refresh();
+  } catch (cause) {
+    report(`⚠ Orca plugin ownership marker was not refreshed: ${errMsg(cause)}`);
+    report('  Delivery is complete. Run `genie doctor` to re-check the Orca plugin lifecycle.');
+  }
+}
+
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -3199,6 +3233,10 @@ async function runDelivery(
       throw new CodexDeliveryPublicationError(`delivery record publication failed: ${errMsg(cause)}`);
     }
     if (publication.kind === 'incomplete') throw new CodexDeliveryPublicationError(publication.detail);
+    // A4: refresh only an existing Genie ownership claim. Runs after the
+    // delivery record is published and never fails the update — see
+    // refreshOrcaOwnershipAfterDelivery.
+    await refreshOrcaOwnershipAfterDelivery();
     return auxiliaryOutcomes;
   } finally {
     // The command boundary owns both lifecycle leases. This scope only closes

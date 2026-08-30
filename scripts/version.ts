@@ -14,6 +14,7 @@
  * - package.json (root)
  * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
  * - plugins/genie/.codex-plugin/plugin.json (Codex)
+ * - plugins/genie/orca-plugin.json (Orca)
  * - plugins/genie/package.json (runtime payload metadata)
  * - .claude-plugin/marketplace.json (marketplace listing)
  * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
@@ -199,6 +200,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/orca-plugin.json'),
     join(rootDir, 'plugins/genie/package.json'),
     join(rootDir, 'plugins/pi-genie/package.json'),
   ];

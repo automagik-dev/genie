@@ -18,15 +18,17 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
-import { reconcileCodexProjectMcp, resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
+import { resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
 import { VERSION } from '../lib/version.js';
 import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
+  checkCodexProjectContext,
   checkIndexLaneDrift,
   checkOmniBridgeHealth,
+  checkRetiredJsonMcpEntry,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
@@ -66,6 +68,15 @@ async function captureDoctor(fn: () => Promise<void>): Promise<{ output: string;
 }
 
 const NO_CODEX = { cliAvailable: false, status: 'unavailable' as const, installed: false, detail: 'fixture absent' };
+
+function seedRetiredCodexMarker(root: string): void {
+  const directory = join(root, '.codex');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, 'config.toml'),
+    '# BEGIN GENIE MCP FALLBACK\nmcp_servers.genie.command = "/absolute/genie"\nmcp_servers.genie.args = ["mcp"]\n# END GENIE MCP FALLBACK\n',
+  );
+}
 const ISOLATED_ENV_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'HERMES_HOME'] as const;
 let isolatedHome: string;
 let savedIsolatedEnv: Partial<Record<(typeof ISOLATED_ENV_KEYS)[number], string>>;
@@ -94,7 +105,14 @@ afterEach(() => {
 });
 
 function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
-  return { root, databaseRoot: root, pluginProbe: NO_CODEX, bunVersion: '1.3.10', bunPath: '/usr/bin/bun' };
+  return {
+    root,
+    databaseRoot: root,
+    pluginProbe: NO_CODEX,
+    codexActivation: null,
+    bunVersion: '1.3.10',
+    bunPath: '/usr/bin/bun',
+  };
 }
 
 describe('Bun runtime contract', () => {
@@ -198,11 +216,7 @@ describe('Codex doctor lifecycle results', () => {
     const root = mkdtempSync(join(tmpdir(), 'doctor-node-availability-'));
     try {
       trustProjectInCodexConfig(root);
-      reconcileCodexProjectMcp(
-        root,
-        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
-        { command: '/absolute/genie', args: ['mcp'] },
-      );
+      seedRetiredCodexMarker(root);
       const checks = await checkCodexIntegration(root, {
         cliAvailable: true,
         status: 'ok',
@@ -215,8 +229,8 @@ describe('Codex doctor lifecycle results', () => {
       const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
       const route = checks.find((check) => check.name === 'Codex Genie MCP registration');
       expect(plugin?.detail).toContain('"node" is not available on PATH');
-      expect(route).toMatchObject({ status: 'pass' });
-      expect(route?.detail).toContain('fallback');
+      expect(route).toMatchObject({ status: 'warn' });
+      expect(route?.detail).toContain('retired route remains');
       expect(readFileSync(join(root, '.codex', 'config.toml'), 'utf8')).toContain('/absolute/genie');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -288,7 +302,7 @@ describe('Codex doctor lifecycle results', () => {
         usabilityDetail: 'active plugin cache root is missing',
         detail: 'active plugin cache root is missing',
       };
-      reconcileCodexProjectMcp(root, probe, { command: '/absolute/genie', args: ['mcp'] });
+      seedRetiredCodexMarker(root);
       const checks = await checkCodexIntegration(root, probe);
       const plugin = checks.find((check) => check.name === 'Codex Genie plugin');
       const capability = checks.find((check) => check.name === 'Codex Genie MCP capability');
@@ -296,8 +310,8 @@ describe('Codex doctor lifecycle results', () => {
       expect(plugin).toMatchObject({ status: 'warn' });
       expect(capability).toMatchObject({ status: 'warn' });
       expect(capability?.detail).toContain('source-bundle declarations do not establish runtime health');
-      expect(route).toMatchObject({ status: 'pass' });
-      expect(route?.detail).toContain('fallback');
+      expect(route).toMatchObject({ status: 'warn' });
+      expect(route?.detail).toContain('retired route remains');
     } finally {
       if (priorCodexHome === undefined) Reflect.deleteProperty(process.env, 'CODEX_HOME');
       else process.env.CODEX_HOME = priorCodexHome;
@@ -360,11 +374,7 @@ describe('Codex doctor lifecycle results', () => {
       if (roots === null) throw new Error('linked worktree roots were not resolved');
       expect(realpathSync(roots.worktreeRoot)).toBe(realpathSync(linked));
       expect(realpathSync(roots.commonRoot)).toBe(realpathSync(repo));
-      reconcileCodexProjectMcp(
-        linked,
-        { cliAvailable: true, status: 'ok', installed: true, enabled: false, usable: false, detail: 'disabled' },
-        { command: '/absolute/genie', args: ['mcp'] },
-      );
+      seedRetiredCodexMarker(linked);
       expect(existsSync(join(linked, '.codex', 'config.toml'))).toBe(true);
       expect(existsSync(join(repo, '.codex', 'config.toml'))).toBe(false);
 
@@ -393,18 +403,7 @@ describe('Codex doctor lifecycle results', () => {
     const durations: number[] = [];
     for (let index = 0; index < 5; index += 1) {
       const started = performance.now();
-      await captureDoctor(() =>
-        doctorCommand(
-          { json: true },
-          {
-            root: process.cwd(),
-            databaseRoot: process.cwd(),
-            pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
-            bunVersion: '1.3.10',
-            bunPath: '/usr/bin/bun',
-          },
-        ),
-      );
+      await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
       durations.push(performance.now() - started);
     }
     durations.sort((a, b) => a - b);
@@ -1396,33 +1395,32 @@ describe('checkAgentSync', () => {
     `mcp_servers:\n  genie:\n    command: ${JSON.stringify(command)}\n    args:\n      - mcp\n`;
   const skillsConfig = (dir: string) => `skills:\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
 
-  test('hermes mcp leg: absolute executable command → pass; each unhealthy shape → warn', () => {
+  test('hermes mcp leg: any remaining route warns; absence is the retired healthy state', () => {
     presentHermes();
     const bin = presentGenieBinary();
 
     writeHermesConfig(mcpConfig(bin));
     let mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
-    expect(mcp?.status).toBe('pass');
+    expect(mcp?.status).toBe('warn');
     expect(mcp?.detail).toContain(bin);
 
     // Relative command → warn.
     writeHermesConfig(mcpConfig('genie'));
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('not absolute');
+    expect(mcp?.detail).toContain('retired');
 
     // Absolute but non-existent/non-executable → warn.
     writeHermesConfig(mcpConfig(join(tmp, 'bin', 'nope')));
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('not executable');
+    expect(mcp?.detail).toContain('retired');
 
-    // Config absent entirely → warn advising genie update.
+    // Config absent entirely is the converged A7 state.
     rmSync(join(hermesHome, 'config.yaml'), { force: true });
     mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
-    expect(mcp?.status).toBe('warn');
-    expect(mcp?.detail).toContain('config.yaml absent');
-    expect(mcp?.suggestion).toContain('genie update');
+    expect(mcp?.status).toBe('pass');
+    expect(mcp?.detail).toContain('retired route absent');
   });
 
   test('hermes skills leg: external_dirs contains the product root → pass', () => {
@@ -1455,13 +1453,13 @@ describe('checkAgentSync', () => {
     expect(skills?.suggestion).toContain('genie update');
   });
 
-  test('hermes legs are independent: healthy MCP + unhealthy skills', () => {
+  test('hermes legs are independent: stale MCP + unhealthy skills', () => {
     presentHermes();
     const bin = presentGenieBinary();
-    // MCP block healthy, skills block absent → mcp pass, skills warn.
+    // A stale MCP block and absent skills are independent warnings.
     writeHermesConfig(mcpConfig(bin));
     const results = checkAgentSync(paths());
-    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
+    expect(find(results, 'agent sync: hermes mcp')?.status).toBe('warn');
     expect(find(results, 'agent sync: hermes skills')?.status).toBe('warn');
     // The link leg stays independently healthy.
     expect(find(results, 'agent sync: hermes')?.status).toBe('pass');
@@ -1526,10 +1524,10 @@ describe('checkAgentSync', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Textual duplicate-key detection (DF-1): the mcp/skills legs must WARN when
+  // Textual duplicate-key detection (DF-1): the retired-route/skills legs must WARN when
   // a spec-invalid duplicate child key is present under mcp_servers:/skills: —
-  // even when the last-wins PARSED value looks perfectly healthy, since that
-  // is exactly what let the duplicate persist forever before the repair.
+  // even when the parser accepts the last value, since duplicate legacy keys
+  // are still stale retirement residue.
   // -------------------------------------------------------------------------
 
   const dupMcpConfig = (command: string) =>
@@ -1537,18 +1535,11 @@ describe('checkAgentSync', () => {
   const dupSkillsConfig = (dir: string) =>
     `skills:\n  external_dirs: []\n  external_dirs:\n    - ${JSON.stringify(dir)}\n`;
 
-  test('hermes mcp leg: textual duplicate genie key → warn naming the config path, even though the parsed value is healthy', () => {
+  test('hermes mcp leg: duplicate retired genie keys warn and name the config path', () => {
     presentHermes();
     const bin = presentGenieBinary();
     writeHermesConfig(dupMcpConfig(bin));
 
-    // The parsed (last-wins) value looks completely correct...
-    const parsed = Bun.YAML.parse(readFileSync(join(hermesHome, 'config.yaml'), 'utf8')) as {
-      mcp_servers: { genie: { command: string } };
-    };
-    expect(parsed.mcp_servers.genie.command).toBe(bin);
-
-    // ...but doctor must still flag the textual duplicate.
     const mcp = find(checkAgentSync(paths()), 'agent sync: hermes mcp');
     expect(mcp?.status).toBe('warn');
     expect(mcp?.detail).toContain('duplicate');
@@ -1572,10 +1563,9 @@ describe('checkAgentSync', () => {
     expect(skills?.suggestion).toContain('genie update');
   });
 
-  test('after repair (single key, no duplicate): both legs pass, no duplicate warning', () => {
+  test('after retirement repair (no MCP key): both legs pass, no duplicate warning', () => {
     presentHermes();
-    const bin = presentGenieBinary();
-    writeHermesConfig(`${mcpConfig(bin)}${skillsConfig(productSkillsRoot())}`);
+    writeHermesConfig(skillsConfig(productSkillsRoot()));
 
     const results = checkAgentSync(paths());
     expect(find(results, 'agent sync: hermes mcp')?.status).toBe('pass');
@@ -2694,5 +2684,76 @@ describe('Group E lifecycle truth (doctor)', () => {
     const { output } = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(null)));
     const json = JSON.parse(output) as DoctorJson;
     expect(json.checks.find((c) => c.name === 'Codex project context')).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// The retired `genie mcp` registration in .mcp.json (H3)
+// ============================================================================
+
+describe('checkRetiredJsonMcpEntry', () => {
+  let repoRoot: string;
+
+  beforeEach(() => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'genie-doctor-mcpjson-'));
+  });
+  afterEach(() => rmSync(repoRoot, { recursive: true, force: true }));
+
+  test('warns, names the file, and names the fix when the dead registration is still there', () => {
+    writeFileSync(
+      join(repoRoot, '.mcp.json'),
+      '{"mcpServers":{"genie":{"command":"/home/u/.genie/bin/genie","args":["mcp"]}}}',
+    );
+    const [check] = checkRetiredJsonMcpEntry(repoRoot);
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain(join(repoRoot, '.mcp.json'));
+    expect(check.suggestion).toContain('genie init');
+  });
+
+  test('passes on an absent, clean, symlinked, or unparseable .mcp.json', () => {
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"other":{"command":"x"}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    // A user wrapper under the same key is not the retired registration.
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"/mine","args":["mcp"]}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    writeFileSync(join(repoRoot, '.mcp.json'), 'not json');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+  });
+
+  test('never flips doctor ok:false — it is warning-level on a user-owned file', () => {
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"genie","args":["mcp"]}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot).every((c) => c.status !== 'fail')).toBe(true);
+  });
+});
+
+// ============================================================================
+// Orca lifecycle authority — doctor never opens the local store
+// ============================================================================
+
+describe('checkCodexProjectContext under Orca', () => {
+  function writeOrchestrationMode(mode: string): void {
+    const home = process.env.GENIE_HOME as string;
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode } }));
+  }
+
+  test('reports the authority without resolving context or opening genie.db', () => {
+    writeOrchestrationMode('orca');
+    const repoRoot = join(isolatedHome, 'repo');
+    const [check] = checkCodexProjectContext(repoRoot);
+    expect(check.status).toBe('pass');
+    expect(check.detail).toBe('not resolved — Orca is the selected lifecycle authority');
+    // The guard forbids the open, so nothing may have been created either.
+    expect(existsSync(join(repoRoot, '.genie', 'genie.db'))).toBe(false);
+  });
+
+  test('still resolves context in standalone mode', () => {
+    writeOrchestrationMode('standalone');
+    const [check] = checkCodexProjectContext(join(isolatedHome, 'repo'));
+    expect(check.detail).not.toContain('Orca is the selected lifecycle authority');
   });
 });

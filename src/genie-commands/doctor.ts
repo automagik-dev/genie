@@ -15,18 +15,9 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import {
-  constants,
-  accessSync,
-  existsSync,
-  lstatSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  statSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import {
   type AgentFileManifestEntry,
   CLAUDE_EXCLUDED_SKILLS,
@@ -62,6 +53,7 @@ import { type RouteLayerFinding, assessSnapshotDelivery, classifyRouteLayers } f
 import {
   type CodexPluginProbe,
   inspectCodexProjectMcp,
+  inspectRetiredJsonMcpEntry,
   probeCodexGeniePlugin,
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
@@ -77,6 +69,7 @@ import {
 import { hasDuplicateMcpGenieKeys } from '../lib/hermes-mcp-config.js';
 import { hasDuplicateSkillsExternalDirsKeys, resolveProductSkillsRoot } from '../lib/hermes-skills-config.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import {
   CANONICAL_GENIE_SKILL_NAMES,
   type CodexAgentDisplayState,
@@ -273,6 +266,10 @@ function checkGit(root: string | null): CheckResult[] {
 }
 
 function checkDatabase(root: string | null): CheckResult[] {
+  const lifecycle = inspectOrcaPluginLifecycle();
+  if (lifecycle.mode === 'orca') {
+    return [{ name: 'genie.db', status: 'pass', detail: 'not opened — Orca is the selected lifecycle authority' }];
+  }
   const dbPath = join(root ?? process.cwd(), '.genie', 'genie.db');
   if (!existsSync(dbPath)) {
     return [
@@ -449,8 +446,8 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
     };
   }
   const current = state.version === VERSION;
-  // Post-Group-A the plugin ships NO MCP declaration — the marker-owned project
-  // route is the only Codex route — so plugin health is installed+enabled+current.
+  // A7 ships no MCP declaration or project route, so plugin health is
+  // installed+enabled+current.
   // The probe still reports the OLD manifest expectation ("does not point
   // mcpServers to ./.mcp.json"): on a post-A generation that IS the healthy
   // shape, so it is filtered from diagnostics; every other usability detail
@@ -462,7 +459,7 @@ function codexPluginCheck(state: CodexPluginProbe): CheckResult {
   return {
     name: 'Codex Genie plugin',
     status: healthy ? 'pass' : 'warn',
-    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; MCP route: marker-owned project route (plugin declares none)${diagnostics} (CLI v${VERSION})`,
+    detail: `v${state.version ?? 'unknown'}; ${state.enabled === true ? 'enabled' : 'disabled or unknown'}; standalone task/board (plugin declares no MCP route)${diagnostics} (CLI v${VERSION})`,
     suggestion: healthy ? undefined : 'Run `genie setup --codex` to activate the delivered generation.',
   };
 }
@@ -528,20 +525,21 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
     const trust = findings.filter(
       (finding) => finding.kind === 'untrusted-config' || finding.kind === 'project-trust-required',
     );
-    const status: CheckStatus = !route.ok || hard.length > 0 ? 'fail' : trust.length > 0 ? 'warn' : 'pass';
+    const retired = route.route !== 'none' && route.route !== 'plugin';
+    const status: CheckStatus = retired || hard.length > 0 || trust.length > 0 ? 'warn' : 'pass';
     const findingText = findings.map((finding) => `${finding.kind}: ${finding.detail}`).join('; ');
     return {
       name: 'Codex Genie MCP registration',
       status,
-      detail: `${route.route}: ${route.detail ?? 'no detail'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
+      detail: `${retired ? 'retired route remains preserved' : 'retired routes absent'}${findingText.length > 0 ? `; ${findingText}` : ''}`,
       suggestion:
         status === 'pass'
           ? undefined
           : hard.length > 0
-            ? 'Resolve the reported same-key/shadowing layer yourself (Genie never edits user-owned config), then run `genie init`.'
+            ? 'Resolve the reported user-owned same-key/shadowing layer if desired; Genie never edits it.'
             : trust.length > 0 && route.ok
               ? 'Trust this project in Codex, then start a new Codex task.'
-              : 'Run `genie init` in this worktree to reconcile the project fallback.',
+              : 'Run `genie init` to remove a marker-owned historical route; user-owned routes are preserved.',
       ...(findings.length > 0 ? { routeLayers: findings } : {}),
     };
   } catch (error) {
@@ -562,8 +560,21 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
  * warn (the MCP returns a typed error, never a healthy empty board); a
  * bare/submodule/external layout or an unresolvable context is a hard fail.
  */
-function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
+export function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
   if (root === null || injected === null) return [];
+  // Same stance as the `genie.db` check: under Orca the local store is not the
+  // lifecycle authority, so doctor neither resolves project context nor opens
+  // the database it would name — reporting a live DB there is a false claim,
+  // and opening it is exactly what the orca-mode guard forbids.
+  if (inspectOrcaPluginLifecycle().mode === 'orca') {
+    return [
+      {
+        name: 'Codex project context',
+        status: 'pass',
+        detail: 'not resolved — Orca is the selected lifecycle authority',
+      },
+    ];
+  }
   const context = injected ?? resolveProjectContext(root);
   if (context.kind === 'ok') {
     let db: Database | null = null;
@@ -667,7 +678,7 @@ function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {
       status: manifestState === 'declares-none' ? 'pass' : 'warn',
       detail:
         manifestState === 'declares-none'
-          ? `plugin declares no MCP route (marker-owned project route is authoritative) at ${probe.activePluginRoot}`
+          ? `plugin declares no MCP route; standalone task/board commands are authoritative at ${probe.activePluginRoot}`
           : manifestState === 'declares-route'
             ? `active plugin manifest still declares mcpServers — a second Genie route risks cache-root routing: ${manifest}`
             : manifestState === 'unreadable'
@@ -1596,11 +1607,11 @@ function checkPiSync(input: PiCheckInput): CheckResult[] {
   ];
 }
 
-/** `mcp_servers.genie.command` must be an absolute path to an existing, executable file. */
+/** A7 health: no Hermes Genie MCP route is the converged state; any surviving route is preserved but stale. */
 function checkHermesMcp(configText: string | null, configPath: string): CheckResult {
   const name = 'agent sync: hermes mcp';
   if (configText === null) {
-    return { name, status: 'warn', detail: `config.yaml absent (${configPath})`, suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: `retired route absent (${configPath})` };
   }
   const inline = detectInlineTopLevelKey(configText, 'mcp_servers');
   if (inline) return { name, status: 'warn', detail: inline, suggestion: HERMES_INLINE_SUGGESTION };
@@ -1614,25 +1625,14 @@ function checkHermesMcp(configText: string | null, configPath: string): CheckRes
   }
   const command = readMcpGenieCommand(configText);
   if (command === null) {
-    return { name, status: 'warn', detail: 'mcp_servers.genie absent', suggestion: SYNC_SUGGESTION };
+    return { name, status: 'pass', detail: 'retired mcp_servers.genie route absent' };
   }
-  if (!isAbsolute(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command not absolute (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  if (!isExecutableFile(command)) {
-    return {
-      name,
-      status: 'warn',
-      detail: `mcp_servers.genie.command missing or not executable (${command})`,
-      suggestion: SYNC_SUGGESTION,
-    };
-  }
-  return { name, status: 'pass', detail: `mcp_servers.genie → ${command}` };
+  return {
+    name,
+    status: 'warn',
+    detail: `retired mcp_servers.genie route remains preserved (${command})`,
+    suggestion: SYNC_SUGGESTION,
+  };
 }
 
 /**
@@ -1770,16 +1770,6 @@ function safeResolveProductSkillsRoot(genieHome: string): string | null {
 
 function countSkillDirs(dir: string): number {
   return listSubdirs(dir).filter((name) => existsSync(join(dir, name, 'SKILL.md'))).length;
-}
-
-function isExecutableFile(path: string): boolean {
-  try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function readTextOrNull(path: string): string | null {
@@ -2062,6 +2052,9 @@ function indexTargetExists(genieDir: string, relativePath: string): boolean {
  */
 export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
   const name = 'jar: index-lane drift';
+  if (inspectOrcaPluginLifecycle().mode === 'orca') {
+    return [{ name, status: 'pass', detail: 'not read — Orca is the selected lifecycle authority' }];
+  }
   const base = root ?? process.cwd();
   const indexPath = join(base, '.genie', 'INDEX.md');
   if (!existsSync(indexPath)) {
@@ -2105,6 +2098,29 @@ export function checkIndexLaneDrift(root: string | null, databaseRoot: string | 
   ];
 }
 
+/**
+ * The `mcp: retired \`genie mcp\` registration` check. Every repo that ran
+ * `genie init` before the MCP server was retired carries a `genie` entry in
+ * `.mcp.json` that launches `genie mcp` — a command that now prints its
+ * retirement diagnostic and exits 1, so Claude Code shows it as a permanently
+ * failed MCP server. Warning-level: it never flips doctor `ok:false`, because
+ * `.mcp.json` is a user-owned file and the repair is one command away.
+ */
+export function checkRetiredJsonMcpEntry(root: string | null): CheckResult[] {
+  const name = 'mcp: retired `genie mcp` registration';
+  const finding = inspectRetiredJsonMcpEntry(root ?? process.cwd());
+  if (finding.state !== 'present') return [{ name, status: 'pass', detail: finding.detail }];
+  return [
+    {
+      name,
+      status: 'warn',
+      detail: `${finding.path} still registers the retired \`genie mcp\` server, which Claude Code shows as failed`,
+      suggestion:
+        'Run `genie init` in this repository to retire that entry (the file is backed up first and every other server is preserved), or delete the "genie" entry from .mcp.json by hand.',
+    },
+  ];
+}
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -2137,6 +2153,51 @@ export interface DoctorDeps {
   projectContext?: ProjectContext | null;
   /** TEST-ONLY cryptographic seam for persisted delivery-evidence fixtures; no CLI/env path exposes it. */
   deliveryEvidenceVerification?: DeliveryEvidenceVerificationDependencies;
+  /** A3 public compatibility probe seam for Orca-mode diagnostics. */
+  orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
+}
+
+export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
+  const state = inspectOrcaPluginLifecycle();
+  const payloadStatus =
+    state.payload === 'owned-clean' || (state.mode === 'standalone' && state.payload === 'unmanaged');
+  const results: CheckResult[] = [
+    {
+      name: 'orchestration authority',
+      status: state.mode === 'invalid' ? 'fail' : 'pass',
+      detail: `mode=${state.mode}; payload=${state.payload}; host_registration=${state.hostRegistration}`,
+      suggestion: state.recovery,
+    },
+  ];
+  if (state.mode !== 'orca') return results;
+  if (!payloadStatus) {
+    const authority = results[0];
+    if (authority !== undefined) results[0] = { ...authority, status: 'fail' };
+    return results;
+  }
+  if (!probeLiveRuntime && deps.orcaCompatibilityProbe === undefined) return results;
+  try {
+    const probe =
+      deps.orcaCompatibilityProbe ??
+      (async () => {
+        const { createOrcaPluginRuntime } = await import('../../plugins/genie/orca-runtime.js');
+        return createOrcaPluginRuntime().probe();
+      });
+    const compatibility = await probe();
+    results.push({
+      name: 'Orca compatibility',
+      status: 'pass',
+      detail: `runtime=${compatibility.runtimeVersion}; contract=${compatibility.contract}; runtime_id=${compatibility.runtimeId}`,
+    });
+  } catch (error) {
+    results.push({
+      name: 'Orca compatibility',
+      status: 'fail',
+      detail: error instanceof Error ? error.message : String(error),
+      suggestion: 'Use a supported Orca runtime, then retry `genie setup --orchestration-mode orca`.',
+    });
+  }
+  return results;
 }
 
 // ============================================================================
@@ -2267,6 +2328,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
       : (hostObservation?.probe ?? probeCodexGeniePlugin());
   const results: CheckResult[] = [
     ...checkGenieBinary(),
+    ...(await checkOrcaLifecycle(deps, !injectedRoot || deps.orcaCompatibilityProbe !== undefined)),
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
     ...checkSkills(root),
@@ -2286,6 +2348,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOmniHookTimeout()),
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
+    ...checkRetiredJsonMcpEntry(root),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

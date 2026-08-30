@@ -24,7 +24,11 @@
  * boundary is unrecoverable from it (slugs may contain `-`).
  *
  * Every degradation exits non-zero with a machine-readable JSON line on
- * stderr: {"error":"<code>","reason":"<text>"}. An empty `tasks` array is
+ * stderr: {"error":"<code>","reason":"<text>"}. When `orchestration.mode` is
+ * `orca`, Orca — not this repo's SQLite — owns lifecycle state, so EVERY form
+ * of the command (wishless, --wish, --group, --plan) degrades identically to
+ * {"error":"local_lifecycle_disabled_in_orca_mode",...} with exit 1 before any
+ * option is resolved. An empty `tasks` array is
  * NOT a degradation: whenever branch+base resolve, the payload is emitted
  * with exit 0 — a group with no ready tasks (all claimed/done, or task rows
  * missing) still gets its base, so a resumed or re-spawned session never
@@ -56,6 +60,11 @@ import { Database } from 'bun:sqlite';
 import { existsSync, statSync } from 'node:fs';
 import type { Command } from 'commander';
 import { resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
+import {
+  InvalidOrchestrationAuthorityError,
+  LocalLifecycleDisabledError,
+  assertLocalLifecycleEnabled,
+} from '../lib/orchestration-mode.js';
 import {
   type IntegrationBranch,
   peelCommit,
@@ -175,6 +184,7 @@ function failClosed(code: string, reason: string): never {
  * wrong about the resolved base policy.
  */
 export function openReadonlyHandle(dbPath: string): Database | null {
+  assertLocalLifecycleEnabled();
   try {
     let walBytes = 0;
     try {
@@ -406,6 +416,12 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
   const write = deps.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const writeErr = deps.writeErr ?? ((line: string) => process.stderr.write(`${line}\n`));
   try {
+    // The lifecycle-authority gate runs BEFORE any option resolution, so every
+    // form of the command degrades identically. Resolving options first made
+    // the guard depend on which code path happened to touch the DB: the
+    // wishless form never opened it (exit 0 with a standalone payload), the
+    // wish form reported `unreadable-db`, and `--plan` reported `internal`.
+    assertLocalLifecycleEnabled();
     if (options.group !== undefined && options.wish === undefined) {
       failClosed('group-requires-wish', '--group requires --wish.');
     }
@@ -417,6 +433,14 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
     write(JSON.stringify(payload));
     return 0;
   } catch (err) {
+    // Orchestration-authority errors keep their own stable code (never
+    // `internal`, never a DB-shaped code) so a consumer can branch on
+    // `local_lifecycle_disabled_in_orca_mode` — including on the defence-in-depth
+    // throws that still live deeper in the DB opens.
+    if (err instanceof LocalLifecycleDisabledError || err instanceof InvalidOrchestrationAuthorityError) {
+      writeErr(JSON.stringify({ error: err.code, reason: stripErrorCodePrefix(err.code, err.message) }));
+      return 1;
+    }
     const failure =
       err instanceof ContextError
         ? err
@@ -424,6 +448,12 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
     writeErr(JSON.stringify({ error: failure.code, reason: failure.message }));
     return 1;
   }
+}
+
+/** The payload's `reason` never repeats the `error` code the message is prefixed with. */
+function stripErrorCodePrefix(code: string, message: string): string {
+  const prefix = `${code}: `;
+  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
 }
 
 /** Register `genie context` on the CLI program. */

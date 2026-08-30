@@ -319,7 +319,7 @@ describe('fresh-install-smoke', () => {
     }
   });
 
-  test('rejects a Claude manifest whose MCP entry is not plugin-root-anchored', () => {
+  test('rejects any retired Claude MCP declaration', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-plugin-claude-mcp-fixture-'));
     try {
       const pluginRoot = join(root, 'plugin');
@@ -337,7 +337,7 @@ describe('fresh-install-smoke', () => {
 
       const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
       expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('${CLAUDE_PLUGIN_ROOT}/scripts/mcp-launcher.cjs');
+      expect(result.stderr).toContain('must not declare retired MCP servers');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

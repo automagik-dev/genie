@@ -308,6 +308,8 @@ describe('install.sh transactional binary promotion (F31a)', () => {
     const body = source.slice(source.indexOf('extract_and_link() {'), source.indexOf('\n}\n\n# Detect pre-cutover'));
 
     expect(body).toContain('"$STAGING_DIR/genie" __install-promote');
+    // Extraction must reproduce archived modes under any caller umask (-p).
+    expect(body).toContain('tar -xzpf "$tarball" -C "$STAGING_DIR"');
     expect(body).toContain('GENIE_LIFECYCLE_LEASE_PATH="$LIFECYCLE_LOCK"');
     expect(body).toContain('GENIE_LIFECYCLE_LEASE_OWNER="$LIFECYCLE_OWNER_RECORD"');
     expect(body).not.toMatch(/\b(?:rm|mv|cp)\b/);

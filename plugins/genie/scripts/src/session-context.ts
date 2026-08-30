@@ -35,7 +35,8 @@
  * installation, or global synchronization.
  */
 
-import { existsSync, lstatSync, opendirSync, readSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, opendirSync, readFileSync, readSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   WISH_SLUG_PATTERN,
@@ -350,8 +351,52 @@ interface OpenSessionDbResult {
   reason: string | null;
 }
 
+type LifecycleAuthority = 'standalone' | 'orca' | 'invalid';
+
+/**
+ * Self-contained read of the orchestration authority (`$GENIE_HOME/config.json`
+ * → `orchestration.mode`). The hook bundle is plain Node and cannot share the
+ * CLI's zod-backed resolver (`src/lib/orchestration-mode.ts`), so it mirrors
+ * that strict schema exactly — the barrier fixture asserts both agree: standalone is
+ * the default, `orca` hands lifecycle authority to Orca, and anything
+ * unreadable or unrecognized fails CLOSED — the local lifecycle DB is never
+ * opened on a guess. In Orca mode every lifecycle DB path must refuse before
+ * SQLite can create `-wal`/`-shm` sidecars; the SessionStart hook runs far
+ * more often than any CLI command, so it is the path that matters most.
+ */
+function readLifecycleAuthority(): LifecycleAuthority {
+  // Same path the CLI resolves (`getGenieConfigPath()`): `$GENIE_HOME/config.json`.
+  const configPath = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'config.json');
+  try {
+    if (!existsSync(configPath)) return 'standalone';
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return 'invalid';
+    const orchestration = (parsed as { orchestration?: unknown }).orchestration;
+    if (orchestration === undefined) return 'standalone';
+    // Mirror of the CLI's strict schema: `{ mode: 'standalone' | 'orca' }`, no
+    // other keys, mode required. Anything else is invalid there and here.
+    if (orchestration === null || typeof orchestration !== 'object' || Array.isArray(orchestration)) return 'invalid';
+    const keys = Object.keys(orchestration as object);
+    if (keys.length !== 1 || keys[0] !== 'mode') return 'invalid';
+    const mode = (orchestration as { mode?: unknown }).mode;
+    if (mode === 'standalone') return 'standalone';
+    return mode === 'orca' ? 'orca' : 'invalid';
+  } catch {
+    return 'invalid';
+  }
+}
+
 function openSessionDb(dbPath: string | null): OpenSessionDbResult {
   if (dbPath === null) return { db: null, reason: null };
+  const authority = readLifecycleAuthority();
+  if (authority === 'orca') {
+    logDegradation('genie.db not opened — Orca is the selected lifecycle authority');
+    return { db: null, reason: 'Orca is the selected lifecycle authority' };
+  }
+  if (authority === 'invalid') {
+    logDegradation('genie.db not opened — orchestration authority config is unreadable');
+    return { db: null, reason: 'orchestration authority unreadable' };
+  }
   if (!existsSync(dbPath)) {
     logDegradation(`genie.db absent at ${dbPath}`);
     return { db: null, reason: 'genie.db absent' };

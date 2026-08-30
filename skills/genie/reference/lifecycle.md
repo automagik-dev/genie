@@ -61,7 +61,7 @@ verdict that was not persisted does not advance the lifecycle.
 | `trace` | Reproduce and isolate root cause without patching | Unknown issues needing investigation |
 | `docs` | Audit, generate, and validate documentation against code | Docs stale or missing |
 | `dream` | Batch-execute SHIP-ready wishes overnight | Multiple wishes ready |
-| `pm` | Backlog triage, prioritization, tracking, reporting | Managing a stream of work |
+| `quick` | Ship one tiny low-risk change through verified dev read-back within 60 minutes | A fully decided change fits the hard one-hour contract |
 | `omni` | Wire a Genie agent to an Omni channel | Channel wiring |
 | `genie-hacks` | Browse community patterns and hacks | Looking for prior art |
 
@@ -94,7 +94,7 @@ The checkout claim is atomic: exactly one concurrent claimant wins; the loser ge
 genie board [--wish <slug>] [--json]   # kanban of current state
 genie task status <id>                 # detail, dependencies, stage log
 genie task list --status in_progress   # active claims
-genie mcp                              # stdio MCP server over the task DB (read + write tools)
+genie mcp                              # stable non-zero retirement diagnostic (no server starts)
 ```
 
 No terminal scraping, no sleep-polling — subagents notify on completion, and a retired orchestration-guard hook used to flag scraping patterns.
