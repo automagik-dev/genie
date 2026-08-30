@@ -354,9 +354,10 @@ interface OpenSessionDbResult {
 type LifecycleAuthority = 'standalone' | 'orca' | 'invalid';
 
 /**
- * Self-contained read of the orchestration authority (`~/.genie/config.json`
+ * Self-contained read of the orchestration authority (`$GENIE_HOME/config.json`
  * → `orchestration.mode`). The hook bundle is plain Node and cannot share the
- * CLI's zod-backed resolver, so it mirrors the contract instead: standalone is
+ * CLI's zod-backed resolver (`src/lib/orchestration-mode.ts`), so it mirrors
+ * that strict schema exactly — the barrier fixture asserts both agree: standalone is
  * the default, `orca` hands lifecycle authority to Orca, and anything
  * unreadable or unrecognized fails CLOSED — the local lifecycle DB is never
  * opened on a guess. In Orca mode every lifecycle DB path must refuse before
@@ -364,17 +365,21 @@ type LifecycleAuthority = 'standalone' | 'orca' | 'invalid';
  * more often than any CLI command, so it is the path that matters most.
  */
 function readLifecycleAuthority(): LifecycleAuthority {
-  const configPath =
-    process.env.GENIE_CONFIG_FILE ?? join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'config.json');
+  // Same path the CLI resolves (`getGenieConfigPath()`): `$GENIE_HOME/config.json`.
+  const configPath = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'config.json');
   try {
     if (!existsSync(configPath)) return 'standalone';
     const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
-    if (parsed === null || typeof parsed !== 'object') return 'invalid';
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return 'invalid';
     const orchestration = (parsed as { orchestration?: unknown }).orchestration;
     if (orchestration === undefined) return 'standalone';
-    if (orchestration === null || typeof orchestration !== 'object') return 'invalid';
+    // Mirror of the CLI's strict schema: `{ mode: 'standalone' | 'orca' }`, no
+    // other keys, mode required. Anything else is invalid there and here.
+    if (orchestration === null || typeof orchestration !== 'object' || Array.isArray(orchestration)) return 'invalid';
+    const keys = Object.keys(orchestration as object);
+    if (keys.length !== 1 || keys[0] !== 'mode') return 'invalid';
     const mode = (orchestration as { mode?: unknown }).mode;
-    if (mode === undefined || mode === 'standalone') return 'standalone';
+    if (mode === 'standalone') return 'standalone';
     return mode === 'orca' ? 'orca' : 'invalid';
   } catch {
     return 'invalid';
