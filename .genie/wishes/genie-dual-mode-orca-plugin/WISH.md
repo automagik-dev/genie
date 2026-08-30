@@ -392,12 +392,16 @@ done
   #2834 (H2 resolved by retiring `genie ui-bridge` outright — see the decision below). Merged to `dev` — #2835 (H7
   SessionStart hook), #2836 (M12 gate wiring, M15 `.mcp.json.genie-backup-*` ignore), #2837 (ledger). Open to `dev` —
   #2838 (re-review #2 M16 authority-mirror fidelity, M17 plugin README H3 row). Open to `main` (human merge;
-  the release pipeline runs `version.yml`, `release-guard.sh` and the dogfood harness from `main`, so these cannot
-  take effect from dev) — #2822 (ninth version field), #2833 (harness accepts the retired Codex project route; why
-  `v5.260830.2/.3` built, signed and never published). Follow-ups recorded, not blocking promotion — M2 (real-runtime
+  `version.yml` runs from `main`) — #2822 (ninth version field). #2833 (harness accepts the retired Codex project
+  route — why `v5.260830.2/.3` built, signed and never published) was closed: the promotion #2817 carries it. Follow-ups recorded, not blocking promotion — M2 (real-runtime
   smoke never executes; needs one transcript against a real Orca host), M3/M4 (read-back over-strictness:
   uncapped `task-list`, optional `model`/`effort` compared strictly), M9 (Hermes model surface lost board/task
-  tools), M10 (dead launcher validator in `src/lib/codex-project-mcp.ts`).
+  tools), M10 (dead launcher validator in `src/lib/codex-project-mcp.ts`), and — found during the on-host dogfood — every
+  failed admission leaves a ~100 MB `$GENIE_HOME/bin/.install-staging-<uuid>` behind (six on khal-labs, removed by
+  hand): `admitExternalInstallStaging`'s failure path does not reliably reach `removeInstallStagingDirectory`; needs
+  a regression fixture on the digest-mismatch branch. On-host dogfood evidence: `(umask 022 && genie update --dev
+  --yes)` 5.260816.2 → 5.260829.4 succeeded on khal-labs (exit 0, doctor runs; Codex activation pending the human's
+  `genie setup --codex`).
 - **Re-review #1 of #2817 (dev→main) — FIX-FIRST (2026-08-30):** same reviewer profile, pinned snapshot
   `f45d634b856a834bf0660e2b1cdbe1eda21edb04` (dev tip incl. #2834). All six previous HIGH gaps and both root causes
   verified closed with evidence (doctor, ui-bridge, update probe, adapter deadline, `run:null` read-back, bundle
@@ -423,9 +427,9 @@ done
   extra keys, and an unimplemented `GENIE_CONFIG_FILE` — fixed in #2838 to mirror the CLI's strict schema with the
   fixture asserting both readers agree), M17 (plugin README H3 row — #2838), L1 (ledger tense — this entry).
 - **Promotion gate (orchestrator):** #2817 is approved for human promotion on the reviewed content. Sequence for the
-  human: merge #2822 and #2833 to `main` first (the release pipeline runs `version.yml`, `release-guard.sh` and the
-  dogfood harness from `main`; without them no dev tarball publishes), then merge #2817 with a merge commit (never
-  squash). Per-group acceptance boxes remain the human promoter's to tick on merge; wish status moves to `SHIPPED`
+  human: merge #2822 to `main` first (`version.yml` runs from `main`), then merge #2817 with a merge commit (never
+  squash). #2833 (harness hotfix to `main`) was CLOSED: on `main` the #2820 harness rejects `main`'s own binary, so
+  the promotion itself is what lands harness + candidate together; the first post-promotion dev tag publishes again. Per-group acceptance boxes remain the human promoter's to tick on merge; wish status moves to `SHIPPED`
   only after the authorized merge plus the on-host dogfood (`genie update --dev` to a published v5.260830.x on
   khal-labs — the old binary needs `(umask 022 && genie update --dev)` once).
 - **Decision (M14, recorded by the orchestrator):** Felipe's words to the fixing session on 2026-08-30 — *"theres no
