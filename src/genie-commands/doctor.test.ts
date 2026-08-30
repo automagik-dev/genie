@@ -25,8 +25,10 @@ import {
   MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
+  checkCodexProjectContext,
   checkIndexLaneDrift,
   checkOmniBridgeHealth,
+  checkRetiredJsonMcpEntry,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
@@ -2682,5 +2684,76 @@ describe('Group E lifecycle truth (doctor)', () => {
     const { output } = await captureDoctor(() => doctorCommand({ json: true }, doctorDepsWith(null)));
     const json = JSON.parse(output) as DoctorJson;
     expect(json.checks.find((c) => c.name === 'Codex project context')).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// The retired `genie mcp` registration in .mcp.json (H3)
+// ============================================================================
+
+describe('checkRetiredJsonMcpEntry', () => {
+  let repoRoot: string;
+
+  beforeEach(() => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'genie-doctor-mcpjson-'));
+  });
+  afterEach(() => rmSync(repoRoot, { recursive: true, force: true }));
+
+  test('warns, names the file, and names the fix when the dead registration is still there', () => {
+    writeFileSync(
+      join(repoRoot, '.mcp.json'),
+      '{"mcpServers":{"genie":{"command":"/home/u/.genie/bin/genie","args":["mcp"]}}}',
+    );
+    const [check] = checkRetiredJsonMcpEntry(repoRoot);
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain(join(repoRoot, '.mcp.json'));
+    expect(check.suggestion).toContain('genie init');
+  });
+
+  test('passes on an absent, clean, symlinked, or unparseable .mcp.json', () => {
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"other":{"command":"x"}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    // A user wrapper under the same key is not the retired registration.
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"/mine","args":["mcp"]}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+
+    writeFileSync(join(repoRoot, '.mcp.json'), 'not json');
+    expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
+  });
+
+  test('never flips doctor ok:false — it is warning-level on a user-owned file', () => {
+    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"genie","args":["mcp"]}}}');
+    expect(checkRetiredJsonMcpEntry(repoRoot).every((c) => c.status !== 'fail')).toBe(true);
+  });
+});
+
+// ============================================================================
+// Orca lifecycle authority — doctor never opens the local store
+// ============================================================================
+
+describe('checkCodexProjectContext under Orca', () => {
+  function writeOrchestrationMode(mode: string): void {
+    const home = process.env.GENIE_HOME as string;
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode } }));
+  }
+
+  test('reports the authority without resolving context or opening genie.db', () => {
+    writeOrchestrationMode('orca');
+    const repoRoot = join(isolatedHome, 'repo');
+    const [check] = checkCodexProjectContext(repoRoot);
+    expect(check.status).toBe('pass');
+    expect(check.detail).toBe('not resolved — Orca is the selected lifecycle authority');
+    // The guard forbids the open, so nothing may have been created either.
+    expect(existsSync(join(repoRoot, '.genie', 'genie.db'))).toBe(false);
+  });
+
+  test('still resolves context in standalone mode', () => {
+    writeOrchestrationMode('standalone');
+    const [check] = checkCodexProjectContext(join(isolatedHome, 'repo'));
+    expect(check.detail).not.toContain('Orca is the selected lifecycle authority');
   });
 });
