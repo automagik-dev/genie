@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import {
   MAX_ORCA_STDERR_BYTES,
   MAX_ORCA_STDOUT_BYTES,
@@ -166,6 +167,30 @@ describe('closed Orca orchestration argv grammar', () => {
     }
   });
 });
+
+/**
+ * Minimal child stand-in for the injected spawn seam: only the events and
+ * streams `createOrcaProcessExecutor` subscribes to, plus a no-op `kill`.
+ */
+function fakeChild(): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean } {
+  return Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill: () => true,
+  });
+}
+
+function processRequest() {
+  return {
+    executable: 'orca',
+    argv: ['orchestration', 'run-current'] as const,
+    shell: false as const,
+    timeoutMs: 30_000,
+    maxStdoutBytes: MAX_ORCA_STDOUT_BYTES,
+    maxStderrBytes: MAX_ORCA_STDERR_BYTES,
+    env: {},
+  };
+}
 
 describe('runtime and executor boundary', () => {
   const validStatus = (): OrcaRuntimeStatus => ({
@@ -712,13 +737,21 @@ describe('runtime and executor boundary', () => {
     });
   });
 
+  // Escalation is only observable when the child genuinely ignores SIGTERM.
+  // A runtime that installs the handler in JS (`bun -e "process.on('SIGTERM', …)"`)
+  // loses the race whenever the timeout fires before the interpreter finishes
+  // booting — the child then dies of the plain SIGTERM and the test reads
+  // SIGTERM instead of SIGKILL, deterministically on some bun builds. `/bin/sh`
+  // sets the disposition to SIG_IGN before anything else runs, and SIG_IGN
+  // survives `exec`, so the sleeping grandchild-free process is unkillable by
+  // SIGTERM from its very first instruction.
   test('bounds timeout termination through the kill escalation path', async () => {
     const started = Date.now();
     const result = await __orcaAdapterTestOnly.spawnOrcaProcess({
-      executable: process.execPath,
-      argv: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      executable: '/bin/sh',
+      argv: ['-c', 'trap "" TERM; exec sleep 30'],
       shell: false,
-      timeoutMs: 20,
+      timeoutMs: 250,
       maxStdoutBytes: MAX_ORCA_STDOUT_BYTES,
       maxStderrBytes: MAX_ORCA_STDERR_BYTES,
       env: process.env,
@@ -726,6 +759,50 @@ describe('runtime and executor boundary', () => {
     expect(result.timedOut).toBeTrue();
     expect(result.signal).toBe('SIGKILL');
     expect(Date.now() - started).toBeLessThan(2500);
+  });
+
+  // A stream fault used to have no listener at all: node/bun re-throws an
+  // 'error' event with no handler as an uncaught exception, so the process died
+  // and this promise never settled. Both streams now settle through the same
+  // ambiguous-transport-loss path as a post-spawn child 'error'.
+  test.each([
+    ['stdout', 'stdout stream error: EIO: i/o error'],
+    ['stderr', 'stderr stream error: EIO: i/o error'],
+  ] as const)('settles a %s stream fault as an ambiguous transport loss', async (stream, expected) => {
+    const child = fakeChild();
+    const executor = __orcaAdapterTestOnly.createOrcaProcessExecutor(
+      (() => child) as unknown as Parameters<typeof __orcaAdapterTestOnly.createOrcaProcessExecutor>[0],
+    );
+    const settled = executor(processRequest());
+    child.emit('spawn');
+    child[stream].emit('error', new Error('EIO: i/o error'));
+    const result = await settled;
+    expect(result.transportLost).toBeTrue();
+    expect(result.exitCode).toBeNull();
+    expect(result.stderr).toContain(expected);
+  });
+
+  test('keeps settling a post-spawn child transport error through the same path', async () => {
+    const child = fakeChild();
+    const executor = __orcaAdapterTestOnly.createOrcaProcessExecutor(
+      (() => child) as unknown as Parameters<typeof __orcaAdapterTestOnly.createOrcaProcessExecutor>[0],
+    );
+    const settled = executor(processRequest());
+    child.emit('spawn');
+    child.emit('error', new Error('EPIPE'));
+    const result = await settled;
+    expect(result.transportLost).toBeTrue();
+    expect(result.stderr).toContain('process transport error: EPIPE');
+  });
+
+  test('still rejects a pre-spawn child error instead of settling it', async () => {
+    const child = fakeChild();
+    const executor = __orcaAdapterTestOnly.createOrcaProcessExecutor(
+      (() => child) as unknown as Parameters<typeof __orcaAdapterTestOnly.createOrcaProcessExecutor>[0],
+    );
+    const settled = executor(processRequest());
+    child.emit('error', Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await expect(settled).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   test('redacts secrets and request values, strips controls, and truncates stderr', async () => {
@@ -850,6 +927,156 @@ describe('runtime and executor boundary', () => {
         code: 'ambiguous_after_possible_commit',
       });
     }
+  });
+
+  // `worker-start`, `check --wait`, and `ask` accept a `--timeout-ms` of up to
+  // 600_000 ms, but the child process was pinned to the 30s adapter default and
+  // SIGKILLed every long wait before Orca could answer.
+  test('bounds the child on the operation wait, not the fixed adapter default', async () => {
+    const cases: ReadonlyArray<[OrcaOperation, number]> = [
+      [{ operation: 'ask', question: 'q', timeoutMs: 120_000 }, 125_000],
+      [{ operation: 'check', wait: true, timeoutMs: 600_000 }, 605_000],
+      [{ operation: 'worker-start', task: 'task_a', agent: 'codex', timeoutMs: 90_000 }, 95_000],
+      // A wait shorter than the default must NOT shrink the budget the CLI needs
+      // just to start up.
+      [{ operation: 'ask', question: 'q', timeoutMs: 250 }, 30_000],
+      // No declared wait keeps the adapter default.
+      [{ operation: 'run-current' }, 30_000],
+    ];
+    for (const [operation, expected] of cases) {
+      const seen: number[] = [];
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async (request) => {
+          seen.push(request.timeoutMs);
+          return { exitCode: 0, stdout: '', stderr: '' };
+        },
+      });
+      await expect(adapter.execute(operation)).rejects.toBeInstanceOf(OrcaAdapterError);
+      expect(seen[0], operation.operation).toBe(expected);
+    }
+  });
+
+  test('never lets a caller push the child bound past the adapter ceiling', async () => {
+    const seen: number[] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      // An adapter-level default already above the ceiling still clamps.
+      timeoutMs: 5_000_000,
+      executor: async (request) => {
+        seen.push(request.timeoutMs);
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+    await expect(adapter.execute({ operation: 'check', wait: true, timeoutMs: 600_000 })).rejects.toBeInstanceOf(
+      OrcaAdapterError,
+    );
+    expect(seen[0]).toBe(605_000);
+  });
+
+  // `run-current` legitimately answers `{ run: null }` when nothing is bound.
+  // The run-use readback dereferenced it and threw a raw TypeError out of
+  // `execute`, bypassing the adapter's typed error contract.
+  test('reports an unbound run-current readback as a typed run-use mismatch', async () => {
+    let call = 0;
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          id: 'request_a',
+          ok: true,
+          result: call++ === 0 ? { runId: 'run_a', coordinatorTerminalHandle: 'term_a' } : { run: null },
+          _meta: { runtimeId: 'runtime_a', runtimeVersion: '1', invokingTerminal: 'term_a' },
+        }),
+        stderr: '',
+      }),
+    });
+    const error = await adapter.execute({ operation: 'run-use', id: 'run_a' }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(error).toBeInstanceOf(OrcaAdapterError);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect(error).toMatchObject({
+      code: 'readback_mismatch',
+      operation: 'run-use',
+      phase: 'readback',
+      retrySafety: 'unsafe',
+    });
+    expect(call).toBe(2);
+  });
+
+  // A status-only `task-update` asserts nothing about `result`. Requiring result
+  // equality compared `JSON.stringify(undefined)` against the readback's stored
+  // value and failed EVERY status-only update — `null` on a fresh task, the prior
+  // JSON string on a task that already carried one.
+  test('accepts a status-only task-update readback whatever result the entity already stores', async () => {
+    const publicTask = (result: string | null) => ({
+      id: 'task_a',
+      run_id: 'run_a',
+      parent_id: null,
+      created_by_terminal_handle: 'term_a',
+      created_by_pane_key: 'pane_a',
+      created_by_process_incarnation: 'incarnation_a',
+      created_by_run_generation: 1,
+      task_title: 'Adapter',
+      display_name: 'Adapter',
+      spec: 'Implement',
+      status: 'completed',
+      deps: '[]',
+      result,
+      created_at: '2026-08-30T00:00:00Z',
+      completed_at: null,
+    });
+    const scenarios: ReadonlyArray<[string, object]> = [
+      ['public projection with no stored result', { legacyReadOnly: false, runId: 'run_a', count: 1 }],
+      ['private projection with no stored result', {}],
+      ['private projection with a prior stored result', {}],
+    ];
+    const readbacks: readonly object[] = [
+      { runId: 'run_a', legacyReadOnly: false, tasks: [publicTask(null)], count: 1 },
+      { tasks: [{ id: 'task_a', spec: 'Implement', status: 'completed' }] },
+      { tasks: [{ id: 'task_a', spec: 'Implement', status: 'completed', result: { summary: 'from an earlier run' } }] },
+    ];
+    for (const [index, [label]] of scenarios.entries()) {
+      let call = 0;
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({
+          exitCode: 0,
+          stdout: JSON.stringify({
+            id: 'request_a',
+            ok: true,
+            result: call++ === 0 ? { taskId: 'task_a' } : readbacks[index],
+            _meta: { runtimeId: 'runtime_a', runtimeVersion: '1' },
+          }),
+          stderr: '',
+        }),
+      });
+      const response = await adapter.execute({ operation: 'task-update', id: 'task_a', status: 'completed' });
+      expect(response.result, label).toMatchObject({ taskId: 'task_a' });
+      expect(call, label).toBe(2);
+    }
+  });
+
+  // The result IS still verified when the mutation carried one.
+  test('still rejects a task-update readback whose stored result contradicts the mutation', async () => {
+    let call = 0;
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          id: 'request_a',
+          ok: true,
+          result:
+            call++ === 0
+              ? { taskId: 'task_a' }
+              : { tasks: [{ id: 'task_a', spec: 'Implement', status: 'completed', result: { summary: 'other' } }] },
+          _meta: { runtimeId: 'runtime_a', runtimeVersion: '1' },
+        }),
+        stderr: '',
+      }),
+    });
+    await expect(
+      adapter.execute({ operation: 'task-update', id: 'task_a', status: 'completed', result: { summary: 'done' } }),
+    ).rejects.toMatchObject({ code: 'readback_mismatch' });
   });
 
   test('rejects mismatched receipt identities and duplicate readback rows', async () => {
