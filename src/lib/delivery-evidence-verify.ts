@@ -1,5 +1,5 @@
 /**
- * Offline-verifiable Codex delivery evidence.
+ * Offline-verifiable release delivery evidence.
  *
  * A release producer signs the SHA-256 of the exact descriptor bytes in an
  * in-toto DSSE statement. This module is the only runtime minter of
@@ -9,16 +9,15 @@
  * workflow identity. Tests may inject only the cryptographic verification step;
  * descriptor, manifest, statement, and caller-observation bindings remain live.
  *
- * Exact packs are stored content-addressed under GENIE_HOME. Raw paths and pack
- * bytes never leave this module. Observation re-verifies the stored bundle
- * synchronously and offline before returning independently derived facts.
+ * Moved verbatim out of the retired Codex delivery-evidence module (whose content-addressed
+ * on-disk pack store belonged to the retired Codex activation protocol) because
+ * two surviving release gates consume exactly this verification half:
+ * `scripts/verify-delivery-evidence-pack.ts` (the `delivery-evidence-compatibility`
+ * and `release-update-path-smoke` jobs) and `genie update --publish-local-delivery`.
  */
 
-import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
-import { atomicWriteFileSync, fsyncParentDir, readBoundedRegularFile } from './codex-activation-persistence.js';
-import { parseReleaseVersion } from './codex-release-version.js';
+import { createHash } from 'node:crypto';
+import { parseReleaseVersion } from './release-payload-proof.js';
 
 export const DELIVERY_EVIDENCE_REPOSITORY = 'automagik-dev/genie';
 export const DELIVERY_EVIDENCE_PREDICATE_TYPE = 'https://github.com/automagik-dev/genie/delivery-evidence/v1';
@@ -32,19 +31,15 @@ export const DELIVERY_EVIDENCE_DIGEST_ALGORITHM = 'genie-physical-tree-v1';
 
 const IN_TOTO_PAYLOAD_TYPE = 'application/vnd.in-toto+json';
 const IN_TOTO_STATEMENT_TYPE = 'https://in-toto.io/Statement/v1';
-const EVIDENCE_DIRECTORY_NAME = '.codex-delivery-evidence-v1';
 const DESCRIPTOR_FILE = 'descriptor.json';
 const BUNDLE_FILE = 'bundle.json';
 const MANIFEST_FILE = 'manifest.json';
-const PACK_FILES = [BUNDLE_FILE, DESCRIPTOR_FILE, MANIFEST_FILE] as const;
 const MAX_DESCRIPTOR_BYTES = 32 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
-const HEX_128_RE = /^[0-9a-f]{32}$/;
 const HEX_160_RE = /^[0-9a-f]{40}$/;
 const HEX_256_RE = /^[0-9a-f]{64}$/;
 const DECIMAL_RE = /^(?:0|[1-9]\d*)$/;
-const MAX_DELIVERY_ROOT_CHARACTERS = 256;
 const RELEASE_CHANNELS = ['stable', 'dev'] as const;
 const PLATFORM_IDS = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'] as const;
 
@@ -120,51 +115,6 @@ export interface VerifiedDeliveryEvidenceFacts {
   deliveredAt: string;
 }
 
-/**
- * The durable flat record remains schema 2 for on-disk compatibility. This
- * interface and its codec are the single owner of the record field set.
- */
-export interface AuthenticatedDeliveryRecordFields {
-  targetVersion: string;
-  canonicalPayloadSha256: string;
-  channel: string;
-  deliveryId: string;
-  evidenceDigest: string;
-  platformId: string;
-  platformTriple: string;
-  releaseTag: string;
-  releaseName: string;
-  releaseManifestSha256: string;
-  artifactSha256: string;
-  installedBinarySha256: string;
-  deliveryRoot: string;
-  deliveredAt: string;
-}
-
-export interface PersistedAuthenticatedDeliveryRecord extends AuthenticatedDeliveryRecordFields {
-  schemaVersion: 2;
-}
-
-/**
- * One complete authenticated delivery value. The evidence digest commits the
- * exact descriptor, bundle, and manifest bytes, while the remaining fields bind
- * that verified release provenance to its physical publication transaction.
- */
-export interface AuthenticatedDeliveryBinding {
-  readonly descriptor: Readonly<DeliveryEvidenceDescriptor>;
-  readonly evidenceDigest: string;
-  readonly deliveryId: string;
-  readonly deliveryRoot: string;
-  readonly deliveredAt: string;
-}
-
-export type AuthenticatedDeliveryAssessment = 'matching' | 'absent' | 'invalid' | 'mismatch';
-
-export type AuthenticatedDeliveryRecordReadState =
-  | { status: 'absent' }
-  | { status: 'invalid'; detail: string }
-  | { status: 'present'; record: AuthenticatedDeliveryRecordFields };
-
 interface VerifiedDeliveryEvidenceState extends VerifiedDeliveryEvidenceFacts {
   descriptorBytes: Buffer;
   bundleBytes: Buffer;
@@ -172,11 +122,6 @@ interface VerifiedDeliveryEvidenceState extends VerifiedDeliveryEvidenceFacts {
 }
 
 const VERIFIED_EVIDENCE = new WeakMap<object, VerifiedDeliveryEvidenceState>();
-
-export type PersistedDeliveryEvidenceObservation =
-  | { status: 'absent' }
-  | { status: 'invalid'; detail: string }
-  | { status: 'present'; evidence: VerifiedDeliveryEvidence; facts: VerifiedDeliveryEvidenceFacts };
 
 /** Verify exact downloaded bytes and mint the only evidence value publication accepts. */
 export function verifyDownloadedDeliveryEvidence(
@@ -219,344 +164,6 @@ export function verifiedDeliveryEvidenceFacts(evidence: VerifiedDeliveryEvidence
     deliveredAt: state.deliveredAt,
   };
 }
-
-/**
- * Persist the exact verified pack before a delivery record is committed.
- * Existing content-addressed packs are accepted only when every byte matches.
- */
-export function persistVerifiedDeliveryEvidence(
-  genieHome: string,
-  evidence: VerifiedDeliveryEvidence,
-): VerifiedDeliveryEvidenceFacts {
-  const state = verifiedState(evidence);
-  const root = ensurePrivateEvidenceRoot(genieHome);
-  const finalDirectory = join(root, state.evidenceDigest);
-  if (pathExists(finalDirectory)) {
-    assertStoredPackMatches(finalDirectory, state);
-    return verifiedDeliveryEvidenceFacts(evidence);
-  }
-
-  const staging = join(root, `.${state.evidenceDigest}.staging-${process.pid}-${randomBytes(6).toString('hex')}`);
-  mkdirSync(staging, { mode: 0o700 });
-  try {
-    atomicWriteFileSync(join(staging, DESCRIPTOR_FILE), state.descriptorBytes.toString('utf8'), {
-      mode: 0o600,
-      backup: false,
-    });
-    atomicWriteFileSync(join(staging, BUNDLE_FILE), state.bundleBytes.toString('utf8'), {
-      mode: 0o600,
-      backup: false,
-    });
-    atomicWriteFileSync(join(staging, MANIFEST_FILE), state.manifestBytes.toString('utf8'), {
-      mode: 0o600,
-      backup: false,
-    });
-    try {
-      renameSync(staging, finalDirectory);
-      fsyncParentDir(finalDirectory);
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-      assertStoredPackMatches(finalDirectory, state);
-    }
-  } finally {
-    rmSync(staging, { recursive: true, force: true });
-  }
-  return verifiedDeliveryEvidenceFacts(evidence);
-}
-
-/** Re-read and synchronously re-verify one stored evidence pack, offline. */
-export function observePersistedDeliveryEvidence(
-  genieHome: string,
-  evidenceDigest: string,
-  dependencies: DeliveryEvidenceVerificationDependencies = {},
-): PersistedDeliveryEvidenceObservation {
-  if (!HEX_256_RE.test(evidenceDigest)) return { status: 'invalid', detail: 'evidence digest is malformed' };
-  const root = join(genieHome, EVIDENCE_DIRECTORY_NAME);
-  const rootState = inspectPrivateDirectory(root);
-  if (rootState === 'absent') return { status: 'absent' };
-  if (rootState !== 'ok') return { status: 'invalid', detail: `evidence root is ${rootState}` };
-  const directory = join(root, evidenceDigest);
-  const directoryState = inspectPrivateDirectory(directory);
-  if (directoryState === 'absent') return { status: 'absent' };
-  if (directoryState !== 'ok') return { status: 'invalid', detail: `evidence pack is ${directoryState}` };
-
-  try {
-    assertExactPackFiles(directory);
-    const descriptorBytes = readPackFile(directory, DESCRIPTOR_FILE, MAX_DESCRIPTOR_BYTES);
-    const bundleBytes = readPackFile(directory, BUNDLE_FILE, MAX_BUNDLE_BYTES);
-    const manifestBytes = readPackFile(directory, MANIFEST_FILE, MAX_MANIFEST_BYTES);
-    const descriptor = parseDescriptor(descriptorBytes);
-    const observedDigest = computeEvidenceDigest(descriptorBytes, bundleBytes, manifestBytes);
-    if (observedDigest !== evidenceDigest) throw new Error('stored evidence pack digest mismatch');
-    const evidence = verifyDownloadedDeliveryEvidence(
-      {
-        descriptorBytes,
-        bundleBytes,
-        manifestBytes,
-        targetVersion: descriptor.version,
-        channel: descriptor.channel,
-        platformId: descriptor.platformId,
-        platformTriple: descriptor.platformTriple,
-        releaseTag: descriptor.releaseTag,
-        releaseName: descriptor.releaseName,
-        artifactSha256: descriptor.artifactSha256,
-        installedBinarySha256: descriptor.installedBinarySha256,
-        canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
-      },
-      dependencies,
-    );
-    const facts = verifiedDeliveryEvidenceFacts(evidence);
-    if (facts.evidenceDigest !== evidenceDigest) throw new Error('stored evidence pack changed during verification');
-    return { status: 'present', evidence, facts };
-  } catch (error) {
-    return { status: 'invalid', detail: errorText(error) };
-  }
-}
-
-/** Domain-separated 128-bit transaction identity over evidence + physical root. */
-export function deriveDeliveryId(evidenceDigest: string, physicalDeliveryRoot: string): string {
-  if (!HEX_256_RE.test(evidenceDigest)) throw new Error('evidence digest is malformed');
-  if (!isAbsolute(physicalDeliveryRoot) || physicalDeliveryRoot.includes('\0')) {
-    throw new Error('physical delivery root is malformed');
-  }
-  return createHash('sha256')
-    .update('genie-delivery-id-v2\0')
-    .update(evidenceDigest)
-    .update('\0')
-    .update(physicalDeliveryRoot)
-    .digest('hex')
-    .slice(0, 32);
-}
-
-/**
- * Bind independently verified release facts to one physical delivery root.
- * Callers never reconstruct individual provenance fields.
- */
-export function createAuthenticatedDeliveryBinding(
-  evidence: VerifiedDeliveryEvidenceFacts,
-  physicalDeliveryRoot: string,
-): AuthenticatedDeliveryBinding {
-  if (!HEX_256_RE.test(evidence.evidenceDigest)) throw new Error('evidence digest is malformed');
-  if (
-    physicalDeliveryRoot.length > MAX_DELIVERY_ROOT_CHARACTERS ||
-    !isAbsolute(physicalDeliveryRoot) ||
-    physicalDeliveryRoot.includes('\0')
-  ) {
-    throw new Error('physical delivery root is malformed');
-  }
-  if (!Number.isFinite(Date.parse(evidence.deliveredAt))) throw new Error('delivery timestamp is malformed');
-  return Object.freeze({
-    descriptor: evidence.descriptor,
-    evidenceDigest: evidence.evidenceDigest,
-    deliveryId: deriveDeliveryId(evidence.evidenceDigest, physicalDeliveryRoot),
-    deliveryRoot: physicalDeliveryRoot,
-    deliveredAt: evidence.deliveredAt,
-  });
-}
-
-/** Project the canonical binding onto the complete authenticated field tuple. */
-export function authenticatedDeliveryRecordFields(
-  binding: AuthenticatedDeliveryBinding,
-): AuthenticatedDeliveryRecordFields {
-  const descriptor = binding.descriptor;
-  return {
-    deliveryId: binding.deliveryId,
-    targetVersion: descriptor.version,
-    canonicalPayloadSha256: descriptor.canonicalPayloadSha256,
-    channel: descriptor.channel,
-    deliveredAt: binding.deliveredAt,
-    evidenceDigest: binding.evidenceDigest,
-    platformId: descriptor.platformId,
-    platformTriple: descriptor.platformTriple,
-    releaseTag: descriptor.releaseTag,
-    releaseName: descriptor.releaseName,
-    releaseManifestSha256: descriptor.releaseManifestSha256,
-    artifactSha256: descriptor.artifactSha256,
-    installedBinarySha256: descriptor.installedBinarySha256,
-    deliveryRoot: binding.deliveryRoot,
-  };
-}
-
-/** Encode the canonical binding as the byte-compatible schema-2 record. */
-export function encodeAuthenticatedDeliveryRecord(
-  binding: AuthenticatedDeliveryBinding,
-): PersistedAuthenticatedDeliveryRecord {
-  return { schemaVersion: 2, ...authenticatedDeliveryRecordFields(binding) };
-}
-
-/** Parse the legacy-compatible flat schema without accepting partial attestation. */
-export function parseAuthenticatedDeliveryRecord(content: string): PersistedAuthenticatedDeliveryRecord | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    return null;
-  }
-  if (!isPlainObject(parsed)) return null;
-  if (
-    Object.keys(parsed).length !== AUTHENTICATED_DELIVERY_RECORD_KEYS.size ||
-    Object.keys(parsed).some((key) => !AUTHENTICATED_DELIVERY_RECORD_KEYS.has(key))
-  ) {
-    return null;
-  }
-  if (parsed.schemaVersion !== 2 || !authenticatedDeliveryRecordFieldsValid(parsed)) return null;
-  return {
-    schemaVersion: 2,
-    deliveryId: parsed.deliveryId,
-    targetVersion: parsed.targetVersion,
-    canonicalPayloadSha256: parsed.canonicalPayloadSha256,
-    channel: parsed.channel,
-    deliveredAt: parsed.deliveredAt,
-    evidenceDigest: parsed.evidenceDigest,
-    platformId: parsed.platformId,
-    platformTriple: parsed.platformTriple,
-    releaseTag: parsed.releaseTag,
-    releaseName: parsed.releaseName,
-    releaseManifestSha256: parsed.releaseManifestSha256,
-    artifactSha256: parsed.artifactSha256,
-    installedBinarySha256: parsed.installedBinarySha256,
-    deliveryRoot: parsed.deliveryRoot,
-  };
-}
-
-/**
- * Pure record assessment shared by lifecycle truth, repair, delivery, and the
- * activation inner guard. Structural invalidity is distinct from tuple drift.
- */
-export function assessAuthenticatedDeliveryRecord(
-  fact: AuthenticatedDeliveryRecordReadState,
-  expectation: AuthenticatedDeliveryRecordFields,
-): AuthenticatedDeliveryAssessment {
-  if (fact.status === 'absent') return 'absent';
-  if (fact.status === 'invalid') return 'invalid';
-  if (!authenticatedDeliveryRecordFieldsValid(fact.record)) return 'invalid';
-  return authenticatedDeliveryRecordFieldsMatch(fact.record, expectation) ? 'matching' : 'mismatch';
-}
-
-/**
- * Return the canonical value only when the durable flat record agrees with all
- * independently reverified evidence and physical-root facts.
- */
-export function authenticatedDeliveryBindingFromRecord(
-  record: AuthenticatedDeliveryRecordFields,
-  evidence: VerifiedDeliveryEvidenceFacts,
-  physicalDeliveryRoot: string,
-): AuthenticatedDeliveryBinding | null {
-  const binding = createAuthenticatedDeliveryBinding(evidence, physicalDeliveryRoot);
-  return assessAuthenticatedDeliveryRecord(
-    { status: 'present', record },
-    authenticatedDeliveryRecordFields(binding),
-  ) === 'matching'
-    ? binding
-    : null;
-}
-
-/**
- * Compact consent fingerprint. `evidenceDigest` already commits every exact
- * descriptor/bundle/manifest byte, so descriptor provenance additions do not
- * amplify into activation request fields.
- */
-export function authenticatedDeliveryBindingDigest(binding: AuthenticatedDeliveryBinding): string {
-  return createHash('sha256')
-    .update('genie-authenticated-delivery-binding-v1\0')
-    .update(binding.evidenceDigest)
-    .update('\0')
-    .update(binding.deliveryId)
-    .update('\0')
-    .update(binding.deliveryRoot)
-    .update('\0')
-    .update(binding.deliveredAt)
-    .digest('hex');
-}
-
-const AUTHENTICATED_DELIVERY_RECORD_KEYS: ReadonlySet<string> = new Set([
-  'schemaVersion',
-  'deliveryId',
-  'targetVersion',
-  'canonicalPayloadSha256',
-  'channel',
-  'deliveredAt',
-  'evidenceDigest',
-  'platformId',
-  'platformTriple',
-  'releaseTag',
-  'releaseName',
-  'releaseManifestSha256',
-  'artifactSha256',
-  'installedBinarySha256',
-  'deliveryRoot',
-]);
-
-const PLATFORM_TRIPLE_RE = /^[a-z0-9]+-[a-z0-9_]+$/;
-
-function authenticatedDeliveryRecordFieldsValid(
-  record: Record<string, unknown> | AuthenticatedDeliveryRecordFields,
-): record is AuthenticatedDeliveryRecordFields {
-  const version = parseReleaseVersion(record.targetVersion);
-  if (version === null) return false;
-  if (typeof record.canonicalPayloadSha256 !== 'string' || !HEX_256_RE.test(record.canonicalPayloadSha256))
-    return false;
-  if (typeof record.deliveryId !== 'string' || !HEX_128_RE.test(record.deliveryId)) return false;
-  if (typeof record.evidenceDigest !== 'string' || !HEX_256_RE.test(record.evidenceDigest)) return false;
-  if (typeof record.channel !== 'string' || record.channel.length === 0 || record.channel.length > 128) return false;
-  if (typeof record.platformId !== 'string' || record.platformId.length === 0 || record.platformId.length > 64)
-    return false;
-  if (typeof record.platformTriple !== 'string' || !PLATFORM_TRIPLE_RE.test(record.platformTriple)) return false;
-  for (const key of ['releaseManifestSha256', 'artifactSha256', 'installedBinarySha256'] as const) {
-    if (typeof record[key] !== 'string' || !HEX_256_RE.test(record[key])) return false;
-  }
-  if (record.releaseTag !== `v${version.canonical}`) return false;
-  if (
-    typeof record.releaseName !== 'string' ||
-    !record.releaseName.startsWith(`genie-${version.canonical}-`) ||
-    !record.releaseName.endsWith('.tar.gz') ||
-    record.releaseName.length > 256
-  ) {
-    return false;
-  }
-  if (
-    typeof record.deliveryRoot !== 'string' ||
-    record.deliveryRoot.length === 0 ||
-    record.deliveryRoot.length > MAX_DELIVERY_ROOT_CHARACTERS ||
-    !isAbsolute(record.deliveryRoot) ||
-    record.deliveryRoot.includes('\0')
-  ) {
-    return false;
-  }
-  if (typeof record.deliveredAt !== 'string' || !Number.isFinite(Date.parse(record.deliveredAt))) return false;
-  return true;
-}
-
-function authenticatedDeliveryRecordFieldsMatch(
-  record: AuthenticatedDeliveryRecordFields,
-  expectation: AuthenticatedDeliveryRecordFields,
-): boolean {
-  const recordVersion = parseReleaseVersion(record.targetVersion);
-  const expectedVersion = parseReleaseVersion(expectation.targetVersion);
-  if (recordVersion === null || expectedVersion === null || recordVersion.canonical !== expectedVersion.canonical) {
-    return false;
-  }
-  for (const key of AUTHENTICATED_DELIVERY_BINDING_FIELDS) {
-    if (record[key] !== expectation[key]) return false;
-  }
-  return true;
-}
-
-const AUTHENTICATED_DELIVERY_BINDING_FIELDS: readonly (keyof AuthenticatedDeliveryRecordFields)[] = [
-  'canonicalPayloadSha256',
-  'channel',
-  'deliveryId',
-  'evidenceDigest',
-  'platformId',
-  'platformTriple',
-  'releaseTag',
-  'releaseName',
-  'releaseManifestSha256',
-  'artifactSha256',
-  'installedBinarySha256',
-  'deliveryRoot',
-  'deliveredAt',
-];
 
 function mintVerifiedEvidence(state: VerifiedDeliveryEvidenceState): VerifiedDeliveryEvidence {
   const evidence = Object.freeze({}) as VerifiedDeliveryEvidence;
@@ -778,7 +385,7 @@ function loadSigstoreVerifier(): SigstoreVerifierModules {
     Verifier: verify.Verifier,
     toSignedEntity: verify.toSignedEntity,
     toTrustMaterial: verify.toTrustMaterial,
-    publicGoodTrustedRoot: require('../fixtures/codex-delivery-public-good-trusted-root.json'),
+    publicGoodTrustedRoot: require('../fixtures/delivery-public-good-trusted-root.json'),
   };
   return sigstoreVerifierModules;
 }
@@ -814,74 +421,6 @@ function computeEvidenceDigest(descriptor: Buffer, bundle: Buffer, manifest: Buf
     digest.update(bytes);
   }
   return digest.digest('hex');
-}
-
-function ensurePrivateEvidenceRoot(genieHome: string): string {
-  const root = join(genieHome, EVIDENCE_DIRECTORY_NAME);
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  const state = inspectDirectory(root);
-  if (state !== 'ok') throw new Error(`delivery evidence root is ${state}`);
-  const stat = lstatSync(root);
-  const uid = process.getuid?.();
-  if (uid !== undefined && stat.uid !== uid) throw new Error('delivery evidence root has unsafe ownership');
-  chmodSync(root, 0o700);
-  return root;
-}
-
-function inspectPrivateDirectory(
-  path: string,
-): 'ok' | 'absent' | 'symlink' | 'non-directory' | 'ownership' | 'permissions' {
-  const state = inspectDirectory(path);
-  if (state !== 'ok') return state;
-  const stat = lstatSync(path);
-  const uid = process.getuid?.();
-  if (uid !== undefined && stat.uid !== uid) return 'ownership';
-  return (stat.mode & 0o077) === 0 ? 'ok' : 'permissions';
-}
-
-function inspectDirectory(path: string): 'ok' | 'absent' | 'symlink' | 'non-directory' {
-  try {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) return 'symlink';
-    if (!stat.isDirectory()) return 'non-directory';
-    return 'ok';
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent';
-    return 'non-directory';
-  }
-}
-
-function assertStoredPackMatches(directory: string, state: VerifiedDeliveryEvidenceState): void {
-  if (inspectPrivateDirectory(directory) !== 'ok') throw new Error('existing delivery evidence pack is unsafe');
-  assertExactPackFiles(directory);
-  const descriptor = readPackFile(directory, DESCRIPTOR_FILE, MAX_DESCRIPTOR_BYTES);
-  const bundle = readPackFile(directory, BUNDLE_FILE, MAX_BUNDLE_BYTES);
-  const manifest = readPackFile(directory, MANIFEST_FILE, MAX_MANIFEST_BYTES);
-  if (
-    !descriptor.equals(state.descriptorBytes) ||
-    !bundle.equals(state.bundleBytes) ||
-    !manifest.equals(state.manifestBytes)
-  ) {
-    throw new Error('existing delivery evidence pack does not match the verified bytes');
-  }
-}
-
-function assertExactPackFiles(directory: string): void {
-  const names = readdirSync(directory).sort();
-  if (names.length !== PACK_FILES.length || names.some((name, index) => name !== PACK_FILES[index])) {
-    throw new Error('delivery evidence pack contains unexpected entries');
-  }
-}
-
-function readPackFile(directory: string, name: string, maxBytes: number): Buffer {
-  const read = readBoundedRegularFile(join(directory, name), maxBytes);
-  if (read.status !== 'ok') throw new Error(`delivery evidence ${name} is ${read.status}`);
-  const stat = lstatSync(join(directory, name));
-  const uid = process.getuid?.();
-  if (uid !== undefined && stat.uid !== uid) throw new Error(`delivery evidence ${name} has unsafe ownership`);
-  if (stat.nlink !== 1) throw new Error(`delivery evidence ${name} has multiple hard links`);
-  if ((stat.mode & 0o077) !== 0) throw new Error(`delivery evidence ${name} has unsafe permissions`);
-  return Buffer.from(read.content, 'utf8');
 }
 
 function boundedBytes(value: Uint8Array | string, maxBytes: number, label: string): Buffer {
@@ -933,25 +472,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function pathExists(path: string): boolean {
-  try {
-    lstatSync(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw error;
-  }
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException).code;
-  return code === 'EEXIST' || code === 'ENOTEMPTY';
-}
-
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -11,11 +11,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import * as projectMcp from './codex-project-mcp.js';
 import {
+  type RouteLayerInput,
+  classifyRouteLayers,
   inspectRetiredJsonMcpEntry,
   isRetiredGenieMcpServer,
+  projectTrustState,
   retireJsonMcpGenieEntry,
   retireProjectMcpConfigs,
 } from './codex-project-mcp.js';
@@ -107,7 +110,6 @@ describe('shipped plugin payload', () => {
   test('contains no Genie-owned MCP route, capability, launcher, or server', () => {
     const plugin = join(import.meta.dir, '..', '..', 'plugins', 'genie');
     const manifests = [
-      join(plugin, '.codex-plugin', 'plugin.json'),
       join(plugin, '.claude-plugin', 'plugin.json'),
       join(plugin, '.kimi-plugin', 'plugin.json'),
       join(plugin, 'orca-plugin.json'),
@@ -263,5 +265,195 @@ describe('retireJsonMcpGenieEntry', () => {
     const after = readFileSync(mcp(), 'utf8');
     expect(retireJsonMcpGenieEntry(root)).toMatchObject({ action: 'skipped' });
     expect(readFileSync(mcp(), 'utf8')).toBe(after);
+  });
+});
+
+// Moved verbatim from the retired Codex lifecycle-truth test with the
+// route-layer classifier itself.
+describe('classifyRouteLayers (typed config-layer diagnostics)', () => {
+  const root = resolve('/repo');
+  function input(over: Partial<RouteLayerInput> = {}): RouteLayerInput {
+    return {
+      worktreeRoot: root,
+      cwd: root,
+      route: { route: 'fallback', detail: 'project fallback' },
+      globalConfigPath: '/codex-home/config.toml',
+      readFile: () => null,
+      exists: () => false,
+      ...over,
+    };
+  }
+  const trustedGlobal = `[projects."${root}"]\ntrust_level = "trusted"\n`;
+
+  test('an intact trusted route yields zero findings', () => {
+    const findings = classifyRouteLayers(
+      input({ readFile: (path) => (path === '/codex-home/config.toml' ? trustedGlobal : null) }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  test('plugin+project conflict is a route-collision', () => {
+    const findings = classifyRouteLayers(
+      input({
+        route: { route: 'conflict', detail: 'both routes effective' },
+        readFile: (path) => (path === '/codex-home/config.toml' ? trustedGlobal : null),
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'route-collision' });
+    expect(findings[0]?.detail).toContain('both routes effective');
+  });
+
+  test('a user-owned same-key project route is a route-collision that names user resolution', () => {
+    const findings = classifyRouteLayers(
+      input({
+        route: { route: 'unmanaged-fallback', detail: 'unmanaged [mcp_servers.genie]' },
+        readFile: (path) => (path === '/codex-home/config.toml' ? trustedGlobal : null),
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'route-collision' });
+    expect(findings[0]?.detail).toContain('user-owned');
+    expect(findings[0]?.detail).toContain('user resolution');
+  });
+
+  test('a nested .codex/config.toml nearer to the CWD shadows the root marker (nearest owner reported)', () => {
+    const nested = join(root, 'packages', 'web');
+    const mid = join(root, 'packages');
+    const shadowConfig = '[mcp_servers.genie]\ncommand = "other"\n';
+    const files: Record<string, string> = {
+      [join(nested, '.codex', 'config.toml')]: shadowConfig,
+      [join(mid, '.codex', 'config.toml')]: shadowConfig,
+      '/codex-home/config.toml': trustedGlobal,
+    };
+    const findings = classifyRouteLayers(
+      input({
+        cwd: nested,
+        readFile: (path) => files[path] ?? null,
+        exists: (path) => path in files,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'route-shadowed', ownerPath: nested });
+  });
+
+  test('a nested config without a genie route does not shadow', () => {
+    const nested = join(root, 'packages');
+    const files: Record<string, string> = {
+      [join(nested, '.codex', 'config.toml')]: '[mcp_servers.other]\ncommand = "x"\n',
+      '/codex-home/config.toml': trustedGlobal,
+    };
+    const findings = classifyRouteLayers(
+      input({ cwd: nested, readFile: (path) => files[path] ?? null, exists: (path) => path in files }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  test('a CWD outside the worktree root never walks the chain', () => {
+    const findings = classifyRouteLayers(
+      input({
+        cwd: '/elsewhere',
+        readFile: (path) => (path === '/codex-home/config.toml' ? trustedGlobal : null),
+        exists: () => {
+          throw new Error('chain walk must not run for an outside CWD');
+        },
+      }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  test('the dotted-key route spelling (the marker form) is detected in nested and global layers', () => {
+    const nested = join(root, 'packages');
+    const dottedConfig = 'mcp_servers.genie.command = "/elsewhere/genie"\nmcp_servers.genie.args = ["mcp"]\n';
+    const files: Record<string, string> = {
+      [join(nested, '.codex', 'config.toml')]: dottedConfig,
+      '/codex-home/config.toml': `${dottedConfig}${trustedGlobal}`,
+    };
+    const findings = classifyRouteLayers(
+      input({ cwd: nested, readFile: (path) => files[path] ?? null, exists: (path) => path in files }),
+    );
+    expect(findings.map((finding) => finding.kind).sort()).toEqual(['global-route-same-key', 'route-shadowed']);
+  });
+
+  test('a dotted-key inline-table route (mcp_servers.genie = {…}) is detected', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml'
+            ? `mcp_servers.genie = { command = "/old/genie", args = [] }\n${trustedGlobal}`
+            : null,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'global-route-same-key' });
+  });
+
+  test('a non-genie dotted key or unrelated assignment does not false-positive', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml'
+            ? `mcp_servers.other.command = "/x"\nsome_genie_note = "mcp_servers.genie"\n${trustedGlobal}`
+            : null,
+      }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  test('a global same-key route is reported and preserved', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml' ? `[mcp_servers.genie]\ncommand = "old"\n${trustedGlobal}` : null,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'global-route-same-key', path: '/codex-home/config.toml' });
+  });
+
+  test('an explicit non-trusted trust_level is untrusted-config', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml' ? `[projects."${root}"]\ntrust_level = "untrusted"\n` : null,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'untrusted-config' });
+    expect(findings[0]?.detail).toContain("'untrusted'");
+  });
+
+  test('no trust entry at all is project-trust-required', () => {
+    const findings = classifyRouteLayers(input());
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'project-trust-required' });
+  });
+
+  test('trust entry for a DIFFERENT project does not trust this one', () => {
+    const findings = classifyRouteLayers(
+      input({
+        readFile: (path) =>
+          path === '/codex-home/config.toml' ? `[projects."/other/repo"]\ntrust_level = "trusted"\n` : null,
+      }),
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'project-trust-required' });
+  });
+});
+
+describe('projectTrustState (bounded targeted parse)', () => {
+  const root = resolve('/repo');
+
+  test('trusted entry is trusted', () => {
+    expect(projectTrustState(`[projects."${root}"]\ntrust_level = "trusted"\n`, root)).toEqual({ state: 'trusted' });
+  });
+
+  test('trust_level read stops at the next section header', () => {
+    const config = `[projects."${root}"]\nother = 1\n[projects."/other"]\ntrust_level = "trusted"\n`;
+    expect(projectTrustState(config, root)).toEqual({ state: 'unknown' });
+  });
+
+  test('null config (absent/unreadable/oversized) is unknown', () => {
+    expect(projectTrustState(null, root)).toEqual({ state: 'unknown' });
   });
 });

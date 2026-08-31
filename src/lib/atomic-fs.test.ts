@@ -328,7 +328,7 @@ describe('computeDirDigest', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bounded reads + durable writes (moved in from codex-activation-persistence.ts)
+// Bounded reads + durable writes (moved in from the retired Codex activation persistence module)
 // ---------------------------------------------------------------------------
 
 describe('readBoundedRegularFile', () => {

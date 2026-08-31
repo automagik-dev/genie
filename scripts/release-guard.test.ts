@@ -306,7 +306,6 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
       { name: '@automagik/genie', version, ...(packageScript ? { scripts: { postinstall: packageScript } } : {}) },
     ],
     ['plugins/genie/.claude-plugin/plugin.json', { name: 'genie', version }],
-    ['plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/orca-plugin.json', { id: 'genie', version }],
     ['plugins/genie/package.json', { name: 'genie-plugin', version }],

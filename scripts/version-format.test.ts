@@ -47,7 +47,6 @@ describe('manifest version formatting', () => {
     for (const path of [
       'package.json',
       'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
@@ -123,7 +122,7 @@ describe('manifest version formatting', () => {
       expect(JSON.parse(readFileSync(join(root, 'plugins/pi-genie/package.json'), 'utf8')).version).toBe('5.260711.3');
       expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
 
-      rmSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'));
+      rmSync(join(root, 'plugins/genie/.kimi-plugin/plugin.json'));
       await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
         'version synchronization preflight failed',
       );

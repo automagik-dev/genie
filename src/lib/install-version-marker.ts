@@ -39,7 +39,7 @@
 import { randomBytes } from 'node:crypto';
 import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fsyncParentDir, readBoundedRegularFile, unlinkWithParentFsync } from './codex-activation-persistence.js';
+import { fsyncParentDir, readBoundedRegularFile, unlinkWithParentFsync } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
 
 /** The stable legacy marker filename, resolved under `GENIE_HOME`. */

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import type { DeliveryEvidencePlatformId } from '../../src/lib/codex-delivery-evidence.js';
+import type { DeliveryEvidencePlatformId } from '../../src/lib/delivery-evidence-verify.js';
 import { type DogfoodEntryInput, type GenerationInputPaths, runDogfoodEntry } from './codex-dogfood-harness.js';
 
 const ENV_KEYS = {

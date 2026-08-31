@@ -344,29 +344,6 @@ export function runDeliveryRootConsumer<T>(consumer: DeliveryRootConsumer<T>, ph
   return consume(physicalRoot) as T;
 }
 
-export interface SetupCodexConsentCommitOptions {
-  genieHome?: string;
-  selection: IntegrationSelection;
-  /** Test seam for the durable consent writer. */
-  persist?: typeof persistIntegrationConsent;
-}
-
-/**
- * Create setup's narrow explicit-consent commit capability. The delivery root
- * is intentionally not passed to the write: its only role is to force this
- * privileged state transition through the store's immediate freshness checks.
- */
-export function createSetupCodexConsentCommitConsumer(
-  options: SetupCodexConsentCommitOptions,
-): DeliveryRootConsumer<void> {
-  if (options.selection !== 'codex' && options.selection !== 'all') {
-    throw new IntegrationCommandError('setup Codex consent commit requires explicit codex/all scope');
-  }
-  return createDeliveryRootConsumer(() =>
-    (options.persist ?? persistIntegrationConsent)(options.selection, options.genieHome ?? resolveGenieHome()),
-  );
-}
-
 const BOUNDED_RUNNER_WORKER = String.raw`
   const { spawn } = require('node:child_process');
   const { workerData } = require('node:worker_threads');
@@ -551,12 +528,12 @@ export function resolveRuntimeExecutable(
 
 /**
  * A directory qualifies as the bundle root only when it actually carries the
- * genie plugin payload the integrations reference (`plugins/genie/codex-agents`
- * ships in every bundle and repo checkout). This guard is what keeps virtual
+ * genie plugin payload the integrations reference (`plugins/genie` ships in
+ * every bundle and repo checkout). This guard is what keeps virtual
  * compile-time paths (`/$bunfs/...` → `/`) from ever being returned.
  */
 function isBundleRoot(root: string): boolean {
-  return existsSync(join(root, 'plugins', 'genie', 'codex-agents'));
+  return existsSync(join(root, 'plugins', 'genie'));
 }
 
 function safeRealpath(path: string): string | null {
@@ -2435,27 +2412,6 @@ function addCodexMarketplace(runner: CommandRunner, command: string, bundleRoot:
   if (!/already|exists|configured/i.test(output)) {
     throw new IntegrationCommandError(`codex ${args.join(' ')} failed: ${(result.stderr || result.stdout).trim()}`);
   }
-}
-
-export interface RegisterCodexMarketplaceOptions {
-  /** Once-bound absolute Codex executable. */
-  command: string;
-  runner?: CommandRunner;
-  timeoutMs?: number;
-}
-
-/**
- * Build a one-operation capability that can register only the exact physical
- * delivery root admitted by the activation store. The root is never exposed to
- * setup/executor callers and cannot be rebound through GENIE_HOME resolution.
- */
-export function createCodexMarketplaceRegistrationConsumer(
-  options: RegisterCodexMarketplaceOptions,
-): DeliveryRootConsumer<void> {
-  const timeoutMs = boundedPositiveInteger('timeout', options.timeoutMs ?? INTEGRATION_TIMEOUT_MS, 5 * 60_000);
-  return createDeliveryRootConsumer((physicalRoot) =>
-    addCodexMarketplace(options.runner ?? defaultRunner, options.command, physicalRoot, timeoutMs),
-  );
 }
 
 function requireCodexPluginState(raw: string, phase: string): RuntimePluginState {

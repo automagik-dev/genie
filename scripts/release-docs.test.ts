@@ -9,25 +9,6 @@ function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
 
-interface ReviewerProfile {
-  approval_policy?: unknown;
-  default_permissions?: unknown;
-  sandbox_mode?: unknown;
-  sandbox_workspace_write?: unknown;
-  permissions?: Record<string, unknown>;
-}
-
-function reviewerPermissionViolations(profile: ReviewerProfile): string[] {
-  const violations: string[] = [];
-  if (profile.approval_policy !== 'never') violations.push('approval policy must be never');
-  if (profile.default_permissions !== ':read-only') violations.push('built-in read-only permissions must be selected');
-  if (profile.sandbox_mode !== undefined) violations.push('legacy sandbox mode must not override the named profile');
-  if (profile.sandbox_workspace_write !== undefined) violations.push('legacy workspace-write grants are forbidden');
-  if (Object.keys(profile.permissions ?? {}).length > 0)
-    violations.push('custom writable permission profiles are forbidden');
-  return violations;
-}
-
 function buildHelperInputs(): string[] {
   const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.[jt]s)/g)].map(
     (match) => `scripts/${match[1]}`,
@@ -61,7 +42,6 @@ describe('Group E release and documentation contracts', () => {
     for (const path of [
       'package.json',
       'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
@@ -74,7 +54,7 @@ describe('Group E release and documentation contracts', () => {
     // There is no repo-root Orca manifest to stamp: the Orca plugin ships as the
     // tree-only `plugins/genie` subtree ref, not from the repo root.
     expect(workflow).not.toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
-    expect(workflow).toContain('expected exactly nine version files');
+    expect(workflow).toContain('expected exactly eight version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
@@ -513,7 +493,6 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
-      "'.agents/plugins/marketplace.json'",
       "'.claude-plugin/marketplace.json'",
       "'.github/workflows/build-tarballs.yml'",
     ]) {
@@ -783,39 +762,6 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
-  test('shipped Codex integration doc carries the exit matrix, trailer, lease, and candidate-channel contract', () => {
-    const doc = read('plugins/genie/references/codex-integration-map.md');
-    // Exit matrix (per-command 0/1/2) with the busy code.
-    expect(doc).toContain('### Per-command 0/1/2 exit matrix');
-    expect(doc).toContain('`codex-lifecycle-busy`');
-    expect(doc).toContain('| `genie setup --codex`');
-    expect(doc).toContain('| `genie update --rollback`');
-    expect(doc).toContain('| `genie uninstall`');
-    expect(doc).toContain('| `genie doctor`');
-    // Result trailer, serialized once by Group A.
-    expect(doc).toContain('### Result trailer');
-    expect(doc).toContain('serializeActivationResultTrailer');
-    expect(doc).toContain('"schemaVersion":1');
-    expect(doc).toContain('"deliveryComplete":false');
-    expect(doc).toContain('"nextAction"');
-    // Lease busy/retry semantics.
-    expect(doc).toContain('exclusive lease');
-    expect(doc).toContain('no force override');
-    // Rollback floor, sync-only, state-scaffold init, uninstall isolation.
-    expect(doc).toContain('### Rollback floor');
-    expect(doc).toContain('cannot waive the protocol floor');
-    expect(doc).toContain('**Sync-only**');
-    expect(doc).toContain('state-scaffold init');
-    expect(doc).toContain('independent of plugin availability');
-    expect(doc).toContain('unreachable from update, install, setup, doctor, sync');
-    // Dev candidate channel + the N-task non-guarantee.
-    expect(doc).toContain('Dev is the canonical pre-stable candidate channel');
-    expect(doc).toContain('an activated N task is not');
-    expect(doc).toContain('cannot resume activated N tasks without');
-    expect(doc).toContain('scripts/validate-live-dogfood-evidence.ts');
-    expect(doc).toContain('scripts/verify-codex-activation-payload.ts');
-  });
-
   test('dual-mode docs preserve the operator and public Orca contributor contracts', () => {
     const operator = read('README.md');
     const contributor = read('plugins/genie/references/orca-orchestration.md');
@@ -881,39 +827,11 @@ describe('Group E release and documentation contracts', () => {
     expect(pluginReadme).toContain('references/orca-orchestration.md');
   });
 
-  test('release build independently verifies each extracted activation payload', () => {
-    const build = read('scripts/build-binary.sh');
-    const extract = build.indexOf('tar -xzf "${TARBALL}"');
-    const verifyPayload = build.indexOf('scripts/verify-codex-activation-payload.ts');
-    expect(verifyPayload).toBeGreaterThan(extract);
-    expect(build).toContain('--root "${VERIFY_ROOT}" --platform "${PLATFORM}" --version "${VERSION}"');
-    // The extracted-payload verifier must be a covered Build-Tarballs PR input.
-    expect(read('.github/workflows/build-tarballs.yml')).toContain("- 'scripts/verify-codex-activation-payload.ts'");
-  });
-
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
     expect(read('README.md')).not.toContain('<!-- METRICS:START -->');
     for (const file of ['AGENT.md', 'runs.jsonl', 'state.json']) {
       expect(existsSync(join(ROOT, '.genie/agents/metrics-updater', file))).toBe(false);
     }
-  });
-
-  test('reviewer permission profile remains read-only even for temporary-hosted worktrees', () => {
-    const profile = Bun.TOML.parse(read('plugins/genie/codex-agents/genie-reviewer.toml')) as ReviewerProfile;
-    expect(reviewerPermissionViolations(profile)).toEqual([]);
-
-    expect(reviewerPermissionViolations({ ...profile, permissions: { unsafe: {} } })).toContain(
-      'custom writable permission profiles are forbidden',
-    );
-    expect(reviewerPermissionViolations({ ...profile, default_permissions: 'genie-reviewer-temp' })).toContain(
-      'built-in read-only permissions must be selected',
-    );
-    expect(reviewerPermissionViolations({ ...profile, sandbox_mode: 'workspace-write' })).toContain(
-      'legacy sandbox mode must not override the named profile',
-    );
-    expect(
-      reviewerPermissionViolations({ ...profile, sandbox_workspace_write: { writable_roots: ['/repo'] } }),
-    ).toContain('legacy workspace-write grants are forbidden');
   });
 
   test('README and contributor command inventories match the live CLI registry', () => {
@@ -976,8 +894,6 @@ describe('Group E release and documentation contracts', () => {
       expect(docs).toContain(`$genie:${skill}`);
     }
     expect(docs).toContain('separately installed personal');
-    const manifest = read('plugins/genie/.codex-plugin/plugin.json');
-    for (const skill of ['wish', 'work', 'review']) expect(manifest).toContain(`$genie:${skill}`);
 
     const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
@@ -1146,23 +1062,6 @@ describe('Group E release and documentation contracts', () => {
     expect(wish).toContain('Never repair the failure with a locally recomputed digest');
     expect(lint).toContain('DESIGN_REVIEW_EVIDENCE_THRESHOLD');
     expect(lint).toContain('designReviewViolations');
-  });
-
-  test('both reviewer profiles cover every universal review context', () => {
-    const profiles = [read('plugins/genie/codex-agents/genie-reviewer.toml'), read('plugins/genie/agents/reviewer.md')];
-    for (const profile of profiles) {
-      for (const marker of [
-        'DESIGN.md',
-        'Plan review',
-        'completed execution',
-        'PR review',
-        'SHIP',
-        'FIX-FIRST',
-        'BLOCKED',
-      ]) {
-        expect(profile).toContain(marker);
-      }
-    }
   });
 
   test('Omni and MCP operator instructions expose provider and project-route ownership policy', () => {

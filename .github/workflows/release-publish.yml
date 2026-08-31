@@ -1029,7 +1029,7 @@ jobs:
   # previous stable N. Real N as the parent, real T as the binary, no Codex
   # anywhere is the shape of an ordinary user's machine, and it is exercised
   # nowhere else in this pipeline. The assertion is the delivery contract
-  # itself: exit 2, a `activation-pending` result trailer, `deliveryComplete`
+  # itself: exit 0, a `delivery-verified` result trailer, `deliveryComplete`
   # true — delivery published, activation still withheld until explicit
   # consent.
   #
@@ -1313,8 +1313,7 @@ jobs:
 
           # The update-side delivery path itself, driven exactly as
           # tests/support/codex-dogfood-harness.ts drives it (argv, request
-          # schema, GENIE_RELEASE_DOGFOOD=1, expected exit 2), but on this bare
-          # host. Inputs are copied under DOGFOOD_ROOT first because
+          # schema, GENIE_RELEASE_DOGFOOD=1), but on this bare host. Inputs are copied under DOGFOOD_ROOT first because
           # run-musl-dogfood.sh requires every path the candidate touches to be
           # physically contained in that one canonical root.
           publish_local_delivery() {
@@ -1337,19 +1336,19 @@ jobs:
             output="$(run_genie update --publish-local-delivery "$request" 2>&1)" || status=$?
             unset GENIE_RELEASE_DOGFOOD
             printf '%s\n' "$output"
-            [[ "$status" -eq 2 ]] || {
-              echo "::error::update-path.delivery expected exit 2 (delivery published, activation pending), got ${status}"
+            [[ "$status" -eq 0 ]] || {
+              echo "::error::update-path.delivery expected exit 0 (offline delivery evidence verified), got ${status}"
               exit 1
             }
             trailer="$(printf '%s\n' "$output" | grep -o '{.*}' | tail -n 1)"
             printf '%s' "$trailer" | jq -e '
-              .schemaVersion == 1 and .code == "activation-pending" and
+              .schemaVersion == 1 and .code == "delivery-verified" and
               .deliveryComplete == true and .retry == false and (.nextAction | length) > 0
             ' >/dev/null || {
-              echo "::error::update-path.delivery trailer is not the activation-pending delivery contract: ${trailer}"
+              echo "::error::update-path.delivery trailer is not the delivery-verified contract: ${trailer}"
               exit 1
             }
-            printf 'genie update --publish-local-delivery -> exit 2 %s\n' "$trailer"
+            printf 'genie update --publish-local-delivery -> exit 0 %s\n' "$trailer"
           }
 
           SEEDED="${ROOT}/repos/seeded"

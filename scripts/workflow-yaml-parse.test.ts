@@ -172,9 +172,9 @@ describe('release-publish.yml gates', () => {
     // The one thing here that no earlier job does on a plain, Codex-free host.
     expect(smoke).toContain('update --publish-local-delivery');
     expect(smoke).toContain('GENIE_RELEASE_DOGFOOD=1');
-    expect(smoke).toContain('.code == "activation-pending"');
+    expect(smoke).toContain('.code == "delivery-verified"');
     expect(smoke).toContain('.deliveryComplete == true');
-    expect(smoke).toContain('"$status" -eq 2');
+    expect(smoke).toContain('"$status" -eq 0');
     // Still the signed-bytes gate it always was.
     expect(smoke).toContain('bash scripts/verify-release.sh --local');
     expect(smoke).toContain('bun scripts/verify-delivery-evidence-pack.ts');
@@ -228,7 +228,7 @@ describe('ci.yml gates', () => {
   test('the inventory parity check is its own job, and unit stays network-free', () => {
     const names = Object.keys(jobs(workflow(CI)));
     expect(names).toContain('skills-inventory-parity');
-    expect(names).toEqual(expect.arrayContaining(['unit', 'e2e', 'codex-smoke', 'quality-gate']));
+    expect(names).toEqual(expect.arrayContaining(['unit', 'e2e', 'quality-gate']));
 
     const parity = runScripts(job(workflow(CI), 'skills-inventory-parity'));
     expect(parity).toContain('skills-inventory-parity.ts');

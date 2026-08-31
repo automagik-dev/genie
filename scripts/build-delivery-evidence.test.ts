@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanPhysicalTree } from '../src/lib/codex-activation.ts';
+import { scanPhysicalTree } from '../src/lib/release-payload-proof.ts';
 
 const SCRIPT = join(import.meta.dir, 'build-delivery-evidence.ts');
 const roots: string[] = [];

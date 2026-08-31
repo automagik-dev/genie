@@ -28,10 +28,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
 import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
-import { VERSION } from '../lib/version.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
 import {
   type InstallOptions,
+  narrowAgentSyncSelection,
   normalizeAuxLayout,
   runInstallAgentSync,
   installCommand as runInstallCommand,
@@ -55,17 +55,7 @@ function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
 }
 
 const noopLease = () => ({ path: '/tmp/test-lifecycle.lock', release: () => undefined });
-const noopCodexLease = () =>
-  ({
-    ok: true,
-    operationId: '0'.repeat(32),
-    kind: 'install-converge',
-    assertOperation: () => undefined,
-    release: () => undefined,
-  }) as const;
 const noopConsent = () => undefined;
-const noopDeliveryRepair = async () => ({ action: 'proceed-current' as const });
-const currentCodexTarget = () => ({ installedVersion: VERSION });
 
 /**
  * The production skills.sh step shells out to the pinned CLI over the network,
@@ -76,8 +66,8 @@ const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skippe
 
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
-  args[10] ??= () => undefined;
-  args[11] ??= noSkillsChannel;
+  args[7] ??= () => undefined;
+  args[8] ??= noSkillsChannel;
   return runInstallCommand(...args);
 }
 
@@ -491,10 +481,8 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
-      noopCodexLease,
       noopConsent,
       () => null,
-      noopDeliveryRepair,
     );
     expect(spy.calls()).toBe(1);
     expect(normalizeCalls).toBe(1);
@@ -517,10 +505,8 @@ describe('installCommand', () => {
       },
       () => [],
       noopLease,
-      noopCodexLease,
       noopConsent,
       () => null,
-      noopDeliveryRepair,
     );
     expect(spy.calls()).toBe(0);
     expect(normalizeCalls).toBe(1);
@@ -539,10 +525,8 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
-      noopCodexLease,
       noopConsent,
       () => null,
-      noopDeliveryRepair,
     );
     await installCommand(
       { skipIntegrations: true },
@@ -554,10 +538,8 @@ describe('installCommand', () => {
         return [];
       },
       noopLease,
-      noopCodexLease,
       noopConsent,
       () => null,
-      noopDeliveryRepair,
     );
     expect(selection).toBe('none');
   });
@@ -572,10 +554,7 @@ describe('installCommand', () => {
         (selection) => observed.push(selection),
         () => [],
         noopLease,
-        noopCodexLease,
         noopConsent,
-        integrations === 'codex' || integrations === 'all' ? currentCodexTarget : () => null,
-        noopDeliveryRepair,
       );
     // Codex never reaches runIntegrations or agent-sync. `none` likewise has no
     // sync target.
@@ -604,10 +583,7 @@ describe('installCommand', () => {
         return [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }];
       },
       noopLease,
-      noopCodexLease,
       noopConsent,
-      currentCodexTarget,
-      noopDeliveryRepair,
     );
     expect(scopes).toEqual([{ selection: 'auto', codex: false }]);
     expect(observedSync).toEqual(['auto']);
@@ -623,10 +599,8 @@ describe('installCommand', () => {
         () => undefined,
         failing,
         noopLease,
-        noopCodexLease,
         noopConsent,
         () => null,
-        noopDeliveryRepair,
       ),
     ).resolves.toBeUndefined();
     await expect(
@@ -637,10 +611,8 @@ describe('installCommand', () => {
         () => {},
         failing,
         noopLease,
-        noopCodexLease,
         noopConsent,
         () => null,
-        noopDeliveryRepair,
       ),
     ).rejects.toThrow('Requested integration failed');
   });
@@ -664,7 +636,6 @@ describe('installCommand', () => {
           },
         ],
         noopLease,
-        noopCodexLease,
         noopConsent,
       );
     try {
@@ -697,36 +668,10 @@ describe('installCommand', () => {
           return [];
         },
         noopLease,
-        noopCodexLease,
         noopConsent,
       ),
     ).rejects.toThrow('Invalid --integrations value: codxe');
     expect(calls).toEqual([]);
-  });
-
-  test('rejects a malformed standalone-installer channel before acquiring a lifecycle lease', async () => {
-    const priorChannel = process.env.GENIE_INSTALL_DELIVERY_CHANNEL;
-    let acquired = false;
-    process.env.GENIE_INSTALL_DELIVERY_CHANNEL = 'main-evil';
-    try {
-      await expect(
-        installCommand(
-          {},
-          makeCleanupSpy().runner,
-          () => undefined,
-          () => undefined,
-          () => [],
-          () => {
-            acquired = true;
-            return noopLease();
-          },
-        ),
-      ).rejects.toThrow('Invalid installer delivery channel');
-      expect(acquired).toBe(false);
-    } finally {
-      if (priorChannel === undefined) Reflect.deleteProperty(process.env, 'GENIE_INSTALL_DELIVERY_CHANNEL');
-      else process.env.GENIE_INSTALL_DELIVERY_CHANNEL = priorChannel;
-    }
   });
 });
 
@@ -814,20 +759,21 @@ describe('normalizeAuxLayout', () => {
     expect(existsSync(join(home, 'plugins'))).toBe(false);
   });
 
-  test('marketplace manifest dirs (.agents, .claude-plugin) move next to plugins/ under GENIE_HOME', () => {
-    write(join(home, 'bin', 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'), '# Managed by Genie.\n');
-    write(join(home, 'bin', '.agents', 'plugins', 'marketplace.json'), '{"name":"automagik"}');
+  test('the marketplace manifest dir (.claude-plugin) moves next to plugins/ under GENIE_HOME', () => {
+    write(join(home, 'bin', 'plugins', 'genie', 'agents', 'reviewer.md'), '# reviewer\n');
     write(join(home, 'bin', '.claude-plugin', 'marketplace.json'), '{"name":"automagik"}');
+    // The retired Codex marketplace tree is no longer a managed layout dir: an
+    // extracted `.agents/` is left exactly where it was found.
+    write(join(home, 'bin', '.agents', 'plugins', 'marketplace.json'), '{"name":"automagik"}');
 
     normalizeAuxLayout(home);
 
     // GENIE_HOME is now a self-consistent `plugin marketplace add` root: the
-    // manifests' relative `./plugins/genie` reference resolves under it.
-    expect(existsSync(join(home, '.agents', 'plugins', 'marketplace.json'))).toBe(true);
+    // manifest's relative `./plugins/genie` reference resolves under it.
     expect(existsSync(join(home, '.claude-plugin', 'marketplace.json'))).toBe(true);
-    expect(existsSync(join(home, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'))).toBe(true);
-    expect(existsSync(join(home, 'bin', '.agents'))).toBe(false);
+    expect(existsSync(join(home, 'plugins', 'genie', 'agents', 'reviewer.md'))).toBe(true);
     expect(existsSync(join(home, 'bin', '.claude-plugin'))).toBe(false);
+    expect(existsSync(join(home, '.agents'))).toBe(false);
   });
 
   test('a failed tree suppresses the VERSION stamp so a same-version reinstall retries it', () => {
@@ -1251,16 +1197,7 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
           cause: 'held',
         };
       },
-      () => {
-        events.push('MUTATION:codex-lease');
-        throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
-      },
       () => events.push('MUTATION:consent'),
-      () => null,
-      async () => {
-        events.push('MUTATION:repair');
-        return { action: 'proceed-current' };
-      },
       () => events.push('MUTATION:retire-marker'),
     ).catch((error: unknown) => {
       thrown = error;
@@ -1301,10 +1238,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
       (selection) => calls.push(`agent-sync:${selection}`),
       () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
       noopLease,
-      noopCodexLease,
       noopConsent,
-      () => null,
-      noopDeliveryRepair,
       () => undefined,
       (selection) => {
         calls.push(`skills:${selection}`);
@@ -1324,10 +1258,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         () => undefined,
         () => [],
         noopLease,
-        noopCodexLease,
         noopConsent,
-        integrations === 'codex' || integrations === 'all' ? currentCodexTarget : () => null,
-        noopDeliveryRepair,
         () => undefined,
         (selection) => {
           seen.push(selection);
@@ -1354,10 +1285,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         () => undefined,
         () => [{ runtime: 'claude' as const, ok: false, detail: 'missing' }],
         noopLease,
-        noopCodexLease,
         noopConsent,
-        () => null,
-        noopDeliveryRepair,
         () => undefined,
         () => {
           skills += 1;
@@ -1387,10 +1315,7 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
     process.exitCode = savedExit;
   });
 
-  const runInstall = async (
-    runSkills: () => SkillsChannelConvergenceResult,
-    codexTarget: () => { installedVersion: string | null } | null,
-  ): Promise<void> =>
+  const runInstall = async (runSkills: () => SkillsChannelConvergenceResult): Promise<void> =>
     installCommand(
       { integrations: 'auto' },
       makeCleanupSpy().runner,
@@ -1398,220 +1323,38 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
       () => undefined,
       () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
       noopLease,
-      noopCodexLease,
       noopConsent,
-      codexTarget,
-      noopDeliveryRepair,
       () => undefined,
       runSkills,
     );
 
-  test('a failed skills install keeps exit 1 on an action-required host instead of projecting exit 2', async () => {
-    await runInstall(
-      () => ({ status: 'failed', reason: 'skills CLI exited 1: fixture' }),
-      () => ({ installedVersion: null }),
-    );
+  test('a failed skills install exits 1 and emits no delivery trailer', async () => {
+    await runInstall(() => ({ status: 'failed', reason: 'skills CLI exited 1: fixture' }));
 
     expect(process.exitCode).toBe(1);
-    // The action-required result trailer belongs to the exit-2 projection the
-    // failure outranks; it must not be printed over the skills failure.
     expect(logs.some((line) => line.includes('activation-pending'))).toBe(false);
+    expect(logs.some((line) => line.includes('deliveryComplete'))).toBe(false);
   });
 
-  test('a successful skills install on an action-required host still projects exit 2', async () => {
-    await runInstall(
-      () => ({
-        status: 'installed',
-        record: {
-          ref: 'v5.260830.16',
-          cliVersion: '1.5.23',
-          inventory: ['wish'],
-          agentDirs: [],
-          dirDigests: {},
-          installedAt: '2026-08-30T12:00:00.000Z',
-        },
-      }),
-      () => ({ installedVersion: null }),
-    );
-
-    expect(process.exitCode).toBe(2);
-    expect(logs.some((line) => line.includes('activation-pending'))).toBe(true);
-  });
-
-  test('a successful skills install with no action required stays exit 0', async () => {
-    await runInstall(
-      () => ({
-        status: 'installed',
-        record: {
-          ref: 'v5.260830.16',
-          cliVersion: '1.5.23',
-          inventory: ['wish'],
-          agentDirs: [],
-          dirDigests: {},
-          installedAt: '2026-08-30T12:00:00.000Z',
-        },
-      }),
-      () => null,
-    );
+  test('a successful skills install stays exit 0', async () => {
+    await runInstall(() => ({
+      status: 'installed',
+      record: {
+        ref: 'v5.260830.16',
+        cliVersion: '1.5.23',
+        inventory: ['wish'],
+        agentDirs: [],
+        dirDigests: {},
+        installedAt: '2026-08-30T12:00:00.000Z',
+      },
+    }));
 
     expect(process.exitCode).toBe(0);
   });
 });
 
-describe('installCommand — Group C install gate (item 2)', () => {
-  let logs: string[];
-  let logSpy: ReturnType<typeof spyOn>;
-  const savedExit = process.exitCode;
-
-  beforeEach(() => {
-    process.exitCode = 0;
-    logs = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map(String).join(' '));
-    });
-  });
-  afterEach(() => {
-    logSpy.mockRestore();
-    process.exitCode = savedExit;
-  });
-
-  test('publishes before permitted non-Codex work and defers a pending generation with zero Codex mutation', async () => {
-    const events: string[] = [];
-    const cleanup = makeCleanupSpy();
-    await installCommand(
-      { integrations: 'all' },
-      ((...args: Parameters<typeof cleanupV4>) => {
-        events.push('cleanup');
-        return cleanup.runner(...args);
-      }) as typeof cleanupV4,
-      () => {
-        events.push('normalize');
-        return undefined;
-      },
-      (selection) => events.push(`sync:${selection}`),
-      (options) => {
-        events.push(`integrations:${options?.selection}`);
-        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
-      },
-      noopLease,
-      noopCodexLease,
-      () => events.push('consent'),
-      () => ({ installedVersion: '5.260710.2' }),
-      async () => {
-        events.push('repair');
-        return { action: 'exit-handoff' };
-      },
-      () => events.push('retire-marker'),
-    );
-    expect(events).toEqual(['normalize', 'repair', 'cleanup', 'integrations:claude', 'sync:all', 'retire-marker']);
-    expect(process.exitCode).toBe(2);
-    expect(logs.filter((l) => l.includes('"deliveryComplete":true'))).toHaveLength(1);
-    const codexLine = logs.find((l) => l.includes('codex:'));
-    expect(codexLine).toContain('Codex plugin left at v5.260710.2 (no activation-owned mutation)');
-    expect(codexLine).toContain('retire tasks → genie setup --codex → /hooks → new task');
-  });
-
-  test('failed or advanced publication is terminal before consent, cleanup, integration, sync, marker retirement, or success', async () => {
-    const advancedManifest = {
-      schema_version: 1,
-      channel: 'stable' as const,
-      version: '5.260723.8',
-      released_at: '2026-07-23T00:00:00Z',
-      tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v5.260723.8',
-      platforms: ['darwin-arm64'],
-      manifestBytes: '{"version":"5.260723.8"}\n',
-      manifestSha256: 'a'.repeat(64),
-    };
-    for (const directive of [
-      { action: 'failed' as const, detail: 'delivery store is unwritable' },
-      { action: 'route-upgrade' as const, manifest: advancedManifest },
-    ]) {
-      const events: string[] = [];
-      logs.length = 0;
-      process.exitCode = 0;
-      await installCommand(
-        { integrations: 'codex' },
-        (() => {
-          events.push('cleanup');
-          return makeCleanupSpy().runner();
-        }) as typeof cleanupV4,
-        () => {
-          events.push('normalize');
-          return undefined;
-        },
-        () => events.push('sync'),
-        () => {
-          events.push('integrations');
-          return [];
-        },
-        noopLease,
-        noopCodexLease,
-        () => events.push('consent'),
-        () => ({ installedVersion: null }),
-        async () => {
-          events.push('repair');
-          return directive;
-        },
-        () => events.push('retire-marker'),
-      );
-      expect(events).toEqual(['normalize', 'repair']);
-      expect(process.exitCode).toBe(1);
-      expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(0);
-      expect(logs.join('\n')).not.toContain('authenticated delivery v');
-      const trailer = logs.find((line) => line.includes('"code":"delivery-incomplete"'));
-      expect(trailer).toBeDefined();
-      expect(JSON.parse(trailer as string)).toMatchObject({ deliveryComplete: false, retry: true });
-      if (directive.action === 'route-upgrade') expect(logs.join('\n')).toContain(advancedManifest.version);
-    }
-  });
-
-  test('a target-current authenticated install leaves Codex untouched and permits only Claude integration', async () => {
-    const events: string[] = [];
-    await installCommand(
-      { integrations: 'all' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      () => events.push('sync'),
-      (options) => {
-        events.push(`integrations:${options?.selection}`);
-        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
-      },
-      noopLease,
-      noopCodexLease,
-      noopConsent,
-      currentCodexTarget,
-      async () => {
-        events.push('repair');
-        return { action: 'repaired-current' };
-      },
-      () => events.push('retire-marker'),
-    );
-    expect(events).toEqual(['repair', 'integrations:claude', 'sync', 'retire-marker']);
-    expect(process.exitCode).toBe(0);
-    expect(logs.join('\n')).not.toContain('"deliveryComplete":true');
-    expect(logs.join('\n')).toContain('no activation-owned mutation');
-  });
-
-  test('only an explicitly Claude-only install persists maintenance consent', async () => {
-    const persisted: string[] = [];
-    for (const integrations of ['codex', 'auto', 'all', 'none', 'claude'] as const) {
-      await installCommand(
-        { integrations },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => undefined,
-        () => [],
-        noopLease,
-        noopCodexLease,
-        (selection) => persisted.push(`${integrations}:${selection}`),
-        integrations === 'codex' || integrations === 'auto' || integrations === 'all' ? currentCodexTarget : () => null,
-        noopDeliveryRepair,
-      );
-    }
-    expect(persisted).toEqual(['claude:claude']);
-  });
-
-  test('install-owned agent sync disables setup-owned Codex role convergence', () => {
+describe('installCommand — agent-sync scope', () => {
+  test('install-owned agent sync passes the real selection through', () => {
     let captured: Parameters<typeof import('./update.js').runAgentSyncSafe>[0] | undefined;
     runInstallAgentSync('all', (options) => {
       captured = options;
@@ -1619,289 +1362,13 @@ describe('installCommand — Group C install gate (item 2)', () => {
     });
     expect(captured?.selection).toBe('all');
     expect(captured?.strict).toBe(true);
-    expect(captured?.codexRefresh).toBeUndefined();
   });
 
-  test('fresh dev and stable installer handoffs authenticate the exact selected channel', async () => {
-    const priorChannel = process.env.GENIE_INSTALL_DELIVERY_CHANNEL;
-    try {
-      for (const selectedChannel of ['dev', 'stable'] as const) {
-        process.env.GENIE_INSTALL_DELIVERY_CHANNEL = selectedChannel;
-        let repairedChannel = '';
-        await installCommand(
-          { integrations: 'codex' },
-          makeCleanupSpy().runner,
-          () => undefined,
-          () => undefined,
-          (options) => {
-            expect(options?.selection).toBe('none');
-            return [];
-          },
-          noopLease,
-          noopCodexLease,
-          noopConsent,
-          () => ({ installedVersion: null }),
-          async (channel) => {
-            repairedChannel = channel;
-            return { action: 'exit-handoff' };
-          },
-          () => undefined,
-        );
-        expect(repairedChannel).toBe(selectedChannel);
-      }
-    } finally {
-      if (priorChannel === undefined) Reflect.deleteProperty(process.env, 'GENIE_INSTALL_DELIVERY_CHANNEL');
-      else process.env.GENIE_INSTALL_DELIVERY_CHANNEL = priorChannel;
+  test('narrowAgentSyncSelection skips only none and codex', () => {
+    expect(narrowAgentSyncSelection('none')).toBeNull();
+    expect(narrowAgentSyncSelection('codex')).toBeNull();
+    for (const selection of ['auto', 'all', 'claude'] as const) {
+      expect(narrowAgentSyncSelection(selection)).toBe(selection);
     }
-  });
-
-  test('a later permitted integration failure preserves the install marker after successful publication', async () => {
-    let retired = false;
-    await expect(
-      installCommand(
-        { integrations: 'all' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => undefined,
-        () => [{ runtime: 'claude', ok: false, detail: 'claude integration failed' }],
-        noopLease,
-        noopCodexLease,
-        noopConsent,
-        currentCodexTarget,
-        async () => ({ action: 'repaired-current' }),
-        () => {
-          retired = true;
-        },
-      ),
-    ).rejects.toThrow('Requested integration failed: claude');
-    expect(retired).toBe(false);
-  });
-
-  test('a later permitted agent-sync failure preserves the install marker after successful publication', async () => {
-    let retired = false;
-    await expect(
-      installCommand(
-        { integrations: 'all' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => {
-          throw new Error('agent sync failed');
-        },
-        () => [{ runtime: 'claude', ok: true, detail: 'claude integration current' }],
-        noopLease,
-        noopCodexLease,
-        noopConsent,
-        currentCodexTarget,
-        async () => ({ action: 'repaired-current' }),
-        () => {
-          retired = true;
-        },
-      ),
-    ).rejects.toThrow('agent sync failed');
-    expect(retired).toBe(false);
-  });
-
-  test('a busy Codex lifecycle lease projects exit 2 codex-lifecycle-busy / deliveryComplete:false with ZERO plugin convergence (AC8 loser)', async () => {
-    let integrationsRan = false;
-    let normalizeRan = false;
-    let syncRan = false;
-    let leaseAcquired = false;
-    await installCommand(
-      { integrations: 'auto' },
-      makeCleanupSpy().runner,
-      () => {
-        normalizeRan = true;
-        return undefined;
-      },
-      () => {
-        syncRan = true;
-      },
-      () => {
-        integrationsRan = true;
-        return [];
-      },
-      noopLease,
-      // Busy codex lifecycle lease: another lifecycle command (update-delivery) holds it.
-      () => {
-        leaseAcquired = true;
-        return {
-          ok: false,
-          reason: 'codex-lifecycle-busy',
-          holderKind: 'update-delivery',
-          detail: 'held by update-delivery (pid 4242)',
-        };
-      },
-      noopConsent,
-      // Classifier must not even be consulted for a mutation decision after a busy refusal.
-      () => null,
-    );
-    expect(leaseAcquired).toBe(true);
-    // Zero payload mutation: normalization, plugin convergence, and agent-sync
-    // all remain behind the unconditional inner lease.
-    expect(normalizeRan).toBe(false);
-    expect(integrationsRan).toBe(false);
-    expect(syncRan).toBe(false);
-    // Exit 2 with the codex-lifecycle-busy trailer (deliveryComplete:false, retry:true), naming the holder.
-    expect(process.exitCode).toBe(2);
-    const output = logs.join('\n');
-    expect(output).toContain('codex-lifecycle-busy');
-    expect(output).toContain('update-delivery');
-    const trailer = logs.find((l) => l.includes('"code":"codex-lifecycle-busy"'));
-    expect(trailer).toBeDefined();
-    expect(JSON.parse(trailer as string)).toMatchObject({ deliveryComplete: false, retry: true });
-  });
-
-  test('a claude/none install acquires Codex before payload normalization and releases inner then outer', async () => {
-    for (const integrations of ['claude', 'none'] as const) {
-      const events: string[] = [];
-      await installCommand(
-        { integrations },
-        makeCleanupSpy().runner,
-        () => {
-          events.push('normalize');
-          return undefined;
-        },
-        () => undefined,
-        () => [],
-        () => {
-          events.push('agent-acquire');
-          return {
-            path: '/tmp/test-lifecycle.lock',
-            release: () => events.push('agent-release'),
-          };
-        },
-        () => {
-          events.push('codex-acquire');
-          return {
-            ok: true as const,
-            operationId: 'a'.repeat(32),
-            kind: 'install-converge' as const,
-            assertOperation: () => undefined,
-            release: () => events.push('codex-release'),
-          };
-        },
-        noopConsent,
-        () => null,
-      );
-      expect(events).toEqual(['agent-acquire', 'codex-acquire', 'normalize', 'codex-release', 'agent-release']);
-    }
-  });
-
-  test('an inner release failure still releases and immediately reacquires the outer lifecycle authority', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-install-release-failure-'));
-    const genieHome = join(root, '.genie');
-    const events: string[] = [];
-    try {
-      await expect(
-        installCommand(
-          { integrations: 'none' },
-          makeCleanupSpy().runner,
-          () => undefined,
-          () => undefined,
-          () => [],
-          () => {
-            const acquired = acquireLifecycleLease(genieHome);
-            if ('skipped' in acquired) throw new Error(`fixture could not acquire outer lease: ${acquired.skipped}`);
-            return {
-              path: acquired.path,
-              release: () => {
-                events.push('agent-release');
-                acquired.release();
-              },
-            };
-          },
-          () => ({
-            ok: true as const,
-            operationId: 'a'.repeat(32),
-            kind: 'install-converge' as const,
-            assertOperation: () => undefined,
-            release: () => {
-              events.push('codex-release');
-              throw new Error('inner release fixture');
-            },
-          }),
-          noopConsent,
-          () => null,
-        ),
-      ).rejects.toThrow('inner release fixture');
-
-      expect(events).toEqual(['codex-release', 'agent-release']);
-      expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
-      const reacquired = acquireLifecycleLease(genieHome);
-      if ('skipped' in reacquired) throw new Error(`outer lease remained stranded: ${reacquired.skipped}`);
-      reacquired.release();
-      expect(existsSync(lifecycleLockPath(genieHome))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('dual release failures report both errors in reverse-release order', async () => {
-    const events: string[] = [];
-    let thrown: unknown;
-    try {
-      await installCommand(
-        { integrations: 'none' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => undefined,
-        () => [],
-        () => ({
-          path: '/tmp/test-lifecycle.lock',
-          release: () => {
-            events.push('agent-release');
-            throw new Error('outer release fixture');
-          },
-        }),
-        () => ({
-          ok: true as const,
-          operationId: 'a'.repeat(32),
-          kind: 'install-converge' as const,
-          assertOperation: () => undefined,
-          release: () => {
-            events.push('codex-release');
-            throw new Error('inner release fixture');
-          },
-        }),
-        noopConsent,
-        () => null,
-      );
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(events).toEqual(['codex-release', 'agent-release']);
-    expect(thrown).toBeInstanceOf(AggregateError);
-    expect((thrown as AggregateError).errors.map((error) => (error as Error).message)).toEqual([
-      'inner release fixture',
-      'outer release fixture',
-    ]);
-  });
-
-  test('a held Codex lifecycle lease is acquired for an in-scope install and released on the terminal path', async () => {
-    let released = false;
-    const acquire = () => ({
-      ok: true as const,
-      operationId: 'a'.repeat(32),
-      kind: 'install-converge' as const,
-      assertOperation: () => undefined,
-      release: () => {
-        released = true;
-      },
-    });
-    await installCommand(
-      { integrations: 'codex' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      () => undefined,
-      () => [{ runtime: 'codex' as const, ok: true, detail: 'plugin/hooks refreshed' }],
-      noopLease,
-      acquire,
-      noopConsent,
-      currentCodexTarget,
-      noopDeliveryRepair,
-    );
-    expect(process.exitCode).toBe(0);
-    expect(released).toBe(true);
   });
 });

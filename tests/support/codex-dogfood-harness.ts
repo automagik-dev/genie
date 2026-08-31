@@ -36,7 +36,6 @@ import {
   validateLiveDogfoodEvidence,
   validateLiveDogfoodEvidenceFile,
 } from '../../scripts/validate-live-dogfood-evidence.js';
-import { compareReleaseVersions, parseReleaseVersion, scanPhysicalTree } from '../../src/lib/codex-activation.js';
 import {
   DELIVERY_EVIDENCE_OIDC_ISSUER,
   DELIVERY_EVIDENCE_PREDICATE_TYPE,
@@ -48,7 +47,8 @@ import {
   type VerifiedDeliveryEvidence,
   verifiedDeliveryEvidenceFacts,
   verifyDownloadedDeliveryEvidence,
-} from '../../src/lib/codex-delivery-evidence.js';
+} from '../../src/lib/delivery-evidence-verify.js';
+import { compareReleaseVersions, parseReleaseVersion, scanPhysicalTree } from '../../src/lib/release-payload-proof.js';
 import { parseUpdateCapabilityReport } from '../../src/lib/update-capabilities.js';
 const PLATFORM_TRIPLES: Readonly<Record<DeliveryEvidencePlatformId, string>> = {
   'linux-x64-glibc': 'linux-x64',

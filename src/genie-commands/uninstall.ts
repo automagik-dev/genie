@@ -59,18 +59,6 @@ import {
   runFlatAgentTransaction,
 } from '../lib/agent-sync.js';
 import { hookScriptExists } from '../lib/claude-settings.js';
-// A's canonical result-trailer serializer (via B's stable facade) + the codex
-// lifecycle lease. Uninstall is a deliberately separate destructive authority: it
-// acquires the lease after confirmation but before the first removal so it
-// serialises against setup/update/rollback/install, and it never mints or accepts
-// an activation assertion/permit.
-import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
-import {
-  type AcquireLeaseOptions,
-  type LifecycleLeaseKind,
-  type LifecycleLeaseResult,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../lib/codex-lifecycle-lease.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import {
   resolveClaudeDir,
@@ -79,6 +67,7 @@ import {
   resolveHermesHome,
   resolvePiExtensionsDir,
 } from '../lib/genie-home.js';
+import { runLegacyIntegrationRetirement } from '../lib/legacy-integration-retirement.js';
 import {
   type LifecycleLease,
   type LifecycleLeaseSkip,
@@ -3473,6 +3462,19 @@ export function performFreshUninstallPlan(
       },
     };
   }
+  // Plugin-era leftovers the batch below does not enumerate (marketplace caches,
+  // role-agent inventories, Hermes/pi links, historical curated lanes) are
+  // retired backup-first before the home itself is removed. Never fatal: a
+  // retirement failure leaves an operator-owned asset in place, and the ordinary
+  // uninstall report still runs.
+  try {
+    runLegacyIntegrationRetirement({
+      homes: { home: homedir(), genieHome: genieDir },
+      log: (line) => console.log(`  \x1b[2m${line}\x1b[0m`),
+    });
+  } catch (error) {
+    console.log(`  \x1b[33m~\x1b[0m legacy integration retirement skipped: ${errorMessage(error)}`);
+  }
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
     ...(execution.claudeAgentManifest.kind === 'unsafe'
@@ -3599,35 +3601,11 @@ export interface UninstallDeps {
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
   /**
-   * Codex lifecycle-lease acquisition seam. Uninstall serialises against
-   * setup/update/rollback/install through the SAME lease (`resolveGenieHome`),
-   * so a busy holder makes uninstall a `codex-lifecycle-busy` loser.
-   */
-  acquireCodexLifecycleLease?: (kind: LifecycleLeaseKind, options?: AcquireLeaseOptions) => LifecycleLeaseResult;
-  /**
-   * Outer agent-sync lifecycle-lease seam, mirroring install's `acquireLease`.
+   * Lifecycle-lease seam, mirroring install's `acquireLease`.
    * Tests can drive a busy/held holder without a real lock file, and the bounded
    * wait wraps whatever is injected here.
    */
   acquireLease?: () => LifecycleLease | LifecycleLeaseSkip;
-}
-
-/**
- * The stable, ANSI-free single-line exit-2 trailer for a lifecycle-lease loser
- * (D9). Built with A's canonical serializer — uninstall never redefines the
- * trailer type. `deliveryComplete:false` because nothing was removed: another
- * lifecycle command held the lease.
- */
-function codexLifecycleBusyTrailer(holderKind: string | null): string {
-  return serializeActivationResultTrailer({
-    schemaVersion: 1,
-    code: 'codex-lifecycle-busy',
-    deliveryComplete: false,
-    retry: true,
-    nextAction: holderKind
-      ? `retry after the current ${holderKind} lifecycle command releases the lease`
-      : 'retry after the current lifecycle command releases the lease',
-  });
 }
 
 function acquireUninstallLifecycleLeasesOrProject(
@@ -3635,23 +3613,10 @@ function acquireUninstallLifecycleLeasesOrProject(
   deps: UninstallDeps,
 ): HeldOrderedLifecycleLeases | null {
   const acquireAgentSync = deps.acquireLease ?? (() => acquireLifecycleLease(genieDir));
-  const acquired = acquireOrderedLifecycleLeases(
-    () => acquireLifecycleLeaseWithWait(acquireAgentSync),
-    () => (deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease)('uninstall'),
-  );
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireAgentSync));
   if (acquired.ok) return acquired;
-  if (acquired.busy === 'agent-sync') {
-    // An agent-sync holder is NOT `codex-lifecycle-busy`: no machine trailer is
-    // emitted here, because install.sh parses that code and would be misled
-    // about which subsystem is holding the lease. One stderr line, exit 2.
-    console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
-    process.exitCode = 2;
-    return null;
-  }
-  process.stdout.write(`${codexLifecycleBusyTrailer(acquired.refusal.holderKind)}\n`);
-  console.error(
-    `\x1b[33mcodex-lifecycle-busy:\x1b[0m ${acquired.refusal.detail}. No files were removed; retry once it completes.`,
-  );
+  // One stderr line, exit 2: nothing was removed.
+  console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
   process.exitCode = 2;
   return null;
 }
@@ -3775,14 +3740,13 @@ export async function uninstallCommand(
     return;
   }
 
-  // Existing agent-sync safeguard lock (unchanged). Acquired after confirmation.
-  // Ratified acquisition point: agent-sync first, then the exclusive Codex
-  // lifecycle lease, after destructive confirmation but before the first removal.
+  // Existing lifecycle safeguard lock. Acquired after destructive confirmation
+  // but before the first removal.
   const acquired = acquireUninstallLifecycleLeasesOrProject(genieDir, deps);
   if (acquired === null) return;
   try {
     executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
   } finally {
-    releaseOrderedLifecycleLeases(acquired.codexLease, acquired.agentSyncLease);
+    releaseOrderedLifecycleLeases(acquired.agentSyncLease);
   }
 }

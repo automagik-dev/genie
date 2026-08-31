@@ -115,8 +115,7 @@ assert_no_release_tests() {
 
 prune_release_tests "${STAGE}"
 assert_no_release_tests "${STAGE}"
-mkdir -p "${STAGE}/.agents/plugins" "${STAGE}/.claude-plugin"
-cp "${REPO_ROOT}/.agents/plugins/marketplace.json" "${STAGE}/.agents/plugins/marketplace.json"
+mkdir -p "${STAGE}/.claude-plugin"
 cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
 
 # A workflow --version override applies to the staged artifact only. Stamp and
@@ -126,9 +125,7 @@ bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERS
 
 for required in \
   "LICENSE" \
-  ".agents/plugins/marketplace.json" \
   ".claude-plugin/marketplace.json" \
-  "plugins/genie/.codex-plugin/plugin.json" \
   "plugins/genie/.kimi-plugin/plugin.json" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
@@ -217,11 +214,6 @@ bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
   --skills-dir "${VERIFY_ROOT}/skills" \
   --plugin-root "${VERIFY_ROOT}/plugins/genie"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${VERIFY_ROOT}" "${VERSION}"
-# Independent extracted-payload activation contract: inventory/version/manifest
-# binding, physical plugin parity, exact platform H3 command, bounded H3 fixture,
-# and (natively) the capability probe. Fails the build on any cross-artifact drift.
-bun "${REPO_ROOT}/scripts/verify-codex-activation-payload.ts" \
-  --root "${VERIFY_ROOT}" --platform "${PLATFORM}" --version "${VERSION}"
 rm -rf "${VERIFY_ROOT}"
 trap - EXIT
 

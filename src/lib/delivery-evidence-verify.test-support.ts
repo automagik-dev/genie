@@ -8,7 +8,7 @@ import {
   type VerifiedDeliveryEvidence,
   type VerifyDownloadedDeliveryEvidenceInput,
   verifyDownloadedDeliveryEvidence,
-} from './codex-delivery-evidence.js';
+} from './delivery-evidence-verify.js';
 
 const DEFAULT_VERSION = '5.260723.7';
 const DEFAULT_SHA = 'a'.repeat(40);

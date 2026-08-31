@@ -2949,9 +2949,6 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
             process.stdout.write('<<CONFIRM-INVOKED>>\n');
             return false;
           }) as unknown as UninstallDeps['confirm'],
-          acquireCodexLifecycleLease: () => {
-            throw new Error('lease must not be acquired on a declined uninstall');
-          },
         },
       ),
     );
@@ -2986,14 +2983,6 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
         {
           confirm: (async () => true) as unknown as UninstallDeps['confirm'],
           acquireLease: () => ({ path: join(root, 'test-lifecycle.lock'), release: () => undefined }),
-          acquireCodexLifecycleLease: () =>
-            ({
-              ok: true,
-              operationId: '0'.repeat(32),
-              kind: 'uninstall',
-              assertOperation: () => undefined,
-              release: () => undefined,
-            }) as const,
         },
       ),
     );
@@ -3009,44 +2998,7 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     expect(existsSync(join(genieHome, 'config.json'))).toBe(true);
   });
 
-  test('a busy Codex lifecycle lease is a loser: exit 2, trailer, zero removal', async () => {
-    const { out, exitCode } = await capture(() =>
-      uninstallCommand(
-        {},
-        {
-          confirm: (async () => true) as unknown as UninstallDeps['confirm'],
-          acquireCodexLifecycleLease: () => ({
-            ok: false,
-            reason: 'codex-lifecycle-busy',
-            holderKind: 'setup-activation',
-            detail: 'held by setup-activation (pid 4242)',
-          }),
-        },
-      ),
-    );
-    expect(exitCode).toBe(2);
-    // The stable single-line trailer is present and machine-parseable.
-    const trailerLine = out.split('\n').find((l) => l.includes('"code":"codex-lifecycle-busy"'));
-    expect(trailerLine).toBeDefined();
-    const trailer = JSON.parse(trailerLine as string) as {
-      schemaVersion: number;
-      code: string;
-      deliveryComplete: boolean;
-      retry: boolean;
-      nextAction: string;
-    };
-    expect(trailer).toEqual({
-      schemaVersion: 1,
-      code: 'codex-lifecycle-busy',
-      deliveryComplete: false,
-      retry: true,
-      nextAction: 'retry after the current setup-activation lifecycle command releases the lease',
-    });
-    // Zero mutation: executeConfirmedUninstall never ran, so GENIE_HOME is intact.
-    expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
-  });
-
-  test('a busy agent-sync lifecycle lease exits 2 on one stderr line, no Codex trailer, zero removal', async () => {
+  test('a busy lifecycle lease exits 2 on one stderr line, no trailer, zero removal', async () => {
     // The 2026-08-02 incident: this branch used to `throw new Error(...)`, so an
     // operator whose other lifecycle command held the lease got a stack trace
     // instead of an explanation — and no assurance that nothing was removed.
@@ -3070,9 +3022,6 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
                 skipped: `another Genie process holds the lock at ${lockPath}; retry shortly, or remove the file if its owner has crashed`,
                 cause: 'held',
               };
-            },
-            acquireCodexLifecycleLease: () => {
-              throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
             },
           },
         ).catch((error: unknown) => {

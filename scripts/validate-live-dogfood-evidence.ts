@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { compareReleaseVersions, parseReleaseVersion } from '../src/lib/codex-release-version.ts';
+import { compareReleaseVersions, parseReleaseVersion } from '../src/lib/release-payload-proof.ts';
 
 export const LIVE_DOGFOOD_SCHEMA_VERSION = 2 as const;
 export const REQUIRED_STAGE_IDS = [
