@@ -49,10 +49,11 @@
  * reporting "installed" and left Claude Code an enabled-but-uninstalled plugin.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   type Dirent,
   type Stats,
+  chmodSync,
   closeSync,
   cpSync,
   existsSync,
@@ -63,6 +64,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  renameSync,
   rmSync,
   rmdirSync,
   unlinkSync,
@@ -83,7 +85,11 @@ import {
 } from './atomic-fs.js';
 import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from './genie-home.js';
 import { retireMcpServersGenie } from './hermes-mcp-config.js';
-import { inspectCodexAgentOwnership, removeCodexPluginRegistration } from './runtime-integrations.js';
+import {
+  CODEX_AGENT_INVENTORY_NAME,
+  inspectCodexAgentOwnership,
+  removeCodexPluginRegistration,
+} from './runtime-integrations.js';
 
 // ============================================================================
 // Contract
@@ -94,10 +100,12 @@ export type LegacyIntegrationSurface =
   | 'codex-plugin-registration'
   | 'codex-plugin-cache'
   | 'codex-role-agent'
+  | 'codex-role-agent-inventory'
   | 'codex-legacy-curated-skill'
   | 'claude-plugin-registry'
   | 'claude-plugin-cache'
   | 'claude-marketplace-registration'
+  | 'claude-marketplace-cache'
   | 'claude-enabled-plugin'
   | 'claude-workflow'
   | 'claude-agent'
@@ -111,10 +119,12 @@ export const LEGACY_INTEGRATION_SURFACES: readonly LegacyIntegrationSurface[] = 
   'codex-plugin-registration',
   'codex-plugin-cache',
   'codex-role-agent',
+  'codex-role-agent-inventory',
   'codex-legacy-curated-skill',
   'claude-plugin-registry',
   'claude-plugin-cache',
   'claude-marketplace-registration',
+  'claude-marketplace-cache',
   'claude-enabled-plugin',
   'claude-workflow',
   'claude-agent',
@@ -224,6 +234,25 @@ const CLAUDE_PLUGIN_ID = 'genie@automagik';
 const CLAUDE_MARKETPLACE_ID = 'automagik';
 
 /**
+ * `managedBy` owner of `.genie-role-agents.json`. Restated from
+ * `runtime-integrations.ts`, whose constant is module-private and whose
+ * transaction engine wish `skills-everywhere-b` Group 3 deletes; retirement
+ * outlives the writer, so the literal it classifies on lives here.
+ */
+const CODEX_AGENT_INVENTORY_OWNER = 'genie-codex-role-agents';
+
+/**
+ * Directory prefixes a crashed role-agent transaction leaves in
+ * `<codexHome>/agents/`. Same provenance and same reason as the owner above.
+ */
+const CODEX_AGENT_TRANSACTION_PREFIXES = [
+  '.genie-role-agents.txn-',
+  '.genie-role-agents.committed-cleanup-',
+  '.genie-role-agents.prepare-',
+  '.genie-role-agents.conflict-',
+] as const;
+
+/**
  * The single source of truth for the Hermes managed-skills marker.
  *
  * It used to be restated from `hermes-skills-config.ts`, with a test asserting
@@ -276,6 +305,8 @@ function surfaceRoot(surface: LegacyIntegrationSurface, homes: ResolvedHomes): s
       return pluginCacheFamilyDir(homes.codexHome);
     case 'codex-role-agent':
       return join(homes.codexHome, 'agents');
+    case 'codex-role-agent-inventory':
+      return join(homes.codexHome, 'agents', CODEX_AGENT_INVENTORY_NAME);
     case 'codex-legacy-curated-skill':
       return codexLegacyCuratedDir(homes.codexHome);
     case 'claude-plugin-registry':
@@ -284,6 +315,8 @@ function surfaceRoot(surface: LegacyIntegrationSurface, homes: ResolvedHomes): s
       return pluginCacheFamilyDir(homes.claudeDir);
     case 'claude-marketplace-registration':
       return claudeMarketplaceRegistryPath(homes.claudeDir);
+    case 'claude-marketplace-cache':
+      return claudeMarketplaceCacheDir(homes.claudeDir);
     case 'claude-enabled-plugin':
       return claudeSettingsPath(homes.claudeDir);
     case 'claude-workflow':
@@ -316,6 +349,7 @@ function classifyCodex(homes: ResolvedHomes, entries: LegacyIntegrationEntry[]):
             : 'absent';
     entries.push({ surface: 'codex-role-agent', path: entry.path, state, detail: `role ${entry.state}` });
   }
+  classifyCodexRoleAgentInventory(join(homes.codexHome, 'agents'), entries);
   collectManagedSkillMirrors('codex-legacy-curated-skill', codexLegacyCuratedDir(homes.codexHome), entries);
 }
 
@@ -359,6 +393,7 @@ function classifyClaude(homes: ResolvedHomes, entries: LegacyIntegrationEntry[])
   }
   collectPluginCacheGenerations('claude-plugin-cache', homes.claudeDir, entries);
   entries.push(classifyClaudeMarketplaceRegistration(claudeMarketplaceRegistryPath(homes.claudeDir), homes.genieHome));
+  classifyClaudeMarketplaceCache(homes.claudeDir, entries);
   entries.push(classifyClaudeEnabledPlugin(claudeSettingsPath(homes.claudeDir)));
   entries.push(classifyClaudeWorkflow(join(homes.claudeDir, 'workflows')));
   collectManagedClaudeAgents(join(homes.claudeDir, 'agents'), entries);
@@ -373,6 +408,79 @@ function classifyClaudePluginRegistry(path: string): LegacyIntegrationEntry {
   return pruned.removed === 0
     ? { surface, path, state: 'absent' }
     : { surface, path, state: 'managed-clean', detail: `${pruned.removed} registration entr(y|ies)` };
+}
+
+/**
+ * The Codex role-agent inventory sidecar and its transaction debris.
+ *
+ * `codex-role-agent` classifies only `genie-*.toml`, so the sidecar that names
+ * them — and every `.genie-role-agents.{txn,conflict,prepare,committed-cleanup}-*`
+ * directory a crashed transaction left behind — survived every retirement run.
+ * A host with zero role agents left still carried genie's own inventory file.
+ *
+ * The name is genie's alone (`runtime-integrations.ts` writes it and nothing
+ * else does), so presence at that exact path is the ownership marker; the
+ * `managedBy` owner is what separates clean from unprovable.
+ */
+function classifyCodexRoleAgentInventory(agentsDir: string, entries: LegacyIntegrationEntry[]): void {
+  const surface = 'codex-role-agent-inventory' as const;
+  const path = join(agentsDir, CODEX_AGENT_INVENTORY_NAME);
+  const read = readJsonDocument(path);
+  if (read.kind === 'value') {
+    if (!isPlainObject(read.value)) {
+      entries.push({ surface, path, state: 'managed-modified', detail: 'inventory root is not a JSON object' });
+    } else if (read.value.managedBy === CODEX_AGENT_INVENTORY_OWNER) {
+      entries.push({ surface, path, state: 'managed-clean', detail: 'codex role-agent inventory' });
+    } else if (typeof read.value.managedBy === 'string' && read.value.managedBy !== '') {
+      entries.push({ surface, path, state: 'unmanaged', detail: `managedBy is ${read.value.managedBy}` });
+    } else {
+      entries.push({ surface, path, state: 'managed-modified', detail: 'inventory declares no managedBy owner' });
+    }
+  } else if (read.kind !== 'absent') {
+    entries.push(unreadableEntry(surface, path, read));
+  }
+  for (const child of readdirSafe(agentsDir)) {
+    if (!CODEX_AGENT_TRANSACTION_PREFIXES.some((prefix) => child.name.startsWith(prefix))) continue;
+    const debris = join(agentsDir, child.name);
+    const stat = lstatSafe(debris);
+    if (stat === null) continue;
+    entries.push(
+      stat.isDirectory() && !stat.isSymbolicLink()
+        ? { surface, path: debris, state: 'managed-clean', detail: 'role-agent transaction debris' }
+        : { surface, path: debris, state: 'unmanaged', detail: 'not a physical directory' },
+    );
+  }
+}
+
+/**
+ * `~/.claude/plugins/marketplaces/automagik/` — the marketplace bundle tree
+ * `plugin marketplace add` materialized.
+ *
+ * `claude-plugin-cache` covers `plugins/cache/automagik/genie` and nothing else,
+ * so this tree survived retirement while `inspectRuntimeIntegrationEvidence`
+ * kept reading its `plugins/genie` child as proof the integration is installed —
+ * a host reported "installed" forever. Ownership is that child: a directory
+ * under genie's own marketplace name that carries the genie bundle is provably
+ * ours; one that does not is reported and left alone.
+ */
+function classifyClaudeMarketplaceCache(claudeDir: string, entries: LegacyIntegrationEntry[]): void {
+  const surface = 'claude-marketplace-cache' as const;
+  const path = claudeMarketplaceCacheDir(claudeDir);
+  const stat = lstatSafe(path);
+  if (stat === null) return;
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    entries.push({ surface, path, state: 'unmanaged', detail: 'not a physical directory' });
+    return;
+  }
+  if (lstatSafe(join(path, 'plugins', 'genie')) === null) {
+    entries.push({ surface, path, state: 'managed-modified', detail: 'no plugins/genie bundle under it' });
+    return;
+  }
+  entries.push({ surface, path, state: 'managed-clean', detail: 'automagik marketplace bundle cache' });
+}
+
+function claudeMarketplaceCacheDir(claudeDir: string): string {
+  return join(claudeDir, 'plugins', 'marketplaces', CLAUDE_MARKETPLACE_ID);
 }
 
 function claudeMarketplaceRegistryPath(claudeDir: string): string {
@@ -518,10 +626,22 @@ function collectManagedClaudeAgents(agentsDir: string, entries: LegacyIntegratio
 /**
  * Managed bare-name skill mirrors under a skills parent.
  *
- * A child WITHOUT a `.genie-sync.json` is not a candidate at all and produces no
- * entry: that is the skills.sh channel's own plain copy (or a user's skill), not
- * a plugin-era mirror, and listing every one of them would bury the report.
- * A child WITH one is classified by the shared `inspectManagedSkillTree`.
+ * A child WITH a `.genie-sync.json` is classified by the shared
+ * `inspectManagedSkillTree`.
+ *
+ * A child WITHOUT one is ownership-unprovable, so it is NEVER removed — but
+ * whether it is even worth reporting depends on the parent:
+ *
+ *   - `~/.claude/skills` is where the skills.sh channel writes its own plain
+ *     `--copy` of every shipped skill. A sidecar-less child there is the normal,
+ *     expected shape; emitting an advisory for each would print ~25 `kept` lines
+ *     on every `genie update` and bury the surfaces that matter.
+ *   - `<codexHome>/skills/.curated` is a hidden lane only the plugin-era sync
+ *     ever wrote (Codex itself prunes hidden dirs from discovery, and skills.sh
+ *     does not know the path). A sidecar-less child there is a managed-looking
+ *     directory whose ownership record is gone — exactly the case an operator
+ *     must be told about by path, because retirement will otherwise leave it
+ *     silently forever.
  */
 function collectManagedSkillMirrors(
   surface: 'claude-skill' | 'codex-legacy-curated-skill',
@@ -530,7 +650,17 @@ function collectManagedSkillMirrors(
 ): void {
   for (const child of childDirectories(parent)) {
     const path = join(parent, child.name);
-    if (lstatSafe(join(path, MANIFEST_NAME)) === null) continue;
+    if (lstatSafe(join(path, MANIFEST_NAME)) === null) {
+      if (surface === 'codex-legacy-curated-skill') {
+        entries.push({
+          surface,
+          path,
+          state: 'unmanaged',
+          detail: 'no .genie-sync.json sidecar — ownership unprovable, left in place',
+        });
+      }
+      continue;
+    }
     const inspected = inspectManagedSkillTree(path);
     if (inspected.state === 'managed-clean') {
       entries.push({ surface, path, state: 'managed-clean' });
@@ -763,6 +893,7 @@ function retireEntry(
           detail: `codex config carries no removable registration (${removal.status})`,
         };
       });
+    case 'claude-marketplace-cache':
     case 'codex-plugin-cache':
     case 'claude-plugin-cache':
       // Re-downloadable payload: a file listing is the backup (legacy-v4 rule).
@@ -777,6 +908,14 @@ function retireEntry(
     case 'claude-agent':
       return withBackup(backup, entry, backupObject(backup, entry.path), () => {
         unlinkSync(entry.path);
+        return { changed: true };
+      });
+    case 'codex-role-agent-inventory':
+      // The sidecar is a file; the transaction debris is a directory tree. One
+      // recursive remove covers both, and the `agents` dir itself is never
+      // pruned -- a user's own agent files may still live there.
+      return withBackup(backup, entry, backupObject(backup, entry.path), () => {
+        rmSync(entry.path, { recursive: true, force: true });
         return { changed: true };
       });
     case 'codex-legacy-curated-skill':
@@ -1068,8 +1207,42 @@ function removeClaudeEnabledPlugin(path: string): boolean {
   return true;
 }
 
+/**
+ * Crash-safe in-place rewrite of a user-owned JSON document.
+ *
+ * `known_marketplaces.json` and `settings.json` belong to the user and this
+ * module's whole story is backup-first: a truncating `writeFileSync` that dies
+ * mid-flight -- ENOSPC, EIO, a kill between truncate and write -- would leave a
+ * half-written or empty file and destroy exactly what the backups promise never
+ * to lose. Stage beside the target, write and fsync the staging file, rename
+ * over the target (the commit point), then fsync the directory entry. Every
+ * failure path unlinks the staging file, so a refused write leaves the original
+ * bytes byte-identical and no `.genie-staging-*` residue.
+ *
+ * The staging sibling is required (not a tmpdir file) so the rename is
+ * same-filesystem and therefore atomic.
+ */
 function writeJsonDocument(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const staging = join(dirname(path), `.${basename(path)}.genie-staging-${process.pid}-${stagingNonce()}`);
+  try {
+    writeDurableFile(staging, `${JSON.stringify(value, null, 2)}\n`);
+    const mode = lstatSafe(path)?.mode;
+    if (mode !== undefined) chmodSync(staging, mode & 0o7777);
+    renameSync(staging, path);
+  } catch (error) {
+    try {
+      unlinkSync(staging);
+    } catch {
+      // Never mask the write failure with a cleanup failure; a staging file the
+      // caller can see is strictly better than a corrupted target.
+    }
+    throw error;
+  }
+  fsyncPath(dirname(path));
+}
+
+function stagingNonce(): string {
+  return randomBytes(6).toString('hex');
 }
 
 /**

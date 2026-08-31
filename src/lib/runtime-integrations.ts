@@ -2125,6 +2125,68 @@ function isRetiredCodexGenieTable(header: string): boolean {
   );
 }
 
+/** The two TOML multi-line string delimiters, which suspend line-level parsing. */
+type TomlMultilineDelimiter = '"""' | "'''";
+
+/**
+ * Consume one line and report whether it ENDS inside a multi-line string.
+ *
+ * A `"""…"""` (or `'''…'''`) value body is arbitrary text: it can contain a
+ * line that reads exactly like `[plugins."genie@automagik"]` or like any other
+ * table header. Treating such a line as a header would either start dropping in
+ * the middle of an unrelated operator's value or end the genie table's drop
+ * early and leave half its body behind — both silent corruptions of a
+ * user-owned config. Single-line basic/literal strings and `#` comments are
+ * skipped for the same reason: a `"""` inside them opens nothing.
+ */
+function scanTomlLine(line: string, open: TomlMultilineDelimiter | null): TomlMultilineDelimiter | null {
+  let current = open;
+  let index = 0;
+  while (index < line.length) {
+    if (current !== null) {
+      // Only a basic multi-line string honours backslash escapes.
+      if (current === '"""' && line[index] === '\\') {
+        index += 2;
+        continue;
+      }
+      if (line.startsWith(current, index)) {
+        current = null;
+        index += 3;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    if (line[index] === '#') return null; // a comment runs to end of line
+    if (line.startsWith('"""', index) || line.startsWith("'''", index)) {
+      current = line.startsWith('"""', index) ? '"""' : "'''";
+      index += 3;
+      continue;
+    }
+    if (line[index] === '"' || line[index] === "'") {
+      index = skipSingleLineTomlString(line, index);
+      continue;
+    }
+    index += 1;
+  }
+  return current;
+}
+
+/** Advance past a single-line basic/literal string; an unterminated one eats the line. */
+function skipSingleLineTomlString(line: string, start: number): number {
+  const quote = line[start];
+  let index = start + 1;
+  while (index < line.length) {
+    if (quote === '"' && line[index] === '\\') {
+      index += 2;
+      continue;
+    }
+    if (line[index] === quote) return index + 1;
+    index += 1;
+  }
+  return line.length;
+}
+
 /**
  * Pure line-level plan: drop every retired genie table (header + body) and every
  * `genie@automagik:` row inside `[hooks.state]`, and keep every other byte.
@@ -2133,14 +2195,21 @@ function isRetiredCodexGenieTable(header: string): boolean {
  * so exactly one separator survives between the neighbours it sat between, and a
  * table dropped at EOF leaves no trailing blank paragraph. The file's original
  * trailing-newline convention is restored by the `endsWith` repair below.
+ *
+ * Lines that begin inside a multi-line string are never read as headers or as
+ * `hooks.state` keys; they are body bytes of whichever table is currently in
+ * scope, and they are kept or dropped with it.
  */
 function planCodexPluginRegistrationRemoval(content: string): { next: string; removed: string[] } {
   const kept: string[] = [];
   const removed: string[] = [];
   let dropping = false;
   let inHooksState = false;
+  let multiline: TomlMultilineDelimiter | null = null;
   for (const line of content.split('\n')) {
-    const header = TOML_TABLE_HEADER.exec(line)?.[1];
+    const insideString = multiline !== null;
+    multiline = scanTomlLine(line, multiline);
+    const header = insideString ? undefined : TOML_TABLE_HEADER.exec(line)?.[1];
     if (header !== undefined) {
       dropping = isRetiredCodexGenieTable(header);
       inHooksState = header === 'hooks.state';
@@ -2152,7 +2221,7 @@ function planCodexPluginRegistrationRemoval(content: string): { next: string; re
       continue;
     }
     if (dropping) continue;
-    if (inHooksState && CODEX_GENIE_HOOK_STATE_KEY.test(line)) {
+    if (!insideString && inHooksState && CODEX_GENIE_HOOK_STATE_KEY.test(line)) {
       removed.push(line.trim());
       continue;
     }
