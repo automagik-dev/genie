@@ -2315,6 +2315,29 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     expect(process.exitCode).toBe(1);
   });
 
+  test('the convergence is skills -> plugin refresh -> retirement, with no sync step and no throttle marker', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    // The `~/.genie/.last-agent-sync` throttle marker and the engine that wrote
+    // it are gone; nothing in the update path refreshes or reads either.
+    expect(source).not.toContain('.last-agent-sync');
+    expect(source).not.toContain('runAgentSync');
+    expect(source).not.toContain('runUpdateAgentSync');
+
+    const start = source.indexOf('export function runManualUpdateConvergence(');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    const skillsIdx = body.indexOf('runUpdateSkillsChannel');
+    const refreshIdx = body.indexOf('refreshUpdatePlugins');
+    const retireIdx = body.indexOf('runLegacyIntegrationRetirement');
+    expect(skillsIdx).toBeGreaterThan(-1);
+    expect(refreshIdx).toBeGreaterThan(skillsIdx);
+    expect(retireIdx).toBeGreaterThan(refreshIdx);
+
+    // Every explicit mode runs behind the acquired lifecycle lease.
+    const leaseIdx = source.indexOf('const lifecycleLease = acquireRequiredLifecycleLease();');
+    expect(leaseIdx).toBeGreaterThan(-1);
+    expect(source.indexOf("mode === 'sync-only'")).toBeGreaterThan(leaseIdx);
+  });
+
   test('--sync-only converges through the same manual convergence, with no per-agent sync step', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     const start = source.indexOf('function runLegacySyncOnlyMode(');
