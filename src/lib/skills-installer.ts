@@ -435,8 +435,21 @@ const SKILLS_SCAN_PRUNED_DIR_NAMES: ReadonlySet<string> = new Set([
 
 /** `~/.config/goose/skills` is depth 3; the deepest known home is shallower still. */
 const SKILLS_SCAN_MAX_DEPTH = 6;
-/** Directory entries the walk may visit before it gives up and reports `capped`. */
-const SKILLS_SCAN_MAX_ENTRIES = 50_000;
+/**
+ * DIRECTORIES the walk may consider before it gives up and reports `capped`.
+ *
+ * The cost this bounds is one `readdirSync` per directory, so plain files must
+ * NOT count toward it. Counting every directory entry (the first cut of this
+ * scan) made the cap fire on any ordinary developer `$HOME`: a real host
+ * measured 112,885 entries under the same depth/prune rules — 2.3x a 50,000
+ * entry cap — so the scan reported `capped`, `agentDirs` silently fell back to
+ * the four-row known-home table, and the honest-N defect this group exists to
+ * fix survived in production. The same walk on that host opens far fewer
+ * directories and finishes in ~340 ms, i.e. 3% of the wall-clock budget below,
+ * which is the bound actually meant to bind. This ceiling is the runaway-walk
+ * backstop, not the working limit.
+ */
+const SKILLS_SCAN_MAX_DIRS = 200_000;
 /** Wall-clock ceiling for one walk. */
 const SKILLS_SCAN_BUDGET_MS = 10_000;
 
@@ -466,8 +479,20 @@ export interface SkillsHomeScanOptions {
   home: string;
   /** The delivered source tree — pruned, because it is never an agent home. */
   sourceRoot: string;
+  /**
+   * Genie's own state root — pruned whole, because nothing genie delivers or
+   * backs up under it is an agent skill home. A delivered `$GENIE_HOME` holds
+   * TWO physical skill trees (`build-binary.sh` stages `plugins/` beside
+   * `skills/`, so `plugins/genie/skills/` is a byte-identical committed
+   * mirror); the mirror is byte-equal to the source and carries the tarball's
+   * own extraction stamp, so without this prune it can be selected as a home
+   * this install "wrote" — inflating the honest N and putting a path inside
+   * `$GENIE_HOME` into the uninstall manifest.
+   */
+  genieHome?: string;
   maxDepth?: number;
-  maxEntries?: number;
+  /** Ceiling on DIRECTORIES considered, not on directory entries. */
+  maxDirs?: number;
   budgetMs?: number;
   /** Injectable millisecond clock for the wall-clock cap. */
   nowMs?: () => number;
@@ -478,6 +503,11 @@ interface ScanFrame {
   depth: number;
 }
 
+/** True for `root` itself and anything beneath it; both paths must be resolved. */
+function isAtOrUnder(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
 /**
  * What the walk does with one directory entry.
  *
@@ -485,10 +515,16 @@ interface ScanFrame {
  * link pointing anywhere — inside `$HOME` or out of it — is never followed and
  * never recorded.
  */
-function classifyScanChild(child: Dirent, absolute: string, sourceRoot: string): 'skip' | 'home' | 'descend' {
+function classifyScanChild(
+  child: Dirent,
+  absolute: string,
+  pruned: { sourceRoot: string; genieHome: string | null },
+): 'skip' | 'home' | 'descend' {
   if (!child.isDirectory()) return 'skip';
   if (SKILLS_SCAN_PRUNED_DIR_NAMES.has(child.name)) return 'skip';
-  if (resolve(absolute) === sourceRoot) return 'skip';
+  const resolved = resolve(absolute);
+  if (isAtOrUnder(resolved, pruned.sourceRoot)) return 'skip';
+  if (pruned.genieHome !== null && isAtOrUnder(resolved, pruned.genieHome)) return 'skip';
   if (!isTraversalFreeAbsolutePath(absolute)) return 'skip';
   // A skill home is a leaf for this walk: its children are skills.
   return child.name === SKILLS_SOURCE_DIR_NAME ? 'home' : 'descend';
@@ -499,10 +535,15 @@ function classifyScanChild(child: Dirent, absolute: string, sourceRoot: string):
  *
  * A FIXED candidate table cannot track a self-discovering CLI whose registry
  * names 77 agents and which wrote 57 homes on one measured host, so the record
- * is built from what is on disk instead. Bounded by construction: entry cap,
- * wall-clock cap, depth cap, and `readdir`-with-`Dirent` traversal that treats
- * a symlink as a leaf — so the walk can never be led out of `$HOME`, and an
- * unreadable directory is skipped rather than fatal.
+ * is built from what is on disk instead. Bounded by construction: directory
+ * cap, wall-clock cap, depth cap, and `readdir`-with-`Dirent` traversal that
+ * treats a symlink as a leaf — so the walk can never be led out of `$HOME`, and
+ * an unreadable directory is skipped rather than fatal.
+ *
+ * The caps count DIRECTORIES, never plain files: an ordinary developer `$HOME`
+ * carries six figures of files under these prune rules, and counting them made
+ * the scan cap out — and silently fall back to the four-row known-home table —
+ * on exactly the hosts this scan exists for.
  *
  * Never throws. A cap or an unexpected failure returns NO directories: the
  * caller falls back to the known-home floor, which can only ever record fewer
@@ -510,17 +551,24 @@ function classifyScanChild(child: Dirent, absolute: string, sourceRoot: string):
  */
 export function scanSkillsHomes(options: SkillsHomeScanOptions): SkillsHomeScanResult {
   const maxDepth = options.maxDepth ?? SKILLS_SCAN_MAX_DEPTH;
-  const maxEntries = options.maxEntries ?? SKILLS_SCAN_MAX_ENTRIES;
+  const maxDirs = options.maxDirs ?? SKILLS_SCAN_MAX_DIRS;
   const budgetMs = options.budgetMs ?? SKILLS_SCAN_BUDGET_MS;
   const nowMs = options.nowMs ?? (() => Date.now());
   const deadline = nowMs() + budgetMs;
-  const sourceRoot = resolve(options.sourceRoot);
+  const pruned = {
+    sourceRoot: resolve(options.sourceRoot),
+    genieHome: options.genieHome === undefined ? null : resolve(options.genieHome),
+  };
   const found: string[] = [];
   const stack: ScanFrame[] = [{ dir: options.home, depth: 0 }];
-  let visited = 0;
+  // The home itself is the first directory opened.
+  let dirs = 1;
   try {
     while (stack.length > 0) {
       const frame = stack.pop() as ScanFrame;
+      if (nowMs() > deadline) {
+        return { status: 'capped', dirs: [], reason: `time budget of ${budgetMs} ms exhausted` };
+      }
       let children: Dirent[];
       try {
         children = readdirSync(frame.dir, { withFileTypes: true });
@@ -529,19 +577,16 @@ export function scanSkillsHomes(options: SkillsHomeScanOptions): SkillsHomeScanR
         continue;
       }
       for (const child of children) {
-        visited += 1;
-        if (visited > maxEntries) {
-          return { status: 'capped', dirs: [], reason: `entry cap of ${maxEntries} exhausted` };
-        }
-        if (nowMs() > deadline) {
-          return { status: 'capped', dirs: [], reason: `time budget of ${budgetMs} ms exhausted` };
-        }
         const absolute = join(frame.dir, child.name);
-        const verdict = classifyScanChild(child, absolute, sourceRoot);
-        if (verdict === 'home') found.push(absolute);
-        else if (verdict === 'descend' && frame.depth + 1 < maxDepth) {
-          stack.push({ dir: absolute, depth: frame.depth + 1 });
+        const verdict = classifyScanChild(child, absolute, pruned);
+        // Files, symlinks and pruned trees cost nothing and are not counted.
+        if (verdict === 'skip') continue;
+        dirs += 1;
+        if (dirs > maxDirs) {
+          return { status: 'capped', dirs: [], reason: `directory cap of ${maxDirs} exhausted` };
         }
+        if (verdict === 'home') found.push(absolute);
+        else if (frame.depth + 1 < maxDepth) stack.push({ dir: absolute, depth: frame.depth + 1 });
       }
     }
   } catch (error) {
@@ -791,12 +836,19 @@ export interface SkillsInstallOptions {
   /** Injectable millisecond clock for the discovery window and the scan caps. */
   nowMs?: () => number;
   /** Scan bounds, for tests that need a small fixture budget. */
-  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxEntries' | 'budgetMs'>;
+  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
 }
 
+/**
+ * `warnings` rides BOTH variants on purpose: the collision snapshot runs before
+ * the spawn, so a foreign skill directory can be copied into
+ * `<GENIE_HOME>/state-backups/…` and the install then fail. Dropping the
+ * warnings on the failure path would leave that backup — possibly taken after
+ * the CLI already overwrote the live path — entirely unreported.
+ */
 export type SkillsInstallOutcome =
   | { ok: true; record: SkillsInstallRecord; warnings?: string[] }
-  | { ok: false; reason: string; remedy: string };
+  | { ok: false; reason: string; remedy: string; warnings?: string[] };
 
 /**
  * Every agent skill home this install can prove it wrote, unioned with the
@@ -805,17 +857,19 @@ export type SkillsInstallOutcome =
  */
 function resolveAgentDirs(options: {
   home: string;
+  genieHome: string;
   sourceRoot: string;
   probe: string;
   since: number;
   nowMs: () => number;
-  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxEntries' | 'budgetMs'>;
+  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
 }): { dirs: string[]; warnings: string[] } {
   const floor = existingAgentSkillHomes(options.home).map((entry) => entry.dir);
   const warnings: string[] = [];
   const scan = scanSkillsHomes({
     home: options.home,
     sourceRoot: options.sourceRoot,
+    genieHome: options.genieHome,
     nowMs: options.nowMs,
     ...options.scan,
   });
@@ -874,18 +928,19 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       maxOutputBytes: SKILLS_INSTALL_OUTPUT_LIMIT_BYTES,
     });
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error), remedy };
+    return { ok: false, reason: error instanceof Error ? error.message : String(error), remedy, warnings };
   }
-  if (result.exitCode !== 0) return { ok: false, reason: describeFailure(result), remedy };
+  if (result.exitCode !== 0) return { ok: false, reason: describeFailure(result), remedy, warnings };
 
   // A zero exit with nothing to record is not a success: the delivered tree is
   // what doctor's freshness check, agent-sync's writer suppression, and
   // uninstall's removal all read back. Recording an empty inventory would make
   // uninstall a silent no-op over skills that are actually on disk.
-  if (inventory.length === 0) return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy };
+  if (inventory.length === 0) return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy, warnings };
 
   const agents = resolveAgentDirs({
     home,
+    genieHome: options.genieHome,
     sourceRoot: skillsRoot,
     probe: inventory[0] as string,
     since: startedAtMs,
@@ -918,7 +973,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   try {
     writeSkillsInstallRecord(options.genieHome, record);
   } catch (error) {
-    return { ok: false, reason: `could not record the install: ${errorMessage(error)}`, remedy };
+    return { ok: false, reason: `could not record the install: ${errorMessage(error)}`, remedy, warnings };
   }
   return { ok: true, record, warnings };
 }
@@ -939,7 +994,11 @@ function snapshotCollisionsSafely(context: {
   if (context.inventory.length === 0) return empty;
   let snapshot: SkillsCollisionSnapshot;
   try {
-    const preScan = scanSkillsHomes({ home: context.home, sourceRoot: context.skillsRoot });
+    const preScan = scanSkillsHomes({
+      home: context.home,
+      sourceRoot: context.skillsRoot,
+      genieHome: context.genieHome,
+    });
     const homes: string[] = [];
     for (const dir of [...existingAgentSkillHomes(context.home).map((entry) => entry.dir), ...preScan.dirs]) {
       if (!homes.includes(dir)) homes.push(dir);
@@ -1024,6 +1083,9 @@ export function runSkillsChannelConvergence(options: SkillsChannelConvergenceOpt
   const outcome = (options.install ?? runSkillsInstall)(options);
   if (!outcome.ok) {
     emit(`Skills install failed: ${outcome.reason}. ${outcome.remedy}`);
+    // The pre-spawn collision snapshot may already have backed a foreign skill
+    // directory up; a failed install must still say where those bytes went.
+    for (const warning of outcome.warnings ?? []) emit(warning);
     // Deliberately non-fatal: the promoted binary is never rolled back for a
     // skills-channel failure. Exit code only.
     process.exitCode = 1;

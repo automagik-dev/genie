@@ -276,6 +276,32 @@ describe('runSkillsInstall', () => {
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
   });
 
+  test('a failed install still carries the collision backups the snapshot already took', () => {
+    fixtureSkillsTree(['wish']);
+    // The snapshot runs BEFORE the spawn, so this foreign directory is copied
+    // into state-backups even though the install then fails. An unreported
+    // backup is a backup the operator has no path to.
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 7, stdout: '', stderr: 'ENOTFOUND registry.npmjs.org\n' }),
+    });
+
+    expect(outcome.ok).toBe(false);
+    const warning = (outcome.ok === false ? (outcome.warnings ?? []) : []).find((line) => line.includes('collision:'));
+    expect(warning).toContain(`skills: collision: ${join(claudeSkills, 'wish')} (wish) — backed up to `);
+    const backupRoot = (warning as string).split('backed up to ')[1] as string;
+    expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+      '# a foreign wish skill\n',
+    );
+  });
+
   test("stderr's last line wins over stdout when both streams are populated", () => {
     fixtureSkillsTree(['wish']);
     const outcome = runSkillsInstall({
@@ -455,12 +481,12 @@ describe('discovery scan', () => {
     ).toEqual([matrix.written]);
   });
 
-  test('an exhausted entry cap or time budget reports capped and records nothing', () => {
+  test('an exhausted directory cap or time budget reports capped and records nothing', () => {
     fakeHomeMatrix();
-    const capped = scanSkillsHomes({ home, sourceRoot: join(genieHome, 'skills'), maxEntries: 1 });
+    const capped = scanSkillsHomes({ home, sourceRoot: join(genieHome, 'skills'), maxDirs: 1 });
     expect(capped.status).toBe('capped');
     expect(capped.dirs).toEqual([]);
-    expect(capped.reason).toContain('entry cap');
+    expect(capped.reason).toContain('directory cap');
 
     let ticks = 0;
     const timedOut = scanSkillsHomes({
@@ -473,6 +499,63 @@ describe('discovery scan', () => {
     expect(timedOut.status).toBe('capped');
     expect(timedOut.dirs).toEqual([]);
     expect(timedOut.reason).toContain('time budget');
+  });
+
+  /**
+   * The cap counts DIRECTORIES, never plain files. Counting every directory
+   * entry made the scan cap out on any ordinary developer `$HOME` (a real host
+   * measured 112,885 entries under these prune rules against a 50,000 entry
+   * cap), which silently demoted `agentDirs` to the four-row known-home table —
+   * the exact defect this scan exists to fix.
+   */
+  test('plain files never count toward the cap', () => {
+    const source = fixtureSkillsTree(['wish']);
+    const written = join(home, '.claude', 'skills');
+    mkdirSync(join(written, 'wish'), { recursive: true });
+    writeFileSync(join(written, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    // Far more files than the cap below, in the two directories the walk opens.
+    for (let index = 0; index < 200; index += 1) {
+      writeFileSync(join(home, `file-${index}.txt`), 'x', 'utf8');
+      writeFileSync(join(home, '.claude', `file-${index}.txt`), 'x', 'utf8');
+    }
+
+    // Three directories are opened or considered: `$HOME`, `.claude` and the
+    // `skills` home itself. `.genie` and everything under it is pruned whole.
+    const scan = scanSkillsHomes({ home, sourceRoot: source, genieHome, maxDirs: 3 });
+
+    expect(scan.status).toBe('ok');
+    expect(scan.dirs).toEqual([written]);
+  });
+
+  /**
+   * A delivered `$GENIE_HOME` carries a SECOND physical skill tree —
+   * `plugins/genie/skills`, byte-identical to `skills/` by
+   * `sync-plugin-skills.ts --check` — extracted from the tarball moments before
+   * the install runs. Byte-equal plus a fresh stamp is exactly what the
+   * selection rule keeps, so without a prune it would inflate the honest N and
+   * put a path inside `$GENIE_HOME` into the uninstall manifest.
+   */
+  test('the delivered plugins mirror inside GENIE_HOME is never a discovered home', () => {
+    const source = fixtureSkillsTree(['wish']);
+    const mirror = join(genieHome, 'plugins', 'genie', 'skills');
+    mkdirSync(join(mirror, 'wish'), { recursive: true });
+    writeFileSync(join(mirror, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+
+    // The fixture is real: without the prune the mirror IS found and selected.
+    const unpruned = scanSkillsHomes({ home, sourceRoot: source });
+    expect(unpruned.dirs).toContain(mirror);
+    expect(
+      selectSkillsHomesWrittenBy({
+        dirs: unpruned.dirs,
+        sourceRoot: source,
+        probe: 'wish',
+        since: Date.now() - 60_000,
+      }),
+    ).toContain(mirror);
+
+    const scan = scanSkillsHomes({ home, sourceRoot: source, genieHome });
+    expect(scan.status).toBe('ok');
+    expect(scan.dirs).not.toContain(mirror);
   });
 
   test("genie's own state-backups tree is never scanned back in", () => {
@@ -847,6 +930,29 @@ describe('runSkillsChannelConvergence', () => {
     ]);
     expect(process.exitCode).toBe(1);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
+  });
+
+  test('a failure still reports every collision the pre-spawn snapshot backed up', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
+
+    const lines: string[] = [];
+    const result = runSkillsChannelConvergence({
+      selection: 'auto',
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 1, stdout: '', stderr: 'boom\n' }),
+      log: (line) => lines.push(line),
+    });
+
+    expect(result.status).toBe('failed');
+    expect(lines[0]).toStartWith('Skills install failed: skills CLI exited 1: boom.');
+    expect(lines[1]).toContain(`skills: collision: ${join(claudeSkills, 'wish')} (wish) — backed up to `);
+    expect(process.exitCode).toBe(1);
   });
 });
 
