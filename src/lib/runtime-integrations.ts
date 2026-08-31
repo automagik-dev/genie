@@ -690,18 +690,12 @@ const CODEX_AGENT_SENTINEL = '# Managed by Genie.';
 const CODEX_AGENT_INVENTORY_MODE = 0o600;
 
 /**
- * The exact set of role agents the current Genie bundle fans into
- * `~/.codex/agents/`, with each role's canonical current content digest and the
- * physical mode every historical installer wrote (git-tracked 0644, preserved by
- * the install tarball). These are the *current* delivered profiles: doctor reports
- * this expected total and the reviewer digest, and the read-only ownership inspector
- * uses them to distinguish an up-to-date managed role from a stale one. A
- * parity test (`runtime-integrations.test.ts`) binds this map to the real
- * `plugins/genie/codex-agents/*.toml` bytes so a role edit that forgets to update
- * the frozen allowlist fails the gate rather than silently drifting.
+ * The exact set of role agents a historical Genie bundle fanned into
+ * `~/.codex/agents/`, with each role's canonical content digest. The shipped
+ * `codex-agents/` payload left with the Codex plugin subsystem; this frozen map
+ * remains so the read-only ownership inspector can still distinguish a
+ * Genie-managed role from a user-owned one on a legacy host.
  */
-const CANONICAL_CODEX_ROLE_AGENT_MODE = 0o644;
-
 export const CANONICAL_CODEX_ROLE_AGENT_DIGESTS: Readonly<Record<string, string>> = Object.freeze({
   'genie-engineer-complex.toml': '62ecc570f1d77783511a9e7f0aa67b3a65d8bba292963409a02c7712c93ebc3b',
   'genie-engineer-standard.toml': 'dc746813b9b4b6aa984c17fa2fd75d4dbe34eba08494a174c0715da07aa9dd30',
