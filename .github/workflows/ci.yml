@@ -211,17 +211,17 @@ jobs:
         run: bun run smoke:codex-discovery
 
   # The skills inventory contract (wish `skills-everywhere`, C6): what
-  # `skills@<PINNED> add automagik-dev/genie@<ref> --list` publishes must be
-  # exactly `ls skills/*/SKILL.md` in the checkout, with no nested SKILL.md and
-  # no skill directory missing one. This is its OWN job because resolving the
-  # published inventory needs a real npx + git clone, and the `unit` job above
-  # stays network-free by design. The comparison logic itself is unit-tested
-  # offline in scripts/skills-inventory-parity.test.ts.
+  # `skills@<PINNED> add <local checkout> --list` publishes must be exactly
+  # `ls skills/*/SKILL.md` in the checkout, with no nested SKILL.md and no skill
+  # directory missing one. This is its OWN job because resolving the published
+  # inventory needs a real npx, and the `unit` job above stays network-free by
+  # design. The comparison logic itself is unit-tested offline in
+  # scripts/skills-inventory-parity.test.ts.
   #
-  # The ref is the exact commit under test — skills.sh resolves a full 40-hex
-  # SHA as a ref (verified 2026-08-30 against automagik-dev/genie). A fork PR
-  # builds a head commit skills.sh cannot clone from this repository, so the job
-  # is scoped to same-repository events, like secrets-scan above.
+  # The source is the LOCAL checkout: skills@1.5.23 ignores an `@<ref>` suffix
+  # and serves the repository default branch instead (verified 2026-08-31),
+  # which made the ref-pinned form of this check vacuous on PRs. The job stays
+  # scoped to same-repository events, like secrets-scan above.
   skills-inventory-parity:
     name: Skills Inventory Parity (skills.sh --list)
     runs-on: ubuntu-latest
