@@ -52,13 +52,21 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
 import {
+  MANIFEST_NAME,
   ManagedArtifactConflictError,
   type NoClobberDeps,
   NoClobberPublishError,
+  PHYSICAL_TREE_IDENTITY_VERSION,
+  type PhysicalTreeEntry,
   type Renameat2,
   atomicRenameDirectoryNoClobber,
+  computeDirDigest,
+  computeExactDirDigest,
+  computeFileDigest,
+  computeLegacyRegularTreeDigest,
   fsyncPath,
   lstatSafe,
+  physicalEntryKind,
   probeLinuxRenameat2,
   publishRegularFileNoClobber,
   readTrimmed,
@@ -118,6 +126,12 @@ export {
 } from './lifecycle-lease.js';
 /** @public Stable compatibility facade for the lease types that moved to './lifecycle-lease.js'. */
 export type { LifecycleLease, LifecycleLeaseSkip } from './lifecycle-lease.js';
+/**
+ * The physical-tree digest primitives moved to `atomic-fs.ts` (wish
+ * `skills-everywhere-b` Group 2). Re-exported here so doctor, uninstall,
+ * runtime-integrations and the retirement module keep their current import.
+ */
+export { MANIFEST_NAME, PHYSICAL_TREE_IDENTITY_VERSION, computeDirDigest, computeFileDigest };
 
 // ============================================================================
 // Constants
@@ -131,8 +145,6 @@ export const TARGET_NAME = 'council.js';
 export const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
 /** Deterministic physical mode for both stamped council artifacts. */
 const WORKFLOW_FILE_MODE = 0o644;
-/** Manifest marker written into every managed skill dir. Exported: single source of truth. */
-export const MANIFEST_NAME = '.genie-sync.json';
 /** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
 export const MANAGED_BY = 'genie-agent-sync';
 /**
@@ -180,8 +192,6 @@ const SKILL_TRANSACTION_ROOT = '.genie-sync-transactions';
 const SKILL_TRANSACTION_STAGING_PREFIX = '.staging-';
 const SKILL_TRANSACTION_PREFIX = 'txn-';
 const SKILL_REMOVAL_PREFIX = 'delete-';
-/** Physical-tree digest schema. Version 1 was the legacy regular-file content digest. */
-export const PHYSICAL_TREE_IDENTITY_VERSION = 2;
 /** Hidden retained transaction root used only by the explicit fallback-retirement primitive. */
 export const CODEX_FALLBACK_RETIREMENT_ROOT = '.genie-codex-fallback-retirement';
 /** Single-writer lock scoped to each fallbackSkillsDir's retirement root; lives directly in it, ignored by the txn-* scan. */
@@ -538,143 +548,6 @@ function firstExisting(paths: string[]): string | null {
   return null;
 }
 
-// ============================================================================
-// Digest — a stable fingerprint of a physical directory tree
-// ============================================================================
-
-/**
- * Version-2 SHA-256 identity over the root and every physical entry. Each entry
- * contributes its normalized relative path, exact lstat kind, permission mode,
- * and kind-specific payload (regular-file content hash or raw symlink target).
- * Symlinks are never followed; FIFOs, sockets, devices, and other non-regular
- * entries are represented rather than silently skipped. The manifest is always
- * excluded because its digest field would otherwise be self-referential.
- */
-export function computeDirDigest(dir: string, exclude?: Set<string>): string {
-  const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
-  excluded.add(MANIFEST_NAME);
-  return computePhysicalTreeDigest(dir, excluded);
-}
-
-function computeExactDirDigest(dir: string): string {
-  return computePhysicalTreeDigest(dir, new Set());
-}
-
-function computePhysicalTreeDigest(dir: string, excluded: Set<string>): string {
-  const rootStat = lstatSync(dir);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    throw new Error(`physical tree root is not a directory: ${dir}`);
-  }
-  const entries: PhysicalTreeEntry[] = [physicalTreeEntry('.', rootStat, dir)];
-  collectPhysicalTreeEntries(dir, dir, excluded, entries);
-  entries.sort(byRel);
-  const digest = createHash('sha256');
-  digest.update(`genie-physical-tree-v${PHYSICAL_TREE_IDENTITY_VERSION}\0`);
-  for (const entry of entries) {
-    updateLengthPrefixed(digest, entry.rel);
-    updateLengthPrefixed(digest, entry.kind);
-    updateLengthPrefixed(digest, entry.mode.toString(8));
-    updateLengthPrefixed(digest, entry.payload);
-  }
-  return digest.digest('hex');
-}
-
-interface PhysicalTreeEntry {
-  rel: string;
-  kind: 'directory' | 'file' | 'symlink' | 'fifo' | 'socket' | 'block-device' | 'character-device' | 'other';
-  mode: number;
-  payload: string;
-}
-
-function byRel(a: { rel: string }, b: { rel: string }): number {
-  if (a.rel < b.rel) return -1;
-  if (a.rel > b.rel) return 1;
-  return 0;
-}
-
-function normalizePhysicalRelPath(path: string): string {
-  return path.split(sep).join('/');
-}
-
-function physicalEntryKind(stat: Stats): PhysicalTreeEntry['kind'] {
-  if (stat.isSymbolicLink()) return 'symlink';
-  if (stat.isDirectory()) return 'directory';
-  if (stat.isFile()) return 'file';
-  if (stat.isFIFO()) return 'fifo';
-  if (stat.isSocket()) return 'socket';
-  if (stat.isBlockDevice()) return 'block-device';
-  if (stat.isCharacterDevice()) return 'character-device';
-  return 'other';
-}
-
-function physicalTreeEntry(rel: string, stat: Stats, absolute: string): PhysicalTreeEntry {
-  const kind = physicalEntryKind(stat);
-  const payload = kind === 'file' ? hashFile(absolute) : kind === 'symlink' ? readlinkSync(absolute) : '';
-  return { rel, kind, mode: stat.mode & 0o7777, payload };
-}
-
-function collectPhysicalTreeEntries(
-  root: string,
-  current: string,
-  excluded: Set<string>,
-  out: PhysicalTreeEntry[],
-): void {
-  for (const name of readdirSync(current)) {
-    const abs = join(current, name);
-    const rel = normalizePhysicalRelPath(relative(root, abs));
-    if (excluded.has(rel)) continue;
-    const stat = lstatSync(abs);
-    const entry = physicalTreeEntry(rel, stat, abs);
-    out.push(entry);
-    if (entry.kind === 'directory') collectPhysicalTreeEntries(root, abs, excluded, out);
-  }
-}
-
-function updateLengthPrefixed(digest: ReturnType<typeof createHash>, value: string): void {
-  const bytes = Buffer.from(value);
-  digest.update(String(bytes.length));
-  digest.update(':');
-  digest.update(bytes);
-  digest.update('\0');
-}
-
-/**
- * Legacy v1 digest, accepted only when every physical entry is a regular file
- * or directory. A symlink or special entry in an old tree therefore revokes
- * deletion/update authority instead of recreating the legacy follow/skip bug.
- */
-function computeLegacyRegularTreeDigest(dir: string): string | null {
-  const rootStat = lstatSync(dir);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
-  const files: Array<{ rel: string; hash: string }> = [];
-  const visit = (current: string): boolean => {
-    for (const name of readdirSync(current)) {
-      const absolute = join(current, name);
-      const rel = relative(dir, absolute);
-      if (rel === MANIFEST_NAME) continue;
-      const stat = lstatSync(absolute);
-      if (stat.isDirectory() && !stat.isSymbolicLink()) {
-        if (!visit(absolute)) return false;
-      } else if (stat.isFile() && !stat.isSymbolicLink()) {
-        files.push({ rel, hash: hashFile(absolute) });
-      } else {
-        return false;
-      }
-    }
-    return true;
-  };
-  if (!visit(dir)) return null;
-  files.sort(byRel);
-  const digest = createHash('sha256');
-  for (const file of files) {
-    digest.update(file.rel);
-    digest.update('\0');
-    digest.update(file.hash);
-    digest.update('\0');
-  }
-  return digest.digest('hex');
-}
-
 /** Resolve a dirent to file/dir/skip, following symlinks and dropping broken ones. */
 function classifyEntry(abs: string, entry: Dirent): 'file' | 'dir' | 'skip' {
   if (entry.isFile()) return 'file';
@@ -687,14 +560,6 @@ function classifyEntry(abs: string, entry: Dirent): 'file' | 'dir' | 'skip' {
     }
   }
   return 'skip';
-}
-
-function hashFile(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
-
-export function computeFileDigest(path: string): string {
-  return hashFile(path);
 }
 
 // ============================================================================
@@ -4688,7 +4553,7 @@ function regularFileDigest(path: string): string | null {
   const stat = lstatSafe(path);
   if (stat === null || !stat.isFile() || stat.isSymbolicLink()) return null;
   try {
-    return hashFile(path);
+    return computeFileDigest(path);
   } catch {
     return null;
   }
@@ -4727,7 +4592,7 @@ function physicalFileIdentity(path: string): PhysicalFileIdentity {
   if (stat.isDirectory()) return { kind: 'directory', mode };
   if (!stat.isFile()) return { kind: 'other', mode, entry: physicalEntryKind(stat) };
   try {
-    return { kind: 'regular', mode, digest: hashFile(path) };
+    return { kind: 'regular', mode, digest: computeFileDigest(path) };
   } catch (error) {
     return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
   }

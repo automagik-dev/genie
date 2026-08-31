@@ -1944,69 +1944,6 @@ describe('partial report preservation on late failure', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Digest properties
-// ---------------------------------------------------------------------------
-
-describe('computeDirDigest', () => {
-  test('is stable regardless of directory entry creation order', () => {
-    const dirA = join(fixture.root, 'digest-a');
-    writeFile(join(dirA, 'b.md'), 'B');
-    writeFile(join(dirA, 'a.md'), 'A');
-    writeFile(join(dirA, 'nested', 'c.md'), 'C');
-
-    const dirB = join(fixture.root, 'digest-b');
-    writeFile(join(dirB, 'nested', 'c.md'), 'C');
-    writeFile(join(dirB, 'a.md'), 'A');
-    writeFile(join(dirB, 'b.md'), 'B');
-
-    expect(computeDirDigest(dirA)).toBe(computeDirDigest(dirB));
-  });
-
-  test('excludes the manifest so a manifest does not change the digest', () => {
-    const dir = join(fixture.root, 'digest-manifest');
-    writeFile(join(dir, 'SKILL.md'), 'body');
-    const before = computeDirDigest(dir);
-    writeFile(join(dir, MANIFEST_NAME), '{"managedBy":"genie-agent-sync","digest":"x"}');
-    expect(computeDirDigest(dir)).toBe(before);
-  });
-
-  test('changes when file content changes', () => {
-    const dir = join(fixture.root, 'digest-content');
-    writeFile(join(dir, 'SKILL.md'), 'one');
-    const before = computeDirDigest(dir);
-    writeFile(join(dir, 'SKILL.md'), 'two');
-    expect(computeDirDigest(dir)).not.toBe(before);
-  });
-
-  test('identifies symlink kind and target without following external content', () => {
-    const dir = join(fixture.root, 'physical-symlink');
-    const external = join(fixture.root, 'external.txt');
-    writeFile(external, 'one\n');
-    mkdirSync(dir, { recursive: true });
-    symlinkSync(external, join(dir, 'entry'));
-    const linked = computeDirDigest(dir);
-
-    writeFile(external, 'two\n');
-    expect(computeDirDigest(dir)).toBe(linked);
-    rmSync(join(dir, 'entry'));
-    writeFile(join(dir, 'entry'), 'two\n');
-    expect(computeDirDigest(dir)).not.toBe(linked);
-    rmSync(join(dir, 'entry'));
-    symlinkSync('different-target', join(dir, 'entry'));
-    expect(computeDirDigest(dir)).not.toBe(linked);
-  });
-
-  test('identifies entry modes and broken symlinks', () => {
-    const dir = join(fixture.root, 'physical-modes');
-    writeFile(join(dir, 'tool'), '#!/bin/sh\n');
-    symlinkSync('missing-target', join(dir, 'broken'));
-    const before = computeDirDigest(dir);
-    chmodSync(join(dir, 'tool'), 0o755);
-    expect(computeDirDigest(dir)).not.toBe(before);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Crash-recovery staging
 // ---------------------------------------------------------------------------
 
