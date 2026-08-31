@@ -18,6 +18,7 @@
 - [intent-to-wish-compiler](brainstorms/intent-to-wish-compiler/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 92; Demand→Patch/Standard/Program router + circuit-breaker (flex cuts autonomous, payout cuts human-only); invisible routing compiled from intent — program-scale, splits at pour time
 - [brainstorm-domain-map](brainstorms/brainstorm-domain-map/DRAFT.md) — **LIVE (re-verified 2026-07-21):** WRS 80; executable spec compiler (intent → requirement-ID → oracle-class → execution → proof-packet); deterministic gates, residual-risk review only; subjective-truth ownership still open (umbrella G8)
 ## Ready
+- [skills-everywhere — DESIGN](brainstorms/skills-everywhere/DESIGN.md) · [WISH A](wishes/skills-everywhere/WISH.md) — **design SHIP 2026-08-30 (rev. 6, digest `fafaef24…`, re-stamped after rename from `codex-skill-installer`); Wish A plan SHIP 2026-08-30 (rev. 5, `10495bc5…`) → APPROVED — umbrella A→B→C, base `dev`:** everywhere except Orca, Genie = skills (skills.sh `npx skills add automagik-dev/genie@v<ver> --all --copy`) + CLI, nothing else — Codex/Claude/Kimi/Hermes/pi integrations, hooks, role agents, council stamp and `agent-sync` deleted; 4-platform Codex dogfood matrix → skills-install + update-path smokes
 
 
 
