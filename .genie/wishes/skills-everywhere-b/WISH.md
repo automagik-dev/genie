@@ -547,6 +547,17 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
+### Execution review — Group 2 — 2026-08-31T19:17:40Z — SHIP (round 1)
+
+- Engineer/reviewer: ultracode wave-1 agents (opus/high, reviewer ≠ engineer), session 17ecb3d2. PR #2877, commits `637f9d296` `aa70a7166` `27762ebad` `1bfc2c0e4` `c3b267cef`, merged to `wish/skills-everywhere-b` at `2fc8dc82c`.
+- SHIP on round 1. Three LOW residuals recorded, none blocking: rehomed `scripts/validate-wish.ts` sits outside the strict static gates (biome-ignored, outside tsconfig include); `BoundedFileRead`/`AtomicWriteOptions` types dropped from `codex-activation-persistence.ts`'s re-export surface against the literal AC wording (both types travel to `atomic-fs.ts`; G3 deletes the shim); `MANIFEST_NAME`/`PHYSICAL_TREE_IDENTITY_VERSION` landed in `atomic-fs.ts` rather than module-private per Decision 6's letter. Verbatim-move proofs, the two-line `validate-wish.ts` import delta, and the 17-surface `LEGACY_INTEGRATION_SURFACES` evidence are in the PR body.
+
+### Execution review — Group 1 — 2026-08-31T19:17:40Z — SHIP (round 2)
+
+- Engineer/reviewer: ultracode wave-1 agents (opus/high, reviewer ≠ engineer), session 17ecb3d2. PR #2876, commits `899c7c47e` `fe0ae41ac` + fix `8ad47783b`, merged to `wish/skills-everywhere-b` at `8f561fa9f`.
+- Round 1 FIX-FIRST (3 findings, all addressed in `8ad47783b` — discovery-scan survival over a real `$HOME`); round 2 SHIP with four LOW residuals recorded, none blocking (scan-fallback path verified manually but untested through `runSkillsInstall`; freshness stamp widened to `max(birthtime, mtime)` with the parent-dir stamp ORed in — a recorded deviation, since `--copy` rewrites SKILL.md in place and the literal birthtime rule would re-orphan every prior-install home; collision candidates include every scanned home by design; one ci.yml doc-drift line).
+- Recorded deviations (full list in the PR body): local `bun run check` substituted by `check:fast` + targeted suites per host OOM rule — CI runs the full gate; Wish A Status was already `SHIPPED` by #2875, so G1 added the ownership/upstream/public-path closure block only.
+
 ### Plan review — 2026-08-31T16:11:15Z — SHIP (round 3)
 - Reviewer: genie:reviewer (session e7edce9e/a2686d03); rounds: 1 FIX-FIRST `3ecb6187…`, 2 FIX-FIRST `114adb57…`, 3 SHIP `e86d3f12…`. Round 3 re-ran the reviewer's own 12-module importer sweep independently: zero unnamed importers; D13 17/17 files verified line-by-line; the two new leaf modules match the real symbol sets (parseReleaseVersion is a codex-release-version leaf re-exported via codex-activation.ts:91). P2 (Wish A stable) remains the wave-0 gate — wave 1 may land before the cut, waves 2–6 may not.
 - Status set to APPROVED by the orchestrator on this evidence.
