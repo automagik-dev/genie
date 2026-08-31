@@ -5,6 +5,8 @@ description: "Coordinator loop for an approved wish on Orca — one Run per wish
 
 # genie-orca:work — coordinator loop
 
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+
 **Invariant.** genie persists no lifecycle state. `WISH.md` is the only durable genie artifact. Orca owns the Run/Task/Dispatch state, Linear owns status, brain owns delegation preferences. If you find yourself writing a state file, stop.
 
 **You are the coordinator.** A live LLM drives the loop below; Orca is the bus (it "never schedules or places workers"). Workers edit files; you never edit group files yourself. Reviewers are read-only; their `worker_done` reports findings and does not authorize edits.

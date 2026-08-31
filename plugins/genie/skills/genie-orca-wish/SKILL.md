@@ -5,6 +5,8 @@ description: "Turn a brainstorm/design into an APPROVED-able wish whose Dispatch
 
 # genie-orca:wish
 
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+
 The wish is the only durable genie artifact and the instruction source for every worker. Write it with the most capable model you have; everything downstream gets cheaper because of it.
 
 ## Before writing

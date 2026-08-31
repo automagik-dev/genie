@@ -251,9 +251,11 @@ jobs:
           set -euo pipefail
           # Only the ATTEMPT is retried, never the argv: the call clones over
           # the network from npm and GitHub, and a transport blip must not read
-          # as an inventory mismatch.
+          # as an inventory mismatch. Listing the LOCAL checkout: a bare non-default-
+          # branch SHA makes the skills CLI silently fall back to the default branch
+          # tree (verified 2026-08-31), which made this check vacuous on PRs.
           attempt=1
-          until npx -y skills@1.5.23 add "automagik-dev/genie@${SKILLS_REF}" --list \
+          until npx -y skills@1.5.23 add "$PWD" --list \
             >"${RUNNER_TEMP}/skills-list.txt" 2>&1; do
             if (( attempt >= 3 )); then
               cat "${RUNNER_TEMP}/skills-list.txt"

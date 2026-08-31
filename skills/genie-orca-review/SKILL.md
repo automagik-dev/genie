@@ -5,6 +5,8 @@ description: "Independent, read-only review of a group, a wish, or a PR on Orca 
 
 # genie-orca:review
 
+**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+
 A reviewer is a **read-only worker dispatched by the coordinator**, never the engineer of the same group, preferably a different model family (brain default: Codex reviews Claude-Sonnet work; Fable/Opus for the two gate reviews).
 
 ## Contract
