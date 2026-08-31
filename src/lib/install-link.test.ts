@@ -15,7 +15,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CanonicalInstallLinkError, prepareCanonicalInstallLink, verifyCanonicalInstallLink } from './install-link.js';
+import {
+  CanonicalInstallLinkError,
+  classifyOwnedDirectorySafety,
+  preflightCanonicalInstallLink,
+  prepareCanonicalInstallLink,
+  verifyCanonicalInstallLink,
+} from './install-link.js';
 
 const roots: string[] = [];
 
@@ -130,6 +136,40 @@ describe('canonical installer link', () => {
   });
 
   for (const unsafeAncestor of ['.local', '.local/bin'] as const) {
+    test('accepts a 0775 ~/.local/bin owned by the user and their effective group (user-private-group umask 002)', () => {
+      const f = fixture();
+      const localBin = join(f.home, '.local', 'bin');
+      mkdirSync(localBin, { recursive: true, mode: 0o755 });
+      chmodSync(join(f.home, '.local'), 0o775);
+      chmodSync(localBin, 0o775);
+      // gid of a fresh dir is the process egid on non-setgid parents, matching the relaxation.
+      expect(() =>
+        preflightCanonicalInstallLink({
+          trustedHome: f.home,
+          linkPath: join(localBin, 'genie'),
+          targetPath: join(f.home, '.genie', 'bin', 'genie'),
+        }),
+      ).not.toThrow();
+    });
+
+    test('classifyOwnedDirectorySafety: pure verdicts', () => {
+      const uid = 1000n;
+      const gid = 1000n;
+      const mk = (mode: number, o: Partial<{ uid: bigint; gid: bigint; nlink: bigint }> = {}) =>
+        ({ uid: o.uid ?? uid, gid: o.gid ?? gid, nlink: o.nlink ?? 2n, mode: BigInt(0o40000 | mode) }) as never;
+      expect(classifyOwnedDirectorySafety(mk(0o755), { uid, gid })).toEqual({ ok: true });
+      expect(classifyOwnedDirectorySafety(mk(0o775), { uid, gid })).toEqual({ ok: true });
+      const foreign = classifyOwnedDirectorySafety(mk(0o775, { gid: 999n }), { uid, gid });
+      expect(foreign.ok).toBe(false);
+      if (!foreign.ok) expect(foreign.reason).toContain('group 999');
+      const world = classifyOwnedDirectorySafety(mk(0o777), { uid, gid });
+      expect(world.ok).toBe(false);
+      if (!world.ok) expect(world.reason).toContain('world-writable (mode 777)');
+      const sudo = classifyOwnedDirectorySafety(mk(0o755, { uid: 0n }), { uid, gid });
+      expect(sudo.ok).toBe(false);
+      if (!sudo.ok) expect(sudo.reason).toContain('owned by uid 0');
+    });
+
     test(`rejects a group/world-writable ${unsafeAncestor} PATH ancestor`, () => {
       const f = fixture();
       const localBin = join(f.home, '.local', 'bin');
@@ -138,7 +178,7 @@ describe('canonical installer link', () => {
 
       expect(() =>
         prepareCanonicalInstallLink({ trustedHome: f.home, linkPath: f.link, targetPath: f.target }),
-      ).toThrow('safe permissions');
+      ).toThrow('writable');
       expect(existsSync(f.link)).toBe(false);
     });
   }

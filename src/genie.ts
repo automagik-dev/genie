@@ -43,7 +43,21 @@ program
   .option('--staging-root <path>')
   .option('--expected-version <version>')
   .option('--self-test')
-  .action((options: InstallPromoteCommandOptions) => installPromoteCommand(options));
+  .action((options: InstallPromoteCommandOptions) => {
+    try {
+      installPromoteCommand(options);
+    } catch (error) {
+      // Preflight/link failures are operator-fixable environment problems
+      // (e.g. a group-writable ~/.local/bin); print the remedy, never a stack.
+      const name = error instanceof Error ? error.name : '';
+      if (name === 'CanonicalInstallLinkError' || name === 'InstallPromoteCommandError') {
+        console.error(`\u2716 ${(error as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  });
 
 // Global --no-interactive flag: disables all interactive prompts (scripting safety)
 program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');

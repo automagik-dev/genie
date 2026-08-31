@@ -69,6 +69,48 @@ function currentUid(): bigint {
   return BigInt(process.getuid());
 }
 
+function currentGid(): bigint {
+  if (process.getegid === undefined)
+    throw new CanonicalInstallLinkError('canonical link requires a POSIX group identity');
+  return BigInt(process.getegid());
+}
+
+/**
+ * Pure safety classifier for a parent directory of the canonical install link.
+ * Ownership contract: owned by the current uid, at least one hard link, never
+ * world-writable, and group-writable ONLY when the directory's group is the
+ * process's effective group — the Debian/Ubuntu user-private-group layout
+ * (umask 002 → `~/.local/bin` is 0775 <user>:<user>), which is as private as
+ * 0755. A group-writable directory owned by any other group stays rejected:
+ * unknown group members could swap the `genie` link.
+ */
+export function classifyOwnedDirectorySafety(
+  stat: Pick<BigIntStats, 'uid' | 'gid' | 'nlink' | 'mode'>,
+  identity: { uid: bigint; gid: bigint },
+): { ok: true } | { ok: false; reason: string; remedy: string } {
+  const mode = Number(stat.mode & 0o777n);
+  const octal = mode.toString(8).padStart(3, '0');
+  if (stat.uid !== identity.uid) {
+    return {
+      ok: false,
+      reason: `is owned by uid ${stat.uid}, not the current user (uid ${identity.uid})`,
+      remedy: 'chown it to your user (it may have been created with sudo), then retry',
+    };
+  }
+  if (stat.nlink < 1n) return { ok: false, reason: 'has no hard links', remedy: 'recreate the directory, then retry' };
+  if ((mode & 0o002) !== 0) {
+    return { ok: false, reason: `is world-writable (mode ${octal})`, remedy: 'run: chmod o-w <path>, then retry' };
+  }
+  if ((mode & 0o020) !== 0 && stat.gid !== identity.gid) {
+    return {
+      ok: false,
+      reason: `is writable by group ${stat.gid}, which is not your effective group (gid ${identity.gid}); mode ${octal}`,
+      remedy: 'run: chmod g-w <path>, then retry',
+    };
+  }
+  return { ok: true };
+}
+
 function fdReferencePath(fd: number): string {
   if (process.platform === 'linux') return `/proc/self/fd/${fd}`;
   if (process.platform === 'darwin') return `/dev/fd/${fd}`;
@@ -127,8 +169,9 @@ function assertSafeOwnedDirectoryStat(stat: BigIntStats, label: string): void {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new CanonicalInstallLinkError(`${label} is not a physical directory`);
   }
-  if (stat.uid !== currentUid() || stat.nlink < 1n || Number(stat.mode & 0o022n) !== 0) {
-    throw new CanonicalInstallLinkError(`${label} is not current-user-owned with safe permissions`);
+  const verdict = classifyOwnedDirectorySafety(stat, { uid: currentUid(), gid: currentGid() });
+  if (!verdict.ok) {
+    throw new CanonicalInstallLinkError(`${label} ${verdict.reason} — ${verdict.remedy.replace('<path>', label)}`);
   }
 }
 
