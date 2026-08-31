@@ -827,9 +827,12 @@ jobs:
   # agent home, so a release candidate must prove the PRODUCTION argv from
   # src/lib/skills-installer.ts actually lands byte-identical skills there.
   #
-  # The ref is the candidate COMMIT, not the release tag: no `v<version>` tag
-  # exists yet at this point in the pipeline, and skills.sh resolves a full
-  # 40-hex SHA as a ref (verified 2026-08-30 against automagik-dev/genie).
+  # The source is a LOCAL PATH, not a GitHub ref: skills@1.5.23 ignores the
+  # `@<ref>` suffix and always serves the repository's default branch (measured
+  # three ways on 2026-08-31), which made a ref-pinned gate assert `main`'s tree
+  # rather than the candidate's. The candidate checkout's own `skills/` stands
+  # in for the delivered `$GENIE_HOME/skills` tree the shipped binary points at
+  # (wish `skills-everywhere-b`, G1) — same argv shape, genuinely pinned.
   #
   # This job checks out `inputs.source_sha` rather than the admitted control
   # commit because the candidate tree is the COMPARISON SUBJECT here, not
@@ -878,20 +881,18 @@ jobs:
       # second unpinned npm install to a release gate without changing a single
       # assertion below.
       - name: Install the candidate's skills with the production argv
-        env:
-          SKILLS_REF: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/skills-evidence"
           # Byte-for-byte the argv built by src/lib/skills-installer.ts
-          # (`npx -y skills@<SKILLS_CLI_VERSION> add automagik-dev/genie@<ref>
-          # --all --copy -g`), with the candidate SHA standing in for the
-          # not-yet-existing release tag.
+          # (`npx -y skills@<SKILLS_CLI_VERSION> add <GENIE_HOME>/skills --all
+          # --copy -g`), with this checkout's `skills/` standing in for the
+          # delivered `$GENIE_HOME/skills` tree.
           # The argv is exact; only the ATTEMPT is bounded-retried, because the
-          # call clones over the network from npm and GitHub and a transport
-          # blip must not read as a release-blocking product failure.
+          # call still downloads the CLI from npm and a transport blip must not
+          # read as a release-blocking product failure.
           attempt=1
-          until npx -y skills@1.5.23 add "automagik-dev/genie@${SKILLS_REF}" --all --copy -g \
+          until npx -y skills@1.5.23 add "${GITHUB_WORKSPACE}/skills" --all --copy -g \
             >"${RUNNER_TEMP}/skills-evidence/install.log" 2>&1; do
             if (( attempt >= 3 )); then
               cat "${RUNNER_TEMP}/skills-evidence/install.log"

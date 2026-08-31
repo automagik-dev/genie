@@ -269,6 +269,58 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     expect(existsSync(work)).toBe(true);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
   });
+
+  /**
+   * Wish `skills-everywhere-b` decision 2: `source` and `collisions` are
+   * OPTIONAL in the record schema. A required field would make every
+   * 5.260830.x record on disk schema-invalid — `readSkillsInstallRecord`
+   * returns `null` for those — turning this removal into a silent no-op over
+   * directories that are really there. The record below is the exact on-disk
+   * shape that release wrote: digests, four agent dirs, no `source`.
+   */
+  test('a 5.260830.x record with no source still parses and still drives the removal', () => {
+    const agentDirs = [
+      claudeSkills,
+      codexSkills,
+      join(root, 'home', '.config', 'goose', 'skills'),
+      join(root, 'home', '.codeium', 'windsurf', 'skills'),
+    ];
+    const dirDigests: Record<string, string> = {};
+    const seeded: string[] = [];
+    for (const agentDir of agentDirs) {
+      mkdirSync(agentDir, { recursive: true });
+      const dir = seedSkillDir(agentDir, 'wish');
+      seeded.push(dir);
+      const digest = computeSkillDirDigest(dir);
+      if (digest === null) throw new Error(`fixture skill dir was not digestable: ${dir}`);
+      dirDigests[dir] = digest;
+    }
+    writeFileSync(
+      skillsInstallRecordPath(genieHome),
+      `${JSON.stringify(
+        {
+          ref: 'v5.260830.16',
+          cliVersion: SKILLS_CLI_VERSION,
+          inventory: ['wish'],
+          agentDirs,
+          dirDigests,
+          installedAt: '2026-08-30T12:00:00.000Z',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.record?.source).toBeUndefined();
+    expect(removal.record?.collisions).toBeUndefined();
+    expect(removal.removed.sort()).toEqual([...seeded].sort());
+    expect(removal.preserved).toEqual([]);
+    expect(removal.recordRemoved).toBe(true);
+    for (const dir of seeded) expect(existsSync(dir)).toBe(false);
+  });
 });
 
 describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 promotion review)', () => {
