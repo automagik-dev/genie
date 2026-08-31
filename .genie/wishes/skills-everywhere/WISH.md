@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `skills-everywhere` |
 | **Date** | 2026-08-30 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
@@ -374,7 +374,11 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 ### Group 7 — evidence review — SHIP (round 3, 2026-08-30)
 - Reviewer: genie:reviewer (session e7edce9e/af3a68af) re-measured every figure at 3efbbb3bc: 57 homes / 77-agent registry / 53 unrecorded / 1,166 would-be orphans all confirmed; retirement half of C3 proven decisively (backups restorable, diffs surgical, idempotent); skills half honestly scoped. Non-blocking addition to the Wish B recording pre-condition: a name-collision check for foreign skills in unrecorded homes (not realized on this host — zero overlaps sampled).
-- `genie task done t_mtg14w35c3ea69d2`. All seven groups complete.; doctor 4→7 warn delta and three residues now recorded in the evidence; `codex exec $wish` probe run post-hoc (exit 0, correct answer from the skills.sh copy); grep fixed. C3 stays ticked with its "once per agent" clause scoped to the recorded homes.
+- `genie task done t_mtg14w35c3ea69d2`. All seven groups complete.
+
+### Closure — 2026-08-31 — SHIPPED (orchestrator)
+- Merged to dev (#2868, 18b85341b), all 7 groups SHIP-reviewed, C3 real-host QA proven (dev v5.260830.20), evidence merged (#2869). Flipped per the umbrella plan's Wish A closure clause, folded into the Wish B/C authoring PR.
+- **Dated correction (2026-08-31):** C1/C2's premise that `add automagik-dev/genie@v<ver>` pins the release tag is FICTION — skills@1.5.23 ignores the `@ref` suffix and serves the repository default branch (verified against tag v5.260712.1, a branch head, and a bare SHA); the installs matched the tag only because main's tree coincided. Corrected by Wish B G1 (local-source install from `$GENIE_HOME/skills`). The 57-homes/4-recorded misreport (G7 HIGH-1) is likewise Wish B G1.; doctor 4→7 warn delta and three residues now recorded in the evidence; `codex exec $wish` probe run post-hoc (exit 0, correct answer from the skills.sh copy); grep fixed. C3 stays ticked with its "once per agent" clause scoped to the recorded homes.
 
 ### Execution review — 2026-08-30 — Group 3 — SHIP (after 1 fix loop)
 - Reviewer: genie:reviewer (session e7edce9e/ab014b35). HIGH closed decisively: static import bundles (`grep -c classifyLegacyIntegrations dist/genie.js` = 3 vs 0 before); `DEFAULT_LEGACY_CLASSIFIER: LegacyClassifier = classifyLegacyIntegrations` turns seam drift into a compile error; source-lock test asserts import present + old pattern gone + module resolves. MEDIUM-1 null-seam rewrite; MEDIUM-2 `(unrecorded)` + `recorded:false`; LOWs closed. Cross-group `KNOWN_AGENT_SKILL_HOMES` narrowing traced: no uninstall regression (persisted `agentDirs` honored), CLI pin asserted repo-wide.
