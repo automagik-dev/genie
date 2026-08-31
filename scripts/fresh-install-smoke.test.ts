@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkSkillStarterPrompts, repositoryRootFromModuleUrl } from './fresh-install-smoke.ts';
 
 const SMOKE_SCRIPT = join(import.meta.dir, 'fresh-install-smoke.ts');
+const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
 const DOCUMENTED_SCAFFOLD = [
   '<!-- wish-scaffold-command:start -->',
@@ -90,6 +91,31 @@ describe('fresh-install-smoke', () => {
     expect(result.code).toBe(0);
   });
 
+  // The staged and extracted payload trees build-binary.sh checks are passed
+  // through --skills-dir, so the shipped-inventory comparison has to run for
+  // those too: a payload that dropped a skill must fail here, not ship.
+  test('a payload skills tree missing a shipped skill fails the inventory guard', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-payload-inventory-fixture-'));
+    try {
+      const payload = join(root, 'skills');
+      cpSync(join(REPO_ROOT, 'skills'), payload, { recursive: true });
+      const dropped = readdirSync(payload, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()[0];
+      expect(dropped).toBeString();
+      rmSync(join(payload, dropped), { recursive: true, force: true });
+
+      const result = runSmoke(['--skills-dir', payload]);
+
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('shipped skill inventory mismatch');
+      expect(result.stderr).toContain(`missing: ${dropped}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('the same metadata is safe in plugin and user tiers because prompts contain no selector', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-selector-free-fixture-'));
     try {
@@ -143,7 +169,7 @@ describe('fresh-install-smoke', () => {
     });
 
     test('exits non-zero when a SKILL.md references a missing bundled path', () => {
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('references missing bundled resource');
     });
@@ -187,7 +213,7 @@ describe('fresh-install-smoke', () => {
       writeWishFixture(`${FULL_SECTIONS.join('\n')}\n`); // no '## Execution Groups'
       const before = scaffoldWorkDirs();
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('fresh-install-smoke: FAIL');
@@ -201,7 +227,7 @@ describe('fresh-install-smoke', () => {
       writeWishFixture(`${[...FULL_SECTIONS, '## Execution Groups'].join('\n')}\n`);
       const before = scaffoldWorkDirs();
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).toBe(0);
       const leaked = [...scaffoldWorkDirs()].filter((n) => !before.has(n));
@@ -232,7 +258,7 @@ describe('fresh-install-smoke', () => {
       writeOpenAiMetadata(genieDir, 'genie');
       rmSync(join(genieDir, 'reference', 'lifecycle.md'));
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('reference/lifecycle.md');

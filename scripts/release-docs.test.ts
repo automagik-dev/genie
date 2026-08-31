@@ -809,6 +809,12 @@ describe('Group E release and documentation contracts', () => {
     }
     expect(pluginReadme).toContain('[Orca dual-mode operator and contributor contract]');
     expect(pluginReadme).toContain('references/orca-orchestration.md');
+    // The Codex-era README claims left with the Codex payload; these are the
+    // contracts the Orca-only rewrite asserts in their place, so the drift
+    // guard follows them rather than lapsing.
+    expect(pluginReadme).toContain('bun run lint:orca-bundle');
+    expect(pluginReadme).toContain('2000 files / 50 MB');
+    expect(pluginReadme).toContain('Genie never registers the plugin with Orca');
   });
 
   test('resurrected metrics bot and incompatible generated state stay retired', () => {

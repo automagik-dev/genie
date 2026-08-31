@@ -38,24 +38,51 @@ function fail(message: string): never {
 
 interface SmokeArgs {
   skillsDir: string;
-  expectProductInventory: boolean;
+  requireShippedInventory: boolean;
 }
 
+/**
+ * The shipped inventory is the set of `SKILL.md`-bearing directories under the
+ * repository `skills/` tree, enforced by default — `--skills-dir` runs
+ * included, because those are exactly the staged and extracted payload trees
+ * `build-binary.sh` hands us, and a payload that lost a skill must fail here.
+ * `--allow-partial-inventory` is the narrow opt-out for synthetic fixture trees
+ * in tests; no release path passes it.
+ */
 function parseArgs(argv: string[]): SmokeArgs {
   let skillsDir = join(REPO_ROOT, 'skills');
-  let customSkills = false;
+  let requireShippedInventory = true;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--skills-dir') {
       const next = argv[i + 1];
       if (!next) fail('--skills-dir requires a path argument');
       skillsDir = resolve(next);
-      customSkills = true;
       i++;
+      continue;
+    }
+    if (argv[i] === '--allow-partial-inventory') {
+      requireShippedInventory = false;
       continue;
     }
     fail(`unknown argument: ${argv[i]}`);
   }
-  return { skillsDir, expectProductInventory: !customSkills };
+  return { skillsDir, requireShippedInventory };
+}
+
+function assertShippedInventory(names: string[]): void {
+  const shipped = listSkillNames(join(REPO_ROOT, 'skills'));
+  if (names.join('\n') === shipped.join('\n')) return;
+  const missing = shipped.filter((name) => !names.includes(name));
+  const unexpected = names.filter((name) => !shipped.includes(name));
+  const detail = [
+    missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+    unexpected.length > 0 ? `unexpected: ${unexpected.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('; ');
+  fail(
+    `shipped skill inventory mismatch: expected ${shipped.length} skills, got ${names.length}${detail ? ` (${detail})` : ''}`,
+  );
 }
 
 function listSkillNames(skillsDir: string): string[] {
@@ -274,11 +301,7 @@ function main(): void {
   try {
     const args = parseArgs(process.argv.slice(2));
     const names = listSkillNames(args.skillsDir);
-    if (args.expectProductInventory) {
-      const shipped = listSkillNames(join(REPO_ROOT, 'skills'));
-      if (names.join('\n') !== shipped.join('\n'))
-        fail(`expected ${shipped.length} shipped skills, got ${names.length}`);
-    }
+    if (args.requireShippedInventory) assertShippedInventory(names);
     checkMetadata(args.skillsDir, names);
     checkSkillStarterPrompts(args.skillsDir, names);
     checkDesignReviewEvidenceTool(args.skillsDir, names);
