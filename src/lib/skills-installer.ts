@@ -767,7 +767,7 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
       );
       try {
         const destination = join(backupRoot, mirrored);
-        mkdirSync(dirname(destination), { recursive: true });
+        mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
         cpSync(target, destination, { recursive: true });
       } catch (error) {
         failures.push(`${target}: ${errorMessage(error)}`);
