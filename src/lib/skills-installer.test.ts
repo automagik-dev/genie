@@ -28,6 +28,7 @@ import {
   SKILLS_CLI_VERSION,
   type SkillsInstallRecord,
   buildSkillsAddArgv,
+  computeSkillDirDigest,
   existingAgentSkillHomes,
   inventoryFromSkillsDir,
   isSafeSkillName,
@@ -165,8 +166,20 @@ describe('agent skill homes', () => {
 describe('runSkillsInstall', () => {
   test('records the tag, CLI version, inventory and existing agent dirs after a zero exit', () => {
     fixtureSkillsTree(['wish', 'work']);
-    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-    mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
+    // The pinned CLI copies every skill into each detected agent home; the fake
+    // spawner does not, so the fixture seeds the post-install state itself.
+    const claudeSkills = join(home, '.claude', 'skills');
+    const agentsSkills = join(home, '.agents', 'skills');
+    const expectedDigests: Record<string, string> = {};
+    for (const parent of [claudeSkills, agentsSkills]) {
+      for (const name of ['wish', 'work']) {
+        mkdirSync(join(parent, name), { recursive: true });
+        writeFileSync(join(parent, name, 'SKILL.md'), `# ${name}\n`, 'utf8');
+        const digest = computeSkillDirDigest(join(parent, name));
+        if (digest === null) throw new Error(`fixture skill dir was not digestable: ${join(parent, name)}`);
+        expectedDigests[join(parent, name)] = digest;
+      }
+    }
     // A bare `~/.codex` is NOT a skill home: skills.sh creates no `.codex/skills`.
     mkdirSync(join(home, '.codex'), { recursive: true });
     const calls = { argv: [] as string[][] };
@@ -188,13 +201,41 @@ describe('runSkillsInstall', () => {
       ref: 'v5.260830.16',
       cliVersion: '1.5.23',
       inventory: ['wish', 'work'],
-      agentDirs: [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')],
+      agentDirs: [claudeSkills, agentsSkills],
+      dirDigests: expectedDigests,
       installedAt: '2026-08-30T12:00:00.000Z',
     });
 
     const onDisk = JSON.parse(readFileSync(skillsInstallRecordPath(genieHome), 'utf8')) as SkillsInstallRecord;
     expect(onDisk).toEqual(outcome.ok === true ? outcome.record : ({} as SkillsInstallRecord));
     expect(statSync(skillsInstallRecordPath(genieHome)).mode & 0o777).toBe(0o600);
+  });
+
+  test('records a content digest per installed agent dir, and only for dirs that exist', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    // A detected agent home the CLI did not populate contributes no digest:
+    // uninstall treats that recorded combination as unverified and preserves it.
+    mkdirSync(join(home, '.agents', 'skills'), { recursive: true });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+
+    const wishDir = join(claudeSkills, 'wish');
+    const digest = computeSkillDirDigest(wishDir);
+    if (digest === null) throw new Error('fixture skill dir was not digestable');
+    expect(outcome.ok === true && outcome.record.dirDigests).toEqual({ [wishDir]: digest });
+    // One edited byte changes the digest, so a user-modified directory can
+    // never reproduce the recorded value.
+    writeFileSync(join(wishDir, 'SKILL.md'), '# my precious edit\n', 'utf8');
+    expect(computeSkillDirDigest(wishDir)).not.toBe(digest);
   });
 
   test('a non-zero exit writes NO record and returns the reason plus the remedy', () => {
@@ -314,6 +355,53 @@ describe('runSkillsInstall', () => {
   });
 });
 
+describe('computeSkillDirDigest', () => {
+  test('is deterministic over sorted relative paths and file bytes, and content-sensitive', () => {
+    const dir = join(root, 'skill');
+    mkdirSync(join(dir, 'references'), { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '# x\n', 'utf8');
+    writeFileSync(join(dir, 'zz-last.txt'), 'zz\n', 'utf8');
+    writeFileSync(join(dir, 'references', 'a.md'), 'a\n', 'utf8');
+    const digest = computeSkillDirDigest(dir);
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+
+    // Same bytes created in a different order must hash identically: the walk
+    // sorts by relative path, not by readdir order.
+    const copy = join(root, 'skill-copy');
+    mkdirSync(join(copy, 'references'), { recursive: true });
+    writeFileSync(join(copy, 'zz-last.txt'), 'zz\n', 'utf8');
+    writeFileSync(join(copy, 'references', 'a.md'), 'a\n', 'utf8');
+    writeFileSync(join(copy, 'SKILL.md'), '# x\n', 'utf8');
+    expect(computeSkillDirDigest(copy)).toBe(digest);
+
+    writeFileSync(join(copy, 'SKILL.md'), '# changed\n', 'utf8');
+    expect(computeSkillDirDigest(copy)).not.toBe(digest);
+  });
+
+  test('hashes a symlink by its target path without following it; null for missing or non-dir roots', () => {
+    const withLink = join(root, 'with-link');
+    mkdirSync(withLink, { recursive: true });
+    writeFileSync(join(withLink, 'SKILL.md'), '# x\n', 'utf8');
+    const outside = join(root, 'outside.txt');
+    writeFileSync(outside, 'payload\n', 'utf8');
+    symlinkSync(outside, join(withLink, 'payload-link'));
+    expect(computeSkillDirDigest(withLink)).not.toBeNull();
+
+    // Retargeting the link changes the digest even though neither target's
+    // bytes nor the rest of the tree changed — links are hashed, not followed.
+    const retargeted = join(root, 'retargeted');
+    mkdirSync(retargeted, { recursive: true });
+    writeFileSync(join(retargeted, 'SKILL.md'), '# x\n', 'utf8');
+    symlinkSync(join(root, 'elsewhere.txt'), join(retargeted, 'payload-link'));
+    expect(computeSkillDirDigest(retargeted)).not.toBe(computeSkillDirDigest(withLink));
+
+    expect(computeSkillDirDigest(join(root, 'absent'))).toBeNull();
+    const plainFile = join(root, 'plain.txt');
+    writeFileSync(plainFile, 'x', 'utf8');
+    expect(computeSkillDirDigest(plainFile)).toBeNull();
+  });
+});
+
 describe('install record', () => {
   test('round-trips', () => {
     const record: SkillsInstallRecord = {
@@ -325,6 +413,20 @@ describe('install record', () => {
     };
     writeSkillsInstallRecord(genieHome, record);
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+  });
+
+  test('a legacy record without dirDigests (written by 5.260830.x) reads back unchanged', () => {
+    const legacy = {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(home, '.claude', 'skills')],
+      installedAt: '2026-08-30T12:00:00.000Z',
+    };
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(legacy), 'utf8');
+    const read = readSkillsInstallRecord(genieHome);
+    expect(read).toEqual(legacy);
+    expect(read?.dirDigests).toBeUndefined();
   });
 
   test('an absent, malformed, or traversal-carrying record reads as null', () => {

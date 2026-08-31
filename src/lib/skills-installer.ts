@@ -24,20 +24,22 @@
  * bytes stays committed and retryable.
  */
 
-import type { Dirent } from 'node:fs';
+import { type Hash, createHash } from 'node:crypto';
+import type { Dirent, Stats } from 'node:fs';
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { z } from 'zod';
 import { fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
@@ -152,6 +154,19 @@ const skillsInstallRecordSchema = z.object({
   agentDirs: z.array(
     z.string().refine(isTraversalFreeAbsolutePath, 'agent dir must be a traversal-free absolute path'),
   ),
+  /**
+   * Content digest of every `<agentDir>/<skill name>` directory the install
+   * actually wrote, keyed by that absolute path — the proof `genie uninstall`
+   * recomputes before deleting. Optional so records written by 5.260830.x
+   * (before digests existed) still read; those legacy records never authorize
+   * a deletion, uninstall preserves and reports their directories instead.
+   */
+  dirDigests: z
+    .record(
+      z.string().refine(isTraversalFreeAbsolutePath, 'digest key must be a traversal-free absolute path'),
+      z.string().regex(/^[0-9a-f]{64}$/, 'digest must be a lowercase sha256 hex string'),
+    )
+    .optional(),
   installedAt: z.string().min(1),
 });
 
@@ -266,6 +281,84 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/**
+ * Domain separator so a skill-dir digest can never collide with — or be
+ * substituted by — any other genie digest scheme.
+ */
+const SKILL_DIR_DIGEST_DOMAIN = 'genie-skill-dir-v1';
+
+type SkillDirEntryKind = 'directory' | 'file' | 'symlink' | 'other';
+
+interface SkillDirEntry {
+  rel: string;
+  kind: SkillDirEntryKind;
+  /** File bytes, or the raw symlink target; empty for directories/other kinds. */
+  payload: Buffer;
+}
+
+function collectSkillDirEntries(root: string, current: string, out: SkillDirEntry[]): void {
+  for (const entry of readdirSync(current, { withFileTypes: true })) {
+    const absolute = join(current, entry.name);
+    const kind: SkillDirEntryKind = entry.isSymbolicLink()
+      ? 'symlink'
+      : entry.isDirectory()
+        ? 'directory'
+        : entry.isFile()
+          ? 'file'
+          : 'other';
+    out.push({
+      rel: relative(root, absolute).split(sep).join('/'),
+      kind,
+      payload:
+        kind === 'file'
+          ? readFileSync(absolute)
+          : kind === 'symlink'
+            ? Buffer.from(readlinkSync(absolute))
+            : Buffer.alloc(0),
+    });
+    // Only real directories recurse: a symlink is hashed by its target path,
+    // never followed (the same fail-closed rule as every other genie digest).
+    if (kind === 'directory') collectSkillDirEntries(root, absolute, out);
+  }
+}
+
+function updateSkillDirDigestField(digest: Hash, value: Buffer): void {
+  digest.update(`${value.length}:`);
+  digest.update(value);
+  digest.update('\0');
+}
+
+/**
+ * Content digest of one installed `<agentDir>/<skill>` directory: a SHA-256
+ * over a deterministic walk (sorted relative paths; exact file bytes; symlink
+ * targets as read). `null` for anything unreadable or not a physical directory
+ * — callers must treat `null` as "unverified" and never delete unverified dirs.
+ */
+export function computeSkillDirDigest(dir: string): string | null {
+  let rootStat: Stats;
+  try {
+    rootStat = lstatSync(dir);
+  } catch {
+    return null;
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
+  const entries: SkillDirEntry[] = [];
+  try {
+    collectSkillDirEntries(dir, dir, entries);
+  } catch {
+    return null;
+  }
+  entries.sort((left, right) => (left.rel < right.rel ? -1 : left.rel > right.rel ? 1 : 0));
+  const digest = createHash('sha256');
+  updateSkillDirDigestField(digest, Buffer.from(SKILL_DIR_DIGEST_DOMAIN));
+  for (const entry of entries) {
+    updateSkillDirDigestField(digest, Buffer.from(entry.rel));
+    updateSkillDirDigestField(digest, Buffer.from(entry.kind));
+    updateSkillDirDigestField(digest, entry.payload);
+  }
+  return digest.digest('hex');
+}
+
 /** `5.260830.16` and `v5.260830.16` both normalize to the `v`-prefixed tag. */
 export function releaseTag(version: string): string {
   const trimmed = version.trim();
@@ -364,11 +457,25 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const inventory = inventoryFromSkillsDir(skillsRoot);
   if (inventory.length === 0) return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy };
 
+  const agentDirs = existingAgentSkillHomes(options.home).map((entry) => entry.dir);
+  // Digest every directory the CLI actually wrote, so `genie uninstall` can
+  // later prove a directory is still genie's byte-identical install before it
+  // deletes it. A combination that did not land (or cannot be read) records no
+  // digest: uninstall then preserves that directory instead of deleting it.
+  const dirDigests: Record<string, string> = {};
+  for (const agentDir of agentDirs) {
+    for (const name of inventory) {
+      const target = join(agentDir, name);
+      const digest = computeSkillDirDigest(target);
+      if (digest !== null) dirDigests[target] = digest;
+    }
+  }
   const record: SkillsInstallRecord = {
     ref: releaseTag(options.version),
     cliVersion: SKILLS_CLI_VERSION,
     inventory,
-    agentDirs: existingAgentSkillHomes(options.home).map((entry) => entry.dir),
+    agentDirs,
+    dirDigests,
     installedAt: (options.now ?? (() => new Date()))().toISOString(),
   };
   try {
