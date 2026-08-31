@@ -767,6 +767,8 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
       );
       try {
         const destination = join(backupRoot, mirrored);
+        // Owner-only: the backup root lives under GENIE_HOME/state-backups and
+        // may carry a foreign operator's skill content.
         mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
         cpSync(target, destination, { recursive: true });
       } catch (error) {

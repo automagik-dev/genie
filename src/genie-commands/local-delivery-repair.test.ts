@@ -14,10 +14,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { scanPhysicalTree } from '../lib/codex-activation.js';
-import type { DeliveryEvidencePlatformId } from '../lib/codex-delivery-evidence.js';
-import { buildTestDeliveryEvidencePack } from '../lib/codex-delivery-evidence.test-support.js';
-import { acquireLifecycleLease } from '../lib/codex-lifecycle-lease.js';
+import type { DeliveryEvidencePlatformId } from '../lib/delivery-evidence-verify.js';
+import { buildTestDeliveryEvidencePack } from '../lib/delivery-evidence-verify.test-support.js';
+import { scanPhysicalTree } from '../lib/release-payload-proof.js';
 import { VERSION } from '../lib/version.js';
 import {
   LOCAL_DELIVERY_REPAIR_REQUEST_MAX_BYTES,
@@ -25,7 +24,7 @@ import {
   materializeLocalDeliveryRepair,
   parseLocalDeliveryRepairRequest,
 } from './local-delivery-repair.js';
-import { projectLocalDeliveryRepairDirective, resolvePlatformId, resolveUpdateExecutionMode } from './update.js';
+import { projectLocalDeliveryVerification, resolvePlatformId, resolveUpdateExecutionMode } from './update.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
 const roots: string[] = [];
@@ -274,21 +273,17 @@ describe('local delivery update-mode and trailer boundary', () => {
     expect(() => resolveUpdateExecutionMode({ publishLocalDelivery: '{}' }, '1')).toThrow('cannot be combined');
   });
 
-  test('projects only the standard result, incomplete, and busy trailers', () => {
-    const failed = projectLocalDeliveryRepairDirective({ action: 'failed', detail: 'tampered' });
+  test('projects only the verified and incomplete trailers', () => {
+    const failed = projectLocalDeliveryVerification({ status: 'failed', detail: 'tampered' });
     expect(failed.exitCode).toBe(1);
     expect(failed.stdout.join('\n')).toContain('"code":"delivery-incomplete"');
     expect(failed.stderr.join('\n')).toContain('tampered');
 
-    const busy = projectLocalDeliveryRepairDirective({ action: 'busy', detail: 'setup owns lease' });
-    expect(busy.exitCode).toBe(2);
-    expect(busy.stdout.join('\n')).toContain('"code":"codex-lifecycle-busy"');
-
-    const pending = projectLocalDeliveryRepairDirective({ action: 'exit-handoff' });
-    expect(pending.exitCode).toBe(2);
-    expect(pending.stdout.join('\n')).toContain('"code":"activation-pending"');
-    expect(projectLocalDeliveryRepairDirective({ action: 'proceed-current' }).exitCode).toBe(0);
-    expect(projectLocalDeliveryRepairDirective({ action: 'repaired-current' }).exitCode).toBe(0);
+    const verified = projectLocalDeliveryVerification({ status: 'verified' }, '5.260831.7');
+    expect(verified.exitCode).toBe(0);
+    expect(verified.stdout.join('\n')).toContain('"code":"delivery-verified"');
+    expect(verified.stdout.join('\n')).toContain('Offline delivery evidence verified for v5.260831.7.');
+    expect(verified.stderr).toEqual([]);
   });
 
   test('the CLI keeps the option hidden and refuses missing capability or mixed modes', () => {
@@ -330,25 +325,6 @@ describe('local delivery update-mode and trailer boundary', () => {
     expect(linked.exitCode).toBe(1);
     expect(linked.stderr).toContain('not its absolute canonical physical path');
     expect(linked.stdout).toContain('"code":"delivery-incomplete"');
-  });
-
-  test('a held Codex lifecycle lease returns the standard busy trailer with exit 2', () => {
-    const files = basicFiles('cli-busy');
-    const genieHome = join(files.root, 'genie-home');
-    mkdirSync(genieHome, { recursive: true });
-    const lease = acquireLifecycleLease('setup-activation', { genieHome });
-    if (!lease.ok) throw new Error(lease.detail);
-    try {
-      const result = runCli(files.root, ['update', '--publish-local-delivery', requestJson(files)], {
-        GENIE_HOME: genieHome,
-        GENIE_RELEASE_DOGFOOD: '1',
-      });
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain('is busy');
-      expect(result.stdout).toContain('"code":"codex-lifecycle-busy"');
-    } finally {
-      lease.release();
-    }
   });
 });
 
@@ -439,8 +415,8 @@ describe('local delivery embedded-trust command boundary', () => {
     expect(readFileIfPresent(join(genieHome, '.codex-plugin-delivery-record.json'))).toBe('');
 
     const source = readFileSync(join(import.meta.dir, 'update.ts'), 'utf8');
-    const start = source.indexOf('async function runLocalDeliveryRepairMode');
-    const end = source.indexOf('/** Build the real repair seams', start);
+    const start = source.indexOf('async function runLocalDeliveryVerificationMode');
+    const end = source.indexOf('function retireLegacyInstallMarkerSafe', start);
     const boundary = source.slice(start, end);
     expect(boundary).not.toContain('skipAttestation');
     expect(boundary).not.toContain('evidenceVerification');

@@ -10,7 +10,7 @@ name: Build Tarballs
 #   genie       — bun --compile static executable
 #   plugins/    — full Claude/Codex/Hermes payload: manifests, 22-skill mirror,
 #                 hooks, references, and optional role-agent staging
-#   .agents/ + .claude-plugin/ — runtime marketplace manifests
+#   .claude-plugin/ — runtime marketplace manifest
 #   skills/     — canonical skills/<name>/SKILL.md + agents/openai.yaml/resources
 #   templates/  — wish-template, genie-config.template.json
 #   VERSION     — plain-text stamp consumed by src/lib/version.ts
@@ -67,8 +67,6 @@ on:
       - 'scripts/fresh-install-smoke.ts'
       - 'scripts/skills-lint.ts'
       - 'scripts/release-payload-version.ts'
-      - 'scripts/verify-codex-activation-payload.ts'
-      - '.agents/plugins/marketplace.json'
       - '.claude-plugin/marketplace.json'
       - '.github/workflows/build-tarballs.yml'
 

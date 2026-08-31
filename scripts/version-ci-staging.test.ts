@@ -32,7 +32,6 @@ describe('synchronizeVersionFiles CI staging', () => {
     for (const path of [
       'package.json',
       'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.codex-plugin/plugin.json',
       'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',

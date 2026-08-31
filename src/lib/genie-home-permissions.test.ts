@@ -9,9 +9,7 @@
  * rejects any directory whose mode carries `0o022`.
  *
  * Several unrelated modules can win the race to be that first creator, so the
- * invariant is asserted here in one place rather than per module. The lease
- * path — the site the original incident traced to — additionally keeps its own
- * colocated regression test in codex-lifecycle-lease.test.ts.
+ * invariant is asserted here in one place rather than per module.
  *
  * Assertions are on the RESULTING mode, never on umask mechanics, so they hold
  * across platforms and runtimes (local darwin/bun vs. the Linux CI where the
@@ -196,7 +194,6 @@ describe('GENIE_HOME first-creation permissions', () => {
       ['src/term-commands/hook/trust.ts', 'mkdirSync(dir, {', '<GENIE_HOME>/hooks via `genie hook trust`'],
       ['src/lib/genie-config.ts', 'mkdirSync(dir, {', 'GENIE_HOME via getGenieDir()'],
       ['src/genie-commands/auxiliary-trees.ts', 'mkdirSync(dirname(options.destination), {', 'GENIE_HOME parent'],
-      ['src/lib/codex-lifecycle-lease.ts', 'mkdirSync(dirOf(path), {', 'GENIE_HOME via the lease path'],
       ['src/lib/atomic-fs.ts', 'mkdirSync(dir, {', 'atomicWriteFileSync — every caller writes under GENIE_HOME'],
     ];
 

@@ -1017,21 +1017,20 @@ jobs:
   #
   # `prepare-delivery-evidence`, `delivery-evidence-compatibility` and
   # `stable-release-security-gate` reason about the candidate's evidence.
-  # `codex-native-dogfood` does run the update-side delivery path, but only
-  # INSIDE the Codex-plugin harness, on a host that harness builds for itself:
-  # a fake Codex CLI on PATH, a trusted-projects config, and a plugin cache
-  # pre-seeded with N.
+  # None of them RUNS the update-side delivery path.
   #
-  # This job runs that same update-side code path — `genie update
-  # --publish-local-delivery`, the candidate binary publishing an authenticated
-  # delivery out of verified local bytes — on a PLAIN host: no Codex home, no
-  # plugin registration, no harness, and a live generation that is the real
-  # previous stable N. Real N as the parent, real T as the binary, no Codex
-  # anywhere is the shape of an ordinary user's machine, and it is exercised
-  # nowhere else in this pipeline. The assertion is the delivery contract
-  # itself: exit 2, a `activation-pending` result trailer, `deliveryComplete`
-  # true — delivery published, activation still withheld until explicit
-  # consent.
+  # This job runs that update-side code path — `genie update
+  # --publish-local-delivery`, the candidate binary verifying an authenticated
+  # delivery out of verified local bytes — on a PLAIN host: no harness, no
+  # pre-seeded cache, and a live generation that is the real previous stable
+  # N. Real N as the parent, real T as the binary is the shape of an ordinary
+  # user's machine, and it is exercised nowhere else in this pipeline. The
+  # assertion is the delivery contract itself: exit 0, a `delivery-verified`
+  # result trailer, `deliveryComplete` true — the offline evidence pack
+  # (artifact digest, manifest, DSSE, caller observation) verified against the
+  # exact local candidate. There is no activation step left to defer: wish
+  # `skills-everywhere-b` G3 deleted the Codex activation store, so the mode's
+  # terminal is verification, not a pending publish.
   #
   # It is deliberately NOT a networked `genie update`: at this point in the
   # pipeline the candidate has no GitHub Release and no
@@ -1311,10 +1310,9 @@ jobs:
             printf 'standalone task/board OK (%s)\n' "$label"
           }
 
-          # The update-side delivery path itself, driven exactly as
-          # tests/support/codex-dogfood-harness.ts drives it (argv, request
-          # schema, GENIE_RELEASE_DOGFOOD=1, expected exit 2), but on this bare
-          # host. Inputs are copied under DOGFOOD_ROOT first because
+          # The update-side delivery path itself: the production argv, the
+          # request schema and GENIE_RELEASE_DOGFOOD=1, on this bare host.
+          # Inputs are copied under DOGFOOD_ROOT first because
           # run-musl-dogfood.sh requires every path the candidate touches to be
           # physically contained in that one canonical root.
           publish_local_delivery() {
@@ -1337,19 +1335,19 @@ jobs:
             output="$(run_genie update --publish-local-delivery "$request" 2>&1)" || status=$?
             unset GENIE_RELEASE_DOGFOOD
             printf '%s\n' "$output"
-            [[ "$status" -eq 2 ]] || {
-              echo "::error::update-path.delivery expected exit 2 (delivery published, activation pending), got ${status}"
+            [[ "$status" -eq 0 ]] || {
+              echo "::error::update-path.delivery expected exit 0 (offline delivery evidence verified), got ${status}"
               exit 1
             }
             trailer="$(printf '%s\n' "$output" | grep -o '{.*}' | tail -n 1)"
             printf '%s' "$trailer" | jq -e '
-              .schemaVersion == 1 and .code == "activation-pending" and
+              .schemaVersion == 1 and .code == "delivery-verified" and
               .deliveryComplete == true and .retry == false and (.nextAction | length) > 0
             ' >/dev/null || {
-              echo "::error::update-path.delivery trailer is not the activation-pending delivery contract: ${trailer}"
+              echo "::error::update-path.delivery trailer is not the delivery-verified contract: ${trailer}"
               exit 1
             }
-            printf 'genie update --publish-local-delivery -> exit 2 %s\n' "$trailer"
+            printf 'genie update --publish-local-delivery -> exit 0 %s\n' "$trailer"
           }
 
           SEEDED="${ROOT}/repos/seeded"

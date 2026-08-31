@@ -34,7 +34,7 @@ import { dirname, join, relative, sep } from 'node:path';
 
 /**
  * `constants` under the name the persistence primitives moved in from
- * `codex-activation-persistence.ts` already used, so those blocks read verbatim.
+ * the retired Codex activation persistence module already used, so those blocks read verbatim.
  */
 const fsConstants = constants;
 
@@ -509,7 +509,7 @@ export function computeFileDigest(path: string): string {
 
 // ============================================================================
 // Bounded reads + durable writes — moved verbatim out of
-// `codex-activation-persistence.ts`
+// the retired Codex activation persistence module
 // ============================================================================
 //
 // Nothing in these four primitives is Codex-specific: they are bounded

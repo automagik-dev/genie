@@ -48,7 +48,6 @@ import {
   materializeFrozenCodexFallbackRelease,
 } from '../../scripts/generate-codex-fallback-allowlist';
 import historicalCodexFallbackAllowlist from '../fixtures/codex-fallback-allowlist.json';
-import { checkAgentSync } from '../genie-commands/doctor';
 import { runAgentSyncSafe } from '../genie-commands/update';
 import {
   type AgentReport,
@@ -2382,75 +2381,6 @@ describe('hermes config convergence', () => {
     expect(extraAction(hermes, 'symlink')).toBe('created');
   });
 
-  test('round-trip: syncHermes writes converge and doctor.checkAgentSync reports every hermes leg green', () => {
-    // WRITE: runAgentSync → syncHermes converges the plugin link + config.yaml
-    // (mcp_servers.genie + skills.external_dirs) into the fixture's HERMES_HOME.
-    present(fixture.hermesHome);
-    presentGenieBinary();
-    const wrote = agentReport(run(), 'hermes');
-    expect(extraAction(wrote, 'mcp-config')).toBe('unchanged');
-    expect(extraAction(wrote, 'skills-dir')).toBe('created');
-
-    // READ-BACK: the doctor's read-only agent-sync check, pointed at the SAME
-    // converged tmpdir fixture, must confirm every hermes leg the writer produced.
-    // hermesBinary:null skips the enable probe so this test never spawns a process.
-    const hermesChecks = checkAgentSync({
-      genieHome: fixture.genieHome,
-      claudeDir: fixture.claudeDir,
-      codexDir: fixture.codexDir,
-      agentsSkillsDir: fixture.agentsSkillsDir,
-      hermesHome: fixture.hermesHome,
-      hermesBinary: null,
-      settingsPath: join(fixture.claudeDir, 'settings.json'),
-    }).filter((check) => check.name.startsWith('agent sync: hermes'));
-
-    const byName = (name: string) => hermesChecks.find((check) => check.name === name);
-    expect(byName('agent sync: hermes')?.status).toBe('pass'); // plugin symlink leg
-    expect(byName('agent sync: hermes')?.detail).toContain(fixture.hermesSource);
-    expect(byName('agent sync: hermes mcp')?.status).toBe('pass');
-    expect(byName('agent sync: hermes mcp')?.detail).toContain('retired');
-    expect(byName('agent sync: hermes skills')?.status).toBe('pass');
-    expect(byName('agent sync: hermes skills')?.detail).toContain(skillsRoot());
-    // Every emitted hermes leg is a pass — the writer and the doctor agree end-to-end.
-    expect(hermesChecks.length).toBeGreaterThanOrEqual(3);
-    expect(hermesChecks.every((check) => check.status === 'pass')).toBe(true);
-  });
-});
-
-function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
-  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
-  const digest = createHash('sha256');
-  for (const [rel, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
-    digest.update(rel);
-    digest.update('\0');
-    digest.update(createHash('sha256').update(content).digest('hex'));
-    digest.update('\0');
-  }
-  writeFile(
-    join(dir, MANIFEST_NAME),
-    `${JSON.stringify({
-      managedBy: 'genie-agent-sync',
-      version: '8.0.0',
-      digest: digest.digest('hex'),
-      syncedAt: '2025-01-01T00:00:00.000Z',
-    })}\n`,
-  );
-}
-
-// The `codex .system` and `codex legacy .curated migration` describes that
-// used to live here tested `syncCodex`, which is retired: codex product
-// skills are plugin-only now (installCodexIntegration), and `runAgentSync`
-// has no codex arm at all. `.system` protection and `.curated` migration are
-// moot when nothing writes into ~/.agents/skills or reads <codexDir>/skills/
-// from this engine anymore. `genie uninstall`'s own `.curated` classifier
-// (codexLegacyCuratedDir + inspectManagedSkillTree) is unaffected and covered
-// in uninstall.test.ts.
-
-// ---------------------------------------------------------------------------
-// Source resolution
-// ---------------------------------------------------------------------------
-
-describe('resolveGenieSource', () => {
   test('falls back to the bin/plugins layout', () => {
     rmSync(fixture.root, { recursive: true, force: true });
     fixture = setup({ binLayout: true });
@@ -3730,133 +3660,7 @@ describe('cross-process sync lock', () => {
   }, 30_000);
 });
 
-// ---------------------------------------------------------------------------
-// Codex role-agent TOML refresh wiring (update.ts runAgentSyncSafe). Lives
-// here rather than __tests__/update.test.ts only because that file is owned by
-// a concurrent lane — the integrator may relocate this block verbatim.
-// ---------------------------------------------------------------------------
-
-describe('runAgentSyncSafe codex role-agent refresh wiring', () => {
-  function fakeReport(overrides: Partial<AgentSyncReport> = {}, codexDetected = true): AgentSyncReport {
-    return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
-      agents: [
-        { agent: 'claude', detected: true, skills: [], extras: [], advisories: [] },
-        { agent: 'codex', detected: codexDetected, skills: [], extras: [], advisories: [] },
-        { agent: 'hermes', detected: false, skills: [], extras: [], advisories: [] },
-      ],
-      backupsDir: null,
-      ...overrides,
-    };
-  }
-
-  function markerPath(): string {
-    return join(fixture.root, '.last-agent-sync');
-  }
-
-  test('codex detected → the refresh seam runs once and the summary reports counts', () => {
-    const lines: string[] = [];
-    let calls = 0;
-    runAgentSyncSafe({
-      sync: () => fakeReport(),
-      codexRefresh: () => {
-        calls += 1;
-        return {
-          installed: 7,
-          skippedUserOwned: ['genie-reviewer.toml'],
-          keptModified: [],
-          removed: [],
-          backedUp: ['genie-wish.toml'],
-        };
-      },
-      log: (line) => lines.push(line),
-      markerPath: markerPath(),
-    });
-    expect(calls).toBe(1);
-    const joined = lines.join('\n');
-    expect(joined).toContain('codex — 7 role-agent TOMLs refreshed');
-    expect(joined).toContain('1 user-tuned backed up');
-    expect(joined).toContain('1 user-owned kept');
-  });
-
-  test('codex not detected → the refresh never runs', () => {
-    let calls = 0;
-    runAgentSyncSafe({
-      sync: () => fakeReport({}, false),
-      codexRefresh: () => {
-        calls += 1;
-        return { installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
-      },
-      log: () => undefined,
-      markerPath: markerPath(),
-    });
-    expect(calls).toBe(0);
-  });
-
-  test('a lock-skipped sync run → the refresh never runs (the lock holder converges TOMLs too)', () => {
-    let calls = 0;
-    runAgentSyncSafe({
-      sync: () => fakeReport({ agents: [], skipped: 'another agent-sync run holds the lock' }),
-      codexRefresh: () => {
-        calls += 1;
-        return { installed: 7, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] };
-      },
-      log: () => undefined,
-      markerPath: markerPath(),
-    });
-    expect(calls).toBe(0);
-  });
-
-  test('a refresh returning null (bundle lacks codex-agents) emits no refresh line', () => {
-    const lines: string[] = [];
-    runAgentSyncSafe({
-      sync: () => fakeReport(),
-      codexRefresh: () => null,
-      log: (line) => lines.push(line),
-      markerPath: markerPath(),
-    });
-    expect(lines.join('\n')).not.toContain('role-agent TOMLs');
-  });
-
-  test('a best-effort refresh throw is advisory and leaves the retry marker untouched', () => {
-    const lines: string[] = [];
-    const marker = markerPath();
-    expect(() =>
-      runAgentSyncSafe({
-        sync: () => fakeReport(),
-        codexRefresh: () => {
-          throw new Error('toml copy exploded');
-        },
-        log: (line) => lines.push(line),
-        markerPath: marker,
-      }),
-    ).not.toThrow();
-    expect(lines.join('\n')).toContain('codex role-agent refresh failed: toml copy exploded');
-    expect(existsSync(marker)).toBe(false);
-  });
-
-  test('strict explicit convergence propagates a role-agent failure', () => {
-    const marker = markerPath();
-    expect(() =>
-      runAgentSyncSafe({
-        sync: () => fakeReport(),
-        codexRefresh: () => {
-          throw new Error('inventory unavailable');
-        },
-        strict: true,
-        log: () => undefined,
-        markerPath: marker,
-      }),
-    ).toThrow('inventory unavailable');
-    expect(existsSync(marker)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Digest guards a real tree (belt-and-suspenders on readdir usage)
-// ---------------------------------------------------------------------------
-
-describe('orphan detection ignores non-managed siblings', () => {
+describe('agent-sync removal safety', () => {
   test('staging siblings and unmanaged dirs never appear as removed and survive on disk', () => {
     present(fixture.claudeDir);
     run();
@@ -5240,3 +5044,23 @@ describe('skills.sh channel suppression — a STALE or absent record leaves ever
     expect(extraAction(agentReport(report, 'pi'), 'symlink')).toBe('created');
   });
 });
+
+function seedV1ManagedDir(dir: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) writeFile(join(dir, rel), content);
+  const digest = createHash('sha256');
+  for (const [rel, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    digest.update(rel);
+    digest.update('\0');
+    digest.update(createHash('sha256').update(content).digest('hex'));
+    digest.update('\0');
+  }
+  writeFile(
+    join(dir, MANIFEST_NAME),
+    `${JSON.stringify({
+      managedBy: 'genie-agent-sync',
+      version: '8.0.0',
+      digest: digest.digest('hex'),
+      syncedAt: '2025-01-01T00:00:00.000Z',
+    })}\n`,
+  );
+}

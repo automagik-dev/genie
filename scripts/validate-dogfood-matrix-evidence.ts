@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto';
 import { type Dirent, type Stats, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { compareReleaseVersions, parseReleaseVersion } from '../src/lib/codex-release-version.ts';
+import { compareReleaseVersions, parseReleaseVersion } from '../src/lib/release-payload-proof.ts';
 import { NATIVE_DOGFOOD_TARGETS } from './candidate-dogfood-matrix.ts';
 import { LIVE_DOGFOOD_SCHEMA_VERSION, validateLiveDogfoodEvidenceFile } from './validate-live-dogfood-evidence.ts';
 

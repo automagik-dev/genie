@@ -16,7 +16,6 @@ const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 const TOP_LEVEL_VERSION_FILES = [
   'plugins/genie/package.json',
   'plugins/genie/.claude-plugin/plugin.json',
-  'plugins/genie/.codex-plugin/plugin.json',
   'plugins/genie/.kimi-plugin/plugin.json',
   'plugins/genie/orca-plugin.json',
 ] as const;
@@ -36,7 +35,6 @@ const COMMITTED_VERSION_FILES = [
   'package.json',
   'plugins/genie/package.json',
   'plugins/genie/.claude-plugin/plugin.json',
-  'plugins/genie/.codex-plugin/plugin.json',
   'plugins/genie/.kimi-plugin/plugin.json',
 ] as const;
 
@@ -85,19 +83,6 @@ function writeObject(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function verifyCodexMarketplaceEntry(path: string, expectedVersion: string): void {
-  const { entry } = marketplaceEntry(path);
-  const source = entry.source as JsonObject | undefined;
-  if (!source || source.source !== 'local' || source.path !== './plugins/genie') {
-    throw new Error(`Codex marketplace genie entry must target local ./plugins/genie: ${path}`);
-  }
-  // Current Codex local-marketplace schema is source-addressed and does not
-  // require a version. If a future manifest adds one, it may not diverge.
-  if (entry.version !== undefined && entry.version !== expectedVersion) {
-    throw new Error(`release payload version mismatch in ${path}: expected ${expectedVersion}, got ${entry.version}`);
-  }
-}
-
 /**
  * Verify the checkout's authoritative metadata before a workflow override is
  * allowed to stamp a staged payload. This prevents packaging from repairing
@@ -124,7 +109,6 @@ export function verifyCommittedReleaseVersions(repoRoot: string): string {
       `committed version mismatch in ${claudeMarketplacePath}: expected ${expectedVersion}, got ${claudeVersion}`,
     );
   }
-  verifyCodexMarketplaceEntry(join(repoRoot, '.agents', 'plugins', 'marketplace.json'), expectedVersion);
   return expectedVersion;
 }
 
@@ -142,11 +126,6 @@ export function stampReleasePayloadVersion(payloadRoot: string, version: string)
   }
   claudeMarketplace.entry.version = version;
   writeObject(claudeMarketplacePath, claudeMarketplace.manifest);
-
-  const codexMarketplacePath = join(payloadRoot, '.agents', 'plugins', 'marketplace.json');
-  const codexMarketplace = marketplaceEntry(codexMarketplacePath);
-  if (codexMarketplace.entry.version !== undefined) codexMarketplace.entry.version = version;
-  writeObject(codexMarketplacePath, codexMarketplace.manifest);
 
   writeFileSync(join(payloadRoot, 'VERSION'), `${version}\n`);
 }
@@ -176,8 +155,6 @@ export function verifyReleasePayloadVersion(payloadRoot: string, expectedVersion
       `release payload version mismatch in ${claudeMarketplacePath}: expected ${expectedVersion}, got ${claudeVersion}`,
     );
   }
-
-  verifyCodexMarketplaceEntry(join(payloadRoot, '.agents', 'plugins', 'marketplace.json'), expectedVersion);
 }
 
 function usage(): never {

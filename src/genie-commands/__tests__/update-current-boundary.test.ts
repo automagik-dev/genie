@@ -9,7 +9,6 @@ const roots: string[] = [];
 interface BoundaryResult {
   deliveries: number;
   convergenceRuns: number;
-  deliveredExact: boolean;
   markerExists: boolean;
   markerText: string | null;
   commandExitCode: number;
@@ -19,7 +18,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function runBoundary(scenario: 'failed' | 'route-upgrade' | 'repaired-current' | 'exit-handoff'): {
+function runBoundary(scenario: 'already-current'): {
   exitCode: number;
   result: BoundaryResult;
 } {
@@ -46,36 +45,14 @@ function runBoundary(scenario: 'failed' | 'route-upgrade' | 'repaired-current' |
   };
 }
 
-describe('updateCommand current-version repair boundary', () => {
-  test('failed repair exits before selected-target delivery and preserves the real legacy marker', () => {
-    const { exitCode, result } = runBoundary('failed');
-    expect(exitCode).toBe(1);
-    expect(result.commandExitCode).toBe(1);
-    expect(result.deliveries).toBe(0);
-    expect(result.convergenceRuns).toBe(0);
-    expect(result.markerExists).toBe(true);
-    expect(result.markerText).toBe('prior-marker\n');
-  });
-
-  test('channel advance feeds the exact pinned manifest into ordinary selected-target delivery', () => {
-    const { exitCode, result } = runBoundary('route-upgrade');
+describe('updateCommand already-current terminal', () => {
+  test('reports, converges once, retires the legacy marker, and never enters selected-target delivery', () => {
+    const { exitCode, result } = runBoundary('already-current');
     expect(exitCode).toBe(0);
     expect(result.commandExitCode).toBe(0);
-    expect(result.deliveries).toBe(1);
-    expect(result.deliveredExact).toBe(true);
-    expect(result.convergenceRuns).toBe(0);
+    expect(result.deliveries).toBe(0);
+    expect(result.convergenceRuns).toBe(1);
+    expect(result.markerExists).toBe(false);
+    expect(result.markerText).toBeNull();
   });
-
-  for (const directive of ['repaired-current', 'exit-handoff'] as const) {
-    test(`${directive} retires the real legacy marker without entering convergence or selected-target delivery`, () => {
-      const { exitCode, result } = runBoundary(directive);
-      const expectedExit = directive === 'exit-handoff' ? 2 : 0;
-      expect(exitCode).toBe(expectedExit);
-      expect(result.commandExitCode).toBe(expectedExit);
-      expect(result.deliveries).toBe(0);
-      expect(result.convergenceRuns).toBe(0);
-      expect(result.markerExists).toBe(false);
-      expect(result.markerText).toBeNull();
-    });
-  }
 });

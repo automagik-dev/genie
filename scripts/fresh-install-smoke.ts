@@ -38,16 +38,6 @@ export function repositoryRootFromModuleUrl(moduleUrl: string): string {
 
 const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
-export const CODEX_ROLE_PROFILE_FILES = [
-  'genie-engineer-complex.toml',
-  'genie-engineer-standard.toml',
-  'genie-engineer-trivial.toml',
-  'genie-final-gate.toml',
-  'genie-fixer.toml',
-  'genie-reviewer.toml',
-  'genie-scout.toml',
-] as const;
-
 export const CLAUDE_ROLE_AGENT_FILES = [
   'engineer-complex.md',
   'engineer-standard.md',
@@ -57,31 +47,6 @@ export const CLAUDE_ROLE_AGENT_FILES = [
   'reviewer.md',
   'scout.md',
 ] as const;
-
-const CODEX_ROLE_PROFILE_CONTRACTS = {
-  'genie-engineer-complex.toml': {
-    name: 'genie_engineer_complex',
-    effort: 'xhigh',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-engineer-standard.toml': {
-    name: 'genie_engineer_standard',
-    effort: 'high',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-engineer-trivial.toml': {
-    name: 'genie_engineer_trivial',
-    effort: 'low',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-final-gate.toml': { name: 'genie_final_gate', effort: 'high', sandboxMode: 'read-only' },
-  'genie-fixer.toml': { name: 'genie_fixer', effort: 'medium', sandboxMode: 'workspace-write' },
-  'genie-reviewer.toml': { name: 'genie_reviewer', effort: 'xhigh', sandboxMode: null },
-  'genie-scout.toml': { name: 'genie_scout', effort: 'low', sandboxMode: 'read-only' },
-} as const satisfies Record<
-  (typeof CODEX_ROLE_PROFILE_FILES)[number],
-  { name: string; effort: string; sandboxMode: 'workspace-write' | 'read-only' | null }
->;
 
 const CLAUDE_ROLE_AGENT_CONTRACTS = {
   'engineer-complex.md': { name: 'engineer-complex', model: 'opus', effort: 'xhigh' },
@@ -179,47 +144,6 @@ function exactPhysicalFiles(root: string, relativeDir: string, expected: readonl
   return directory;
 }
 
-function checkCodexRoleProfiles(pluginRoot: string): void {
-  const directory = exactPhysicalFiles(pluginRoot, 'codex-agents', CODEX_ROLE_PROFILE_FILES);
-  for (const fileName of CODEX_ROLE_PROFILE_FILES) {
-    const file = join(directory, fileName);
-    let parsed: unknown;
-    try {
-      parsed = Bun.TOML.parse(readFileSync(file, 'utf8'));
-    } catch (error) {
-      fail(`${fileName} is not parseable TOML: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const contract = CODEX_ROLE_PROFILE_CONTRACTS[fileName];
-    const accessMatches =
-      contract.sandboxMode === null
-        ? parsed !== undefined &&
-          isRecord(parsed) &&
-          parsed.approval_policy === 'never' &&
-          parsed.default_permissions === ':read-only' &&
-          parsed.sandbox_mode === undefined
-        : parsed !== undefined && isRecord(parsed) && parsed.sandbox_mode === contract.sandboxMode;
-    if (
-      !isRecord(parsed) ||
-      parsed.name !== contract.name ||
-      parsed.model_reasoning_effort !== contract.effort ||
-      !accessMatches ||
-      typeof parsed.description !== 'string' ||
-      parsed.description.trim() === '' ||
-      typeof parsed.developer_instructions !== 'string' ||
-      parsed.developer_instructions.trim() === ''
-    ) {
-      fail(`${fileName} must match the canonical ${contract.name} role contract`);
-    }
-    if (fileName === 'genie-reviewer.toml' && isRecord(parsed)) {
-      const instructions = typeof parsed.developer_instructions === 'string' ? parsed.developer_instructions : '';
-      const missing = REVIEWER_CONTEXT_MARKERS.filter((marker) => !instructions.includes(marker));
-      if (missing.length > 0) {
-        fail(`genie-reviewer.toml must cover design, plan, execution, and PR contexts (${missing.join(', ')})`);
-      }
-    }
-  }
-}
-
 function checkClaudeRoleAgents(pluginRoot: string): void {
   const directory = exactPhysicalFiles(pluginRoot, 'agents', CLAUDE_ROLE_AGENT_FILES);
   for (const fileName of CLAUDE_ROLE_AGENT_FILES) {
@@ -256,7 +180,6 @@ function checkClaudeRoleAgents(pluginRoot: string): void {
 }
 
 function checkRoleInventories(pluginRoot: string): void {
-  checkCodexRoleProfiles(pluginRoot);
   checkClaudeRoleAgents(pluginRoot);
 }
 
@@ -407,50 +330,20 @@ function documentedWishScaffoldCommand(instructions: string, wishDir: string, sl
   return command;
 }
 
-function resolvePluginSkills(pluginRoot: string): { skillsDir: string; manifest: Record<string, unknown> } {
-  const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
-  if (!existsSync(manifestPath)) fail(`Codex plugin manifest missing: ${manifestPath}`);
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-  if (typeof manifest.skills !== 'string' || !manifest.skills.startsWith('./')) {
-    fail('Codex plugin manifest skills path must start with ./');
-  }
-  const declared = resolve(pluginRoot, manifest.skills);
-  if (!isWithin(resolve(pluginRoot), declared))
-    fail(`Codex plugin skills path escapes plugin root: ${manifest.skills}`);
-  if (!existsSync(declared)) fail(`Codex plugin skills path is missing: ${manifest.skills}`);
-  if (lstatSync(declared).isSymbolicLink()) fail(`Codex plugin skills path must be physical: ${manifest.skills}`);
+function resolvePluginSkills(pluginRoot: string): { skillsDir: string } {
+  const declared = resolve(pluginRoot, './skills');
+  if (!isWithin(resolve(pluginRoot), declared)) fail('plugin skills path escapes plugin root');
+  if (!existsSync(declared)) fail('plugin skills path is missing: ./skills');
+  if (lstatSync(declared).isSymbolicLink()) fail('plugin skills path must be physical: ./skills');
   const realPluginRoot = realpathSync(pluginRoot);
   const realSkills = realpathSync(declared);
-  if (!isWithin(realPluginRoot, realSkills))
-    fail(`Codex plugin skills path resolves outside plugin root: ${manifest.skills}`);
-  return { skillsDir: declared, manifest };
+  if (!isWithin(realPluginRoot, realSkills)) fail('plugin skills path resolves outside plugin root: ./skills');
+  return { skillsDir: declared };
 }
 
-function checkStarterPrompts(manifest: Record<string, unknown>, names: string[]): void {
-  const interfaceMetadata = manifest.interface as { defaultPrompt?: unknown } | undefined;
-  const prompts = interfaceMetadata?.defaultPrompt;
-  if (!Array.isArray(prompts) || !prompts.every((prompt) => typeof prompt === 'string')) {
-    fail('Codex plugin interface.defaultPrompt must be an array of strings');
-  }
-  for (const required of ['wish', 'work', 'review']) {
-    if (!names.includes(required) || !prompts.some((prompt) => prompt.includes(`$genie:${required}`))) {
-      fail(`Codex plugin starter prompts must name $genie:${required}`);
-    }
-  }
-}
-
-function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unknown>): void {
+function checkPluginMcpLayout(pluginRoot: string): void {
   // A7 removed every plugin MCP route and launcher.
-  if ('mcpServers' in manifest) fail('Codex plugin manifest must not declare mcpServers (plugin MCP route removed)');
-  const iface = manifest.interface;
-  const capabilities =
-    typeof iface === 'object' && iface !== null && !Array.isArray(iface)
-      ? (iface as { capabilities?: unknown }).capabilities
-      : undefined;
-  if (Array.isArray(capabilities) && capabilities.includes('MCP')) {
-    fail('Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
-  }
-  if (existsSync(join(pluginRoot, '.mcp.json'))) fail('Codex plugin must not ship a .mcp.json route file');
+  if (existsSync(join(pluginRoot, '.mcp.json'))) fail('plugin must not ship a .mcp.json route file');
   const launcher = resolve(pluginRoot, 'scripts', 'mcp-launcher.cjs');
   if (existsSync(launcher)) fail(`retired MCP launcher must not ship: ${launcher}`);
 }
@@ -485,7 +378,7 @@ function checkH3SessionStartCommand(pluginRoot: string): void {
 }
 
 function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
-  const { skillsDir, manifest } = resolvePluginSkills(pluginRoot);
+  const { skillsDir } = resolvePluginSkills(pluginRoot);
   const actual = listSkillNames(skillsDir);
   if (actual.join('\n') !== [...expectedNames].sort().join('\n')) {
     fail(`plugin skill inventory differs (expected ${expectedNames.length}, got ${actual.length})`);
@@ -495,8 +388,7 @@ function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expected
     pluginSkillsDir: skillsDir,
     expectedSkillNames: expectedNames,
   });
-  checkStarterPrompts(manifest, expectedNames);
-  checkPluginMcpLayout(pluginRoot, manifest);
+  checkPluginMcpLayout(pluginRoot);
   checkClaudePluginMcpLayout(pluginRoot);
   checkH3SessionStartCommand(pluginRoot);
   try {
@@ -603,7 +495,7 @@ function main(): void {
       checkSourceCopy(args.pluginRoot, args.skillsDir, names);
       checkCacheCopy(args.pluginRoot, args.skillsDir, names);
     }
-    const roleSummary = args.pluginRoot ? ', 7 Codex + 7 Claude role profiles' : '';
+    const roleSummary = args.pluginRoot ? ', 7 Claude role profiles' : '';
     console.log(
       `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references${roleSummary}, source/package parity, Claude variables unset)`,
     );

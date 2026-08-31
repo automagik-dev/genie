@@ -198,7 +198,6 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   const paths = [
     join(rootDir, 'package.json'),
     join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/orca-plugin.json'),
     join(rootDir, 'plugins/genie/package.json'),

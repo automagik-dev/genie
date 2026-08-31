@@ -3,26 +3,16 @@
  *
  * install.sh downloads, verifies, extracts, links and PATH-wires the binary in
  * bash, then hands off to `genie install` on the freshly linked binary for the
- * finishing steps that belong in TypeScript. v5 authenticates and deep-publishes
- * the Codex delivery before v4 cleanup and permitted non-Codex convergence;
- * explicit `setup --codex` alone owns Codex activation and managed roles.
+ * finishing steps that belong in TypeScript: canonical payload normalization,
+ * v4 cleanup, consent, the skills channel and the remaining integrations.
  *
  * Opt out of the v4 cleanup with `--skip-v4-cleanup` — install.sh forwards its
- * CLI args, so `curl ... | bash -s -- --skip-v4-cleanup` reaches this flag. The
- * layout-normalize always runs; the selected non-Codex sync scope runs only
- * after authenticated delivery publication succeeds.
+ * CLI args, so `curl ... | bash -s -- --skip-v4-cleanup` reaches this flag.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { DeliveryEvidenceChannel } from '../lib/codex-delivery-evidence.js';
-import {
-  type HeldLifecycleLease,
-  type LifecycleLeaseResult,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../lib/codex-lifecycle-lease.js';
-import { genieConfigExists, getGenieConfigPath } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type LifecycleLease,
@@ -40,42 +30,28 @@ import {
   type IntegrationResult,
   type IntegrationSelection,
   installRuntimeIntegrations,
-  parseCodexPluginState,
   persistIntegrationConsent,
-  resolveRuntimeExecutable,
-  runBoundedIntegrationCommand,
 } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import { VERSION } from '../lib/version.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
-import {
-  CODEX_DELIVERY_INCOMPLETE_TRAILER,
-  CODEX_DELIVERY_RESULT_TRAILER,
-  CODEX_LIFECYCLE_BUSY_TRAILER,
-  CODEX_RETIRE_RECOVERY,
-  CodexLifecycleBusyError,
-  classifyCodexDelivery,
-} from './codex-delivery.js';
 import { cleanupV4 } from './legacy-v4.js';
-import {
-  type AlreadyCurrentRepairDirective,
-  attemptAlreadyCurrentDeliveryRepair,
-  resolvePlatformId,
-  runAgentSyncSafe,
-} from './update.js';
+import { runAgentSyncSafe } from './update.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
+
+/** Reported for an explicitly requested Codex selection now that its plugin subsystem is retired. */
+const CODEX_INTEGRATION_RETIRED = 'Codex plugin integration is retired; nothing to install';
 
 /**
  * Auxiliary trees moved from `bin/` to the GENIE_HOME root. plugins/skills/
  * templates are the trees `genie update`'s syncAuxiliaryContent also manages.
- * `.agents` + `.claude-plugin` carry the marketplace manifests, whose plugin
- * entries reference `./plugins/genie` RELATIVE to the manifest location — they
- * must live beside plugins/ so `plugin marketplace add <GENIE_HOME>` points at
- * a root that truly contains what the manifests reference (left in bin/, the
- * manifests would dangle once plugins/ moves out).
+ * `.claude-plugin` carries the marketplace manifest, whose plugin entries
+ * reference `./plugins/genie` RELATIVE to the manifest location — it must live
+ * beside plugins/ so a marketplace root truly contains what the manifest
+ * references (left in bin/, the manifest would dangle once plugins/ moves out).
  */
-const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'] as const;
+const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates', '.claude-plugin'] as const;
 
 export interface InstallOptions {
   /** Set by --skip-v4-cleanup: leave v4-era artifacts in place. */
@@ -93,52 +69,8 @@ type AgentSyncRunner = (selection: IntegrationSelection) => void;
 type SkillsChannelRunner = (selection: IntegrationSelection) => SkillsChannelConvergenceResult;
 type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
-type CodexLifecycleLeaseAcquirer = () => LifecycleLeaseResult;
 type ConsentWriter = (selection: IntegrationSelection) => void;
-
-/**
- * A detected Codex runtime whose installed generation must remain untouched by
- * install. `null` means absent or unobservable; setup owns every activation.
- */
-export interface CodexInstallTarget {
-  installedVersion: string | null;
-}
-type CodexInstallClassifier = (selection: IntegrationSelection) => CodexInstallTarget | null;
-type InstallDeliveryRepair = (
-  channel: DeliveryEvidenceChannel,
-  platformId: string,
-  lease: HeldLifecycleLease,
-) => Promise<AlreadyCurrentRepairDirective>;
 type InstallMarkerRetirer = () => void;
-
-/**
- * Detect Codex without granting install any activation authority. A runnable
- * Codex command always returns a target, including fresh/absent, same-version,
- * malformed, or temporarily unobservable plugin state. The authenticated
- * delivery record is published first; only `setup --codex` may later mutate the
- * journal, registration/cache, enabled state, project route, or managed roles.
- */
-function classifyCodexInstallDefault(selection: IntegrationSelection): CodexInstallTarget | null {
-  if (!codexInScope(selection)) return null;
-  let command: string | null;
-  try {
-    command = resolveRuntimeExecutable('codex', process.cwd());
-  } catch {
-    return { installedVersion: null };
-  }
-  // Delivery publication authenticates the installed Genie payload, not the
-  // presence of a Codex executable. Publish now so installing Genie before
-  // Codex does not make later setup unrecoverably delivery-incomplete.
-  if (command === null) return { installedVersion: null };
-  const result = runBoundedIntegrationCommand(command, ['plugin', 'list', '--json'], {
-    timeoutMs: 15_000,
-    maxOutputBytes: 64 * 1024,
-  });
-  if (result.timedOut || result.outputOverflow || result.exitCode !== 0) return { installedVersion: null };
-  const parsed = parseCodexPluginState(result.stdout);
-  if (!parsed.ok || !parsed.state.installed) return { installedVersion: null };
-  return { installedVersion: parsed.state.version ?? null };
-}
 
 function codexInScope(selection: IntegrationSelection): boolean {
   return selection === 'auto' || selection === 'codex' || selection === 'all';
@@ -151,96 +83,12 @@ function claudeOnlyScope(selection: IntegrationSelection): InstallIntegrationsOp
   return { selection: 'none' };
 }
 
-/**
- * Report an authenticated Codex delivery without mutating Codex. The result is
- * informational only; the caller emits the completion trailer after publication
- * and leaves all activation work to `setup --codex`.
- */
-function buildInstallCodexDeferral(target: CodexInstallTarget, actionRequired: boolean): IntegrationResult {
-  const installed =
-    target.installedVersion === null
-      ? 'not registered or not safely observable'
-      : `left at v${target.installedVersion}`;
-  const next = actionRequired ? ` ${CODEX_RETIRE_RECOVERY}` : '';
-  return {
-    runtime: 'codex',
-    ok: true,
-    detail: `authenticated delivery v${VERSION}; Codex plugin ${installed} (no activation-owned mutation).${next}`,
-    deliveryComplete: true,
-    actionRequired,
-  };
-}
-
-/** Resolve the release channel whose manifest and asset must authenticate a deferred install. */
-function resolveDeliveryChannelForInstall(): DeliveryEvidenceChannel {
-  const handedOffChannel = process.env.GENIE_INSTALL_DELIVERY_CHANNEL;
-  if (handedOffChannel !== undefined) {
-    if (handedOffChannel === 'stable' || handedOffChannel === 'dev') {
-      return handedOffChannel;
-    }
-    throw new Error(`Invalid installer delivery channel: ${handedOffChannel}`);
-  }
-  try {
-    if (!genieConfigExists()) return 'stable';
-    const raw = JSON.parse(readFileSync(getGenieConfigPath(), 'utf8')) as { updateChannel?: string };
-    if (raw.updateChannel === 'dev' || raw.updateChannel === 'next') return 'dev';
-    return 'stable';
-  } catch {
-    return 'stable';
-  }
-}
-
-/**
- * Authenticate and deep-publish before any integration, sync, consent, legacy
- * cleanup, marker retirement, or Codex-owned mutation. A detected Codex target
- * without a held lease is an internal fail-closed error.
- */
-async function finalizeInstallDeliveryLifecycle(
-  lease: HeldLifecycleLease,
-  target: CodexInstallTarget | null,
-  deliveryChannel: DeliveryEvidenceChannel,
-  repairDelivery: InstallDeliveryRepair,
-): Promise<AlreadyCurrentRepairDirective | null> {
-  if (target === null) return null;
-  const delivery = await repairDelivery(deliveryChannel, resolvePlatformId(), lease);
-  if (delivery.action === 'failed' || delivery.action === 'busy' || delivery.action === 'route-upgrade')
-    return delivery;
-  return delivery;
-}
-
 function retireInstallMarkerSafe(retireMarker: InstallMarkerRetirer): void {
   try {
     retireMarker();
   } catch {
     // orphan-metadata cleanup must never fail a completed install.
   }
-}
-
-function projectInstallDeliveryOutcome(
-  delivery: AlreadyCurrentRepairDirective | null,
-  actionRequired: boolean,
-): boolean {
-  if (delivery?.action === 'failed' || delivery?.action === 'route-upgrade') {
-    const detail =
-      delivery.action === 'route-upgrade'
-        ? `release channel advanced to ${delivery.manifest.version} while authenticating the installed delivery`
-        : delivery.detail;
-    console.log(`  \x1b[31m!\x1b[0m Codex delivery incomplete: ${detail}`);
-    console.log(CODEX_DELIVERY_INCOMPLETE_TRAILER);
-    process.exitCode = 1;
-    return true;
-  }
-  if (delivery?.action === 'busy') {
-    console.log(`  \x1b[31m!\x1b[0m Codex delivery repair is busy: ${delivery.detail}`);
-    console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
-    process.exitCode = 2;
-    return true;
-  }
-  if (actionRequired) {
-    process.exitCode = 2;
-    console.log(CODEX_DELIVERY_RESULT_TRAILER);
-  }
-  return false;
 }
 
 /**
@@ -296,34 +144,18 @@ function readVersionStamp(path: string): string | null {
 }
 
 /**
- * Build the ordered install results after delivery authentication. Every
- * Codex-in-scope selection excludes Codex from the integration runner; a
- * detected runtime gets an informational delivery result, while an explicitly
- * requested missing runtime remains a normal integration failure.
+ * Build the ordered install results. The Codex plugin subsystem is retired, so
+ * a Codex-in-scope selection never reaches the integration runner for Codex; an
+ * explicitly requested Codex selection reports the retirement rather than
+ * failing, and every other runtime keeps its ordinary integration result.
  */
-function buildInstallResults(
-  codexTarget: CodexInstallTarget | null,
-  selection: IntegrationSelection,
-  runIntegrations: IntegrationRunner,
-  actionRequired: boolean,
-): IntegrationResult[] {
+function buildInstallResults(selection: IntegrationSelection, runIntegrations: IntegrationRunner): IntegrationResult[] {
   if (!codexInScope(selection)) return runIntegrations({ selection });
   const nonCodex = runIntegrations(claudeOnlyScope(selection));
-  if (codexTarget !== null) return [buildInstallCodexDeferral(codexTarget, actionRequired), ...nonCodex];
   if (selection === 'codex' || selection === 'all') {
-    return [{ runtime: 'codex', ok: false, detail: 'codex CLI not found' }, ...nonCodex];
+    return [{ runtime: 'codex', ok: true, detail: CODEX_INTEGRATION_RETIRED }, ...nonCodex];
   }
   return nonCodex;
-}
-
-function installActionRequired(
-  target: CodexInstallTarget | null,
-  delivery: AlreadyCurrentRepairDirective | null,
-): boolean {
-  if (target === null) return false;
-  if (delivery?.action === 'exit-handoff') return true;
-  if (target.installedVersion === null) return true;
-  return classifyCodexDelivery(target.installedVersion, VERSION).kind !== 'current';
 }
 
 /**
@@ -345,28 +177,24 @@ export function runInstallAgentSync(
 }
 
 /**
- * Run only the post-publication integrations this command is authorized to
- * own. Codex itself is structurally absent from the runner scope; setup owns
- * its marketplace, plugin, project route, and managed-role convergence.
+ * Run the integrations this command is authorized to own. Codex is structurally
+ * absent from the runner scope.
  *
- * Returns the skills-channel result so the caller can give a skills failure
- * exit precedence over the action-required projection.
+ * Returns the skills-channel result so the caller can give a skills failure its
+ * own exit precedence.
  */
 function runPermittedPostDeliveryIntegrations(
   selection: IntegrationSelection,
-  target: CodexInstallTarget | null,
-  actionRequired: boolean,
   runIntegrations: IntegrationRunner,
   runSync: AgentSyncRunner,
   runSkills: SkillsChannelRunner,
 ): SkillsChannelConvergenceResult {
-  const results = buildInstallResults(target, selection, runIntegrations, actionRequired);
+  const results = buildInstallResults(selection, runIntegrations);
   for (const result of results) {
     const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
     const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
     console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
   }
-  const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok);
   if (selection !== 'auto' && selection !== 'none') {
     const failed = results.filter((result) => !result.ok);
     if (failed.length > 0)
@@ -379,17 +207,7 @@ function runPermittedPostDeliveryIntegrations(
   // committed.
   const skills = runSkills(selection);
   const agentSyncSelection = narrowAgentSyncSelection(selection);
-  if (agentSyncSelection !== null) {
-    if (!codexFailed) {
-      runSync(agentSyncSelection);
-    } else {
-      // selection === 'auto' is the only surviving case here: an explicit
-      // --integrations all/claude/codex failure already threw above.
-      console.log(
-        '  \x1b[33m!\x1b[0m Skipped agent-sync: codex integration failed under --integrations auto (rerun with --integrations claude to sync Claude/hermes only, or fix codex and rerun).',
-      );
-    }
-  }
+  if (agentSyncSelection !== null) runSync(agentSyncSelection);
   return skills;
 }
 
@@ -405,47 +223,25 @@ export async function installCommand(
   runSync: AgentSyncRunner = runInstallAgentSync,
   runIntegrations: IntegrationRunner = installRuntimeIntegrations,
   acquireLease: LifecycleLeaseAcquirer = () => acquireLifecycleLease(GENIE_HOME),
-  acquireCodexLease: CodexLifecycleLeaseAcquirer = () =>
-    acquireCodexLifecycleLease('install-converge', { genieHome: GENIE_HOME }),
   writeConsent: ConsentWriter = (selection) => persistIntegrationConsent(selection, GENIE_HOME),
-  classifyCodexInstall: CodexInstallClassifier = classifyCodexInstallDefault,
-  repairDelivery: InstallDeliveryRepair = (channel, platformId, lease) =>
-    attemptAlreadyCurrentDeliveryRepair(channel, platformId, lease),
   retireMarker: InstallMarkerRetirer = () => retireInstallVersionMarker(GENIE_HOME),
   runSkills: SkillsChannelRunner = (selection) =>
     runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
 ): Promise<void> {
-  // install.sh passes the exact channel whose manifest selected the installed
-  // bytes. Resolve and validate it before acquiring either lifecycle lease or
-  // running a finisher, so fresh dev installs cannot be relabeled as
-  // stable and a malformed internal handoff cannot mutate anything.
-  const deliveryChannel = resolveDeliveryChannelForInstall();
   const selection = resolveIntegrationSelection(options);
   // The bounded wait wraps the acquirer actually in play (injected seam
   // included), so production and tests share one retry policy.
-  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease), acquireCodexLease);
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (!acquired.ok) {
-    if (acquired.busy === 'agent-sync') {
-      // Deliberately NOT a Codex refusal: no CodexLifecycleBusyError message and
-      // no CODEX_LIFECYCLE_BUSY_TRAILER / INSTALL_ACTION_REQUIRED trailer.
-      // install.sh parses those machine trailers, and reporting
-      // `codex-lifecycle-busy` for an agent-sync holder would be a lie. One
-      // human-readable stderr line plus exit 2 is the whole contract here.
-      console.error(lifecycleBusyMessage(acquired.detail));
-      process.exitCode = 2;
-      return;
-    }
-    console.log(new CodexLifecycleBusyError(acquired.refusal.holderKind).message);
-    console.log(CODEX_LIFECYCLE_BUSY_TRAILER);
+    // One human-readable stderr line plus exit 2 is the whole contract here.
+    console.error(lifecycleBusyMessage(acquired.detail));
     process.exitCode = 2;
     return;
   }
-  const { agentSyncLease: lease, codexLease } = acquired;
+  const { agentSyncLease: lease } = acquired;
   try {
-    codexLease.assertOperation(codexLease.operationId);
-
-    // Both lifecycle locks are now held before canonical payload normalization,
-    // VERSION publication, delivery repair, or any later finisher.
+    // The lifecycle lock is held before canonical payload normalization,
+    // VERSION publication, or any later finisher.
     const normalized = normalizeLayout(GENIE_HOME);
     if (normalized !== undefined) {
       for (const outcome of normalized) printAuxiliaryOutcome(outcome);
@@ -454,14 +250,6 @@ export async function installCommand(
         throw new Error(`Install payload convergence failed: ${failed.map((outcome) => outcome.label).join(', ')}`);
       }
     }
-    const codexTarget = classifyCodexInstall(selection);
-    const delivery = await finalizeInstallDeliveryLifecycle(codexLease, codexTarget, deliveryChannel, repairDelivery);
-    // Failed, busy, or advanced authentication is terminal before every
-    // activation-owned or integration-owned finisher. An advanced channel must
-    // be selected and delivered by the ordinary installer/update path; this
-    // stale target never mints a record or mutates Codex.
-    if (projectInstallDeliveryOutcome(delivery, false)) return;
-
     persistInstallOwnedConsent(selection, writeConsent);
     if (options.skipV4Cleanup) {
       console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
@@ -469,48 +257,24 @@ export async function installCommand(
       runV4Cleanup();
     }
 
-    // Install never invokes Codex convergence, even after the authenticated
-    // record exists. Only unrelated Claude/Hermes integration and sync work is
-    // permitted here; `setup --codex` owns every Codex activation mutation.
-    const actionRequired = installActionRequired(codexTarget, delivery);
-    const skills = runPermittedPostDeliveryIntegrations(
-      selection,
-      codexTarget,
-      actionRequired,
-      runIntegrations,
-      runSync,
-      runSkills,
-    );
+    const skills = runPermittedPostDeliveryIntegrations(selection, runIntegrations, runSync, runSkills);
     // Decision 14: marker retirement is the LAST successful finisher. A later
     // consent, legacy cleanup, permitted integration, or sync failure must leave
     // the marker intact so the whole install remains retryable.
     retireInstallMarkerSafe(retireMarker);
-    // A failed skills install is a FAILURE and outranks action-required — the
-    // same precedence as `applyConvergenceExitSignal` (update.ts): a routine
-    // pending `setup --codex` must not overwrite the channel's exit 1 with the
-    // action-required exit 2 and hide a real retryable failure.
-    if (skills.status === 'failed') {
-      process.exitCode = 1;
-      return;
-    }
-    // Delivered-but-action-required (Codex generation deferred): exit 2 with the
-    // one A-owned result trailer and no all-green footer. install.sh maps this to
-    // an installer exit 2 (deliverable 3).
-    if (projectInstallDeliveryOutcome(delivery, actionRequired)) return;
+    // A failed skills install is a FAILURE: the delivered bytes stay committed,
+    // and the operator gets exit 1 with the remedy command.
+    if (skills.status === 'failed') process.exitCode = 1;
   } finally {
-    releaseOrderedLifecycleLeases(codexLease, lease);
+    releaseOrderedLifecycleLeases(lease);
   }
 }
 
 /**
- * Gate the agent-sync scope for install. R2/A1 (agent-sync must never write
- * codex product skills into ~/.agents/skills) is now structural in
- * `runAgentSync` itself — there is no `codex` arm to narrow away from — so
- * this only needs to skip agent-sync where it has nothing to do: `none`
- * (nothing selected) and `codex` (setup owns Codex convergence, never
- * agent-sync). Every other selection
- * (`auto`/`all`/`claude`) passes through UNCHANGED so `runAgentSync` sees the
- * real selection and converges hermes on `auto`/`all` too.
+ * Gate the agent-sync scope for install: skip it where it has nothing to do —
+ * `none` (nothing selected) and `codex` (a retired plugin runtime agent-sync
+ * never converged). Every other selection (`auto`/`all`/`claude`) passes
+ * through UNCHANGED so `runAgentSync` sees the real selection.
  */
 export function narrowAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
   return selection === 'none' || selection === 'codex' ? null : selection;

@@ -14,11 +14,6 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  type HeldLifecycleLease,
-  type LifecycleLeaseResult,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../lib/codex-lifecycle-lease.js';
-import {
   type CanonicalInstallLinkGuard,
   preflightCanonicalInstallLink,
   prepareCanonicalInstallLink,
@@ -69,7 +64,6 @@ interface BorrowedLeaseGuard {
 
 export interface InstallPromoteCommandDependencies {
   acquireLease?: (genieHome: string) => LifecycleLease | { skipped: string };
-  acquireCodexLease?: (genieHome: string) => LifecycleLeaseResult;
   runtimeExecutable?: string;
   runtimeVersion?: string;
   userHome?: string;
@@ -267,14 +261,11 @@ export function installPromoteCommand(
   const stagingBinary = join(stagingRoot, 'genie');
   const stagedIdentity = assertRunningVerifiedStage(stagingBinary, runtimeExecutable);
   const lease = acquireExactBorrowedInstallLease(genieHome, dependencies.acquireLease);
-  let codexLease: HeldLifecycleLease | null = null;
   let linkGuard: CanonicalInstallLinkGuard | null = null;
   let admitted: InstallStagingDirectoryGuard | null = null;
   let promotionComplete = false;
   const assertAuthority = (): void => {
     assertBorrowedLeaseUnchanged(lease);
-    if (codexLease === null) throw new InstallPromoteCommandError('Codex lifecycle lease is not held');
-    codexLease.assertOperation(codexLease.operationId);
     if (linkGuard !== null) verifyCanonicalInstallLink(linkGuard);
     if (admitted !== null) verifyInstallStagingDirectory(admitted);
   };
@@ -286,15 +277,6 @@ export function installPromoteCommand(
     },
   };
   try {
-    const acquired = (
-      dependencies.acquireCodexLease ?? ((home) => acquireCodexLifecycleLease('install-converge', { genieHome: home }))
-    )(genieHome);
-    if (!acquired.ok) {
-      throw new InstallPromoteCommandError(
-        `Codex lifecycle lease is busy (${acquired.holderKind ?? 'unknown'}); refusing installer promotion`,
-      );
-    }
-    codexLease = acquired;
     assertAuthority();
     ensurePhysicalInstallDirectory(join(genieHome, 'bin'), 'GENIE_HOME/bin');
     assertAuthority();
@@ -362,7 +344,7 @@ export function installPromoteCommand(
         }
       }
     } finally {
-      releaseOrderedLifecycleLeases(codexLease, lease);
+      releaseOrderedLifecycleLeases(lease);
     }
   }
 }

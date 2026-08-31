@@ -26,7 +26,7 @@ import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { type Stats, closeSync, existsSync, constants as fsConstants, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, isAbsolute } from 'node:path';
-import { atomicWriteFileSync } from './codex-activation-persistence.js';
+import { atomicWriteFileSync } from './atomic-fs.js';
 import { VERSION } from './version.js';
 
 /**

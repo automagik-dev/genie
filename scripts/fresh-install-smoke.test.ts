@@ -345,28 +345,10 @@ describe('fresh-install-smoke', () => {
 
   for (const fixture of [
     {
-      label: 'renamed Codex role profile',
-      mutate: (pluginRoot: string) =>
-        renameSync(
-          join(pluginRoot, 'codex-agents', 'genie-reviewer.toml'),
-          join(pluginRoot, 'codex-agents', 'genie-auditor.toml'),
-        ),
-      expected: 'codex-agents role inventory differs',
-    },
-    {
       label: 'renamed Claude role agent',
       mutate: (pluginRoot: string) =>
         renameSync(join(pluginRoot, 'agents', 'reviewer.md'), join(pluginRoot, 'agents', 'auditor.md')),
       expected: 'agents role inventory differs',
-    },
-    {
-      label: 'same-filename Codex role substitution',
-      mutate: (pluginRoot: string) => {
-        const reviewer = join(pluginRoot, 'codex-agents', 'genie-reviewer.toml');
-        const fixer = join(pluginRoot, 'codex-agents', 'genie-fixer.toml');
-        writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name = "genie_fixer"', 'name = "genie_reviewer"'));
-      },
-      expected: 'must match the canonical genie_reviewer role contract',
     },
     {
       label: 'same-filename Claude role substitution',
@@ -376,21 +358,6 @@ describe('fresh-install-smoke', () => {
         writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name: fixer', 'name: reviewer'));
       },
       expected: 'must match the canonical reviewer role contract',
-    },
-    {
-      label: 'execution-only Codex reviewer profile',
-      mutate: (pluginRoot: string) => {
-        const reviewer = join(pluginRoot, 'codex-agents', 'genie-reviewer.toml');
-        const raw = readFileSync(reviewer, 'utf8');
-        writeFileSync(
-          reviewer,
-          raw.replace(
-            /developer_instructions = """[\s\S]*?"""/,
-            'developer_instructions = """Review completed execution and return evidence. Remain read-only."""',
-          ),
-        );
-      },
-      expected: 'must cover design, plan, execution, and PR contexts',
     },
     {
       label: 'execution-only Claude reviewer profile',

@@ -590,7 +590,6 @@ describe('doctor wiring', () => {
         root: fixture.root,
         databaseRoot: fixture.root,
         pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
-        codexActivation: null,
         projectContext: null,
         bunVersion: '1.3.10',
         bunPath: '/usr/bin/bun',

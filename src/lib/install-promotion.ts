@@ -30,7 +30,6 @@ import {
 } from './install-transaction.js';
 
 export const INSTALL_PAYLOAD_MEMBERS = [
-  '.agents',
   '.claude-plugin',
   'LICENSE',
   'VERSION',
@@ -198,7 +197,6 @@ const activeInstallStagingGuards = new WeakSet<InstallStagingDirectoryGuard>();
 const installStagingContentDigests = new WeakMap<InstallStagingDirectoryGuard, string | null>();
 
 const EXPECTED_MEMBER_KINDS: Record<InstallPayloadMember, PhysicalPathIdentity['kind']> = {
-  '.agents': 'directory',
   '.claude-plugin': 'directory',
   LICENSE: 'file',
   VERSION: 'file',
