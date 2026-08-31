@@ -185,7 +185,7 @@ jobs:
       # SECURITY: every command in this step is trusted workflow control loaded
       # from main. Do not run package scripts, dependency installers, hooks, or
       # any executable from the dev checkout in this write-capable workflow.
-      - name: Synchronize the exact nine version fields
+      - name: Synchronize the exact five version fields
         if: steps.context.outputs.should_bump == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -193,18 +193,15 @@ jobs:
           set -euo pipefail
           JSON_FILES=(
             package.json
-            plugins/genie/.claude-plugin/plugin.json
-            plugins/genie/.kimi-plugin/plugin.json
             plugins/genie/orca-plugin.json
             plugins/genie/package.json
             plugins/pi-genie/package.json
           )
-          MARKETPLACE=.claude-plugin/marketplace.json
           HERMES=plugins/hermes-genie/plugin.yaml
 
           # Validate every input before the first write. Symlinks are rejected
           # so an allowlisted path cannot redirect a trusted rewrite.
-          for path in "${JSON_FILES[@]}" "$MARKETPLACE" "$HERMES"; do
+          for path in "${JSON_FILES[@]}" "$HERMES"; do
             if [[ ! -f "$path" || -L "$path" ]]; then
               echo "::error ::release-version.invalid_path ${path} must be a regular non-symlink file"
               exit 1
@@ -216,15 +213,6 @@ jobs:
               exit 1
             }
           done
-          jq -e '
-            type == "object" and
-            (.plugins | type == "array") and
-            ([.plugins[]? | select(type == "object" and .name == "genie")] | length) == 1 and
-            ([.plugins[]? | select(type == "object" and .name == "genie")][0].version | type == "string")
-          ' "$MARKETPLACE" >/dev/null || {
-            echo "::error ::release-version.invalid_marketplace expected exactly one versioned genie entry"
-            exit 1
-          }
           if [[ "$(grep -Ec '^version: [^[:space:]]+$' "$HERMES")" != 1 ]]; then
             echo "::error ::release-version.invalid_yaml ${HERMES} needs exactly one top-level version"
             exit 1
@@ -246,29 +234,16 @@ jobs:
               exit 1
             }
           done
-          # marketplace.json carries the version inside the single genie entry,
-          # so scope the edit to the line following that entry's name.
-          perl -i -pe '
-            BEGIN { $version = $ENV{VERSION}; $seen = 0; $done = 0 }
-            $seen = 1 if /^\s*"name":\s*"genie"\s*,?\s*$/;
-            if ($seen && !$done && s/^(\s*"version":\s*)"[^"]*"/$1"$version"/) { $done = 1 }
-          ' "$MARKETPLACE"
-          jq -e --arg version "$VERSION" '
-            [.plugins[]? | select(.name == "genie") | .version] == [$version]
-          ' "$MARKETPLACE" >/dev/null || {
-            echo "::error ::release-version.write_failed ${MARKETPLACE} genie version was not updated in place"
-            exit 1
-          }
           tmp="$(mktemp)"
           sed -E "s/^version: [^[:space:]]+$/version: ${VERSION}/" "$HERMES" > "$tmp"
           mv "$tmp" "$HERMES"
 
-          VERSION_PATHS=("${JSON_FILES[@]}" "$MARKETPLACE" "$HERMES")
+          VERSION_PATHS=("${JSON_FILES[@]}" "$HERMES")
           git add -- "${VERSION_PATHS[@]}"
           EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
           ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error ::release-version.delta_untrusted expected exactly eight version files"
+            echo "::error ::release-version.delta_untrusted expected exactly five version files"
             printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
             exit 1
           fi

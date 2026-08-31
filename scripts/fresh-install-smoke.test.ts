@@ -1,22 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import {
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkSkillStarterPrompts, repositoryRootFromModuleUrl } from './fresh-install-smoke.ts';
 
 const SMOKE_SCRIPT = join(import.meta.dir, 'fresh-install-smoke.ts');
-const REPO_ROOT = join(import.meta.dir, '..');
+const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
 const DOCUMENTED_SCAFFOLD = [
   '<!-- wish-scaffold-command:start -->',
@@ -101,6 +91,31 @@ describe('fresh-install-smoke', () => {
     expect(result.code).toBe(0);
   });
 
+  // The staged and extracted payload trees build-binary.sh checks are passed
+  // through --skills-dir, so the shipped-inventory comparison has to run for
+  // those too: a payload that dropped a skill must fail here, not ship.
+  test('a payload skills tree missing a shipped skill fails the inventory guard', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-payload-inventory-fixture-'));
+    try {
+      const payload = join(root, 'skills');
+      cpSync(join(REPO_ROOT, 'skills'), payload, { recursive: true });
+      const dropped = readdirSync(payload, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()[0];
+      expect(dropped).toBeString();
+      rmSync(join(payload, dropped), { recursive: true, force: true });
+
+      const result = runSmoke(['--skills-dir', payload]);
+
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('shipped skill inventory mismatch');
+      expect(result.stderr).toContain(`missing: ${dropped}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('the same metadata is safe in plugin and user tiers because prompts contain no selector', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-selector-free-fixture-'));
     try {
@@ -154,7 +169,7 @@ describe('fresh-install-smoke', () => {
     });
 
     test('exits non-zero when a SKILL.md references a missing bundled path', () => {
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('references missing bundled resource');
     });
@@ -198,7 +213,7 @@ describe('fresh-install-smoke', () => {
       writeWishFixture(`${FULL_SECTIONS.join('\n')}\n`); // no '## Execution Groups'
       const before = scaffoldWorkDirs();
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('fresh-install-smoke: FAIL');
@@ -212,194 +227,13 @@ describe('fresh-install-smoke', () => {
       writeWishFixture(`${[...FULL_SECTIONS, '## Execution Groups'].join('\n')}\n`);
       const before = scaffoldWorkDirs();
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).toBe(0);
       const leaked = [...scaffoldWorkDirs()].filter((n) => !before.has(n));
       expect(leaked).toEqual([]);
     });
   });
-
-  test('rejects an escaping source-plugin skills symlink', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-source-plugin-fixture-'));
-    try {
-      const skillsDir = join(root, 'skills');
-      const wishDir = join(skillsDir, 'wish');
-      mkdirSync(join(wishDir, 'templates'), { recursive: true });
-      writeFileSync(join(wishDir, 'SKILL.md'), wishSkillBody());
-      writeFileSync(
-        join(wishDir, 'templates', 'wish-template.md'),
-        '## Summary\n## Scope\n### IN\n### OUT\n## Dependencies\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
-      );
-      writeOpenAiMetadata(wishDir, 'wish');
-
-      const pluginRoot = join(root, 'plugin');
-      mkdirSync(join(pluginRoot, '.codex-plugin'), { recursive: true });
-      writeFileSync(
-        join(pluginRoot, '.codex-plugin', 'plugin.json'),
-        JSON.stringify({
-          name: 'fixture',
-          skills: './skills/',
-          interface: {
-            defaultPrompt: ['Use $genie:wish for this request.', 'Use $genie:work.', 'Use $genie:review.'],
-          },
-        }),
-      );
-      symlinkSync('../skills', join(pluginRoot, 'skills'));
-
-      const result = runSmoke(['--skills-dir', skillsDir, '--plugin-root', pluginRoot]);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('must be physical');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects source/package skill drift', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-plugin-parity-fixture-'));
-    try {
-      const canonical = join(root, 'skills');
-      const wishDir = join(canonical, 'wish');
-      mkdirSync(join(wishDir, 'templates'), { recursive: true });
-      writeFileSync(join(wishDir, 'SKILL.md'), wishSkillBody());
-      writeFileSync(
-        join(wishDir, 'templates', 'wish-template.md'),
-        '## Summary\n## Scope\n### IN\n### OUT\n## Dependencies\n## Success Criteria\n## Execution Strategy\n## Execution Groups\n',
-      );
-      writeOpenAiMetadata(wishDir, 'wish');
-
-      const pluginRoot = join(root, 'plugin');
-      mkdirSync(join(pluginRoot, '.codex-plugin'), { recursive: true });
-      cpSync(canonical, join(pluginRoot, 'skills'), { recursive: true });
-      writeFileSync(join(pluginRoot, 'skills', 'wish', 'SKILL.md'), 'drift\n');
-      writeFileSync(
-        join(pluginRoot, '.codex-plugin', 'plugin.json'),
-        JSON.stringify({
-          name: 'fixture',
-          skills: './skills/',
-          interface: {
-            defaultPrompt: ['Use $genie:wish for this request.', 'Use $genie:work.', 'Use $genie:review.'],
-          },
-        }),
-      );
-
-      const result = runSmoke(['--skills-dir', canonical, '--plugin-root', pluginRoot]);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('plugin skills mirror drift');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects any plugin .mcp.json route file (the Codex plugin MCP route was removed)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-plugin-mcp-schema-fixture-'));
-    try {
-      const pluginRoot = join(root, 'plugin');
-      cpSync(join(REPO_ROOT, 'plugins', 'genie'), pluginRoot, {
-        recursive: true,
-        dereference: false,
-        verbatimSymlinks: true,
-      });
-      // A resurrected plugin `.mcp.json` (in any shape) must fail the smoke: the
-      // Codex plugin no longer provides an MCP route, so shipping one is a defect.
-      writeFileSync(
-        join(pluginRoot, '.mcp.json'),
-        JSON.stringify({
-          mcp_servers: {
-            genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' },
-          },
-        }),
-      );
-
-      const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('must not ship a .mcp.json route file');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects any retired Claude MCP declaration', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-plugin-claude-mcp-fixture-'));
-    try {
-      const pluginRoot = join(root, 'plugin');
-      cpSync(join(REPO_ROOT, 'plugins', 'genie'), pluginRoot, {
-        recursive: true,
-        dereference: false,
-        verbatimSymlinks: true,
-      });
-      const manifestPath = join(pluginRoot, '.claude-plugin', 'plugin.json');
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-      manifest.mcpServers = {
-        genie: { command: 'node', args: ['./scripts/mcp-launcher.cjs'], cwd: '.' },
-      };
-      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-
-      const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
-      expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('must not declare retired MCP servers');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  for (const fixture of [
-    {
-      label: 'renamed Claude role agent',
-      mutate: (pluginRoot: string) =>
-        renameSync(join(pluginRoot, 'agents', 'reviewer.md'), join(pluginRoot, 'agents', 'auditor.md')),
-      expected: 'agents role inventory differs',
-    },
-    {
-      label: 'same-filename Claude role substitution',
-      mutate: (pluginRoot: string) => {
-        const reviewer = join(pluginRoot, 'agents', 'reviewer.md');
-        const fixer = join(pluginRoot, 'agents', 'fixer.md');
-        writeFileSync(reviewer, readFileSync(fixer, 'utf8').replace('name: fixer', 'name: reviewer'));
-      },
-      expected: 'must match the canonical reviewer role contract',
-    },
-    {
-      label: 'execution-only Claude reviewer profile',
-      mutate: (pluginRoot: string) => {
-        const reviewer = join(pluginRoot, 'agents', 'reviewer.md');
-        const raw = readFileSync(reviewer, 'utf8');
-        const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(raw);
-        if (!frontmatter) throw new Error('fixture reviewer frontmatter missing');
-        writeFileSync(reviewer, `${frontmatter[0]}\n# Reviewer\n\nReview completed execution and return evidence.\n`);
-      },
-      expected: 'must cover design, plan, execution, and PR contexts',
-    },
-    {
-      label: 'drifted H3 SessionStart launcher',
-      mutate: (pluginRoot: string) => {
-        const manifestPath = join(pluginRoot, 'hooks', 'codex-hooks.json');
-        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-        manifest.hooks.SessionStart[0].hooks[0].command = 'node "${PLUGIN_ROOT}/scripts/tampered.cjs"';
-        writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-      },
-      expected: 'H3 SessionStart launcher must be the exact bounded read-only',
-    },
-  ]) {
-    test(`rejects a ${fixture.label}`, () => {
-      const root = mkdtempSync(join(tmpdir(), 'genie-role-inventory-fixture-'));
-      try {
-        const pluginRoot = join(root, 'plugin');
-        cpSync(join(REPO_ROOT, 'plugins', 'genie'), pluginRoot, {
-          recursive: true,
-          dereference: false,
-          verbatimSymlinks: true,
-        });
-        fixture.mutate(pluginRoot);
-
-        const result = runSmoke(['--skills-dir', join(REPO_ROOT, 'skills'), '--plugin-root', pluginRoot]);
-        expect(result.code).not.toBe(0);
-        expect(result.stderr).toContain(fixture.expected);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-  }
 
   test('rejects a missing singular reference resource such as genie lifecycle.md', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-reference-resource-fixture-'));
@@ -424,7 +258,7 @@ describe('fresh-install-smoke', () => {
       writeOpenAiMetadata(genieDir, 'genie');
       rmSync(join(genieDir, 'reference', 'lifecycle.md'));
 
-      const result = runSmoke(['--skills-dir', skillsDir]);
+      const result = runSmoke(['--skills-dir', skillsDir, '--allow-partial-inventory']);
 
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('reference/lifecycle.md');

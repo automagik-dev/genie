@@ -58,7 +58,7 @@ describe('CLAUDE.md v5 drift guard', () => {
   test('keeps AGENTS.md canonical and CLAUDE.md as an overlay', () => {
     expect(content).toContain('canonical shared repository contract in `AGENTS.md`');
     expect(shared).toContain('runtime-neutral contributor contract');
-    expect(shared).toContain('plugins/genie/references/native-surfaces.md');
+    expect(shared).toContain('delivered to every agent home by the skills channel');
   });
 
   test('does not resurrect the dead Genie loopback relay', () => {

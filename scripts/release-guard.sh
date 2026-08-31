@@ -160,8 +160,6 @@ version_child_matches_parent() {
   local parent_sha="$1" child_sha="$2" version="$3" path changed expected child_yaml
   local -a json_paths=(
     package.json
-    plugins/genie/.claude-plugin/plugin.json
-    plugins/genie/.kimi-plugin/plugin.json
     plugins/genie/package.json
     plugins/pi-genie/package.json
   )
@@ -170,7 +168,6 @@ version_child_matches_parent() {
     json_paths+=(plugins/genie/orca-plugin.json)
   fi
   expected="$(printf '%s\n' \
-    '.claude-plugin/marketplace.json' \
     'plugins/hermes-genie/plugin.yaml' \
     "${json_paths[@]}" | LC_ALL=C sort)"
   [[ "$changed" == "$expected" ]] || return 1
@@ -183,17 +180,6 @@ version_child_matches_parent() {
       <(git show "${parent_sha}:${path}" | jq -S -e '.version = "__GENIE_VERSION__"') \
       <(git show "${child_sha}:${path}" | jq -S -e '.version = "__GENIE_VERSION__"') || return 1
   done
-
-  path='.claude-plugin/marketplace.json'
-  git show "${child_sha}:${path}" |
-    jq -e --arg version "$version" \
-      '([.plugins[]? | select(.name == "genie")] | length) == 1 and
-       ([.plugins[]? | select(.name == "genie")][0].version == $version)' >/dev/null || return 1
-  cmp -s \
-    <(git show "${parent_sha}:${path}" |
-      jq -S -e '.plugins |= map(if .name == "genie" then .version = "__GENIE_VERSION__" else . end)') \
-    <(git show "${child_sha}:${path}" |
-      jq -S -e '.plugins |= map(if .name == "genie" then .version = "__GENIE_VERSION__" else . end)') || return 1
 
   path='plugins/hermes-genie/plugin.yaml'
   child_yaml="$(git show "${child_sha}:${path}")" || return 1

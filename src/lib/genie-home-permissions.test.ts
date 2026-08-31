@@ -191,7 +191,6 @@ describe('GENIE_HOME first-creation permissions', () => {
     // visible at the call and the scan structurally cannot flag them. Pin them
     // by hand — verified reachable, and each regressed the incident on its own.
     const pinned: Array<[file: string, marker: string, why: string]> = [
-      ['src/term-commands/hook/trust.ts', 'mkdirSync(dir, {', '<GENIE_HOME>/hooks via `genie hook trust`'],
       ['src/lib/genie-config.ts', 'mkdirSync(dir, {', 'GENIE_HOME via getGenieDir()'],
       ['src/genie-commands/auxiliary-trees.ts', 'mkdirSync(dirname(options.destination), {', 'GENIE_HOME parent'],
       ['src/lib/atomic-fs.ts', 'mkdirSync(dir, {', 'atomicWriteFileSync — every caller writes under GENIE_HOME'],

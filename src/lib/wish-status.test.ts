@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,15 +11,9 @@ import {
 } from './wish-status.js';
 
 const MAX_WISH_BYTES = 256 * 1_024;
-const SESSION_CONTEXT_BUNDLE = join(import.meta.dir, '..', '..', 'plugins', 'genie', 'scripts', 'session-context.cjs');
 /**
- * One corpus, two readings. Every row pins BOTH consumers at once, because the
- * point of the shared module is that it changed the mechanics and nothing else:
- * the board reads a `row-end` cell raw, the SessionStart hook reads a
- * `first-pipe` cell through its charset + display vocabulary (the active
- * statuses plus the terminal set). Two rows pin the hooks-v2 extension itself:
- * SHIPPED moved inside the vocabulary, so those expectations flipped from the
- * pre-extension null to SHIPPED.
+ * The wish-status corpus. Every row pins the board's `row-end` reading of a
+ * status cell: what `readWishStatus` returns raw, with no display vocabulary.
  *
  * The delicate distinction is between "this consumer cannot read this row",
  * which skips and keeps scanning, and "it read the row and disliked the value",
@@ -29,17 +22,18 @@ const SESSION_CONTEXT_BUNDLE = join(import.meta.dir, '..', '..', 'plugins', 'gen
  * span, the only place those two differ.
  *
  * PROVENANCE: every expectation below was captured by running the pre-refactor
- * board regex and the previously shipped session-context.cjs (`git show
- * HEAD:...`) over these exact bodies. Not one was derived from the new module.
+ * board regex over these exact bodies. Not one was derived from the new module.
  * That is what makes this corpus a parity proof rather than a change detector.
+ *
+ * The second reading this corpus used to pin — the shipped SessionStart hook's
+ * `first-pipe` cell through its own charset + vocabulary — left with the hook
+ * runtime, so the rows no longer carry a `session` expectation.
  */
 interface CorpusRow {
   slug: string;
   body: string;
   /** What `readWishStatus` returns in src/term-commands/v5-board.ts — raw, no vocabulary. */
   board: string | null;
-  /** What `extractStatus` returns in plugins/genie/scripts/src/session-context.ts. */
-  session: string | null;
   why: string;
 }
 
@@ -48,154 +42,132 @@ const CORPUS: CorpusRow[] = [
     slug: 'row-1-parenthetical',
     body: '| **Status** | SHIP-READY (wave 2) |\n',
     board: 'SHIP-READY (wave 2)',
-    session: null,
     why: 'board keeps the raw cell (its ladder reads SHIP- as Wish); the hook charset rejects parentheses',
   },
   {
     slug: 'row-2-trailing-comment',
     body: '| **Status** | DRAFT |   <!-- x -->\n',
     board: null,
-    session: 'DRAFT',
     why: 'the board anchors the closing pipe at end-of-row, so trailing content kills the match; the hook stops at the first pipe',
   },
   {
     slug: 'row-3-three-column',
     body: '| **Status** | DRAFT | note |\n',
     board: 'DRAFT | note',
-    session: 'DRAFT',
     why: 'a row-end cell spans internal pipes; a first-pipe cell does not',
   },
   {
     slug: 'row-4-charset-violation',
     body: '| **Status** | DRAFT extra |\n',
     board: 'DRAFT extra',
-    session: null,
     why: 'the hook charset is a FULL-CELL test — a conforming DRAFT prefix is not enough',
   },
   {
     slug: 'row-5-legacy-form',
     body: '**Status:** DRAFT\n',
     board: null,
-    session: 'DRAFT',
     why: 'the legacy form is opt-in and only the hook opts in',
   },
   {
     slug: 'row-6-legacy-with-note',
     body: '**Status:** DRAFT (2026-07-09) — shipped later\n',
     board: null,
-    session: 'DRAFT',
     why: 'the legacy line keeps PREFIX semantics, unlike the cell — a note after the status does not void it',
   },
   {
     slug: 'row-7-board-falls-through',
     body: '| **Status** | DRAFT |   <!-- x -->\n| **Status** | APPROVED |\n',
     board: 'APPROVED',
-    session: 'DRAFT',
     why: 'a row the board cannot match is skipped, not fatal — it reads the next Status row',
   },
   {
     slug: 'row-8-hook-falls-through',
     body: '| **Status** | DRAFT extra |\n| **Status** | APPROVED |\n',
     board: 'DRAFT extra',
-    session: 'APPROVED',
     why: 'the hook charset is applied DURING the scan, so a rejected row hands off to the next one',
   },
   {
     slug: 'zerowidth-with-legacy',
     body: '| **Status** ||\n**Status:** DRAFT\n',
     board: null,
-    session: 'DRAFT',
     why: 'ZERO-WIDTH cell: never a match at all, so the scan continues and the legacy fallback is REACHABLE',
   },
   {
     slug: 'blank-cell-with-legacy',
     body: '| **Status** |   |\n**Status:** BLOCKED\n',
     board: null,
-    session: null,
     why: 'BLANK cell: a match whose value the vocabulary rejects, which STOPS the scan and BLOCKS the fallback',
   },
   {
     slug: 'zerowidth-with-later-row',
     body: '| **Status** ||\n| **Status** | APPROVED |\n',
     board: null,
-    session: 'APPROVED',
     why: 'the zero-width row is skipped; the next Status row supplies the value',
   },
   {
     slug: 'blank-cell-with-later-row',
     body: '| **Status** |   |\n| **Status** | APPROVED |\n',
     board: null,
-    session: null,
     why: 'the blank row matches, so the later Status row is never reached',
   },
   {
     slug: 'zerowidth-alone',
     body: '| **Status** ||\n',
     board: null,
-    session: null,
     why: 'nothing admissible anywhere',
   },
   {
     slug: 'blank-cell-alone',
     body: '| **Status** |   |\n',
     board: null,
-    session: null,
     why: 'matches, but an empty value is not a status',
   },
   {
     slug: 'tab-cell-with-legacy',
     body: '| **Status** |\t|\n**Status:** DRAFT\n',
     board: null,
-    session: 'DRAFT',
     why: 'a tab is whitespace but not a status character, so the row is not a match and the fallback is reached',
   },
   {
     slug: 'tab-led-cell',
     body: '| **Status** |\tDRAFT |\n',
     board: 'DRAFT',
-    session: 'DRAFT',
     why: 'leading whitespace is stripped by the surrounding runs, so a tab-led cell still reads',
   },
   {
     slug: 'legacy-bare-then-value',
     body: '**Status:**\n**Status:** DRAFT\n',
     board: null,
-    session: 'DRAFT',
     why: 'a bare legacy line is not a match; scanning continues to the next legacy line',
   },
   {
     slug: 'legacy-lowercase-then-value',
     body: '**Status:** draft\n**Status:** APPROVED\n',
     board: null,
-    session: null,
     why: 'a lowercase legacy line still MATCHES (a space satisfies the charset), so the scan stops and yields nothing',
   },
   {
     slug: 'legacy-bare-only',
     body: '**Status:**\n',
     board: null,
-    session: null,
     why: 'no admissible legacy line',
   },
   {
     slug: 'legacy-value-on-next-line',
     body: '**Status:**\nDRAFT\n',
     board: null,
-    session: 'DRAFT',
     why: 'the whitespace run crosses the newline, so the value on the following line still reads',
   },
   {
     slug: 'unterminated-then-row',
     body: '| **Status** | draft\n| **Status** | APPROVED |\n',
     board: 'APPROVED',
-    session: 'APPROVED',
     why: 'the rejected first row must not swallow the second — the scan retries from one character past its START',
   },
   {
     slug: 'unterminated-valid-then-row',
     body: '| **Status** | DRAFT\n| **Status** | APPROVED |\n',
     board: 'APPROVED',
-    session: 'DRAFT',
     why: 'the whitespace run reaches the next rows opening pipe, so the hook reads DRAFT while the board reads the closed row',
   },
   {
@@ -205,49 +177,42 @@ const CORPUS: CorpusRow[] = [
     // hooks-v2 display vocabulary: SHIPPED is now a first-class display token
     // (it was outside the old active-only vocabulary, which pinned these two
     // rows to null); the stop-on-rejection mechanics stay pinned by row-4.
-    session: 'SHIPPED',
     why: 'the board takes the first row; the hook matches it and displays it under the extended vocabulary',
   },
   {
     slug: 'vocab-invalid-blocks-legacy',
     body: '| **Status** | SHIPPED |\n**Status:** DRAFT\n',
     board: 'SHIPPED',
-    session: 'SHIPPED',
     why: 'a matched displayable row blocks the legacy fallback, exactly as a vocabulary failure did pre-hooks-v2',
   },
   {
     slug: 'em-dash-note',
     body: '| **Status** | DONE — all 3 groups SHIP-reviewed |\n',
     board: 'DONE — all 3 groups SHIP-reviewed',
-    session: null,
     why: 'an em-dash note is outside the hook charset entirely',
   },
   {
     slug: 'hyphen-uppercase-note',
     body: '| **Status** | DRAFT - WAVE TWO |\n',
     board: 'DRAFT - WAVE TWO',
-    session: 'DRAFT',
     why: 'an all-uppercase hyphen note passes the charset, then normalization splits it',
   },
   {
     slug: 'realistic-metadata-table',
     body: '# Wish\n\n| Field | Value |\n|---|---|\n| **Date** | 2026-08-10 |\n| **Status** | IN_PROGRESS |\n',
     board: 'IN_PROGRESS',
-    session: 'IN_PROGRESS',
     why: 'the ordinary shape every real wish uses',
   },
   {
     slug: 'no-status-at-all',
     body: '# Wish\n\nnothing here\n',
     board: null,
-    session: null,
     why: 'no Status row and no legacy line',
   },
   {
     slug: 'crlf-row',
     body: '| **Status** | DRAFT |\r\n',
     board: 'DRAFT',
-    session: 'DRAFT',
     why: 'a CRLF row reads identically to LF',
   },
 ];
@@ -365,46 +330,6 @@ describe('corpus: board reading (v5-board readWishStatus)', () => {
       const body = readBoundedWishFile(join(dir, row.slug, 'WISH.md'), MAX_WISH_BYTES);
       expect(body).not.toBeNull();
       expect((body !== null && extractStatusCell(body, 'row-end')) || null).toBe(row.board);
-    });
-  }
-});
-
-describe('corpus: SessionStart reading (session-context.cjs, end to end)', () => {
-  const dirs: string[] = [];
-  const statuses = new Map<string, string | null>();
-
-  // One node spawn per corpus row is deliberately sequential; give the hook
-  // explicit headroom over bun's default 5s (CI runners are slower).
-  beforeAll(() => {
-    // Run the real shipped hook: it is the only honest witness for a script
-    // whose module body writes to stdout and exits. hooks-v2#session-context
-    // emits exactly one wish per run — the session's own — so each corpus row
-    // gets its own repo with that wish on the branch (db-less: the scan path).
-    for (const row of CORPUS) {
-      const repo = mkdtempSync(join(tmpdir(), 'wish-status-session-'));
-      dirs.push(repo);
-      mkdirSync(join(repo, '.git'), { recursive: true });
-      writeFileSync(join(repo, '.git', 'HEAD'), `ref: refs/heads/wish/${row.slug}\n`);
-      mkdirSync(join(repo, '.genie', 'wishes', row.slug), { recursive: true });
-      writeFileSync(join(repo, '.genie', 'wishes', row.slug, 'WISH.md'), row.body);
-      const stdout = execFileSync('node', [SESSION_CONTEXT_BUNDLE], {
-        input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
-        encoding: 'utf8',
-        env: { ...process.env, GENIE_WORKER: '0' },
-      });
-      const context = (JSON.parse(stdout).hookSpecificOutput?.additionalContext ?? '') as string;
-      const match = context.match(new RegExp(`^- wish=${row.slug} status=(\\S+) `, 'm'));
-      statuses.set(row.slug, match && match[1] !== 'unknown' ? match[1] : null);
-    }
-  }, 30_000);
-
-  afterAll(() => {
-    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
-  });
-
-  for (const row of CORPUS) {
-    test(`${row.slug}: ${row.why}`, () => {
-      expect(statuses.get(row.slug) ?? null).toBe(row.session);
     });
   }
 });

@@ -929,105 +929,6 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
 }
 
 // ============================================================================
-// Omni approval hook-timeout guardrail
-// ============================================================================
-
-interface HookCommand {
-  command?: unknown;
-  timeout?: unknown;
-}
-interface HookMatcher {
-  hooks?: unknown;
-}
-interface CcSettings {
-  hooks?: { PreToolUse?: unknown };
-}
-
-/** Smallest timeout among settings-shaped PreToolUse entries matching the predicate. */
-function minMatchingTimeout(entries: unknown, matches: (command: string) => boolean): number | null {
-  if (!Array.isArray(entries)) return null;
-  let min: number | null = null;
-  for (const entry of entries as HookMatcher[]) {
-    if (!Array.isArray(entry?.hooks)) continue;
-    for (const h of entry.hooks as HookCommand[]) {
-      if (typeof h?.command === 'string' && matches(h.command) && typeof h.timeout === 'number') {
-        min = min === null ? h.timeout : Math.min(min, h.timeout);
-      }
-    }
-  }
-  return min;
-}
-
-/**
- * Smallest `timeout` (SECONDS) among PreToolUse hooks that reach the omni
- * approval handler: `genie hook dispatch` entries in a Claude Code settings
- * object. That minimum is the ceiling the approval handler polls under. null
- * when no such hook is installed. Pure + exported so the guardrail is
- * unit-tested without files on disk.
- */
-export function findDispatchHookTimeoutSec(settings: CcSettings): number | null {
-  return minMatchingTimeout(settings.hooks?.PreToolUse, (command) => command.includes('hook dispatch'));
-}
-
-/**
- * Compare the installed hook timeout against the approval poll budget. Returns
- * null when omni approvals are off (no check emitted). A hook timeout below the
- * budget is a WARN: CC kills `genie hook dispatch` before the omni handler can
- * allow/deny OR reach its timeout→ask fail-safe. Pure + exported for testing.
- */
-export function evaluateOmniHookTimeout(params: {
-  enabled: boolean;
-  pollBudgetMs: number;
-  timeoutSec: number | null;
-}): CheckResult | null {
-  if (!params.enabled) return null;
-  const name = 'omni hook timeout > pollBudget';
-  // pollBudgetMs MUST stay STRICTLY below the hook timeout (genie-config.ts), so
-  // the smallest safe whole-second timeout is the first that exceeds pollBudgetMs.
-  const needSec = Math.floor(params.pollBudgetMs / 1000) + 1;
-  if (params.timeoutSec === null) {
-    return {
-      name,
-      status: 'warn',
-      detail: 'omni approvals enabled but no genie dispatch PreToolUse timeout found (settings or plugin manifests)',
-      suggestion: `Install the genie PreToolUse hook with a timeout ≥ ${needSec}s so approvals can resolve.`,
-    };
-  }
-  const timeoutMs = params.timeoutSec * 1000;
-  // At timeoutMs === pollBudgetMs there is no margin — CC can kill the hook the
-  // instant the poll budget expires — so the strict contract warns on equal too.
-  if (timeoutMs <= params.pollBudgetMs) {
-    return {
-      name,
-      status: 'warn',
-      detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) ≤ pollBudget ${params.pollBudgetMs}ms — CC may kill the hook before it can allow/deny or reach its ask fail-safe`,
-      suggestion: `Raise the PreToolUse \`genie hook dispatch\` timeout to ≥ ${needSec}s (e.g. 120) in ~/.claude/settings.json.`,
-    };
-  }
-  return {
-    name,
-    status: 'pass',
-    detail: `hook timeout ${params.timeoutSec}s (${timeoutMs}ms) > pollBudget ${params.pollBudgetMs}ms`,
-  };
-}
-
-async function checkOmniHookTimeout(): Promise<CheckResult[]> {
-  const rt = await resolveOmniRuntimeConfig();
-  if (!rt.approvals.enabled) return []; // omni off → stay silent
-  let timeoutSec: number | null = null;
-  try {
-    const settings = existsSync(join(homedir(), '.claude', 'settings.json'))
-      ? (JSON.parse(readFileSync(join(homedir(), '.claude', 'settings.json'), 'utf8')) as CcSettings)
-      : {};
-    timeoutSec = findDispatchHookTimeoutSec(settings);
-  } catch {
-    timeoutSec = null; // unreadable/malformed settings → treated as "not found"
-  }
-  const result = evaluateOmniHookTimeout({ enabled: true, pollBudgetMs: rt.approvals.pollBudgetMs, timeoutSec });
-  return result ? [result] : [];
-}
-
-// ============================================================================
 // Omni bridge health probe
 // ============================================================================
 
@@ -1459,7 +1360,6 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
     ...checkWorktreeModes(root),
-    ...(await checkOmniHookTimeout()),
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),

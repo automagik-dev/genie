@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { CLAUDE_ROLE_AGENT_FILES } from './fresh-install-smoke.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -41,12 +40,9 @@ describe('Group E release and documentation contracts', () => {
     }
     for (const path of [
       'package.json',
-      'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
-      '.claude-plugin/marketplace.json',
       'plugins/hermes-genie/plugin.yaml',
     ]) {
       expect(workflow).toContain(path);
@@ -54,7 +50,7 @@ describe('Group E release and documentation contracts', () => {
     // There is no repo-root Orca manifest to stamp: the Orca plugin ships as the
     // tree-only `plugins/genie` subtree ref, not from the repo root.
     expect(workflow).not.toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
-    expect(workflow).toContain('expected exactly eight version files');
+    expect(workflow).toContain('expected exactly five version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
@@ -485,15 +481,10 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build-binary.sh'",
       "'scripts/build.js'",
       "'scripts/json-top-level-string.js'",
-      "'scripts/hook-bundle-parity.ts'",
       "'scripts/orca-bundle-parity.ts'",
-      "'scripts/hook-content-binding.ts'",
-      "'scripts/plugin-executables-check.ts'",
-      "'scripts/sync-plugin-skills.ts'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
-      "'.claude-plugin/marketplace.json'",
       "'.github/workflows/build-tarballs.yml'",
     ]) {
       expect(workflow).toContain(`- ${path}`);
@@ -669,11 +660,9 @@ describe('Group E release and documentation contracts', () => {
     expect(read('scripts/check-fingerprint-pinning.sh')).not.toContain('all four witnesses');
   });
 
-  test('release packaging validates generated hooks and the extracted archive payload', () => {
+  test('release packaging validates the Orca bundle and the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
-    expect(build).toContain('scripts/hook-bundle-parity.ts');
     expect(build).toContain('scripts/orca-bundle-parity.ts');
-    expect(build).toContain('scripts/hook-content-binding.ts');
     const archive = build.indexOf('tar czf "${TARBALL}"');
     const extract = build.indexOf('tar -xzf "${TARBALL}"');
     const postExtractSmoke = build.lastIndexOf('scripts/fresh-install-smoke.ts');
@@ -702,46 +691,50 @@ describe('Group E release and documentation contracts', () => {
     expect(pluginPackage.license).toBe('MIT');
   });
 
-  test('committed CI reproduces the council and generated-hook parts of the local gate', () => {
+  test('committed CI reproduces the local gate step for step', () => {
     const workflow = read('.github/workflows/ci.yml');
     const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
     expect(pkg.scripts.check).toContain('bun run lint:complexity-budget');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:complexity-budget');
-    expect(workflow).toContain('bun run lint:council-workflow');
-    expect(workflow).toContain('bun run lint:hook-bundles');
     expect(workflow).toContain('bun run lint:orca-bundle');
     expect(pkg.scripts.check).toContain('bun run lint:orca-bundle');
     expect(pkg.scripts['check:fast']).toContain('bun run lint:orca-bundle');
-    expect(workflow).toContain('bun run lint:hook-content');
-    expect(workflow).toContain('bun run lint:plugin-executables');
-    expect(workflow).toContain('bun run lint:plugin-skills');
-    expect(pkg.scripts.check).toContain('bun run lint:plugin-skills');
-    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-skills');
-    expect(pkg.scripts.check).toContain('bun run lint:hook-content');
-    expect(pkg.scripts['check:fast']).toContain('bun run lint:hook-content');
-    expect(pkg.scripts.check).toContain('bun run lint:plugin-executables');
-    expect(pkg.scripts['check:fast']).toContain('bun run lint:plugin-executables');
-    const executableGate = read('scripts/plugin-executables-check.ts');
-    expect(executableGate).toContain("'--strict'");
-    expect(read('scripts/plugin-executables-check.test.ts')).toContain('error TS7006');
+    // The six plugin/hook gates left with the payload they linted; `check` is
+    // exactly these eight steps and `check:fast` the same seven without `bun test`.
+    const steps = pkg.scripts.check.split(' && ');
+    expect(steps).toEqual([
+      'bun run typecheck',
+      'bun run lint',
+      'bun run dead-code',
+      'bun run skills:lint',
+      'bun run wishes:lint',
+      'bun run lint:complexity-budget',
+      'bun run lint:orca-bundle',
+      'bun test',
+    ]);
+    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -1));
+    // The six plugin/hook lint gates and the `hooks:bind` writer are gone: the
+    // only surviving `lint:` scripts are the two the eight-step gate names.
+    expect(
+      Object.keys(pkg.scripts)
+        .filter((name) => name.startsWith('lint:'))
+        .sort(),
+    ).toEqual(['lint:complexity-budget', 'lint:docs-links', 'lint:docs-markdown', 'lint:fix', 'lint:orca-bundle']);
+    expect(Object.keys(pkg.scripts).some((name) => name.startsWith('hooks:'))).toBe(false);
+    const workflowGates = [...workflow.matchAll(/^ +run: bun run (\S+)$/gm)].map((match) => match[1]).sort();
+    expect(workflowGates).toEqual([
+      'build',
+      'lint:complexity-budget',
+      'lint:orca-bundle',
+      'scripts/fresh-install-smoke.ts',
+      'skills:lint',
+      'typecheck',
+      'wishes:lint',
+    ]);
   });
 
-  test('release gates pin the exact Claude role inventory through archive extraction', () => {
-    expect(CLAUDE_ROLE_AGENT_FILES).toEqual([
-      'engineer-complex.md',
-      'engineer-standard.md',
-      'engineer-trivial.md',
-      'final-gate.md',
-      'fixer.md',
-      'reviewer.md',
-      'scout.md',
-    ]);
-
-    const smoke = read('scripts/fresh-install-smoke.ts');
-    for (const file of CLAUDE_ROLE_AGENT_FILES) expect(smoke).toContain(`'${file}'`);
-    expect(smoke).toContain('checkRoleInventories(pluginRoot)');
-
+  test('the release smoke runs against the source, staged, and extracted skills trees', () => {
     const build = read('scripts/build-binary.sh');
     expect(build.match(/scripts\/fresh-install-smoke\.ts/g)?.length).toBe(3);
     const sourceSmoke = build.indexOf('bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"');
@@ -816,6 +809,12 @@ describe('Group E release and documentation contracts', () => {
     }
     expect(pluginReadme).toContain('[Orca dual-mode operator and contributor contract]');
     expect(pluginReadme).toContain('references/orca-orchestration.md');
+    // The Codex-era README claims left with the Codex payload; these are the
+    // contracts the Orca-only rewrite asserts in their place, so the drift
+    // guard follows them rather than lapsing.
+    expect(pluginReadme).toContain('bun run lint:orca-bundle');
+    expect(pluginReadme).toContain('2000 files / 50 MB');
+    expect(pluginReadme).toContain('Genie never registers the plugin with Orca');
   });
 
   test('resurrected metrics bot and incompatible generated state stay retired', () => {
@@ -849,12 +848,11 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('operator docs distinguish product, role-agent, personal, MCP, and hook inventories', () => {
-    const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}`;
-    expect(read('README.md')).toContain('These five inventories are intentionally separate');
+    const docs = read('README.md');
+    expect(docs).toContain('These five inventories are intentionally separate');
     for (const statement of [
       '22 physical',
       'Seven optional',
-      '36 adapted skills',
       'MCP retirement',
       'H3',
       'H4',
@@ -864,10 +862,9 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
-    // Plugin-only contract: the installed plugin is the sole Genie-managed skill provider.
+    // The Orca payload README states plainly that it provides no skills and no launcher.
     expect(read('README.md')).toContain('the **sole** Genie-managed skill provider');
     expect(read('README.md')).toContain('Fallback retirement');
-    expect(read('plugins/genie/README.md')).toContain('the only Genie-managed skill provider');
     expect(read('README.md')).toContain('No product MCP route or launcher');
     expect(read('plugins/genie/README.md')).toContain('No launcher or registration ships');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
@@ -876,11 +873,10 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).not.toContain('CLI-managed product fallbacks');
     expect(docs).toContain('at most 64 candidate');
     expect(docs).toContain('network-free');
-    expect(docs).toContain('no Codex network lookup');
   });
 
   test('manual docs use explicit tiers while all physical skill cards remain selector-free', () => {
-    const docs = `${read('README.md')}\n${read('plugins/genie/README.md')}\n${read('skills/README.md')}`;
+    const docs = `${read('README.md')}\n${read('skills/README.md')}`;
     for (const skill of ['brainstorm', 'wish', 'review', 'work']) {
       expect(docs).toContain(`$genie:${skill}`);
     }
@@ -910,22 +906,16 @@ describe('Group E release and documentation contracts', () => {
 
   test('lifecycle and operator docs name design, plan, and implementation review as distinct mandatory gates', () => {
     const lifecycle = read('skills/genie/reference/lifecycle.md');
-    const plugin = read('plugins/genie/README.md');
     const root = read('README.md');
     for (const term of ['design review', 'plan review', 'implementation review']) {
       expect(lifecycle).toContain(term);
-      expect(plugin).toContain(term);
       expect(root).toContain(term);
     }
     expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
-    expect(plugin).toContain('successful `genie setup --codex` persists Codex delivery scope');
     expect(root).toContain('Successful setup persists Codex delivery scope');
     // Delivery scope authorizes later publication only; setup remains the sole activation/convergence owner.
-    expect(plugin).toContain('never advance the plugin cache');
     expect(root).toContain('those updates still deliver only');
-    expect(plugin).toContain('nothing is written to `~/.agents/skills`');
     expect(root).toContain('Genie never seeds the user tier');
-    expect(plugin).not.toContain('digest-managed product-skill');
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 

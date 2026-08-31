@@ -528,14 +528,16 @@ describe('discovery scan', () => {
   });
 
   /**
-   * A delivered `$GENIE_HOME` carries a SECOND physical skill tree —
-   * `plugins/genie/skills`, byte-identical to `skills/` by
-   * `sync-plugin-skills.ts --check` — extracted from the tarball moments before
-   * the install runs. Byte-equal plus a fresh stamp is exactly what the
-   * selection rule keeps, so without a prune it would inflate the honest N and
-   * put a path inside `$GENIE_HOME` into the uninstall manifest.
+   * Releases through 5.260831.x delivered a SECOND physical skill tree inside
+   * `$GENIE_HOME` (`plugins/genie/skills`, byte-identical to `skills/`),
+   * extracted from the tarball moments before the install ran. Byte-equal plus a
+   * fresh stamp is exactly what the selection rule keeps, so without the prune it
+   * inflated the honest N and put a path inside `$GENIE_HOME` into the uninstall
+   * manifest. The mirror no longer ships, but an operator upgrading from such a
+   * release still has one on disk — and the prune is the structural guarantee for
+   * any future sibling tree, so this fixture stays.
    */
-  test('the delivered plugins mirror inside GENIE_HOME is never a discovered home', () => {
+  test('a second skill tree inside GENIE_HOME is never a discovered home', () => {
     const source = fixtureSkillsTree(['wish']);
     const mirror = join(genieHome, 'plugins', 'genie', 'skills');
     mkdirSync(join(mirror, 'wish'), { recursive: true });

@@ -46,17 +46,12 @@ describe('manifest version formatting', () => {
     };
     for (const path of [
       'package.json',
-      'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
     ]) {
       writeJson(path, { name: 'genie', version: '5.000000.0' });
     }
-    writeJson('.claude-plugin/marketplace.json', {
-      plugins: [{ name: 'genie', version: '5.000000.0' }],
-    });
     const yamlPath = join(root, 'plugins/hermes-genie/plugin.yaml');
     mkdirSync(dirname(yamlPath), { recursive: true });
     writeFileSync(yamlPath, 'name: genie\nversion: 5.000000.0\ndescription: "Native surface"\n');
@@ -111,9 +106,6 @@ describe('manifest version formatting', () => {
     try {
       const root = synchronizationFixture();
       await synchronizeVersionFiles(root, '5.260711.3');
-      expect(JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8')).plugins[0].version).toBe(
-        '5.260711.3',
-      );
       // The Hermes YAML manifest is synced alongside the JSON manifests.
       expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toBe(
         'name: genie\nversion: 5.260711.3\ndescription: "Native surface"\n',
@@ -122,7 +114,7 @@ describe('manifest version formatting', () => {
       expect(JSON.parse(readFileSync(join(root, 'plugins/pi-genie/package.json'), 'utf8')).version).toBe('5.260711.3');
       expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
 
-      rmSync(join(root, 'plugins/genie/.kimi-plugin/plugin.json'));
+      rmSync(join(root, 'plugins/genie/package.json'));
       await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
         'version synchronization preflight failed',
       );
@@ -162,7 +154,7 @@ describe('manifest version formatting', () => {
 
   test('synchronization rejects malformed required metadata', async () => {
     const root = synchronizationFixture();
-    writeFileSync(join(root, '.claude-plugin/marketplace.json'), '{"plugins":[]}\n');
+    writeFileSync(join(root, 'plugins/genie/orca-plugin.json'), '{"name":"genie"}\n');
     await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
       'version synchronization preflight failed',
     );

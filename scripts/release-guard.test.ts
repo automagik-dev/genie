@@ -305,8 +305,6 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
       'package.json',
       { name: '@automagik/genie', version, ...(packageScript ? { scripts: { postinstall: packageScript } } : {}) },
     ],
-    ['plugins/genie/.claude-plugin/plugin.json', { name: 'genie', version }],
-    ['plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version }],
     ['plugins/genie/orca-plugin.json', { id: 'genie', version }],
     ['plugins/genie/package.json', { name: 'genie-plugin', version }],
     ['plugins/pi-genie/package.json', { name: 'genie-pi-plugin', version }],
@@ -315,9 +313,6 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
     mkdirSync(join(root, path, '..'), { recursive: true });
     writeFileSync(join(root, path), `${JSON.stringify(value, null, 2)}\n`);
   }
-  const marketplace = join(root, '.claude-plugin', 'marketplace.json');
-  mkdirSync(join(marketplace, '..'), { recursive: true });
-  writeFileSync(marketplace, `${JSON.stringify({ plugins: [{ name: 'genie', version }] }, null, 2)}\n`);
   const hermes = join(root, 'plugins', 'hermes-genie', 'plugin.yaml');
   mkdirSync(join(hermes, '..'), { recursive: true });
   writeFileSync(hermes, `name: genie\nversion: ${version}\ndescription: fixture\n`);

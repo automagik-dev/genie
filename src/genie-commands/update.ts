@@ -1275,7 +1275,7 @@ async function runCommandSilent(
 // ============================================================================
 
 const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
-const AUXILIARY_DELIVERY_TREE_NAMES = ['plugins', 'skills', 'templates', '.claude-plugin'] as const;
+const AUXILIARY_DELIVERY_TREE_NAMES = ['plugins', 'skills', 'templates'] as const;
 type AuxiliaryDeliveryTreeName = (typeof AUXILIARY_DELIVERY_TREE_NAMES)[number];
 
 // ============================================================================
@@ -3194,10 +3194,8 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
 }
 
 /**
- * Mirror plugins/, skills/, templates/ plus the marketplace-manifest dir
- * (`.claude-plugin/` — must sit beside plugins/ so its relative
- * `./plugins/genie` payload references stay truthful; mirrors AUX_LAYOUT_DIRS
- * in install.ts) from the extracted tarball into `~/.genie/`. Stage to a
+ * Mirror plugins/, skills/ and templates/ (mirrors AUX_LAYOUT_DIRS in
+ * install.ts) from the extracted tarball into `~/.genie/`. Stage to a
  * sibling `<dest>.new` directory and promote it with same-filesystem renames.
  * The previous live tree is retained until the fresh tree is verified. Portable
  * Node filesystem APIs do not provide an atomic non-empty directory exchange;
@@ -3218,7 +3216,6 @@ export function syncAuxiliaryContent(
     { src: join(extractDir, 'plugins'), dest: join(genieHome, 'plugins'), label: 'plugins' },
     { src: join(extractDir, 'skills'), dest: join(genieHome, 'skills'), label: 'skills' },
     { src: join(extractDir, 'templates'), dest: join(genieHome, 'templates'), label: 'templates' },
-    { src: join(extractDir, '.claude-plugin'), dest: join(genieHome, '.claude-plugin'), label: '.claude-plugin' },
   ];
   const outcomes = targets.map((target) =>
     convergeAuxiliaryTree({

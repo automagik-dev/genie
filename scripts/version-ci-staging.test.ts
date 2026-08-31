@@ -31,15 +31,12 @@ describe('synchronizeVersionFiles CI staging', () => {
     };
     for (const path of [
       'package.json',
-      'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.kimi-plugin/plugin.json',
       'plugins/genie/orca-plugin.json',
       'plugins/genie/package.json',
       'plugins/pi-genie/package.json',
     ]) {
       writeJson(path, { name: 'genie', version: '5.000000.0' });
     }
-    writeJson('.claude-plugin/marketplace.json', { plugins: [{ name: 'genie', version: '5.000000.0' }] });
     const yamlPath = join(root, 'plugins/hermes-genie/plugin.yaml');
     mkdirSync(dirname(yamlPath), { recursive: true });
     writeFileSync(yamlPath, 'name: genie\nversion: 5.000000.0\ndescription: "Native surface"\n');
@@ -73,7 +70,6 @@ describe('synchronizeVersionFiles CI staging', () => {
     expect(staged).toContain('plugins/pi-genie/package.json');
     expect(staged).toContain('plugins/genie/orca-plugin.json');
     expect(staged).toContain('package.json');
-    expect(staged).toContain('.claude-plugin/marketplace.json');
     // The rewritten value is actually on disk (staging did not mask a no-op).
     expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.3');
   });

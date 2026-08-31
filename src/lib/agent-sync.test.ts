@@ -5,8 +5,8 @@
  * are the injectable clock, the hermes binary override, and the hermes-enable
  * exec spy (so no process is ever spawned).
  *
- * The stamp-parity test loads the shipped council-stamp.cjs through
- * createRequire and asserts byte-identical output + identical skip semantics.
+ * The council-stamp parity half left with the shipped plugin scripts; what
+ * remains asserts the TypeScript stamper's own ownership and rollback contract.
  *
  * INVARIANT — every fixture home in this file is skills-install-RECORD-FREE
  * unless a test writes one itself. `skillsChannelSupersedesWriters` stands the
@@ -40,7 +40,6 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -79,28 +78,8 @@ import { currentSyncLockHostId } from './lifecycle-lease';
 import { SKILLS_CLI_VERSION, releaseTag, writeSkillsInstallRecord } from './skills-installer';
 import { VERSION } from './version';
 
-const require = createRequire(import.meta.url);
-const {
-  stampCouncilWorkflow,
-  recoverTransactions: recoverCjsCouncilTransactions,
-  PLACEHOLDER,
-} = require('../../plugins/genie/scripts/council-stamp.cjs') as {
-  stampCouncilWorkflow: (opts: {
-    templatePath: string;
-    pluginRoot: string;
-    targetDir: string;
-    version?: string | null;
-    now?: () => Date;
-    beforePromotion?: () => void;
-    afterAuthorization?: () => void;
-    beforePublish?: () => void;
-  }) => {
-    action: 'written' | 'skipped' | 'kept-unmanaged' | 'kept-modified' | 'metadata-corrupt';
-    targetPath: string;
-  };
-  recoverTransactions: (targetDir: string) => void;
-  PLACEHOLDER: string;
-};
+/** The /council template token `stampWorkflow` replaces with the plugin root. */
+const PLACEHOLDER = '__GENIE_LENS_ROOT__';
 
 const MANIFEST_NAME = '.genie-sync.json';
 const FIXED_NOW = () => new Date('2026-07-10T12:00:00.000Z');
@@ -2403,41 +2382,10 @@ describe('hermes config convergence', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Stamp parity with the shipped .cjs
+// Workflow stamp
 // ---------------------------------------------------------------------------
 
-describe('stampWorkflow parity with council-stamp.cjs', () => {
-  test('produces byte-identical workflow output and identical skip semantics', () => {
-    const templatePath = join(fixture.root, 'council.template.js');
-    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    const pluginRoot = '/opt/some/plugins/genie';
-    const tsDir = join(fixture.root, 'ts-out');
-    const cjsDir = join(fixture.root, 'cjs-out');
-
-    const tsWrite = stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir, version: '1.2.3', now: FIXED_NOW });
-    const cjsWrite = stampCouncilWorkflow({
-      templatePath,
-      pluginRoot,
-      targetDir: cjsDir,
-      version: '1.2.3',
-      now: FIXED_NOW,
-    });
-    expect(tsWrite.action).toBe('written');
-    expect(cjsWrite.action).toBe('written');
-    expect(readFileSync(join(tsDir, 'council.js'), 'utf8')).toBe(readFileSync(join(cjsDir, 'council.js'), 'utf8'));
-    expect(readFileSync(join(tsDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe(
-      readFileSync(join(cjsDir, WORKFLOW_MANIFEST_NAME), 'utf8'),
-    );
-    for (const dir of [tsDir, cjsDir]) {
-      expect(lstatSync(join(dir, TARGET_NAME)).mode & 0o7777).toBe(0o644);
-      expect(lstatSync(join(dir, WORKFLOW_MANIFEST_NAME)).mode & 0o7777).toBe(0o644);
-    }
-
-    // idempotent skip on the unchanged re-run, for both implementations
-    expect(stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir }).action).toBe('skipped');
-    expect(stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir }).action).toBe('skipped');
-  });
-
+describe('stampWorkflow', () => {
   test('an inventory-missing exact legacy workflow remains byte-identical and unmanaged', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     const targetDir = join(fixture.root, 'user-workflows');
@@ -2517,10 +2465,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
   test('both council engines preserve a post-classification personal edit and quarantine the incoming version', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    for (const [name, stamp] of [
-      ['ts', stampWorkflow],
-      ['cjs', stampCouncilWorkflow],
-    ] as const) {
+    for (const [name, stamp] of [['ts', stampWorkflow]] as const) {
       const targetDir = join(fixture.root, `workflow-cas-${name}`);
       const targetPath = join(targetDir, TARGET_NAME);
       stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
@@ -2544,10 +2489,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
   test('both council engines reject directory and symlink races after an expected-absence check', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    for (const [engine, stamp] of [
-      ['ts', stampWorkflow],
-      ['cjs', stampCouncilWorkflow],
-    ] as const) {
+    for (const [engine, stamp] of [['ts', stampWorkflow]] as const) {
       for (const kind of ['directory', 'symlink'] as const) {
         const targetDir = join(fixture.root, `workflow-absence-${engine}-${kind}`);
         const targetPath = join(targetDir, TARGET_NAME);
@@ -2572,10 +2514,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
   test('both council engines preserve a file recreated after parking but before exclusive publish', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    for (const [engine, stamp] of [
-      ['ts', stampWorkflow],
-      ['cjs', stampCouncilWorkflow],
-    ] as const) {
+    for (const [engine, stamp] of [['ts', stampWorkflow]] as const) {
       const targetDir = join(fixture.root, `workflow-final-publish-${engine}`);
       const targetPath = join(targetDir, TARGET_NAME);
       stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
@@ -2600,10 +2539,7 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
   test('both council rollbacks preserve a byte-identical chmod racer plus prior and staged evidence', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    for (const [engine, stamp] of [
-      ['ts', stampWorkflow],
-      ['cjs', stampCouncilWorkflow],
-    ] as const) {
+    for (const [engine, stamp] of [['ts', stampWorkflow]] as const) {
       const targetDir = join(fixture.root, `workflow-rollback-race-${engine}`);
       const targetPath = join(targetDir, TARGET_NAME);
       stamp({ templatePath, pluginRoot: '/old/plugin', targetDir });
@@ -2631,51 +2567,6 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     }
   });
 
-  test('SessionStart recovery preserves a byte-identical chmod racer plus prior and staged evidence', () => {
-    const templatePath = join(fixture.root, 'council.template.js');
-    const targetDir = join(fixture.root, 'cjs-workflow-recovery-race');
-    const targetPath = join(targetDir, TARGET_NAME);
-    const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
-    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    stampCouncilWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
-    const oldTarget = readFileSync(targetPath);
-    const oldManifest = readFileSync(manifestPath);
-    stampCouncilWorkflow({ templatePath, pluginRoot: '/incoming/plugin', targetDir, now: FIXED_NOW });
-    const incomingTarget = readFileSync(targetPath);
-    const incomingManifest = readFileSync(manifestPath);
-    const transaction = join(targetDir, '.council.genie-txn-cjs-recovery-race');
-    writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
-    writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
-    writeFile(join(transaction, 'staged', TARGET_NAME), incomingTarget.toString());
-    writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), incomingManifest.toString());
-    writeFile(
-      join(transaction, 'journal.json'),
-      `${JSON.stringify({
-        version: 2,
-        targetDigest: createHash('sha256').update(incomingTarget).digest('hex'),
-        manifestDigest: createHash('sha256').update(incomingManifest).digest('hex'),
-        hadTarget: true,
-        hadManifest: true,
-        beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
-        beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
-        identityVersion: 2,
-        targetMode: 0o644,
-        manifestMode: 0o644,
-        beforeTargetMode: 0o644,
-        beforeManifestMode: 0o644,
-      })}\n`,
-    );
-    chmodSync(targetPath, 0o600);
-
-    expect(() => recoverCjsCouncilTransactions(targetDir)).toThrow('preserved workflow evidence');
-
-    expect(readFileSync(targetPath)).toEqual(incomingTarget);
-    expect(lstatSync(targetPath).mode & 0o7777).toBe(0o600);
-    const conflict = readdirSync(targetDir).find((name) => name.startsWith('.council.genie-conflict-')) as string;
-    expect(readFileSync(join(targetDir, conflict, 'before', TARGET_NAME))).toEqual(oldTarget);
-    expect(readFileSync(join(targetDir, conflict, 'staged', TARGET_NAME))).toEqual(incomingTarget);
-  });
-
   test('v1 council removal recovery refuses content-only destructive authority', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     const targetDir = join(fixture.root, 'workflow-v1-removal');
@@ -2699,46 +2590,6 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(readFileSync(join(targetDir, conflict as string, 'parked', TARGET_NAME), 'utf8')).toContain('/old/plugin');
   });
 
-  test("TypeScript and SessionStart engines recover each other's version-2 council journals", () => {
-    const templatePath = join(fixture.root, 'council.template.js');
-    writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
-    for (const [name, recover] of [
-      ['ts-recovers-cjs', recoverManagedWorkflowTransactions],
-      ['cjs-recovers-ts', recoverCjsCouncilTransactions],
-    ] as const) {
-      const targetDir = join(fixture.root, name);
-      stampWorkflow({ templatePath, pluginRoot: '/old/plugin', targetDir, now: FIXED_NOW });
-      const oldTarget = readFileSync(join(targetDir, TARGET_NAME));
-      const oldManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
-      stampWorkflow({ templatePath, pluginRoot: '/new/plugin', targetDir, now: FIXED_NOW });
-      const nextTarget = readFileSync(join(targetDir, TARGET_NAME));
-      const nextManifest = readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME));
-      const transaction = join(targetDir, `.council.genie-txn-cross-${name}`);
-      writeFile(join(transaction, 'before', TARGET_NAME), oldTarget.toString());
-      writeFile(join(transaction, 'before', WORKFLOW_MANIFEST_NAME), oldManifest.toString());
-      writeFile(join(transaction, 'staged', TARGET_NAME), nextTarget.toString());
-      writeFile(join(transaction, 'staged', WORKFLOW_MANIFEST_NAME), nextManifest.toString());
-      writeFile(
-        join(transaction, 'journal.json'),
-        `${JSON.stringify({
-          version: 2,
-          targetDigest: createHash('sha256').update(nextTarget).digest('hex'),
-          manifestDigest: createHash('sha256').update(nextManifest).digest('hex'),
-          hadTarget: true,
-          hadManifest: true,
-          beforeTargetDigest: createHash('sha256').update(oldTarget).digest('hex'),
-          beforeManifestDigest: createHash('sha256').update(oldManifest).digest('hex'),
-        })}\n`,
-      );
-
-      recover(targetDir);
-
-      expect(readFileSync(join(targetDir, TARGET_NAME))).toEqual(oldTarget);
-      expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME))).toEqual(oldManifest);
-      expect(existsSync(transaction)).toBe(false);
-    }
-  });
-
   test('corrupt workflow ownership metadata fails closed with zero target writes', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     const targetDir = join(fixture.root, 'corrupt-workflows');
@@ -2752,17 +2603,13 @@ describe('stampWorkflow parity with council-stamp.cjs', () => {
     expect(readFileSync(join(targetDir, WORKFLOW_MANIFEST_NAME), 'utf8')).toBe('{broken');
   });
 
-  test('workflow paths are emitted as valid escaped JavaScript literals in both stampers', () => {
+  test('workflow paths are emitted as valid escaped JavaScript literals', () => {
     const templatePath = join(fixture.root, 'council.template.js');
     writeFileSync(templatePath, TEMPLATE_BODY, 'utf8');
     for (const pluginRoot of ["/opt/O'Brien/genie", 'C:\\Users\\genie', '/tmp/line\nbreak']) {
       const tsDir = join(fixture.root, `escaped-ts-${Buffer.from(pluginRoot).toString('hex')}`);
-      const cjsDir = join(fixture.root, `escaped-cjs-${Buffer.from(pluginRoot).toString('hex')}`);
       stampWorkflow({ templatePath, pluginRoot, targetDir: tsDir });
-      stampCouncilWorkflow({ templatePath, pluginRoot, targetDir: cjsDir });
       const ts = readFileSync(join(tsDir, 'council.js'), 'utf8');
-      const cjs = readFileSync(join(cjsDir, 'council.js'), 'utf8');
-      expect(ts).toBe(cjs);
       expect(ts).toContain(`const LENS_ROOT = ${JSON.stringify(pluginRoot)};`);
       expect(() => new Function(ts.replace('export const meta', 'const meta'))).not.toThrow();
     }

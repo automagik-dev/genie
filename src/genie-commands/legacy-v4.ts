@@ -78,7 +78,7 @@ export interface V4LegacyManifest {
   homeResidue: readonly HomeResidueEntry[];
 }
 
-// src-proof method (2026-07-05): `grep -rn <name> src/ scripts/ plugins/genie/scripts/`
+// src-proof method (2026-07-05): `grep -rn <name> src/ scripts/`
 // on the v5 tree. "no refs" = zero hits outside tests. Deliberately EXCLUDED as
 // live or uncertain: bin/, worktrees/, state-backups/, logs/* (except
 // scheduler.log), genie.db*, config.json, keys/, plugins/, skills/, templates/,

@@ -3,8 +3,8 @@
 /**
  * Stamp and verify the version-bearing metadata copied into a release
  * tarball. This operates only on the staged payload: a workflow version
- * override must not mutate the checkout, and must not leave VERSION, plugin
- * manifests, or marketplace metadata disagreeing inside the artifact.
+ * override must not mutate the checkout, and must not leave VERSION or the
+ * plugin manifests disagreeing inside the artifact.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,12 +13,7 @@ import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 
-const TOP_LEVEL_VERSION_FILES = [
-  'plugins/genie/package.json',
-  'plugins/genie/.claude-plugin/plugin.json',
-  'plugins/genie/.kimi-plugin/plugin.json',
-  'plugins/genie/orca-plugin.json',
-] as const;
+const TOP_LEVEL_VERSION_FILES = ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json'] as const;
 
 /**
  * Committed files whose version must already equal package.json before a
@@ -31,12 +26,7 @@ const TOP_LEVEL_VERSION_FILES = [
  * every dev child in between failed this gate (observed 2026-08-30, dev
  * releases 5.260829.5–.8 never shipped).
  */
-const COMMITTED_VERSION_FILES = [
-  'package.json',
-  'plugins/genie/package.json',
-  'plugins/genie/.claude-plugin/plugin.json',
-  'plugins/genie/.kimi-plugin/plugin.json',
-] as const;
+const COMMITTED_VERSION_FILES = ['package.json', 'plugins/genie/package.json'] as const;
 
 interface JsonObject {
   [key: string]: unknown;
@@ -63,26 +53,6 @@ function replaceTopLevelVersion(path: string, version: string): void {
   writeFileSync(path, updated);
 }
 
-function marketplaceEntry(path: string): { manifest: JsonObject; entry: JsonObject } {
-  const manifest = readObject(path);
-  const plugins = manifest.plugins;
-  if (!Array.isArray(plugins)) throw new Error(`marketplace has no plugins array: ${path}`);
-  const matches = plugins.filter((candidate): candidate is JsonObject =>
-    Boolean(
-      candidate &&
-        typeof candidate === 'object' &&
-        !Array.isArray(candidate) &&
-        (candidate as JsonObject).name === 'genie',
-    ),
-  );
-  if (matches.length !== 1) throw new Error(`marketplace must contain exactly one genie entry: ${path}`);
-  return { manifest, entry: matches[0] };
-}
-
-function writeObject(path: string, value: JsonObject): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
 /**
  * Verify the checkout's authoritative metadata before a workflow override is
  * allowed to stamp a staged payload. This prevents packaging from repairing
@@ -102,13 +72,6 @@ export function verifyCommittedReleaseVersions(repoRoot: string): string {
     }
   }
 
-  const claudeMarketplacePath = join(repoRoot, '.claude-plugin', 'marketplace.json');
-  const claudeVersion = marketplaceEntry(claudeMarketplacePath).entry.version;
-  if (claudeVersion !== expectedVersion) {
-    throw new Error(
-      `committed version mismatch in ${claudeMarketplacePath}: expected ${expectedVersion}, got ${claudeVersion}`,
-    );
-  }
   return expectedVersion;
 }
 
@@ -118,14 +81,6 @@ export function stampReleasePayloadVersion(payloadRoot: string, version: string)
   for (const relativePath of TOP_LEVEL_VERSION_FILES) {
     replaceTopLevelVersion(join(payloadRoot, relativePath), version);
   }
-
-  const claudeMarketplacePath = join(payloadRoot, '.claude-plugin', 'marketplace.json');
-  const claudeMarketplace = marketplaceEntry(claudeMarketplacePath);
-  if (typeof claudeMarketplace.entry.version !== 'string') {
-    throw new Error(`Claude marketplace genie entry has no string version: ${claudeMarketplacePath}`);
-  }
-  claudeMarketplace.entry.version = version;
-  writeObject(claudeMarketplacePath, claudeMarketplace.manifest);
 
   writeFileSync(join(payloadRoot, 'VERSION'), `${version}\n`);
 }
@@ -146,14 +101,6 @@ export function verifyReleasePayloadVersion(payloadRoot: string, expectedVersion
     if (actual !== expectedVersion) {
       throw new Error(`release payload version mismatch in ${path}: expected ${expectedVersion}, got ${actual}`);
     }
-  }
-
-  const claudeMarketplacePath = join(payloadRoot, '.claude-plugin', 'marketplace.json');
-  const claudeVersion = marketplaceEntry(claudeMarketplacePath).entry.version;
-  if (claudeVersion !== expectedVersion) {
-    throw new Error(
-      `release payload version mismatch in ${claudeMarketplacePath}: expected ${expectedVersion}, got ${claudeVersion}`,
-    );
   }
 }
 

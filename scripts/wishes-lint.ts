@@ -11,11 +11,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
-// Maintained verbatim mirror of `plugins/genie/scripts/src/validate-wish.ts`
-// (that tree is deleted by wish `skills-everywhere-b` Group 4). The two copies
-// differ only in the two relative import specifiers the depth change forces; the
-// mirror is biome-ignored exactly as `plugins/genie/scripts` is, so the parity
-// stays a byte fact rather than a formatting negotiation.
+// The wish validator, rehomed here from the retired `plugins/genie/scripts/src/`
+// tree. It stays biome-ignored (its formatting is inherited verbatim from the
+// plugin-era original) so a reformat cannot be mistaken for a rule change.
 import { validateWish } from './validate-wish.js';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');

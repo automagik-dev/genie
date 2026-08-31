@@ -759,21 +759,21 @@ describe('normalizeAuxLayout', () => {
     expect(existsSync(join(home, 'plugins'))).toBe(false);
   });
 
-  test('the marketplace manifest dir (.claude-plugin) moves next to plugins/ under GENIE_HOME', () => {
-    write(join(home, 'bin', 'plugins', 'genie', 'agents', 'reviewer.md'), '# reviewer\n');
+  test('the retired marketplace manifest dirs are not managed layout dirs', () => {
+    write(join(home, 'bin', 'plugins', 'genie', 'orca-plugin.json'), '{}');
+    // Both marketplace trees left the payload with the plugins that owned them
+    // (`.agents/` with Codex, `.claude-plugin/` with Claude). An extracted copy
+    // of either is left exactly where it was found, never promoted.
     write(join(home, 'bin', '.claude-plugin', 'marketplace.json'), '{"name":"automagik"}');
-    // The retired Codex marketplace tree is no longer a managed layout dir: an
-    // extracted `.agents/` is left exactly where it was found.
     write(join(home, 'bin', '.agents', 'plugins', 'marketplace.json'), '{"name":"automagik"}');
 
     normalizeAuxLayout(home);
 
-    // GENIE_HOME is now a self-consistent `plugin marketplace add` root: the
-    // manifest's relative `./plugins/genie` reference resolves under it.
-    expect(existsSync(join(home, '.claude-plugin', 'marketplace.json'))).toBe(true);
-    expect(existsSync(join(home, 'plugins', 'genie', 'agents', 'reviewer.md'))).toBe(true);
-    expect(existsSync(join(home, 'bin', '.claude-plugin'))).toBe(false);
+    expect(existsSync(join(home, 'plugins', 'genie', 'orca-plugin.json'))).toBe(true);
+    expect(existsSync(join(home, '.claude-plugin'))).toBe(false);
+    expect(existsSync(join(home, 'bin', '.claude-plugin', 'marketplace.json'))).toBe(true);
     expect(existsSync(join(home, '.agents'))).toBe(false);
+    expect(existsSync(join(home, 'bin', '.agents', 'plugins', 'marketplace.json'))).toBe(true);
   });
 
   test('a failed tree suppresses the VERSION stamp so a same-version reinstall retries it', () => {
