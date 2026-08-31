@@ -700,7 +700,7 @@ const CODEX_AGENT_INVENTORY_MODE = 0o600;
  * `plugins/genie/codex-agents/*.toml` bytes so a role edit that forgets to update
  * the frozen allowlist fails the gate rather than silently drifting.
  */
-export const CANONICAL_CODEX_ROLE_AGENT_MODE = 0o644;
+const CANONICAL_CODEX_ROLE_AGENT_MODE = 0o644;
 
 export const CANONICAL_CODEX_ROLE_AGENT_DIGESTS: Readonly<Record<string, string>> = Object.freeze({
   'genie-engineer-complex.toml': '62ecc570f1d77783511a9e7f0aa67b3a65d8bba292963409a02c7712c93ebc3b',
@@ -1997,32 +1997,6 @@ export function installCodexAgents(
     );
   }
   return plan.result;
-}
-
-export interface ConvergeSetupCodexRoleAgentsOptions {
-  codexHome?: string;
-  genieHome?: string;
-}
-
-/**
- * Create setup's narrow role-convergence consumer. The authenticated root is
- * supplied only when CodexActivationStore admits this opaque capability; exact
- * historical profiles are adopted only after setup has durably committed
- * explicit Codex consent.
- */
-export function createSetupCodexRoleAgentConsumer(
-  options: ConvergeSetupCodexRoleAgentsOptions,
-): DeliveryRootConsumer<CodexAgentInstallResult> {
-  return createDeliveryRootConsumer((physicalRoot) => {
-    const genieHome = options.genieHome ?? resolveGenieHome();
-    const consent = readIntegrationConsentState(genieHome);
-    if (!codexRoleAdoptionAllowed(consent)) {
-      throw new IntegrationCommandError(
-        'Codex role-agent convergence requires committed explicit Codex integration consent',
-      );
-    }
-    return installCodexAgents(physicalRoot, options.codexHome, {}, { adoptHistorical: true });
-  });
 }
 
 export interface CodexEnabledMutationResult {
