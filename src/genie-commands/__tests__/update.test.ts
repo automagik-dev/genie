@@ -4397,6 +4397,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
       'codex-plugin-cache',
       'codex-plugin-registration',
       'codex-role-agent',
+      'codex-role-agent-inventory',
       'hermes-plugin-link',
       'hermes-skills-external-dir',
       'pi-extension-link',

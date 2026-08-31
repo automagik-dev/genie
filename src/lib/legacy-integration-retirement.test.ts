@@ -14,6 +14,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -30,6 +31,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { computeDirDigest, computeFileDigest, stampWorkflow } from './agent-sync';
 import {
+  LEGACY_INTEGRATION_SURFACES,
   type LegacyIntegrationEntry,
   type LegacyIntegrationHomes,
   type LegacyIntegrationState,
@@ -38,7 +40,7 @@ import {
   retireLegacyIntegrations,
   runLegacyIntegrationRetirement,
 } from './legacy-integration-retirement';
-import { installCodexAgents } from './runtime-integrations';
+import { inspectRuntimeIntegrationEvidence, installCodexAgents } from './runtime-integrations';
 
 const MANIFEST_NAME = '.genie-sync.json';
 const MANAGED_ROLE_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
@@ -207,6 +209,7 @@ function populateClean(fixture: Fixture): void {
       2,
     )}\n`,
   );
+  write(join(fixture.claudeDir, 'plugins', 'marketplaces', 'automagik', 'plugins', 'genie', 'plugin.json'), '{}\n');
   write(
     join(fixture.claudeDir, 'settings.json'),
     `${JSON.stringify({ model: 'opus', enabledPlugins: { 'genie@automagik': true, 'other@market': true } }, null, 2)}\n`,
@@ -256,9 +259,11 @@ describe('classifyLegacyIntegrations — every surface, every state', () => {
       'codex-plugin-registration',
       'codex-plugin-cache',
       'codex-role-agent',
+      'codex-role-agent-inventory',
       'codex-legacy-curated-skill',
       'claude-plugin-registry',
       'claude-plugin-cache',
+      'claude-marketplace-cache',
       'claude-workflow',
       'claude-agent',
       'claude-skill',
@@ -367,7 +372,7 @@ describe('retireLegacyIntegrations — removes only clean assets, backup-first',
 
     expect(result.failures).toEqual([]);
     expect(result.kept).toEqual([]);
-    expect(result.removed).toHaveLength(15);
+    expect(result.removed).toHaveLength(17);
     expect(result.backupRootUsed).toBe(true);
     for (const removal of result.removed) {
       expect([removal.surface, existsSync(removal.backupPath)]).toEqual([removal.surface, true]);
@@ -405,7 +410,7 @@ describe('retireLegacyIntegrations — removes only clean assets, backup-first',
     expect(existsSync(join(fixture.genieHome, 'plugins', 'hermes-genie'))).toBe(true);
     expect(existsSync(join(fixture.genieHome, 'plugins', 'pi-genie'))).toBe(true);
 
-    expect(lines.filter((line) => line.startsWith('retired '))).toHaveLength(15);
+    expect(lines.filter((line) => line.startsWith('retired '))).toHaveLength(17);
     expect(lines).toContain(`retired claude-workflow: ${join(fixture.claudeDir, 'workflows', 'council.js')}`);
     expect(lines.at(-1)).toBe(`retirement backups: ${result.backupRoot}`);
     expect(lines).not.toContain('nothing to retire');
@@ -461,7 +466,7 @@ describe('retireLegacyIntegrations — removes only clean assets, backup-first',
     });
     expect(result.failures.map((failure) => failure.surface)).toEqual(['claude-agent']);
     expect(result.kept.map((entry) => entry.surface)).toEqual(['claude-agent']);
-    expect(result.removed).toHaveLength(14);
+    expect(result.removed).toHaveLength(16);
   });
 });
 
@@ -528,12 +533,14 @@ describe('content-preserving edits', () => {
     expect(Bun.YAML.parse(text)).toEqual({ models: { default: 'gpt-5' }, skills: null });
   });
 
-  test('the marker literals restated here still exist in the modules that write them', () => {
-    // The two Hermes markers are module-private in their own files, so this is
-    // the drift guard that keeps the classifier and the writer in agreement.
-    expect(readFileSync(join(import.meta.dir, 'hermes-skills-config.ts'), 'utf8')).toContain(
-      "'# genie:managed:skills.external_dirs'",
-    );
+  test('the mcp marker literal restated here still exists in the module that writes it', () => {
+    // `hermes-mcp-config.ts` survives wish `skills-everywhere-b` and still owns
+    // its begin/end pair privately, so this stays the drift guard between that
+    // writer and this classifier. The skills half is gone on purpose: Group 5
+    // deletes `hermes-skills-config.ts`, and pinning a literal to a file that
+    // will not exist is a guard that fails on the deletion rather than on
+    // drift. `HERMES_SKILLS_MARKER` in the retirement module is now the single
+    // source of truth for that marker.
     expect(readFileSync(join(import.meta.dir, 'hermes-mcp-config.ts'), 'utf8')).toContain(
       '# genie:managed:mcp_servers.genie',
     );
@@ -796,9 +803,10 @@ describe('backups', () => {
     const configBackup = readFileSync(join(result.backupRoot, '.codex', 'config.toml'), 'utf8');
     expect(configBackup).toContain('[plugins."genie@automagik"]');
 
-    // Re-downloadable plugin payload: a listing, not the bytes.
+    // Re-downloadable plugin payload: a listing, not the bytes. Three now: the
+    // two plugin-cache generations plus the automagik marketplace bundle cache.
     const manifests = readdirSync(join(result.backupRoot, 'cache-manifests'));
-    expect(manifests).toHaveLength(2);
+    expect(manifests).toHaveLength(3);
     expect(readFileSync(join(result.backupRoot, 'cache-manifests', manifests[0]), 'utf8')).toContain('plugin.json');
 
     // A symlink's recovery material is its target.
@@ -833,5 +841,237 @@ describe('backups', () => {
     expect(readFileSync(backup as string, 'utf8')).toContain('genie@automagik');
     expect(lstatSync(join(outside, 'config.toml')).isFile()).toBe(true);
     expect(readFileSync(join(outside, 'config.toml'), 'utf8')).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('codex-role-agent-inventory — the sidecar the role-agent surface never saw', () => {
+  const inventoryPathOf = (fixture: Fixture): string => join(fixture.codexHome, 'agents', '.genie-role-agents.json');
+
+  test('a genie-owned inventory is managed-clean and is removed with its transaction debris', () => {
+    const fixture = makeFixture();
+    write(
+      inventoryPathOf(fixture),
+      `${JSON.stringify({ version: 2, managedBy: 'genie-codex-role-agents', files: {} })}\n`,
+    );
+    for (const debris of [
+      '.genie-role-agents.txn-abc',
+      '.genie-role-agents.committed-cleanup-abc',
+      '.genie-role-agents.prepare-abc',
+      '.genie-role-agents.conflict-abc',
+    ]) {
+      write(join(fixture.codexHome, 'agents', debris, 'marker'), 'x\n');
+    }
+    // A user's own file in the same dir must be untouched.
+    write(join(fixture.codexHome, 'agents', 'mine.toml'), 'name = "mine"\n');
+
+    const { entries } = classifyLegacyIntegrations(homesOf(fixture));
+    expect(statesOf(entries, 'codex-role-agent-inventory')).toEqual([
+      'managed-clean',
+      'managed-clean',
+      'managed-clean',
+      'managed-clean',
+      'managed-clean',
+    ]);
+
+    const result = runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(result.removed.filter((entry) => entry.surface === 'codex-role-agent-inventory')).toHaveLength(5);
+    expect(existsSync(inventoryPathOf(fixture))).toBe(false);
+    expect(existsSync(join(fixture.codexHome, 'agents', '.genie-role-agents.txn-abc'))).toBe(false);
+    expect(readFileSync(join(fixture.codexHome, 'agents', 'mine.toml'), 'utf8')).toBe('name = "mine"\n');
+  });
+
+  test('an inventory that cannot prove clean genie ownership is managed-modified and kept', () => {
+    const fixture = makeFixture();
+    write(inventoryPathOf(fixture), '{ "version": 2 }\n');
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'codex-role-agent-inventory')).toEqual([
+      'managed-modified',
+    ]);
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(existsSync(inventoryPathOf(fixture))).toBe(true);
+  });
+
+  test("someone else's file at the same name is unmanaged and kept", () => {
+    const fixture = makeFixture();
+    write(inventoryPathOf(fixture), `${JSON.stringify({ managedBy: 'someone-else' })}\n`);
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'codex-role-agent-inventory')).toEqual([
+      'unmanaged',
+    ]);
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(existsSync(inventoryPathOf(fixture))).toBe(true);
+  });
+
+  test('a host that never had one classifies absent', () => {
+    const fixture = makeFixture();
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'codex-role-agent-inventory')).toEqual([
+      'absent',
+    ]);
+  });
+});
+
+describe('claude-marketplace-cache — the bundle tree the evidence probe kept reading', () => {
+  const cacheOf = (fixture: Fixture): string => join(fixture.claudeDir, 'plugins', 'marketplaces', 'automagik');
+
+  test('a bundle carrying plugins/genie is managed-clean, removed, and prunes its empty parent', () => {
+    const fixture = makeFixture();
+    write(join(cacheOf(fixture), 'plugins', 'genie', 'plugin.json'), '{}\n');
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'claude-marketplace-cache')).toEqual([
+      'managed-clean',
+    ]);
+    const result = runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(result.removed.map((entry) => entry.surface)).toContain('claude-marketplace-cache');
+    expect(existsSync(cacheOf(fixture))).toBe(false);
+  });
+
+  test('a marketplace dir without the genie bundle is managed-modified and kept', () => {
+    const fixture = makeFixture();
+    write(join(cacheOf(fixture), 'README.md'), '# not ours\n');
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'claude-marketplace-cache')).toEqual([
+      'managed-modified',
+    ]);
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(existsSync(join(cacheOf(fixture), 'README.md'))).toBe(true);
+  });
+
+  test('a symlink at the marketplace path is unmanaged and kept', () => {
+    const fixture = makeFixture();
+    const checkout = join(fixture.home, 'dev-checkout');
+    mkdirSync(checkout, { recursive: true });
+    link(cacheOf(fixture), checkout);
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'claude-marketplace-cache')).toEqual([
+      'unmanaged',
+    ]);
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(readlinkSync(cacheOf(fixture))).toBe(checkout);
+  });
+
+  test('a host that never had one classifies absent', () => {
+    const fixture = makeFixture();
+    expect(statesOf(classifyLegacyIntegrations(homesOf(fixture)).entries, 'claude-marketplace-cache')).toEqual([
+      'absent',
+    ]);
+  });
+});
+
+describe('the full plugin-era surface is retired in one run and never re-retired', () => {
+  test('evidence flips to {codex:false, claude:false} and the second run allocates no backup root', () => {
+    const fixture = makeFixture();
+    populateClean(fixture);
+    write(join(fixture.codexHome, 'agents', '.genie-role-agents.txn-stale', 'marker'), 'x\n');
+    const evidenceHomes = { codexHome: fixture.codexHome, claudeHome: fixture.claudeDir };
+    expect(inspectRuntimeIntegrationEvidence(evidenceHomes)).toMatchObject({ codex: true, claude: true });
+
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(inspectRuntimeIntegrationEvidence(evidenceHomes)).toMatchObject({ codex: false, claude: false });
+
+    const backupRootsAfterFirst = readdirSync(join(fixture.genieHome, 'state-backups'));
+    const lines: string[] = [];
+    const second = runLegacyIntegrationRetirement({
+      homes: homesOf(fixture),
+      log: (line) => lines.push(line),
+      now: new Date('2026-08-30T13:00:00.000Z'),
+    });
+    expect(second.removed).toEqual([]);
+    expect(second.backupRootUsed).toBe(false);
+    expect(lines).toContain('nothing to retire');
+    expect(readdirSync(join(fixture.genieHome, 'state-backups'))).toEqual(backupRootsAfterFirst);
+  });
+});
+
+describe('sidecar-less skill directories', () => {
+  test('a curated-lane dir with no sidecar is reported by path as kept and never removed', () => {
+    const fixture = makeFixture();
+    const orphan = join(fixture.codexHome, 'skills', '.curated', 'sidecar-less');
+    write(join(orphan, 'SKILL.md'), '# orphan\n');
+
+    const { entries } = classifyLegacyIntegrations(homesOf(fixture));
+    expect(entries.filter((entry) => entry.surface === 'codex-legacy-curated-skill')).toEqual([
+      {
+        surface: 'codex-legacy-curated-skill',
+        path: orphan,
+        state: 'unmanaged',
+        detail: 'no .genie-sync.json sidecar — ownership unprovable, left in place',
+      },
+    ]);
+
+    const lines: string[] = [];
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: (line) => lines.push(line), now: FIXED_NOW });
+    expect(lines).toContain(
+      `kept (unmanaged) codex-legacy-curated-skill: ${orphan} — no .genie-sync.json sidecar — ownership unprovable, left in place`,
+    );
+    expect(readFileSync(join(orphan, 'SKILL.md'), 'utf8')).toBe('# orphan\n');
+  });
+});
+
+describe('writeJsonDocument durability', () => {
+  // A 0o500 parent is the portable way to make the staged write fail; root
+  // ignores the mode bits, so the fault cannot be induced there.
+  test.skipIf(process.getuid?.() === 0)(
+    'a failed rewrite leaves the original bytes byte-identical and no staging residue',
+    () => {
+      const fixture = makeFixture();
+      const settingsPath = join(fixture.claudeDir, 'settings.json');
+      const original = `${JSON.stringify({ model: 'opus', enabledPlugins: { 'genie@automagik': true } }, null, 2)}\n`;
+      write(settingsPath, original);
+      // The write is staged in the target's own directory, so a read-only parent
+      // is the one fault that reaches production identically: ENOSPC, EIO and a
+      // kill all land in the same catch.
+      chmodSync(fixture.claudeDir, 0o500);
+      let result: ReturnType<typeof runLegacyIntegrationRetirement>;
+      try {
+        result = runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+      } finally {
+        chmodSync(fixture.claudeDir, 0o700);
+      }
+
+      expect(result.failures.map((failure) => failure.surface)).toEqual(['claude-enabled-plugin']);
+      expect(readFileSync(settingsPath, 'utf8')).toBe(original);
+      expect(readdirSync(fixture.claudeDir).filter((name) => name.includes('genie-staging'))).toEqual([]);
+    },
+  );
+
+  test('a successful rewrite commits by rename and leaves no staging sibling', () => {
+    const fixture = makeFixture();
+    const settingsPath = join(fixture.claudeDir, 'settings.json');
+    write(settingsPath, `${JSON.stringify({ model: 'opus', enabledPlugins: { 'genie@automagik': true } }, null, 2)}\n`);
+    chmodSync(settingsPath, 0o640);
+    runLegacyIntegrationRetirement({ homes: homesOf(fixture), log: () => undefined, now: FIXED_NOW });
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual({ model: 'opus', enabledPlugins: {} });
+    // The user's own mode survives the republish.
+    expect(lstatSync(settingsPath).mode & 0o777).toBe(0o640);
+    expect(readdirSync(fixture.claudeDir).filter((name) => name.includes('genie-staging'))).toEqual([]);
+  });
+});
+
+describe('the surface roster', () => {
+  test('every declared surface is classified, and the roster is the seventeen this module owns', () => {
+    // The list is the contract `classifyLegacyIntegrations` fills in with an
+    // `absent` entry for anything it did not otherwise emit, so a surface added
+    // to the union but not to the array would silently never be reported.
+    expect(LEGACY_INTEGRATION_SURFACES).toEqual([
+      'codex-plugin-registration',
+      'codex-plugin-cache',
+      'codex-role-agent',
+      'codex-role-agent-inventory',
+      'codex-legacy-curated-skill',
+      'claude-plugin-registry',
+      'claude-plugin-cache',
+      'claude-marketplace-registration',
+      'claude-marketplace-cache',
+      'claude-enabled-plugin',
+      'claude-workflow',
+      'claude-agent',
+      'claude-skill',
+      'hermes-plugin-link',
+      'hermes-mcp-server',
+      'hermes-skills-external-dir',
+      'pi-extension-link',
+    ]);
+    expect(LEGACY_INTEGRATION_SURFACES).toHaveLength(17);
+
+    const fixture = makeFixture();
+    const { entries } = classifyLegacyIntegrations(homesOf(fixture));
+    expect([...new Set(entries.map((entry) => entry.surface))].sort()).toEqual([...LEGACY_INTEGRATION_SURFACES].sort());
   });
 });
