@@ -51,7 +51,7 @@ function makeRoot(): string {
 }
 
 function writePayload(root: string, generation: string): void {
-  for (const name of ['.agents', '.claude-plugin', 'plugins', 'skills', 'templates']) {
+  for (const name of ['.claude-plugin', 'plugins', 'skills', 'templates']) {
     // Explicit 0o755 so the payload member dirs never inherit a group/other
     // write bit under a loose caller umask (umask 002 → 0o775), which the
     // promotion guards reject. Mirrors the modes real release tarballs ship.
@@ -378,43 +378,45 @@ describe('installer promotion transaction', () => {
 
   test('recovers a crash immediately after capture by inferring the exact physical state', () => {
     const fixture = makeFixture();
-    const prior = inspectPhysicalPath(join(fixture.bin, '.agents'));
+    const prior = inspectPhysicalPath(join(fixture.bin, '.claude-plugin'));
 
-    expect(() => promote(fixture, { dependencies: interruption('capture-prior', '.agents') })).toThrow(
+    expect(() => promote(fixture, { dependencies: interruption('capture-prior', '.claude-plugin') })).toThrow(
       InstallPromotionInterruptedError,
     );
     expect(pendingRoots(fixture)).toHaveLength(1);
-    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
+    expect(existsSync(join(fixture.bin, '.claude-plugin'))).toBe(false);
 
     const reports = recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() });
     expect(reports.map((report) => report.outcome)).toEqual(['rolledback']);
-    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.agents')), prior)).toBe(true);
+    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.claude-plugin')), prior)).toBe(true);
     assertGeneration(fixture.staging, '2.0.0');
     expect(recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() })).toEqual([]);
   });
 
   test('recovers a crash after publishing an originally absent member back into staging', () => {
     const fixture = makeFixture(false);
-    const incoming = inspectPhysicalPath(join(fixture.staging, '.agents'));
+    const incoming = inspectPhysicalPath(join(fixture.staging, '.claude-plugin'));
 
-    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.agents') })).toThrow(
+    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.claude-plugin') })).toThrow(
       InstallPromotionInterruptedError,
     );
-    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.agents')), incoming)).toBe(true);
+    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.claude-plugin')), incoming)).toBe(true);
 
     const [report] = recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() });
     expect(report?.outcome).toBe('rolledback');
-    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
-    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.staging, '.agents')), incoming)).toBe(true);
+    expect(existsSync(join(fixture.bin, '.claude-plugin'))).toBe(false);
+    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.staging, '.claude-plugin')), incoming)).toBe(
+      true,
+    );
   });
 
   test('a final-boundary foreign target is preserved and keeps the transaction pending', () => {
     const fixture = makeFixture(false);
-    const foreign = join(fixture.bin, '.agents');
+    const foreign = join(fixture.bin, '.claude-plugin');
     let injected = false;
     const deps = dependencies({
       beforeRename: (event) => {
-        if (!injected && event.operation === 'publish-incoming' && event.member === '.agents') {
+        if (!injected && event.operation === 'publish-incoming' && event.member === '.claude-plugin') {
           injected = true;
           writeFileSync(foreign, 'foreign target\n');
         }
@@ -423,7 +425,7 @@ describe('installer promotion transaction', () => {
 
     expect(() => promote(fixture, { dependencies: deps })).toThrow('rollback retained a transaction');
     expect(readFileSync(foreign, 'utf8')).toBe('foreign target\n');
-    expect(lstatSync(join(fixture.staging, '.agents')).isDirectory()).toBe(true);
+    expect(lstatSync(join(fixture.staging, '.claude-plugin')).isDirectory()).toBe(true);
     expect(pendingRoots(fixture)).toHaveLength(1);
   });
 
@@ -452,18 +454,18 @@ describe('installer promotion transaction', () => {
 
   test('rollback refuses an occupied staging name and preserves both foreign and published objects', () => {
     const fixture = makeFixture(false);
-    const incoming = inspectPhysicalPath(join(fixture.staging, '.agents'));
-    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.agents') })).toThrow(
+    const incoming = inspectPhysicalPath(join(fixture.staging, '.claude-plugin'));
+    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.claude-plugin') })).toThrow(
       InstallPromotionInterruptedError,
     );
-    mkdirSync(join(fixture.staging, '.agents'), { mode: 0o755 });
-    writeFileSync(join(fixture.staging, '.agents', 'foreign.txt'), 'foreign\n', { mode: 0o644 });
+    mkdirSync(join(fixture.staging, '.claude-plugin'), { mode: 0o755 });
+    writeFileSync(join(fixture.staging, '.claude-plugin', 'foreign.txt'), 'foreign\n', { mode: 0o644 });
 
     expect(() => recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() })).toThrow(
       'could not be recovered safely',
     );
-    expect(readFileSync(join(fixture.staging, '.agents', 'foreign.txt'), 'utf8')).toBe('foreign\n');
-    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.agents')), incoming)).toBe(true);
+    expect(readFileSync(join(fixture.staging, '.claude-plugin', 'foreign.txt'), 'utf8')).toBe('foreign\n');
+    expect(physicalPathIdentitiesEqual(inspectPhysicalPath(join(fixture.bin, '.claude-plugin')), incoming)).toBe(true);
     expect(pendingRoots(fixture)).toHaveLength(1);
   });
 
@@ -552,18 +554,18 @@ describe('installer promotion transaction', () => {
     const fixture = makeFixture(false);
     const outside = join(fixture.root, 'outside-race');
     writeFileSync(outside, 'outside\n');
-    let agentsInspections = 0;
+    let claudePluginInspections = 0;
     const deps = dependencies({
       afterPayloadMemberInspected: (member) => {
-        if (member === '.agents' && ++agentsInspections === 2) {
-          symlinkSync(outside, join(fixture.staging, '.agents', 'late-link'));
+        if (member === '.claude-plugin' && ++claudePluginInspections === 2) {
+          symlinkSync(outside, join(fixture.staging, '.claude-plugin', 'late-link'));
         }
       },
     });
 
     expect(() => promote(fixture, { dependencies: deps })).toThrow('rollback retained a transaction');
-    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
-    expect(lstatSync(join(fixture.staging, '.agents', 'late-link')).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(fixture.bin, '.claude-plugin'))).toBe(false);
+    expect(lstatSync(join(fixture.staging, '.claude-plugin', 'late-link')).isSymbolicLink()).toBe(true);
     expect(readFileSync(outside, 'utf8')).toBe('outside\n');
     expect(pendingRoots(fixture)).toHaveLength(1);
   });
@@ -575,16 +577,16 @@ describe('installer promotion transaction', () => {
     let injected = false;
     const deps = dependencies({
       beforeRename: (event) => {
-        if (!injected && event.operation === 'publish-incoming' && event.member === '.agents') {
+        if (!injected && event.operation === 'publish-incoming' && event.member === '.claude-plugin') {
           injected = true;
-          symlinkSync(outside, join(fixture.staging, '.agents', 'late-link'));
+          symlinkSync(outside, join(fixture.staging, '.claude-plugin', 'late-link'));
         }
       },
     });
 
     expect(() => promote(fixture, { dependencies: deps })).toThrow('rollback retained a transaction');
-    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
-    expect(lstatSync(join(fixture.staging, '.agents', 'late-link')).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(fixture.bin, '.claude-plugin'))).toBe(false);
+    expect(lstatSync(join(fixture.staging, '.claude-plugin', 'late-link')).isSymbolicLink()).toBe(true);
     expect(readFileSync(outside, 'utf8')).toBe('outside\n');
     expect(pendingRoots(fixture)).toHaveLength(1);
   });
@@ -646,7 +648,7 @@ describe('installer promotion transaction', () => {
 
   test('an authorized-looking rolledback history still infers and rolls back a published member', () => {
     const fixture = makeFixture(false);
-    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.agents') })).toThrow(
+    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.claude-plugin') })).toThrow(
       InstallPromotionInterruptedError,
     );
     const transactionRoot = pendingRoots(fixture)[0] as string;
@@ -655,8 +657,8 @@ describe('installer promotion transaction', () => {
 
     const [report] = recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() });
     expect(report?.outcome).toBe('rolledback');
-    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
-    expect(lstatSync(join(fixture.staging, '.agents')).isDirectory()).toBe(true);
+    expect(existsSync(join(fixture.bin, '.claude-plugin'))).toBe(false);
+    expect(lstatSync(join(fixture.staging, '.claude-plugin')).isDirectory()).toBe(true);
   });
 
   test('rejects non-0600 receipts and unknown transaction-root objects without mutating payload paths', () => {

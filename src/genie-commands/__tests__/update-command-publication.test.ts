@@ -45,10 +45,9 @@ function buildReleasePayload(
   payloadSha256: string;
 } {
   const payload = join(root, 'payload');
-  for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
+  for (const directory of ['.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
     mkdirSync(join(payload, directory), { recursive: true });
   }
-  writeFileSync(join(payload, '.agents', 'plugin.json'), '{}\n');
   writeFileSync(join(payload, '.claude-plugin', 'marketplace.json'), '{}\n');
   writeFileSync(join(payload, 'LICENSE'), 'test fixture\n');
   writeFileSync(join(payload, 'VERSION'), `${version}\n`);

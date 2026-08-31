@@ -1564,7 +1564,8 @@ describe('syncAuxiliaryContent transactional outcomes', () => {
 
       const outcomes = syncAuxiliaryContent(extract, home);
 
-      expect(outcomes).toHaveLength(5);
+      expect(outcomes).toHaveLength(4);
+      expect(outcomes.map((outcome) => outcome.label)).toEqual(['plugins', 'skills', 'templates', '.claude-plugin']);
       expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
       expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
       expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
@@ -1756,7 +1757,7 @@ describe('legacy pending delivery compatibility', () => {
       previousBinary: { present: true, fingerprint: fingerprint(join(bin, 'genie')) },
       versionStamp: { present: true, fingerprint: fingerprint(join(extract, 'VERSION')) },
       tarball: fingerprint(tarball),
-      auxiliary: ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'].map((name) => ({
+      auxiliary: ['plugins', 'skills', 'templates', '.claude-plugin'].map((name) => ({
         name,
         present: false,
         digest: null,

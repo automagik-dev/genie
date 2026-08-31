@@ -30,7 +30,6 @@ import {
 } from './install-transaction.js';
 
 export const INSTALL_PAYLOAD_MEMBERS = [
-  '.agents',
   '.claude-plugin',
   'LICENSE',
   'VERSION',
