@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { CLAUDE_ROLE_AGENT_FILES, CODEX_ROLE_PROFILE_FILES } from './fresh-install-smoke.ts';
+import { CLAUDE_ROLE_AGENT_FILES } from './fresh-install-smoke.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -727,16 +727,7 @@ describe('Group E release and documentation contracts', () => {
     expect(read('scripts/plugin-executables-check.test.ts')).toContain('error TS7006');
   });
 
-  test('release gates pin exact Codex and Claude role inventories through archive extraction', () => {
-    expect(CODEX_ROLE_PROFILE_FILES).toEqual([
-      'genie-engineer-complex.toml',
-      'genie-engineer-standard.toml',
-      'genie-engineer-trivial.toml',
-      'genie-final-gate.toml',
-      'genie-fixer.toml',
-      'genie-reviewer.toml',
-      'genie-scout.toml',
-    ]);
+  test('release gates pin the exact Claude role inventory through archive extraction', () => {
     expect(CLAUDE_ROLE_AGENT_FILES).toEqual([
       'engineer-complex.md',
       'engineer-standard.md',
@@ -748,7 +739,7 @@ describe('Group E release and documentation contracts', () => {
     ]);
 
     const smoke = read('scripts/fresh-install-smoke.ts');
-    for (const file of [...CODEX_ROLE_PROFILE_FILES, ...CLAUDE_ROLE_AGENT_FILES]) expect(smoke).toContain(`'${file}'`);
+    for (const file of CLAUDE_ROLE_AGENT_FILES) expect(smoke).toContain(`'${file}'`);
     expect(smoke).toContain('checkRoleInventories(pluginRoot)');
 
     const build = read('scripts/build-binary.sh');

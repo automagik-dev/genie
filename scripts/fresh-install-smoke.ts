@@ -38,7 +38,7 @@ export function repositoryRootFromModuleUrl(moduleUrl: string): string {
 
 const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
 
-const CLAUDE_ROLE_AGENT_FILES = [
+export const CLAUDE_ROLE_AGENT_FILES = [
   'engineer-complex.md',
   'engineer-standard.md',
   'engineer-trivial.md',
