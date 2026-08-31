@@ -41,7 +41,12 @@ import {
   readAgentFilesManifest,
   stampWorkflow,
 } from '../lib/agent-sync.js';
-import { SKILLS_CLI_VERSION, skillsInstallRecordPath, writeSkillsInstallRecord } from '../lib/skills-installer.js';
+import {
+  SKILLS_CLI_VERSION,
+  computeSkillDirDigest,
+  skillsInstallRecordPath,
+  writeSkillsInstallRecord,
+} from '../lib/skills-installer.js';
 import {
   type ProvenV4Rules,
   type UninstallBatchScope,
@@ -82,12 +87,27 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
   let claudeSkills: string;
   let codexSkills: string;
 
-  function seedRecord(inventory: string[], agentDirs: string[]): void {
+  /**
+   * Seed the record install-time would have written: a content digest for
+   * every recorded `<agentDir>/<skill>` that exists right now. `legacy` writes
+   * the 5.260830.x shape with no digests at all.
+   */
+  function seedRecord(inventory: string[], agentDirs: string[], options: { legacy?: boolean } = {}): void {
+    const dirDigests: Record<string, string> = {};
+    if (!options.legacy) {
+      for (const agentDir of agentDirs) {
+        for (const name of inventory) {
+          const digest = computeSkillDirDigest(join(agentDir, name));
+          if (digest !== null) dirDigests[join(agentDir, name)] = digest;
+        }
+      }
+    }
     writeSkillsInstallRecord(genieHome, {
       ref: 'v5.260830.16',
       cliVersion: SKILLS_CLI_VERSION,
       inventory,
       agentDirs,
+      ...(options.legacy ? {} : { dirDigests }),
       installedAt: '2026-08-30T12:00:00.000Z',
     });
   }
@@ -120,6 +140,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
 
     expect(removal.removed.sort()).toEqual([...recorded].sort());
     expect(removal.failures).toEqual([]);
+    expect(removal.preserved).toEqual([]);
     for (const dir of recorded) expect(existsSync(dir)).toBe(false);
     for (const dir of foreign) expect(existsSync(dir)).toBe(true);
     // The agent dirs themselves survive; only genie's own skill dirs go.
@@ -136,7 +157,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
 
     const second = removeSkillsChannelInstall(genieHome);
-    expect(second).toEqual({ record: null, removed: [], failures: [], recordRemoved: false });
+    expect(second).toEqual({ record: null, removed: [], failures: [], preserved: [], recordRemoved: false });
   });
 
   test('no record is nothing to do', () => {
@@ -145,6 +166,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
       record: null,
       removed: [],
       failures: [],
+      preserved: [],
       recordRemoved: false,
     });
     expect(existsSync(foreign)).toBe(true);
@@ -181,6 +203,180 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
 
     expect(removeSkillsChannelInstall(genieHome).record).toBeNull();
     expect(existsSync(sibling)).toBe(true);
+  });
+
+  test('a user-modified recorded dir is preserved and reported, never deleted', () => {
+    const wish = seedSkillDir(claudeSkills, 'wish');
+    seedRecord(['wish'], [claudeSkills]);
+    writeFileSync(join(wish, 'SKILL.md'), '# my precious local edit\n', 'utf8');
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved).toEqual([wish]);
+    expect(removal.failures).toEqual([]);
+    expect(removal.recordRemoved).toBe(false);
+    expect(readFileSync(join(wish, 'SKILL.md'), 'utf8')).toBe('# my precious local edit\n');
+    // The receipt survives an incomplete removal so the uninstall is retryable.
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+  });
+
+  test('a foreign same-name dir that replaced the install is preserved', () => {
+    const dir = seedSkillDir(claudeSkills, 'docs');
+    seedRecord(['docs'], [claudeSkills]);
+    // The user replaced the whole directory with their own skill: different
+    // file set, different bytes, same generic name in a shared home.
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), '# my own docs skill\n', 'utf8');
+    writeFileSync(join(dir, 'extra.md'), 'mine\n', 'utf8');
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved).toEqual([dir]);
+    expect(removal.recordRemoved).toBe(false);
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('# my own docs skill\n');
+    expect(readFileSync(join(dir, 'extra.md'), 'utf8')).toBe('mine\n');
+  });
+
+  test('a matching dir is removed while a modified sibling of the same inventory is preserved', () => {
+    const matching = seedSkillDir(claudeSkills, 'wish');
+    const modified = seedSkillDir(codexSkills, 'wish');
+    seedRecord(['wish'], [claudeSkills, codexSkills]);
+    writeFileSync(join(modified, 'SKILL.md'), '# edited\n', 'utf8');
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([matching]);
+    expect(removal.preserved).toEqual([modified]);
+    expect(existsSync(matching)).toBe(false);
+    expect(existsSync(modified)).toBe(true);
+    expect(removal.recordRemoved).toBe(false);
+  });
+
+  test('a legacy record without digests (5.260830.x) preserves every recorded dir', () => {
+    const wish = seedSkillDir(claudeSkills, 'wish');
+    const work = seedSkillDir(codexSkills, 'work');
+    seedRecord(['wish', 'work'], [claudeSkills, codexSkills], { legacy: true });
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved.sort()).toEqual([wish, work].sort());
+    expect(removal.recordRemoved).toBe(false);
+    expect(existsSync(wish)).toBe(true);
+    expect(existsSync(work)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+  });
+});
+
+describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 promotion review)', () => {
+  let root: string;
+  let genieHome: string;
+  let claudeSkills: string;
+  let output: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  const savedExitCode = process.exitCode;
+
+  /** Isolate every env-resolved home the plan and its inspectors read. */
+  function withIsolatedEnv<T>(run: () => T): T {
+    const overrides = {
+      GENIE_HOME: genieHome,
+      CLAUDE_CONFIG_DIR: join(root, 'home', '.claude'),
+      CODEX_HOME: join(root, 'home', '.codex'),
+      HERMES_HOME: join(root, 'home', '.hermes'),
+    };
+    const prior = Object.fromEntries(Object.keys(overrides).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, overrides);
+    try {
+      return run();
+    } finally {
+      for (const [name, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  /** A GENIE_HOME that is a real removable install root, not just a record holder. */
+  function seedRemovableGenieHome(): void {
+    mkdirSync(join(genieHome, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'payload.txt'), 'delivered\n', 'utf8');
+  }
+
+  function seedWishSkill(): string {
+    const wish = join(claudeSkills, 'wish');
+    mkdirSync(wish, { recursive: true });
+    writeFileSync(join(wish, 'SKILL.md'), '# wish\n', 'utf8');
+    return wish;
+  }
+
+  function seedChannelRecord(wish: string, digest: string): void {
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+      installedAt: '2026-08-30T12:00:00.000Z',
+    });
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-uninstall-skills-plan-'));
+    genieHome = join(root, 'genie');
+    claudeSkills = join(root, 'home', '.claude', 'skills');
+    mkdirSync(claudeSkills, { recursive: true });
+    output = [];
+    process.exitCode = 0;
+    logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(' '));
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.exitCode = savedExitCode;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('an unverified skill dir aborts the plan before GENIE_HOME cleanup and keeps the record', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    seedChannelRecord(wish, 'deadbeef'.repeat(8)); // never matches the live content
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.step).toBe('skills.sh channel');
+    expect(outcome.result.failures[0]?.detail).toContain(wish);
+    expect(outcome.result.failures[0]?.detail).toContain('preserved');
+    // The preserved dir is reported distinctly from outright removal failures.
+    expect(output.some((line) => line.includes(`skills.sh channel: preserved ${wish}`))).toBe(true);
+    // Aborted before the batch: the home (and the receipt inside it) survive.
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+    expect(existsSync(wish)).toBe(true);
+    expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
+  });
+
+  test('a fully verified removal deletes the record and completes the uninstall', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    if (digest === null) throw new Error('fixture skill dir was not digestable');
+    seedChannelRecord(wish, digest);
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(wish)).toBe(false);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
+    // The record deletion happens before the home snapshot, so the batch can
+    // still authorize a clean wholesale removal of GENIE_HOME's contents.
+    expect(existsSync(join(genieHome, 'plugins'))).toBe(false);
+    expect(readdirSync(genieHome)).toEqual([]);
   });
 });
 
@@ -2713,6 +2909,52 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     expect(out.indexOf('can break current or resumable tasks')).toBeLessThan(out.indexOf('<<CONFIRM-INVOKED>>'));
     // Zero mutation: the GENIE_HOME artifact survives a decline.
     expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('a preserved skills dir exits non-zero, keeps the record, and never removes GENIE_HOME', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    const claudeSkills = join(process.env.CLAUDE_CONFIG_DIR as string, 'skills');
+    const wish = join(claudeSkills, 'wish');
+    mkdirSync(wish, { recursive: true });
+    writeFileSync(join(wish, 'SKILL.md'), '# wish\n', 'utf8');
+    // A digest that can never match the live content: the recorded dir is
+    // unverified, so the plan must stop before the GENIE_HOME cleanup batch.
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: 'deadbeef'.repeat(8) },
+      installedAt: '2026-08-30T12:00:00.000Z',
+    });
+
+    const { out, exitCode } = await capture(() =>
+      uninstallCommand(
+        {},
+        {
+          confirm: (async () => true) as unknown as UninstallDeps['confirm'],
+          acquireLease: () => ({ path: join(root, 'test-lifecycle.lock'), release: () => undefined }),
+          acquireCodexLifecycleLease: () =>
+            ({
+              ok: true,
+              operationId: '0'.repeat(32),
+              kind: 'uninstall',
+              assertOperation: () => undefined,
+              release: () => undefined,
+            }) as const,
+        },
+      ),
+    );
+
+    expect(exitCode).toBe(1);
+    expect(out).toContain(`skills.sh channel: preserved ${wish}`);
+    expect(out).toContain('Genie CLI uninstall is incomplete');
+    expect(out).toContain('retry `genie uninstall`');
+    // The receipt (the record inside GENIE_HOME) survives for a retry.
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+    expect(existsSync(wish)).toBe(true);
+    expect(existsSync(join(genieHome, 'config.json'))).toBe(true);
   });
 
   test('a busy Codex lifecycle lease is a loser: exit 2, trailer, zero removal', async () => {

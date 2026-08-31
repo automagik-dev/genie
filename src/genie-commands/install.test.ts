@@ -1369,6 +1369,95 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
   });
 });
 
+describe('installCommand — skills failure exit precedence (PR #2866 promotion review)', () => {
+  let logs: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  const savedExit = process.exitCode;
+
+  beforeEach(() => {
+    process.exitCode = 0;
+    logs = [];
+    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      logs.push(a.map(String).join(' '));
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.exitCode = savedExit;
+  });
+
+  const runInstall = async (
+    runSkills: () => SkillsChannelConvergenceResult,
+    codexTarget: () => { installedVersion: string | null } | null,
+  ): Promise<void> =>
+    installCommand(
+      { integrations: 'auto' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      () => undefined,
+      () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
+      noopLease,
+      noopCodexLease,
+      noopConsent,
+      codexTarget,
+      noopDeliveryRepair,
+      () => undefined,
+      runSkills,
+    );
+
+  test('a failed skills install keeps exit 1 on an action-required host instead of projecting exit 2', async () => {
+    await runInstall(
+      () => ({ status: 'failed', reason: 'skills CLI exited 1: fixture' }),
+      () => ({ installedVersion: null }),
+    );
+
+    expect(process.exitCode).toBe(1);
+    // The action-required result trailer belongs to the exit-2 projection the
+    // failure outranks; it must not be printed over the skills failure.
+    expect(logs.some((line) => line.includes('activation-pending'))).toBe(false);
+  });
+
+  test('a successful skills install on an action-required host still projects exit 2', async () => {
+    await runInstall(
+      () => ({
+        status: 'installed',
+        record: {
+          ref: 'v5.260830.16',
+          cliVersion: '1.5.23',
+          inventory: ['wish'],
+          agentDirs: [],
+          dirDigests: {},
+          installedAt: '2026-08-30T12:00:00.000Z',
+        },
+      }),
+      () => ({ installedVersion: null }),
+    );
+
+    expect(process.exitCode).toBe(2);
+    expect(logs.some((line) => line.includes('activation-pending'))).toBe(true);
+  });
+
+  test('a successful skills install with no action required stays exit 0', async () => {
+    await runInstall(
+      () => ({
+        status: 'installed',
+        record: {
+          ref: 'v5.260830.16',
+          cliVersion: '1.5.23',
+          inventory: ['wish'],
+          agentDirs: [],
+          dirDigests: {},
+          installedAt: '2026-08-30T12:00:00.000Z',
+        },
+      }),
+      () => null,
+    );
+
+    expect(process.exitCode).toBe(0);
+  });
+});
+
 describe('installCommand — Group C install gate (item 2)', () => {
   let logs: string[];
   let logSpy: ReturnType<typeof spyOn>;

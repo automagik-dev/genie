@@ -348,6 +348,9 @@ export function runInstallAgentSync(
  * Run only the post-publication integrations this command is authorized to
  * own. Codex itself is structurally absent from the runner scope; setup owns
  * its marketplace, plugin, project route, and managed-role convergence.
+ *
+ * Returns the skills-channel result so the caller can give a skills failure
+ * exit precedence over the action-required projection.
  */
 function runPermittedPostDeliveryIntegrations(
   selection: IntegrationSelection,
@@ -356,7 +359,7 @@ function runPermittedPostDeliveryIntegrations(
   runIntegrations: IntegrationRunner,
   runSync: AgentSyncRunner,
   runSkills: SkillsChannelRunner,
-): void {
+): SkillsChannelConvergenceResult {
   const results = buildInstallResults(target, selection, runIntegrations, actionRequired);
   for (const result of results) {
     const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
@@ -374,7 +377,7 @@ function runPermittedPostDeliveryIntegrations(
   // widening of the install-consent contract for skills only). A failure sets
   // exit 1 with the remedy command and never throws — the delivered bytes stay
   // committed.
-  runSkills(selection);
+  const skills = runSkills(selection);
   const agentSyncSelection = narrowAgentSyncSelection(selection);
   if (agentSyncSelection !== null) {
     if (!codexFailed) {
@@ -387,6 +390,7 @@ function runPermittedPostDeliveryIntegrations(
       );
     }
   }
+  return skills;
 }
 
 /**
@@ -469,11 +473,26 @@ export async function installCommand(
     // record exists. Only unrelated Claude/Hermes integration and sync work is
     // permitted here; `setup --codex` owns every Codex activation mutation.
     const actionRequired = installActionRequired(codexTarget, delivery);
-    runPermittedPostDeliveryIntegrations(selection, codexTarget, actionRequired, runIntegrations, runSync, runSkills);
+    const skills = runPermittedPostDeliveryIntegrations(
+      selection,
+      codexTarget,
+      actionRequired,
+      runIntegrations,
+      runSync,
+      runSkills,
+    );
     // Decision 14: marker retirement is the LAST successful finisher. A later
     // consent, legacy cleanup, permitted integration, or sync failure must leave
     // the marker intact so the whole install remains retryable.
     retireInstallMarkerSafe(retireMarker);
+    // A failed skills install is a FAILURE and outranks action-required — the
+    // same precedence as `applyConvergenceExitSignal` (update.ts): a routine
+    // pending `setup --codex` must not overwrite the channel's exit 1 with the
+    // action-required exit 2 and hide a real retryable failure.
+    if (skills.status === 'failed') {
+      process.exitCode = 1;
+      return;
+    }
     // Delivered-but-action-required (Codex generation deferred): exit 2 with the
     // one A-owned result trailer and no all-green footer. install.sh maps this to
     // an installer exit 2 (deliverable 3).
