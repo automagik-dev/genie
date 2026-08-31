@@ -98,14 +98,10 @@ const OmniApprovalsConfigSchema = z.object({
   /** Regex source matched against tool_name to decide which calls to gate. */
   tools: z.string().default('^(Bash|Write|Edit|NotebookEdit)$'),
   /**
-   * Hook self-timeout budget (ms) — how long the PreToolUse handler polls for a
-   * remote resolution before falling back to `ask`. MUST stay strictly below the
-   * Claude Code hook `timeout` (SECONDS) wherever `genie hook dispatch` is
-   * installed, or CC kills the hook before it can allow/deny OR reach its
-   * timeout→ask fail-safe. The shipped dispatch entries default to 5s/15s, which
-   * is far below this 110s default: enabling approvals REQUIRES raising the hook
-   * `timeout` (e.g. 120s) on the PreToolUse dispatch entry — see
-   * `.claude/settings.json` / `plugins/genie/hooks/hooks.json`.
+   * Approval self-timeout budget (ms) — how long a caller polls the queue for a
+   * remote resolution before falling back to `ask`. The PreToolUse hook that
+   * used to consume this budget left with the hook runtime; the value now bounds
+   * the CLI-originated approval waits the Omni runner serves.
    */
   pollBudgetMs: z.number().default(110_000),
   /** Poll interval while waiting for a resolution (ms). */

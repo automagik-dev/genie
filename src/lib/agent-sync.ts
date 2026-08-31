@@ -4493,7 +4493,7 @@ function hashBytes(bytes: Buffer): string {
 }
 
 // ============================================================================
-// Workflow stamp (parity-locked to council-stamp.cjs)
+// Workflow stamp
 // ============================================================================
 
 export type ManagedWorkflowState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
@@ -4655,8 +4655,7 @@ export function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport
 
 /**
  * Stamp the /council template's LENS_ROOT placeholder with `pluginRoot` and
- * write `<targetDir>/council.js` plus a digest ownership sidecar. Output remains
- * byte-identical to plugins/genie/scripts/council-stamp.cjs, but ownership is
+ * write `<targetDir>/council.js` plus a digest ownership sidecar. Ownership is
  * granted only by valid metadata: unmanaged, modified, or corrupt targets are
  * preserved byte-identically and never adopted by content/signature.
  */

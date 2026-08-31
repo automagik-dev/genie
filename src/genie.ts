@@ -7,7 +7,6 @@
  *   Utilities:  setup, doctor, update, install, uninstall, shortcuts
  *   Lifecycle:  init (scaffold), context (spawn plan)
  *   State:      task, board  (SQLite-backed, .genie/genie.db)
- *   Hooks:      hook namespace + git hook dispatch
  */
 
 import { Command, Option } from 'commander';
@@ -22,7 +21,6 @@ import {
 } from './genie-commands/shortcuts.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
-import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
@@ -188,12 +186,6 @@ shortcuts
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
   .action(shortcutsInstallCommand);
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
-
-// ============================================================================
-// Hook namespace + git hook dispatch
-// ============================================================================
-
-registerHookNamespace(program);
 
 // ============================================================================
 // Bare task/board — thin commands over the zero-daemon SQLite state engine.

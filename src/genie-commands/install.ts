@@ -44,14 +44,12 @@ const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const CODEX_INTEGRATION_RETIRED = 'Codex plugin integration is retired; nothing to install';
 
 /**
- * Auxiliary trees moved from `bin/` to the GENIE_HOME root. plugins/skills/
- * templates are the trees `genie update`'s syncAuxiliaryContent also manages.
- * `.claude-plugin` carries the marketplace manifest, whose plugin entries
- * reference `./plugins/genie` RELATIVE to the manifest location — it must live
- * beside plugins/ so a marketplace root truly contains what the manifest
- * references (left in bin/, the manifest would dangle once plugins/ moves out).
+ * Auxiliary trees moved from `bin/` to the GENIE_HOME root — the same three
+ * trees `genie update`'s syncAuxiliaryContent manages. The Claude marketplace
+ * manifest dir (`.claude-plugin`) left the payload with the Claude plugin, so
+ * an extracted `.claude-plugin/` is no longer a managed layout dir.
  */
-const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates', '.claude-plugin'] as const;
+const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates'] as const;
 
 export interface InstallOptions {
   /** Set by --skip-v4-cleanup: leave v4-era artifacts in place. */

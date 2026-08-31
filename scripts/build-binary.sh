@@ -5,7 +5,7 @@
 # Local equivalent of one matrix leg of .github/workflows/build-tarballs.yml.
 # Produces dist/genie-<version>-<platform>.tar.gz containing:
 #   genie (bun --compile static executable),
-#   plugins/, skills/, templates/, runtime marketplaces, VERSION
+#   plugins/, skills/, templates/, VERSION
 #
 # Size budget: each tarball ≤80 MB compressed; the script fails if exceeded.
 # Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.
@@ -52,14 +52,8 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
 [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$ ]] \
   || { echo "error: invalid release version: ${VERSION}" >&2; exit 2; }
 
-# The committed plugin mirror is a release input, not a symlink that the
-# packager silently repairs. Fail before compiling if source and mirror drift.
-bun "${REPO_ROOT}/scripts/sync-plugin-skills.ts" --check
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
-bun "${REPO_ROOT}/scripts/hook-bundle-parity.ts" --check
 bun "${REPO_ROOT}/scripts/orca-bundle-parity.ts" --check
-bun "${REPO_ROOT}/scripts/hook-content-binding.ts" --check
-bun "${REPO_ROOT}/scripts/plugin-executables-check.ts"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
 
 STAGE="${DIST_DIR}/${PLATFORM}"
@@ -115,38 +109,21 @@ assert_no_release_tests() {
 
 prune_release_tests "${STAGE}"
 assert_no_release_tests "${STAGE}"
-mkdir -p "${STAGE}/.claude-plugin"
-cp "${REPO_ROOT}/.claude-plugin/marketplace.json" "${STAGE}/.claude-plugin/marketplace.json"
 
 # A workflow --version override applies to the staged artifact only. Stamp and
-# then independently verify every version-bearing copy so VERSION, plugin
-# package/manifests, and marketplace metadata cannot disagree after extract.
+# then independently verify every version-bearing copy so VERSION and the
+# plugin package/manifests cannot disagree after extract.
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERSION}"
 
 for required in \
   "LICENSE" \
-  ".claude-plugin/marketplace.json" \
-  "plugins/genie/.kimi-plugin/plugin.json" \
   "plugins/genie/orca-plugin.json" \
-  "plugins/genie/orca-entrypoint.min.js" \
-  "plugins/genie/.claude-plugin/plugin.json" \
-  "plugins/genie/hooks/hooks.json" \
-  "plugins/genie/hooks/codex-hooks.json"; do
+  "plugins/genie/orca-entrypoint.min.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 
-for skill_dir in "${REPO_ROOT}"/skills/*; do
-  [[ -f "${skill_dir}/SKILL.md" ]] || continue
-  skill="$(basename "${skill_dir}")"
-  [[ -f "${STAGE}/plugins/genie/skills/${skill}/SKILL.md" ]] \
-    || { echo "error: release plugin missing skill ${skill}" >&2; exit 1; }
-  [[ -f "${STAGE}/plugins/genie/skills/${skill}/agents/openai.yaml" ]] \
-    || { echo "error: release plugin missing Codex metadata for ${skill}" >&2; exit 1; }
-done
-
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
-  --skills-dir "${STAGE}/skills" \
-  --plugin-root "${STAGE}/plugins/genie"
+  --skills-dir "${STAGE}/skills"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${STAGE}" "${VERSION}"
 
 # Defense-in-depth for the consumer's exact-0700 staging-root assertion: `tar`
@@ -211,8 +188,7 @@ assert_release_tree_equal() {
 
 assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
-  --skills-dir "${VERIFY_ROOT}/skills" \
-  --plugin-root "${VERIFY_ROOT}/plugins/genie"
+  --skills-dir "${VERIFY_ROOT}/skills"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${VERIFY_ROOT}" "${VERSION}"
 rm -rf "${VERIFY_ROOT}"
 trap - EXIT

@@ -83,10 +83,10 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      # Pinned Node 22 (same action SHA as the codex-smoke job): the
-      # session-context tests drive the shipped hook under node and need
-      # node:sqlite (minimum Node 22.13) — without this pin the runner's
-      # driverless system node would skip the db-backed half of the suite.
+      # Pinned Node 22: parts of the suite spawn `node` (the design-review
+      # evidence tool the fresh-install smoke runs, and the node-targeted
+      # scripts under scripts/) and need a modern runtime — without this pin
+      # the runner's driverless system node would silently skip them.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
@@ -117,23 +117,8 @@ jobs:
       - name: Complexity budget
         run: bun run lint:complexity-budget
 
-      - name: Council workflow lint
-        run: bun run lint:council-workflow
-
-      - name: Generated hook bundle parity
-        run: bun run lint:hook-bundles
-
       - name: Native Orca bundle parity
         run: bun run lint:orca-bundle
-
-      - name: Codex hook launcher content binding
-        run: bun run lint:hook-content
-
-      - name: Shipped plugin executable static checks
-        run: bun run lint:plugin-executables
-
-      - name: Plugin skill mirror + Kimi command orphan check
-        run: bun run lint:plugin-skills
 
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orca Wish Planner"
-  short_description: "Turn a design into an Orca-dispatchable wish plan"
-  default_prompt: "Turn this reviewed design into an Orca-dispatchable Genie wish."

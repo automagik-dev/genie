@@ -12,11 +12,9 @@
  *
  * Syncs versions across:
  * - package.json (root)
- * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
- * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/orca-plugin.json (Orca)
  * - plugins/genie/package.json (runtime payload metadata)
- * - .claude-plugin/marketplace.json (marketplace listing)
+ * - plugins/pi-genie/package.json (pi extension)
  * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
  *
  * CI staging (GITHUB_ACTIONS only): after rewriting, this script `git add`s every
@@ -37,7 +35,6 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { replaceTopLevelStringProperty } from './json-top-level-string.js';
-import { assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
@@ -120,32 +117,6 @@ export async function updateYamlVersion(filePath: string, version: string): Prom
   }
 }
 
-export async function updateClaudeMarketplaceVersion(filePath: string, version: string): Promise<boolean> {
-  if (!existsSync(filePath)) {
-    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
-    return false;
-  }
-  try {
-    const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      throw new Error('marketplace must be an object');
-    const plugins = Reflect.get(parsed, 'plugins');
-    if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
-    const matches = plugins.filter((entry): entry is Record<string, unknown> =>
-      Boolean(entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie'),
-    );
-    if (matches.length !== 1) throw new Error('marketplace must contain exactly one genie entry');
-    if (typeof matches[0].version !== 'string') throw new Error('genie entry version must be a string');
-    matches[0].version = version;
-    await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`);
-    console.log(`  ✓ ${filePath}`);
-    return true;
-  } catch (err) {
-    console.error(`  ✗ Failed: ${filePath}`, err);
-    return false;
-  }
-}
-
 async function assertVersionFileShape(filePath: string): Promise<void> {
   if (!existsSync(filePath)) throw new Error('file is missing');
   const source = await readFile(filePath, 'utf-8');
@@ -160,20 +131,6 @@ async function assertYamlVersionFileShape(filePath: string): Promise<void> {
   const source = await readFile(filePath, 'utf-8');
   // Throws unless exactly one top-level version line is present.
   replaceTopLevelYamlVersion(source, '0.0.0');
-}
-
-async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
-  if (!existsSync(filePath)) throw new Error('file is missing');
-  const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('marketplace must be an object');
-  const plugins = Reflect.get(parsed, 'plugins');
-  if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
-  const matches = plugins.filter(
-    (entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie',
-  );
-  if (matches.length !== 1 || typeof Reflect.get(matches[0], 'version') !== 'string') {
-    throw new Error('marketplace must contain exactly one versioned genie entry');
-  }
 }
 
 /**
@@ -197,13 +154,10 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
   const paths = [
     join(rootDir, 'package.json'),
-    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),
     join(rootDir, 'plugins/genie/orca-plugin.json'),
     join(rootDir, 'plugins/genie/package.json'),
     join(rootDir, 'plugins/pi-genie/package.json'),
   ];
-  const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
   const yamlPaths = [join(rootDir, 'plugins/hermes-genie/plugin.yaml')];
   const preflightFailures: string[] = [];
   for (const path of paths) {
@@ -212,11 +166,6 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
     } catch (error) {
       preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-  try {
-    await assertClaudeMarketplaceShape(marketplacePath);
-  } catch (error) {
-    preflightFailures.push(`${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   for (const path of yamlPaths) {
     try {
@@ -231,8 +180,6 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
 
   const outcomes: Array<{ path: string; ok: boolean }> = [];
   for (const path of paths) outcomes.push({ path, ok: await updateJsonVersion(path, version) });
-
-  outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
   for (const path of yamlPaths) outcomes.push({ path, ok: await updateYamlVersion(path, version) });
 
   // Stage every file we actually rewrote so CI commits the full set (incl. YAML).
@@ -246,7 +193,6 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
 }
 
 async function main() {
-  assertPluginSkillsInSync();
   const version = generateVersion();
   const rootDir = join(dirname(import.meta.path), '..');
 

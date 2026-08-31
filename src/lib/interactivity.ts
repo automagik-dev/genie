@@ -31,16 +31,6 @@ export function isInteractive(): boolean {
 /**
  * Commands that do NOT require a workspace.
  * These are matched against the root-level command name (first subcommand under `genie`).
- *
- * `hook` is exempt because Claude Code calls `genie hook dispatch` on every
- * PreToolUse / Stop / UserPromptSubmit event from whatever cwd the user's
- * editor or terminal happens to be in — often far outside any `.genie/`
- * workspace. If the hook exits non-zero (which `ensureWorkspace` did for
- * any missing-workspace cwd, because hook stdin is piped so `isInteractive`
- * is always false), Claude Code treats it as a blocking deny and the tool
- * call dies. That was the fleet-breaking P0 regression in #1295: one
- * non-zero exit from a single hook invocation blocks every tool call on
- * the host. Hooks must never gate on environmental state.
  */
 const WORKSPACE_EXEMPT = new Set([
   '__install-promote',
@@ -54,7 +44,6 @@ const WORKSPACE_EXEMPT = new Set([
   'team',
   'version',
   'help',
-  'hook',
   // `task` / `board` / `launch` are the v5 sqlite-backed commands. They
   // self-resolve their shared `.genie/genie.db` from the git common-dir (see
   // src/lib/v5/genie-db.ts) and never read the v4 `.genie/workspace.json`, so

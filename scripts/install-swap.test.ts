@@ -74,7 +74,7 @@ function buildTarball(root: string, opts: { version: string; withBinary?: boolea
   }
   writeFileSync(join(tree, 'VERSION'), `${opts.version}\n`, { mode: 0o644 });
   writeFileSync(join(tree, 'LICENSE'), 'fixture license\n', { mode: 0o644 });
-  for (const name of ['plugins', 'skills', 'templates', '.claude-plugin']) {
+  for (const name of ['plugins', 'skills', 'templates']) {
     mkdirSync(join(tree, name), { recursive: true, mode: 0o755 });
     writeFileSync(join(tree, name, opts.sidecar ?? 'marker.txt'), `sidecar:${name}\n`, { mode: 0o644 });
   }
@@ -212,7 +212,7 @@ describe('install.sh transactional binary promotion (F31a)', () => {
     expect(readFileSync(join(layout.bin, 'VERSION'), 'utf8')).toBe('5.260714.1\n');
     const previous = join(layout.bin, '.previous');
     expect(existsSync(previous) ? readdirSync(previous) : []).toEqual([]);
-    for (const name of ['plugins', 'skills', 'templates', '.claude-plugin']) {
+    for (const name of ['plugins', 'skills', 'templates']) {
       expect(lstatSync(join(layout.bin, name)).isDirectory()).toBe(true);
       expect(lstatSync(join(layout.bin, name)).isSymbolicLink()).toBe(false);
     }

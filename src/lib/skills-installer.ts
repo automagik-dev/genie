@@ -74,11 +74,12 @@ export const SKILLS_CLI_VERSION = '1.5.23';
 /**
  * The delivered skills tree, relative to GENIE_HOME — the install source.
  *
- * A delivered `$GENIE_HOME` holds TWO physical skill trees (`build-binary.sh`
- * stages `plugins/` and `skills/` side by side, so `plugins/genie/skills/` is a
- * byte-identical committed mirror). The root is pinned EXPLICITLY to
- * `<GENIE_HOME>/skills` so the CLI can never see a two-root tree whose
- * discovery behaviour nobody has specified.
+ * The root is pinned EXPLICITLY to `<GENIE_HOME>/skills` rather than to
+ * `$GENIE_HOME` itself, so the CLI can never see a multi-root tree whose
+ * discovery behaviour nobody has specified. (Until the Claude plugin was
+ * deleted, a delivered `$GENIE_HOME` really did hold a second byte-identical
+ * tree at `plugins/genie/skills/`; the explicit pin is what made that safe and
+ * is what keeps any future sibling tree safe.)
  */
 export const SKILLS_SOURCE_DIR_NAME = 'skills';
 
@@ -481,13 +482,13 @@ export interface SkillsHomeScanOptions {
   sourceRoot: string;
   /**
    * Genie's own state root — pruned whole, because nothing genie delivers or
-   * backs up under it is an agent skill home. A delivered `$GENIE_HOME` holds
-   * TWO physical skill trees (`build-binary.sh` stages `plugins/` beside
-   * `skills/`, so `plugins/genie/skills/` is a byte-identical committed
-   * mirror); the mirror is byte-equal to the source and carries the tarball's
-   * own extraction stamp, so without this prune it can be selected as a home
-   * this install "wrote" — inflating the honest N and putting a path inside
-   * `$GENIE_HOME` into the uninstall manifest.
+   * backs up under it is an agent skill home. Any second physical skill tree
+   * inside `$GENIE_HOME` would be byte-equal to the source and carry the
+   * tarball's own extraction stamp — exactly what the selection rule keeps — so
+   * without this prune it could be selected as a home this install "wrote",
+   * inflating the honest N and putting a path inside `$GENIE_HOME` into the
+   * uninstall manifest. The `plugins/genie/skills/` mirror that motivated this
+   * left with the Claude plugin; the prune stays as the structural guarantee.
    */
   genieHome?: string;
   maxDepth?: number;

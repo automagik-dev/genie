@@ -5,13 +5,11 @@
  *
  * Template-derived, not vibecode: every structural rule is parsed from the
  * canonical template fixture (skills/wish/templates/wish-template.md),
- * embedded in this bundle at build time by esbuild's text loader. When the
- * template changes, the next `bun scripts/hook-bundle-parity.ts --write`
- * regen bakes the new shapes in, and the bundle-parity gate fails CI until
- * that regen lands — so template drift cannot silently wedge wish writes.
+ * imported with a text-type import so template drift cannot silently wedge
+ * wish writes.
  *
  * The read is bounded and refuses symlinks (readBoundedWishFile, the same
- * primitive the board and session-context use) with a 256 KiB size cap.
+ * primitive the board uses) with a 256 KiB size cap.
  *
  * Pure Node.js - no Bun dependency.
  *

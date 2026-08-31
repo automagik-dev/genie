@@ -53,8 +53,6 @@
       ".genie",
       ".worktrees",
       ".claude",
-      "plugins/genie/scripts",
-      "plugins/genie/workflows",
       "scripts/validate-wish.ts",
       "scripts/wish-template-text.d.ts",
       ".docs-vendor",

@@ -5,12 +5,11 @@
  *
  * `plugins/genie/orca-entrypoint.min.js` is the file the Orca host executes
  * (`plugins/genie/orca-plugin.json` → `main`). It ships inside every signed
- * tarball, yet it sits outside tsc, biome, knip and the hook-bundle gate, so a
- * commit that edits only the blob would pass `bun run check`, get attested,
- * and reach every operator. Provenance proves origin, not correspondence to
- * reviewed source. This script binds the committed bundle byte-for-byte to
- * `plugins/genie/orca-entrypoint.ts`, exactly like `hook-bundle-parity.ts`
- * does for the generated hook executables.
+ * tarball, yet it sits outside tsc, biome and knip, so a commit that edits only
+ * the blob would pass `bun run check`, get attested, and reach every operator.
+ * Provenance proves origin, not correspondence to reviewed source. This script
+ * binds the committed bundle byte-for-byte to
+ * `plugins/genie/orca-entrypoint.ts`.
  *
  * esbuild (a pinned devDependency) renders the bundle so the bytes do not
  * depend on the Bun version of whoever last ran `--write`.

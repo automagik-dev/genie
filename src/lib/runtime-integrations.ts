@@ -545,14 +545,12 @@ function safeRealpath(path: string): string | null {
 }
 
 /**
- * Locate the directory that contains `plugins/genie` plus the marketplace
- * manifests (`.agents/plugins/marketplace.json`, `.claude-plugin/marketplace.json`).
+ * Locate the directory that contains the `plugins/genie` payload.
  *
  * Probe order (first qualifying root wins):
  *   1. explicit argument / GENIE_BUNDLE_ROOT — caller's assertion, unvalidated
  *   2. GENIE_HOME (`~/.genie`) — the installed layout: install.sh extracts to
- *      `~/.genie/bin/` and normalizeAuxLayout moves plugins/ + manifests to the
- *      home root, so the home itself is the marketplace root
+ *      `~/.genie/bin/` and normalizeAuxLayout moves plugins/ to the home root
  *   3. dirname(execPath) and its parent (both as-invoked and symlink-resolved) —
  *      covers a binary run straight out of an unpacked tarball
  *   4. `import.meta.dir/../..` — source checkout under `bun test`/`bun run`;

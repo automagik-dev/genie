@@ -16,10 +16,9 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 
 - `src/genie.ts` is the Commander CLI entry point.
 - `src/lib/v5/` owns SQLite state. Per-repo `.genie/genie.db` stores task state; global `~/.genie/genie.db` stores Omni state. Never mix their path/schema modules.
-- `src/hooks/` owns provider-neutral lifecycle policy plus Claude/Codex wire adapters.
 - `src/term-commands/` owns `init`, `context`, MCP, Omni, task, and board commands.
-- `plugins/genie/` is one shared plugin payload with sibling Claude and Codex manifests.
-- `skills/` is shared runtime-neutral workflow guidance. Runtime mapping lives in `plugins/genie/references/native-surfaces.md`.
+- `plugins/genie/` is the Orca plugin payload: the native manifest, its entrypoint bundle, and `references/orca-orchestration.md`.
+- `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel.
 - `.genie/` contains git-tracked wishes/brainstorms/index plus gitignored operational SQLite files.
 
 Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` bridge. Do not use telemetry presence as integration health.
