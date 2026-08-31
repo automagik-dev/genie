@@ -109,11 +109,9 @@ describe('retireProjectMcpConfigs', () => {
 describe('shipped plugin payload', () => {
   test('contains no Genie-owned MCP route, capability, launcher, or server', () => {
     const plugin = join(import.meta.dir, '..', '..', 'plugins', 'genie');
-    const manifests = [
-      join(plugin, '.claude-plugin', 'plugin.json'),
-      join(plugin, '.kimi-plugin', 'plugin.json'),
-      join(plugin, 'orca-plugin.json'),
-    ];
+    // The Claude and Kimi manifests left with their payloads; the Orca manifest
+    // and the compatibility metadata beside it are what still ships.
+    const manifests = [join(plugin, 'orca-plugin.json'), join(plugin, 'plugin.json')];
     for (const path of manifests) {
       const text = readFileSync(path, 'utf8');
       expect(text).not.toContain('mcpServers');
