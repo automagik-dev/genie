@@ -7,18 +7,18 @@ export interface ReleasableLifecycleLease {
 export type OrderedLifecycleLeaseAcquisition =
   | {
       ok: true;
-      agentSyncLease: LifecycleLease;
+      lifecycleLease: LifecycleLease;
     }
   | {
       ok: false;
-      busy: 'agent-sync';
+      busy: 'lifecycle';
       detail: string;
     };
 
 export type HeldOrderedLifecycleLeases = Extract<OrderedLifecycleLeaseAcquisition, { ok: true }>;
 
 /**
- * The one busy sentence every lifecycle path prints for an agent-sync holder.
+ * The one busy sentence every lifecycle path prints for a live lease holder.
  * It carries the acquirer's own (path-naming) detail forward.
  *
  * Three consumers: `update.ts` (no suffix), `install.ts` (no suffix), and
@@ -33,22 +33,22 @@ export function lifecycleBusyMessage(detail: string, suffix?: string): string {
 /**
  * Acquire the process-wide lifecycle lease.
  *
- * This was an ordered pair (agent-sync outer, Codex inner) while the Codex
- * plugin owned its own lease; with that subsystem retired the pair collapses to
- * the single remaining lease. The tagged shape is kept so every lifecycle
- * command keeps its one busy-projection site.
+ * This was an ordered pair while the Codex plugin owned its own lease and the
+ * per-agent convergence engine held the outer half; with both retired the pair
+ * collapses to the single remaining lease. The tagged shape is kept so every
+ * lifecycle command keeps its one busy-projection site.
  */
 export function acquireOrderedLifecycleLeases(
-  acquireAgentSync: () => LifecycleLease | { skipped: string },
+  acquire: () => LifecycleLease | { skipped: string },
 ): OrderedLifecycleLeaseAcquisition {
-  const agentSyncLease = acquireAgentSync();
-  if ('skipped' in agentSyncLease) {
-    return { ok: false, busy: 'agent-sync', detail: agentSyncLease.skipped };
+  const lifecycleLease = acquire();
+  if ('skipped' in lifecycleLease) {
+    return { ok: false, busy: 'lifecycle', detail: lifecycleLease.skipped };
   }
-  return { ok: true, agentSyncLease };
+  return { ok: true, lifecycleLease };
 }
 
 /** Release the held lifecycle lease. */
-export function releaseOrderedLifecycleLeases(agentSyncLease: ReleasableLifecycleLease): void {
-  agentSyncLease.release();
+export function releaseOrderedLifecycleLeases(lifecycleLease: ReleasableLifecycleLease): void {
+  lifecycleLease.release();
 }

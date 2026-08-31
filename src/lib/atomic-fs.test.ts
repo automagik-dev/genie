@@ -1,9 +1,8 @@
 /**
- * Tests for the atomic filesystem primitives. Split verbatim out of
- * `agent-sync.test.ts` when the primitives moved into their own module; the
- * blocks below are unchanged apart from their imports and the minimal tmpdir
- * fixture they need (the full agent-sync fixture built agent target dirs these
- * tests never touch).
+ * Tests for the atomic filesystem primitives. Split verbatim out of the
+ * per-agent convergence engine's suite when the primitives moved into their own
+ * module; the blocks below are unchanged apart from their imports and the
+ * minimal tmpdir fixture they need.
  *
  * Run with: bun test src/lib/atomic-fs.test.ts
  */

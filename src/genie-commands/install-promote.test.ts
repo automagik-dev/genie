@@ -16,8 +16,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LIFECYCLE_LEASE_OWNER_ENV, LIFECYCLE_LEASE_PATH_ENV, lifecycleLockPath } from '../lib/agent-sync.js';
 import { type InstallPromotionDependencies, recoverPendingInstallPromotions } from '../lib/install-promotion.js';
+import { LIFECYCLE_LEASE_OWNER_ENV, LIFECYCLE_LEASE_PATH_ENV, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import {
   type InstallPromoteCommandDependencies,
   InstallPromoteCommandError,

@@ -20,7 +20,6 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { type AgentSyncReport, type AgentSyncSelection, runAgentSync } from '../lib/agent-sync.js';
 import {
   type DeliveryEvidenceChannel,
   type DeliveryEvidencePlatformId,
@@ -1718,59 +1717,12 @@ function childExitStatus(cause: unknown): number | null {
 }
 
 /**
- * Gate the agent-sync scope for update. R2/A1 (agent-sync must never write
- * codex product skills into ~/.agents/skills) is structural in `runAgentSync`
- * itself now — there is no `codex` arm to narrow away from — so this only
- * skips agent-sync where it has nothing to do: `none` and `codex` (setup owns
- * Codex convergence). `auto`/`all`/`claude` pass through UNCHANGED so
- * `runAgentSync` sees the real selection and converges hermes on `auto`/`all`.
- */
-export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
-  return selection === 'none' || selection === 'codex' ? null : selection;
-}
-
-/**
- * Update delivery owns no Codex activation surfaces. Claude refresh remains
- * update-owned; Hermes continues through agent-sync. Returning null prevents
- * even a Codex query when Codex is the only selected integration.
+ * Update delivery owns no Codex activation surfaces; the Claude plugin refresh
+ * is the only client convergence left. Returning null prevents even a Codex
+ * query when Codex is the only selected integration.
  */
 export function narrowUpdatePluginRefreshSelection(selection: IntegrationSelection): 'claude' | null {
   return selection === 'none' || selection === 'codex' ? null : 'claude';
-}
-
-/** Update-owned agent sync cannot cross into setup-owned Codex role convergence. */
-export function runUpdateAgentSync(
-  selection: IntegrationSelection,
-  sync: typeof runAgentSyncSafe = runAgentSyncSafe,
-): AgentSyncReport | null {
-  return sync({ strict: true, selection });
-}
-
-export interface LegacySyncOnlyConvergenceOptions {
-  selection: IntegrationSelection;
-  /** Retained for the call signature and structure tests; sync-only never reads a version. */
-  expectedVersion: string;
-  sync?: () => void;
-  log?: (line: string) => void;
-}
-
-/**
- * D2 (wish decision 3, Felipe-ratified): legacy `--sync-only` is a pure
- * agent-sync compatibility path. It branches BEFORE every Codex activation
- * observer, classifier, authorization, plugin query, or mutation — it never
- * lists, probes, inspects, enables, installs, or swaps the Codex plugin — and a
- * genuine agent-sync failure is its ONLY nonzero result. Codex product skills
- * are never rewritten under ~/.agents/skills (R2/A1) — that guarantee is
- * structural in `runAgentSync`, not a Claude-only narrowing here.
- */
-export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
-  const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
-  (
-    options.sync ??
-    (() => {
-      if (agentSyncSelection !== null) runUpdateAgentSync(agentSyncSelection);
-    })
-  )();
 }
 
 function announceUpdatePlanOrExit(
@@ -1792,11 +1744,16 @@ function announceUpdatePlanOrExit(
   return latestVersion;
 }
 
+/**
+ * Legacy `--sync-only` (and `GENIE_UPDATE_SYNC_ONLY=1`): converge the client
+ * surfaces this binary still owns and return — no manifest fetch, no binary
+ * swap. The per-agent convergence engine that once WAS this mode is gone, so the
+ * convergence it runs is the ordinary post-delivery one (skills channel, then
+ * Claude plugin refresh, then plugin-era retirement) against the running
+ * binary's own VERSION. It branches before every network and delivery step.
+ */
 function runLegacySyncOnlyMode(): void {
-  // Consent is re-read under the lease so a concurrent lifecycle command
-  // cannot change the selected client-home scope between plan and write.
-  const selection = readIntegrationConsent(GENIE_HOME);
-  runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION });
+  runTrackedManualUpdateConvergence(VERSION);
 }
 
 function runPostDeliveryConvergenceMode(): void {
@@ -2224,8 +2181,8 @@ function acquireUpdateLifecycleLeasesOrProject(
 ): HeldOrderedLifecycleLeases | null {
   // The wait wraps whichever acquirer is in play — the injected seam included —
   // so a test seam and production share one retry policy.
-  const acquireAgentSync = dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME));
-  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireAgentSync));
+  const acquireLease = dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME));
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (acquired.ok) return acquired;
   projectDeferredUpdateTerminal(new DeferredUpdateTerminal(2, lifecycleBusyMessage(acquired.detail)));
   return null;
@@ -2283,7 +2240,7 @@ export async function updateCommand(
 
   const acquired = acquireUpdateLifecycleLeasesOrProject(dependencies);
   if (acquired === null) return;
-  const { agentSyncLease: lifecycleLease } = acquired;
+  const { lifecycleLease } = acquired;
   let terminal: DeferredUpdateTerminal | null = null;
   try {
     try {
@@ -2375,87 +2332,6 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
 }
 
 /**
- * Agent-sync phase — converge the selected Claude/Hermes surfaces from the
- * canonical source root.
- *
- * Non-fatal by default — an engine failure becomes a single advisory line.
- * The `~/.genie/.last-agent-sync` throttle marker is refreshed only after all
- * surfaces authorized for this invocation converge without a reported failure;
- * partial work therefore remains immediately retryable.
- *
- * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
- * runV4CleanupSafe) so the wiring is unit-testable without
- * touching a real home directory.
- */
-export interface RunAgentSyncSafeOptions {
-  /** Test seam: replaces the real agent-sync engine call. */
-  sync?: typeof runAgentSync;
-  /** Test seam: sink for the compact summary; defaults to the module `log`. */
-  log?: (line: string) => void;
-  /** Throttle marker path; defaults to `<GENIE_HOME>/.last-agent-sync`. */
-  markerPath?: string;
-  /** Injectable clock for the marker timestamp. */
-  now?: () => Date;
-  /** Explicit lifecycle commands fail instead of converting convergence errors to warnings. */
-  strict?: boolean;
-  selection?: AgentSyncSelection;
-}
-
-export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): AgentSyncReport | null {
-  const emit = opts.log ?? log;
-  let successful = false;
-  try {
-    const report = (opts.sync ?? runAgentSync)({ selection: opts.selection });
-    for (const line of formatAgentSyncSummary(report)) emit(line);
-    const failures = report.agents.flatMap((agent) => agent.failures ?? []);
-    if (report.source.pluginRoot === null) failures.push('no Genie plugin source was available');
-    if (report.skipped) failures.push(report.skipped);
-    if (opts.strict && failures.length > 0) throw new Error(failures.join('; '));
-    successful = failures.length === 0;
-    if (successful) {
-      touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
-    }
-    return report;
-  } catch (err) {
-    emit(`agent sync failed: ${errMsg(err)} — will retry on the next genie update`);
-    if (opts.strict) throw err;
-    return null;
-  }
-}
-
-/** Compact per-agent summary: detected + counts by action + advisories. */
-function formatAgentSyncSummary(report: AgentSyncReport): string[] {
-  if (report.source.pluginRoot === null) {
-    return ['agent-sync: no genie plugin source found (plugins/genie); skipped'];
-  }
-  if (report.skipped) return [`agent-sync: ${report.skipped}`];
-  const lines: string[] = [];
-  for (const agent of report.agents) {
-    if (!agent.detected) {
-      lines.push(`agent-sync: ${agent.agent} not detected — skipped`);
-      continue;
-    }
-    const counts = new Map<string, number>();
-    for (const skill of agent.skills) counts.set(skill.action, (counts.get(skill.action) ?? 0) + 1);
-    const parts = [...counts.entries()].map(([action, n]) => `${action} ${n}`);
-    for (const extra of agent.extras) parts.push(`${extra.kind} ${extra.action}`);
-    lines.push(`agent-sync: ${agent.agent} — ${parts.join(', ') || 'no changes'}`);
-    for (const advisory of agent.advisories) lines.push(`  ${agent.agent}: ${advisory}`);
-  }
-  if (report.backupsDir !== null) lines.push(`agent-sync: backups saved to ${report.backupsDir}`);
-  return lines;
-}
-
-/** Best-effort refresh of the SessionStart-hook throttle marker (ISO string). */
-function touchAgentSyncMarker(markerPath: string, now: Date): void {
-  try {
-    writeFileSync(markerPath, `${now.toISOString()}\n`);
-  } catch {
-    // the marker only optimizes the hook throttle; never fail the sync over it.
-  }
-}
-
-/**
  * Canonical operator-driven convergence routine. After delivery it runs only
  * inside the fresh binary's explicit `--post-delivery-converge` mode; already-
  * current and blocked-downgrade paths can call it in-process. Never launch a
@@ -2465,7 +2341,6 @@ function touchAgentSyncMarker(markerPath: string, now: Date): void {
 export interface ManualUpdateConvergenceOptions {
   expectedVersion: string;
   bundleRoot?: string;
-  runSync?: () => void;
   refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
   log?: (line: string) => void;
   /** Persisted operator scope; explicit Codex authority is written only by setup. */
@@ -2516,20 +2391,13 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
   if (selection === 'none') return { integrations: [], skills: null, retirement: null };
-  // Skills FIRST, before agent-sync: a host must never pass through a state
-  // with neither plugin skills nor skills.sh skills (wish `skills-everywhere`
+  // Skills FIRST: a host must never pass through a state with neither the
+  // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
   // (`--all`) — the accepted consent widening of wish decision 3. A failure
   // here reports the remedy and sets exit 1; it never rolls back the promoted
   // binary and never blocks the remaining convergence.
   const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
-  // `runAgentSync` has no codex arm, so it structurally never writes Codex
-  // product skills or roles. A full update passes the real non-Codex selection
-  // through so auto/all still converge Claude + Hermes.
-  const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
-  if (agentSyncSelection !== null) {
-    (options.runSync ?? (() => runUpdateAgentSync(agentSyncSelection)))();
-  }
   const pluginSelection = narrowUpdatePluginRefreshSelection(selection);
   const integrations =
     pluginSelection === null
@@ -2854,8 +2722,8 @@ async function runDelivery(
     await refreshOrcaOwnershipAfterDelivery();
     return auxiliaryOutcomes;
   } finally {
-    // The command boundary owns both lifecycle leases. This scope only closes
-    // admitted staging; the caller releases Codex first, then agent-sync.
+    // The command boundary owns the lifecycle lease. This scope only closes
+    // admitted staging; the caller releases the lease.
     if (admitted !== null) {
       try {
         if (promotionComplete) removeInstallStagingDirectory(admitted);

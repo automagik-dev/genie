@@ -24,7 +24,7 @@
  * VERSION, which is exactly what doctor's freshness check compares.
  *
  * The pinned CLI has no `--json` mode, so its stdout is never parsed for state.
- * What genie needs later — freshness (doctor), writer suppression (agent-sync),
+ * What genie needs later — freshness (doctor),
  * and deterministic removal (uninstall) — comes from a record genie writes
  * itself at `<GENIE_HOME>/skills-install.json`, and only after a zero exit.
  * That record must name every directory the CLI actually wrote: on the
@@ -936,7 +936,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   if (result.exitCode !== 0) return { ok: false, reason: describeFailure(result), remedy, warnings };
 
   // A zero exit with nothing to record is not a success: the delivered tree is
-  // what doctor's freshness check, agent-sync's writer suppression, and
+  // what doctor's freshness check and
   // uninstall's removal all read back. Recording an empty inventory would make
   // uninstall a silent no-op over skills that are actually on disk.
   if (inventory.length === 0) return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy, warnings };

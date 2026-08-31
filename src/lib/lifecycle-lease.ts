@@ -3,8 +3,8 @@
  * update, setup, uninstall) serialize on, plus the owner-record protocol it
  * shares byte-for-byte with the shell installer.
  *
- * Moved verbatim out of `agent-sync.ts`. It depends only on `atomic-fs.ts` and
- * `genie-home.ts`; nothing here imports `agent-sync.ts`.
+ * It depends only on `atomic-fs.ts` and `genie-home.ts` and sits at the bottom
+ * of the module graph; nothing here imports a command module.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -78,7 +78,7 @@ function acquireFileLock(lockPath: string): { release: () => void } | LifecycleL
     if (stealStaleFileLock(lockPath) === 'contended') return heldLockSkip(lockPath);
     // stale debris cleared — loop and retry the exclusive create
   }
-  return { skipped: 'agent-sync lock remained contended after retries; skipped safely', cause: 'contended' };
+  return { skipped: 'lifecycle lock remained contended after retries; skipped safely', cause: 'contended' };
 }
 
 /**
@@ -121,7 +121,7 @@ function tryInitializeFileLock(lockPath: string): LockCreateAttempt {
     const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
     return code === 'EEXIST'
       ? { status: 'exists' }
-      : { status: 'failed', reason: `could not acquire agent-sync lock (${code}); skipped safely` };
+      : { status: 'failed', reason: `could not acquire lifecycle lock (${code}); skipped safely` };
   }
   let failure: unknown;
   try {
@@ -142,16 +142,16 @@ function tryInitializeFileLock(lockPath: string): LockCreateAttempt {
   // fails closed and is handled by the stale-lock path later.
   releaseOwnedLock(lockPath, ownerRecord);
   const code = (failure as NodeJS.ErrnoException).code ?? 'unknown';
-  return { status: 'failed', reason: `could not initialize agent-sync lock (${code}); skipped safely` };
+  return { status: 'failed', reason: `could not initialize lifecycle lock (${code}); skipped safely` };
 }
 
 /**
  * The lock is held by someone we may not displace: a live owner, a cross-host
  * owner, or a record whose liveness could not be disproved. The message names
  * the exact file so an operator can inspect or remove it. The previous wording
- * reassured the reader that the holder was converging the same targets — true
- * for the agent-sync report skip (which keeps its own literal), FALSE for this
- * lease, where the holder may be an unrelated update/install/setup/uninstall.
+ * reassured the reader that the holder was converging the same targets, which
+ * is FALSE for this lease: the holder may be an unrelated
+ * update/install/setup/uninstall.
  * It also gave the reader nothing actionable.
  */
 function heldLockSkip(lockPath: string): LifecycleLeaseSkip {
@@ -210,8 +210,8 @@ function lockOwner(lockPath: string): LockOwner | null {
  * in TS alone would desynchronize the two acquirers AND still leave the shell
  * able to cross-host-steal — trading a real regression for incomplete safety.
  * Because every lock written after this change carries a host field — INCLUDING
- * every retirement lock (TS-only) and every post-upgrade agent-sync/lifecycle
- * lock — cross-host steal is prevented everywhere it can actually occur; only
+ * every retirement lock (TS-only) and every post-upgrade lifecycle lock —
+ * cross-host steal is prevented everywhere it can actually occur; only
  * transient legacy/shell-shaped records retain the prior semantics, in lockstep
  * with the shell.
  */

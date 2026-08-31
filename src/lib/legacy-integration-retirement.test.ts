@@ -3,10 +3,12 @@
  *
  * Everything runs inside one tmpdir standing in for `$HOME`: every agent root is
  * injected, so the real home is never read or written. Real files, no mocks —
- * the managed assets are built with the SAME primitives production uses
- * (`stampWorkflow`, `installCodexAgents`, `computeDirDigest`-backed manifests),
- * because a fixture that fakes ownership metadata would prove nothing about the
- * classifiers this module delegates to.
+ * the managed assets are written in exactly the on-disk shape a plugin-era
+ * Genie left behind (`computeDirDigest`/`computeFileDigest`-backed manifests,
+ * the stamped-workflow sidecar, the v2 role-agent inventory), because a fixture
+ * that fakes ownership metadata would prove nothing about the classifiers this
+ * module delegates to. The writers that once produced them left with the plugin
+ * subsystem, so the fixture builders below are the record of their format.
  *
  * Run with: bun test src/lib/legacy-integration-retirement.test.ts
  */
@@ -29,7 +31,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { computeDirDigest, computeFileDigest, stampWorkflow } from './agent-sync';
+import { computeDirDigest, computeFileDigest } from './atomic-fs';
 import {
   LEGACY_INTEGRATION_SURFACES,
   type LegacyIntegrationEntry,
@@ -40,7 +42,7 @@ import {
   retireLegacyIntegrations,
   runLegacyIntegrationRetirement,
 } from './legacy-integration-retirement';
-import { inspectRuntimeIntegrationEvidence, installCodexAgents } from './runtime-integrations';
+import { inspectRuntimeIntegrationEvidence } from './runtime-integrations';
 
 const MANIFEST_NAME = '.genie-sync.json';
 const MANAGED_ROLE_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
@@ -122,6 +124,48 @@ function writeManagedSkill(dir: string, files: Record<string, string>): void {
   );
 }
 
+/** The stamped council workflow plus its ownership sidecar, as the stamper left them. */
+function writeManagedCouncilWorkflow(workflowsDir: string, body: string): void {
+  const targetPath = join(workflowsDir, 'council.js');
+  write(targetPath, body);
+  chmodSync(targetPath, 0o644);
+  const manifestPath = join(workflowsDir, 'council.js.genie-sync.json');
+  write(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        managedBy: 'genie-agent-sync',
+        version: '9.9.9',
+        digest: computeFileDigest(targetPath),
+        syncedAt: FIXED_NOW.toISOString(),
+        identityVersion: 2,
+        targetMode: 0o644,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  chmodSync(manifestPath, 0o644);
+}
+
+/** Codex role agents plus the v2 ownership inventory, as the role writer left them. */
+function writeManagedCodexRoleAgents(codexHome: string, files: Record<string, string>): void {
+  const agentsDir = join(codexHome, 'agents');
+  const inventory: Record<string, { identity: { kind: 'regular'; mode: number; digest: string } }> = {};
+  for (const [name, content] of Object.entries(files)) {
+    const path = join(agentsDir, name);
+    write(path, content);
+    chmodSync(path, 0o644);
+    inventory[name] = { identity: { kind: 'regular', mode: 0o644, digest: computeFileDigest(path) } };
+  }
+  const inventoryPath = join(agentsDir, '.genie-role-agents.json');
+  write(
+    inventoryPath,
+    `${JSON.stringify({ version: 2, managedBy: 'genie-codex-role-agents', files: inventory }, null, 2)}\n`,
+  );
+  chmodSync(inventoryPath, 0o600);
+}
+
 /** The shared per-file Claude role-agent manifest, as the flat-agent writer leaves it. */
 function writeManagedClaudeAgents(agentsDir: string, files: Record<string, string>): void {
   const manifest: Record<string, { digest: string; version: string | null; syncedAt: string }> = {};
@@ -185,9 +229,7 @@ function populateClean(fixture: Fixture): void {
     '[otel]\nexporter = "keep"\n\n[plugins."genie@automagik"]\nenabled = true\n\n[hooks.state]\n"genie@automagik:session_start" = "approved"\n',
   );
   write(join(fixture.codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260830.19', 'plugin.json'), '{}\n');
-  const bundleRoot = join(fixture.genieHome, 'bundle');
-  write(join(bundleRoot, 'plugins', 'genie', 'codex-agents', 'genie-reviewer.toml'), MANAGED_ROLE_TOML);
-  installCodexAgents(bundleRoot, fixture.codexHome);
+  writeManagedCodexRoleAgents(fixture.codexHome, { 'genie-reviewer.toml': MANAGED_ROLE_TOML });
   writeManagedSkill(join(fixture.codexHome, 'skills', '.curated', 'legacy-curated'), { 'SKILL.md': '# curated\n' });
 
   write(
@@ -215,15 +257,10 @@ function populateClean(fixture: Fixture): void {
     `${JSON.stringify({ model: 'opus', enabledPlugins: { 'genie@automagik': true, 'other@market': true } }, null, 2)}\n`,
   );
   write(join(fixture.pluginRoot, 'workflows', 'council.js'), TEMPLATE_BODY);
-  expect(
-    stampWorkflow({
-      templatePath: join(fixture.pluginRoot, 'workflows', 'council.js'),
-      pluginRoot: fixture.pluginRoot,
-      targetDir: join(fixture.claudeDir, 'workflows'),
-      version: '9.9.9',
-      now: () => FIXED_NOW,
-    }).action,
-  ).toBe('written');
+  writeManagedCouncilWorkflow(
+    join(fixture.claudeDir, 'workflows'),
+    TEMPLATE_BODY.replace('__GENIE_LENS_ROOT__', fixture.pluginRoot),
+  );
   writeManagedClaudeAgents(join(fixture.claudeDir, 'agents'), { 'genie-reviewer.md': '# reviewer\n' });
   writeManagedSkill(join(fixture.claudeDir, 'skills', 'legacy-mirror'), { 'SKILL.md': '# legacy mirror\n' });
 

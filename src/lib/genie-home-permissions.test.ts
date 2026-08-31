@@ -256,20 +256,7 @@ interface ScanExemption {
  * still fires, so a moved or edited call site is a named test failure rather
  * than a silent re-classification.
  */
-const SCAN_EXEMPTIONS: ScanExemption[] = [
-  {
-    file: 'src/lib/agent-sync.ts',
-    call: 'mkdirSync(before, { recursive: true })',
-    anchor: "const before = join(transactionDir, 'before');",
-    // Triggered by the identifier `before`: the scan's file-scoped const map
-    // resolves it to the file's FIRST `const before = lstatSync(path)`,
-    // whose `path` cascades into a genieHome token. The
-    // real target here is `join(transactionDir, 'before')` inside a council
-    // workflow transaction dir the preceding renameSync already published, so
-    // GENIE_HOME is never created.
-    reason: 'council workflow transaction dir, not GENIE_HOME (scan token collision)',
-  },
-];
+const SCAN_EXEMPTIONS: ScanExemption[] = [];
 
 /** Index of every exemption the last scan actually consumed. */
 function exemptionIndex(file: string, call: string): number {

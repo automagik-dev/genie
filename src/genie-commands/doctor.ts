@@ -156,7 +156,7 @@ function whichBinary(name: string): string | null {
       return null;
     }
   }
-  // Node fallback — same policy as detectPiBinary/detectHermesBinary in agent-sync.
+  // Node fallback — the same policy the retired per-agent binary detectors used.
   try {
     const found = execFileSync('which', [name], { encoding: 'utf8' }).trim();
     return found === '' ? null : found;

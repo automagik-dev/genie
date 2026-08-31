@@ -143,7 +143,7 @@ describe('install.sh .steal lifecycle-lock protocol (F42/F45–F47/F50 — must 
   // The ordered set of functions that make up the durable `.steal` recovery
   // protocol + its shell/TS parity. Their concatenated source is pinned so any
   // edit to this contract fails loudly. To intentionally rotate the pin, change
-  // these functions in lockstep with src/lib/agent-sync.ts's stealStaleLock and
+  // these functions in lockstep with src/lib/lifecycle-lease.ts's stealStaleLock and
   // update the digest below in the SAME review.
   const PROTECTED_FUNCTIONS = [
     'logical_absolute_path',
