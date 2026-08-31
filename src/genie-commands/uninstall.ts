@@ -42,13 +42,9 @@ import {
   type FlatAgentOp,
   type FlatAgentOutcome,
   KEPT_SUFFIX,
-  type LifecycleLease,
-  type LifecycleLeaseSkip,
   MANIFEST_NAME,
   TARGET_NAME,
   acquireAgentSyncLock,
-  acquireLifecycleLease,
-  acquireLifecycleLeaseWithWait,
   allocateExclusiveBackupRoot,
   captureAgentPathSnapshot,
   codexLegacyCuratedDir,
@@ -84,6 +80,12 @@ import {
   resolvePiExtensionsDir,
 } from '../lib/genie-home.js';
 import {
+  type LifecycleLease,
+  type LifecycleLeaseSkip,
+  acquireLifecycleLease,
+  acquireLifecycleLeaseWithWait,
+} from '../lib/lifecycle-lease.js';
+import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
   lifecycleBusyMessage,
@@ -96,6 +98,13 @@ import {
   removeRuntimeIntegrations,
   resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
+import {
+  type SkillsInstallRecord,
+  computeSkillDirDigest,
+  deleteSkillsInstallRecord,
+  isSafeSkillName,
+  readSkillsInstallRecord,
+} from '../lib/skills-installer.js';
 import { detectV4Install } from './legacy-v4.js';
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
@@ -3341,6 +3350,89 @@ function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
   };
 }
 
+/**
+ * What `genie uninstall` removed from the skills.sh channel.
+ *
+ * Removal is record-driven AND digest-verified: only a `<agentDir>/<inventory
+ * name>` directory named by `<GENIE_HOME>/skills-install.json` whose recomputed
+ * content digest still matches the recorded one is deleted, so a user-replaced
+ * or foreign same-name directory (generic names like `fix` or `docs` in shared
+ * homes) is preserved and reported rather than recursively destroyed. A foreign
+ * skill the record never named is structurally out of reach, and no record at
+ * all (never installed through the channel, or already uninstalled) is a no-op.
+ */
+export interface SkillsChannelRemoval {
+  record: SkillsInstallRecord | null;
+  removed: string[];
+  failures: string[];
+  /**
+   * Real directories at recorded paths that were NOT deleted because genie
+   * cannot prove they are still its own install: the record predates content
+   * digests (5.260830.x) or the content changed since. Data safety beats
+   * cleanliness — they stay in place and are reported, never removed.
+   */
+  preserved: string[];
+  recordRemoved: boolean;
+}
+
+export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
+  const record = readSkillsInstallRecord(genieHome);
+  if (record === null) return { record: null, removed: [], failures: [], preserved: [], recordRemoved: false };
+  const removed: string[] = [];
+  const failures: string[] = [];
+  const preserved: string[] = [];
+  for (const agentDir of record.agentDirs) {
+    if (!isAbsolute(agentDir)) continue;
+    for (const name of record.inventory) {
+      // One traversal guard, owned by the module that also writes the record.
+      if (!isSafeSkillName(name)) continue;
+      const target = join(agentDir, name);
+      const stat = lstatOrNull(target);
+      // Only real directories genie recorded; a symlink or file at that name
+      // was not written by `--copy` and stays untouched.
+      if (stat === null || !stat.isDirectory()) continue;
+      // Delete only what the record can prove is still genie's byte-identical
+      // install. No digest entry (a legacy record, or a directory that appeared
+      // after the install) or a digest mismatch (user-modified/foreign content)
+      // preserves the directory instead — never delete unverified directories.
+      const recordedDigest = record.dirDigests?.[target];
+      const currentDigest = computeSkillDirDigest(target);
+      if (recordedDigest === undefined || currentDigest === null || currentDigest !== recordedDigest) {
+        preserved.push(target);
+        continue;
+      }
+      try {
+        rmSync(target, { recursive: true, force: true });
+        removed.push(target);
+      } catch (error) {
+        failures.push(`${target}: ${errorMessage(error)}`);
+      }
+    }
+  }
+  // The record is the receipt for retrying an incomplete removal, so it is
+  // deleted only after a fully clean sweep of every recorded directory.
+  if (failures.length > 0 || preserved.length > 0) {
+    return { record, removed, failures, preserved, recordRemoved: false };
+  }
+  return { record, removed, failures, preserved, recordRemoved: deleteSkillsInstallRecord(genieHome) };
+}
+
+function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
+  if (removal.record === null) {
+    console.log('\x1b[36mi\x1b[0m skills.sh channel: no install record; nothing to remove.');
+    return;
+  }
+  console.log(
+    `  \x1b[32m+\x1b[0m skills.sh channel: removed ${removal.removed.length} recorded skill dir(s) (${removal.record.ref})`,
+  );
+  for (const failure of removal.failures) console.log(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
+  for (const dir of removal.preserved) {
+    console.log(
+      `  \x1b[33m~\x1b[0m skills.sh channel: preserved ${dir} (unverified: content differs from the recorded install or the record predates digests)`,
+    );
+  }
+}
+
 export function performFreshUninstallPlan(
   genieDir: string,
   removeMarketplace: boolean,
@@ -3353,6 +3445,34 @@ export function performFreshUninstallPlan(
   // sibling while an owned object is parked. Recover all published transaction
   // roots under the lifecycle lease before this authoritative enumeration.
   recoverUninstallTransactions();
+  // Record-driven and outside GENIE_HOME, so it must run before the batch
+  // deletes the home that holds the record.
+  const skillsRemoval = removeSkillsChannelInstall(genieDir);
+  reportSkillsChannelRemoval(skillsRemoval);
+  if (skillsRemoval.failures.length > 0 || skillsRemoval.preserved.length > 0) {
+    // Anything not cleanly removed keeps its receipt: the skills install record
+    // lives inside GENIE_HOME, so the plan must stop before the batch deletes
+    // the home. The failures surface through the ordinary incomplete-uninstall
+    // report (exit 1, GENIE_HOME kept), and the user retries `genie uninstall`
+    // after removing the preserved directories manually.
+    return {
+      execution: inspectUninstallPlan(genieDir, removeMarketplace),
+      result: {
+        failures: [
+          ...skillsRemoval.failures.map((detail): UninstallFailure => ({ step: 'skills.sh channel', detail })),
+          ...skillsRemoval.preserved.map(
+            (dir): UninstallFailure => ({
+              step: 'skills.sh channel',
+              detail: `${dir} preserved (unverified: content differs from the recorded install or the record predates digests); remove it manually, then rerun \`genie uninstall\``,
+            }),
+          ),
+        ],
+        notes: [
+          'skills.sh channel removal was incomplete; kept GENIE_HOME and the install record so the uninstall stays retryable.',
+        ],
+      },
+    };
+  }
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
     ...(execution.claudeAgentManifest.kind === 'unsafe'

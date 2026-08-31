@@ -8,6 +8,15 @@
  * The stamp-parity test loads the shipped council-stamp.cjs through
  * createRequire and asserts byte-identical output + identical skip semantics.
  *
+ * INVARIANT — every fixture home in this file is skills-install-RECORD-FREE
+ * unless a test writes one itself. `skillsChannelSupersedesWriters` stands the
+ * plugin-era writer arms down (claude role-agent fan-out, council stamp,
+ * hermes/pi links, hermes `skills.external_dirs`) as soon as
+ * `<genieHome>/skills-install.json` names THIS release, so every describe that
+ * asserts a writer FIRES depends on `setup()` never planting that record. The
+ * suppression contract itself is covered by the two describes at the end of this
+ * file: a fresh record suppresses, a stale one does not.
+ *
  * Run with: bun test src/lib/agent-sync.test.ts
  */
 
@@ -15,25 +24,21 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
-  closeSync,
   cpSync,
   existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -52,25 +57,14 @@ import {
   type AgentSyncReport,
   CODEX_FALLBACK_RETIREMENT_ROOT,
   type CodexFallbackRetirementFailpoint,
-  type FsyncPathDeps,
-  LIFECYCLE_LEASE_OWNER_ENV,
-  LIFECYCLE_LEASE_PATH_ENV,
-  type LifecycleLeaseSkip,
   TARGET_NAME,
   WORKFLOW_MANIFEST_NAME,
   acquireAgentSyncLock,
-  acquireLifecycleLease,
-  acquireLifecycleLeaseWithWait,
   applyCodexFallbackRetirement,
-  atomicRenameDirectoryNoClobber,
   computeDirDigest,
   computeFileDigest,
-  currentSyncLockHostId,
-  fsyncPathForTest,
   inspectManagedWorkflow,
-  lifecycleLockPath,
   planCodexFallbackRetirement,
-  publishDirectoryViaNameClaim,
   readAgentFilesManifest,
   readAgentFilesManifestState,
   recoverCodexFallbackRetirements,
@@ -78,12 +72,13 @@ import {
   recoverManagedWorkflowTransactions,
   removeManagedWorkflow,
   resolveGenieSource,
-  resolveLinuxRenameat2,
   retirementTransactionId,
   runAgentSync,
   stampWorkflow,
-  writeAllSync,
 } from './agent-sync';
+import { currentSyncLockHostId } from './lifecycle-lease';
+import { SKILLS_CLI_VERSION, releaseTag, writeSkillsInstallRecord } from './skills-installer';
+import { VERSION } from './version';
 
 const require = createRequire(import.meta.url);
 const {
@@ -3798,294 +3793,6 @@ describe('cross-process sync lock', () => {
   }, 30_000);
 });
 
-describe('shared lifecycle lease', () => {
-  test('lives beside GENIE_HOME and is reentrant within one lifecycle process', () => {
-    const path = lifecycleLockPath(fixture.genieHome);
-    expect(dirname(path)).toBe(dirname(fixture.genieHome));
-    expect(path.startsWith(`${fixture.genieHome}/`)).toBe(false);
-    const first = acquireLifecycleLease(fixture.genieHome);
-    expect('skipped' in first).toBe(false);
-    if ('skipped' in first) throw new Error(first.skipped);
-    const second = acquireLifecycleLease(fixture.genieHome);
-    expect('skipped' in second).toBe(false);
-    if ('skipped' in second) throw new Error(second.skipped);
-    expect(existsSync(path)).toBe(true);
-    second.release();
-    expect(existsSync(path)).toBe(true);
-    first.release();
-    expect(existsSync(path)).toBe(false);
-  });
-
-  test('a child borrows only the exact shell-owned lifecycle lease and never releases it', () => {
-    const path = lifecycleLockPath(fixture.genieHome);
-    const owner = `${process.pid}:${'a'.repeat(32)}:${'b'.repeat(64)}`;
-    writeFile(path, `${owner}\n`);
-    process.env[LIFECYCLE_LEASE_PATH_ENV] = path;
-    process.env[LIFECYCLE_LEASE_OWNER_ENV] = owner;
-    try {
-      const borrowed = acquireLifecycleLease(fixture.genieHome);
-      expect('skipped' in borrowed).toBe(false);
-      if ('skipped' in borrowed) throw new Error(borrowed.skipped);
-      borrowed.release();
-      expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
-    } finally {
-      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
-      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
-      rmSync(path, { force: true });
-    }
-  });
-
-  test('forged or path-mismatched borrowed lifecycle leases fail closed', () => {
-    const path = lifecycleLockPath(fixture.genieHome);
-    const owner = `${process.pid}:${'c'.repeat(32)}:${'d'.repeat(64)}`;
-    writeFile(path, `${owner}\n`);
-    try {
-      for (const [borrowedPath, borrowedOwner] of [
-        [path, `${process.pid}:${'e'.repeat(32)}:${'d'.repeat(64)}`],
-        [`${path}.forged`, owner],
-      ]) {
-        process.env[LIFECYCLE_LEASE_PATH_ENV] = borrowedPath;
-        process.env[LIFECYCLE_LEASE_OWNER_ENV] = borrowedOwner;
-        const result = acquireLifecycleLease(fixture.genieHome);
-        expect('skipped' in result ? result.skipped : '').toContain('did not exactly match');
-        expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
-      }
-    } finally {
-      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
-      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
-      rmSync(path, { force: true });
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Lifecycle-lease busy grace: the same-host dead-holder early steal and the
-// bounded wait that replaced the ten-minute staleness hang. Every lock forged
-// here has a FRESH mtime — that is the whole point: before this change a
-// lifecycle command that crashed one second ago blocked every subsequent
-// update/install/setup/uninstall for LOCK_STALE_MS.
-// ---------------------------------------------------------------------------
-
-describe('lifecycle lease same-host dead-holder steal', () => {
-  const HOST = currentSyncLockHostId();
-  const TOKEN = 'abcdef0123456789abcdef0123456789';
-  /** Above every plausible live pid on Linux/macOS, so `kill -0` reports ESRCH. */
-  const DEAD_PID = 2147483647;
-  const STALE_MS = 10 * 60 * 1000;
-
-  /** Write a hand-built owner record at the lifecycle lock path with a fresh mtime. */
-  function forge(record: string): string {
-    const path = lifecycleLockPath(fixture.genieHome);
-    writeFile(path, record);
-    // Pin the premise: nothing below is reachable through the staleness rule.
-    expect(Date.now() - statSync(path).mtimeMs).toBeLessThan(STALE_MS);
-    return path;
-  }
-
-  /**
-   * The process-start identity THIS process stamps into its own lock records,
-   * read back from a real acquisition at an unrelated path. `unknown` means the
-   * platform could not resolve one, in which case PID reuse is unprovable.
-   */
-  function selfLockIdentity(): string {
-    const probeHome = join(fixture.root, 'identity-probe', 'genie');
-    mkdirSync(dirname(probeHome), { recursive: true });
-    const lease = acquireLifecycleLease(probeHome);
-    if ('skipped' in lease) throw new Error(lease.skipped);
-    const record = readFileSync(lifecycleLockPath(probeHome), 'utf8').trim();
-    lease.release();
-    return record.split(':')[2] as string;
-  }
-
-  function expectRefused(result: ReturnType<typeof acquireLifecycleLease>, path: string): LifecycleLeaseSkip {
-    if (!('skipped' in result)) {
-      result.release();
-      throw new Error('lease was acquired but the holder must never have been displaced');
-    }
-    expect(result.skipped).toContain(`holds the lock at ${path}`);
-    expect(result.cause).toBe('held');
-    return result;
-  }
-
-  test('a FRESH same-host lock whose owner is provably dead is stolen on the first attempt', () => {
-    // Identity is irrelevant to a death proof: the shell installer's
-    // `unknown` form and a full 64-hex identity are both stolen.
-    for (const identity of ['unknown', 'a'.repeat(64)]) {
-      const path = forge(`${DEAD_PID}:${TOKEN}:${identity}:${HOST}\n`);
-      const lease = acquireLifecycleLease(fixture.genieHome);
-      if ('skipped' in lease) throw new Error(`fresh dead holder was not stolen: ${lease.skipped}`);
-      // The lock now carries OUR record, and no steal guard was left behind.
-      expect(readFileSync(path, 'utf8').startsWith(`${process.pid}:`)).toBe(true);
-      expect(existsSync(`${path}.steal`)).toBe(false);
-      lease.release();
-      expect(existsSync(path)).toBe(false);
-    }
-  });
-
-  test('a FRESH same-host lock whose live pid no longer matches its start identity is stolen (pid reuse)', () => {
-    const self = selfLockIdentity();
-    const mismatched = self === 'b'.repeat(64) ? 'c'.repeat(64) : 'b'.repeat(64);
-    const path = forge(`${process.pid}:${TOKEN}:${mismatched}:${HOST}\n`);
-
-    const lease = acquireLifecycleLease(fixture.genieHome);
-
-    if ('skipped' in lease) {
-      // Only legitimate on a platform that cannot resolve a start identity at
-      // all: PID reuse is then unprovable and the record must be kept.
-      expect(self).toBe('unknown');
-      expectRefused(lease, path);
-      return;
-    }
-    expect(self).not.toBe('unknown');
-    expect(readFileSync(path, 'utf8').startsWith(`${process.pid}:`)).toBe(true);
-    lease.release();
-  });
-
-  test('a FRESH same-host lock held by this very live process is never stolen', () => {
-    const record = `${process.pid}:${TOKEN}:${selfLockIdentity()}:${HOST}\n`;
-    const path = forge(record);
-
-    const refusal = expectRefused(acquireLifecycleLease(fixture.genieHome), path);
-
-    // The wording an operator actually reads: actionable, and no longer the
-    // agent-sync report's reassurance (false for an unrelated lifecycle holder).
-    expect(refusal.skipped).toContain('retry shortly, or remove the file if its owner has crashed');
-    expect(refusal.skipped).not.toContain('the holder converges the same targets');
-    expect(readFileSync(path, 'utf8')).toBe(record); // untouched
-  });
-
-  test('a FRESH cross-host record with a locally-dead pid is never stolen', () => {
-    const record = `${DEAD_PID}:${TOKEN}:unknown:${'f'.repeat(64)}\n`;
-    const path = forge(record);
-
-    expectRefused(acquireLifecycleLease(fixture.genieHome), path);
-
-    expect(readFileSync(path, 'utf8')).toBe(record); // a peer host's lock is not ours
-  });
-
-  test('a FRESH unparsable or empty record yields no death proof and is never stolen', () => {
-    for (const record of ['', 'not-a-lock-record\n', `${DEAD_PID}:garbage:${HOST}\n`]) {
-      const path = forge(record);
-      expectRefused(acquireLifecycleLease(fixture.genieHome), path);
-      expect(readFileSync(path, 'utf8')).toBe(record);
-      rmSync(path, { force: true });
-    }
-  });
-
-  /**
-   * Drive the exact interleaving the under-guard re-verification exists to
-   * close: the observed record is replaced AFTER the caller proved it dead but
-   * BEFORE the `.steal` guard is taken. Made deterministic by hooking the death
-   * probe itself — `kill -0` on the observed pid is the last thing the acquirer
-   * does with that record before it reaches the guard.
-   */
-  function acquireWithRecordReplacedUnderUs(path: string, replacement: string): LifecycleLeaseSkip {
-    const realKill = process.kill.bind(process);
-    let publishedUnderUs = false;
-    process.kill = ((pid: number, signal?: string | number) => {
-      if (!publishedUnderUs) {
-        publishedUnderUs = true;
-        writeFileSync(path, replacement);
-      }
-      return realKill(pid, signal as never);
-    }) as typeof process.kill;
-    try {
-      const refusal = expectRefused(acquireLifecycleLease(fixture.genieHome), path);
-      expect(publishedUnderUs).toBe(true);
-      return refusal;
-    } finally {
-      process.kill = realKill;
-    }
-  }
-
-  test('a dead record replaced before the guarded steal survives byte-for-byte, live or dead', () => {
-    const deadRecord = `${DEAD_PID}:${TOKEN}:unknown:${HOST}\n`;
-    const replacements = [
-      // A new LIVE owner published under us.
-      `${process.pid}:${TOKEN}:${selfLockIdentity()}:${HOST}\n`,
-      // A DIFFERENT same-host dead owner: only the byte-identical record
-      // re-read can refuse this one — a liveness re-probe alone would clear it.
-      `${DEAD_PID - 1}:${TOKEN}:unknown:${HOST}\n`,
-    ];
-
-    for (const replacement of replacements) {
-      const path = forge(deadRecord);
-
-      acquireWithRecordReplacedUnderUs(path, replacement);
-
-      expect(readFileSync(path, 'utf8')).toBe(replacement); // the new record survives intact
-      expect(existsSync(`${path}.steal`)).toBe(false); // the guard was released
-      rmSync(path, { force: true });
-    }
-  });
-});
-
-describe('acquireLifecycleLeaseWithWait', () => {
-  const fakeLease = () => ({ path: '/fixture/lifecycle.lock', release: () => undefined });
-
-  test('a refusal that cannot clear on its own makes exactly one attempt and never sleeps', () => {
-    // `borrow-mismatch` and `io` are permanent for this invocation; a
-    // cause-less skip (hand-built fixtures, pre-existing callers) is treated as
-    // non-retryable so nobody silently inherits a wait they never asked for.
-    for (const cause of ['borrow-mismatch', 'io', undefined] as const) {
-      let attempts = 0;
-      const startedAt = Date.now();
-      const result = acquireLifecycleLeaseWithWait(() => {
-        attempts += 1;
-        return { skipped: 'permanent refusal', cause };
-      }, 5_000);
-
-      expect(attempts).toBe(1);
-      expect(Date.now() - startedAt).toBeLessThan(200);
-      expect('skipped' in result && result.skipped).toBe('permanent refusal');
-    }
-  });
-
-  test('GENIE_LIFECYCLE_LEASE_WAIT_MS=0 restores the historical single-attempt fail-fast', () => {
-    const prior = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
-    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '0';
-    try {
-      let attempts = 0;
-      const result = acquireLifecycleLeaseWithWait(() => {
-        attempts += 1;
-        return { skipped: 'held', cause: 'held' };
-      });
-
-      expect(attempts).toBe(1);
-      expect('skipped' in result).toBe(true);
-    } finally {
-      if (prior === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
-      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = prior;
-    }
-  });
-
-  test('a held or contended holder is polled until the deadline, then the skip is returned', () => {
-    for (const cause of ['held', 'contended'] as const) {
-      let attempts = 0;
-      const startedAt = Date.now();
-      const result = acquireLifecycleLeaseWithWait(() => {
-        attempts += 1;
-        return { skipped: 'still busy', cause };
-      }, 120);
-
-      expect(attempts).toBeGreaterThan(1);
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(120);
-      expect('skipped' in result && result.skipped).toBe('still busy');
-    }
-  });
-
-  test('a holder that releases mid-wait yields the lease instead of a refusal', () => {
-    let attempts = 0;
-    const result = acquireLifecycleLeaseWithWait(() => {
-      attempts += 1;
-      return attempts < 3 ? { skipped: 'held', cause: 'held' as const } : fakeLease();
-    }, 5_000);
-
-    expect(attempts).toBe(3);
-    expect('skipped' in result).toBe(false);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Codex role-agent TOML refresh wiring (update.ts runAgentSyncSafe). Lives
 // here rather than __tests__/update.test.ts only because that file is owned by
@@ -5492,201 +5199,107 @@ describe('Codex fallback allowlist generator', () => {
 });
 
 // ---------------------------------------------------------------------------
-// G4 short-write loop + G5 musl-safe no-clobber directory publish primitives
+// skills.sh channel writer suppression
 // ---------------------------------------------------------------------------
 
-describe('writeAllSync short-write loop (G4)', () => {
-  test('completes a whole buffer across a partial write then a full write', () => {
-    const path = join(fixture.root, 'writeall-target');
-    const buffer = Buffer.from('the quick brown fox jumps over the lazy dog\n');
-    let calls = 0;
-    const partialOnce: typeof writeSync = ((fd: number, buf: Buffer, offset: number, length: number) => {
-      calls += 1;
-      const chunk = calls === 1 ? Math.min(4, length) : length; // short write on the first call only
-      return writeSync(fd, buf, offset, chunk);
-    }) as typeof writeSync;
-    const fd = openSync(path, 'w');
-    try {
-      writeAllSync(fd, buffer, partialOnce);
-    } finally {
-      closeSync(fd);
-    }
-    expect(readFileSync(path)).toEqual(buffer); // every byte landed despite the short write
-    expect(calls).toBeGreaterThanOrEqual(2); // the loop advanced the offset and finished the tail
+/**
+ * Plant a skills-channel install record in the fixture GENIE_HOME.
+ *
+ * `ref` is what decides suppression: only THIS release's tag stands the writers
+ * down. Every other describe in this file deliberately never calls this — see
+ * the record-free invariant in the file header.
+ */
+function plantSkillsRecord(ref: string): void {
+  writeSkillsInstallRecord(fixture.genieHome, {
+    ref,
+    cliVersion: SKILLS_CLI_VERSION,
+    inventory: ['wish'],
+    agentDirs: [],
+    installedAt: '2026-08-30T12:00:00.000Z',
+  });
+}
+
+/** Detect claude + hermes + pi so all three adapters reach their writer arms. */
+function presentAllAgents(): void {
+  present(fixture.claudeDir);
+  present(fixture.hermesHome);
+  present(join(fixture.piHome, 'agent'));
+}
+
+describe('skills.sh channel suppression — a FRESH record stands every writer arm down', () => {
+  beforeEach(() => {
+    presentAllAgents();
+    plantSkillsRecord(releaseTag(VERSION));
   });
 
-  test('a writer that never makes progress raises rather than looping forever', () => {
-    const zeroWriter: typeof writeSync = (() => 0) as typeof writeSync;
-    expect(() => writeAllSync(1, Buffer.from('x'), zeroWriter)).toThrow('made no progress');
+  test('claude: the role-agent fan-out and the council stamp report suppressed and write nothing', () => {
+    const claude = agentReport(run(), 'claude');
+    expect(extraAction(claude, 'agents-mirror')).toBe('suppressed');
+    expect(extraAction(claude, 'stamp')).toBe('suppressed');
+    expect(
+      claude.extras
+        .filter((extra) => extra.action === 'suppressed')
+        .every((extra) => extra.detail === 'skills.sh channel active'),
+    ).toBe(true);
+    expect(existsSync(join(fixture.claudeDir, 'agents', 'reviewer.md'))).toBe(false);
+    expect(existsSync(join(fixture.claudeDir, 'workflows', TARGET_NAME))).toBe(false);
+  });
+
+  test('claude: the bare-name SKILL mirror still runs — it is inert, not a competing writer', () => {
+    // skills.sh has already written the same names as plain, unmanaged copies;
+    // the mirror must preserve them rather than adopt or overwrite them.
+    writeFile(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), '# alpha from skills.sh\n');
+    const claude = agentReport(run(), 'claude');
+    expect(skillAction(claude, 'alpha')).toBe('skipped-unmanaged-kept');
+    expect(readFileSync(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), 'utf8')).toBe(
+      '# alpha from skills.sh\n',
+    );
+  });
+
+  test('hermes: link and skills.external_dirs are suppressed, while the MCP retirement leg still runs', () => {
+    const hermes = agentReport(run(), 'hermes');
+    expect(extraAction(hermes, 'symlink')).toBe('suppressed');
+    expect(extraAction(hermes, 'skills-dir')).toBe('suppressed');
+    // The MCP leg only ever REMOVES genie's marker block, so suppression never
+    // covers it: it stays wired and reports its (idempotent) outcome.
+    expect(extraAction(hermes, 'mcp-config')).toBe('unchanged');
+    expect(existsSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(false);
+    expect(existsSync(join(fixture.hermesHome, 'config.yaml'))).toBe(false);
+  });
+
+  test('pi: the extension link is suppressed', () => {
+    const pi = agentReport(run(), 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('suppressed');
+    expect(existsSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(false);
   });
 });
 
-describe('no-clobber directory publish (G5 musl portability)', () => {
-  function stagedTree(name: string, body = `# ${name}\n`): string {
-    const dir = join(fixture.root, name);
-    writeFile(join(dir, 'SKILL.md'), body);
-    return dir;
-  }
+describe('skills.sh channel suppression — a STALE or absent record leaves every writer armed', () => {
+  test('an older release ref does not suppress: the host would otherwise lose both channels', () => {
+    presentAllAgents();
+    plantSkillsRecord('v0.0.1');
 
-  function bufPath(b: Buffer): string {
-    return b.toString('utf8').replace(/\0$/, '');
-  }
+    const report = run();
+    const claude = agentReport(report, 'claude');
+    expect(extraAction(claude, 'stamp')).toBe('written');
+    expect(agentFileAction(claude, 'reviewer')).toBe('created');
+    expect(existsSync(join(fixture.claudeDir, 'workflows', TARGET_NAME))).toBe(true);
 
-  // A JS stand-in for renameat2(RENAME_NOREPLACE): refuse when the target exists.
-  const noReplaceRenamer = (s: Buffer, t: Buffer): number => {
-    const target = bufPath(t);
-    if (existsSync(target)) return -1;
-    renameSync(bufPath(s), target);
-    return 0;
-  };
+    const hermes = agentReport(report, 'hermes');
+    expect(extraAction(hermes, 'symlink')).toBe('created');
+    expect(extraAction(hermes, 'skills-dir')).toBe('created');
+    expect(readlinkSync(join(fixture.hermesHome, 'plugins', 'genie'))).toBe(fixture.hermesSource);
 
-  test('resolveLinuxRenameat2 tries candidate sonames in order and returns the first that resolves', () => {
-    const attempted: string[] = [];
-    const opener = (soname: string) => {
-      attempted.push(soname);
-      return soname === 'good.so' ? noReplaceRenamer : null;
-    };
-    const resolved = resolveLinuxRenameat2(opener, ['bad-1.so', 'good.so', 'never-reached.so']);
-    expect(resolved).toBe(noReplaceRenamer);
-    expect(attempted).toEqual(['bad-1.so', 'good.so']); // stops at the first success
+    const pi = agentReport(report, 'pi');
+    expect(extraAction(pi, 'symlink')).toBe('created');
+    expect(readlinkSync(join(fixture.piHome, 'agent', 'extensions', 'genie'))).toBe(fixture.piSource);
   });
 
-  test('a resolved renameat2 publishes atomically onto an absent target and rejects an existing one', () => {
-    const staged = stagedTree('rn-src');
-    const digest = computeDirDigest(staged);
-    const target = join(fixture.root, 'rn-target');
-    atomicRenameDirectoryNoClobber(staged, target, {
-      platform: 'linux',
-      opener: () => noReplaceRenamer,
-      probe: {},
-    });
-    expect(computeDirDigest(target)).toBe(digest);
-    const staged2 = stagedTree('rn-src2');
-    expect(() =>
-      atomicRenameDirectoryNoClobber(staged2, target, {
-        platform: 'linux',
-        opener: () => noReplaceRenamer,
-        probe: {},
-      }),
-    ).toThrow('target preserved');
-    expect(computeDirDigest(target)).toBe(digest); // pre-existing target bytes untouched
-  });
-
-  test('with no libc renameat2 available, the portable name-claim publishes onto an absent target', () => {
-    const staged = stagedTree('portable-src');
-    const digest = computeDirDigest(staged);
-    const target = join(fixture.root, 'portable-target'); // absent
-    atomicRenameDirectoryNoClobber(staged, target, { platform: 'linux', opener: () => null, probe: {} });
-    expect(computeDirDigest(target)).toBe(digest); // mkdir-claim + rename-onto-empty reproduces the tree
-  });
-
-  test('with no libc renameat2 available, a non-empty target is preserved and NoClobberPublishError is raised', () => {
-    const staged = stagedTree('portable-src2');
-    const target = join(fixture.root, 'portable-target2');
-    writeFile(join(target, 'EXISTING.txt'), 'user bytes\n');
-    const before = computeDirDigest(target);
-    expect(() =>
-      atomicRenameDirectoryNoClobber(staged, target, { platform: 'linux', opener: () => null, probe: {} }),
-    ).toThrow('portable directory claim failed');
-    expect(computeDirDigest(target)).toBe(before); // target never clobbered
-    expect(readFileSync(join(target, 'EXISTING.txt'), 'utf8')).toBe('user bytes\n');
-  });
-
-  test('publishDirectoryViaNameClaim replaces only an empty claimed dir and rejects a populated target', () => {
-    const staged = stagedTree('claim-src');
-    const digest = computeDirDigest(staged);
-    const target = join(fixture.root, 'claim-target'); // absent
-    publishDirectoryViaNameClaim(staged, target);
-    expect(computeDirDigest(target)).toBe(digest);
-    const staged2 = stagedTree('claim-src2');
-    const before = computeDirDigest(target);
-    expect(() => publishDirectoryViaNameClaim(staged2, target)).toThrow('portable directory claim failed');
-    expect(computeDirDigest(target)).toBe(before); // a real (non-empty) target is never touched
-  });
-
-  test('Darwin falls back safely when native rename setup is unavailable before invocation', () => {
-    const staged = stagedTree('darwin-portable-src');
-    const digest = computeDirDigest(staged);
-    const target = join(fixture.root, 'darwin-portable-target');
-    atomicRenameDirectoryNoClobber(staged, target, { platform: 'darwin', darwinOpener: () => null });
-    expect(computeDirDigest(target)).toBe(digest);
-  });
-
-  test('feature detection is memoized at first use across publishes', () => {
-    let calls = 0;
-    const probe = {}; // fresh probe cache shared across both publishes
-    const opener = () => {
-      calls += 1;
-      return null; // simulate musl: no candidate resolves
-    };
-    atomicRenameDirectoryNoClobber(stagedTree('cache-1'), join(fixture.root, 'cache-t1'), {
-      platform: 'linux',
-      opener,
-      probe,
-    });
-    const afterFirst = calls;
-    atomicRenameDirectoryNoClobber(stagedTree('cache-2'), join(fixture.root, 'cache-t2'), {
-      platform: 'linux',
-      opener,
-      probe,
-    });
-    expect(calls).toBe(afterFirst); // the second publish reuses the memoized probe — no re-detection
-    expect(afterFirst).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Fix 4 — directory-metadata fsync tolerance (Windows / network-fs failpoint).
-// A directory fsync that the platform refuses must NOT brick journal-prepare;
-// FILE fsync stays strict because journal/staging byte durability is load-bearing.
-// ---------------------------------------------------------------------------
-
-describe('fsyncPath directory-metadata flush tolerance (Fix 4)', () => {
-  const errno = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
-  const dir = (name: string): string => {
-    const d = join(fixture.root, name);
-    mkdirSync(d, { recursive: true });
-    return d;
-  };
-  const throwingFsync = (code: string): FsyncPathDeps['fsync'] =>
-    (() => {
-      throw errno(code);
-    }) as unknown as FsyncPathDeps['fsync'];
-
-  for (const code of ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'] as const) {
-    test(`a DIRECTORY fsync raising ${code} is swallowed (best-effort)`, () => {
-      expect(() => fsyncPathForTest(dir(`fsync-dir-${code}`), { fsync: throwingFsync(code) })).not.toThrow();
-    });
-  }
-
-  test('a DIRECTORY that cannot even be opened for fsync is tolerated', () => {
-    const open = (() => {
-      throw errno('EISDIR');
-    }) as unknown as FsyncPathDeps['open'];
-    expect(() => fsyncPathForTest(dir('fsync-open-eisdir'), { open })).not.toThrow();
-  });
-
-  test('a DIRECTORY fsync is skipped entirely on win32 (open never attempted)', () => {
-    let opened = false;
-    const open = (() => {
-      opened = true;
-      return 0;
-    }) as unknown as FsyncPathDeps['open'];
-    fsyncPathForTest(dir('fsync-win32'), { platform: 'win32', open });
-    expect(opened).toBe(false);
-  });
-
-  test('a FILE fsync failure stays strict — journal/staging durability is load-bearing', () => {
-    const f = join(fixture.root, 'fsync-file-strict');
-    writeFile(f, 'durable\n');
-    expect(() => fsyncPathForTest(f, { fsync: throwingFsync('EIO') })).toThrow('EIO');
-  });
-
-  test('a DIRECTORY fsync raising a NON-tolerable code still propagates', () => {
-    expect(() => fsyncPathForTest(dir('fsync-dir-eio'), { fsync: throwingFsync('EIO') })).toThrow('EIO');
-  });
-
-  test('a healthy directory fsync succeeds through the real syscalls', () => {
-    expect(() => fsyncPathForTest(dir('fsync-dir-ok'))).not.toThrow();
+  test('no record at all leaves the writers armed (the invariant every other describe relies on)', () => {
+    presentAllAgents();
+    const report = run();
+    expect(extraAction(agentReport(report, 'claude'), 'stamp')).toBe('written');
+    expect(extraAction(agentReport(report, 'hermes'), 'symlink')).toBe('created');
+    expect(extraAction(agentReport(report, 'pi'), 'symlink')).toBe('created');
   });
 });

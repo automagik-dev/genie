@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orca Reviewer"
+  short_description: "Independent read-only review of Orca groups or wishes"
+  default_prompt: "Review this Orca group, wish, or PR independently and return SHIP, FIX-FIRST, or BLOCKED."

@@ -40,7 +40,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { atomicRenameDirectoryNoClobber, resolveLinuxRenameat2 } from '../src/lib/agent-sync.ts';
+import { atomicRenameDirectoryNoClobber, resolveLinuxRenameat2 } from '../src/lib/atomic-fs.ts';
 import {
   DIST_CLI,
   type IsolatedHome,

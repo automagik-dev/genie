@@ -20,15 +20,20 @@ import { dirname, join } from 'node:path';
 import { computeDirDigest, computeFileDigest } from '../lib/agent-sync.js';
 import { resolveGitProjectRoots } from '../lib/codex-project-mcp.js';
 import { CANONICAL_GENIE_SKILL_NAMES } from '../lib/runtime-integrations.js';
+import { type SkillsInstallRecord, releaseTag, writeSkillsInstallRecord } from '../lib/skills-installer.js';
 import { VERSION } from '../lib/version.js';
 import {
+  type CheckResult,
+  type LegacyClassifier,
   MINIMUM_BUN_VERSION,
   checkAgentSync,
   checkCodexIntegration,
   checkCodexProjectContext,
   checkIndexLaneDrift,
+  checkLegacyIntegrations,
   checkOmniBridgeHealth,
   checkRetiredJsonMcpEntry,
+  checkSkillsChannel,
   checkSubagentModelOverride,
   checkV4Residue,
   doctorCommand,
@@ -1010,11 +1015,16 @@ describe('checkAgentSync', () => {
     );
   }
 
-  function stampCouncil(lensRoot: string): void {
+  // Mirrors agent-sync `stampWorkflowTemplate`: the placeholder is replaced with
+  // `JSON.stringify(pluginRoot)`, i.e. a DOUBLE-quoted literal. Keep this in
+  // lockstep with the stamper — a single-quoted fixture once hid a doctor regex
+  // that reported every real stamp as `stale (LENS_ROOT unreadable)`.
+  function stampCouncil(lensRoot: string, quote: 'json' | 'legacy-single' = 'json'): void {
     mkdirSync(join(claudeDir, 'workflows'), { recursive: true });
+    const literal = quote === 'json' ? JSON.stringify(lensRoot) : `'${lensRoot}'`;
     writeFileSync(
       join(claudeDir, 'workflows', 'council.js'),
-      `export const meta = { name: 'council' };\nconst LENS_ROOT = '${lensRoot}';\n`,
+      `export const meta = { name: 'council' };\nconst LENS_ROOT = ${literal};\n`,
       'utf8',
     );
   }
@@ -1168,6 +1178,24 @@ describe('checkAgentSync', () => {
     expect(claude?.detail).toContain('1 stale');
     expect(claude?.detail).toContain('council.js stale');
     expect(claude?.suggestion).toContain('genie update');
+  });
+
+  test('legacy single-quoted council stamp for the current root reads as current, not unreadable', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil(pluginRoot, 'legacy-single');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.detail).toContain('council.js current');
+    expect(claude?.detail).not.toContain('unreadable');
+  });
+
+  test('wrong-root council stamp names the stamped root instead of unreadable', () => {
+    seedManaged(join(pluginRoot, 'skills', 'wish'), join(claudeDir, 'skills', 'wish'));
+    stampCouncil('/old/plugin/root');
+
+    const claude = find(checkAgentSync(paths()), 'agent sync: claude');
+    expect(claude?.status).toBe('warn');
+    expect(claude?.detail).toContain('council.js stale (LENS_ROOT /old/plugin/root)');
   });
 
   test('unmanaged skill dirs are never counted (genie only speaks for what it shipped)', () => {
@@ -2755,5 +2783,326 @@ describe('checkCodexProjectContext under Orca', () => {
     writeOrchestrationMode('standalone');
     const [check] = checkCodexProjectContext(join(isolatedHome, 'repo'));
     expect(check.detail).not.toContain('Orca is the selected lifecycle authority');
+  });
+});
+
+// ============================================================================
+// skills.sh channel + legacy integrations (wish `skills-everywhere`, group 3)
+// ============================================================================
+
+interface SkillsChannelJson {
+  ok: boolean;
+  checks: Array<{
+    name: string;
+    status: string;
+    detail?: string;
+    suggestion?: string;
+    skillsChannel?: {
+      agent: string;
+      present: number;
+      total: number;
+      ref: string;
+      stale: boolean;
+      detected: boolean;
+      recorded: boolean;
+    };
+    legacyIntegrations?: { pending: Array<{ surface: string; path: string }>; available: boolean };
+  }>;
+}
+
+/** `<home>/<...segments>/<name>/SKILL.md` for each name. */
+function seedAgentSkills(home: string, segments: string[], names: string[]): void {
+  for (const name of names) {
+    const dir = join(home, ...segments, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`);
+  }
+}
+
+function seedSkillsRecord(genieHome: string, overrides: Partial<SkillsInstallRecord> = {}): void {
+  writeSkillsInstallRecord(genieHome, {
+    ref: releaseTag(VERSION),
+    cliVersion: '1.5.23',
+    inventory: ['alpha', 'beta'],
+    agentDirs: [join(isolatedHome, '.claude', 'skills'), join(isolatedHome, '.agents', 'skills')],
+    installedAt: '2026-08-30T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
+function skillsChannelResults(): CheckResult[] {
+  return checkSkillsChannel({ home: isolatedHome, genieHome: process.env.GENIE_HOME as string });
+}
+
+function byName(results: CheckResult[], name: string): CheckResult {
+  const found = results.find((result) => result.name === name);
+  if (found === undefined) throw new Error(`no check named ${name} in ${results.map((r) => r.name).join(', ')}`);
+  return found;
+}
+
+describe('doctor: skills.sh channel', () => {
+  test('two detected agent homes with a complete current record report two pass lines', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const results = skillsChannelResults();
+    const complete = results.filter((r) => r.status === 'pass' && r.detail === `2/2 @ ${releaseTag(VERSION)}`);
+    expect(complete.map((r) => r.name)).toEqual(['skills: claude', 'skills: agents']);
+    expect(results.filter((r) => r.status === 'warn')).toEqual([]);
+    expect(byName(results, 'skills: claude').skillsChannel).toEqual({
+      agent: 'claude',
+      present: 2,
+      total: 2,
+      ref: releaseTag(VERSION),
+      stale: false,
+      detected: true,
+      recorded: true,
+    });
+  });
+
+  test('a Codex host reports `skills: agents`, never a false `skills: codex` warning', () => {
+    // skills.sh 1.5.23 `--all --copy -g` creates no `~/.codex/skills`; Codex
+    // reads `~/.agents/skills`. A bare `~/.codex` must not produce a check.
+    mkdirSync(join(isolatedHome, '.codex'), { recursive: true });
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const results = skillsChannelResults();
+    expect(results.map((r) => r.name)).not.toContain('skills: codex');
+    expect(results.map((r) => r.name)).not.toContain('skills: cursor');
+    expect(byName(results, 'skills: agents')).toMatchObject({
+      status: 'pass',
+      detail: `2/2 @ ${releaseTag(VERSION)}`,
+    });
+    expect(results.filter((r) => r.status === 'warn')).toEqual([]);
+  });
+
+  test('a file (not a directory) at an agent config home is `not detected`', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    writeFileSync(join(isolatedHome, '.agents'), 'not a directory\n');
+
+    const agents = byName(skillsChannelResults(), 'skills: agents');
+    expect(agents.status).toBe('pass');
+    expect(agents.detail).toBe('not detected');
+  });
+
+  test('a missing skill under one agent warns with the `genie update` remedy', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    rmSync(join(isolatedHome, '.agents', 'skills', 'beta'), { recursive: true, force: true });
+
+    const results = skillsChannelResults();
+    const agentsHome = byName(results, 'skills: agents');
+    expect(agentsHome.status).toBe('warn');
+    expect(agentsHome.detail).toBe(`1/2 @ ${releaseTag(VERSION)}`);
+    expect(agentsHome.suggestion).toBe('Run `genie update` to install the skills.sh channel');
+    expect(agentsHome.skillsChannel).toMatchObject({ agent: 'agents', present: 1, total: 2, detected: true });
+    // The healthy agent is untouched by its neighbour's drift.
+    expect(byName(results, 'skills: claude').status).toBe('pass');
+  });
+
+  test('an undetected agent home passes as `not detected` and never warns', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(existsSync(join(isolatedHome, '.config', 'goose'))).toBe(false);
+
+    const goose = byName(skillsChannelResults(), 'skills: goose');
+    expect(goose.status).toBe('pass');
+    expect(goose.detail).toBe('not detected');
+    expect(goose.skillsChannel).toMatchObject({ agent: 'goose', detected: false, present: 0, total: 2 });
+  });
+
+  test('a record from an older release is stale even when every skill is present', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string, { ref: 'v5.000000.1' });
+
+    const claude = byName(skillsChannelResults(), 'skills: claude');
+    expect(claude.status).toBe('warn');
+    expect(claude.detail).toBe(`2/2 @ v5.000000.1 (stale, binary is ${releaseTag(VERSION)})`);
+    expect(claude.suggestion).toBe('Run `genie update` to install the skills.sh channel');
+    expect(claude.skillsChannel).toMatchObject({ ref: 'v5.000000.1', stale: true });
+  });
+
+  test('no install record and no delivered tree is a single channel warning', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha']);
+    const results = skillsChannelResults();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      name: 'skills: channel',
+      status: 'warn',
+      detail: 'no install record',
+      suggestion: 'Run `genie update` to install the skills.sh channel',
+    });
+    expect(results[0]?.skillsChannel).toBeUndefined();
+  });
+
+  test('no install record but a delivered tree still compares against the tree', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    seedAgentSkills(genieHome, ['skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+
+    const results = skillsChannelResults();
+    expect(byName(results, 'skills: channel').status).toBe('warn');
+    // No record => no provenance. The line must not read as if `ref` were the
+    // release the skills were actually installed from.
+    const claude = byName(results, 'skills: claude');
+    expect(claude).toMatchObject({ status: 'pass', detail: `2/2 @ ${releaseTag(VERSION)} (unrecorded)` });
+    expect(claude.skillsChannel).toMatchObject({ recorded: false, stale: false, ref: releaseTag(VERSION) });
+  });
+});
+
+describe('doctor: legacy marker-owned integrations', () => {
+  const pendingClassifier: LegacyClassifier = () => ({
+    entries: [
+      { surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish', state: 'managed-clean' },
+      { surface: 'codex-agents', path: '/home/u/.codex/agents/genie.md', state: 'managed-modified' },
+      { surface: 'claude-skills', path: '/home/u/.claude/skills/other', state: 'unmanaged' },
+      { surface: 'gone', path: '/home/u/.agents/skills/old', state: 'absent' },
+    ],
+  });
+
+  test('one managed-clean asset warns and names its path', async () => {
+    const results = await checkLegacyIntegrations({ legacyClassifier: pendingClassifier });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      name: 'legacy integrations',
+      status: 'warn',
+      suggestion: 'Run `genie update` to retire them',
+    });
+    expect(results[0]?.detail).toBe('1 marker-owned assets pending: /home/u/.codex/skills/genie-wish');
+    expect(results[0]?.legacyIntegrations).toEqual({
+      pending: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish' }],
+      available: true,
+    });
+  });
+
+  test('nothing managed-clean is `retired`', async () => {
+    const results = await checkLegacyIntegrations({
+      legacyClassifier: () => ({
+        entries: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/x', state: 'unmanaged' as const }],
+      }),
+    });
+    expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass', detail: 'retired' });
+    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: true });
+  });
+
+  test('more than five pending assets name five and count the remainder', async () => {
+    const results = await checkLegacyIntegrations({
+      legacyClassifier: () => ({
+        entries: Array.from({ length: 7 }, (_, index) => ({
+          surface: 'codex-skills',
+          path: `/home/u/.codex/skills/s${index}`,
+          state: 'managed-clean' as const,
+        })),
+      }),
+    });
+    expect(results[0]?.detail).toContain('7 marker-owned assets pending:');
+    expect(results[0]?.detail).toContain('/home/u/.codex/skills/s4');
+    expect(results[0]?.detail).toContain('…and 2 more');
+    expect(results[0]?.detail).not.toContain('/home/u/.codex/skills/s5');
+    expect(results[0]?.legacyIntegrations?.pending).toHaveLength(7);
+  });
+
+  test('a null classifier seam degrades to a passing `classifier unavailable` that still rides the rider', async () => {
+    const results = await checkLegacyIntegrations({ legacyClassifier: null });
+    expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass' });
+    expect(results[0]?.detail).toBe('classifier unavailable');
+    // `available:false` is what separates "nothing pending" from "nothing observed".
+    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: false });
+  });
+
+  test('the default path uses the real group-2 classifier: an empty home is `retired`', async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'doctor-legacy-default-'));
+    try {
+      const results = await checkLegacyIntegrations({}, { home: tmpHome, genieHome: join(tmpHome, '.genie') });
+      expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass', detail: 'retired' });
+      expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: true });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('a throwing classifier never fails the doctor run', async () => {
+    const results = await checkLegacyIntegrations({
+      legacyClassifier: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(results[0]).toMatchObject({ status: 'pass' });
+    expect(results[0]?.detail).toContain('classifier unavailable (boom)');
+    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: false });
+  });
+
+  test('doctor imports the retirement classifier statically so `bun build` bundles it (source lock)', async () => {
+    // A non-literal `await import(SPECIFIER)` is invisible to the bundler: the
+    // shipped dist/genie.js would degrade to a permanent silent pass.
+    const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf-8');
+    expect(source).toMatch(
+      /import \{ classifyLegacyIntegrations \} from '\.\.\/lib\/legacy-integration-retirement\.js';/,
+    );
+    expect(source).not.toMatch(/await import\(LEGACY_RETIREMENT_MODULE\)/);
+    const loaded = await import('../lib/legacy-integration-retirement.js');
+    expect(typeof loaded.classifyLegacyIntegrations).toBe('function');
+  });
+});
+
+describe('doctor --json: skills channel + legacy integration riders', () => {
+  test('per-agent skillsChannel riders and the legacyIntegrations rider survive --json', async () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const { output } = await captureDoctor(() =>
+      doctorCommand(
+        { json: true },
+        {
+          ...isolatedDoctorDeps(),
+          legacyClassifier: () => ({
+            entries: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish', state: 'managed-clean' }],
+          }),
+        },
+      ),
+    );
+    const json = JSON.parse(output) as SkillsChannelJson;
+    const riders = json.checks.filter((check) => check.skillsChannel !== undefined).map((c) => c.skillsChannel);
+    expect(riders.map((r) => r?.agent)).toEqual(['claude', 'agents', 'goose', 'windsurf']);
+    expect(riders[0]).toMatchObject({ present: 2, total: 2, detected: true, stale: false, recorded: true });
+    expect(riders[1]).toMatchObject({ present: 1, total: 2, detected: true });
+    expect(riders[2]).toMatchObject({ detected: false });
+    const legacy = json.checks.find((check) => check.name === 'legacy integrations');
+    expect(legacy).toMatchObject({ status: 'warn' });
+    expect(legacy?.legacyIntegrations).toEqual({
+      pending: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish' }],
+      available: true,
+    });
+    // Warnings never flip the hard-failure verdict.
+    expect(json.ok).toBe(true);
+  });
+
+  test('--fix retires nothing: the pending classification and the on-disk skills are unchanged', async () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    const legacyAsset = join(isolatedHome, '.codex', 'skills', 'genie-legacy');
+    mkdirSync(legacyAsset, { recursive: true });
+    writeFileSync(join(legacyAsset, 'SKILL.md'), '# legacy\n');
+
+    const { output } = await captureDoctor(() =>
+      doctorCommand(
+        { json: true, fix: true },
+        {
+          ...isolatedDoctorDeps(),
+          legacyClassifier: () => ({
+            entries: [{ surface: 'codex-skills', path: legacyAsset, state: 'managed-clean' }],
+          }),
+        },
+      ),
+    );
+    const json = JSON.parse(output) as SkillsChannelJson;
+    expect(json.checks.find((c) => c.name === 'legacy integrations')?.status).toBe('warn');
+    expect(existsSync(join(legacyAsset, 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(isolatedHome, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
   });
 });

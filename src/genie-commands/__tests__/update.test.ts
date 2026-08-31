@@ -21,6 +21,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -33,9 +34,12 @@ import { join } from 'node:path';
 import {
   type AgentSyncReport,
   acquireLifecycleLease,
+  computeDirDigest,
+  computeFileDigest,
   currentSyncLockHostId,
   lifecycleLockPath,
   runAgentSync,
+  stampWorkflow,
 } from '../../lib/agent-sync';
 import { observeCodexActivation, openCodexActivationStore } from '../../lib/codex-activation';
 import type { DeliveryEvidencePlatformId } from '../../lib/codex-delivery-evidence';
@@ -51,7 +55,14 @@ import {
   type CodexPluginOnlyDeps,
   type CommandRunner,
   type IntegrationSelection,
+  installCodexAgents,
 } from '../../lib/runtime-integrations';
+import {
+  SKILLS_CLI_VERSION,
+  type SkillsChannelConvergenceResult,
+  releaseTag,
+  writeSkillsInstallRecord,
+} from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import type { PinnedManifest } from '../codex-delivery-repair.js';
@@ -107,6 +118,14 @@ import {
   syncAuxiliaryContent,
   updateCommand,
 } from '../update.js';
+
+/**
+ * Every `runManualUpdateConvergence` test injects this: the production default
+ * shells out to the pinned skills CLI over the network, which no unit test may
+ * do. Group 1's own behavior is covered by the skills.sh describe below and by
+ * `src/lib/skills-installer.test.ts`.
+ */
+const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
 
 function healthyUpdateCodexProbe(): CodexPluginProbe {
   return {
@@ -2671,6 +2690,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
       bundleRoot: '/tmp/verified-bundle',
+      runSkills: noSkillsChannel,
       // Explicit selection: the default reads the host's persisted integration
       // consent, so omitting it makes the test depend on machine state (#2732).
       selection: 'all',
@@ -2684,6 +2704,29 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(calls[0]).toBe('parent-safe-sync');
     expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3:claude');
     expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }]);
+    expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+  });
+
+  test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
+    const savedExitCode = process.exitCode;
+    try {
+      const result = runManualUpdateConvergence({
+        expectedVersion: '5.260711.3',
+        selection: 'all',
+        runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
+        runSync: () => {},
+        refreshPlugins: () => [
+          { runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true },
+          { runtime: 'claude', ok: true, detail: 'plugin refreshed' },
+        ],
+        log: () => {},
+      });
+      expect(result.skills).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
+      applyConvergenceExitSignal(result, false);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = savedExitCode ?? 0;
+    }
   });
 
   test('structurally excludes Codex queries and writes while retaining Claude/Hermes convergence', () => {
@@ -2698,6 +2741,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const codexOnly = runManualUpdateConvergence({
       expectedVersion: VERSION,
       selection: 'codex',
+      runSkills: noSkillsChannel,
       runSync: () => {
         codexOnlySyncs += 1;
       },
@@ -2706,7 +2750,13 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         return [{ runtime: 'codex', ok: true, detail: 'must not run' }];
       },
     });
-    expect(codexOnly).toEqual({ integrations: [] });
+    // `codex` is not `none`: the skills channel still runs (fixture-skipped here),
+    // only agent-sync and the plugin refresh are narrowed away.
+    expect(codexOnly).toEqual({
+      integrations: [],
+      skills: { status: 'skipped', reason: 'test fixture' },
+      retirement: null,
+    });
     expect(codexOnlySyncs).toBe(0);
     expect(codexOnlyRefreshes).toBe(0);
 
@@ -2714,6 +2764,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const auto = runManualUpdateConvergence({
       expectedVersion: VERSION,
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: () => {},
       refreshPlugins: (options) => {
         selectedRefresh = options.selection;
@@ -2843,6 +2894,28 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
+  test('D3: a fresh-child exit 1 (e.g. a failed skills install) stays a hard failure', () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-failed-'));
+    const lease = acquireLifecycleLease(home);
+    expect('skipped' in lease).toBe(false);
+    if ('skipped' in lease) return;
+    try {
+      // Only exit 2 is the delivered-but-action-required carve-out. Exit 1 —
+      // what the skills channel sets — must never be mapped to it.
+      expect(() =>
+        runFreshBinaryPostDeliveryConvergence({
+          lifecycleLease: lease,
+          run: () => {
+            throw Object.assign(new Error('Command failed'), { status: 1 });
+          },
+        }),
+      ).toThrow(/fresh Genie integration convergence failed/);
+    } finally {
+      lease.release();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('D3: a converged fresh-child returns converged', () => {
     const home = mkdtempSync(join(tmpdir(), 'genie-fresh-converge-ok-'));
     const lease = acquireLifecycleLease(home);
@@ -2900,6 +2973,115 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       }),
     ).not.toThrow();
     expect(synced).toBe(true);
+  });
+});
+
+describe('skills.sh channel in the post-delivery convergence (wish skills-everywhere, group 1)', () => {
+  let previousExitCode: number | string | undefined;
+
+  beforeEach(() => {
+    previousExitCode = process.exitCode ?? undefined;
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+  });
+
+  test('installs skills BEFORE agent-sync and the plugin refresh (decision 2 ordering)', () => {
+    const calls: string[] = [];
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: (selection) => {
+        calls.push(`skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => calls.push('agent-sync'),
+      refreshPlugins: () => {
+        calls.push('plugin-refresh');
+        return [];
+      },
+      log: () => undefined,
+    });
+    expect(calls).toEqual(['skills:all', 'agent-sync', 'plugin-refresh']);
+  });
+
+  test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
+    const seen: string[] = [];
+    for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {
+      runManualUpdateConvergence({
+        expectedVersion: VERSION,
+        selection,
+        runSkills: (received) => {
+          seen.push(received);
+          return { status: 'skipped', reason: 'test fixture' };
+        },
+        runSync: () => undefined,
+        refreshPlugins: () => [],
+        log: () => undefined,
+      });
+    }
+    expect(seen).toEqual(['auto', 'all', 'claude', 'codex']);
+  });
+
+  test('consent none skips the channel with the rest of the convergence', () => {
+    let skills = 0;
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'none',
+      runSkills: () => {
+        skills += 1;
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => undefined,
+      refreshPlugins: () => [],
+      log: () => undefined,
+    });
+    expect(skills).toBe(0);
+  });
+
+  test('the channel logs through the convergence emitter', () => {
+    const lines: string[] = [];
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'claude',
+      runSkills: (_selection, emit) => {
+        emit('skills: fixture line');
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      runSync: () => undefined,
+      refreshPlugins: () => [],
+      log: (line) => lines.push(line),
+    });
+    expect(lines).toContain('skills: fixture line');
+  });
+
+  test('a skills failure never aborts the convergence — the promoted binary stays committed', () => {
+    const calls: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: () => {
+        calls.push('skills');
+        process.exitCode = 1;
+        return { status: 'failed', reason: 'skills CLI exited 1: boom' };
+      },
+      runSync: () => calls.push('agent-sync'),
+      refreshPlugins: () => [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
+      log: () => undefined,
+    });
+    expect(calls).toEqual(['skills', 'agent-sync']);
+    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test('D2 stays intact: --sync-only convergence never touches the skills channel', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const start = source.indexOf('export function runLegacySyncOnlyConvergence(');
+    const end = source.indexOf('function announceUpdatePlanOrExit(', start);
+    const convergence = source.slice(start, end);
+    expect(convergence).not.toContain('runSkills');
+    expect(convergence).not.toContain('SkillsChannel');
   });
 });
 
@@ -2993,6 +3175,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: realRunSync('auto'),
       refreshPlugins: () => [],
       log: () => undefined,
@@ -3020,6 +3203,7 @@ describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore
     runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'auto',
+      runSkills: noSkillsChannel,
       runSync: realRunSync('auto'),
       refreshPlugins: () => [],
       log: () => undefined,
@@ -3584,13 +3768,21 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
   });
 
   test('a non-codex (claude) failure exits 1 and emits NO trailer', () => {
-    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }] });
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }],
+      skills: null,
+      retirement: null,
+    });
     expect(process.exitCode).toBe(1);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
   });
 
   test('an all-ok convergence sets no failure/action-required code and emits no trailer', () => {
-    applyConvergenceExitSignal({ integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }] });
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
+      skills: null,
+      retirement: null,
+    });
     // Neither the exit-1 (failure) nor exit-2 (action-required) code is set.
     expect(process.exitCode).toBe(0);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
@@ -3599,6 +3791,8 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
   test('a codex action-required delivery exits 2 and emits the trailer exactly once', () => {
     applyConvergenceExitSignal({
       integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: null,
+      retirement: null,
     });
     expect(process.exitCode).toBe(2);
     expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
@@ -3610,6 +3804,8 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
         { runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true },
         { runtime: 'claude', ok: false, detail: 'boom' },
       ],
+      skills: null,
+      retirement: null,
     });
     expect(process.exitCode).toBe(1);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
@@ -3617,11 +3813,56 @@ describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 gua
 
   test('emitTrailer=false (fresh-binary parent) sets exit 2 without printing the trailer', () => {
     applyConvergenceExitSignal(
-      { integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }] },
+      {
+        integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }],
+        skills: null,
+        retirement: null,
+      },
       false,
     );
     expect(process.exitCode).toBe(2);
     expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  // A pending `setup --codex` (action-required) is ROUTINE on a Codex host. It
+  // must never downgrade a real skills-channel failure from exit 1 to exit 2,
+  // which is what discarding the skills result used to do.
+  test('a failed skills install wins over action-required (exit 1, no trailer)', () => {
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: { status: 'failed', reason: 'skills CLI exited 1: boom' },
+      retirement: null,
+    });
+    expect(process.exitCode).toBe(1);
+    expect(logs.join('\n')).not.toContain('deliveryComplete');
+  });
+
+  test('an installed skills channel leaves the action-required exit 2 intact', () => {
+    applyConvergenceExitSignal({
+      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
+      skills: {
+        status: 'installed',
+        record: {
+          ref: 'v9.9.9',
+          cliVersion: '1.5.23',
+          inventory: ['wish'],
+          agentDirs: ['/home/tester/.claude/skills'],
+          installedAt: '2026-08-30T12:00:00.000Z',
+        },
+      },
+      retirement: null,
+    });
+    expect(process.exitCode).toBe(2);
+    expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
+  });
+
+  test('a skills failure alone (no integrations) still exits 1', () => {
+    applyConvergenceExitSignal({
+      integrations: [],
+      skills: { status: 'failed', reason: 'no skills found' },
+      retirement: null,
+    });
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -3875,5 +4116,369 @@ describe('attemptAlreadyCurrentDeliveryRepair — fail-closed skip with no insta
         evidenceVerification: pack.dependencies,
       }),
     ).toEqual({ action: 'proceed-current' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plugin-era retirement wiring (wish `skills-everywhere`, group 2)
+// ---------------------------------------------------------------------------
+
+describe('runManualUpdateConvergence — plugin-era retirement runs last, behind a fresh skills install', () => {
+  const MANAGED_ROLE_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
+  const COUNCIL_TEMPLATE = "export const meta = { name: 'council' };\nconst LENS_ROOT = '__GENIE_LENS_ROOT__';\n";
+  const RETIREMENT_NOW = new Date('2026-08-30T12:00:00.000Z');
+
+  interface RetirementFixture {
+    home: string;
+    genieHome: string;
+    pluginRoot: string;
+    codexHome: string;
+    claudeDir: string;
+    hermesHome: string;
+    piExtensionsDir: string;
+  }
+
+  const retirementRoots: string[] = [];
+
+  afterEach(() => {
+    while (retirementRoots.length > 0) rmSync(retirementRoots.pop() as string, { recursive: true, force: true });
+  });
+
+  function put(path: string, content: string): void {
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, content, 'utf8');
+  }
+
+  function putLink(linkPath: string, target: string): void {
+    mkdirSync(join(linkPath, '..'), { recursive: true });
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, linkPath);
+  }
+
+  function putManagedSkill(dir: string, body: string): void {
+    put(join(dir, 'SKILL.md'), body);
+    put(
+      join(dir, '.genie-sync.json'),
+      `${JSON.stringify(
+        {
+          managedBy: 'genie-agent-sync',
+          version: '9.9.9',
+          digest: computeDirDigest(dir),
+          syncedAt: RETIREMENT_NOW.toISOString(),
+          identityVersion: 2,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
+  /**
+   * A host carrying EVERY plugin-era surface, plus the skills.sh copies that
+   * already occupy the bare-name skill slots — the real post-channel state, and
+   * the reason the claude skills mirror stays inert instead of competing.
+   */
+  function makeRetirementFixture(): RetirementFixture {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'genie-retire-pipeline-')));
+    retirementRoots.push(home);
+    const genieHome = join(home, '.genie');
+    const pluginRoot = join(genieHome, 'plugins', 'genie');
+    const fixture: RetirementFixture = {
+      home,
+      genieHome,
+      pluginRoot,
+      codexHome: join(home, '.codex'),
+      claudeDir: join(home, '.claude'),
+      hermesHome: join(home, '.hermes'),
+      piExtensionsDir: join(home, '.pi', 'agent', 'extensions'),
+    };
+
+    // Genie-owned payload: plugin source for all three adapters.
+    put(join(genieHome, 'VERSION'), '9.9.9\n');
+    put(join(pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
+    put(join(pluginRoot, 'agents', 'reviewer.md'), '# reviewer\n');
+    put(join(pluginRoot, 'workflows', 'council.js'), COUNCIL_TEMPLATE);
+    put(join(pluginRoot, 'codex-agents', 'genie-reviewer.toml'), MANAGED_ROLE_TOML);
+    put(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
+    put(join(genieHome, 'plugins', 'pi-genie', 'package.json'), '{"name":"genie-pi-plugin"}\n');
+
+    // Codex plugin era.
+    put(join(fixture.codexHome, 'config.toml'), '[otel]\nkeep = true\n\n[plugins."genie@automagik"]\nenabled = true\n');
+    put(join(fixture.codexHome, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
+    installCodexAgents(genieHome, fixture.codexHome);
+    putManagedSkill(join(fixture.codexHome, 'skills', '.curated', 'alpha'), '# curated alpha\n');
+
+    // Claude plugin era.
+    put(
+      join(fixture.claudeDir, 'plugins', 'installed_plugins.json'),
+      `${JSON.stringify({ plugins: [{ id: 'genie@automagik' }, { id: 'other@market' }] }, null, 2)}\n`,
+    );
+    put(join(fixture.claudeDir, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
+    expect(
+      stampWorkflow({
+        templatePath: join(pluginRoot, 'workflows', 'council.js'),
+        pluginRoot,
+        targetDir: join(fixture.claudeDir, 'workflows'),
+        version: '9.9.9',
+        now: () => RETIREMENT_NOW,
+      }).action,
+    ).toBe('written');
+    const agentPath = join(fixture.claudeDir, 'agents', 'reviewer.md');
+    put(agentPath, '# reviewer\n');
+    put(
+      join(fixture.claudeDir, 'agents', '.genie-sync.json'),
+      `${JSON.stringify(
+        {
+          managedBy: 'genie-agent-sync',
+          files: {
+            'reviewer.md': {
+              digest: computeFileDigest(agentPath),
+              version: '9.9.9',
+              syncedAt: RETIREMENT_NOW.toISOString(),
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    putManagedSkill(join(fixture.claudeDir, 'skills', 'legacy-mirror'), '# legacy mirror\n');
+    // The skills.sh channel already owns the bare-name slot for every SOURCE skill.
+    put(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), '# alpha from skills.sh\n');
+
+    // Hermes + pi plugin era.
+    putLink(join(fixture.hermesHome, 'plugins', 'genie'), join(genieHome, 'plugins', 'hermes-genie'));
+    put(
+      join(fixture.hermesHome, 'config.yaml'),
+      [
+        'mcp_servers:',
+        '  other:',
+        '    command: other',
+        '# genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)',
+        '  genie:',
+        '    command: genie',
+        '# genie:managed:mcp_servers.genie — end',
+        'skills:',
+        '  external_dirs:',
+        '    - /operator/own/skills',
+        `    - ${join(genieHome, 'skills')}  # genie:managed:skills.external_dirs`,
+        '',
+      ].join('\n'),
+    );
+    putLink(join(fixture.piExtensionsDir, 'genie'), join(genieHome, 'plugins', 'pi-genie'));
+    mkdirSync(join(genieHome, 'skills', 'alpha'), { recursive: true });
+    put(join(genieHome, 'skills', 'alpha', 'SKILL.md'), '# alpha payload\n');
+    return fixture;
+  }
+
+  function plantRecord(fixture: RetirementFixture, ref: string): void {
+    writeSkillsInstallRecord(fixture.genieHome, {
+      ref,
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['alpha'],
+      agentDirs: [],
+      installedAt: RETIREMENT_NOW.toISOString(),
+    });
+  }
+
+  /** One full convergence pass, with agent-sync bound to the fixture's homes. */
+  function converge(
+    fixture: RetirementFixture,
+    skills: SkillsChannelConvergenceResult,
+  ): {
+    lines: string[];
+    sync: AgentSyncReport;
+    retirement: ReturnType<typeof runManualUpdateConvergence>['retirement'];
+  } {
+    const lines: string[] = [];
+    let sync: AgentSyncReport | undefined;
+    const result = runManualUpdateConvergence({
+      expectedVersion: '9.9.9',
+      selection: 'all',
+      runSkills: () => skills,
+      runSync: () => {
+        sync = runAgentSync({
+          genieHome: fixture.genieHome,
+          targets: {
+            claude: fixture.claudeDir,
+            codex: fixture.codexHome,
+            hermes: fixture.hermesHome,
+            pi: fixture.piExtensionsDir,
+            agentsSkills: join(fixture.home, '.agents', 'skills'),
+          },
+          hermesBinary: null,
+          piBinary: null,
+          now: () => RETIREMENT_NOW,
+          log: () => undefined,
+        });
+      },
+      refreshPlugins: () => [],
+      retirementHomes: {
+        home: fixture.home,
+        genieHome: fixture.genieHome,
+        codexHome: fixture.codexHome,
+        claudeDir: fixture.claudeDir,
+        hermesHome: fixture.hermesHome,
+        piExtensionsDir: fixture.piExtensionsDir,
+      },
+      log: (line) => lines.push(line),
+    });
+    if (sync === undefined) throw new Error('agent-sync did not run');
+    return { lines, sync, retirement: result.retirement };
+  }
+
+  function installedSkills(): SkillsChannelConvergenceResult {
+    return {
+      status: 'installed',
+      record: {
+        ref: 'v9.9.9',
+        cliVersion: SKILLS_CLI_VERSION,
+        inventory: ['alpha'],
+        agentDirs: [],
+        installedAt: RETIREMENT_NOW.toISOString(),
+      },
+    };
+  }
+
+  function treeHash(root: string): string {
+    const parts: string[] = [];
+    const walk = (dir: string, rel: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const path = join(dir, entry.name);
+        const next = rel === '' ? entry.name : `${rel}/${entry.name}`;
+        if (entry.isSymbolicLink()) parts.push(`L ${next} ${readlinkSync(path)}`);
+        else if (entry.isDirectory()) {
+          parts.push(`D ${next}`);
+          walk(path, next);
+        } else parts.push(`F ${next} ${createHash('sha256').update(readFileSync(path)).digest('hex')}`);
+      }
+    };
+    walk(root, '');
+    return createHash('sha256').update(parts.join('\n')).digest('hex');
+  }
+
+  function extras(sync: AgentSyncReport, agent: string, kind: string): string | undefined {
+    return sync.agents.find((entry) => entry.agent === agent)?.extras.find((extra) => extra.kind === kind)?.action;
+  }
+
+  test('a fresh record: pass one retires every surface, pass two is a byte-for-byte no-op', () => {
+    const fixture = makeRetirementFixture();
+    plantRecord(fixture, releaseTag(VERSION));
+    // The two user-owned Claude registries the plugin era wrote one key into.
+    put(
+      join(fixture.claudeDir, 'plugins', 'known_marketplaces.json'),
+      `${JSON.stringify(
+        {
+          automagik: {
+            source: { source: 'directory', path: fixture.genieHome },
+            installLocation: fixture.genieHome,
+          },
+          'other-market': { source: { source: 'git', repo: 'someone/else' } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    put(
+      join(fixture.claudeDir, 'settings.json'),
+      `${JSON.stringify({ enabledPlugins: { 'genie@automagik': true, 'other@market': true } }, null, 2)}\n`,
+    );
+
+    const first = converge(fixture, installedSkills());
+    expect(first.retirement?.failures).toEqual([]);
+    expect(first.retirement?.removed.map((entry) => entry.surface).sort()).toEqual([
+      'claude-agent',
+      'claude-enabled-plugin',
+      'claude-marketplace-registration',
+      'claude-plugin-cache',
+      'claude-plugin-registry',
+      'claude-workflow',
+      'codex-legacy-curated-skill',
+      'codex-plugin-cache',
+      'codex-plugin-registration',
+      'codex-role-agent',
+      'hermes-plugin-link',
+      'hermes-skills-external-dir',
+      'pi-extension-link',
+    ]);
+    // Two surfaces are already owned by agent-sync's own never-suppressed cleanup
+    // lanes, so retirement correctly finds them absent by the time it runs:
+    // the hermes MCP marker block, and the bare-name claude skill mirror (a
+    // managed ORPHAN once the plugin source no longer ships that name).
+    expect(extras(first.sync, 'hermes', 'mcp-config')).toBe('updated');
+    expect(first.sync.agents.find((entry) => entry.agent === 'claude')?.skills).toContainEqual({
+      name: 'legacy-mirror',
+      action: 'removed',
+    });
+    expect(existsSync(join(fixture.claudeDir, 'skills', 'legacy-mirror'))).toBe(false);
+    // The two user-owned Claude registries keep every key but genie's own.
+    expect(JSON.parse(readFileSync(join(fixture.claudeDir, 'plugins', 'known_marketplaces.json'), 'utf8'))).toEqual({
+      'other-market': { source: { source: 'git', repo: 'someone/else' } },
+    });
+    expect(JSON.parse(readFileSync(join(fixture.claudeDir, 'settings.json'), 'utf8'))).toEqual({
+      enabledPlugins: { 'other@market': true },
+    });
+    const afterFirst = treeHash(fixture.home);
+
+    const second = converge(fixture, installedSkills());
+    expect(second.retirement?.removed).toEqual([]);
+    expect(second.lines).toContain('nothing to retire');
+    // Every plugin-era writer arm stands down, on both passes.
+    expect(extras(second.sync, 'claude', 'agents-mirror')).toBe('suppressed');
+    expect(extras(second.sync, 'claude', 'stamp')).toBe('suppressed');
+    expect(extras(second.sync, 'hermes', 'symlink')).toBe('suppressed');
+    expect(extras(second.sync, 'hermes', 'skills-dir')).toBe('suppressed');
+    expect(extras(second.sync, 'pi', 'symlink')).toBe('suppressed');
+    // …and the bare-name skill mirror stays inert against the skills.sh copy.
+    expect(second.sync.agents.find((entry) => entry.agent === 'claude')?.skills).toEqual([
+      {
+        name: 'alpha',
+        action: 'skipped-unmanaged-kept',
+        detail: 'no ownership manifest; existing directory preserved',
+      },
+    ]);
+    expect(treeHash(fixture.home)).toBe(afterFirst);
+  });
+
+  test('a stale record: the writers fire, and a non-installed channel skips retirement entirely', () => {
+    const fixture = makeRetirementFixture();
+    plantRecord(fixture, 'v0.0.1');
+
+    const run = converge(fixture, { status: 'failed', reason: 'skills CLI exited 1: boom' });
+    expect(run.retirement).toBeNull();
+    expect(run.lines).not.toContain('nothing to retire');
+
+    // Every arm reports a real convergence outcome ("already correct" included) —
+    // never `suppressed`, which is the only value a stood-down arm ever reports.
+    expect(extras(run.sync, 'claude', 'stamp')).toBe('skipped');
+    expect(extras(run.sync, 'claude', 'agents-mirror')).toBeUndefined();
+    expect(extras(run.sync, 'hermes', 'symlink')).toBe('unchanged');
+    expect(extras(run.sync, 'hermes', 'skills-dir')).toBe('unchanged');
+    expect(extras(run.sync, 'pi', 'symlink')).toBe('unchanged');
+    expect(run.sync.agents.flatMap((entry) => entry.extras).some((extra) => extra.action === 'suppressed')).toBe(false);
+
+    // Nothing was retired: every plugin-era asset is still exactly where it was.
+    expect(readFileSync(join(fixture.codexHome, 'config.toml'), 'utf8')).toContain('[plugins."genie@automagik"]');
+    expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(true);
+    expect(existsSync(join(fixture.codexHome, 'skills', '.curated', 'alpha'))).toBe(true);
+    expect(existsSync(join(fixture.piExtensionsDir, 'genie'))).toBe(true);
+    expect(existsSync(join(fixture.genieHome, 'state-backups'))).toBe(false);
+  });
+
+  test('the retirement call sits after every other convergence step in update.ts', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const body = source.slice(source.indexOf('export function runManualUpdateConvergence('));
+    const convergence = body.slice(0, body.indexOf('\n}\n'));
+    expect(convergence.indexOf('runLegacyIntegrationRetirement(')).toBeGreaterThan(
+      convergence.indexOf('refreshUpdatePlugins)('),
+    );
+    expect(convergence).toContain("skills.status === 'installed'");
+    // Never at the install seam, never from doctor.
+    expect(readFileSync(join(import.meta.dir, '..', 'install.ts'), 'utf-8')).not.toContain(
+      'runLegacyIntegrationRetirement',
+    );
+    expect(readFileSync(join(import.meta.dir, '..', 'doctor.ts'), 'utf-8')).not.toContain(
+      'runLegacyIntegrationRetirement',
+    );
   });
 });

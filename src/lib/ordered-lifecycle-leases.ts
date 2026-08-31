@@ -1,5 +1,5 @@
-import type { LifecycleLease } from './agent-sync.js';
 import type { HeldLifecycleLease, LifecycleLeaseBusy, LifecycleLeaseResult } from './codex-lifecycle-lease.js';
+import type { LifecycleLease } from './lifecycle-lease.js';
 
 export interface ReleasableLifecycleLease {
   release(): void;

@@ -78,7 +78,9 @@
           "complexity": {
             "noExcessiveCognitiveComplexity": {
               "level": "warn",
-              "options": { "maxAllowedComplexity": 25 }
+              "options": {
+                "maxAllowedComplexity": 25
+              }
             },
             "noForEach": "warn"
           },
@@ -127,6 +129,19 @@
           "suspicious": {
             "noExplicitAny": "off",
             "noConsole": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": ["skills/genie-orca-work/scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
           },
           "style": {
             "noNonNullAssertion": "off"

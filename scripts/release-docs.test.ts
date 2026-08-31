@@ -983,7 +983,7 @@ describe('Group E release and documentation contracts', () => {
       .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
       .map((entry) => entry.name)
       .sort();
-    expect(skillNames).toHaveLength(22);
+    expect(skillNames).toHaveLength(25);
     for (const name of skillNames) {
       const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
         interface?: { default_prompt?: unknown };
