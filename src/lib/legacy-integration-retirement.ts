@@ -49,6 +49,7 @@
  * reporting "installed" and left Claude Code an enabled-but-uninstalled plugin.
  */
 
+import { createHash } from 'node:crypto';
 import {
   type Dirent,
   type Stats,
@@ -67,19 +68,19 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   MANIFEST_NAME,
-  TARGET_NAME,
-  WORKFLOW_MANIFEST_NAME,
-  codexLegacyCuratedDir,
+  PHYSICAL_TREE_IDENTITY_VERSION,
+  type PhysicalTreeEntry,
+  computeDirDigest,
   computeFileDigest,
-  inspectManagedSkillTree,
-  inspectManagedWorkflow,
-  readAgentFilesManifestState,
-  resolveHermesConfigPath,
-} from './agent-sync.js';
-import { fsyncPath, writeAllSync } from './atomic-fs.js';
+  computeLegacyRegularTreeDigest,
+  fsyncPath,
+  physicalEntryKind,
+  readTrimmed,
+  writeAllSync,
+} from './atomic-fs.js';
 import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from './genie-home.js';
 import { retireMcpServersGenie } from './hermes-mcp-config.js';
 import { inspectCodexAgentOwnership, removeCodexPluginRegistration } from './runtime-integrations.js';
@@ -223,9 +224,14 @@ const CLAUDE_PLUGIN_ID = 'genie@automagik';
 const CLAUDE_MARKETPLACE_ID = 'automagik';
 
 /**
- * Restated from `hermes-skills-config.ts` (its `MARKER` is module-private).
- * `legacy-integration-retirement.test.ts` asserts the literal still appears in
- * that file, so the two can never drift apart silently.
+ * The single source of truth for the Hermes managed-skills marker.
+ *
+ * It used to be restated from `hermes-skills-config.ts`, with a test asserting
+ * the literal still appeared there. Wish `skills-everywhere-b` Group 5 deletes
+ * that module, and a marker owned by a file that no longer exists is not a
+ * contract. Retirement is the last reader of this marker on disk — every host
+ * that still carries it was written by a release that predates the deletion —
+ * so the definition lives here and the drift guard is retired with the writer.
  */
 const HERMES_SKILLS_MARKER = '# genie:managed:skills.external_dirs';
 
@@ -1198,4 +1204,451 @@ function escapeRegExp(value: string): string {
 
 function errMsg(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// ============================================================================
+// Absorbed from `agent-sync.ts` — module-private
+// ============================================================================
+//
+// This module is `agent-sync.ts`'s only consumer that survives wish
+// `skills-everywhere-b`, and it is itself deleted two stable releases after
+// that wish ships, so a new shared `src/lib/*.ts` home would outlive its only
+// user (Decision 6). Everything below is a verbatim copy of the classifiers and
+// their transitive leaf helpers with the `export` keyword dropped; the doc
+// comments are preserved as written, including their references to callers that
+// consume the ORIGINAL in `agent-sync.ts`. `MANIFEST_NAME`,
+// `PHYSICAL_TREE_IDENTITY_VERSION` and the digest primitives are NOT copied:
+// they moved to `atomic-fs.ts` with `computeDirDigest`, which outlives this
+// module, and a second definition of the manifest name would be a silent
+// divergence in what counts as a managed directory.
+
+/** Stamped/synced workflow filename. Exported: doctor/uninstall key their checks on it. */
+const TARGET_NAME = 'council.js';
+
+/** Digest-backed ownership record for the stamped council workflow. */
+const WORKFLOW_MANIFEST_NAME = `${TARGET_NAME}.genie-sync.json`;
+
+/** Deterministic physical mode for both stamped council artifacts. */
+const WORKFLOW_FILE_MODE = 0o644;
+
+/** `managedBy` value that certifies a dir as one this engine owns. Exported: single source of truth. */
+const MANAGED_BY = 'genie-agent-sync';
+
+/** Digest stamp for one flat Claude agent file in {@link AgentFilesManifest}. */
+interface AgentFileManifestEntry {
+  digest: string;
+  version: string | null;
+  syncedAt: string;
+}
+
+/** Shared manifest stored at `~/.claude/agents/.genie-sync.json`. */
+interface AgentFilesManifest {
+  managedBy: 'genie-agent-sync';
+  files: Record<string, AgentFileManifestEntry>;
+}
+
+interface ManifestFileSnapshot {
+  path: string;
+  bytes: Buffer;
+  stat: Stats;
+}
+
+type SafeManifestFile = ManifestFileSnapshot &
+  ({ kind: 'managed'; manifest: AgentFilesManifest } | { kind: 'foreign'; manifest: null });
+
+type AgentManifestState =
+  | SafeManifestFile
+  | { kind: 'absent'; path: string }
+  | { kind: 'unsafe'; path: string; reason: string };
+
+interface SyncManifest {
+  managedBy: 'genie-agent-sync';
+  version: string | null;
+  digest: string;
+  syncedAt: string;
+  /** Physical-identity schema for managed directories and stamped workflows. */
+  identityVersion?: typeof PHYSICAL_TREE_IDENTITY_VERSION;
+  /** Stamped workflow target mode; absent from managed-directory manifests. */
+  targetMode?: number;
+}
+
+/**
+ * Retired codex lane (pre-migration): `<codexDir>/skills/.curated`. Codex
+ * provably never loaded it — codex-rs prunes hidden dirs from skill discovery
+ * (`HiddenDirectoryPolicy::Skip`) and marks `$CODEX_HOME/skills` itself
+ * deprecated. Exported so doctor/uninstall can keep checking/cleaning the
+ * legacy location on machines that have not synced since the migration.
+ */
+function codexLegacyCuratedDir(codexDir: string): string {
+  return join(codexDir, 'skills', '.curated');
+}
+
+function readManifest(dir: string): { manifest: SyncManifest; fileDigest: string } | null {
+  try {
+    const content = readFileSync(join(dir, MANIFEST_NAME));
+    const parsed = JSON.parse(content.toString('utf8')) as Partial<SyncManifest>;
+    if (
+      parsed.managedBy === MANAGED_BY &&
+      typeof parsed.digest === 'string' &&
+      /^[a-f0-9]{64}$/.test(parsed.digest) &&
+      (parsed.identityVersion === undefined || parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION)
+    ) {
+      return {
+        manifest: {
+          managedBy: MANAGED_BY,
+          version: parsed.version ?? null,
+          digest: parsed.digest,
+          syncedAt: typeof parsed.syncedAt === 'string' ? parsed.syncedAt : '',
+          ...(parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+            ? { identityVersion: PHYSICAL_TREE_IDENTITY_VERSION }
+            : {}),
+        },
+        fileDigest: createHash('sha256').update(content).digest('hex'),
+      };
+    }
+  } catch {
+    // absent, unreadable, or unparsable → treat as unmanaged
+  }
+  return null;
+}
+
+/**
+ * Lightweight, read-only view of the shared agent manifest for external
+ * consumers (doctor). Distinguishes a genie-managed manifest (with its per-file
+ * entries) from foreign / absent / unsafe WITHOUT exposing the raw byte+stat
+ * snapshot. `unsafe` mirrors {@link inspectAgentFilesManifest}'s fail-closed
+ * verdict (symlink, non-regular file, multiple hard links, or unreadable) so a
+ * diagnostic can surface it as a warning instead of silently reporting healthy.
+ */
+type AgentFilesManifestView =
+  | { kind: 'managed'; files: Record<string, AgentFileManifestEntry> }
+  | { kind: 'foreign' }
+  | { kind: 'absent' }
+  | { kind: 'unsafe'; reason: string };
+
+function readAgentFilesManifestState(dir: string): AgentFilesManifestView {
+  const state = inspectAgentFilesManifest(dir);
+  switch (state.kind) {
+    case 'managed':
+      return { kind: 'managed', files: state.manifest.files };
+    case 'foreign':
+      return { kind: 'foreign' };
+    case 'absent':
+      return { kind: 'absent' };
+    default:
+      return { kind: 'unsafe', reason: state.reason };
+  }
+}
+
+function inspectAgentFilesManifest(dir: string): AgentManifestState {
+  const path = join(dir, MANIFEST_NAME);
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return { kind: 'absent', path };
+    return { kind: 'unsafe', path, reason: `cannot inspect it: ${errMsg(error)}` };
+  }
+  if (stat.isSymbolicLink()) return { kind: 'unsafe', path, reason: 'it is a symlink' };
+  if (!stat.isFile()) return { kind: 'unsafe', path, reason: 'it is not a regular file' };
+  if (stat.nlink !== 1) return { kind: 'unsafe', path, reason: `it has ${stat.nlink} hard links` };
+
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    return { kind: 'unsafe', path, reason: `cannot read it: ${errMsg(error)}` };
+  }
+  const manifest = parseAgentFilesManifest(bytes);
+  if (manifest === null) {
+    if (isInvalidOrGenieOwnedAgentManifest(bytes)) {
+      return { kind: 'unsafe', path, reason: 'it is invalid JSON or claims Genie ownership with an invalid schema' };
+    }
+    return { kind: 'foreign', path, bytes, stat, manifest: null };
+  }
+  return { kind: 'managed', path, bytes, stat, manifest };
+}
+
+/** Invalid JSON cannot prove foreign ownership; valid JSON is unsafe only when Genie claims it. */
+function isInvalidOrGenieOwnedAgentManifest(bytes: Buffer): boolean {
+  try {
+    const parsed = JSON.parse(bytes.toString('utf8')) as unknown;
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).managedBy === MANAGED_BY
+    );
+  } catch {
+    return true;
+  }
+}
+
+function parseAgentFileManifestEntry(rawEntry: unknown): AgentFileManifestEntry | null {
+  if (typeof rawEntry !== 'object' || rawEntry === null || Array.isArray(rawEntry)) return null;
+  const entry = rawEntry as Record<string, unknown>;
+  if (Object.keys(entry).sort().join('\0') !== ['digest', 'syncedAt', 'version'].join('\0')) return null;
+  if (typeof entry.digest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.digest)) return null;
+  if (
+    entry.version !== null &&
+    (typeof entry.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(entry.version))
+  ) {
+    return null;
+  }
+  if (typeof entry.syncedAt !== 'string') return null;
+  try {
+    if (new Date(entry.syncedAt).toISOString() !== entry.syncedAt) return null;
+  } catch {
+    return null;
+  }
+  return { digest: entry.digest, version: entry.version, syncedAt: entry.syncedAt };
+}
+
+function parseAgentFilesManifest(bytes: Buffer): AgentFilesManifest | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record.managedBy !== MANAGED_BY) return null;
+  if (typeof record.files !== 'object' || record.files === null || Array.isArray(record.files)) return null;
+  if (Object.keys(record).sort().join('\0') !== ['files', 'managedBy'].join('\0')) return null;
+
+  const files: Record<string, AgentFileManifestEntry> = {};
+  for (const [name, rawEntry] of Object.entries(record.files)) {
+    if (!isFlatAgentFilename(name)) return null;
+    const entry = parseAgentFileManifestEntry(rawEntry);
+    if (entry === null) return null;
+    files[name] = entry;
+  }
+  return { managedBy: MANAGED_BY, files };
+}
+
+function isFlatAgentFilename(name: string): boolean {
+  return name === basename(name) && name.endsWith('.md') && name !== '.' && name !== '..';
+}
+
+/**
+ * Return the current v2 physical identity only when the tree still matches its
+ * ownership manifest. An untagged v2 digest is an unambiguous transitional
+ * record. A content-only v1 digest is accepted only when a caller also proves
+ * that the complete current physical tree equals a trusted canonical tree;
+ * destructive orphan/legacy-lane callers intentionally provide no such proof.
+ */
+function acceptedManagedDirPhysicalDigest(
+  dir: string,
+  manifest: SyncManifest,
+  trustedPhysicalDigest?: string,
+): string | null {
+  const physicalDigest = computeDirDigest(dir);
+  if (manifest.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION) {
+    return physicalDigest === manifest.digest ? physicalDigest : null;
+  }
+  // Transitional fixtures/releases could write the v2 digest before adding the
+  // explicit schema tag. Exact v2 equality is unambiguous and safe to accept.
+  if (physicalDigest === manifest.digest) return physicalDigest;
+  const legacyDigest = computeLegacyRegularTreeDigest(dir);
+  return legacyDigest !== null && legacyDigest === manifest.digest && physicalDigest === trustedPhysicalDigest
+    ? physicalDigest
+    : null;
+}
+
+type ManagedSkillTreeState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
+
+interface ManagedSkillTreeReport {
+  path: string;
+  state: ManagedSkillTreeState;
+  /** Accepted v2 physical identity captured during classification. */
+  contentDigest?: string;
+  manifestDigest?: string;
+}
+
+/** One ownership classifier shared by sync, doctor-facing callers, and uninstall. */
+function inspectManagedSkillTree(dir: string): ManagedSkillTreeReport {
+  const root = lstatSafe(dir);
+  if (root === null || !root.isDirectory() || root.isSymbolicLink()) return { path: dir, state: 'unmanaged' };
+  const manifestPath = join(dir, MANIFEST_NAME);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return lstatSafe(manifestPath) === null
+      ? { path: dir, state: 'unmanaged' }
+      : { path: dir, state: 'corrupt-metadata' };
+  }
+  if (typeof raw !== 'object' || raw === null || Reflect.get(raw, 'managedBy') !== MANAGED_BY) {
+    return { path: dir, state: 'unmanaged' };
+  }
+  const manifest = readManifest(dir);
+  if (manifest === null) return { path: dir, state: 'corrupt-metadata' };
+  try {
+    const contentDigest = acceptedManagedDirPhysicalDigest(dir, manifest.manifest);
+    return contentDigest === null
+      ? { path: dir, state: 'managed-modified' }
+      : { path: dir, state: 'managed-clean', contentDigest, manifestDigest: manifest.fileDigest };
+  } catch {
+    return { path: dir, state: 'managed-modified' };
+  }
+}
+
+type ManagedWorkflowState = 'unmanaged' | 'managed-clean' | 'managed-modified' | 'corrupt-metadata';
+
+interface ManagedWorkflowReport {
+  targetPath: string;
+  manifestPath: string;
+  state: ManagedWorkflowState;
+  /** Accepted physical identity captured by the ownership read. */
+  targetDigest?: string;
+  manifestDigest?: string;
+  targetMode?: number;
+  manifestMode?: number;
+}
+
+function readWorkflowManifest(path: string): {
+  status: 'missing' | 'valid' | 'corrupt';
+  manifest?: SyncManifest;
+  fileDigest?: string;
+} {
+  const stat = lstatSafe(path);
+  if (stat === null) return { status: 'missing' };
+  if (!stat.isFile() || stat.isSymbolicLink()) return { status: 'corrupt' };
+  try {
+    const content = readFileSync(path);
+    const parsed = JSON.parse(content.toString('utf8')) as Partial<SyncManifest>;
+    if (
+      parsed.managedBy !== MANAGED_BY ||
+      typeof parsed.digest !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(parsed.digest) ||
+      (parsed.version !== null && parsed.version !== undefined && typeof parsed.version !== 'string') ||
+      typeof parsed.syncedAt !== 'string' ||
+      (parsed.identityVersion !== undefined && parsed.identityVersion !== PHYSICAL_TREE_IDENTITY_VERSION) ||
+      (parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION && !isPhysicalMode(parsed.targetMode))
+    ) {
+      return { status: 'corrupt' };
+    }
+    return {
+      status: 'valid',
+      manifest: {
+        managedBy: MANAGED_BY,
+        version: parsed.version ?? null,
+        digest: parsed.digest,
+        syncedAt: parsed.syncedAt,
+        ...(parsed.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+          ? { identityVersion: PHYSICAL_TREE_IDENTITY_VERSION, targetMode: parsed.targetMode }
+          : {}),
+      },
+      fileDigest: createHash('sha256').update(content).digest('hex'),
+    };
+  } catch {
+    return { status: 'corrupt' };
+  }
+}
+
+interface PhysicalRegularFileIdentity {
+  kind: 'regular';
+  mode: number;
+  digest: string;
+}
+
+type PhysicalFileIdentity =
+  | { kind: 'absent' }
+  | PhysicalRegularFileIdentity
+  | { kind: 'directory'; mode: number }
+  | { kind: 'symlink'; mode: number; target: string }
+  | { kind: 'other'; mode: number; entry: PhysicalTreeEntry['kind'] }
+  | { kind: 'unreadable'; code: string };
+
+function physicalFileIdentity(path: string): PhysicalFileIdentity {
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+  }
+  const mode = stat.mode & 0o7777;
+  if (stat.isSymbolicLink()) {
+    try {
+      return { kind: 'symlink', mode, target: readlinkSync(path) };
+    } catch (error) {
+      return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
+    }
+  }
+  if (stat.isDirectory()) return { kind: 'directory', mode };
+  if (!stat.isFile()) return { kind: 'other', mode, entry: physicalEntryKind(stat) };
+  try {
+    return { kind: 'regular', mode, digest: computeFileDigest(path) };
+  } catch (error) {
+    return { kind: 'unreadable', code: (error as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
+  }
+}
+
+function isPhysicalMode(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 0o7777;
+}
+
+/**
+ * Resolve the Hermes `config.yaml` for the live profile the plugin-link lane
+ * targets: the active sticky profile's home when a safe `active_profile` is set,
+ * else the default Hermes home. Mirrors {@link ensureStickyProfileLink}'s
+ * validation so a config write lands in the same home whose plugins/genie link is
+ * converged. An unsafe/invalid profile falls back to the default home (never an
+ * escaped path); the link lane already surfaces the invalid-profile failure.
+ */
+function resolveHermesConfigPath(hermesHome: string): string {
+  return join(resolveHermesProfileHome(hermesHome), 'config.yaml');
+}
+
+function resolveHermesProfileHome(hermesHome: string): string {
+  const active = readTrimmed(join(hermesHome, 'active_profile'));
+  if (active === null || active === '') return hermesHome;
+  // Same guard the sticky-link lane enforces — an invalid/unsafe profile name
+  // must never redirect a write outside the profiles root.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(active) || active === '.' || active === '..') return hermesHome;
+  const profilesRoot = resolve(hermesHome, 'profiles');
+  const profileRoot = resolve(profilesRoot, active);
+  if (!profileRoot.startsWith(`${profilesRoot}${sep}`)) return hermesHome;
+  return profileRoot;
+}
+
+/** Classify council.js using only its sidecar ownership grant and recorded digest. */
+function inspectManagedWorkflow(targetDir: string): ManagedWorkflowReport {
+  const targetPath = join(targetDir, TARGET_NAME);
+  const manifestPath = join(targetDir, WORKFLOW_MANIFEST_NAME);
+  const ownership = readWorkflowManifest(manifestPath);
+  if (ownership.status === 'missing') return { targetPath, manifestPath, state: 'unmanaged' };
+  if (ownership.status === 'corrupt') return { targetPath, manifestPath, state: 'corrupt-metadata' };
+  const targetIdentity = physicalFileIdentity(targetPath);
+  const manifestIdentity = physicalFileIdentity(manifestPath);
+  const expectedTargetMode =
+    ownership.manifest?.identityVersion === PHYSICAL_TREE_IDENTITY_VERSION
+      ? ownership.manifest.targetMode
+      : WORKFLOW_FILE_MODE;
+  const clean =
+    targetIdentity.kind === 'regular' &&
+    targetIdentity.digest === ownership.manifest?.digest &&
+    targetIdentity.mode === expectedTargetMode &&
+    manifestIdentity.kind === 'regular' &&
+    manifestIdentity.digest === ownership.fileDigest &&
+    manifestIdentity.mode === WORKFLOW_FILE_MODE;
+  return {
+    targetPath,
+    manifestPath,
+    state: clean ? 'managed-clean' : 'managed-modified',
+    ...(clean && targetIdentity.kind === 'regular' && manifestIdentity.kind === 'regular'
+      ? {
+          targetDigest: targetIdentity.digest,
+          manifestDigest: manifestIdentity.digest,
+          targetMode: targetIdentity.mode,
+          manifestMode: manifestIdentity.mode,
+        }
+      : {}),
+  };
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }

@@ -528,12 +528,14 @@ describe('content-preserving edits', () => {
     expect(Bun.YAML.parse(text)).toEqual({ models: { default: 'gpt-5' }, skills: null });
   });
 
-  test('the marker literals restated here still exist in the modules that write them', () => {
-    // The two Hermes markers are module-private in their own files, so this is
-    // the drift guard that keeps the classifier and the writer in agreement.
-    expect(readFileSync(join(import.meta.dir, 'hermes-skills-config.ts'), 'utf8')).toContain(
-      "'# genie:managed:skills.external_dirs'",
-    );
+  test('the mcp marker literal restated here still exists in the module that writes it', () => {
+    // `hermes-mcp-config.ts` survives wish `skills-everywhere-b` and still owns
+    // its begin/end pair privately, so this stays the drift guard between that
+    // writer and this classifier. The skills half is gone on purpose: Group 5
+    // deletes `hermes-skills-config.ts`, and pinning a literal to a file that
+    // will not exist is a guard that fails on the deletion rather than on
+    // drift. `HERMES_SKILLS_MARKER` in the retirement module is now the single
+    // source of truth for that marker.
     expect(readFileSync(join(import.meta.dir, 'hermes-mcp-config.ts'), 'utf8')).toContain(
       '# genie:managed:mcp_servers.genie',
     );
