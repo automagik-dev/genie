@@ -9,9 +9,14 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { validateWish } from '../plugins/genie/scripts/src/validate-wish.js';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
+// Maintained verbatim mirror of `plugins/genie/scripts/src/validate-wish.ts`
+// (that tree is deleted by wish `skills-everywhere-b` Group 4). The two copies
+// differ only in the two relative import specifiers the depth change forces; the
+// mirror is biome-ignored exactly as `plugins/genie/scripts` is, so the parity
+// stays a byte fact rather than a formatting negotiation.
+import { validateWish } from './validate-wish.js';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');
