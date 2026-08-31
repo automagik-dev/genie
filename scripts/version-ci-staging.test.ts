@@ -8,8 +8,8 @@ import { synchronizeVersionFiles } from './version.ts';
 /**
  * D2: `synchronizeVersionFiles` owns the version-carrying file list, so it must
  * `git add` every file it rewrote when running in CI — otherwise the release
- * workflow's own (stale) `git add` list omits plugins/hermes-genie/plugin.yaml
- * and ships a bump with a stale Hermes manifest.
+ * workflow's own (stale) `git add` list re-guesses the set and ships a bump
+ * with a stale manifest.
  */
 describe('synchronizeVersionFiles CI staging', () => {
   const roots: string[] = [];
@@ -29,17 +29,9 @@ describe('synchronizeVersionFiles CI staging', () => {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
     };
-    for (const path of [
-      'package.json',
-      'plugins/genie/orca-plugin.json',
-      'plugins/genie/package.json',
-      'plugins/pi-genie/package.json',
-    ]) {
+    for (const path of ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json']) {
       writeJson(path, { name: 'genie', version: '5.000000.0' });
     }
-    const yamlPath = join(root, 'plugins/hermes-genie/plugin.yaml');
-    mkdirSync(dirname(yamlPath), { recursive: true });
-    writeFileSync(yamlPath, 'name: genie\nversion: 5.000000.0\ndescription: "Native surface"\n');
     return root;
   }
 
@@ -58,7 +50,7 @@ describe('synchronizeVersionFiles CI staging', () => {
       .filter(Boolean);
   }
 
-  test('stages the rewritten plugin.yaml when GITHUB_ACTIONS=true', async () => {
+  test('stages every rewritten manifest when GITHUB_ACTIONS=true', async () => {
     const root = versionFixture();
     initGitRepo(root);
     process.env.GITHUB_ACTIONS = 'true';
@@ -66,12 +58,11 @@ describe('synchronizeVersionFiles CI staging', () => {
     await synchronizeVersionFiles(root, '5.260713.3');
 
     const staged = stagedPaths(root);
-    expect(staged).toContain('plugins/hermes-genie/plugin.yaml');
-    expect(staged).toContain('plugins/pi-genie/package.json');
+    expect(staged).toContain('plugins/genie/package.json');
     expect(staged).toContain('plugins/genie/orca-plugin.json');
     expect(staged).toContain('package.json');
     // The rewritten value is actually on disk (staging did not mask a no-op).
-    expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.3');
+    expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).version).toBe('5.260713.3');
   });
 
   test('stages nothing when GITHUB_ACTIONS is unset', async () => {
@@ -83,7 +74,7 @@ describe('synchronizeVersionFiles CI staging', () => {
 
     expect(stagedPaths(root)).toEqual([]);
     // Files were still rewritten locally — only the staging is CI-gated.
-    expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.4');
+    expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).version).toBe('5.260713.4');
   });
 
   test('fails the sync when git add fails (not a git repo)', async () => {
@@ -91,13 +82,13 @@ describe('synchronizeVersionFiles CI staging', () => {
     process.env.GITHUB_ACTIONS = 'true';
 
     // A CI staging failure must fail the sync — silently continuing would
-    // re-introduce the plugin.yaml version-skew defect this staging exists
-    // to prevent (the workflow's own `git add` list is stale and would ship
-    // a bump with a stale Hermes manifest).
+    // re-introduce the version-skew defect this staging exists to prevent (the
+    // workflow's own `git add` list is stale and would ship a bump with a stale
+    // manifest).
     await expect(synchronizeVersionFiles(root, '5.260713.5')).rejects.toThrow(/CI staging failed/);
     // The version files are still fully rewritten on disk before staging ran —
     // only the staging (and therefore the auto-version commit) is blocked.
-    expect(readFileSync(join(root, 'plugins/hermes-genie/plugin.yaml'), 'utf8')).toContain('version: 5.260713.5');
+    expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).version).toBe('5.260713.5');
     expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260713.5');
   });
 });

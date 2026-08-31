@@ -307,15 +307,11 @@ function writeVersionTree(root: string, version: string, packageScript?: string)
     ],
     ['plugins/genie/orca-plugin.json', { id: 'genie', version }],
     ['plugins/genie/package.json', { name: 'genie-plugin', version }],
-    ['plugins/pi-genie/package.json', { name: 'genie-pi-plugin', version }],
   ];
   for (const [path, value] of jsonFiles) {
     mkdirSync(join(root, path, '..'), { recursive: true });
     writeFileSync(join(root, path), `${JSON.stringify(value, null, 2)}\n`);
   }
-  const hermes = join(root, 'plugins', 'hermes-genie', 'plugin.yaml');
-  mkdirSync(join(hermes, '..'), { recursive: true });
-  writeFileSync(hermes, `name: genie\nversion: ${version}\ndescription: fixture\n`);
 }
 
 function versionRepo(packageScript?: string) {
