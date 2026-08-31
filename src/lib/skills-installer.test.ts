@@ -475,6 +475,20 @@ describe('discovery scan', () => {
     expect(timedOut.reason).toContain('time budget');
   });
 
+  test("genie's own state-backups tree is never scanned back in", () => {
+    const source = fixtureSkillsTree(['wish']);
+    // What the collision snapshot writes: a mirrored `.../skills/wish` under
+    // the backup root, with a fresh mtime. Recording it would let uninstall
+    // delete the backup the snapshot exists to protect.
+    const mirrored = join(genieHome, 'state-backups', 'skills-collision-x', '.claude', 'skills');
+    mkdirSync(join(mirrored, 'wish'), { recursive: true });
+    writeFileSync(join(mirrored, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+
+    const scan = scanSkillsHomes({ home, sourceRoot: source });
+    expect(scan.status).toBe('ok');
+    expect(scan.dirs).not.toContain(mirrored);
+  });
+
   test('an unreadable directory is skipped, never a scan failure', () => {
     const source = fixtureSkillsTree(['wish']);
     const good = join(home, '.claude', 'skills');

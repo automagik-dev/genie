@@ -419,8 +419,19 @@ export function computeSkillDirDigest(dir: string): string | null {
  * Directory names the `$HOME` walk never descends into. Package caches hold
  * thousands of vendored `skills` directories that no agent ever reads, and
  * `.git` can hold a checked-out one; none of them is an agent skill home.
+ *
+ * `state-backups` is genie's own backup-root name (the convention `legacy-v4.ts`
+ * established and the collision snapshot below reuses). Nothing under it is a
+ * live agent home, and a recorded path under it would let `genie uninstall`
+ * delete the very copy the snapshot took — so the walk never enters it.
  */
-const SKILLS_SCAN_PRUNED_DIR_NAMES: ReadonlySet<string> = new Set(['node_modules', '.cache', '.npm', '.git']);
+const SKILLS_SCAN_PRUNED_DIR_NAMES: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.cache',
+  '.npm',
+  '.git',
+  'state-backups',
+]);
 
 /** `~/.config/goose/skills` is depth 3; the deepest known home is shallower still. */
 const SKILLS_SCAN_MAX_DEPTH = 6;
