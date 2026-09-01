@@ -48,11 +48,10 @@ CI in `automagik-dev/genie` runs `actions/checkout@v4` with `submodules: recursi
 
 ```
 src/genie.ts                    CLI entry point (commander)
-src/lib/                        Core modules (transcript, codex/claude logs, paths, config)
-src/lib/transcript.ts           Provider-agnostic transcript abstraction (Claude + Codex)
-src/lib/codex-logs.ts           Codex JSONL parsing + SQLite discovery
+src/lib/                        Core modules (install/update lifecycle, paths, config, Omni, Orca adapter)
 src/lib/codex-config.ts         Backup-first removal of the obsolete Genie loopback OTel exporter
-src/lib/claude-logs.ts          Claude log parsing + transcript adapter
+src/lib/genie-home.ts           GENIE_HOME resolution and the per-agent home paths built on it
+src/lib/orca-orchestration-adapter.ts  The closed public `orca orchestration ... --json` boundary
 src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightweight body")
   genie-db.ts                   Per-repo .genie/genie.db open/init (worktree-aware, WAL)
   global-db.ts                  Global ~/.genie/genie.db — omni approval queue + inbox
