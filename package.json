@@ -1,0 +1,13 @@
+{
+  "name": "genie-plugin",
+  "version": "5.260831.7",
+  "private": true,
+  "description": "Runtime dependencies for genie bundled CLIs",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.0.0"
+  }
+}
