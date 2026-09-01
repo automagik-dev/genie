@@ -39,9 +39,10 @@ export const CODEX_ACTIVATION_PROTOCOL = 1 as const;
 export const READABLE_INTENT_SCHEMAS: readonly number[] = [1];
 
 /**
- * The intent schema currently written by A's activation store (`RefreshIntent`
- * carries `schemaVersion: 1`). A rollback target must declare it can read every
- * extant schema so it never resumes an interrupted transaction it cannot parse.
+ * The intent schema a plugin-era activation store wrote (`schemaVersion: 1`).
+ * The store itself is deleted, but the value is a published wire contract: a
+ * rollback target must declare it can read every extant schema so it never
+ * resumes an interrupted transaction it cannot parse.
  */
 export const EXTANT_INTENT_SCHEMAS: readonly number[] = [1];
 

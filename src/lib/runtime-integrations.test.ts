@@ -1,40 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  type InstallIntegrationsOptions,
-  convergeClaudePlugin,
   inspectRuntimeIntegrationEvidence,
-  installRuntimeIntegrations as installRuntimeIntegrationsWithPhysicalVerification,
-  parseClaudePluginState,
   persistIntegrationConsent,
   readIntegrationConsent,
   removeCodexPluginRegistration,
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   runBoundedIntegrationCommand,
   setCodexPluginEnabled,
-  verifyClaudePhysicalPayload,
 } from './runtime-integrations.js';
 import { VERSION } from './version.js';
-
-function installRuntimeIntegrations(options: InstallIntegrationsOptions) {
-  return installRuntimeIntegrationsWithPhysicalVerification({
-    ...options,
-    genieHome: options.genieHome ?? options.stateDir ?? options.claudeHome,
-    resolveExecutable: options.resolveExecutable ?? ((name) => name),
-    verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
-  });
-}
 
 function removeRuntimeIntegrations(
   options: Exclude<Parameters<typeof removeRuntimeIntegrationsWithTrustedResolution>[0], undefined>,
@@ -51,7 +28,7 @@ function write(path: string, content: string): void {
   writeFileSync(path, content);
 }
 
-describe('runtime plugin state', () => {
+describe('bounded integration subprocess and Codex plugin state', () => {
   test('the default subprocess primitive bounds output and escalates TERM-resistant timeouts to KILL', () => {
     const overflow = runBoundedIntegrationCommand(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000))'], {
       timeoutMs: 1_000,
@@ -113,18 +90,6 @@ describe('runtime plugin state', () => {
     expect(alive).toBe(false);
   });
 
-  for (const [label, entry] of [
-    ['missing enabled', { id: 'genie@automagik', version: VERSION }],
-    ['string enabled', { id: 'genie@automagik', enabled: 'false', version: VERSION }],
-    ['missing version', { id: 'genie@automagik', enabled: false }],
-    ['non-string version', { id: 'genie@automagik', enabled: false, version: 123 }],
-    ['unsafe version', { id: 'genie@automagik', enabled: false, version: '5.0.0\nforged' }],
-  ] as const) {
-    test(`rejects a Claude matching entry with ${label}`, () => {
-      expect(parseClaudePluginState(JSON.stringify([entry]))).toMatchObject({ ok: false });
-    });
-  }
-
   test('restores an explicit Codex disabled state without touching other plugins', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-plugin-state-'));
     const path = join(root, 'config.toml');
@@ -134,30 +99,9 @@ describe('runtime plugin state', () => {
       '[plugins."genie@automagik"]\nenabled = false\n\n[plugins."other@market"]\nenabled = true\n',
     );
   });
-
-  test('install subprocess timeout is bounded and returned as a structured runtime failure', () => {
-    const claudeHome = mkdtempSync(join(tmpdir(), 'genie-claude-timeout-'));
-    const observedTimeouts: number[] = [];
-    const result = installRuntimeIntegrations({
-      selection: 'claude',
-      bundleRoot: join(import.meta.dir, '..', '..'),
-      claudeHome,
-      detected: { claude: true },
-      timeoutMs: 432,
-      runner(_command, _args, options) {
-        observedTimeouts.push(options?.timeoutMs ?? -1);
-        return { exitCode: 1, stdout: '', stderr: '', timedOut: true };
-      },
-    })[0];
-
-    expect(result.ok).toBe(false);
-    expect(result.timedOut).toBe(true);
-    expect(result.detail).toContain('timed out after 432ms');
-    expect(observedTimeouts).toEqual([432]);
-  });
 });
 
-describe('durable integration consent and Claude payload provenance', () => {
+describe('durable integration consent', () => {
   test('integration consent round-trips explicit selections and rejects non-files', () => {
     const home = mkdtempSync(join(tmpdir(), 'genie-integration-consent-'));
     for (const selection of ['none', 'codex', 'claude', 'all', 'auto'] as const) {
@@ -168,234 +112,6 @@ describe('durable integration consent and Claude payload provenance', () => {
     rmSync(path);
     mkdirSync(path);
     expect(() => readIntegrationConsent(home)).toThrow('not a physical file');
-  });
-
-  test('Claude verification binds both directory marketplace source and installed bytes', () => {
-    const bundleRoot = mkdtempSync(join(tmpdir(), 'genie-claude-bundle-'));
-    const claudeHome = mkdtempSync(join(tmpdir(), 'genie-claude-home-'));
-    const source = join(bundleRoot, 'plugins', 'genie');
-    const installed = join(claudeHome, 'plugins', 'cache', 'automagik', 'genie', VERSION);
-    write(join(source, 'package.json'), '{"name":"genie"}\n');
-    write(join(installed, 'package.json'), '{"name":"genie"}\n');
-    write(
-      join(claudeHome, 'plugins', 'known_marketplaces.json'),
-      JSON.stringify({
-        automagik: { source: { source: 'directory', path: bundleRoot }, installLocation: bundleRoot },
-      }),
-    );
-    const input = { bundleRoot, claudeHome, expectedVersion: VERSION };
-    expect(() => verifyClaudePhysicalPayload(input)).not.toThrow();
-    writeFileSync(join(installed, 'package.json'), '{"name":"substituted"}\n');
-    expect(() => verifyClaudePhysicalPayload(input)).toThrow('payload identity mismatch');
-  });
-
-  test('a failed refresh that leaves the plugin installed clears authority before a later manual removal', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-claude-intent-'));
-    const statePath = join(root, 'refresh.json');
-    const current = JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]);
-    const calls: string[] = [];
-    const first = convergeClaudePlugin({
-      command: 'claude',
-      runner(command, args) {
-        calls.push([command, ...args].join(' '));
-        if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: current, stderr: '' };
-        if (args.join(' ') === `plugin marketplace add ${root}`) return { exitCode: 0, stdout: '', stderr: '' };
-        return { exitCode: 7, stdout: '', stderr: 'permission denied' };
-      },
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-    });
-    expect(first?.ok).toBe(false);
-    expect(existsSync(statePath)).toBe(false);
-
-    calls.length = 0;
-    const afterManualRemoval = convergeClaudePlugin({
-      command: 'claude',
-      runner(command, args) {
-        calls.push([command, ...args].join(' '));
-        return { exitCode: 0, stdout: '[]', stderr: '' };
-      },
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-    });
-    expect(afterManualRemoval).toBeNull();
-    expect(calls).toEqual(['claude plugin list --json']);
-    expect(existsSync(statePath)).toBe(false);
-  });
-
-  test('Claude failure settlement restores and verifies captured disabled consent before clearing it', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-claude-disabled-settlement-'));
-    const statePath = join(root, 'refresh.json');
-    let enabled = false;
-    const list = () => JSON.stringify([{ id: 'genie@automagik', enabled, version: VERSION }]);
-    const result = convergeClaudePlugin({
-      command: 'claude',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-      runner(_command, args) {
-        if (args.join(' ') === 'plugin list --json') return { exitCode: 0, stdout: list(), stderr: '' };
-        if (args.join(' ') === 'plugin update genie@automagik') {
-          enabled = true;
-          return { exitCode: 9, stdout: '', stderr: 'partial refresh enabled plugin' };
-        }
-        if (args.join(' ') === 'plugin disable genie@automagik') {
-          enabled = false;
-          return { exitCode: 0, stdout: '', stderr: '' };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-
-    expect(result?.ok).toBe(false);
-    expect(enabled).toBe(false);
-    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ phase: 'planned', enabled: false });
-  });
-
-  test('Claude captures durable disabled intent before a failing first probe and consumes reinstall authority', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-claude-disabled-first-probe-'));
-    const statePath = join(root, 'refresh.json');
-    writeFileSync(
-      statePath,
-      `${JSON.stringify({
-        schemaVersion: 4,
-        runtime: 'claude',
-        installed: true,
-        enabled: false,
-        createdAt: new Date().toISOString(),
-        phase: 'removal-observed',
-      })}\n`,
-    );
-    let lists = 0;
-    let enabled = true;
-    const first = convergeClaudePlugin({
-      command: 'claude',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-      runner(_command, args) {
-        const call = args.join(' ');
-        if (call === 'plugin disable genie@automagik') {
-          enabled = false;
-          return { exitCode: 0, stdout: '', stderr: '' };
-        }
-        if (call !== 'plugin list --json') return { exitCode: 0, stdout: '{}', stderr: '' };
-        lists += 1;
-        if (lists < 3) return { exitCode: 9, stdout: '', stderr: 'probe unavailable' };
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify([{ id: 'genie@automagik', enabled, version: VERSION }]),
-          stderr: '',
-        };
-      },
-    });
-
-    expect(first?.ok).toBe(false);
-    expect(enabled).toBe(false);
-    expect(JSON.parse(readFileSync(statePath, 'utf8'))).toMatchObject({ phase: 'planned', enabled: false });
-
-    const retryCalls: string[] = [];
-    const retry = convergeClaudePlugin({
-      command: 'claude',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-      runner(command, args) {
-        retryCalls.push([command, ...args].join(' '));
-        return { exitCode: 0, stdout: '[]', stderr: '' };
-      },
-    });
-    expect(retry).toBeNull();
-    expect(retryCalls).toEqual(['claude plugin list --json']);
-  });
-
-  test('Claude disabled-state restore tolerates an already-disabled plugin', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-claude-already-disabled-'));
-    const statePath = join(root, 'refresh.json');
-    const result = convergeClaudePlugin({
-      command: 'claude',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-      runner(_command, args) {
-        const call = args.join(' ');
-        if (call === 'plugin list --json') {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([{ id: 'genie@automagik', enabled: false, version: VERSION }]),
-            stderr: '',
-          };
-        }
-        if (call === 'plugin disable genie@automagik') {
-          return {
-            exitCode: 1,
-            stdout: '',
-            stderr: '✘ Failed to disable plugin "genie@automagik": Plugin "genie@automagik" is already disabled',
-          };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-
-    expect(result?.ok).toBe(true);
-    expect(result?.preservedDisabled).toBe(true);
-    expect(existsSync(statePath)).toBe(false);
-  });
-
-  test('Claude stale planned intent defers to a live enabled plugin instead of re-disabling it', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-claude-stale-planned-intent-'));
-    const statePath = join(root, 'refresh.json');
-    writeFileSync(
-      statePath,
-      `${JSON.stringify({
-        schemaVersion: 4,
-        runtime: 'claude',
-        installed: true,
-        enabled: false,
-        createdAt: new Date().toISOString(),
-        phase: 'planned',
-      })}\n`,
-    );
-    const calls: string[] = [];
-    const result = convergeClaudePlugin({
-      command: 'claude',
-      bundleRoot: root,
-      expectedVersion: VERSION,
-      installIfAbsent: false,
-      statePath,
-      verifyClaudePayload: () => undefined,
-      runner(_command, args) {
-        const call = args.join(' ');
-        calls.push(call);
-        if (call === 'plugin list --json') {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([{ id: 'genie@automagik', enabled: true, version: VERSION }]),
-            stderr: '',
-          };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-
-    expect(result?.ok).toBe(true);
-    expect(result?.preservedDisabled).toBe(false);
-    expect(calls).not.toContain('plugin disable genie@automagik');
-    expect(existsSync(statePath)).toBe(false);
   });
 });
 

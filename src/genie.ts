@@ -168,7 +168,7 @@ program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
-  .option('--integrations <mode>', 'Deliver client integrations: auto, codex, claude, all, or none', 'auto')
+  .option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none', 'auto')
   .option('--skip-integrations', 'Alias for --integrations none')
   .action((options: InstallOptions) => installCommand(options));
 

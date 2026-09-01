@@ -1455,7 +1455,6 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
       [dir, 'install.ts'],
       [dir, 'setup.ts'],
       [dir, 'doctor.ts'],
-      [dir, 'update-integrations.ts'],
       [termDir, 'init.ts'],
     ];
     for (const [base, file] of callers) {
