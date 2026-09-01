@@ -286,7 +286,7 @@ Line numbers are the authoring-time measurement against the pointer this wish re
 7. **After a human merges the docs PR** (external, human-gated — see the Execution Strategy note): bump the genie superproject `.docs-vendor` pointer as its own commit.
 
 **Acceptance Criteria:**
-- [ ] Docs PR merged into `automagik-dev/docs` `main` **by a human reviewer** (this wish opens the PR; it cannot merge it); the Mintlify docs-lint run on that PR is green (run URL recorded in Review Results).
+- [ ] Docs PR merged into `automagik-dev/docs` `main` **by a human reviewer** (this wish opens the PR; it cannot merge it); **every check that repository actually runs on the PR is green, with the check list recorded in Review Results.** `automagik-dev/docs` has no `.github/workflows/` directory — there is no Mintlify docs-lint run to cite there, and the docs-lint gate is genie-side (Group 4, deliverable 3). The checks that do run on the docs PR are CodeRabbit, GitGuardian, and the two Socket Security reports; local markdownlint evidence goes in the PR body.
 - [ ] `grep -c 'plugin marketplace add' docs/installation.mdx` is 0, and the page contains `npx skills add automagik-dev/genie -g --all` **with the default-branch caveat of deliverable 3 attached to it**.
 - [ ] RETIRED-9 **plus `plugin marketplace add`** over `docs/` returns nothing — 27 hits → 0, with every one of the ten worklist files touched or, in `hooks.mdx`'s case, deleted.
 - [ ] `docs/config/hooks.mdx` no longer exists and `"genie/config/hooks"` is gone from `.docs-vendor/docs.json`; no page links to it.
@@ -295,9 +295,12 @@ Line numbers are the authoring-time measurement against the pointer this wish re
 - [ ] **Bounded `_internal` criterion:** none of the three enumerated `_internal` pages — `docs/_internal/architecture.mdx`, `docs/_internal/sdk-executor-guide.mdx`, `docs/_internal/cli-reference.mdx` — documents a Wish-B-deleted subsystem as live at the enumerated lines. The wish makes **no claim** about `_internal` pages outside that list: `docs/_internal/` is a large engineering archive, an exhaustive "no page documents anything deleted" sweep is unbounded and unverifiable, and the grep-provable contract is the 27-hit worklist.
 
 **Validation:**
+
+> **Do not run `git submodule update --init .docs-vendor` while deliverable 7 is still pending.** It checks the submodule back out at the superproject-recorded pointer (still the pre-wish commit until the pointer bump lands), which wipes the docs branch checkout: `docs/config/hooks.mdx` reappears, `test ! -e` and the RETIRED-9 grep fail as false negatives, and `merge-base --is-ancestor HEAD origin/main` reports a false pass because it tests the old pointer rather than the branch head. Run the block below as written, which checks out the docs work branch instead of resetting to the pointer. Once deliverable 7 has bumped the pointer, `git submodule update --init .docs-vendor` is the correct first line again. Note that `merge-base --is-ancestor HEAD origin/main` **legitimately fails** on the work branch until a human merges the docs PR; that is the human gate on deliverable 7, not a regression. Verify the remaining four lines independently of it while the PR is open.
+
 ```bash
-git submodule update --init .docs-vendor \
-  && git -C .docs-vendor fetch origin \
+git -C .docs-vendor fetch origin \
+  && git -C .docs-vendor checkout docs/skills-everywhere-c \
   && git -C .docs-vendor merge-base --is-ancestor HEAD origin/main \
   && grep -q 'npx skills add automagik-dev/genie -g --all' docs/installation.mdx \
   && test ! -e docs/config/hooks.mdx \
