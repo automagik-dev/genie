@@ -10,7 +10,10 @@ name: Version
 # On dev triggers we DERIVE a fresh version (today + build-count),
 # commit + tag + push back to dev, then call the main-controlled reusable
 # release workflow with the successful parent CI run. The release guard accepts
-# the child only when all six changed fields are the deterministic version bump.
+# the child only when every changed version field is the deterministic version
+# bump — three files since wish `skills-everywhere-b` (`package.json`,
+# `plugins/genie/package.json`, `plugins/genie/orca-plugin.json`), of which the
+# guard requires the first two and accepts the third when it moved.
 #
 # On main promotion triggers, derive a fresh immutable release identity
 # without rewriting the source tree. The successful branch CI run and a new

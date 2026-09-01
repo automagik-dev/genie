@@ -456,7 +456,7 @@ function sourceBranchAllowedForChannel(branch: unknown, channel: DeliveryEvidenc
   // EVIDENCE_CHANNELS=(stable dev) with SOURCE_BRANCH=main), so dev clients on a
   // stable-promoted version verify a {channel:'dev', sourceBranch:'main'}
   // descriptor. Narrowing this to "dev" aborts every dev update after a stable
-  // release. Same asymmetry documented in validate-live-dogfood-evidence.ts.
+  // release.
   return branch === 'main' || branch === 'dev';
 }
 
