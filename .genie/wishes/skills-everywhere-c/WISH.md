@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `skills-everywhere-c` |
 | **Date** | 2026-08-31 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
@@ -376,6 +376,12 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Execution review — Group 4 — 2026-09-01T08:00:00Z — SHIP
+
+- Engineer/reviewer: ultracode wave-2 agents (opus/high, reviewer ≠ engineer), session 17ecb3d2. PR #2889 (11/11 checks pass), commits `25fb1ca94` `655098418` + fix loop, merged to `wish/skills-everywhere-c` at `72abd7941`.
+- The docs-lint retired-terminology job's grep is proven byte-identical to the ratified G3 validation grep (137 bytes, sha256 `12fe1d4a…` both sides, programmatic extraction + `cmp`); proven both ways against the docs work branch (`db8bddd`): real tree passes, each of the ten tokens individually fails a seeded probe. The ci.yml-form parity run lists all three `genie-orca-*` skills (25 agree). C7-untouched empty. Disclosed out-of-list edit ratified: `.github/markdown-link-check.json` gains a `/genie/<page>[#anchor]` → file resolution pattern so the release-notes page's one internal link is verified rather than skipped.
+- **Pointer-bump-pending acceptance (recorded, not ticked):** the three docs-lint jobs on the dev-targeting PR #2888 are EXPECTED RED until G3 deliverable 7 lands — the recorded `.docs-vendor` pointer (`b700cb611`) predates the wish and still carries the 27 retired-term hits with no release-notes page. **Orchestrator instruction to self: #2888 must not merge to dev before a human merges automagik-dev/docs#81 and the pointer bump lands.** C10-docs, AC2's CI half, and the "Pointer bumped" criterion remain post-human-merge acceptance.
 
 ### Execution review — Wave 1 (G1, G2, G3) — 2026-09-01T07:00:00Z — SHIP ×3
 
