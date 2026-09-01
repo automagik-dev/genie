@@ -2,15 +2,19 @@
 /**
  * skills-lint validates both the command surface and the shipped Codex skill
  * contract: strict SKILL.md frontmatter, matching agents/openai.yaml metadata,
- * skill-relative resources, and real `genie` / `omni` commands.
+ * skill-relative resources, real `genie` / `omni` commands, the retired-role
+ * vocabulary ban, and the skills.sh directory shape.
  *
  * Exit non-zero if any skill has missing commands.
- * Honors a `<!-- skills-lint:ignore -->` bailout marker to skip a file.
+ * Honors a `<!-- skills-lint:ignore -->` bailout marker to skip a file's
+ * command/resource checks — the vocabulary scan below is deliberately NOT
+ * skippable (see BANNED_TOKEN_GUIDANCE).
  */
 
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
+import { scanRepoSkills } from './skills-inventory-parity.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 // SKILLS_LINT_DIR lets tests point the scanner at a fixture tree; defaults to
@@ -30,6 +34,110 @@ export function isResourceAllowlisted(file: string, skillsDir: string = SKILLS_D
   if (rel === 'README.md') return true;
   const first = rel.split(sep)[0];
   return RESOURCE_ALLOWLIST_SEGMENTS.has(first);
+}
+
+/**
+ * BANNED-13 — the retired role/runtime vocabulary, matched as PLAIN SUBSTRINGS
+ * (`String.includes`; no regex, no word boundaries, no "used as an agent name"
+ * judgement call) in EVERY file under the scanned skills dir, `.md` and
+ * non-`.md` alike: `agents/openai.yaml` starter prompts are shipped skill
+ * content an agent reads and acts on.
+ *
+ * Two properties are deliberate and must not be relaxed:
+ *   - There is NO allowlist. `RESOURCE_ALLOWLIST_SEGMENTS` and the README
+ *     exemption are scoped to the resource-path rule only: a hack recipe naming
+ *     a deleted agent profile misleads exactly as much as an executable skill
+ *     does, because a recipe is copied, not read.
+ *   - The scan runs BEFORE the `<!-- skills-lint:ignore -->` bailout, so an
+ *     ignore marker added for a command fence cannot silently disable the
+ *     vocabulary contract for that file.
+ *
+ * Each entry carries the replacement the offending file must adopt, so the
+ * failure names the fix and not just the sin.
+ */
+export const BANNED_TOKEN_GUIDANCE: ReadonlyArray<readonly [token: string, guidance: string]> = [
+  [
+    'genie_engineer_trivial',
+    'name the portable role `implementor-low`, not the runtime profile `genie_engineer_trivial`',
+  ],
+  [
+    'genie_engineer_standard',
+    'name the portable role `implementor-mid`, not the runtime profile `genie_engineer_standard`',
+  ],
+  [
+    'genie_engineer_complex',
+    'name the portable role `implementor-high`, not the runtime profile `genie_engineer_complex`',
+  ],
+  ['genie_reviewer', 'name the portable role `reviewer`, not the runtime profile `genie_reviewer`'],
+  ['genie_fixer', 'name the portable role `fixer`, not the runtime profile `genie_fixer`'],
+  ['genie_final_gate', 'name the portable role `final-gate`, not the runtime profile `genie_final_gate`'],
+  ['genie_scout', 'name the portable role `scout`, not the runtime profile `genie_scout`'],
+  ['engineer-trivial', 'name the portable role `implementor-low`, not the retired tier `engineer-trivial`'],
+  ['engineer-standard', 'name the portable role `implementor-mid`, not the retired tier `engineer-standard`'],
+  ['engineer-complex', 'name the portable role `implementor-high`, not the retired tier `engineer-complex`'],
+  [
+    '$genie:',
+    'describe invocation as skills.sh discovery (`$wish`, `$work`, a bare name, or natural language), not a `$genie:` plugin selector',
+  ],
+  [
+    'CLAUDE_PLUGIN_ROOT',
+    'resolve skill-shipped files from the loaded SKILL.md directory; `CLAUDE_PLUGIN_ROOT` is a retired host-specific root',
+  ],
+  [
+    'LENS_ROOT',
+    'resolve skill-shipped files from the loaded SKILL.md directory; `LENS_ROOT` is a retired host-specific root',
+  ],
+];
+
+export interface BannedTokenViolation {
+  token: string;
+  /** 1-indexed line within the scanned file. */
+  line: number;
+  guidance: string;
+}
+
+/** Every BANNED-13 substring hit in `text`, with its 1-indexed line. */
+export function collectBannedTokenViolations(text: string): BannedTokenViolation[] {
+  const violations: BannedTokenViolation[] = [];
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as string;
+    for (const [token, guidance] of BANNED_TOKEN_GUIDANCE) {
+      if (line.includes(token)) violations.push({ token, line: index + 1, guidance });
+    }
+  }
+  return violations;
+}
+
+export interface StructureViolation {
+  rule: 'empty skill dir' | 'nested skill dir';
+  detail: string;
+}
+
+/**
+ * The skills.sh directory shape, IMPORTED rather than re-derived:
+ * `scanRepoSkills` already computes both findings and is already CI-gated by
+ * the `skills-inventory-parity` job. Two implementations of one contract can
+ * disagree; one cannot.
+ */
+export function collectStructureViolations(skillsDir: string = SKILLS_DIR): StructureViolation[] {
+  const scan = scanRepoSkills(ROOT, skillsDir);
+  const violations: StructureViolation[] = [];
+  for (const name of scan.dirsWithoutSkillMd) {
+    violations.push({
+      rule: 'empty skill dir',
+      detail: `${name}/ has no SKILL.md at its root — skills.sh does not discover it; add ${name}/SKILL.md or remove the directory`,
+    });
+  }
+  for (const nested of scan.nestedSkillFiles) {
+    const segments = nested.split('/');
+    const where = segments.length > 1 ? `hides under ${segments[0]}/` : 'sits at the skills root';
+    violations.push({
+      rule: 'nested skill dir',
+      detail: `${nested} ${where} — skills.sh does not discover it, and \`--full-depth\` collides with the top-level name; move it to a uniquely named top-level directory`,
+    });
+  }
+  return violations;
 }
 
 function collectSubcommands(helpText: string): Set<string> {
@@ -100,13 +208,19 @@ function getOmniCommands(): Set<string> | null {
   return cmds;
 }
 
+/**
+ * Every file under `dir`, `.md` and non-`.md` alike. The vocabulary scan needs
+ * the whole tree (Decision 10: `agents/openai.yaml` starter prompts are shipped
+ * skill content); the command/resource/metadata checks stay markdown-only and
+ * filter this list themselves.
+ */
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const p = join(dir, entry);
     const s = statSync(p);
     if (s.isDirectory()) out.push(...walk(p));
-    else if (entry.endsWith('.md')) out.push(p);
+    else out.push(p);
   }
   return out;
 }
@@ -320,6 +434,54 @@ interface Report {
   missingCommands: Array<{ tool: string; command: string }>;
   resourceViolations: ResourceViolation[];
   metadataViolations: string[];
+  bannedTokens: BannedTokenViolation[];
+}
+
+/** Emit every failing category. Returns true when the gate must exit non-zero. */
+function reportFailures(reports: Report[], structureViolations: StructureViolation[]): boolean {
+  const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
+  const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
+  const metadataFailed = reports.filter((r) => r.metadataViolations.length > 0);
+  const tokenFailed = reports.filter((r) => r.bannedTokens.length > 0);
+  if (
+    missingFailed.length === 0 &&
+    resourceFailed.length === 0 &&
+    metadataFailed.length === 0 &&
+    tokenFailed.length === 0 &&
+    structureViolations.length === 0
+  ) {
+    return false;
+  }
+
+  if (missingFailed.length > 0) {
+    console.error(`\nskills-lint: ${missingFailed.length} skill(s) reference missing commands`);
+  }
+  if (resourceFailed.length > 0) {
+    console.error(`\nskills-lint: ${resourceFailed.length} skill(s) reference repo-only resources`);
+    console.error('skills-lint: resolve skill-shipped paths from the loaded SKILL.md directory');
+    for (const r of resourceFailed) {
+      for (const v of r.resourceViolations) console.error(`  ${r.skill}: [${v.rule}] ${v.snippet}`);
+    }
+  }
+  if (metadataFailed.length > 0) {
+    console.error(`\nskills-lint: ${metadataFailed.length} skill(s) have invalid Codex metadata`);
+    for (const r of metadataFailed) {
+      for (const violation of r.metadataViolations) console.error(`  ${r.skill}: ${violation}`);
+    }
+  }
+  if (tokenFailed.length > 0) {
+    console.error(`\nskills-lint: ${tokenFailed.length} file(s) name a retired agent/runtime token`);
+    for (const r of tokenFailed) {
+      for (const v of r.bannedTokens) {
+        console.error(`  ${r.skill}:${v.line}: [retired-token] ${v.token} — ${v.guidance}`);
+      }
+    }
+  }
+  if (structureViolations.length > 0) {
+    console.error(`\nskills-lint: ${structureViolations.length} skills/ directory shape violation(s)`);
+    for (const v of structureViolations) console.error(`  [${v.rule}] ${v.detail}`);
+  }
+  return true;
 }
 
 function main() {
@@ -331,6 +493,7 @@ function main() {
   }
 
   const files = walk(SKILLS_DIR);
+  const structureViolations = collectStructureViolations(SKILLS_DIR);
   const reports: Report[] = [];
   const metadataBySkill = new Map<string, string[]>();
   for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
@@ -342,10 +505,24 @@ function main() {
   // is only probed when some scanned skill actually references it; when the
   // probe fails, getOmniCommands() returns null and omni checks are skipped
   // (loudly) instead of failing the gate — see its contract comment.
-  const scanned: Array<{ file: string; genie: string[]; omni: string[]; resource: ResourceViolation[] }> = [];
+  const scanned: Array<{
+    file: string;
+    genie: string[];
+    omni: string[];
+    resource: ResourceViolation[];
+    banned: BannedTokenViolation[];
+  }> = [];
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
-    if (text.includes('<!-- skills-lint:ignore -->')) continue;
+    // Decision 9: the vocabulary scan runs on EVERY file the walk finds and
+    // BEFORE the ignore bailout. The bailout below skips only the
+    // command/resource checks it was introduced for.
+    const banned = collectBannedTokenViolations(text);
+    const commandChecksSkipped = !file.endsWith('.md') || text.includes('<!-- skills-lint:ignore -->');
+    if (commandChecksSkipped) {
+      scanned.push({ file, genie: [], omni: [], resource: [], banned });
+      continue;
+    }
     const genie: string[] = [];
     const omni: string[] = [];
     for (const fence of extractBashFences(text)) {
@@ -356,14 +533,14 @@ function main() {
     // show repo-root commands; executable skill instructions must ship their
     // own resources.
     const resource = isResourceAllowlisted(file) ? [] : collectResourceViolations(text);
-    scanned.push({ file, genie, omni, resource });
+    scanned.push({ file, genie, omni, resource, banned });
   }
 
   const omniNeeded = scanned.some((s) => s.omni.length > 0);
   const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
   const omniSkipped = omniCmds === null;
 
-  for (const { file, genie, omni, resource } of scanned) {
+  for (const { file, genie, omni, resource, banned } of scanned) {
     const missing: Report['missingCommands'] = [];
     for (const cmd of genie) {
       if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
@@ -380,37 +557,17 @@ function main() {
       missingCommands: missing,
       resourceViolations: resource,
       metadataViolations,
+      bannedTokens: banned,
     });
   }
 
-  const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
-  const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
-  const metadataFailed = reports.filter((r) => r.metadataViolations.length > 0);
   console.log(JSON.stringify(reports, null, 2));
 
-  if (missingFailed.length > 0 || resourceFailed.length > 0 || metadataFailed.length > 0) {
-    if (missingFailed.length > 0) {
-      console.error(`\nskills-lint: ${missingFailed.length} skill(s) reference missing commands`);
-    }
-    if (resourceFailed.length > 0) {
-      console.error(`\nskills-lint: ${resourceFailed.length} skill(s) reference repo-only resources`);
-      console.error('skills-lint: resolve skill-shipped paths from the loaded SKILL.md directory');
-      for (const r of resourceFailed) {
-        for (const v of r.resourceViolations) {
-          console.error(`  ${r.skill}: [${v.rule}] ${v.snippet}`);
-        }
-      }
-    }
-    if (metadataFailed.length > 0) {
-      console.error(`\nskills-lint: ${metadataFailed.length} skill(s) have invalid Codex metadata`);
-      for (const r of metadataFailed) {
-        for (const violation of r.metadataViolations) console.error(`  ${r.skill}: ${violation}`);
-      }
-    }
-    process.exit(1);
-  }
+  if (reportFailures(reports, structureViolations)) process.exit(1);
   const omniNote = omniSkipped ? ', omni checks skipped' : '';
-  console.error(`skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations${omniNote})`);
+  console.error(
+    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 structure violations${omniNote})`,
+  );
 }
 
 // Only run the linter when executed directly, not when imported by tests.
