@@ -204,7 +204,7 @@ describe('Group E release and documentation contracts', () => {
     const materialize = publish.indexOf('bash scripts/materialize-release-subjects.sh');
     const descriptorBuild = publish.indexOf('bun scripts/build-delivery-evidence.ts');
     const compatibilityJob =
-      publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  codex-native-dogfood:')[0] ?? '';
+      publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  skills-install-smoke:')[0] ?? '';
     const publishJob = publish.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
     const releaseUpload = publish.indexOf('bash scripts/reconcile-release-assets.sh');
     const manifestsJob = publish.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
@@ -222,9 +222,8 @@ describe('Group E release and documentation contracts', () => {
     expect(compatibilityJob).toContain('bun install --frozen-lockfile --ignore-scripts');
     expect(compatibilityJob).toContain('bun scripts/verify-delivery-evidence-pack.ts');
     expect(compatibilityJob).toContain('name: delivery-candidate-manifests');
-    expect(publishJob).toContain('- codex-dogfood-completeness');
+    expect(publishJob).not.toContain('- codex-dogfood-completeness');
     expect(publishJob).toContain('- stable-release-security-gate');
-    expect(publishJob).toContain("needs.codex-dogfood-completeness.result == 'success'");
     expect(publishJob).toContain("needs.stable-release-security-gate.result == 'success'");
     expect(publishJob).toContain('name: delivery-candidate-manifests');
     expect(manifestsJob).toContain('needs: finalize');
@@ -243,15 +242,33 @@ describe('Group E release and documentation contracts', () => {
     expect(assetReconciliation).toContain('.releaseManifestSha256 == $manifest_sha');
   });
 
-  test('manifest-derived native dogfood and the independent security gate jointly block publication', () => {
+  /**
+   * Wish `skills-everywhere-b`, G6: the `Codex standalone task/board dogfood`
+   * matrix and its completeness roll-up were deleted with the Codex plugin
+   * subsystem they exercised. What survives is the manifest-derived inventory
+   * they were built on — `scripts/candidate-dogfood-matrix.ts` is DELIBERATELY
+   * kept, because `prepare-delivery-evidence` derives the platform list and the
+   * update-path projection from it and `stable-release-security-gate`
+   * (a `publish.needs` edge) re-derives and `cmp`s it — plus the independent
+   * security gate. This test now pins both halves and the removal itself.
+   */
+  test('the manifest-derived inventory and the independent security gate block publication', () => {
     const workflow = read('.github/workflows/release-publish.yml');
     const prepare =
       workflow.split('\n  prepare-delivery-evidence:')[1]?.split('\n  attest-delivery-evidence:')[0] ?? '';
-    const native = workflow.split('\n  codex-native-dogfood:')[1]?.split('\n  codex-dogfood-completeness:')[0] ?? '';
-    const completeness =
-      workflow.split('\n  codex-dogfood-completeness:')[1]?.split('\n  stable-release-security-gate:')[0] ?? '';
     const security = workflow.split('\n  stable-release-security-gate:')[1]?.split('\n  publish:')[0] ?? '';
     const publish = workflow.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
+
+    // The two retired jobs are gone, and nothing depends on them.
+    expect(workflow).not.toContain('\n  codex-native-dogfood:');
+    expect(workflow).not.toContain('\n  codex-dogfood-completeness:');
+    expect(workflow).not.toContain('needs.codex-native-dogfood');
+    expect(workflow).not.toContain('needs.codex-dogfood-completeness');
+    expect(workflow).not.toContain('- codex-dogfood-completeness');
+    // ...and so are the three release controls deleted with them.
+    expect(workflow).not.toContain('tests/support/codex-dogfood-entry-runner.ts');
+    expect(workflow).not.toContain('scripts/validate-live-dogfood-evidence.ts');
+    expect(workflow).not.toContain('scripts/validate-dogfood-matrix-evidence.ts');
 
     // The selected candidate manifest is the sole platform inventory. A
     // hand-written representative matrix cannot become promotion evidence.
@@ -260,41 +277,15 @@ describe('Group E release and documentation contracts', () => {
     expect(prepare).toContain('mapfile -t MANIFEST_PLATFORMS');
     expect(prepare).toContain('for platform in "${MANIFEST_PLATFORMS[@]}"');
     expect(prepare).not.toContain('PLATFORMS=(linux-x64-glibc');
-    expect(prepare).toContain('dogfood_matrix=${DOGFOOD_MATRIX}');
     expect(prepare).toContain('candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}');
     expect(prepare).toContain('name: codex-dogfood-candidate-matrix');
+    // release-update-path-smoke downloads this exact artifact for its N-to-T leg.
     expect(prepare).toContain('name: codex-dogfood-previous-release');
     expect(prepare).toContain('bash scripts/verify-release.sh --local');
     expect(prepare).not.toContain('--previous-descriptor');
 
-    expect(native).toContain('matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.dogfood_matrix) }}');
-    expect(native).toContain('runs-on: ${{ matrix.runner }}');
-    expect(native).toContain('ref: ${{ github.sha }}');
-    expect(native).toContain('name: genie-${{ matrix.version }}-${{ matrix.platform }}-signed');
-    expect(native).toContain('--previous-provenance "${PREVIOUS_ARTIFACT}.intoto.jsonl"');
-    expect(native).toContain('--candidate-descriptor "$CANDIDATE_DESCRIPTOR"');
-    expect(native).toContain('--candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json"');
-    expect(native).toContain('EXECUTION_KIND: ${{ matrix.execution }}');
-    expect(native).toContain('scripts/run-musl-dogfood.sh');
-    expect(native).toContain('--inputs-root dogfood-entry');
-    expect(native).toContain('name: codex-dogfood-evidence-${{ matrix.platform }}');
-
-    // Missing, skipped, duplicated, stale, or identity-mismatched native
-    // entries fail the aggregate instead of degrading to representative proof.
-    expect(completeness).toContain('if: ${{ always() }}');
-    expect(completeness).toContain('[[ "$PREPARE_RESULT" == success && "$STANDALONE_RESULT" == success ]]');
-    expect(completeness).toContain('downloaded candidate matrix differs from the matrix used to schedule native jobs');
-    expect(completeness).toContain('bun scripts/validate-dogfood-matrix-evidence.ts');
-    expect(completeness).toContain('--evidence-dir aggregate/entries');
-    expect(completeness).toContain('--candidate-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"');
-    const aggregate = read('scripts/validate-dogfood-matrix-evidence.ts');
-    expect(aggregate).toContain("entry.evidenceKind !== 'host-native'");
-    expect(aggregate).toContain('candidate.manifestSha256 !== options.candidateManifestSha256');
-    expect(aggregate).toContain('candidate.artifactSha256 !== matrixEntry.artifactSha256');
-    expect(aggregate).toContain("kind: 'codex-dogfood-completeness'");
-
     // The machine security proof is read-only, protected-control-derived, and
-    // independent of dogfood while binding the same exact candidate digest.
+    // binds the exact candidate digest.
     expect(security).toContain('if: ${{ always() }}');
     expect(security).toContain('permissions:\n      contents: read\n      attestations: read');
     expect(security).toContain('ref: ${{ github.sha }}');
@@ -317,17 +308,26 @@ describe('Group E release and documentation contracts', () => {
     expect(security).toContain(
       'EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}',
     );
-    expect(security).not.toContain('needs.codex-native-dogfood');
+    expect(security).toContain('bun scripts/candidate-dogfood-matrix.ts');
     expect(security).not.toContain('contents: write');
     expect(security).not.toContain('id-token: write');
 
-    // All channels use both gates. An unavailable/skipped gate is never
-    // equivalent to success, and the write-capable publication job stays shut.
+    // All channels use every surviving gate. An unavailable/skipped gate is
+    // never equivalent to success, and the write-capable publication job stays
+    // shut. Exactly six edges — one fewer than before G6, and only that one.
     expect(publish).toContain('always() &&');
-    expect(publish).toContain('- codex-dogfood-completeness');
-    expect(publish).toContain('- stable-release-security-gate');
-    expect(publish).toContain("needs.codex-dogfood-completeness.result == 'success'");
-    expect(publish).toContain("needs.stable-release-security-gate.result == 'success'");
+    for (const gate of [
+      'admit',
+      'attest-delivery-evidence',
+      'delivery-evidence-compatibility',
+      'skills-install-smoke',
+      'release-update-path-smoke',
+      'stable-release-security-gate',
+    ]) {
+      expect(publish).toContain(`- ${gate}`);
+      expect(publish).toContain(`needs.${gate}.result == 'success'`);
+    }
+    expect(publish.split('\n').filter((line) => /^\s+- [a-z][a-z0-9-]*$/.test(line))).toHaveLength(6);
     expect(publish).not.toContain("inputs.channel == 'stable'");
   });
 
