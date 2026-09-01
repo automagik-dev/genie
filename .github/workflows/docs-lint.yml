@@ -15,9 +15,13 @@ name: Docs Lint
 #     into the .docs-vendor submodule: a contributor with an unpopulated
 #     submodule would see a false failure locally, while every job in this
 #     workflow checks out with `submodules: recursive` and is guaranteed a
-#     populated tree. Known blind spot (wish Decision 11): the assertion reads
-#     docs/ at the pinned submodule commit, so a violation landed on docs `main`
-#     after the last pointer bump is invisible until the next bump.
+#     populated tree. Because "guaranteed" is an assumption about the checkout
+#     and not a fact the step can observe, it asserts docs/ is populated before
+#     grepping and fails on any grep status other than 0/1 — an unresolvable
+#     docs/ must read as a broken gate, never as a clean scan. Known blind spot
+#     (wish Decision 11): the assertion reads docs/ at the pinned submodule
+#     commit, so a violation landed on docs `main` after the last pointer bump
+#     is invisible until the next bump.
 
 on:
   push:
@@ -116,8 +120,25 @@ jobs:
       - name: Assert docs/ names no retired subsystem
         run: |
           set -euo pipefail
-          if grep -rnE 'setup --codex|agent-sync|H3/H4/H6|\.curated|LENS_ROOT|CLAUDE_PLUGIN_ROOT|genie@automagik|council\.js|hook dispatch|plugin marketplace add' docs/; then
+          # grep exits 2 — not 1 — when docs/ does not resolve at all (an
+          # unpopulated .docs-vendor, or the docs repo moving the genie/ subdir
+          # the symlink points at). Read as a plain `if` condition that is
+          # indistinguishable from "no match", and the gate would report green
+          # having scanned nothing. So: assert the tree is really there first,
+          # then treat any status other than 0 (matched) or 1 (clean) as a
+          # failure rather than a pass.
+          if [ ! -e docs/installation.mdx ]; then
+            echo "::error::docs-lint: docs/ is not populated (.docs-vendor submodule missing, or the docs repo moved the genie/ subdir the docs symlink points at). The retired-terminology gate scanned nothing; fix the checkout rather than trusting this job."
+            exit 1
+          fi
+          status=0
+          grep -rnE 'setup --codex|agent-sync|H3/H4/H6|\.curated|LENS_ROOT|CLAUDE_PLUGIN_ROOT|genie@automagik|council\.js|hook dispatch|plugin marketplace add' docs/ || status=$?
+          if [ "$status" -eq 0 ]; then
             echo "::error::docs-lint: docs/ still names retired Genie machinery (matches above). Rewrite the page; the terminology contract is wish skills-everywhere-c, criterion C10-docs."
+            exit 1
+          fi
+          if [ "$status" -ne 1 ]; then
+            echo "::error::docs-lint: the retired-terminology grep exited $status (an error, not a clean scan). Failing rather than reporting a pass over an unread tree."
             exit 1
           fi
           echo "docs/ carries no retired terminology"
