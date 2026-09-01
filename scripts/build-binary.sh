@@ -71,6 +71,13 @@ cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
+# Empty compatibility members. The promoter baked into every previously
+# installed binary validates the downloaded payload against an *exact*
+# top-level allowlist (src/lib/install-promotion.ts INSTALL_PAYLOAD_MEMBERS),
+# so the tarball's top-level set is frozen: dropping these directories broke
+# `genie update` on every 5.260831.x host (5.260901.1). They ship empty and
+# nothing reads them; only remove them together with a shape-tolerant promoter.
+mkdir -p "${STAGE}/.agents" "${STAGE}/.claude-plugin"
 
 # Tests validate the source checkout; no language's test sources or discovery
 # directories belong in the runtime archive. Keep deletion and assertion

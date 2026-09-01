@@ -666,6 +666,10 @@ describe('Group E release and documentation contracts', () => {
     expect(build).toContain('assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"');
     expect(build).toContain('cmp -- "${expected_entry}" "${actual_entry}"');
     expect(build).toContain('cp "${REPO_ROOT}/LICENSE"');
+    // Frozen compat members: the previously installed binary validates the
+    // downloaded payload against its own exact INSTALL_PAYLOAD_MEMBERS, so
+    // dropping these broke `genie update` on every 5.260831.x host (5.260901.1).
+    expect(build).toContain('mkdir -p "${STAGE}/.agents" "${STAGE}/.claude-plugin"');
     expect(build).toContain("-iname '*.test.*'");
     expect(build).toContain("-iname 'test_*.*'");
     expect(build).toContain("-iname '*_test.*'");

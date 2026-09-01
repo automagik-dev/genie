@@ -44,6 +44,7 @@ afterEach(() => {
 });
 
 function writePayload(root: string, version: string): void {
+  for (const name of ['.agents', '.claude-plugin']) mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
   for (const name of ['plugins', 'skills', 'templates']) {
     mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
     writeFileSync(join(root, name, 'generation.txt'), `${version}:${name}\n`, { mode: 0o644 });
