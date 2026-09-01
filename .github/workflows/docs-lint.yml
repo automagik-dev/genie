@@ -10,6 +10,18 @@ name: Docs Lint
 #   - markdown-link-check — verifies internal anchors and external URLs. Run
 #     with a config that retries on 429/5xx and allows the GitHub user-agent
 #     so shortlink checks don't false-fail in CI.
+#   - a retired-terminology grep over docs/ (wish `skills-everywhere-c`, C10).
+#     It lives here, and NOT in `bun run check`, because `docs/` is a symlink
+#     into the .docs-vendor submodule: a contributor with an unpopulated
+#     submodule would see a false failure locally, while every job in this
+#     workflow checks out with `submodules: recursive` and is guaranteed a
+#     populated tree. Because "guaranteed" is an assumption about the checkout
+#     and not a fact the step can observe, it asserts docs/ is populated before
+#     grepping and fails on any grep status other than 0/1 — an unresolvable
+#     docs/ must read as a broken gate, never as a clean scan. Known blind spot
+#     (wish Decision 11): the assertion reads docs/ at the pinned submodule
+#     commit, so a violation landed on docs `main` after the last pointer bump
+#     is invisible until the next bump.
 
 on:
   push:
@@ -18,11 +30,15 @@ on:
       - 'SECURITY.md'
       # Docs live in the .docs-vendor submodule (automagik-dev/docs); trigger
       # on submodule pointer bumps so docs lint runs whenever genie picks up
-      # a new docs commit.
+      # a new docs commit. That is also how a new page (docs/release-notes.mdx)
+      # reaches this workflow — it arrives with the pointer bump.
       - '.docs-vendor'
       - '.gitmodules'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
+      # package.json carries the lint:docs-markdown / lint:docs-links target
+      # lists, so editing which pages are linted must re-run this workflow.
+      - 'package.json'
       - '.github/workflows/docs-lint.yml'
   pull_request:
     branches: [main, dev]
@@ -32,6 +48,7 @@ on:
       - '.gitmodules'
       - '.markdownlint-cli2.jsonc'
       - '.github/markdown-link-check.json'
+      - 'package.json'
       - '.github/workflows/docs-lint.yml'
 
 concurrency:
@@ -60,7 +77,7 @@ jobs:
       - name: Install locked docs tooling
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Lint SECURITY.md + runbook
+      - name: Lint SECURITY.md + runbook + install/release-notes pages
         run: bun run lint:docs-markdown
 
   link-check:
@@ -81,5 +98,47 @@ jobs:
       - name: Install locked docs tooling
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Verify links in SECURITY.md + runbook
+      - name: Verify links in SECURITY.md + runbook + install/release-notes pages
         run: bun run lint:docs-links
+
+  # Wish `skills-everywhere-c`, criterion C10-docs. The token list is RETIRED-9
+  # plus the docs-only `plugin marketplace add` bootstrap step; the pattern below
+  # is byte-identical to the wish's Group 3 validation grep — one list, two call
+  # sites. Needs no toolchain, only a populated submodule, so it does not install
+  # bun or node.
+  retired-terminology:
+    name: Retired terminology (docs/)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Assert docs/ names no retired subsystem
+        run: |
+          set -euo pipefail
+          # grep exits 2 — not 1 — when docs/ does not resolve at all (an
+          # unpopulated .docs-vendor, or the docs repo moving the genie/ subdir
+          # the symlink points at). Read as a plain `if` condition that is
+          # indistinguishable from "no match", and the gate would report green
+          # having scanned nothing. So: assert the tree is really there first,
+          # then treat any status other than 0 (matched) or 1 (clean) as a
+          # failure rather than a pass.
+          if [ ! -e docs/installation.mdx ]; then
+            echo "::error::docs-lint: docs/ is not populated (.docs-vendor submodule missing, or the docs repo moved the genie/ subdir the docs symlink points at). The retired-terminology gate scanned nothing; fix the checkout rather than trusting this job."
+            exit 1
+          fi
+          status=0
+          grep -rnE 'setup --codex|agent-sync|H3/H4/H6|\.curated|LENS_ROOT|CLAUDE_PLUGIN_ROOT|genie@automagik|council\.js|hook dispatch|plugin marketplace add' docs/ || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::docs-lint: docs/ still names retired Genie machinery (matches above). Rewrite the page; the terminology contract is wish skills-everywhere-c, criterion C10-docs."
+            exit 1
+          fi
+          if [ "$status" -ne 1 ]; then
+            echo "::error::docs-lint: the retired-terminology grep exited $status (an error, not a clean scan). Failing rather than reporting a pass over an unread tree."
+            exit 1
+          fi
+          echo "docs/ carries no retired terminology"
