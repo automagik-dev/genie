@@ -49,17 +49,17 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 
 Spawn subagents with the **native delegation surface**; never execute group work directly. Dispatch a wave together so independent groups can run concurrently. Subagents notify you on completion. Every dispatch selects one named role below; implicit or unnamed roles are forbidden.
 
-Use the active runtime's named roles: the matching `genie_*` custom-agent profile when the runtime has one installed, otherwise the runtime's native named-role surface. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
+Use the active runtime's named roles: the portable role names below map onto whatever native named-role surface the runtime provides. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. The git-state freeze and the "agents merge to `dev`; `main` is humans-only" rule are operator policy carried in briefs and AGENTS.md, enforced by server-side branch protection on `main` and by nothing client-side. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Reviewers and scouts stay read-only. Wait for completion notifications, steer a running thread with native follow-up messaging, and interrupt drift rather than spawning a duplicate worker.
 
-| Need | Portable role (runtime profile) |
+| Need | Portable role |
 |------|----------------------------|
-| Deterministic implementation, complexity 0-1 | `engineer-trivial` (`genie_engineer_trivial`) |
-| Moderately coupled implementation, complexity 2-3 | `engineer-standard` (`genie_engineer_standard`) |
-| High-coupling or stateful implementation, complexity 4+ | `engineer-complex` (`genie_engineer_complex`) |
-| Review | `reviewer` (`genie_reviewer`; never the group's engineer) |
-| Fix | `fixer` (`genie_fixer`; separate from the reviewer) |
-| Final plan or execution gate | `final-gate` (`genie_final_gate`) |
-| Bounded read-only discovery | `scout` (`genie_scout`) |
+| Deterministic implementation, complexity 0-1 | `implementor-low` |
+| Moderately coupled implementation, complexity 2-3 | `implementor-mid` |
+| High-coupling or stateful implementation, complexity 4+ | `implementor-high` |
+| Review | `reviewer` (never the group's engineer) |
+| Fix | `fixer` (separate from the reviewer) |
+| Final plan or execution gate | `final-gate` |
+| Bounded read-only discovery | `scout` |
 | Quick validation | The active runtime's shell directly — no subagent |
 | Follow-up to a running subagent | **native follow-up messaging** (keeps its context) |
 
@@ -96,7 +96,7 @@ Extract the group's context from WISH.md and paste it into the dispatch prompt �
 
 When the wave shares one workspace, every brief carries the file scope from item 6 **and** the freeze rule verbatim:
 
-> You share this workspace with concurrent engineers on disjoint files. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**. Work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. Leave your changes in the working tree; do not commit.
+> You share this workspace with concurrent engineers on disjoint files. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**. Work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. The git-state freeze and the "agents merge to `dev`; `main` is humans-only" rule are operator policy carried in briefs and AGENTS.md, enforced by server-side branch protection on `main` and by nothing client-side. Leave your changes in the working tree; do not commit.
 
 ## State Management
 

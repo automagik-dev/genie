@@ -7,6 +7,11 @@
   ],
   "replacementPatterns": [
     {
+      "comment": "Mintlify site-absolute route -> the .mdx file behind it. Assumes every /genie/<route> is backed by a same-named docs/<route>.mdx, which is true for every /genie/ link in the linted pages today. A route resolved by a directory index (/genie/config) or written with a trailing slash (/genie/installation/) would map to a path that does not exist and be reported dead; extend this pattern rather than deleting the link if such a route is ever linted.",
+      "pattern": "^/genie/([^#]+?)(#.*)?$",
+      "replacement": "{{BASEURL}}/docs/$1.mdx$2"
+    },
+    {
       "pattern": "^/",
       "replacement": "{{BASEURL}}/"
     },

@@ -63,11 +63,10 @@ Complexity scoring rubric: score each group independently and record the total p
 - **+1** each for multi-package work; OTel-label dependency; no deterministic test; prior rework; prompt-skill change; CI / release work.
 
 Route the total in **Model** by portable role and reasoning effort: **0–1** →
-`engineer-trivial` / low; **2–3** → `engineer-standard` / medium or high;
-**4–6** → `engineer-complex` / high; **7+** → `engineer-complex` plus an
+`implementor-low` / low; **2–3** → `implementor-mid` / medium or high;
+**4–6** → `implementor-high` / high; **7+** → `implementor-high` plus an
 independent `final-gate` at the highest justified effort. Each runtime maps
-these to its matching native roles (such as the `genie_*` profiles where
-installed). Keep
+these to its matching native roles. Keep
 model and effort in runtime session/agent configuration, never skill frontmatter.
 
 ## Execution Groups

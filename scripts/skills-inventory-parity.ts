@@ -2,18 +2,26 @@
 /**
  * CI guard for the skills.sh inventory contract (wish `skills-everywhere`, C6).
  *
- * The published skill inventory is whatever `skills@<PINNED> add
- * automagik-dev/genie@<ref> --list` names at that ref. Genie's own record
+ * The published skill inventory is whatever `skills@<PINNED> add <local
+ * checkout> --list` names for THIS commit. Genie's own record
  * (`inventoryFromSkillsDir`, `src/lib/skills-installer.ts`) instead derives the
  * inventory from the TOP-LEVEL `skills/*​/SKILL.md` names in the checkout. The
  * two must agree, or `genie uninstall` removes the wrong set and `doctor`
  * reports freshness against a list nobody published.
  *
- * Usage (the CI job pipes the real CLI's human output in):
- *   npx -y skills@<PINNED> add automagik-dev/genie@<sha> --list 2>&1 \
- *     | bun scripts/skills-inventory-parity.ts --repo .
+ * REF CAVEAT: the source is the LOCAL checkout, never `automagik-dev/genie@<ref>`
+ * — `skills@1.5.23` binds the third capture of its source spec to `skillFilter`,
+ * not to a ref, so an `@<ref>` suffix is ignored and the repository's DEFAULT
+ * branch is served (verified 2026-08-31). The ref-pinned form made this check
+ * vacuous on PRs; a local path is the only way to list the commit under test.
  *
- *   bun scripts/skills-inventory-parity.ts --repo . --list-file captured.txt
+ * Usage (the `ci.yml` form — the CI job captures the real CLI's human output):
+ *   npx -y skills@<PINNED> add "$PWD" --list > "$RUNNER_TEMP/skills-list.txt" 2>&1
+ *   bun scripts/skills-inventory-parity.ts --repo . --list-file "$RUNNER_TEMP/skills-list.txt"
+ *
+ * The list may also arrive on stdin:
+ *   npx -y skills@<PINNED> add "$PWD" --list 2>&1 \
+ *     | bun scripts/skills-inventory-parity.ts --repo .
  *
  * Exit 0 only when every one of these holds:
  *   - the parsed `--list` names and the repo's top-level skill dirs are the
@@ -178,9 +186,15 @@ function collectSkillFiles(skillsRoot: string, skipped?: Set<string>): string[] 
   return found.sort();
 }
 
-/** The checkout side of the contract: top-level `skills/<name>/SKILL.md` only. */
-export function scanRepoSkills(repoRoot: string): RepoSkillsScan {
-  const skillsRoot = join(repoRoot, 'skills');
+/**
+ * The checkout side of the contract: top-level `skills/<name>/SKILL.md` only.
+ *
+ * `skillsRoot` defaults to `<repoRoot>/skills`. It is an explicit override so a
+ * caller that already holds a skills root — `scripts/skills-lint.ts`, whose
+ * `SKILLS_LINT_DIR` fixture hook points straight at one — reuses THIS walk
+ * instead of re-deriving the nested/empty contract in a second implementation.
+ */
+export function scanRepoSkills(repoRoot: string, skillsRoot: string = join(repoRoot, 'skills')): RepoSkillsScan {
   const skippedSymlinks = new Set<string>();
   const topLevel = listPhysicalEntries(skillsRoot, '', skippedSymlinks);
   const directories = topLevel.filter((entry) => entry.isDirectory).map((entry) => entry.relativePath);

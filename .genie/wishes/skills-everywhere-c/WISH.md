@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `skills-everywhere-c` |
 | **Date** | 2026-08-31 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
@@ -286,7 +286,7 @@ Line numbers are the authoring-time measurement against the pointer this wish re
 7. **After a human merges the docs PR** (external, human-gated — see the Execution Strategy note): bump the genie superproject `.docs-vendor` pointer as its own commit.
 
 **Acceptance Criteria:**
-- [ ] Docs PR merged into `automagik-dev/docs` `main` **by a human reviewer** (this wish opens the PR; it cannot merge it); the Mintlify docs-lint run on that PR is green (run URL recorded in Review Results).
+- [ ] Docs PR merged into `automagik-dev/docs` `main` **by a human reviewer** (this wish opens the PR; it cannot merge it); **every check that repository actually runs on the PR is green, with the check list recorded in Review Results.** `automagik-dev/docs` has no `.github/workflows/` directory — there is no Mintlify docs-lint run to cite there, and the docs-lint gate is genie-side (Group 4, deliverable 3). The checks that do run on the docs PR are CodeRabbit, GitGuardian, and the two Socket Security reports; local markdownlint evidence goes in the PR body.
 - [ ] `grep -c 'plugin marketplace add' docs/installation.mdx` is 0, and the page contains `npx skills add automagik-dev/genie -g --all` **with the default-branch caveat of deliverable 3 attached to it**.
 - [ ] RETIRED-9 **plus `plugin marketplace add`** over `docs/` returns nothing — 27 hits → 0, with every one of the ten worklist files touched or, in `hooks.mdx`'s case, deleted.
 - [ ] `docs/config/hooks.mdx` no longer exists and `"genie/config/hooks"` is gone from `.docs-vendor/docs.json`; no page links to it.
@@ -295,9 +295,12 @@ Line numbers are the authoring-time measurement against the pointer this wish re
 - [ ] **Bounded `_internal` criterion:** none of the three enumerated `_internal` pages — `docs/_internal/architecture.mdx`, `docs/_internal/sdk-executor-guide.mdx`, `docs/_internal/cli-reference.mdx` — documents a Wish-B-deleted subsystem as live at the enumerated lines. The wish makes **no claim** about `_internal` pages outside that list: `docs/_internal/` is a large engineering archive, an exhaustive "no page documents anything deleted" sweep is unbounded and unverifiable, and the grep-provable contract is the 27-hit worklist.
 
 **Validation:**
+
+> **Do not run `git submodule update --init .docs-vendor` while deliverable 7 is still pending.** It checks the submodule back out at the superproject-recorded pointer (still the pre-wish commit until the pointer bump lands), which wipes the docs branch checkout: `docs/config/hooks.mdx` reappears, `test ! -e` and the RETIRED-9 grep fail as false negatives, and `merge-base --is-ancestor HEAD origin/main` reports a false pass because it tests the old pointer rather than the branch head. Run the block below as written, which checks out the docs work branch instead of resetting to the pointer. Once deliverable 7 has bumped the pointer, `git submodule update --init .docs-vendor` is the correct first line again. Note that `merge-base --is-ancestor HEAD origin/main` **legitimately fails** on the work branch until a human merges the docs PR; that is the human gate on deliverable 7, not a regression. Verify the remaining four lines independently of it while the PR is open.
+
 ```bash
-git submodule update --init .docs-vendor \
-  && git -C .docs-vendor fetch origin \
+git -C .docs-vendor fetch origin \
+  && git -C .docs-vendor checkout docs/skills-everywhere-c \
   && git -C .docs-vendor merge-base --is-ancestor HEAD origin/main \
   && grep -q 'npx skills add automagik-dev/genie -g --all' docs/installation.mdx \
   && test ! -e docs/config/hooks.mdx \
@@ -373,6 +376,32 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Wish closure — 2026-09-01 — SHIPPED
+
+- All four groups SHIP-reviewed and merged; docs#81 merged by a human and the pointer bumped; every CI check on PR #2888's final head is green, including the full Unit gate and all three docs-lint jobs (markdownlint-cli2, markdown-link-check, `Retired terminology (docs/)`) at the bumped pointer. Status flipped to SHIPPED by the orchestrator on this evidence; the dev merge of #2888 completes the umbrella A → B → C.
+- Post-merge QA remains as written in `## QA Criteria` (real-host doctor/update verification rides the next release); the musl `setup --codex` step drop is the recorded follow-up for the first stable cut after Wish B.
+
+### Group 3 closure — 2026-09-01 — docs PR merged by a human; pointer bumped
+
+- automagik-dev/docs#81 was merged by a human reviewer (merge `41eb2dd6f`). The orchestrator executed deliverable 7: `.docs-vendor` advanced to `41eb2dd` (an ancestor of docs `origin/main`, verified with `merge-base --is-ancestor`) as its own commit `6a24bc626`.
+- **C10-docs proven at the bumped pointer:** the RETIRED-9 + `plugin marketplace add` grep over `docs/` returns nothing (27 → 0); `docs/config/hooks.mdx` gone; `docs/release-notes.mdx` present. `bun run lint:docs-markdown` (4 files, 0 issues) and `bun run lint:docs-links` (release-notes anchor resolves into `installation.mdx`) green locally at the pointer.
+- G3's card is done; the remaining CI proof is the docs-lint jobs on PR #2888's final head.
+
+### Execution review — Group 4 — 2026-09-01T08:00:00Z — SHIP
+
+- Engineer/reviewer: ultracode wave-2 agents (opus/high, reviewer ≠ engineer), session 17ecb3d2. PR #2889 (11/11 checks pass), commits `25fb1ca94` `655098418` + fix loop, merged to `wish/skills-everywhere-c` at `72abd7941`.
+- The docs-lint retired-terminology job's grep is proven byte-identical to the ratified G3 validation grep (137 bytes, sha256 `12fe1d4a…` both sides, programmatic extraction + `cmp`); proven both ways against the docs work branch (`db8bddd`): real tree passes, each of the ten tokens individually fails a seeded probe. The ci.yml-form parity run lists all three `genie-orca-*` skills (25 agree). C7-untouched empty. Disclosed out-of-list edit ratified: `.github/markdown-link-check.json` gains a `/genie/<page>[#anchor]` → file resolution pattern so the release-notes page's one internal link is verified rather than skipped.
+- **Pointer-bump-pending acceptance (recorded, not ticked):** the three docs-lint jobs on the dev-targeting PR #2888 are EXPECTED RED until G3 deliverable 7 lands — the recorded `.docs-vendor` pointer (`b700cb611`) predates the wish and still carries the 27 retired-term hits with no release-notes page. **Orchestrator instruction to self: #2888 must not merge to dev before a human merges automagik-dev/docs#81 and the pointer bump lands.** C10-docs, AC2's CI half, and the "Pointer bumped" criterion remain post-human-merge acceptance.
+
+### Execution review — Wave 1 (G1, G2, G3) — 2026-09-01T07:00:00Z — SHIP ×3
+
+- Engineers/reviewers: ultracode wave-1 agents (opus/high, reviewer ≠ engineer per group), session 17ecb3d2, base `0efc288b5` (post-Wish-B dev). G1 PR #2887 SHIP r1; G2 PR #2886 SHIP r1; G3 docs PR automagik-dev/docs#81 SHIP r2 after one fix loop. All three merged to `wish/skills-everywhere-c` (`d3b884f6d`, `db4de7d6d`, `403fe5c26`).
+- **Baseline correction (ledger-recorded per G1's review):** the C10-repo `skills/` baseline was 2 hits, not the recorded 0 — `skills/README.md:50` (`genie setup --codex`) and `skills/genie-hacks/references/catalog.md:113` (`hook dispatch`); both fixed in G1. G1's gate-forced out-of-list edits (build-tarballs.yml parity path, release-docs.test.ts skills-README retarget) are disclosed in PR #2887.
+- **Orchestrator ratification (2026-09-01, session 17ecb3d2):** G3's in-branch amendment `1f69e4044` is RATIFIED — the docs repo has no `.github/workflows/`, so the "Mintlify docs-lint run" AC is replaced by "every check the repo actually runs is green + local markdownlint evidence in the PR body", and the Validation block is corrected so `git submodule update --init` is not run while the pointer bump is pending (it would reset the submodule to the pre-wish pointer and produce false failures/passes).
+- **Cross-group seam fixed by the orchestrator (`bbc8de72d`):** `release-docs.test.ts`'s "manual docs use explicit tiers" test required `$genie:<skill>` in the two READMEs — banned vocabulary post-Decision-8; each branch passed only via the other file's stale tokens and the union failed. Rewritten to assert the discovery forms (`$name`, `/name`) and `not.toContain('$genie:')`.
+- **G3 completes at the open, human-gated docs PR (#81)** per the Execution Strategy; deliverable 7 (the `.docs-vendor` pointer bump) executes after a human merges it. G3's card stays in progress until then.
+- LOW residuals recorded, none blocking: full test gate pending on the dev-targeting PR (opened after the first merge, per protocol); two docs prose leftovers (`config/files.mdx:233` GENIE_AGENT_NAME description, `architecture/messaging.mdx` fire-and-forget sentence) and the no-redirect 404 for the deleted hooks page, all noted in docs#81; the two-walk symlink/binary divergence comment suggestion.
 
 ### Plan review — 2026-08-31T16:02:02Z — SHIP (round 2)
 - Reviewer: genie:reviewer (session e7edce9e/ae37f64b), rounds 1 (FIX-FIRST, sha `8924f5ad…`) and 2 (SHIP, sha `8e5611226…`), base 67be5c46d. All H/M closed and independently re-verified (Decision 10 proven empirically: 0 violations across the 29 non-.md files). Binding erratum applied by the orchestrator in this revision: G3's inbound-link contract corrected to `docs/hacks.mdx:318` (11th worklist file, repoint to Omni docs). LOW errata applied (11 hits count, BANNED-13 naming, B:50 citation, ci.yml:258-270, final-gate line ref). Reviewer verifies the erratum at execution review.
