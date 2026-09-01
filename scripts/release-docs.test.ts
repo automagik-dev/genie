@@ -840,32 +840,29 @@ describe('Group E release and documentation contracts', () => {
     expect(contributorCommands).toEqual(expected);
   });
 
-  test('operator docs distinguish product, role-agent, personal, MCP, and hook inventories', () => {
+  test('operator docs name the three delivery surfaces and keep the plugin era retired', () => {
     const docs = read('README.md');
-    expect(docs).toContain('These five inventories are intentionally separate');
+    // Wish `skills-everywhere-c`: the operator README describes exactly three
+    // surfaces — the signed binary, the skills.sh channel, and the Orca plugin.
     for (const statement of [
-      '22 physical',
-      'Seven optional',
+      'npx skills add automagik-dev/genie',
+      'skills-install.json',
+      '~/.agents/skills',
       'MCP retirement',
-      'H3',
-      'H4',
-      'H6',
-      '/hooks',
-      'start a new task',
+      'skills: skipped (consent: none)',
     ]) {
       expect(docs).toContain(statement);
     }
     // The Orca payload README states plainly that it provides no skills and no launcher.
-    expect(read('README.md')).toContain('the **sole** Genie-managed skill provider');
-    expect(read('README.md')).toContain('Fallback retirement');
-    expect(read('README.md')).toContain('No product MCP route or launcher');
     expect(read('plugins/genie/README.md')).toContain('No launcher or registration ships');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
     expect(docs).not.toContain('CLI-managed product fallbacks');
-    expect(docs).toContain('at most 64 candidate');
-    expect(docs).toContain('network-free');
+    // The plugin-era inventories and the hook-review step left with the code.
+    expect(docs).not.toContain('These five inventories are intentionally separate');
+    expect(docs).not.toContain('Fallback retirement');
+    expect(docs).not.toContain('/hooks');
   });
 
   test('manual docs use explicit tiers while all physical skill cards remain selector-free', () => {
@@ -905,10 +902,6 @@ describe('Group E release and documentation contracts', () => {
       expect(root).toContain(term);
     }
     expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
-    expect(root).toContain('Successful setup persists Codex delivery scope');
-    // Delivery scope authorizes later publication only; setup remains the sole activation/convergence owner.
-    expect(root).toContain('those updates still deliver only');
-    expect(root).toContain('Genie never seeds the user tier');
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
