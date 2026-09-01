@@ -83,10 +83,10 @@ jobs:
         with:
           bun-version: "1.3.11"
 
-      # Pinned Node 22 (same action SHA as the codex-smoke job): the
-      # session-context tests drive the shipped hook under node and need
-      # node:sqlite (minimum Node 22.13) — without this pin the runner's
-      # driverless system node would skip the db-backed half of the suite.
+      # Pinned Node 22: parts of the suite spawn `node` (the design-review
+      # evidence tool the fresh-install smoke runs, and the node-targeted
+      # scripts under scripts/) and need a modern runtime — without this pin
+      # the runner's driverless system node would silently skip them.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
@@ -117,23 +117,8 @@ jobs:
       - name: Complexity budget
         run: bun run lint:complexity-budget
 
-      - name: Council workflow lint
-        run: bun run lint:council-workflow
-
-      - name: Generated hook bundle parity
-        run: bun run lint:hook-bundles
-
       - name: Native Orca bundle parity
         run: bun run lint:orca-bundle
-
-      - name: Codex hook launcher content binding
-        run: bun run lint:hook-content
-
-      - name: Shipped plugin executable static checks
-        run: bun run lint:plugin-executables
-
-      - name: Plugin skill mirror + Kimi command orphan check
-        run: bun run lint:plugin-skills
 
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
@@ -167,61 +152,18 @@ jobs:
       - name: v5 lifecycle e2e
         run: V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh
 
-  # Black-box proof that the BUILT CLI makes Codex product skills plugin-only
-  # (wish `repair-genie-codex-hooks-and-dedupe-skills`, Group C). Runs against
-  # a real codex CLI (pinned via `@openai/codex` on npm — the same package
-  # that ships the platform-specific `codex-cli` binary installed locally) in
-  # a fully isolated $HOME/$CODEX_HOME the smoke harness creates per-run.
-  # `ubuntu-latest` (not the blacksmith runner used elsewhere) because this
-  # job's feasibility was verified specifically against a stock GH-hosted
-  # Linux runner; see PR body for the verification evidence.
-  codex-smoke:
-    name: Codex Plugin Smoke (black-box)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.11"
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "22"
-
-      - name: Install dependencies
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-cache-${{ github.run_id }}-${{ github.run_attempt }}
-        run: bun install --frozen-lockfile
-
-      - name: Install codex CLI (pinned, unauthenticated — the smokes never call `codex login`)
-        run: npm install -g @openai/codex@0.144.1
-
-      - name: Build
-        run: bun run build
-
-      - name: Codex plugin-only smoke
-        run: bun run smoke:codex
-
-      - name: Codex debug discovery smoke
-        run: bun run smoke:codex-discovery
-
   # The skills inventory contract (wish `skills-everywhere`, C6): what
-  # `skills@<PINNED> add automagik-dev/genie@<ref> --list` publishes must be
-  # exactly `ls skills/*/SKILL.md` in the checkout, with no nested SKILL.md and
-  # no skill directory missing one. This is its OWN job because resolving the
-  # published inventory needs a real npx + git clone, and the `unit` job above
-  # stays network-free by design. The comparison logic itself is unit-tested
-  # offline in scripts/skills-inventory-parity.test.ts.
+  # `skills@<PINNED> add <local checkout> --list` publishes must be exactly
+  # `ls skills/*/SKILL.md` in the checkout, with no nested SKILL.md and no skill
+  # directory missing one. This is its OWN job because resolving the published
+  # inventory needs a real npx, and the `unit` job above stays network-free by
+  # design. The comparison logic itself is unit-tested offline in
+  # scripts/skills-inventory-parity.test.ts.
   #
-  # The ref is the exact commit under test — skills.sh resolves a full 40-hex
-  # SHA as a ref (verified 2026-08-30 against automagik-dev/genie). A fork PR
-  # builds a head commit skills.sh cannot clone from this repository, so the job
-  # is scoped to same-repository events, like secrets-scan above.
+  # The source is the LOCAL checkout: skills@1.5.23 ignores an `@<ref>` suffix
+  # and serves the repository default branch instead (verified 2026-08-31),
+  # which made the ref-pinned form of this check vacuous on PRs. The job stays
+  # scoped to same-repository events, like secrets-scan above.
   skills-inventory-parity:
     name: Skills Inventory Parity (skills.sh --list)
     runs-on: ubuntu-latest

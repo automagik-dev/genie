@@ -19,11 +19,10 @@ reviews:
     - "!.claude/**"
     - "!*.md"
     - "!dist/**"
-    - "!plugins/genie/scripts/**"
   path_instructions:
     - path: "src/**"
       instructions: "Core CLI source. Check for breaking changes to exported types."
     - path: "plugins/**"
-      instructions: "Claude Code plugin. Verify plugin manifest updates are consistent."
+      instructions: "Orca plugin payload. Verify plugin manifest updates are consistent."
     - path: ".github/workflows/**"
       instructions: "CI workflows. Check for hardcoded secrets, proper caching keys, and timeout settings."

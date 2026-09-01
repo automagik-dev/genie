@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanPhysicalTree } from '../../lib/codex-activation.js';
-import type { DeliveryEvidencePlatformId } from '../../lib/codex-delivery-evidence.js';
-import { buildTestDeliveryEvidencePack } from '../../lib/codex-delivery-evidence.test-support.js';
+import type { DeliveryEvidencePlatformId } from '../../lib/delivery-evidence-verify.js';
+import { buildTestDeliveryEvidencePack } from '../../lib/delivery-evidence-verify.test-support.js';
+import { scanPhysicalTree } from '../../lib/release-payload-proof.js';
 import { VERSION } from '../../lib/version.js';
 
 const RUNNER = join(import.meta.dir, '..', '..', '..', 'tests', 'support', 'update-publication-failure-runner.ts');
@@ -45,11 +45,9 @@ function buildReleasePayload(
   payloadSha256: string;
 } {
   const payload = join(root, 'payload');
-  for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
+  for (const directory of ['plugins/genie', 'skills/review', 'templates']) {
     mkdirSync(join(payload, directory), { recursive: true });
   }
-  writeFileSync(join(payload, '.agents', 'plugin.json'), '{}\n');
-  writeFileSync(join(payload, '.claude-plugin', 'marketplace.json'), '{}\n');
   writeFileSync(join(payload, 'LICENSE'), 'test fixture\n');
   writeFileSync(join(payload, 'VERSION'), `${version}\n`);
   writeFileSync(join(payload, 'plugins', 'genie', 'plugin.txt'), 'authenticated plugin payload\n');
@@ -71,7 +69,7 @@ function buildReleasePayload(
 }
 
 describe('updateCommand publication boundary', () => {
-  test('real promotion plus an unwritable record store exits nonzero and preserves retry metadata', () => {
+  test('a verified candidate is promoted and its binding is proven against the delivered payload', () => {
     const root = tempRoot('update-command-publication');
     const genieHome = join(root, 'genie-home');
     const bin = join(genieHome, 'bin');
@@ -102,9 +100,6 @@ describe('updateCommand publication boundary', () => {
     );
     const marker = join(genieHome, '.install-version');
     writeFileSync(marker, `${oldVersion}\n`);
-    const recordPath = join(genieHome, '.codex-plugin-delivery-record.json');
-    mkdirSync(recordPath);
-
     const release = buildReleasePayload(fixture, VERSION);
     const pack = buildTestDeliveryEvidencePack({
       descriptor: {
@@ -147,13 +142,12 @@ describe('updateCommand publication boundary', () => {
 
     const result = Bun.spawnSync(['bun', RUNNER], { env, stdout: 'pipe', stderr: 'pipe' });
     const output = `${result.stdout.toString()}\n${result.stderr.toString()}`;
-    expect(result.exitCode).toBe(1);
-    expect(output).toContain('authenticated Codex delivery publication incomplete');
-    expect(output.match(/"deliveryComplete":false/g)).toHaveLength(1);
-    expect(output).not.toContain('"deliveryComplete":true');
-    expect(existsSync(marker)).toBe(true);
-    expect(readFileSync(marker, 'utf8')).toBe(`${oldVersion}\n`);
-    expect(existsSync(recordPath) && statSync(recordPath).isDirectory()).toBe(true);
+    // The durable delivery record left with the Codex activation store; what the
+    // promotion boundary still owns is the evidence→binary binding, so a
+    // verified candidate promotes cleanly and nothing reports an incomplete
+    // binding.
+    expect(output).not.toContain('delivery binding incomplete');
+    expect(output).not.toContain('"deliveryComplete":false');
 
     const installed = Bun.spawnSync([join(bin, 'genie'), '--version'], { stdout: 'pipe', stderr: 'pipe' });
     expect(installed.exitCode).toBe(0);

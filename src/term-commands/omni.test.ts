@@ -1,15 +1,10 @@
 /**
- * Omni runner — five round-trips with NO real NATS/Omni/network:
- *   1. token-approve      inbound "yes" resolves the pending approval → allow
- *   2. reaction-approve   inbound 👍 reaction (correlated by ref) → allow
- *   3. deny               inbound "no" → deny
- *   4. timeout → ask      no reply within budget → ask + row expired
- *   5. registration-sig   signed POST /api/v2/agents verifies against the host pubkey
+ * Omni runner — registration and inbox behavior with NO real NATS/Omni/network.
  *
- * The first four drive the real handler↔runner loop against an in-memory global
- * DB, with a FAKE publish recorder standing in for NATS (outbound asserted on
- * recorded publishes). The fifth uses a fake Omni HTTP server (Bun.serve,
- * ephemeral port) for the registration signature only.
+ * The PreToolUse approval hook that used to drive the token/reaction/deny/timeout
+ * round-trips through this runner was deleted with the hook runtime; what remains
+ * is the CLI-originated surface. The registration test uses a fake Omni HTTP
+ * server (Bun.serve, ephemeral port) for the signature only.
  */
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -17,8 +12,6 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { omniApproval } from '../hooks/handlers/omni-approval.js';
-import type { HandlerResult } from '../hooks/types.js';
 import type { OmniRuntimeConfig } from '../lib/omni-config.js';
 import { registerAgentInOmni } from '../lib/omni-registration.js';
 import { createOmniRunner, natsConnectionCount } from '../lib/omni-runner.js';
@@ -41,15 +34,6 @@ function rt(overrides: Partial<OmniRuntimeConfig> = {}): OmniRuntimeConfig {
   };
 }
 
-const PAYLOAD = {
-  hook_event_name: 'PreToolUse',
-  tool_name: 'Bash',
-  tool_input: { command: 'deploy prod' },
-  session_id: 'sess',
-  cwd: '/repo',
-  permission_mode: 'default',
-};
-
 /** Restore an env var to a prior value, deleting it when it was previously unset. */
 function restoreEnv(key: string, prev: string | undefined): void {
   if (prev === undefined) Reflect.deleteProperty(process.env, key);
@@ -67,122 +51,8 @@ afterEach(() => {
   dbs = [];
 });
 
-interface Published {
-  subject: string;
-  payload: string;
-}
-
-interface Sent {
-  instance: string;
-  chat: string;
-  text: string;
-}
-
-/** The stanza id the fake id-returning send returns; the real Omni message id
- *  `announce()` stores and a reaction correlates against. */
-const STANZA_ID = 'stanza-fixed-1';
-
-/**
- * Run the real handler↔runner loop once. The handler enqueues + polls; on its
- * first `sleep` we play the runner (announce via a FAKE id-returning send, then
- * the phone action), and the handler's next poll observes the resolution.
- */
-async function driveRoundTrip(
-  db: Database,
-  config: OmniRuntimeConfig,
-  phone: (runner: ReturnType<typeof createOmniRunner>, published: Published[], sent: Sent[]) => void,
-): Promise<HandlerResult> {
-  const published: Published[] = [];
-  const sent: Sent[] = [];
-  const runner = createOmniRunner({
-    db,
-    config,
-    publish: (subject, payload) => published.push({ subject, payload }),
-    sendApproval: async (opts) => {
-      sent.push(opts);
-      return { outcome: 'accepted', messageId: STANZA_ID };
-    },
-  });
-  let phoned = false;
-  return omniApproval(PAYLOAD, {
-    openDb: () => db,
-    loadConfig: async () => config,
-    sleep: async () => {
-      if (phoned) return;
-      phoned = true;
-      runner.tick(); // announce the pending approval (fires the id-returning send)
-      await runner.whenIdle(); // wait for the send to store the real stanza id
-      phone(runner, published, sent);
-    },
-  });
-}
-
-describe('omni runner — five round-trips (no network)', () => {
-  test('1. token-approve: inbound "yes" → allow, request announced, message stored', async () => {
-    const config = rt();
-    const db = freshDb();
-    let sentRef: Sent[] = [];
-    const res = await driveRoundTrip(db, config, (runner, _published, sent) => {
-      sentRef = sent;
-      runner.handleMessage(
-        `omni.message.${config.instance}.${config.approvalChat}`,
-        JSON.stringify({ content: 'yes', chatId: config.approvalChat, sender: 'boss', instanceId: config.instance }),
-      );
-    });
-    expect(res?.hookSpecificOutput?.permissionDecision).toBe('allow');
-    // Approval-request sent via the id-returning send, addressed at the approval chat.
-    expect(sentRef.length).toBe(1);
-    expect(sentRef[0].chat).toBe(config.approvalChat as string);
-    expect(sentRef[0].text).toContain('Approval Required');
-    // Inbound reply stored to the inbox.
-    const inbox = listInbox(db);
-    expect(inbox.length).toBe(1);
-    expect(inbox[0].body).toBe('yes');
-  });
-
-  test('2. reaction-approve: 👍 correlated by the stored stanza id → allow', async () => {
-    const config = rt();
-    const db = freshDb();
-    const res = await driveRoundTrip(db, config, (runner) => {
-      // announce() stored the REAL stanza id (STANZA_ID) the send returned; a
-      // reaction referencing it (on `omni.message.*`, not the retired
-      // `omni.event.*`) resolves this exact approval.
-      runner.handleMessage(
-        `omni.message.${config.instance}.${config.approvalChat}`,
-        JSON.stringify({
-          content: `[Reaction: \u{1F44D} on message ${STANZA_ID}]`,
-          messageId: STANZA_ID,
-          chatId: config.approvalChat,
-          instanceId: config.instance,
-          sender: 'boss',
-        }),
-      );
-    });
-    expect(res?.hookSpecificOutput?.permissionDecision).toBe('allow');
-  });
-
-  test('3. deny: inbound "no" → deny', async () => {
-    const config = rt();
-    const db = freshDb();
-    const res = await driveRoundTrip(db, config, (runner) => {
-      runner.handleMessage(
-        `omni.message.${config.instance}.${config.approvalChat}`,
-        JSON.stringify({ content: 'no', chatId: config.approvalChat, sender: 'boss' }),
-      );
-    });
-    expect(res?.hookSpecificOutput?.permissionDecision).toBe('deny');
-  });
-
-  test('4. timeout → ask, row expired (no reply within budget)', async () => {
-    const config = rt({ approvals: { enabled: true, toolMatcher: '^Bash$', pollBudgetMs: 0, pollIntervalMs: 1 } });
-    const db = freshDb();
-    const res = await omniApproval(PAYLOAD, { openDb: () => db, loadConfig: async () => config });
-    expect(res?.hookSpecificOutput?.permissionDecision).toBe('ask');
-    const rows = db.query('SELECT status FROM approvals').all() as Array<{ status: string }>;
-    expect(rows[0].status).toBe('expired');
-  });
-
-  test('5. registration-signature: signed POST verifies against the host pubkey', async () => {
+describe('omni runner — registration (no network)', () => {
+  test('registration-signature: signed POST verifies against the host pubkey', async () => {
     const home = mkdtempSync(join(tmpdir(), 'omni-sig-'));
     const prevHome = process.env.GENIE_HOME;
     const prevUrl = process.env.OMNI_API_URL;

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED by skills-everywhere-b G4: the council-workflow lint gate and the
+# plugin-side workflow it checked no longer exist. Kept as shipped-wish
+# evidence only — do not re-run as a live gate.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 

@@ -16,10 +16,9 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 
 - `src/genie.ts` is the Commander CLI entry point.
 - `src/lib/v5/` owns SQLite state. Per-repo `.genie/genie.db` stores task state; global `~/.genie/genie.db` stores Omni state. Never mix their path/schema modules.
-- `src/hooks/` owns provider-neutral lifecycle policy plus Claude/Codex wire adapters.
 - `src/term-commands/` owns `init`, `context`, MCP, Omni, task, and board commands.
-- `plugins/genie/` is one shared plugin payload with sibling Claude and Codex manifests.
-- `skills/` is shared runtime-neutral workflow guidance. Runtime mapping lives in `plugins/genie/references/native-surfaces.md`.
+- `plugins/genie/` is the Orca plugin payload: the native manifest, its entrypoint bundle, and `references/orca-orchestration.md`.
+- `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
 - `.genie/` contains git-tracked wishes/brainstorms/index plus gitignored operational SQLite files.
 
 Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` bridge. Do not use telemetry presence as integration health.
@@ -35,7 +34,8 @@ Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` br
 - Subagents share a workspace unless the client explicitly guarantees otherwise. Parallel writers must have disjoint file ownership or dedicated worktrees; otherwise sequence them. Shared-workspace subagents never mutate repo-level git state (no `checkout`/`switch`/`reset`/`stash`/`rebase`) — **only the orchestrator moves HEAD**; work needing repo-level mutation gets an isolated worktree arranged by the orchestrator (client-provided worktrees or explicit `git worktree add` plumbing) or gets sequenced. `git worktree add/remove/prune` on snapshot/lane paths is orchestrator-side plumbing and permitted. Genie task claims own shared-workspace scope; the orchestrator arranges worktree isolation.
 - Reviewer and engineer are different roles. Never accept self-review as independent evidence.
 - Codex agents inherit the active model; do not hardcode unstable model identifiers.
-- Hook trust and workspace trust remain explicit user decisions.
+- Workspace trust remains an explicit user decision. Genie installs no lifecycle hooks into any runtime.
+- The shared-workspace git-state freeze and the "agents merge to `dev`; `main` is humans-only" rule are operator policy carried in briefs and in this file, enforced by server-side branch protection on `main` and by nothing client-side. That is the answer to [#2705](https://github.com/automagik-dev/genie/issues/2705): no client-side guard enforces either rule.
 
 ### Flip conditions for the shared-workspace contract
 
@@ -54,10 +54,10 @@ Biome enforces single quotes, two-space indentation, 120-column lines, and trail
 
 ## Release contract
 
-Release tarballs contain the binary, shared plugin, both plugin manifests, both marketplaces, skills, templates, and `VERSION`. Plugin and marketplace versions must match `package.json`. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
+Release tarballs contain the binary, the `plugins/genie` Orca payload, `skills/`, `templates/`, and `VERSION`. Three version files are stamped and must agree with `package.json`: `package.json`, `plugins/genie/package.json`, and `plugins/genie/orca-plugin.json`. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
 
 ## Runtime-specific notes
 
 - Claude invokes Genie skills as slash commands and may load the `CLAUDE.md` overlay.
-- Codex invokes `$skill` or natural language, discovers `.codex-plugin/plugin.json`, and requires explicit `/hooks` review plus a new task after hook changes.
+- Codex invokes `$skill` or natural language and discovers skills from the shared global skills home (`~/.agents/skills`) that the skills channel writes. Genie ships no Codex plugin and no hooks, so there is no plugin manifest to discover and no hook-review step.
 - `/level-up` stays Claude-only because it evaluates Claude Code mastery.

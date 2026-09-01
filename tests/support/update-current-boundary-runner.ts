@@ -2,23 +2,18 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { VERSION } from '../../src/lib/version.js';
 
-type Scenario = 'failed' | 'route-upgrade' | 'repaired-current' | 'exit-handoff';
+type Scenario = 'already-current';
 
 const scenario = process.env.GENIE_TEST_UPDATE_CURRENT_SCENARIO as Scenario | undefined;
 const genieHome = process.env.GENIE_HOME;
-if (
-  genieHome === undefined ||
-  !['failed', 'route-upgrade', 'repaired-current', 'exit-handoff'].includes(scenario ?? '')
-) {
-  throw new Error('runner requires GENIE_HOME and a valid GENIE_TEST_UPDATE_CURRENT_SCENARIO');
+if (genieHome === undefined || scenario !== 'already-current') {
+  throw new Error('runner requires GENIE_HOME and GENIE_TEST_UPDATE_CURRENT_SCENARIO=already-current');
 }
 
 const bin = join(genieHome, 'bin');
-for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
+for (const directory of ['plugins/genie', 'skills/review', 'templates']) {
   mkdirSync(join(bin, directory), { recursive: true });
 }
-writeFileSync(join(bin, '.agents', 'plugin.json'), '{}\n');
-writeFileSync(join(bin, '.claude-plugin', 'marketplace.json'), '{}\n');
 writeFileSync(join(bin, 'LICENSE'), 'fixture\n');
 writeFileSync(join(bin, 'VERSION'), `${VERSION}\n`);
 writeFileSync(join(bin, 'plugins', 'genie', 'plugin.json'), '{"name":"genie"}\n');
@@ -51,16 +46,8 @@ function currentManifest() {
   };
 }
 
-const advancedManifest = {
-  ...currentManifest(),
-  version: '5.260723.999',
-  released_at: '2026-07-23T01:00:00.000Z',
-  manifestBytes: '{"advanced":"exact-object"}',
-  manifestSha256: 'f'.repeat(64),
-};
 let deliveries = 0;
 let convergenceRuns = 0;
-let deliveredExact = false;
 console.log = () => {};
 console.error = () => {};
 
@@ -71,18 +58,12 @@ await updateCommand(
     readInstalledVersion: () => VERSION,
     requireCanonicalInstall: () => {},
     alreadyCurrent: {
-      attemptRepair: async () => {
-        if (scenario === 'failed') return { action: 'failed', detail: 'download-verify: invalid provenance' };
-        if (scenario === 'route-upgrade') return { action: 'route-upgrade', manifest: advancedManifest };
-        return { action: scenario };
-      },
       runConvergence: () => {
         convergenceRuns += 1;
       },
     },
-    deliverSelectedManifest: async (manifest) => {
+    deliverSelectedManifest: async () => {
       deliveries += 1;
-      deliveredExact = manifest === advancedManifest;
       return [];
     },
     finalizeSelectedDelivery: async () => true,
@@ -94,7 +75,6 @@ process.stdout.write(
   `${JSON.stringify({
     deliveries,
     convergenceRuns,
-    deliveredExact,
     markerExists,
     markerText: markerExists ? readFileSync(marker, 'utf8') : null,
     commandExitCode: process.exitCode ?? 0,

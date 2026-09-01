@@ -1,36 +1,46 @@
 /**
- * Tests for the atomic filesystem primitives. Split verbatim out of
- * `agent-sync.test.ts` when the primitives moved into their own module; the
- * blocks below are unchanged apart from their imports and the minimal tmpdir
- * fixture they need (the full agent-sync fixture built agent target dirs these
- * tests never touch).
+ * Tests for the atomic filesystem primitives. Split verbatim out of the
+ * per-agent convergence engine's suite when the primitives moved into their own
+ * module; the blocks below are unchanged apart from their imports and the
+ * minimal tmpdir fixture they need.
  *
  * Run with: bun test src/lib/atomic-fs.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { computeDirDigest } from './agent-sync';
 import {
   type FsyncPathDeps,
+  MANIFEST_NAME,
   atomicRenameDirectoryNoClobber,
+  atomicWriteFileSync,
+  computeDirDigest,
+  computeFileDigest,
+  fsyncParentDir,
   fsyncPathForTest,
   publishDirectoryViaNameClaim,
+  readBoundedRegularFile,
   resolveLinuxRenameat2,
+  unlinkWithParentFsync,
   writeAllSync,
 } from './atomic-fs';
 
@@ -250,5 +260,144 @@ describe('fsyncPath directory-metadata flush tolerance (Fix 4)', () => {
 
   test('a healthy directory fsync succeeds through the real syscalls', () => {
     expect(() => fsyncPathForTest(dir('fsync-dir-ok'))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Digest properties
+// ---------------------------------------------------------------------------
+
+describe('computeDirDigest', () => {
+  test('is stable regardless of directory entry creation order', () => {
+    const dirA = join(fixture.root, 'digest-a');
+    writeFile(join(dirA, 'b.md'), 'B');
+    writeFile(join(dirA, 'a.md'), 'A');
+    writeFile(join(dirA, 'nested', 'c.md'), 'C');
+
+    const dirB = join(fixture.root, 'digest-b');
+    writeFile(join(dirB, 'nested', 'c.md'), 'C');
+    writeFile(join(dirB, 'a.md'), 'A');
+    writeFile(join(dirB, 'b.md'), 'B');
+
+    expect(computeDirDigest(dirA)).toBe(computeDirDigest(dirB));
+  });
+
+  test('excludes the manifest so a manifest does not change the digest', () => {
+    const dir = join(fixture.root, 'digest-manifest');
+    writeFile(join(dir, 'SKILL.md'), 'body');
+    const before = computeDirDigest(dir);
+    writeFile(join(dir, MANIFEST_NAME), '{"managedBy":"genie-agent-sync","digest":"x"}');
+    expect(computeDirDigest(dir)).toBe(before);
+  });
+
+  test('changes when file content changes', () => {
+    const dir = join(fixture.root, 'digest-content');
+    writeFile(join(dir, 'SKILL.md'), 'one');
+    const before = computeDirDigest(dir);
+    writeFile(join(dir, 'SKILL.md'), 'two');
+    expect(computeDirDigest(dir)).not.toBe(before);
+  });
+
+  test('identifies symlink kind and target without following external content', () => {
+    const dir = join(fixture.root, 'physical-symlink');
+    const external = join(fixture.root, 'external.txt');
+    writeFile(external, 'one\n');
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(external, join(dir, 'entry'));
+    const linked = computeDirDigest(dir);
+
+    writeFile(external, 'two\n');
+    expect(computeDirDigest(dir)).toBe(linked);
+    rmSync(join(dir, 'entry'));
+    writeFile(join(dir, 'entry'), 'two\n');
+    expect(computeDirDigest(dir)).not.toBe(linked);
+    rmSync(join(dir, 'entry'));
+    symlinkSync('different-target', join(dir, 'entry'));
+    expect(computeDirDigest(dir)).not.toBe(linked);
+  });
+
+  test('identifies entry modes and broken symlinks', () => {
+    const dir = join(fixture.root, 'physical-modes');
+    writeFile(join(dir, 'tool'), '#!/bin/sh\n');
+    symlinkSync('missing-target', join(dir, 'broken'));
+    const before = computeDirDigest(dir);
+    chmodSync(join(dir, 'tool'), 0o755);
+    expect(computeDirDigest(dir)).not.toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bounded reads + durable writes (moved in from the retired Codex activation persistence module)
+// ---------------------------------------------------------------------------
+
+describe('readBoundedRegularFile', () => {
+  test('reads a regular file within the cap', () => {
+    const path = join(fixture.root, 'bounded-ok');
+    writeFileSync(path, 'payload', 'utf8');
+    expect(readBoundedRegularFile(path, 1024)).toEqual({ status: 'ok', content: 'payload', size: 7 });
+  });
+
+  test('distinguishes absent, symlink, non-regular and oversized without mutating', () => {
+    expect(readBoundedRegularFile(join(fixture.root, 'nope'), 1024)).toEqual({ status: 'absent' });
+
+    const target = join(fixture.root, 'link-target');
+    writeFileSync(target, 'x', 'utf8');
+    const link = join(fixture.root, 'a-symlink');
+    symlinkSync(target, link);
+    expect(readBoundedRegularFile(link, 1024)).toEqual({ status: 'symlink' });
+
+    const dir = join(fixture.root, 'a-directory');
+    mkdirSync(dir);
+    expect(readBoundedRegularFile(dir, 1024)).toEqual({ status: 'non-regular' });
+
+    const big = join(fixture.root, 'oversized');
+    writeFileSync(big, 'abcdefghij', 'utf8');
+    expect(readBoundedRegularFile(big, 4)).toEqual({ status: 'oversized', size: 10 });
+    expect(readFileSync(big, 'utf8')).toBe('abcdefghij');
+  });
+});
+
+describe('atomicWriteFileSync', () => {
+  test('publishes content at the requested mode and leaves no staging residue', () => {
+    const path = join(fixture.root, 'nested', 'state.json');
+    atomicWriteFileSync(path, '{"a":1}', { mode: 0o640 });
+    expect(readFileSync(path, 'utf8')).toBe('{"a":1}');
+    expect(lstatSync(path).mode & 0o777).toBe(0o640);
+    expect(readdirSync(dirname(path)).filter((name) => name.includes('.staging-'))).toEqual([]);
+  });
+
+  test('backs the prior regular file up before replacing it when asked', () => {
+    const path = join(fixture.root, 'backed-up.json');
+    atomicWriteFileSync(path, 'first');
+    atomicWriteFileSync(path, 'second', { backup: true });
+    expect(readFileSync(path, 'utf8')).toBe('second');
+    const backups = readdirSync(fixture.root).filter((name) => name.includes('.genie-backup-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(fixture.root, backups[0]), 'utf8')).toBe('first');
+  });
+});
+
+describe('unlinkWithParentFsync and fsyncParentDir', () => {
+  test('removing an absent path is a no-op rather than a throw', () => {
+    const path = join(fixture.root, 'already-gone');
+    writeFileSync(path, 'x', 'utf8');
+    unlinkWithParentFsync(path);
+    expect(existsSync(path)).toBe(false);
+    expect(() => unlinkWithParentFsync(path)).not.toThrow();
+  });
+
+  test('a parent-directory fsync never throws, even for a path that does not exist', () => {
+    expect(() => fsyncParentDir(join(fixture.root, 'missing', 'deeper', 'file'))).not.toThrow();
+  });
+});
+
+describe('computeFileDigest', () => {
+  test('is the sha256 of the file bytes and changes with content', () => {
+    const path = join(fixture.root, 'digest-me');
+    writeFileSync(path, 'one', 'utf8');
+    const before = computeFileDigest(path);
+    expect(before).toBe(createHash('sha256').update(Buffer.from('one')).digest('hex'));
+    writeFileSync(path, 'two', 'utf8');
+    expect(computeFileDigest(path)).not.toBe(before);
   });
 });

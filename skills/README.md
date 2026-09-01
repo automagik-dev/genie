@@ -1,15 +1,15 @@
 # Genie Skills
 
-`skills/` is the canonical, runtime-neutral source for Genie's 22 product skills. Each directory contains a
+`skills/` is the canonical, runtime-neutral source for Genie's 25 product skills. Each directory contains a
 `SKILL.md`, optional bundled resources, and `agents/openai.yaml` for Codex UI metadata.
 
-Shared skill bodies name semantic routes without a host-specific prefix. Invoke them through the active owner tier:
+Shared skill bodies name semantic routes without a host-specific prefix. Skills are installed into each agent's own global skills home by skills.sh (`npx skills add automagik-dev/genie`, or `genie update`), and every runtime discovers them from there. Invoke them the way the active runtime surfaces a discovered skill:
 
-- Codex plugin: `$genie:brainstorm`, `$genie:wish`, `$genie:review`, `$genie:work`
-- Codex user tier (only a separately installed personal copy; Genie no longer seeds this tier): `$brainstorm`, `$wish`, `$review`, `$work`
-- Claude Code and Hermes: `/brainstorm`, `/wish`, `/review`, `/work`
+- Codex: `$brainstorm`, `$wish`, `$review`, `$work`
+- Claude Code: `/brainstorm`, `/wish`, `/review`, `/work`
+- Any runtime: the bare skill name, or plain natural language describing the workflow
 
-The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating either `$genie:<name>` or `$<name>` inside that card could redirect execution to a different tier. Manual invocation still uses the explicit selector mapping above.
+The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating any selector — a bare `$<name>` included — inside that card could redirect execution to a different physical copy of the skill. Manual invocation uses the discovery forms above.
 
 The lifecycle is:
 
@@ -34,24 +34,25 @@ All runtimes share the same durable contracts:
 
 ## Distribution contract
 
-`plugins/genie/skills/` is a committed physical mirror of this directory so a source marketplace install and an
-extracted release contain the same in-root payload. Never edit the mirror directly.
+This directory is the single physical source; there is no committed mirror. The release tarball ships it verbatim, and
+`genie install` / `genie update` hand that delivered copy to the pinned skills.sh CLI, which writes it into every
+detected agent skills home. Editing a skill here is the only way to change what ships.
 
 ```bash
-bun scripts/sync-plugin-skills.ts --write  # regenerate after canonical edits
-bun scripts/sync-plugin-skills.ts --check  # fail on inventory or byte drift
-bun run skills:lint                         # validate metadata and command/resource contracts
-bun scripts/fresh-install-smoke.ts          # exercise source and copied plugin layouts
+bun run skills:lint                         # metadata, command, resource, vocabulary and directory-shape contracts
+bun scripts/fresh-install-smoke.ts          # exercise the tree exactly as a fresh install delivers it
 ```
 
-The build and version paths run the parity check before producing release state. Adding or removing a shipped skill
-therefore requires an intentional update to `SHIPPED_SKILL_NAMES` in `scripts/sync-plugin-skills.ts`.
+CI additionally runs `skills-inventory-parity`, which compares what the pinned skills CLI publishes for this commit
+against the top-level `skills/<name>/SKILL.md` set. Adding or removing a shipped skill therefore needs nothing beyond
+the directory itself — the inventory is derived from the tree, never hand-listed.
 
-An explicit successful `genie setup --codex` persists Codex maintenance consent. A later explicit `genie update` may
-therefore refresh the plugin, MCP, and optional role profiles. The installed plugin is the sole Genie-managed skill
-provider — no supported path writes product skills into the user tier; the only user-tier mutation is retiring provably
-clean historical fallbacks into a hidden quarantine transaction after a plugin health proof. Unmanaged, modified, or
-separately installed personal skills remain user-owned and are never adopted by that consent.
+Skills reach a host through exactly one channel: the pinned skills.sh CLI, run for you by `genie update` against the
+delivered tree, or run by hand as `npx skills add automagik-dev/genie`. The manual command publishes from the
+repository's default branch, so it can be ahead of or behind any release; `genie update` installs the exact delivered
+release. Genie writes skills nowhere else, and skills a user installed themselves stay user-owned — the installer
+records what it wrote so `genie uninstall` removes only that set. A separately installed personal copy of a skill is
+never adopted, refreshed, or removed by Genie.
 
 ## Shipped inventory
 
@@ -60,6 +61,7 @@ separately installed personal skills remain user-owned and are never adopted by 
 | Lifecycle | `brainstorm`, `quick`, `wish`, `review`, `work`, `fix`, `trace` |
 | Orchestration | `genie`, `dream`, `council`, `omni` |
 | Quality lanes | `architecture`, `code-quality`, `dx-docs`, `perf`, `qa`, `repo-hygiene`, `supply-chain` |
+| Orca lane | `genie-orca-wish`, `genie-orca-work`, `genie-orca-review` |
 | Supporting workflows | `docs`, `refine`, `report`, `genie-hacks` |
 
 Personal specialist-panel/persona skills are intentionally not part of this product payload.

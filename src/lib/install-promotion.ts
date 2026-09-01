@@ -29,16 +29,7 @@ import {
   renamePathNoClobber,
 } from './install-transaction.js';
 
-export const INSTALL_PAYLOAD_MEMBERS = [
-  '.agents',
-  '.claude-plugin',
-  'LICENSE',
-  'VERSION',
-  'genie',
-  'plugins',
-  'skills',
-  'templates',
-] as const;
+export const INSTALL_PAYLOAD_MEMBERS = ['LICENSE', 'VERSION', 'genie', 'plugins', 'skills', 'templates'] as const;
 
 export type InstallPayloadMember = (typeof INSTALL_PAYLOAD_MEMBERS)[number];
 export type InstallPromotionOutcome = 'committed' | 'rolledback';
@@ -198,8 +189,6 @@ const activeInstallStagingGuards = new WeakSet<InstallStagingDirectoryGuard>();
 const installStagingContentDigests = new WeakMap<InstallStagingDirectoryGuard, string | null>();
 
 const EXPECTED_MEMBER_KINDS: Record<InstallPayloadMember, PhysicalPathIdentity['kind']> = {
-  '.agents': 'directory',
-  '.claude-plugin': 'directory',
   LICENSE: 'file',
   VERSION: 'file',
   genie: 'file',

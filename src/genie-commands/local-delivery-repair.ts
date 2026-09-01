@@ -3,9 +3,10 @@
  *
  * The hidden update mode accepts one bounded exact-schema JSON value, then
  * snapshots every caller-owned file into a private directory before any
- * evidence verification or archive extraction. Production verification still
- * happens in `repairMissingDelivery`; this module only turns unstable external
- * paths into stable, bounded, physical inputs.
+ * evidence verification or archive extraction. This module only turns unstable
+ * external paths into stable, bounded, physical inputs; the release-dogfood
+ * update path that consumes them (`runLocalDeliveryRepairMode` in `update.ts`)
+ * owns the verification that follows.
  */
 
 import { createHash } from 'node:crypto';
@@ -23,9 +24,8 @@ import {
   writeSync,
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
-import type { DeliveryEvidenceChannel, DeliveryEvidencePlatformId } from '../lib/codex-delivery-evidence.js';
-import { parseReleaseVersion } from '../lib/codex-release-version.js';
-import type { PinnedManifest } from './codex-delivery-repair.js';
+import type { DeliveryEvidenceChannel, DeliveryEvidencePlatformId } from '../lib/delivery-evidence-verify.js';
+import { parseReleaseVersion } from '../lib/release-payload-proof.js';
 
 export const LOCAL_DELIVERY_REPAIR_ENABLE_ENV = 'GENIE_RELEASE_DOGFOOD';
 export const LOCAL_DELIVERY_REPAIR_REQUEST_MAX_BYTES = 16 * 1024;
@@ -46,6 +46,24 @@ const PLATFORM_IDS = new Set<DeliveryEvidencePlatformId>([
 ]);
 const REQUEST_KEYS = ['artifact', 'bundle', 'descriptor', 'manifest', 'platformId', 'schemaVersion'] as const;
 const MANIFEST_KEYS = ['channel', 'platforms', 'released_at', 'schema_version', 'tarball_base', 'version'] as const;
+
+/**
+ * The pinned release manifest a materialized repair carries forward. Inlined
+ * here when the Codex delivery-repair module was deleted: this is now its only
+ * definition and its only consumer.
+ */
+export interface PinnedManifest {
+  schema_version: number;
+  channel: DeliveryEvidenceChannel;
+  version: string;
+  released_at: string;
+  tarball_base: string;
+  platforms: string[];
+  /** Exact fetched manifest bytes retained for the signed evidence pack. */
+  manifestBytes: string;
+  /** SHA-256 of the fetched manifest bytes (NOT an artifact digest source). */
+  manifestSha256: string;
+}
 
 export interface LocalDeliveryRepairRequest {
   schemaVersion: 1;

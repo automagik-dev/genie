@@ -5,18 +5,21 @@ import { join } from 'node:path';
 /**
  * Drift guard for the canonical AGENTS.md contract and Claude-specific overlay.
  *
- * CLAUDE.md must describe v5 reality, not the demolished v4 harness. This test
- * fails hard if any retired-v4 fossil string reappears (a stale edit or a bad
- * merge that resurrects the old surface). Add a token here whenever a v4
+ * Both files must describe current reality, not the demolished v4 harness and
+ * not the plugin era the `skills-everywhere` wishes retired. This test fails
+ * hard if any retired fossil string reappears in EITHER file (a stale edit or a
+ * bad merge that resurrects the old surface). Add a token here whenever a
  * concept is removed for good.
  */
 
 const CLAUDE_MD = join(import.meta.dir, '..', '..', 'CLAUDE.md');
 const AGENTS_MD = join(import.meta.dir, '..', '..', 'AGENTS.md');
 
-// Substrings that MUST NOT appear anywhere in CLAUDE.md. Each is a v4 fossil:
-// a demolished subsystem, a deleted env var, or a retired command namespace.
+// Substrings that MUST NOT appear anywhere in CLAUDE.md or AGENTS.md. Each is a
+// fossil: a demolished subsystem, a deleted env var, or a retired command
+// namespace.
 const RETIRED_FOSSILS: ReadonlyArray<string> = [
+  // v4 harness
   'genie launch',
   'pgserve',
   'PostgreSQL',
@@ -32,6 +35,20 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'buildTeamLeadCommand',
   'native-teams',
   'mailbox',
+  // Plugin era, retired by `skills-everywhere-b` (RETIRED-9).
+  'setup --codex',
+  'agent-sync',
+  'H3/H4/H6',
+  '.curated',
+  'LENS_ROOT',
+  'CLAUDE_PLUGIN_ROOT',
+  'genie@automagik',
+  'council.js',
+  'hook dispatch',
+  // Plugin era, AGENTS.md-specific: the RETIRED-9 regex does not catch these.
+  'native-surfaces.md',
+  '.codex-plugin',
+  'both marketplaces',
 ];
 
 // v5 command surface that MUST stay documented so the file can't drift back
@@ -40,7 +57,6 @@ const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'board',
   'context',
   'doctor',
-  'hook',
   'idea',
   'init',
   'omni',
@@ -58,7 +74,7 @@ describe('CLAUDE.md v5 drift guard', () => {
   test('keeps AGENTS.md canonical and CLAUDE.md as an overlay', () => {
     expect(content).toContain('canonical shared repository contract in `AGENTS.md`');
     expect(shared).toContain('runtime-neutral contributor contract');
-    expect(shared).toContain('plugins/genie/references/native-surfaces.md');
+    expect(shared).toContain('delivered to every agent home by the skills channel');
   });
 
   test('does not resurrect the dead Genie loopback relay', () => {
@@ -66,9 +82,17 @@ describe('CLAUDE.md v5 drift guard', () => {
     expect(shared).toContain('Do not use telemetry presence as integration health');
   });
 
+  test('documents the one skills channel in both files', () => {
+    for (const file of [content, shared]) {
+      expect(file).toContain('npx skills add automagik-dev/genie');
+      expect(file).toContain('skills-install.json');
+    }
+  });
+
   for (const fossil of RETIRED_FOSSILS) {
-    test(`does not contain retired v4 fossil: ${JSON.stringify(fossil)}`, () => {
+    test(`does not contain retired fossil: ${JSON.stringify(fossil)}`, () => {
       expect(content).not.toContain(fossil);
+      expect(shared).not.toContain(fossil);
     });
   }
 
