@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `skills-everywhere-c` |
 | **Date** | 2026-08-31 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
@@ -376,6 +376,11 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Wish closure — 2026-09-01 — SHIPPED
+
+- All four groups SHIP-reviewed and merged; docs#81 merged by a human and the pointer bumped; every CI check on PR #2888's final head is green, including the full Unit gate and all three docs-lint jobs (markdownlint-cli2, markdown-link-check, `Retired terminology (docs/)`) at the bumped pointer. Status flipped to SHIPPED by the orchestrator on this evidence; the dev merge of #2888 completes the umbrella A → B → C.
+- Post-merge QA remains as written in `## QA Criteria` (real-host doctor/update verification rides the next release); the musl `setup --codex` step drop is the recorded follow-up for the first stable cut after Wish B.
 
 ### Group 3 closure — 2026-09-01 — docs PR merged by a human; pointer bumped
 
