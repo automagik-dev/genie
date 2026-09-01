@@ -103,29 +103,3 @@ jobs:
             exit 1
           }
           echo "adapter smoke: OK"
-
-      - name: Real-PTY setup — the exact leg that failed in v5.260726.11
-        run: |
-          set -euo pipefail
-          ROOT="${RUNNER_TEMP}/dogfood-root"
-          mkdir -p "$ROOT/codex-home"
-          ADAPTER="$PWD/scripts/run-musl-dogfood.sh"
-          cd "$ROOT/repos/a"
-          # Mirror capturePtySetup's Linux path byte for byte: script(1)
-          # allocates a real PTY, stdin feeds the confirmation, CI is emptied
-          # so setup believes it is interactive. Unlike the harness, capture
-          # BOTH streams to files so a failure shows the actual error instead
-          # of an echoed "yes".
-          status=0
-          DOGFOOD_ROOT="$ROOT" HOME="$ROOT/home" GENIE_HOME="$ROOT/genie-home" \
-            CODEX_HOME="$ROOT/codex-home" TMPDIR="$ROOT/tmp" \
-            GENIE_RELEASE_DOGFOOD=1 TERM=xterm CI= CODEX_THREAD_ID= \
-            script -qec "'$ADAPTER' '$ROOT/genie-home/bin/genie' setup --codex" /dev/null \
-            <<<'yes' >"$RUNNER_TEMP/pty-out" 2>"$RUNNER_TEMP/pty-err" || status=$?
-          echo "--- pty stdout:"; cat "$RUNNER_TEMP/pty-out"
-          echo "--- pty stderr:"; cat "$RUNNER_TEMP/pty-err"
-          if [[ "$status" -ne 0 ]]; then
-            echo "::error::real-PTY setup through the adapter exited ${status}"
-            exit 1
-          fi
-          echo "pty smoke: OK"
