@@ -1380,16 +1380,16 @@ function errMsg(error: unknown): string {
 }
 
 // ============================================================================
-// Absorbed from `agent-sync.ts` — module-private
+// Absorbed from the retired per-agent convergence engine — module-private
 // ============================================================================
 //
-// This module is `agent-sync.ts`'s only consumer that survives wish
+// This module was that engine's only consumer that survives wish
 // `skills-everywhere-b`, and it is itself deleted two stable releases after
 // that wish ships, so a new shared `src/lib/*.ts` home would outlive its only
 // user (Decision 6). Everything below is a verbatim copy of the classifiers and
 // their transitive leaf helpers with the `export` keyword dropped; the doc
 // comments are preserved as written, including their references to callers that
-// consume the ORIGINAL in `agent-sync.ts`. `MANIFEST_NAME`,
+// consumed the original engine. `MANIFEST_NAME`,
 // `PHYSICAL_TREE_IDENTITY_VERSION` and the digest primitives are NOT copied:
 // they moved to `atomic-fs.ts` with `computeDirDigest`, which outlives this
 // module, and a second definition of the manifest name would be a silent

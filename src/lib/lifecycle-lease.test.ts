@@ -1,9 +1,8 @@
 /**
- * Tests for the shared lifecycle lease. Split verbatim out of
- * `agent-sync.test.ts` when the lock moved into its own module; the blocks
+ * Tests for the shared lifecycle lease. Split verbatim out of the per-agent
+ * convergence engine's suite when the lock moved into its own module; the blocks
  * below are unchanged apart from their imports and the minimal tmpdir fixture
- * they need (the full agent-sync fixture built agent target dirs these tests
- * never touch).
+ * they need.
  *
  * Run with: bun test src/lib/lifecycle-lease.test.ts
  */
@@ -204,7 +203,7 @@ describe('lifecycle lease same-host dead-holder steal', () => {
     const refusal = expectRefused(acquireLifecycleLease(fixture.genieHome), path);
 
     // The wording an operator actually reads: actionable, and no longer the
-    // agent-sync report's reassurance (false for an unrelated lifecycle holder).
+    // retired sync report's reassurance (false for an unrelated lifecycle holder).
     expect(refusal.skipped).toContain('retry shortly, or remove the file if its owner has crashed');
     expect(refusal.skipped).not.toContain('the holder converges the same targets');
     expect(readFileSync(path, 'utf8')).toBe(record); // untouched

@@ -21,7 +21,7 @@ describe('lifecycle lease acquisition', () => {
 
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
-    releaseOrderedLifecycleLeases(acquired.agentSyncLease);
+    releaseOrderedLifecycleLeases(acquired.lifecycleLease);
     expect(events).toEqual(['acquire', 'release']);
   });
 
@@ -30,7 +30,7 @@ describe('lifecycle lease acquisition', () => {
 
     expect(acquired.ok).toBe(false);
     if (acquired.ok) return;
-    expect(acquired.busy).toBe('agent-sync');
+    expect(acquired.busy).toBe('lifecycle');
     expect(acquired.detail).toBe('held by pid 4242');
   });
 
@@ -51,6 +51,6 @@ describe('lifecycle lease acquisition', () => {
 
     expect(acquired.ok).toBe(true);
     if (!acquired.ok) return;
-    expect(() => releaseOrderedLifecycleLeases(acquired.agentSyncLease)).toThrow('release failed');
+    expect(() => releaseOrderedLifecycleLeases(acquired.lifecycleLease)).toThrow('release failed');
   });
 });

@@ -1,10 +1,10 @@
 /**
- * atomic-fs — the crash-safe filesystem primitives agent-sync (and every
+ * atomic-fs — the crash-safe filesystem primitives every
  * lifecycle command) publishes through.
  *
- * Moved verbatim out of `agent-sync.ts` so the no-clobber publish, durable
+ * Extracted so the no-clobber publish, durable
  * write, and directory-fsync contracts live in one dependency-free leaf module.
- * Nothing here imports `agent-sync.ts`: this file is the bottom of the graph.
+ * Nothing here imports a command module: this file is the bottom of the graph.
  */
 
 import { dlopen } from 'bun:ffi';
@@ -12,11 +12,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   constants,
   type Stats,
-  chmodSync,
   closeSync,
   copyFileSync,
   fsyncSync,
-  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -76,29 +74,6 @@ function readTrimmed(path: string): string | null {
 class ManagedArtifactConflictError extends Error {}
 
 class NoClobberPublishError extends ManagedArtifactConflictError {}
-
-/**
- * Atomically reserve an absent regular-file pathname with a hard link. The
- * linked candidate is a disposable copy, so the original staged bytes remain
- * immutable evidence if a concurrent writer changes the published inode.
- */
-export function publishRegularFileNoClobber(stagedPath: string, targetPath: string): void {
-  const stagedStat = lstatSync(stagedPath);
-  if (!stagedStat.isFile() || stagedStat.isSymbolicLink()) {
-    throw new Error(`publish source is not a physical regular file: ${stagedPath}`);
-  }
-  const candidate = `${stagedPath}.publish-${process.pid}-${randomBytes(6).toString('hex')}`;
-  copyFileSync(stagedPath, candidate, constants.COPYFILE_EXCL);
-  chmodSync(candidate, stagedStat.mode & 0o7777);
-  try {
-    linkSync(candidate, targetPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
-    throw new NoClobberPublishError(`exclusive publish failed (${code}); target was preserved: ${targetPath}`);
-  } finally {
-    rmSync(candidate, { force: true });
-  }
-}
 
 /** Errors a DIRECTORY-metadata flush may legitimately raise on platforms/filesystems that refuse it. */
 function isTolerableDirectoryFsyncError(error: unknown): boolean {
@@ -345,7 +320,7 @@ function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
 }
 
 // ============================================================================
-// Physical-tree digest — moved verbatim out of `agent-sync.ts`
+// Physical-tree digest
 // ============================================================================
 //
 // `computeDirDigest` / `computeFileDigest` are the verification primitive
@@ -353,10 +328,9 @@ function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
 // survive wish `skills-everywhere-b`. The private helpers travel with them
 // (a digest is defined by its traversal), and `MANIFEST_NAME` /
 // `PHYSICAL_TREE_IDENTITY_VERSION` come along because the digest grammar is
-// defined in terms of both. `agent-sync.ts` re-exports the public four and
-// imports back the four this move made non-private (`computeExactDirDigest`,
-// `computeLegacyRegularTreeDigest`, `physicalEntryKind`, `PhysicalTreeEntry`),
-// so no other consumer changes this wave.
+// defined in terms of both. `legacy-integration-retirement.ts` is the only
+// surviving consumer of the wider set (`computeLegacyRegularTreeDigest`,
+// `physicalEntryKind`, `PhysicalTreeEntry`).
 
 /** Manifest marker written into every managed skill dir. Exported: single source of truth. */
 export const MANIFEST_NAME = '.genie-sync.json';
@@ -378,10 +352,6 @@ export function computeDirDigest(dir: string, exclude?: Set<string>): string {
   const excluded = new Set([...(exclude ?? [])].map(normalizePhysicalRelPath));
   excluded.add(MANIFEST_NAME);
   return computePhysicalTreeDigest(dir, excluded);
-}
-
-export function computeExactDirDigest(dir: string): string {
-  return computePhysicalTreeDigest(dir, new Set());
 }
 
 function computePhysicalTreeDigest(dir: string, excluded: Set<string>): string {
@@ -664,7 +634,6 @@ function errorText(error: unknown): string {
 }
 
 export {
-  ManagedArtifactConflictError,
   NoClobberPublishError,
   fsyncPath,
   lstatSafe,

@@ -570,7 +570,7 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
 });
 
 // ============================================================================
-// agent-sync freshness (wish agent-sync, Group 3) — read-only, path-injected
+// skills freshness — read-only, path-injected
 // ============================================================================
 
 describe('evaluateIndexLaneDrift (pure section↔lane parser)', () => {

@@ -287,10 +287,6 @@ supported UI surface, or roll back to a pre-retirement signed release.` to stder
 and `genie board` retain their existing behavior in standalone mode; Orca mode continues to use the public
 `orca orchestration ... --json` adapter as its sole authority.
 
-## Hermes-native surface
-
-Genie also ships a Hermes-native plugin under `plugins/hermes-genie/` — seven read-only tools (doctor, board, wish/task queries, `context --plan` spawn previews), `/genie` slash commands, advisory hooks, and workflow skills, all wrapping the genie CLI through an argv-only subprocess bridge that marks every payload `mutation: "none"`. The boundary is deliberate: Hermes is the chat/reasoning cockpit; Genie remains the execution system and the source of task truth. Install and smoke-test instructions: [`plugins/hermes-genie/README.md`](plugins/hermes-genie/README.md).
-
 ## Roadmap
 
 No dates — direction, not promises:

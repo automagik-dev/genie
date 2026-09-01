@@ -185,7 +185,7 @@ jobs:
       # SECURITY: every command in this step is trusted workflow control loaded
       # from main. Do not run package scripts, dependency installers, hooks, or
       # any executable from the dev checkout in this write-capable workflow.
-      - name: Synchronize the exact five version fields
+      - name: Synchronize the exact three version fields
         if: steps.context.outputs.should_bump == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -195,13 +195,11 @@ jobs:
             package.json
             plugins/genie/orca-plugin.json
             plugins/genie/package.json
-            plugins/pi-genie/package.json
           )
-          HERMES=plugins/hermes-genie/plugin.yaml
 
           # Validate every input before the first write. Symlinks are rejected
           # so an allowlisted path cannot redirect a trusted rewrite.
-          for path in "${JSON_FILES[@]}" "$HERMES"; do
+          for path in "${JSON_FILES[@]}"; do
             if [[ ! -f "$path" || -L "$path" ]]; then
               echo "::error ::release-version.invalid_path ${path} must be a regular non-symlink file"
               exit 1
@@ -213,11 +211,6 @@ jobs:
               exit 1
             }
           done
-          if [[ "$(grep -Ec '^version: [^[:space:]]+$' "$HERMES")" != 1 ]]; then
-            echo "::error ::release-version.invalid_yaml ${HERMES} needs exactly one top-level version"
-            exit 1
-          fi
-
           # Rewrite ONLY the version line in place. `jq '.version = $version'`
           # re-serializes the whole document in jq's own style, which expands
           # biome's single-line arrays and fails `bun run lint` on every bump
@@ -234,16 +227,12 @@ jobs:
               exit 1
             }
           done
-          tmp="$(mktemp)"
-          sed -E "s/^version: [^[:space:]]+$/version: ${VERSION}/" "$HERMES" > "$tmp"
-          mv "$tmp" "$HERMES"
-
-          VERSION_PATHS=("${JSON_FILES[@]}" "$HERMES")
+          VERSION_PATHS=("${JSON_FILES[@]}")
           git add -- "${VERSION_PATHS[@]}"
           EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
           ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error ::release-version.delta_untrusted expected exactly five version files"
+            echo "::error ::release-version.delta_untrusted expected exactly three version files"
             printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
             exit 1
           fi

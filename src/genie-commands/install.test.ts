@@ -1,11 +1,11 @@
 /**
  * Tests for the `genie install` post-install finisher.
  *
- * The v4 cleanup engine is covered by legacy-v4.test.ts and the agent-sync
- * engine by agent-sync.test.ts; here we only prove the command wiring: v4
- * cleanup is gated by --skip-v4-cleanup, while the layout-normalize and
- * agent-sync steps always run. Every seam is injected — calling the real
- * cleanup/normalize/sync from a test would target the actual home directory.
+ * The v4 cleanup engine is covered by legacy-v4.test.ts; here we only prove the
+ * command wiring: v4 cleanup is gated by --skip-v4-cleanup, while the
+ * layout-normalize and skills-channel steps always run. Every seam is injected —
+ * calling the real cleanup/normalize from a test would target the actual home
+ * directory.
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
@@ -26,16 +26,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { acquireLifecycleLease, lifecycleLockPath } from '../lib/agent-sync.js';
+import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
-import {
-  type InstallOptions,
-  narrowAgentSyncSelection,
-  normalizeAuxLayout,
-  runInstallAgentSync,
-  installCommand as runInstallCommand,
-} from './install.js';
+import { type InstallOptions, normalizeAuxLayout, installCommand as runInstallCommand } from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
 
 function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
@@ -66,8 +60,8 @@ const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skippe
 
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
-  args[7] ??= () => undefined;
-  args[8] ??= noSkillsChannel;
+  args[6] ??= () => undefined;
+  args[7] ??= noSkillsChannel;
   return runInstallCommand(...args);
 }
 
@@ -465,19 +459,15 @@ set -euo pipefail
 });
 
 describe('installCommand', () => {
-  test('runs v4 cleanup + layout normalize + agent sync by default', async () => {
+  test('runs v4 cleanup + layout normalize by default', async () => {
     const spy = makeCleanupSpy();
     let normalizeCalls = 0;
-    let syncCalls = 0;
     await installCommand(
       {},
       spy.runner,
       () => {
         normalizeCalls += 1;
         return undefined;
-      },
-      () => {
-        syncCalls += 1;
       },
       () => [],
       noopLease,
@@ -486,22 +476,17 @@ describe('installCommand', () => {
     );
     expect(spy.calls()).toBe(1);
     expect(normalizeCalls).toBe(1);
-    expect(syncCalls).toBe(1);
   });
 
-  test('--skip-v4-cleanup skips ONLY the cleanup; normalize + sync still run', async () => {
+  test('--skip-v4-cleanup skips ONLY the cleanup; normalize still runs', async () => {
     const spy = makeCleanupSpy();
     let normalizeCalls = 0;
-    let syncCalls = 0;
     await installCommand(
       { skipV4Cleanup: true },
       spy.runner,
       () => {
         normalizeCalls += 1;
         return undefined;
-      },
-      () => {
-        syncCalls += 1;
       },
       () => [],
       noopLease,
@@ -510,7 +495,6 @@ describe('installCommand', () => {
     );
     expect(spy.calls()).toBe(0);
     expect(normalizeCalls).toBe(1);
-    expect(syncCalls).toBe(1);
   });
 
   test('--skip-integrations maps to none', async () => {
@@ -518,7 +502,6 @@ describe('installCommand', () => {
     await installCommand(
       {},
       makeCleanupSpy().runner,
-      () => undefined,
       () => undefined,
       (options) => {
         selection = options?.selection ?? '';
@@ -532,7 +515,6 @@ describe('installCommand', () => {
       { skipIntegrations: true },
       makeCleanupSpy().runner,
       () => undefined,
-      () => undefined,
       (options) => {
         selection = options?.selection ?? '';
         return [];
@@ -544,40 +526,12 @@ describe('installCommand', () => {
     expect(selection).toBe('none');
   });
 
-  test('agent-sync selection passes through unchanged (restore-hermes-sync-leg): codex/none skip it, auto/all/claude reach it as-is', async () => {
-    const observed: string[] = [];
-    const runFor = (integrations: 'codex' | 'none' | 'auto' | 'all' | 'claude') =>
-      installCommand(
-        { integrations },
-        makeCleanupSpy().runner,
-        () => undefined,
-        (selection) => observed.push(selection),
-        () => [],
-        noopLease,
-        noopConsent,
-      );
-    // Codex never reaches runIntegrations or agent-sync. `none` likewise has no
-    // sync target.
-    await runFor('codex');
-    await runFor('none');
-    expect(observed).toEqual([]);
-    // auto/all/claude pass through UNCHANGED — narrowAgentSyncSelection no
-    // longer collapses them to 'claude', which is what silently killed the
-    // hermes leg (runAgentSync's hermes gate needs 'auto'/'all' verbatim).
-    await runFor('auto');
-    await runFor('all');
-    await runFor('claude');
-    expect(observed).toEqual(['auto', 'all', 'claude']);
-  });
-
   test('Codex is structurally excluded from the integration runner after delivery authentication', async () => {
     const scopes: Array<{ selection?: string; codex?: boolean }> = [];
-    const observedSync: string[] = [];
     await installCommand(
       { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
-      (selection) => observedSync.push(selection),
       (options) => {
         scopes.push({ selection: options?.selection, codex: options?.detected?.codex });
         return [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }];
@@ -586,7 +540,6 @@ describe('installCommand', () => {
       noopConsent,
     );
     expect(scopes).toEqual([{ selection: 'auto', codex: false }]);
-    expect(observedSync).toEqual(['auto']);
   });
 
   test('explicit integration failures are fatal while auto failures warn', async () => {
@@ -595,7 +548,6 @@ describe('installCommand', () => {
       installCommand(
         {},
         makeCleanupSpy().runner,
-        () => undefined,
         () => undefined,
         failing,
         noopLease,
@@ -608,7 +560,6 @@ describe('installCommand', () => {
         { integrations: 'claude' },
         makeCleanupSpy().runner,
         () => undefined,
-        () => {},
         failing,
         noopLease,
         noopConsent,
@@ -617,32 +568,19 @@ describe('installCommand', () => {
     ).rejects.toThrow('Requested integration failed');
   });
 
-  test('non-Codex integration results cannot claim that Codex hook review is required', async () => {
+  test('a successful integration result never prints the retired Codex hook-review advisory', async () => {
     const lines: string[] = [];
     const originalLog = console.log;
     console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
-    const run = (hookReviewRequired: boolean) =>
-      installCommand(
+    try {
+      await installCommand(
         { integrations: 'claude' },
         makeCleanupSpy().runner,
         () => undefined,
-        () => undefined,
-        () => [
-          {
-            runtime: 'claude',
-            ok: true,
-            detail: 'fixture integration current',
-            hookReviewRequired,
-          },
-        ],
+        () => [{ runtime: 'claude', ok: true, detail: 'fixture integration current' }],
         noopLease,
         noopConsent,
       );
-    try {
-      await run(false);
-      expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
-      lines.length = 0;
-      await run(true);
       expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
     } finally {
       console.log = originalLog;
@@ -659,9 +597,6 @@ describe('installCommand', () => {
         () => {
           calls.push('normalize');
           return undefined;
-        },
-        () => {
-          calls.push('sync');
         },
         () => {
           calls.push('integrations');
@@ -1138,7 +1073,7 @@ describe('transactional auxiliary-tree convergence', () => {
   });
 });
 
-describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incident)', () => {
+describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () => {
   const savedExit = process.exitCode;
   const savedWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
   const BUSY_LOCK_PATH = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
@@ -1185,7 +1120,6 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
         events.push('MUTATION:normalize');
         return undefined;
       },
-      () => events.push('MUTATION:sync'),
       () => {
         events.push('MUTATION:integrations');
         return [];
@@ -1216,7 +1150,7 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
     expect(errors[0]).toContain(`holds the lock at ${BUSY_LOCK_PATH}`);
     expect(logs).toEqual([]);
 
-    // install.sh parses machine trailers off this stream: an agent-sync holder
+    // install.sh parses machine trailers off this stream: a lease holder
     // must never be relabelled as a Codex refusal or an action-required result.
     const output = [...logs, ...errors].join('\n');
     expect(output).not.toContain('codex-lifecycle-busy');
@@ -1229,14 +1163,16 @@ describe('installCommand — a busy agent-sync lifecycle lease (2026-08-02 incid
 });
 
 describe('installCommand — skills.sh channel seam (wish skills-everywhere, group 1)', () => {
-  test('runs the skills install immediately BEFORE agent-sync', async () => {
+  test('runs the skills install after the integration results are reported', async () => {
     const calls: string[] = [];
     await installCommand(
       { integrations: 'claude' },
       makeCleanupSpy().runner,
       () => undefined,
-      (selection) => calls.push(`agent-sync:${selection}`),
-      () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
+      () => {
+        calls.push('integrations');
+        return [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }];
+      },
       noopLease,
       noopConsent,
       () => undefined,
@@ -1245,7 +1181,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         return { status: 'skipped', reason: 'test fixture' };
       },
     );
-    expect(calls).toEqual(['skills:claude', 'agent-sync:claude']);
+    expect(calls).toEqual(['integrations', 'skills:claude']);
   });
 
   test('every non-none selection reaches the channel unnarrowed (decision 3)', async () => {
@@ -1254,7 +1190,6 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
       installCommand(
         { integrations },
         makeCleanupSpy().runner,
-        () => undefined,
         () => undefined,
         () => [],
         noopLease,
@@ -1270,7 +1205,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
     await runFor('claude');
     await runFor('codex');
     // `none` still reaches the channel, which reports `skipped (consent: none)`
-    // itself — agent-sync, by contrast, is never called for `none`.
+    // itself.
     await runFor('none');
     expect(seen).toEqual(['auto', 'all', 'claude', 'codex', 'none']);
   });
@@ -1281,7 +1216,6 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
       installCommand(
         { integrations: 'claude' },
         makeCleanupSpy().runner,
-        () => undefined,
         () => undefined,
         () => [{ runtime: 'claude' as const, ok: false, detail: 'missing' }],
         noopLease,
@@ -1320,7 +1254,6 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
       { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
-      () => undefined,
       () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
       noopLease,
       noopConsent,
@@ -1350,25 +1283,5 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
     }));
 
     expect(process.exitCode).toBe(0);
-  });
-});
-
-describe('installCommand — agent-sync scope', () => {
-  test('install-owned agent sync passes the real selection through', () => {
-    let captured: Parameters<typeof import('./update.js').runAgentSyncSafe>[0] | undefined;
-    runInstallAgentSync('all', (options) => {
-      captured = options;
-      return null;
-    });
-    expect(captured?.selection).toBe('all');
-    expect(captured?.strict).toBe(true);
-  });
-
-  test('narrowAgentSyncSelection skips only none and codex', () => {
-    expect(narrowAgentSyncSelection('none')).toBeNull();
-    expect(narrowAgentSyncSelection('codex')).toBeNull();
-    for (const selection of ['auto', 'all', 'claude'] as const) {
-      expect(narrowAgentSyncSelection(selection)).toBe(selection);
-    }
   });
 });
