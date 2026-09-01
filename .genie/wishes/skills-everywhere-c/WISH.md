@@ -377,6 +377,12 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
+### Group 3 closure — 2026-09-01 — docs PR merged by a human; pointer bumped
+
+- automagik-dev/docs#81 was merged by a human reviewer (merge `41eb2dd6f`). The orchestrator executed deliverable 7: `.docs-vendor` advanced to `41eb2dd` (an ancestor of docs `origin/main`, verified with `merge-base --is-ancestor`) as its own commit `6a24bc626`.
+- **C10-docs proven at the bumped pointer:** the RETIRED-9 + `plugin marketplace add` grep over `docs/` returns nothing (27 → 0); `docs/config/hooks.mdx` gone; `docs/release-notes.mdx` present. `bun run lint:docs-markdown` (4 files, 0 issues) and `bun run lint:docs-links` (release-notes anchor resolves into `installation.mdx`) green locally at the pointer.
+- G3's card is done; the remaining CI proof is the docs-lint jobs on PR #2888's final head.
+
 ### Execution review — Group 4 — 2026-09-01T08:00:00Z — SHIP
 
 - Engineer/reviewer: ultracode wave-2 agents (opus/high, reviewer ≠ engineer), session 17ecb3d2. PR #2889 (11/11 checks pass), commits `25fb1ca94` `655098418` + fix loop, merged to `wish/skills-everywhere-c` at `72abd7941`.
