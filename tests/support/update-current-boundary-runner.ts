@@ -11,7 +11,7 @@ if (genieHome === undefined || scenario !== 'already-current') {
 }
 
 const bin = join(genieHome, 'bin');
-for (const directory of ['plugins/genie', 'skills/review', 'templates']) {
+for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
   mkdirSync(join(bin, directory), { recursive: true });
 }
 writeFileSync(join(bin, 'LICENSE'), 'fixture\n');

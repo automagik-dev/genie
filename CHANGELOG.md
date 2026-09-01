@@ -15,6 +15,23 @@ Wish: `wish/tui-native-selection`.
 
 ## Unreleased
 
+### `genie update` repaired for hosts on 5.260831.x
+
+5.260901.1 dropped the `.agents/` and `.claude-plugin/` directories from the
+release tarball. `genie update` is executed by the *previously installed*
+binary, whose promoter validates the downloaded payload against an exact
+top-level allowlist, so every 5.260831.x host failed with
+`staged install does not match the exact installer member allowlist`.
+
+The tarball again ships both directories (empty; nothing reads them) and the
+allowlist is frozen at the eight-member set. Hosts on 5.260831.x update
+normally from the next release. Hosts that installed 5.260901.1 fresh carry
+the six-member allowlist and must reinstall once:
+`curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash`.
+
+Follow-up (not in this change): a shape-tolerant promoter and a release gate
+that runs the previous stable binary's promoter against the candidate tarball.
+
 ### Plugin-only Codex skills
 
 Wish: `repair-genie-codex-hooks-and-dedupe-skills`.
