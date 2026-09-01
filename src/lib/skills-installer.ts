@@ -68,7 +68,16 @@ import {
   runBoundedIntegrationCommand,
 } from './runtime-integrations.js';
 
-/** Pinned skills CLI. Bumping it is an ordinary dependency PR (wish decision 1). */
+/**
+ * Pinned skills CLI. Bumping it is an ordinary dependency PR (wish decision 1),
+ * but never a blind one: `KNOWN_AGENT_SKILL_HOMES` below is GENIE-owned, while
+ * the set of homes the CLI actually writes and the discovery scan that finds
+ * them afterwards are the CLI's. The two drift independently. Bumping this pin
+ * therefore requires re-verifying, against what the NEW CLI writes on a real
+ * host, both the homes table and the post-install discovery scan — otherwise
+ * `genie doctor` compares the recorded `agentDirs` against a set the installer
+ * no longer produces and reports a permanent false stale/missing result.
+ */
 export const SKILLS_CLI_VERSION = '1.5.23';
 
 /**
@@ -92,9 +101,12 @@ export function skillsSourceRoot(genieHome: string): string {
 export const SKILLS_INSTALL_RECORD_NAME = 'skills-install.json';
 
 /**
- * npm download + 22 skills across every detected agent home is well inside a
- * minute on a warm cache and can take a few on a cold one. 5 minutes is the
- * ceiling `runBoundedIntegrationCommand` accepts.
+ * npm download + the full inventory across every detected agent home is well
+ * inside a minute on a warm cache and can take a few on a cold one. 5 minutes
+ * is the ceiling `runBoundedIntegrationCommand` accepts. (Deliberately no
+ * literal skill count here: the top-level inventory is 25 at the time of
+ * writing and moves with every skill added, and a stale number in a timeout
+ * rationale reads as a contract nobody re-measured.)
  */
 const SKILLS_INSTALL_TIMEOUT_MS = 300_000;
 const SKILLS_INSTALL_OUTPUT_LIMIT_BYTES = 1024 * 1024;

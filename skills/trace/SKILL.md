@@ -37,7 +37,7 @@ Include file paths and line numbers in every root-cause claim so `fix` can act w
 
 ## Dispatch
 
-Trace runs through a fresh read-only scout/explorer role on the active runtime (runtime profile `genie_scout` when installed). It may search files and run non-mutating diagnostic commands, but it must not edit, stage, commit, or publish. Use native follow-up messaging to keep the same investigation context.
+Trace runs through a fresh read-only `scout` role on the active runtime. It may search files and run non-mutating diagnostic commands, but it must not edit, stage, commit, or publish. Use native follow-up messaging to keep the same investigation context.
 
 ## Rules
 - Report findings and stop — investigation only. `fix` applies the correction; never combine the two.

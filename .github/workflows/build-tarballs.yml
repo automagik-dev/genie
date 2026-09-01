@@ -60,6 +60,7 @@ on:
       - 'scripts/orca-bundle-parity.ts'
       - 'scripts/fresh-install-smoke.ts'
       - 'scripts/skills-lint.ts'
+      - 'scripts/skills-inventory-parity.ts'
       - 'scripts/release-payload-version.ts'
       - '.github/workflows/build-tarballs.yml'
 
