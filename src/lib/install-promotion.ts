@@ -29,7 +29,41 @@ import {
   renamePathNoClobber,
 } from './install-transaction.js';
 
-export const INSTALL_PAYLOAD_MEMBERS = ['LICENSE', 'VERSION', 'genie', 'plugins', 'skills', 'templates'] as const;
+/**
+ * Exact top-level member set of every release tarball.
+ *
+ * FROZEN — this is a cross-release compatibility contract, not a description of
+ * what the current build needs. `genie update` is executed by the *previously
+ * installed* binary, whose copy of this list validates the freshly downloaded
+ * payload (`verifyPayloadLayout`: same count, same sorted names). Any release
+ * whose tarball drops or adds a top-level member is therefore rejected by every
+ * host that has not yet installed a binary agreeing with the new set — that is
+ * exactly how 5.260901.1 broke `genie update` on every 5.260831.x host
+ * ("staged install does not match the exact installer member allowlist").
+ *
+ * `.agents` and `.claude-plugin` no longer carry product content; they ship as
+ * empty compatibility directories (`scripts/build-binary.sh`) purely so the
+ * promoter baked into older releases accepts the payload. Removing them again
+ * requires an installer that tolerates payload-shape changes across releases
+ * (a member-tolerant promoter and a release gate that runs the previous stable
+ * binary's `genie update` against the candidate) — never a plain delisting.
+ */
+export const INSTALL_PAYLOAD_MEMBERS = [
+  '.agents',
+  '.claude-plugin',
+  'LICENSE',
+  'VERSION',
+  'genie',
+  'plugins',
+  'skills',
+  'templates',
+] as const;
+
+/** Members shipped only for older promoters; they carry no product content. */
+export const INSTALL_PAYLOAD_COMPAT_MEMBERS = [
+  '.agents',
+  '.claude-plugin',
+] as const satisfies readonly InstallPayloadMember[];
 
 export type InstallPayloadMember = (typeof INSTALL_PAYLOAD_MEMBERS)[number];
 export type InstallPromotionOutcome = 'committed' | 'rolledback';
@@ -189,6 +223,8 @@ const activeInstallStagingGuards = new WeakSet<InstallStagingDirectoryGuard>();
 const installStagingContentDigests = new WeakMap<InstallStagingDirectoryGuard, string | null>();
 
 const EXPECTED_MEMBER_KINDS: Record<InstallPayloadMember, PhysicalPathIdentity['kind']> = {
+  '.agents': 'directory',
+  '.claude-plugin': 'directory',
   LICENSE: 'file',
   VERSION: 'file',
   genie: 'file',

@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  INSTALL_PAYLOAD_COMPAT_MEMBERS,
   INSTALL_PAYLOAD_MEMBERS,
   type InstallPayloadMember,
   type InstallPromotionDependencies,
@@ -51,6 +52,8 @@ function makeRoot(): string {
 }
 
 function writePayload(root: string, generation: string): void {
+  // Real tarballs ship `.agents` and `.claude-plugin` as empty compat dirs.
+  for (const name of INSTALL_PAYLOAD_COMPAT_MEMBERS) mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
   for (const name of ['plugins', 'skills', 'templates']) {
     // Explicit 0o755 so the payload member dirs never inherit a group/other
     // write bit under a loose caller umask (umask 002 → 0o775), which the
@@ -134,6 +137,33 @@ function writeReceipt(
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('installer payload member contract', () => {
+  test('the top-level member set is frozen for cross-release update compatibility', () => {
+    // `genie update` runs the PREVIOUS release's promoter against the NEW
+    // tarball. Changing this set breaks update on every already-installed host
+    // (5.260901.1 vs 5.260831.x). Do not edit without a shape-tolerant promoter.
+    expect([...INSTALL_PAYLOAD_MEMBERS]).toEqual([
+      '.agents',
+      '.claude-plugin',
+      'LICENSE',
+      'VERSION',
+      'genie',
+      'plugins',
+      'skills',
+      'templates',
+    ]);
+    expect([...INSTALL_PAYLOAD_COMPAT_MEMBERS]).toEqual(['.agents', '.claude-plugin']);
+  });
+
+  test('empty compat directories are accepted and published as payload members', () => {
+    const fixture = makeFixture();
+    for (const name of INSTALL_PAYLOAD_COMPAT_MEMBERS) expect(readdirSync(join(fixture.staging, name))).toEqual([]);
+    expect(promote(fixture).outcome).toBe('committed');
+    for (const name of INSTALL_PAYLOAD_COMPAT_MEMBERS) expect(readdirSync(join(fixture.bin, name))).toEqual([]);
+    assertGeneration(fixture.bin, '2.0.0');
+  });
 });
 
 describe('installer promotion transaction', () => {
@@ -645,8 +675,9 @@ describe('installer promotion transaction', () => {
   });
 
   test('an authorized-looking rolledback history still infers and rolls back a published member', () => {
+    // `.agents` is the first published member, so exactly one receipt precedes the forged pair.
     const fixture = makeFixture(false);
-    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', 'plugins') })).toThrow(
+    expect(() => promote(fixture, { dependencies: interruption('publish-incoming', '.agents') })).toThrow(
       InstallPromotionInterruptedError,
     );
     const transactionRoot = pendingRoots(fixture)[0] as string;
@@ -655,8 +686,8 @@ describe('installer promotion transaction', () => {
 
     const [report] = recoverPendingInstallPromotions({ genieHome: fixture.home, dependencies: dependencies() });
     expect(report?.outcome).toBe('rolledback');
-    expect(existsSync(join(fixture.bin, 'plugins'))).toBe(false);
-    expect(lstatSync(join(fixture.staging, 'plugins')).isDirectory()).toBe(true);
+    expect(existsSync(join(fixture.bin, '.agents'))).toBe(false);
+    expect(lstatSync(join(fixture.staging, '.agents')).isDirectory()).toBe(true);
   });
 
   test('rejects non-0600 receipts and unknown transaction-root objects without mutating payload paths', () => {
