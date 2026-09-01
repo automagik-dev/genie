@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `skills-everywhere-b` |
 | **Date** | 2026-08-31 |
 | **Author** | Felipe Rosa (orchestrated by Claude Fable 5) |
@@ -582,6 +582,12 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - **Release-breaking defect found while fixing finding 5, fixed here.** `src/lib/install-promotion.ts:32`'s `INSTALL_PAYLOAD_MEMBERS` is an exact eight-name allowlist that `verifyPayloadLayout` compares by length and by every sorted name. G3 stopped staging `.agents` in `build-binary.sh`, so **every tarball this branch builds would have been rejected by `install.sh`'s promoter** with `staged install does not match the exact installer member allowlist`. Invisible to `check`, to `build-binary.sh` and to `fresh-install-smoke` — the reproduction is `bun test scripts/install-swap.test.ts` (3 fail on the unfixed head, 12 pass on the base commit). Fixed by delisting `.agents` from the allowlist and re-pointing five payload fixtures; proven by `tar -tzf` over a freshly built 35 MB tarball whose top-level set is exactly `.claude-plugin LICENSE VERSION genie plugins skills templates`. Deliverable 8 and a new acceptance criterion now carry the rule.
 - Validation: `bun run check:fast` green (2 pre-existing complexity warnings, budget intact); `bun test src/genie-commands/` 529 pass; `bun test src/lib/install-promotion.test.ts src/lib/install-transaction.test.ts scripts/install-swap.test.ts scripts/workflow-yaml-parse.test.ts scripts/release-docs.test.ts scripts/release-payload-version.test.ts scripts/version-format.test.ts scripts/version-ci-staging.test.ts scripts/release-guard.test.ts` 188 pass; `bun scripts/release-payload-version.ts --verify-source .` OK; `bash scripts/build-binary.sh --platform linux-x64-glibc` OK. Full `bun test` and `bun run check` deferred to CI per the host OOM rule.
+
+### Final gate — 2026-09-01T05:45:00Z — SHIP (round 2)
+
+- Independent final-gate reviewer (opus/high, round 2 delta scope), session 17ecb3d2, head `7a09df506`. The round-1 fix is verified correct and complete for its class: the delta from `fd8a9b32d` is exactly `.claude/settings.json` (−44) + the WISH.md ledger; the settings file is valid JSON with zero `genie`/`hook dispatch` references and exactly the repo-local git-safety entry kept; a repo-wide sweep of every tracked machine-read config file (json/toml/yaml/sh/cjs/mjs) finds ZERO live registration of any deleted surface — every remaining `hook dispatch`/`genie hook` hit is classified prose (Wish C scope), ledger record, or a deliberately retained legacy-detection test fixture named in this wish. C4 reproduced at 37,454 with the canonical command. `check:fast` green.
+- One informational LOW, already covered by this wish's own risk table: `musl-adapter-smoke.yml:123` runs `setup --codex` against the PREVIOUS-STABLE binary (correct today; the first stable cut after this wish ships must drop that step — Wish C's release notes carry it).
+- **The wish's execution is complete: all seven groups + H1 SHIP-reviewed, final gate SHIP.** Post-merge acceptance remains as recorded in `qa/20260901.md` (the live candidate release run proving C7/C11's CI legs, and C-R4's QA criteria on dev).
 
 ### Final gate — 2026-09-01T05:10:00Z — FIX-FIRST (round 1) → fix applied
 
