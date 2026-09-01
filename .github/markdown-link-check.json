@@ -7,6 +7,10 @@
   ],
   "replacementPatterns": [
     {
+      "pattern": "^/genie/([^#]+?)(#.*)?$",
+      "replacement": "{{BASEURL}}/docs/$1.mdx$2"
+    },
+    {
       "pattern": "^/",
       "replacement": "{{BASEURL}}/"
     },
