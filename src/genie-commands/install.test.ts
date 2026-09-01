@@ -60,8 +60,8 @@ const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skippe
 
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
-  args[6] ??= () => undefined;
-  args[7] ??= noSkillsChannel;
+  args[5] ??= () => undefined;
+  args[6] ??= noSkillsChannel;
   return runInstallCommand(...args);
 }
 
@@ -469,7 +469,6 @@ describe('installCommand', () => {
         normalizeCalls += 1;
         return undefined;
       },
-      () => [],
       noopLease,
       noopConsent,
       () => null,
@@ -488,7 +487,6 @@ describe('installCommand', () => {
         normalizeCalls += 1;
         return undefined;
       },
-      () => [],
       noopLease,
       noopConsent,
       () => null,
@@ -498,92 +496,85 @@ describe('installCommand', () => {
   });
 
   test('--skip-integrations maps to none', async () => {
-    let selection = '';
-    await installCommand(
-      {},
-      makeCleanupSpy().runner,
-      () => undefined,
-      (options) => {
-        selection = options?.selection ?? '';
-        return [];
-      },
-      noopLease,
-      noopConsent,
-      () => null,
-    );
-    await installCommand(
-      { skipIntegrations: true },
-      makeCleanupSpy().runner,
-      () => undefined,
-      (options) => {
-        selection = options?.selection ?? '';
-        return [];
-      },
-      noopLease,
-      noopConsent,
-      () => null,
-    );
-    expect(selection).toBe('none');
-  });
-
-  test('Codex is structurally excluded from the integration runner after delivery authentication', async () => {
-    const scopes: Array<{ selection?: string; codex?: boolean }> = [];
-    await installCommand(
-      { integrations: 'auto' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      (options) => {
-        scopes.push({ selection: options?.selection, codex: options?.detected?.codex });
-        return [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }];
-      },
-      noopLease,
-      noopConsent,
-    );
-    expect(scopes).toEqual([{ selection: 'auto', codex: false }]);
-  });
-
-  test('explicit integration failures are fatal while auto failures warn', async () => {
-    const failing = () => [{ runtime: 'claude' as const, ok: false, detail: 'missing' }];
-    await expect(
+    const seen: string[] = [];
+    const runFor = (options: InstallOptions) =>
       installCommand(
-        {},
+        options,
         makeCleanupSpy().runner,
         () => undefined,
-        failing,
         noopLease,
         noopConsent,
         () => null,
-      ),
-    ).resolves.toBeUndefined();
-    await expect(
-      installCommand(
-        { integrations: 'claude' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        failing,
-        noopLease,
-        noopConsent,
-        () => null,
-      ),
-    ).rejects.toThrow('Requested integration failed');
-  });
-
-  test('a successful integration result never prints the retired Codex hook-review advisory', async () => {
-    const lines: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
-    try {
-      await installCommand(
-        { integrations: 'claude' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        () => [{ runtime: 'claude', ok: true, detail: 'fixture integration current' }],
-        noopLease,
-        noopConsent,
+        (selection) => {
+          seen.push(selection);
+          return { status: 'skipped', reason: 'test fixture' };
+        },
       );
+    await runFor({});
+    await runFor({ skipIntegrations: true });
+    expect(seen).toEqual(['auto', 'none']);
+  });
+
+  /**
+   * H1 regression (wish `skills-everywhere-b`, QA 2026-09-01): an explicit
+   * `--integrations claude|all` used to drive `claude plugin marketplace add`
+   * against a payload that no longer ships a marketplace manifest, so it threw
+   * `Requested integration failed: claude` as a raw stack trace and
+   * `install.sh` treated the whole installation as failed. Both client plugin
+   * integrations are retired; an explicit selection now reports the retirement
+   * and cannot fail.
+   */
+  test('an explicit runtime selection reports the retirement and never fails the install', async () => {
+    for (const [integrations, expected] of [
+      ['claude', ['claude: client plugin integration is retired']],
+      ['codex', ['codex: client plugin integration is retired']],
+      ['all', ['codex: client plugin integration is retired', 'claude: client plugin integration is retired']],
+    ] as const) {
+      const lines: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      try {
+        await expect(
+          installCommand(
+            { integrations },
+            makeCleanupSpy().runner,
+            () => undefined,
+            noopLease,
+            noopConsent,
+            () => null,
+          ),
+        ).resolves.toBeUndefined();
+      } finally {
+        console.log = originalLog;
+      }
+      const reported = lines.filter((line) => line.includes('client plugin integration is retired'));
+      expect(reported).toHaveLength(expected.length);
+      for (const [index, fragment] of expected.entries()) expect(reported[index]).toContain(fragment);
+      // No client CLI is ever consulted, so no failure line and no stack trace.
+      expect(lines.join('\n')).not.toContain('marketplace');
+      expect(lines.join('\n')).not.toContain('Requested integration failed');
+    }
+  });
+
+  test('auto and none report no runtime at all', async () => {
+    for (const integrations of ['auto', 'none'] as const) {
+      const lines: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      try {
+        await installCommand(
+          { integrations },
+          makeCleanupSpy().runner,
+          () => undefined,
+          noopLease,
+          noopConsent,
+          () => null,
+        );
+      } finally {
+        console.log = originalLog;
+      }
+      expect(lines.join('\n')).not.toContain('client plugin integration is retired');
       expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
-    } finally {
-      console.log = originalLog;
     }
   });
 
@@ -597,10 +588,6 @@ describe('installCommand', () => {
         () => {
           calls.push('normalize');
           return undefined;
-        },
-        () => {
-          calls.push('integrations');
-          return [];
         },
         noopLease,
         noopConsent,
@@ -1121,10 +1108,6 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
         return undefined;
       },
       () => {
-        events.push('MUTATION:integrations');
-        return [];
-      },
-      () => {
         attempts += 1;
         return {
           skipped: `another Genie process holds the lock at ${BUSY_LOCK_PATH}; retry shortly, or remove the file if its owner has crashed`,
@@ -1163,25 +1146,30 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
 });
 
 describe('installCommand — skills.sh channel seam (wish skills-everywhere, group 1)', () => {
-  test('runs the skills install after the integration results are reported', async () => {
+  test('runs the skills install after the retirement notice is reported', async () => {
     const calls: string[] = [];
-    await installCommand(
-      { integrations: 'claude' },
-      makeCleanupSpy().runner,
-      () => undefined,
-      () => {
-        calls.push('integrations');
-        return [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }];
-      },
-      noopLease,
-      noopConsent,
-      () => undefined,
-      (selection) => {
-        calls.push(`skills:${selection}`);
-        return { status: 'skipped', reason: 'test fixture' };
-      },
-    );
-    expect(calls).toEqual(['integrations', 'skills:claude']);
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      const line = args.map(String).join(' ');
+      if (line.includes('client plugin integration is retired')) calls.push('retirement-notice');
+    };
+    try {
+      await installCommand(
+        { integrations: 'claude' },
+        makeCleanupSpy().runner,
+        () => undefined,
+        noopLease,
+        noopConsent,
+        () => undefined,
+        (selection) => {
+          calls.push(`skills:${selection}`);
+          return { status: 'skipped', reason: 'test fixture' };
+        },
+      );
+    } finally {
+      console.log = originalLog;
+    }
+    expect(calls).toEqual(['retirement-notice', 'skills:claude']);
   });
 
   test('every non-none selection reaches the channel unnarrowed (decision 3)', async () => {
@@ -1191,7 +1179,6 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         { integrations },
         makeCleanupSpy().runner,
         () => undefined,
-        () => [],
         noopLease,
         noopConsent,
         () => undefined,
@@ -1210,14 +1197,13 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
     expect(seen).toEqual(['auto', 'all', 'claude', 'codex', 'none']);
   });
 
-  test('a failed explicit integration is still fatal before the channel runs', async () => {
+  test('an explicit selection no longer has a failure arm that can skip the channel (H1)', async () => {
     let skills = 0;
     await expect(
       installCommand(
         { integrations: 'claude' },
         makeCleanupSpy().runner,
         () => undefined,
-        () => [{ runtime: 'claude' as const, ok: false, detail: 'missing' }],
         noopLease,
         noopConsent,
         () => undefined,
@@ -1226,8 +1212,11 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
           return { status: 'skipped', reason: 'test fixture' };
         },
       ),
-    ).rejects.toThrow('Requested integration failed: claude');
-    expect(skills).toBe(0);
+    ).resolves.toBeUndefined();
+    expect(skills).toBe(1);
+    const source = readFileSync(join(import.meta.dir, 'install.ts'), 'utf8');
+    expect(source).not.toContain('Requested integration failed');
+    expect(source).not.toContain('installRuntimeIntegrations');
   });
 });
 
@@ -1254,7 +1243,6 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
       { integrations: 'auto' },
       makeCleanupSpy().runner,
       () => undefined,
-      () => [{ runtime: 'claude' as const, ok: true, detail: 'claude current' }],
       noopLease,
       noopConsent,
       () => undefined,

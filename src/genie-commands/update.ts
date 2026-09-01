@@ -60,11 +60,7 @@ import {
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
 import { parseReleaseVersion, scanPhysicalTree } from '../lib/release-payload-proof.js';
-import {
-  type IntegrationResult,
-  type IntegrationSelection,
-  readIntegrationConsent,
-} from '../lib/runtime-integrations.js';
+import { type IntegrationSelection, readIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
@@ -77,7 +73,6 @@ import {
 } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { assertLocalDeliveryRepairEnabled, materializeLocalDeliveryRepair } from './local-delivery-repair.js';
-import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const GENIE_BIN_STAGING = join(GENIE_BIN, '.staging');
@@ -1608,15 +1603,16 @@ function applyDowngradeGuard(
 
 /**
  * Map a convergence outcome to the process exit code:
- *   - any failed integration, or a failed skills.sh install → exit 1 (retry)
+ *   - a failed skills.sh install → exit 1 (retry)
  *   - else success (exit 0), caller prints its own success line.
  *
  * The former action-required exit-2 arm left with the Codex plugin activation
- * protocol: no convergence step defers work to a later explicit command any
- * more, so a convergence either succeeds or is retryable.
+ * protocol, and the failed-integration arm left with the client plugin
+ * convergence: the skills channel is the only step that can fail here, so a
+ * convergence either succeeds or is retryable.
  */
 export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult): void {
-  if (convergence.skills?.status === 'failed' || convergence.integrations.some((result) => !result.ok)) {
+  if (convergence.skills?.status === 'failed') {
     process.exitCode = 1;
   }
 }
@@ -1716,15 +1712,6 @@ function childExitStatus(cause: unknown): number | null {
   return null;
 }
 
-/**
- * Update delivery owns no Codex activation surfaces; the Claude plugin refresh
- * is the only client convergence left. Returning null prevents even a Codex
- * query when Codex is the only selected integration.
- */
-export function narrowUpdatePluginRefreshSelection(selection: IntegrationSelection): 'claude' | null {
-  return selection === 'none' || selection === 'codex' ? null : 'claude';
-}
-
 function announceUpdatePlanOrExit(
   channel: ReleaseChannel,
   platform: string,
@@ -1749,8 +1736,13 @@ function announceUpdatePlanOrExit(
  * surfaces this binary still owns and return — no manifest fetch, no binary
  * swap. The per-agent convergence engine that once WAS this mode is gone, so the
  * convergence it runs is the ordinary post-delivery one (skills channel, then
- * Claude plugin refresh, then plugin-era retirement) against the running
- * binary's own VERSION. It branches before every network and delivery step.
+ * plugin-era retirement) against the running binary's own VERSION. It branches
+ * before every network and delivery step.
+ *
+ * The middle leg of that convergence — the Claude plugin refresh — left with
+ * the client plugin integrations, so the mode is still *identical* to a plain
+ * `genie update`'s convergence on the same head, which is the ratified
+ * contract; only the number of legs changed.
  */
 function runLegacySyncOnlyMode(): void {
   runTrackedManualUpdateConvergence(VERSION);
@@ -1768,10 +1760,6 @@ function runPostDeliveryConvergenceMode(): void {
       expectedVersion: installedVersion,
       selection: readIntegrationConsent(GENIE_HOME),
     });
-    const failures = convergence.integrations.filter((result) => !result.ok);
-    if (failures.length > 0) {
-      throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
-    }
     // Delivered-but-action-required (installed N ≠ delivered T): exit 2 with the
     // result trailer and no all-green footer. The parent mirrors this exit code.
     applyConvergenceExitSignal(convergence);
@@ -2340,8 +2328,6 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
  */
 export interface ManualUpdateConvergenceOptions {
   expectedVersion: string;
-  bundleRoot?: string;
-  refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
   log?: (line: string) => void;
   /** Persisted operator scope; explicit Codex authority is written only by setup. */
   selection?: IntegrationSelection;
@@ -2372,7 +2358,6 @@ export function runUpdateSkillsChannel(
 }
 
 export interface ManualUpdateConvergenceResult {
-  integrations: IntegrationResult[];
   /**
    * The skills.sh channel outcome, or `null` when the channel never ran
    * (consent `none`). Surfaced rather than discarded because a failed skills
@@ -2390,7 +2375,7 @@ export interface ManualUpdateConvergenceResult {
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { integrations: [], skills: null, retirement: null };
+  if (selection === 'none') return { skills: null, retirement: null };
   // Skills FIRST: a host must never pass through a state with neither the
   // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2398,21 +2383,10 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   // here reports the remedy and sets exit 1; it never rolls back the promoted
   // binary and never blocks the remaining convergence.
   const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
-  const pluginSelection = narrowUpdatePluginRefreshSelection(selection);
-  const integrations =
-    pluginSelection === null
-      ? []
-      : (options.refreshPlugins ?? refreshUpdatePlugins)({
-          bundleRoot: options.bundleRoot ?? GENIE_HOME,
-          expectedVersion: options.expectedVersion,
-          selection: pluginSelection,
-        }).filter((result) => result.runtime !== 'codex');
-  for (const result of integrations) {
-    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
-    emit(
-      `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
-    );
-  }
+  // The client plugin refresh that used to sit here is gone: no Genie plugin
+  // ships for any client runtime any more, so there is nothing to converge
+  // between the skills channel and retirement.
+  //
   // LAST, and only behind a FRESH skills-channel install: the plugin-era assets
   // are retired exactly once the replacements are proven on disk. A `skipped` or
   // `failed` channel deliberately leaves the legacy assets in place — a host must
@@ -2425,7 +2399,7 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
           log: emit,
         })
       : null;
-  return { integrations, skills, retirement };
+  return { skills, retirement };
 }
 
 /**

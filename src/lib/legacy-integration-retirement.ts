@@ -227,9 +227,10 @@ const CODEX_HOOK_STATE_ROW = /(^|\n)[ \t]*(\[hooks\.state\."genie@automagik:|"ge
 const CLAUDE_PLUGIN_ID = 'genie@automagik';
 
 /**
- * The marketplace NAME genie registers in `known_marketplaces.json` (written by
- * `plugin marketplace add <bundle root>`; see `runtime-integrations.ts`'s
- * `readClaudeMarketplaceSource` for the entry shape this classifier reads).
+ * The marketplace NAME a plugin-era genie registered in `known_marketplaces.json`
+ * (written by `plugin marketplace add <bundle root>`). The install convergence
+ * that wrote it is deleted, so the entry shape this classifier reads is now
+ * recorded only here, beside the classifier that outlives the writer.
  */
 const CLAUDE_MARKETPLACE_ID = 'automagik';
 

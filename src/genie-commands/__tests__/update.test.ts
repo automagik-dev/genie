@@ -33,7 +33,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { computeDirDigest, computeFileDigest } from '../../lib/atomic-fs';
 import { acquireLifecycleLease, currentSyncLockHostId, lifecycleLockPath } from '../../lib/lifecycle-lease';
-import type { IntegrationSelection } from '../../lib/runtime-integrations';
 import {
   SKILLS_CLI_VERSION,
   type SkillsChannelConvergenceResult,
@@ -61,7 +60,6 @@ import {
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
-  narrowUpdatePluginRefreshSelection,
   normalizeVersion,
   persistChannel,
   refreshOrcaOwnershipAfterDelivery,
@@ -1999,24 +1997,22 @@ describe('runV4CleanupSafe', () => {
 // ============================================================================
 
 describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
-  test('runs the canonical convergence APIs and returns structured integration outcomes', () => {
+  test('runs the canonical convergence APIs and returns the structured channel outcome', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
-      bundleRoot: '/tmp/verified-bundle',
-      runSkills: noSkillsChannel,
+      runSkills: (selection) => {
+        calls.push(`parent-skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
       // Explicit selection: the default reads the host's persisted integration
       // consent, so omitting it makes the test depend on machine state (#2732).
       selection: 'all',
-      refreshPlugins: (options) => {
-        calls.push(`parent-plugin-refresh:${options.expectedVersion}:${options.selection}`);
-        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
-      },
       log: (line) => calls.push(`log:${line}`),
     });
-    expect(calls[0]).toBe('parent-plugin-refresh:5.260711.3:claude');
-    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }]);
+    expect(calls[0]).toBe('parent-skills:all');
     expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+    expect(result.retirement).toBeNull();
   });
 
   test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
@@ -2026,7 +2022,6 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
-        refreshPlugins: () => [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }],
         log: () => {},
       });
       expect(result.skills).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
@@ -2037,48 +2032,31 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
-  test('structurally excludes Codex queries and writes while retaining Claude/Hermes convergence', () => {
-    expect(narrowUpdatePluginRefreshSelection('auto')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('all')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('claude')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('codex')).toBeNull();
-    expect(narrowUpdatePluginRefreshSelection('none')).toBeNull();
-
-    let codexOnlyRefreshes = 0;
-    const codexOnly = runManualUpdateConvergence({
-      expectedVersion: VERSION,
-      selection: 'codex',
-      runSkills: noSkillsChannel,
-      refreshPlugins: () => {
-        codexOnlyRefreshes += 1;
-        return [{ runtime: 'codex', ok: true, detail: 'must not run' }];
-      },
-    });
-    // `codex` is not `none`: the skills channel still runs (fixture-skipped here),
-    // only the plugin refresh is narrowed away.
-    expect(codexOnly).toEqual({
-      integrations: [],
-      skills: { status: 'skipped', reason: 'test fixture' },
+  test('no client plugin refresh survives: every non-none selection is skills then retirement only', () => {
+    // The Claude plugin refresh that once sat between the two left with the
+    // client plugin integrations, so a `codex` selection is no longer special:
+    // it is not `none`, so the skills channel runs (fixture-skipped here), and
+    // no runtime is queried at all.
+    for (const selection of ['codex', 'auto', 'all', 'claude'] as const) {
+      expect(
+        runManualUpdateConvergence({
+          expectedVersion: VERSION,
+          selection,
+          runSkills: noSkillsChannel,
+          log: () => {},
+        }),
+      ).toEqual({ skills: { status: 'skipped', reason: 'test fixture' }, retirement: null });
+    }
+    expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
+      skills: null,
       retirement: null,
     });
-    expect(codexOnlyRefreshes).toBe(0);
 
-    let selectedRefresh: IntegrationSelection | undefined;
-    const auto = runManualUpdateConvergence({
-      expectedVersion: VERSION,
-      selection: 'auto',
-      runSkills: noSkillsChannel,
-      refreshPlugins: (options) => {
-        selectedRefresh = options.selection;
-        return [
-          { runtime: 'claude', ok: true, detail: 'refreshed' },
-          { runtime: 'codex', ok: true, detail: 'injected boundary violation' },
-        ];
-      },
-      log: () => {},
-    });
-    expect(selectedRefresh).toBe('claude');
-    expect(auto.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+    // Nothing in the update path can reach a client plugin registration.
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toContain('refreshUpdatePlugins');
+    expect(source).not.toContain('update-integrations');
+    expect(existsSync(join(import.meta.dir, '..', 'update-integrations.ts'))).toBe(false);
   });
 
   test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
@@ -2232,7 +2210,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     process.exitCode = previousExitCode;
   });
 
-  test('installs skills BEFORE the plugin refresh (decision 2 ordering)', () => {
+  test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {
     const calls: string[] = [];
     runManualUpdateConvergence({
       expectedVersion: VERSION,
@@ -2241,13 +2219,15 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         calls.push(`skills:${selection}`);
         return { status: 'skipped', reason: 'test fixture' };
       },
-      refreshPlugins: () => {
-        calls.push('plugin-refresh');
-        return [];
+      retirementHomes: {
+        home: mkdtempSync(join(tmpdir(), 'genie-converge-order-home-')),
+        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order-genie-')),
       },
-      log: () => undefined,
+      log: (line) => calls.push(`log:${line}`),
     });
-    expect(calls).toEqual(['skills:all', 'plugin-refresh']);
+    // A `skipped` channel deliberately leaves the legacy assets in place, so
+    // retirement never runs — skills is the first and only step it gates.
+    expect(calls).toEqual(['skills:all']);
   });
 
   test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
@@ -2260,7 +2240,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
           seen.push(received);
           return { status: 'skipped', reason: 'test fixture' };
         },
-        refreshPlugins: () => [],
         log: () => undefined,
       });
     }
@@ -2276,7 +2255,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         skills += 1;
         return { status: 'skipped', reason: 'test fixture' };
       },
-      refreshPlugins: () => [],
       log: () => undefined,
     });
     expect(skills).toBe(0);
@@ -2291,7 +2269,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         emit('skills: fixture line');
         return { status: 'skipped', reason: 'test fixture' };
       },
-      refreshPlugins: () => [],
       log: (line) => lines.push(line),
     });
     expect(lines).toContain('skills: fixture line');
@@ -2307,15 +2284,14 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         process.exitCode = 1;
         return { status: 'failed', reason: 'skills CLI exited 1: boom' };
       },
-      refreshPlugins: () => [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
       log: () => undefined,
     });
     expect(calls).toEqual(['skills']);
-    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+    expect(result.retirement).toBeNull();
     expect(process.exitCode).toBe(1);
   });
 
-  test('the convergence is skills -> plugin refresh -> retirement, with no sync step and no throttle marker', () => {
+  test('the convergence is skills -> retirement, with no plugin refresh, sync step or throttle marker', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     // The `~/.genie/.last-agent-sync` throttle marker and the engine that wrote
     // it are gone; nothing in the update path refreshes or reads either.
@@ -2326,11 +2302,11 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     const start = source.indexOf('export function runManualUpdateConvergence(');
     const body = source.slice(start, source.indexOf('\n}', start));
     const skillsIdx = body.indexOf('runUpdateSkillsChannel');
-    const refreshIdx = body.indexOf('refreshUpdatePlugins');
     const retireIdx = body.indexOf('runLegacyIntegrationRetirement');
     expect(skillsIdx).toBeGreaterThan(-1);
-    expect(refreshIdx).toBeGreaterThan(skillsIdx);
-    expect(retireIdx).toBeGreaterThan(refreshIdx);
+    expect(retireIdx).toBeGreaterThan(skillsIdx);
+    // The client plugin refresh that used to sit between them is gone.
+    expect(body).not.toContain('refreshUpdatePlugins');
 
     // Every explicit mode runs behind the acquired lifecycle lease.
     const leaseIdx = source.indexOf('const lifecycleLease = acquireRequiredLifecycleLease();');
@@ -2686,7 +2662,6 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
       expectedVersion: '9.9.9',
       selection: 'all',
       runSkills: () => skills,
-      refreshPlugins: () => [],
       retirementHomes: {
         home: fixture.home,
         genieHome: fixture.genieHome,
@@ -2814,7 +2789,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     const body = source.slice(source.indexOf('export function runManualUpdateConvergence('));
     const convergence = body.slice(0, body.indexOf('\n}\n'));
     expect(convergence.indexOf('runLegacyIntegrationRetirement(')).toBeGreaterThan(
-      convergence.indexOf('refreshUpdatePlugins)('),
+      convergence.indexOf('runUpdateSkillsChannel)('),
     );
     expect(convergence).toContain("skills.status === 'installed'");
     // Never at the install seam, never from doctor.

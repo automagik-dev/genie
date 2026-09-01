@@ -4,7 +4,7 @@
  * install.sh downloads, verifies, extracts, links and PATH-wires the binary in
  * bash, then hands off to `genie install` on the freshly linked binary for the
  * finishing steps that belong in TypeScript: canonical payload normalization,
- * v4 cleanup, consent, the skills channel and the remaining integrations.
+ * v4 cleanup, consent and the skills channel.
  *
  * Opt out of the v4 cleanup with `--skip-v4-cleanup` — install.sh forwards its
  * CLI args, so `curl ... | bash -s -- --skip-v4-cleanup` reaches this flag.
@@ -25,13 +25,7 @@ import {
   lifecycleBusyMessage,
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
-import {
-  type InstallIntegrationsOptions,
-  type IntegrationResult,
-  type IntegrationSelection,
-  installRuntimeIntegrations,
-  persistIntegrationConsent,
-} from '../lib/runtime-integrations.js';
+import { type IntegrationSelection, persistIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import { VERSION } from '../lib/version.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
@@ -39,8 +33,15 @@ import { cleanupV4 } from './legacy-v4.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 
-/** Reported for an explicitly requested Codex selection now that its plugin subsystem is retired. */
-const CODEX_INTEGRATION_RETIRED = 'Codex plugin integration is retired; nothing to install';
+/**
+ * Reported for every explicitly requested runtime. Both client plugin
+ * integrations are retired — the Codex subsystem with its plugin, and the
+ * Claude marketplace registration with the payload manifest that backed it —
+ * so an explicit selection installs nothing for that runtime and says so.
+ * It is never an error: `install.sh` forwards `--integrations claude` and
+ * treats a non-zero `genie install` as a fatal, incomplete installation.
+ */
+const RUNTIME_INTEGRATION_RETIRED = 'client plugin integration is retired; nothing to install';
 
 /**
  * Auxiliary trees moved from `bin/` to the GENIE_HOME root — the same three
@@ -53,7 +54,7 @@ const AUX_LAYOUT_DIRS = ['plugins', 'skills', 'templates'] as const;
 export interface InstallOptions {
   /** Set by --skip-v4-cleanup: leave v4-era artifacts in place. */
   skipV4Cleanup?: boolean;
-  /** Which detected client integrations to install. Default: auto. */
+  /** Consent scope the skills channel is installed under. Default: auto. */
   integrations?: IntegrationSelection;
   /** Alias for --integrations none. */
   skipIntegrations?: boolean;
@@ -63,21 +64,9 @@ type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | undefined;
 /** The skills.sh channel step; production pins it to the running binary's VERSION. */
 type SkillsChannelRunner = (selection: IntegrationSelection) => SkillsChannelConvergenceResult;
-type IntegrationRunner = (options?: InstallIntegrationsOptions) => ReturnType<typeof installRuntimeIntegrations>;
 type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
 type ConsentWriter = (selection: IntegrationSelection) => void;
 type InstallMarkerRetirer = () => void;
-
-function codexInScope(selection: IntegrationSelection): boolean {
-  return selection === 'auto' || selection === 'codex' || selection === 'all';
-}
-
-/** The claude/hermes scope for `runIntegrations` when Codex is deferred (never activate it here). */
-function claudeOnlyScope(selection: IntegrationSelection): InstallIntegrationsOptions {
-  if (selection === 'auto') return { selection: 'auto', detected: { codex: false } };
-  if (selection === 'all') return { selection: 'claude' };
-  return { selection: 'none' };
-}
 
 function retireInstallMarkerSafe(retireMarker: InstallMarkerRetirer): void {
   try {
@@ -140,18 +129,18 @@ function readVersionStamp(path: string): string | null {
 }
 
 /**
- * Build the ordered install results. The Codex plugin subsystem is retired, so
- * a Codex-in-scope selection never reaches the integration runner for Codex; an
- * explicitly requested Codex selection reports the retirement rather than
- * failing, and every other runtime keeps its ordinary integration result.
+ * Report the retirement of every explicitly requested runtime. `auto` says
+ * nothing (it requests no runtime in particular) and `none` mutates nothing at
+ * all; `codex`, `claude` and `all` each get one line naming what is no longer
+ * installed. Nothing here can fail, so an explicit selection can no longer
+ * abort the install — the H1 regression this replaces.
  */
-function buildInstallResults(selection: IntegrationSelection, runIntegrations: IntegrationRunner): IntegrationResult[] {
-  if (!codexInScope(selection)) return runIntegrations({ selection });
-  const nonCodex = runIntegrations(claudeOnlyScope(selection));
-  if (selection === 'codex' || selection === 'all') {
-    return [{ runtime: 'codex', ok: true, detail: CODEX_INTEGRATION_RETIRED }, ...nonCodex];
+function reportRetiredRuntimeIntegrations(selection: IntegrationSelection): void {
+  if (selection === 'auto' || selection === 'none') return;
+  const runtimes = selection === 'all' ? (['codex', 'claude'] as const) : ([selection] as const);
+  for (const runtime of runtimes) {
+    console.log(`  \x1b[32m+\x1b[0m ${runtime}: ${RUNTIME_INTEGRATION_RETIRED}`);
   }
-  return nonCodex;
 }
 
 /**
@@ -165,28 +154,17 @@ function persistInstallOwnedConsent(selection: IntegrationSelection, writeConsen
 }
 
 /**
- * Run the integrations this command is authorized to own. Codex is structurally
- * absent from the runner scope.
+ * Run the post-delivery convergence this command owns. No client plugin
+ * integration survives, so the only runtime output is the retirement notice.
  *
  * Returns the skills-channel result so the caller can give a skills failure its
  * own exit precedence.
  */
 function runPermittedPostDeliveryIntegrations(
   selection: IntegrationSelection,
-  runIntegrations: IntegrationRunner,
   runSkills: SkillsChannelRunner,
 ): SkillsChannelConvergenceResult {
-  const results = buildInstallResults(selection, runIntegrations);
-  for (const result of results) {
-    const glyph = result.ok ? '\x1b[32m+\x1b[0m' : '\x1b[33m!\x1b[0m';
-    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
-    console.log(`  ${glyph} ${result.runtime}: ${result.detail}${disabled}`);
-  }
-  if (selection !== 'auto' && selection !== 'none') {
-    const failed = results.filter((result) => !result.ok);
-    if (failed.length > 0)
-      throw new Error(`Requested integration failed: ${failed.map((result) => result.runtime).join(', ')}`);
-  }
+  reportRetiredRuntimeIntegrations(selection);
   // The skills channel is the whole post-delivery convergence now (wish
   // `skills-everywhere` decision 2), and it runs for every non-`none` consent
   // with `--all` (decision 3: an explicit, accepted widening of the
@@ -196,7 +174,7 @@ function runPermittedPostDeliveryIntegrations(
 }
 
 /**
- * Run the post-install finishers. `runV4Cleanup` / `normalizeLayout` / `runSync`
+ * Run the post-install finishers. `runV4Cleanup` / `normalizeLayout` / `runSkills`
  * are injection seams for tests (mirrors runV4CleanupSafe) — production callers
  * pass options only.
  */
@@ -204,7 +182,6 @@ export async function installCommand(
   options: InstallOptions = {},
   runV4Cleanup: V4CleanupRunner = cleanupV4,
   normalizeLayout: NormalizeAuxLayoutFn = normalizeAuxLayout,
-  runIntegrations: IntegrationRunner = installRuntimeIntegrations,
   acquireLease: LifecycleLeaseAcquirer = () => acquireLifecycleLease(GENIE_HOME),
   writeConsent: ConsentWriter = (selection) => persistIntegrationConsent(selection, GENIE_HOME),
   retireMarker: InstallMarkerRetirer = () => retireInstallVersionMarker(GENIE_HOME),
@@ -240,10 +217,10 @@ export async function installCommand(
       runV4Cleanup();
     }
 
-    const skills = runPermittedPostDeliveryIntegrations(selection, runIntegrations, runSkills);
+    const skills = runPermittedPostDeliveryIntegrations(selection, runSkills);
     // Decision 14: marker retirement is the LAST successful finisher. A later
-    // consent, legacy cleanup, or permitted-integration failure must leave the
-    // marker intact so the whole install remains retryable.
+    // consent or legacy-cleanup failure must leave the marker intact so the
+    // whole install remains retryable.
     retireInstallMarkerSafe(retireMarker);
     // A failed skills install is a FAILURE: the delivered bytes stay committed,
     // and the operator gets exit 1 with the remedy command.
