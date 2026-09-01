@@ -15,6 +15,10 @@
  * - plugins/genie/orca-plugin.json (Orca)
  * - plugins/genie/package.json (runtime payload metadata)
  *
+ * `--check` is the read-only mode: it reports that exact target set and whether
+ * each file is bump-ready, then exits 0 without writing. The BARE command always
+ * performs a real bump, so `--check` is the only form safe to run as validation.
+ *
  * CI staging (GITHUB_ACTIONS only): after rewriting, this script `git add`s every
  * file it actually touched. This exists because the release workflow's own
  * `git add -A '*.json' 'src/lib/version.ts'` list re-guesses the version-carrying
@@ -104,13 +108,46 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
   }
 }
 
+/**
+ * The authoritative version-file set, in stamping order. Three files since wish
+ * `skills-everywhere-b` retired the Codex/Claude/Kimi/Hermes/pi manifests; the
+ * same list is enumerated by `scripts/release-payload-version.ts`,
+ * `scripts/release-guard.sh` and `.github/workflows/version.yml`, which is why
+ * `--check` exists: it is the only way to read this set without bumping.
+ */
+export const VERSION_FILES = ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json'] as const;
+
+export function versionFilePaths(rootDir: string): string[] {
+  return VERSION_FILES.map((relativePath) => join(rootDir, relativePath));
+}
+
+export interface VersionCheckReport {
+  targets: string[];
+  failures: string[];
+}
+
+/**
+ * Read-only companion to `synchronizeVersionFiles`: report the exact bump
+ * targets and whether each is shaped so a bump could stamp it, WITHOUT writing
+ * anything and without deriving a new version. The bare command performs a real
+ * bump, so this is the only runnable verification of the version-file set.
+ */
+export async function versionCheckReport(rootDir: string): Promise<VersionCheckReport> {
+  const targets = versionFilePaths(rootDir);
+  const failures: string[] = [];
+  for (const path of targets) {
+    try {
+      await assertVersionFileShape(path);
+    } catch (error) {
+      failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { targets, failures };
+}
+
 /** Update every authoritative version file and fail the command on any partial write. */
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
-  const paths = [
-    join(rootDir, 'package.json'),
-    join(rootDir, 'plugins/genie/orca-plugin.json'),
-    join(rootDir, 'plugins/genie/package.json'),
-  ];
+  const paths = versionFilePaths(rootDir);
   const preflightFailures: string[] = [];
   for (const path of paths) {
     try {
@@ -136,9 +173,32 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
 }
 
+async function runCheck(rootDir: string): Promise<void> {
+  const report = await versionCheckReport(rootDir);
+  console.log(`version --check: ${report.targets.length} version file(s), no writes performed`);
+  for (const relativePath of VERSION_FILES) console.log(`  • ${relativePath}`);
+  if (report.failures.length > 0) {
+    throw new Error(`version files are not bump-ready:\n  ${report.failures.join('\n  ')}`);
+  }
+  console.log('\n✅ Every version file is present and bump-ready');
+}
+
 async function main() {
-  const version = generateVersion();
   const rootDir = join(dirname(import.meta.path), '..');
+  const argv = process.argv.slice(2);
+
+  // Argument handling is deliberately strict and comes BEFORE any mutation: the
+  // bare command performs a real, irreversible bump, so an unrecognized flag
+  // must never degrade into one.
+  if (argv.length > 0) {
+    if (argv.length === 1 && argv[0] === '--check') {
+      await runCheck(rootDir);
+      return;
+    }
+    throw new Error(`usage: bun scripts/version.ts [--check]  (got: ${argv.join(' ')})`);
+  }
+
+  const version = generateVersion();
 
   console.log(`Version: ${version}`);
   console.log('Updating files:');

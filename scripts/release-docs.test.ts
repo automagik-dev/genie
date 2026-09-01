@@ -473,7 +473,6 @@ describe('Group E release and documentation contracts', () => {
       "'bunfig.toml'",
       "'tsconfig.json'",
       "'scripts/build-binary.sh'",
-      "'scripts/build.js'",
       "'scripts/json-top-level-string.js'",
       "'scripts/orca-bundle-parity.ts'",
       "'scripts/fresh-install-smoke.ts'",
