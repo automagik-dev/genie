@@ -29,13 +29,12 @@ export const DEFAULT_DENY_REACTIONS = ['\u{1F44E}', '\u{274C}', '\u{1F6AB}']; //
 const DEFAULT_NATS_URL = 'localhost:4222';
 const DEFAULT_TOOL_MATCHER = '^(Bash|Write|Edit|apply_patch|NotebookEdit)$';
 /**
- * PermissionRequest timing ladder: Omni polls for at most 110s, the bundled
- * launcher owns 115s, and the Codex host manifest owns 125s. The 5s/15s
- * margins leave time to expire the row, serialize a deny, and terminate.
+ * Approval poll ceiling. The launcher and host-manifest rungs above it (115s /
+ * 125s) belonged to the Codex PermissionRequest hook and left with it; this
+ * budget now bounds only the CLI-originated wait, leaving time to expire the
+ * row and serialize a deny before the caller gives up.
  */
 export const MAX_APPROVAL_POLL_BUDGET_MS = 110_000;
-export const PERMISSION_CHILD_TIMEOUT_MS = 115_000;
-export const PERMISSION_HOST_TIMEOUT_MS = 125_000;
 const DEFAULT_POLL_BUDGET_MS = MAX_APPROVAL_POLL_BUDGET_MS;
 const DEFAULT_POLL_INTERVAL_MS = 400;
 const DEFAULT_INBOUND_TIMEOUT_MS = 120_000;

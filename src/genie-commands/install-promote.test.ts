@@ -16,9 +16,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LIFECYCLE_LEASE_OWNER_ENV, LIFECYCLE_LEASE_PATH_ENV, lifecycleLockPath } from '../lib/agent-sync.js';
-import { acquireLifecycleLease as acquireCodexLifecycleLease } from '../lib/codex-lifecycle-lease.js';
 import { type InstallPromotionDependencies, recoverPendingInstallPromotions } from '../lib/install-promotion.js';
+import { LIFECYCLE_LEASE_OWNER_ENV, LIFECYCLE_LEASE_PATH_ENV, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import {
   type InstallPromoteCommandDependencies,
   InstallPromoteCommandError,
@@ -45,7 +44,7 @@ afterEach(() => {
 });
 
 function writePayload(root: string, version: string): void {
-  for (const name of ['.agents', '.claude-plugin', 'plugins', 'skills', 'templates']) {
+  for (const name of ['plugins', 'skills', 'templates']) {
     mkdirSync(join(root, name), { recursive: true, mode: 0o755 });
     writeFileSync(join(root, name, 'generation.txt'), `${version}:${name}\n`, { mode: 0o644 });
   }
@@ -116,23 +115,7 @@ describe('hidden installer promoter command', () => {
     expect(JSON.parse(output[0] as string)).toMatchObject({ outcome: 'committed', canonicalLink });
   });
 
-  test('a setup-held Codex lease refuses before recovery, swap, link, or VERSION mutation', () => {
-    const f = fixture();
-    const held = acquireCodexLifecycleLease('setup-activation', { genieHome: f.genieHome });
-    expect(held.ok).toBe(true);
-    if (!held.ok) return;
-    try {
-      expect(() => run(f)).toThrow('setup-activation');
-      expect(readFileSync(join(f.bin, 'VERSION'), 'utf8')).toBe('1.0.0\n');
-      expect(readFileSync(join(f.staging, 'VERSION'), 'utf8')).toBe('2.0.0\n');
-      expect(existsSync(join(f.userHome, '.local'))).toBe(false);
-      expect(readdirSync(f.bin).some((name) => name.startsWith('.install-'))).toBe(false);
-    } finally {
-      held.release();
-    }
-  });
-
-  test('acquires agent-sync then Codex and releases Codex then agent-sync around promotion', () => {
+  test('acquires the lifecycle lease before promotion and releases it after', () => {
     const f = fixture();
     const events: string[] = [];
     const dependencies: InstallPromoteCommandDependencies = {
@@ -144,16 +127,6 @@ describe('hidden installer promoter command', () => {
         events.push('agent-acquire');
         return { path: f.leasePath, release: () => events.push('agent-release') };
       },
-      acquireCodexLease: () => {
-        events.push('codex-acquire');
-        return {
-          ok: true,
-          operationId: 'b'.repeat(32),
-          kind: 'install-converge',
-          assertOperation: () => undefined,
-          release: () => events.push('codex-release'),
-        };
-      },
       promotion: {
         randomId: () => '22222222-2222-4222-8222-222222222222',
         beforeRename: () => {
@@ -164,10 +137,10 @@ describe('hidden installer promoter command', () => {
 
     installPromoteCommand({ stagingRoot: f.staging, expectedVersion: '2.0.0' }, dependencies);
 
-    expect(events.slice(0, 2)).toEqual(['agent-acquire', 'codex-acquire']);
+    expect(events[0]).toBe('agent-acquire');
     expect(events).toContain('promotion');
-    expect(events.slice(-2)).toEqual(['codex-release', 'agent-release']);
-    expect(events.indexOf('codex-acquire')).toBeLessThan(events.indexOf('promotion'));
+    expect(events.at(-1)).toBe('agent-release');
+    expect(events.indexOf('agent-acquire')).toBeLessThan(events.indexOf('promotion'));
   });
 
   test('missing borrowed authority fails before any live or link mutation', () => {

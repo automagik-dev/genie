@@ -20,22 +20,12 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { type AgentSyncReport, type AgentSyncSelection, runAgentSync } from '../lib/agent-sync.js';
-import { observeCodexActivation, openCodexActivationStore } from '../lib/codex-activation-executor.js';
-import { parseReleaseVersion, scanPhysicalTree } from '../lib/codex-activation.js';
 import {
   type DeliveryEvidenceChannel,
   type DeliveryEvidencePlatformId,
   type DeliveryEvidenceVerificationDependencies,
-  type VerifiedDeliveryEvidence,
   verifyDownloadedDeliveryEvidence,
-} from '../lib/codex-delivery-evidence.js';
-import {
-  type HeldLifecycleLease,
-  type LifecycleLeaseResult,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../lib/codex-lifecycle-lease.js';
-import { snapshotDeliveryReadState } from '../lib/codex-lifecycle-truth.js';
+} from '../lib/delivery-evidence-verify.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
@@ -69,20 +59,10 @@ import {
   lifecycleBusyMessage,
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
-import {
-  type CodexAgentInstallResult,
-  type IntegrationResult,
-  type IntegrationSelection,
-  readIntegrationConsent,
-  resolveRuntimeExecutable,
-} from '../lib/runtime-integrations.js';
+import { parseReleaseVersion, scanPhysicalTree } from '../lib/release-payload-proof.js';
+import { type IntegrationSelection, readIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
-import {
-  CODEX_ACTIVATION_PROTOCOL,
-  printUpdateCapabilities,
-  publishBackupCapabilitySidecar,
-  runBackupCapabilityProbe,
-} from '../lib/update-capabilities.js';
+import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
@@ -91,27 +71,8 @@ import {
   convergeAuxiliaryTree,
   fingerprintAuxiliaryTree,
 } from './auxiliary-trees.js';
-import {
-  type CandidateProof,
-  type DeliveryRepairOutcome,
-  type DeliveryRepairSeams,
-  type InstalledProof,
-  type PinnedManifest,
-  type RepairPinnedTarget,
-  localDeliveryMatches,
-  repairMissingDelivery,
-} from './codex-delivery-repair.js';
-import {
-  CODEX_DELIVERY_INCOMPLETE_TRAILER,
-  CODEX_DELIVERY_RESULT_TRAILER,
-  CODEX_LIFECYCLE_BUSY_TRAILER,
-  CodexLifecycleBusyError,
-  publishCodexDelivery,
-} from './codex-delivery.js';
-import { performProtocolSafeRollback } from './codex-rollback.js';
 import { cleanupV4 } from './legacy-v4.js';
 import { assertLocalDeliveryRepairEnabled, materializeLocalDeliveryRepair } from './local-delivery-repair.js';
-import { type RefreshUpdatePluginsOptions, refreshUpdatePlugins } from './update-integrations.js';
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_BIN = join(GENIE_HOME, 'bin');
 const GENIE_BIN_STAGING = join(GENIE_BIN, '.staging');
@@ -1308,7 +1269,7 @@ async function runCommandSilent(
 // ============================================================================
 
 const FRAMEWORK_MARKER_FILES = new Set(['.orphaned_at']);
-const AUXILIARY_DELIVERY_TREE_NAMES = ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'] as const;
+const AUXILIARY_DELIVERY_TREE_NAMES = ['plugins', 'skills', 'templates'] as const;
 type AuxiliaryDeliveryTreeName = (typeof AUXILIARY_DELIVERY_TREE_NAMES)[number];
 
 // ============================================================================
@@ -1641,27 +1602,18 @@ function applyDowngradeGuard(
 }
 
 /**
- * Map a convergence outcome to the process exit code (deliverable 3):
- *   - any failed integration, or a failed skills.sh install → exit 1 (retry)
- *   - else any action-required (delivered, activation deferred) → exit 2 with the
- *     result trailer and NO all-green footer
+ * Map a convergence outcome to the process exit code:
+ *   - a failed skills.sh install → exit 1 (retry)
  *   - else success (exit 0), caller prints its own success line.
- * `emitTrailer` is false on the fresh-binary parent, whose child already printed
- * the trailer over inherited stdio — the parent only mirrors the exit code.
  *
- * A failed skills install is a FAILURE and outranks action-required: the skills
- * channel already set `exitCode = 1` itself, and a routine pending
- * `setup --codex` on a Codex host would otherwise downgrade that 1 to a 2 and
- * hide a real retryable failure behind the delivery trailer.
+ * The former action-required exit-2 arm left with the Codex plugin activation
+ * protocol, and the failed-integration arm left with the client plugin
+ * convergence: the skills channel is the only step that can fail here, so a
+ * convergence either succeeds or is retryable.
  */
-export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult, emitTrailer = true): void {
-  if (convergence.skills?.status === 'failed' || convergence.integrations.some((result) => !result.ok)) {
+export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult): void {
+  if (convergence.skills?.status === 'failed') {
     process.exitCode = 1;
-    return;
-  }
-  if (convergence.integrations.some((result) => result.actionRequired === true)) {
-    process.exitCode = 2;
-    if (emitTrailer) log(CODEX_DELIVERY_RESULT_TRAILER);
   }
 }
 
@@ -1746,7 +1698,7 @@ export function runFreshBinaryPostDeliveryConvergence(
     // result trailer over inherited stdio; the parent only mirrors the code.
     if (childExitStatus(cause) === 2) return 'action-required';
     throw new Error(
-      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but the integration named above is not converged. Rerun \`genie update\` from a regular terminal to retry. If Codex activation is pending afterwards, close Codex tasks, run \`genie setup --codex\`, review \`/hooks\`, and start a new Codex task.`,
+      `fresh Genie integration convergence failed: ${errMsg(cause)}. The verified CLI update is installed, but the integration named above is not converged. Rerun \`genie update\` from a regular terminal to retry.`,
     );
   }
 }
@@ -1758,62 +1710,6 @@ function childExitStatus(cause: unknown): number | null {
     return typeof status === 'number' ? status : null;
   }
   return null;
-}
-
-/**
- * Gate the agent-sync scope for update. R2/A1 (agent-sync must never write
- * codex product skills into ~/.agents/skills) is structural in `runAgentSync`
- * itself now — there is no `codex` arm to narrow away from — so this only
- * skips agent-sync where it has nothing to do: `none` and `codex` (setup owns
- * Codex convergence). `auto`/`all`/`claude` pass through UNCHANGED so
- * `runAgentSync` sees the real selection and converges hermes on `auto`/`all`.
- */
-export function narrowUpdateAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {
-  return selection === 'none' || selection === 'codex' ? null : selection;
-}
-
-/**
- * Update delivery owns no Codex activation surfaces. Claude refresh remains
- * update-owned; Hermes continues through agent-sync. Returning null prevents
- * even a Codex query when Codex is the only selected integration.
- */
-export function narrowUpdatePluginRefreshSelection(selection: IntegrationSelection): 'claude' | null {
-  return selection === 'none' || selection === 'codex' ? null : 'claude';
-}
-
-/** Update-owned agent sync cannot cross into setup-owned Codex role convergence. */
-export function runUpdateAgentSync(
-  selection: IntegrationSelection,
-  sync: typeof runAgentSyncSafe = runAgentSyncSafe,
-): AgentSyncReport | null {
-  return sync({ strict: true, selection });
-}
-
-export interface LegacySyncOnlyConvergenceOptions {
-  selection: IntegrationSelection;
-  /** Retained for the call signature and structure tests; sync-only never reads a version. */
-  expectedVersion: string;
-  sync?: () => void;
-  log?: (line: string) => void;
-}
-
-/**
- * D2 (wish decision 3, Felipe-ratified): legacy `--sync-only` is a pure
- * agent-sync compatibility path. It branches BEFORE every Codex activation
- * observer, classifier, authorization, plugin query, or mutation — it never
- * lists, probes, inspects, enables, installs, or swaps the Codex plugin — and a
- * genuine agent-sync failure is its ONLY nonzero result. Codex product skills
- * are never rewritten under ~/.agents/skills (R2/A1) — that guarantee is
- * structural in `runAgentSync`, not a Claude-only narrowing here.
- */
-export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {
-  const agentSyncSelection = narrowUpdateAgentSyncSelection(options.selection);
-  (
-    options.sync ??
-    (() => {
-      if (agentSyncSelection !== null) runUpdateAgentSync(agentSyncSelection);
-    })
-  )();
 }
 
 function announceUpdatePlanOrExit(
@@ -1835,11 +1731,21 @@ function announceUpdatePlanOrExit(
   return latestVersion;
 }
 
+/**
+ * Legacy `--sync-only` (and `GENIE_UPDATE_SYNC_ONLY=1`): converge the client
+ * surfaces this binary still owns and return — no manifest fetch, no binary
+ * swap. The per-agent convergence engine that once WAS this mode is gone, so the
+ * convergence it runs is the ordinary post-delivery one (skills channel, then
+ * plugin-era retirement) against the running binary's own VERSION. It branches
+ * before every network and delivery step.
+ *
+ * The middle leg of that convergence — the Claude plugin refresh — left with
+ * the client plugin integrations, so the mode is still *identical* to a plain
+ * `genie update`'s convergence on the same head, which is the ratified
+ * contract; only the number of legs changed.
+ */
 function runLegacySyncOnlyMode(): void {
-  // Consent is re-read under the lease so a concurrent lifecycle command
-  // cannot change the selected client-home scope between plan and write.
-  const selection = readIntegrationConsent(GENIE_HOME);
-  runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION });
+  runTrackedManualUpdateConvergence(VERSION);
 }
 
 function runPostDeliveryConvergenceMode(): void {
@@ -1854,10 +1760,6 @@ function runPostDeliveryConvergenceMode(): void {
       expectedVersion: installedVersion,
       selection: readIntegrationConsent(GENIE_HOME),
     });
-    const failures = convergence.integrations.filter((result) => !result.ok);
-    if (failures.length > 0) {
-      throw new Error(failures.map((result) => `${result.runtime}: ${result.detail}`).join('; '));
-    }
     // Delivered-but-action-required (installed N ≠ delivered T): exit 2 with the
     // result trailer and no all-green footer. The parent mirrors this exit code.
     applyConvergenceExitSignal(convergence);
@@ -1893,7 +1795,7 @@ async function dispatchNonNormalUpdateMode(options: UpdateCommandOptions): Promi
   }
   const mode = resolveUpdateExecutionMode(options);
   if (mode === 'publish-local-delivery') {
-    await runLocalDeliveryRepairMode(options.publishLocalDelivery as string);
+    await runLocalDeliveryVerificationMode(options.publishLocalDelivery as string);
     return true;
   }
   if (mode !== 'normal') {
@@ -1978,46 +1880,49 @@ function recoverInstallPromotionAndConvergePayload(): void {
 }
 
 // ============================================================================
-// Same-version delivery repair on the already-current path (Group D deliverable 1)
+// Offline delivery-evidence verification (release-dogfood boundary)
 // ============================================================================
 
-export type AlreadyCurrentRepairDirective =
-  | { action: 'proceed-current' }
-  | { action: 'repaired-current' }
-  | { action: 'exit-handoff' }
-  | { action: 'route-upgrade'; manifest: PinnedManifest }
-  | { action: 'busy'; detail: string }
-  | { action: 'failed'; detail: string };
+/** What a freshly extracted candidate tarball proves about itself. */
+interface CandidateProof {
+  version: string;
+  pluginTreeSha256: string;
+  binarySha256: string;
+}
 
 /**
- * Pure mapping of a repair outcome to the already-current directive. A published
- * record whose registered generation still trails the target hands off to setup
- * (exit 2 with the delivery trailer); a target-current publish reports the repair
- * and returns without entering activation or ordinary rerun convergence. A matching
- * record retains the ordinary rerun path, a channel advance routes through ordinary
- * upgrade, and failed repair remains an explicit non-success terminal outcome.
+ * The one stable, ANSI-free, single-line JSON result trailer the delivery
+ * paths emit so automation has a machine-readable `deliveryComplete` carrier.
  */
-export function mapAlreadyCurrentRepairOutcome(outcome: DeliveryRepairOutcome): AlreadyCurrentRepairDirective {
-  if (outcome.kind === 'published') {
-    return outcome.handoff === 'activation-pending' ? { action: 'exit-handoff' } : { action: 'repaired-current' };
-  }
-  if (outcome.kind === 'channel-advanced') return { action: 'route-upgrade', manifest: outcome.manifest };
-  if (outcome.kind === 'failed') return { action: 'failed', detail: `${outcome.stage}: ${outcome.detail}` };
-  return { action: 'proceed-current' };
+interface DeliveryResultTrailer {
+  schemaVersion: 1;
+  code: string;
+  deliveryComplete: boolean;
+  retry: boolean;
+  nextAction: string;
 }
 
-/** The pinned, immutable repair target — every field is locally known at pin time. */
-function buildRepairPinnedTarget(channel: DeliveryEvidenceChannel, platformId: string): RepairPinnedTarget {
-  const version = normalizeVersion(VERSION);
-  return {
-    channel,
-    targetVersion: version,
-    platformTriple: `${process.platform}-${process.arch}`,
-    platformId,
-    releaseTag: `v${version}`,
-    releaseName: `genie-${version}-${platformId}.tar.gz`,
-  };
+function serializeDeliveryResultTrailer(trailer: DeliveryResultTrailer): string {
+  return JSON.stringify(trailer);
 }
+
+/** A verified binary/payload exists, but its authenticated evidence was not bound. */
+const DELIVERY_INCOMPLETE_TRAILER = serializeDeliveryResultTrailer({
+  schemaVersion: 1,
+  code: 'delivery-incomplete',
+  deliveryComplete: false,
+  retry: true,
+  nextAction: 'retry genie update (or genie install) to publish the authenticated delivery record',
+});
+
+/** The offline evidence pack verified against the exact local candidate. */
+const DELIVERY_VERIFIED_TRAILER = serializeDeliveryResultTrailer({
+  schemaVersion: 1,
+  code: 'delivery-verified',
+  deliveryComplete: true,
+  retry: false,
+  nextAction: 'no action required; the local candidate matches its authenticated delivery evidence',
+});
 
 /** The canonical installed payload root under GENIE_HOME, or null when no payload is present. */
 function resolveCanonicalPayloadRoot(genieHome = GENIE_HOME): string | null {
@@ -2033,21 +1938,6 @@ function hashFileSha256(path: string): string | null {
   } catch {
     return null;
   }
-}
-
-/** Local canonical observation; null when the installed payload/binary cannot be safely observed. */
-function observeInstalledForRepair(
-  genieHome = GENIE_HOME,
-  deliveryEvidenceVerification: DeliveryEvidenceVerificationDependencies = {},
-): InstalledProof | null {
-  const snapshot = observeCodexActivation({ genieHome, command: null, deliveryEvidenceVerification });
-  if (snapshot.canonical.status !== 'ok') return null;
-  return {
-    version: snapshot.canonical.version.canonical,
-    pluginTreeSha256: snapshot.canonical.digest,
-    binarySha256: snapshot.canonical.installedBinarySha256,
-    deliveryRoot: snapshot.canonical.deliveryRoot,
-  };
 }
 
 /** Re-scan a freshly extracted tarball into a candidate proof; throws on any unsafe/unreadable member. */
@@ -2084,120 +1974,40 @@ function readTrimmedFile(path: string): string | null {
   }
 }
 
-/**
- * Attempt the same-version delivery repair before an already-current return.
- * The operation is fail-closed: unobservable state, lease contention, or any
- * repair failure is reported explicitly instead of masquerading as current.
- * Download and private extraction happen under the held Codex lease and are
- * cleaned up on every path; only `publishDelivery` mutates durable state.
- */
-export async function attemptAlreadyCurrentDeliveryRepair(
-  channel: DeliveryEvidenceChannel,
-  platformId: string,
-  heldLease?: HeldLifecycleLease,
-  genieHome = GENIE_HOME,
-  dependencies: AlreadyCurrentRepairAdapterDeps = {},
-): Promise<AlreadyCurrentRepairDirective> {
-  const installed = observeInstalledForRepair(genieHome, dependencies.evidenceVerification);
-  if (installed === null) return { action: 'failed', detail: 'installed payload/binary could not be observed' };
-  const pinned = buildRepairPinnedTarget(channel, platformId);
-  // No-network, no-lease fast path: an already-bound record needs no repair.
-  const delivery = observeCodexActivation({
-    genieHome,
-    command: null,
-    deliveryEvidenceVerification: dependencies.evidenceVerification,
-  }).delivery;
-  if (localDeliveryMatches(delivery, pinned, installed)) {
-    return { action: 'proceed-current' };
-  }
-  const acquired = heldLease === undefined ? acquireCodexLifecycleLease('update-delivery', { genieHome }) : null;
-  if (acquired !== null && !acquired.ok) {
-    return {
-      action: 'busy',
-      detail: `another Genie lifecycle command (${acquired.holderKind ?? 'unknown'}) holds the Codex lease`,
-    };
-  }
-  const lease = heldLease ?? (acquired as HeldLifecycleLease);
-  const tempRoots: string[] = [];
-  try {
-    const seams = buildAlreadyCurrentRepairSeams(platformId, installed, lease, tempRoots, genieHome, dependencies);
-    const outcome = await repairMissingDelivery(pinned, seams);
-    return mapAlreadyCurrentRepairOutcome(outcome);
-  } catch (cause) {
-    return { action: 'failed', detail: errMsg(cause) };
-  } finally {
-    if (heldLease === undefined) lease.release();
-    for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
-  }
-}
-
-export interface AlreadyCurrentRepairAdapterDeps {
-  fetchManifest?: typeof fetchLatestManifest;
-  downloadAndVerifyDeliveryAssets?: typeof downloadAndVerifyDeliveryAssets;
-  evidenceVerification?: DeliveryEvidenceVerificationDependencies;
-  createTempRoot?: typeof createPrivateUpdateTempRoot;
-}
-
-export interface LocalDeliveryRepairProjection {
-  exitCode: 0 | 1 | 2;
+export interface LocalDeliveryVerificationProjection {
+  exitCode: 0 | 1;
   stdout: string[];
   stderr: string[];
 }
 
 /**
- * Map the production repair directive onto the same stable delivery trailers
- * used by ordinary update. The local dogfood surface never routes a moving
- * channel into the network-backed upgrade path.
+ * Project the offline verification outcome onto the stable delivery trailers.
+ *
+ * This is the surviving half of what `repairMissingDelivery` used to own: the
+ * Codex activation store that consumed a verified pack is retired, so the
+ * release-dogfood boundary now ENDS at cryptographic verification instead of
+ * publishing a delivery record. Every descriptor, manifest, DSSE-statement and
+ * caller-observation binding is still live and still production code.
  */
-export function projectLocalDeliveryRepairDirective(
-  directive: AlreadyCurrentRepairDirective,
+export function projectLocalDeliveryVerification(
+  outcome: { status: 'verified' } | { status: 'failed'; detail: string },
   version = normalizeVersion(VERSION),
-): LocalDeliveryRepairProjection {
-  if (directive.action === 'busy') {
-    return {
-      exitCode: 2,
-      stdout: [CODEX_LIFECYCLE_BUSY_TRAILER],
-      stderr: [`Local Codex delivery publication is busy: ${directive.detail}`],
-    };
-  }
-  if (directive.action === 'failed') {
+): LocalDeliveryVerificationProjection {
+  if (outcome.status === 'failed') {
     return {
       exitCode: 1,
-      stdout: [CODEX_DELIVERY_INCOMPLETE_TRAILER],
-      stderr: [`Local Codex delivery publication failed: ${directive.detail}`],
-    };
-  }
-  if (directive.action === 'route-upgrade') {
-    return {
-      exitCode: 1,
-      stdout: [CODEX_DELIVERY_INCOMPLETE_TRAILER],
-      stderr: [
-        `Local Codex delivery publication refused a non-current manifest (${version} → ${directive.manifest.version})`,
-      ],
-    };
-  }
-  if (directive.action === 'exit-handoff') {
-    return {
-      exitCode: 2,
-      stdout: ['Authenticated Codex delivery published; activation is pending.', CODEX_DELIVERY_RESULT_TRAILER],
-      stderr: [],
-    };
-  }
-  if (directive.action === 'repaired-current') {
-    return {
-      exitCode: 0,
-      stdout: [`Authenticated Codex delivery published for current v${version}.`],
-      stderr: [],
+      stdout: [DELIVERY_INCOMPLETE_TRAILER],
+      stderr: [`Local delivery evidence verification failed: ${outcome.detail}`],
     };
   }
   return {
     exitCode: 0,
-    stdout: [`Authenticated Codex delivery already matches current v${version}.`],
+    stdout: [`Offline delivery evidence verified for v${version}.`, DELIVERY_VERIFIED_TRAILER],
     stderr: [],
   };
 }
 
-function emitLocalDeliveryRepairProjection(projection: LocalDeliveryRepairProjection): void {
+function emitLocalDeliveryVerification(projection: LocalDeliveryVerificationProjection): void {
   for (const line of projection.stdout) log(line);
   for (const line of projection.stderr) process.stderr.write(`${line}\n`);
   process.exitCode = projection.exitCode;
@@ -2205,143 +2015,44 @@ function emitLocalDeliveryRepairProjection(projection: LocalDeliveryRepairProjec
 
 /**
  * Offline release-dogfood entrypoint. External paths are snapshotted first,
- * the Codex lifecycle lease is then held across the complete production
- * `repairMissingDelivery` call, and no fetch/download implementation is
- * reachable: both adapters return only the snapshotted bytes.
+ * then the snapshotted artifact is extracted and proven, and its authenticated
+ * delivery evidence is verified with the production embedded-trust-root
+ * verifier. No network fetch is reachable and nothing durable is mutated.
  */
-async function runLocalDeliveryRepairMode(rawRequest: string): Promise<void> {
+async function runLocalDeliveryVerificationMode(rawRequest: string): Promise<void> {
   let snapshotRoot: string | null = null;
-  let lease: HeldLifecycleLease | null = null;
   try {
     assertLocalDeliveryRepairEnabled(process.env.GENIE_RELEASE_DOGFOOD);
     const platformId = resolvePlatformId();
     snapshotRoot = createPrivateUpdateTempRoot();
     const local = materializeLocalDeliveryRepair(rawRequest, snapshotRoot, platformId, normalizeVersion(VERSION));
-    const acquired = acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME });
-    if (!acquired.ok) {
-      emitLocalDeliveryRepairProjection({
-        exitCode: 2,
-        stdout: [CODEX_LIFECYCLE_BUSY_TRAILER],
-        stderr: [`Local Codex delivery publication is busy: ${acquired.detail}`],
-      });
-      return;
+    const version = normalizeVersion(local.manifest.version);
+    const artifactSha256 = hashFileSha256(local.artifactPath);
+    if (artifactSha256 === null) throw new Error('snapshotted release artifact is unreadable');
+    const candidate = await proveCandidateFromTarball(local.artifactPath);
+    if (candidate.version !== version) {
+      throw new Error(`candidate version ${candidate.version} differs from the pinned manifest ${version}`);
     }
-    lease = acquired;
-    const directive = await attemptAlreadyCurrentDeliveryRepair(
-      local.manifest.channel,
-      local.platformId,
-      lease,
-      GENIE_HOME,
-      {
-        fetchManifest: async (channel) => {
-          if (channel !== local.manifest.channel) {
-            throw new Error(`local manifest channel ${local.manifest.channel} differs from requested ${channel}`);
-          }
-          return local.manifest;
-        },
-        downloadAndVerifyDeliveryAssets: async (manifest, requestedPlatform) => {
-          if (
-            requestedPlatform !== local.platformId ||
-            manifest.manifestSha256 !== local.manifest.manifestSha256 ||
-            manifest.manifestBytes !== local.manifest.manifestBytes
-          ) {
-            throw new Error('local delivery adapter received a target other than the snapshotted request');
-          }
-          return {
-            tarballPath: local.artifactPath,
-            descriptorBytes: local.descriptorBytes,
-            bundleBytes: local.bundleBytes,
-          };
-        },
-      },
-    );
-    emitLocalDeliveryRepairProjection(projectLocalDeliveryRepairDirective(directive));
+    verifyDownloadedDeliveryEvidence({
+      descriptorBytes: local.descriptorBytes,
+      bundleBytes: local.bundleBytes,
+      manifestBytes: local.manifest.manifestBytes,
+      targetVersion: candidate.version,
+      channel: local.manifest.channel,
+      platformId: local.platformId,
+      platformTriple: `${process.platform}-${process.arch}`,
+      releaseTag: `v${version}`,
+      releaseName: `genie-${version}-${local.platformId}.tar.gz`,
+      artifactSha256,
+      installedBinarySha256: candidate.binarySha256,
+      canonicalPayloadSha256: candidate.pluginTreeSha256,
+    });
+    emitLocalDeliveryVerification(projectLocalDeliveryVerification({ status: 'verified' }, version));
   } catch (cause) {
-    emitLocalDeliveryRepairProjection(projectLocalDeliveryRepairDirective({ action: 'failed', detail: errMsg(cause) }));
+    emitLocalDeliveryVerification(projectLocalDeliveryVerification({ status: 'failed', detail: errMsg(cause) }));
   } finally {
-    lease?.release();
     if (snapshotRoot !== null) rmSync(snapshotRoot, { recursive: true, force: true });
   }
-}
-
-/** Build the real repair seams; download roots are tracked in `tempRoots` for cleanup by the caller. */
-export function buildAlreadyCurrentRepairSeams(
-  platformId: string,
-  installed: InstalledProof,
-  lease: HeldLifecycleLease,
-  tempRoots: string[],
-  genieHome = GENIE_HOME,
-  deps: AlreadyCurrentRepairAdapterDeps = {},
-): DeliveryRepairSeams {
-  const fetchManifest = deps.fetchManifest ?? fetchLatestManifest;
-  const downloadAssets = deps.downloadAndVerifyDeliveryAssets ?? downloadAndVerifyDeliveryAssets;
-  const createTempRoot = deps.createTempRoot ?? createPrivateUpdateTempRoot;
-  return {
-    readDeliveryFact: () =>
-      observeCodexActivation({
-        genieHome,
-        command: null,
-        deliveryEvidenceVerification: deps.evidenceVerification,
-      }).delivery,
-    observeInstalled: () => installed,
-    fetchManifest: async (channel) => {
-      const manifest = await fetchManifest(channel as ReleaseChannel);
-      return manifest === null ? null : manifest;
-    },
-    downloadAndVerify: async (target, pinnedManifest) => {
-      const destDir = createTempRoot();
-      tempRoots.push(destDir);
-      if (target.platformId !== platformId) {
-        throw new Error(`repair target platform ${target.platformId} differs from adapter ${platformId}`);
-      }
-      const expectedName = `genie-${normalizeVersion(pinnedManifest.version)}-${platformId}.tar.gz`;
-      if (target.releaseTag !== `v${normalizeVersion(pinnedManifest.version)}` || target.releaseName !== expectedName) {
-        throw new Error('repair release tag/name differ from the immutable pinned manifest asset');
-      }
-      const downloaded = await downloadAssets(pinnedManifest, platformId, destDir);
-      if (downloaded.tarballPath.split('/').pop() !== target.releaseName) {
-        throw new Error(`downloaded asset name differs from pinned ${target.releaseName}`);
-      }
-      return downloaded;
-    },
-    hashArtifact: (path) => {
-      const digest = hashFileSha256(path);
-      if (digest === null) throw new Error('downloaded artifact is unreadable');
-      return digest;
-    },
-    proveCandidate: (path) => proveCandidateFromTarball(path),
-    verifyEvidence: (input) => verifyDownloadedDeliveryEvidence(input, deps.evidenceVerification),
-    reobserve: () => reobserveForRepair(genieHome),
-    store: openCodexActivationStore({ genieHome, deliveryEvidenceVerification: deps.evidenceVerification }),
-    lease,
-  };
-}
-
-/** Re-observe the installed generation + canonical digest immediately before publication. */
-function reobserveForRepair(genieHome = GENIE_HOME): {
-  installedGeneration: string | null;
-  canonicalVersion: string;
-  canonicalPayloadSha256: string;
-  installedBinarySha256: string;
-  deliveryRoot: string;
-} | null {
-  let command: string | null = null;
-  try {
-    command = resolveRuntimeExecutable('codex', process.cwd());
-  } catch {
-    command = null;
-  }
-  const snapshot = observeCodexActivation({ genieHome, command });
-  if (snapshot.canonical.status !== 'ok') return null;
-  const registration = snapshot.query.status === 'ok' ? snapshot.query.registration : { present: false as const };
-  const installedGeneration = registration.present && registration.version ? registration.version.canonical : null;
-  return {
-    installedGeneration,
-    canonicalVersion: snapshot.canonical.version.canonical,
-    canonicalPayloadSha256: snapshot.canonical.digest,
-    installedBinarySha256: snapshot.canonical.installedBinarySha256,
-    deliveryRoot: snapshot.canonical.deliveryRoot,
-  };
 }
 
 /** Best-effort retirement of the legacy `.install-version` marker after a proven-successful convergence. */
@@ -2354,63 +2065,21 @@ function retireLegacyInstallMarkerSafe(): void {
 }
 
 /**
- * The already-current terminal path. Group D deliverable 1: before returning
- * "Already up to date", repair a missing authenticated delivery record for the
- * installed target exactly once. A matching record retains non-Codex rerun
- * convergence, a channel advance enters ordinary upgrade, and repair failure
- * or contention exits nonzero. An old-parent repair hands off to setup (exit 2).
+ * The already-current terminal path: report, converge the client homes once,
+ * and retire the legacy install marker. The same-version delivery-record repair
+ * this path used to attempt left with the Codex activation store.
  */
 export interface AlreadyCurrentUpdateDependencies {
-  attemptRepair?: typeof attemptAlreadyCurrentDeliveryRepair;
   runConvergence?: typeof runTrackedManualUpdateConvergence;
   retireLegacyMarker?: typeof retireLegacyInstallMarkerSafe;
 }
 
 export async function handleAlreadyCurrentUpdate(
   channel: ReleaseChannel,
-  platform: string,
   installedVersion: string,
   latestVersion: string | null | undefined,
   dependencies: AlreadyCurrentUpdateDependencies = {},
-  heldLease?: HeldLifecycleLease,
 ): Promise<LatestManifest | null> {
-  const repair = await (dependencies.attemptRepair ?? attemptAlreadyCurrentDeliveryRepair)(
-    channel,
-    platform,
-    heldLease,
-  );
-  if (repair.action === 'route-upgrade') {
-    log(`Channel advanced while repairing delivery (${installedVersion} → ${repair.manifest.version}); upgrading.`);
-    return repair.manifest;
-  }
-  if (repair.action === 'busy') {
-    error(`Codex delivery repair is busy: ${repair.detail}`);
-    log(CODEX_LIFECYCLE_BUSY_TRAILER);
-    process.exitCode = 2;
-    return null;
-  }
-  if (repair.action === 'failed') {
-    error(`Codex delivery repair failed: ${repair.detail}`);
-    log(CODEX_DELIVERY_INCOMPLETE_TRAILER);
-    process.exitCode = 1;
-    return null;
-  }
-  if (repair.action === 'repaired-current') {
-    (dependencies.retireLegacyMarker ?? retireLegacyInstallMarkerSafe)();
-    log('Repaired the missing Codex delivery record for the installed generation.');
-    return null;
-  }
-  if (repair.action === 'exit-handoff') {
-    // Publication owns only the delivery fact. Activation remains an explicit
-    // setup authority, so this terminal path must not enter convergence.
-    log(
-      'Codex plugin activation is pending: retire Codex tasks, run `genie setup --codex`, review `/hooks`, then start a new Codex task.',
-    );
-    (dependencies.retireLegacyMarker ?? retireLegacyInstallMarkerSafe)();
-    log(CODEX_DELIVERY_RESULT_TRAILER);
-    process.exitCode = 2;
-    return null;
-  }
   success(`Already up to date (v${normalizeVersion(installedVersion)}, channel ${channel})`);
   (dependencies.runConvergence ?? runTrackedManualUpdateConvergence)(
     latestVersion ?? normalizeVersion(installedVersion),
@@ -2421,9 +2090,10 @@ export async function handleAlreadyCurrentUpdate(
 }
 
 /**
- * Normal-delivery terminal boundary. Publication failure happens after verified
- * promotion, so it is handled as an explicit incomplete delivery and no
- * success-only cleanup, convergence, verification, or marker retirement runs.
+ * Normal-delivery terminal boundary. Evidence binding happens after verified
+ * promotion, so a binding failure is handled as an explicit incomplete delivery
+ * and no success-only cleanup, convergence, verification, or marker retirement
+ * runs.
  */
 export async function runNormalUpdatePublicationBoundary(
   deliver: () => Promise<AuxiliaryTreeOutcome[]>,
@@ -2432,9 +2102,9 @@ export async function runNormalUpdatePublicationBoundary(
   try {
     await deliver();
   } catch (cause) {
-    if (!(cause instanceof CodexDeliveryPublicationError)) throw cause;
+    if (!(cause instanceof DeliveryPublicationError)) throw cause;
     error(`Update delivered the verified binary, but ${cause.message}`);
-    log(CODEX_DELIVERY_INCOMPLETE_TRAILER);
+    log(DELIVERY_INCOMPLETE_TRAILER);
     process.exitCode = 1;
     return false;
   }
@@ -2448,7 +2118,7 @@ export interface UpdateCommandDependencies {
   downloadDeliveryAssets?: typeof downloadAndVerifyDeliveryAssets;
   /** Cryptographic verifier seam only; every descriptor/candidate binding remains live. */
   evidenceVerification?: DeliveryEvidenceVerificationDependencies;
-  /** Same-version terminal seam; production keeps repair, convergence, and marker authority unchanged. */
+  /** Same-version terminal seam; production keeps convergence and marker authority unchanged. */
   alreadyCurrent?: AlreadyCurrentUpdateDependencies;
   /** Narrow selected-target delivery seam for command-boundary tests. */
   deliverSelectedManifest?: (manifest: LatestManifest, platform: string) => Promise<AuxiliaryTreeOutcome[]>;
@@ -2464,10 +2134,8 @@ export interface UpdateCommandDependencies {
   persistSelectedChannel?: (channel: ReleaseChannel) => Promise<void>;
   /** Canonical-install guard seam for command-boundary tests. */
   requireCanonicalInstall?: () => void;
-  /** Outer delivery lock seam; production acquires the shared agent-sync lifecycle lease. */
+  /** Delivery lock seam; production acquires the shared lifecycle lease. */
   acquireLease?: () => LifecycleLease | LifecycleLeaseSkip;
-  /** Inner delivery lock seam; production acquires one Codex lease for the whole mutation phase. */
-  acquireCodexLease?: () => LifecycleLeaseResult;
 }
 
 type UpdateTerminalExitCode = 1 | 2;
@@ -2501,32 +2169,11 @@ function acquireUpdateLifecycleLeasesOrProject(
 ): HeldOrderedLifecycleLeases | null {
   // The wait wraps whichever acquirer is in play — the injected seam included —
   // so a test seam and production share one retry policy.
-  const acquireAgentSync = dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME));
-  const acquired = acquireOrderedLifecycleLeases(
-    () => acquireLifecycleLeaseWithWait(acquireAgentSync),
-    dependencies.acquireCodexLease ?? (() => acquireCodexLifecycleLease('update-delivery', { genieHome: GENIE_HOME })),
-  );
+  const acquireLease = dependencies.acquireLease ?? (() => acquireLifecycleLease(GENIE_HOME));
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (acquired.ok) return acquired;
-  if (acquired.busy === 'agent-sync') {
-    projectDeferredUpdateTerminal(new DeferredUpdateTerminal(2, lifecycleBusyMessage(acquired.detail)));
-    return null;
-  }
-  projectDeferredUpdateTerminal(
-    new DeferredUpdateTerminal(
-      2,
-      new CodexLifecycleBusyError(acquired.refusal.holderKind).message,
-      CODEX_LIFECYCLE_BUSY_TRAILER,
-    ),
-  );
+  projectDeferredUpdateTerminal(new DeferredUpdateTerminal(2, lifecycleBusyMessage(acquired.detail)));
   return null;
-}
-
-function assertInitialUpdateLifecycleAuthority(codexLease: HeldLifecycleLease): void {
-  try {
-    codexLease.assertOperation(codexLease.operationId);
-  } catch (err) {
-    throw new DeferredUpdateTerminal(1, `Update failed: ${errMsg(err)}`, CODEX_DELIVERY_INCOMPLETE_TRAILER);
-  }
 }
 
 function captureDeferredUpdateTerminal(error: unknown): DeferredUpdateTerminal {
@@ -2571,27 +2218,22 @@ export async function updateCommand(
   // Planning is read-only and deliberately happens before lifecycle lease
   // acquisition. Interactive users can consider the prompt without blocking
   // install/setup/uninstall in another process.
-  let manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel);
+  const manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel);
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
   const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
-  let latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
+  const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
   console.log();
 
   if (!(await confirmPlannedDelivery(options, plannedInstalledVersion, latestVersion))) return;
 
   const acquired = acquireUpdateLifecycleLeasesOrProject(dependencies);
   if (acquired === null) return;
-  const { agentSyncLease: lifecycleLease, codexLease } = acquired;
+  const { lifecycleLease } = acquired;
   let terminal: DeferredUpdateTerminal | null = null;
   try {
     try {
-      // The first fencing observation belongs inside the reverse-unwind
-      // boundary. A stale acquisition therefore releases both leases before
-      // projecting failure and cannot reach recovery or any later mutation.
-      assertInitialUpdateLifecycleAuthority(codexLease);
-
       // Revalidate durable recovery and the installed binary immediately after
-      // acquiring both locks, before the first mutation owned by this plan.
+      // acquiring the lock, before the first mutation owned by this plan.
       recoverPendingUpdateStateOrThrow(dependencies.recoverPendingState);
       const installedVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
 
@@ -2600,17 +2242,8 @@ export async function updateCommand(
       await (dependencies.persistSelectedChannel ?? persistChannel)(channel);
 
       if (shortCircuitIfCurrent(installedVersion, latestVersion)) {
-        const advancedManifest = await handleAlreadyCurrentUpdate(
-          channel,
-          platform,
-          installedVersion,
-          latestVersion,
-          dependencies.alreadyCurrent,
-          codexLease,
-        );
-        if (advancedManifest === null) return;
-        manifest = advancedManifest;
-        latestVersion = advancedManifest.version;
+        await handleAlreadyCurrentUpdate(channel, installedVersion, latestVersion, dependencies.alreadyCurrent);
+        return;
       }
 
       if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
@@ -2622,7 +2255,7 @@ export async function updateCommand(
       // A concurrent lifecycle operation may have moved or replaced the live
       // binary while this process was prompting. Re-check canonical ownership
       // under the lease immediately before delivery. Refusals are deferred so
-      // both leases unwind before process status is projected.
+      // the lease unwinds before process status is projected.
       try {
         (dependencies.requireCanonicalInstall ?? ensureCanonicalInstall)();
       } catch (err) {
@@ -2642,11 +2275,10 @@ export async function updateCommand(
       const resolvedManifest = manifest as LatestManifest;
 
       try {
-        codexLease.assertOperation(codexLease.operationId);
         const complete = await runNormalUpdatePublicationBoundary(
           () =>
             dependencies.deliverSelectedManifest?.(resolvedManifest, platform) ??
-            runDelivery(resolvedManifest, platform, diagnosticsCtx, codexLease, dependencies),
+            runDelivery(resolvedManifest, platform, diagnosticsCtx, dependencies),
           dependencies.finalizeSelectedDelivery ??
             (async () => {
               runV4CleanupSafe();
@@ -2661,19 +2293,13 @@ export async function updateCommand(
         );
         if (!complete) return;
       } catch (err) {
-        if (err instanceof CodexLifecycleBusyError) {
-          // Loser semantics (deliverable 9): refused before any swap with zero
-          // mutation. Exit 2 codex-lifecycle-busy with the busy trailer, not a
-          // generic failure.
-          throw new DeferredUpdateTerminal(2, err.message, CODEX_LIFECYCLE_BUSY_TRAILER);
-        }
         throw new DeferredUpdateTerminal(1, `Update failed: ${errMsg(err)}`);
       }
     } catch (err) {
       terminal = captureDeferredUpdateTerminal(err);
     }
   } finally {
-    releaseOrderedLifecycleLeases(codexLease, lifecycleLease);
+    releaseOrderedLifecycleLeases(lifecycleLease);
   }
   if (terminal !== null) projectDeferredUpdateTerminal(terminal);
 }
@@ -2694,122 +2320,6 @@ export function runV4CleanupSafe(runner: typeof cleanupV4 = cleanupV4): void {
 }
 
 /**
- * Agent-sync phase — converge the selected Claude/Hermes surfaces from the
- * canonical source root. Codex product skills are plugin-owned, and managed
- * Codex roles run only through an explicit setup-authorized callback.
- *
- * Non-fatal by default — an engine failure becomes a single advisory line.
- * The `~/.genie/.last-agent-sync` throttle marker is refreshed only after all
- * surfaces authorized for this invocation converge without a reported failure;
- * partial work therefore remains immediately retryable.
- *
- * `sync` / `log` / `markerPath` / `now` are injection seams (mirrors
- * runV4CleanupSafe) so the wiring is unit-testable without
- * touching a real home directory.
- */
-export interface RunAgentSyncSafeOptions {
-  /** Test seam: replaces the real agent-sync engine call. */
-  sync?: typeof runAgentSync;
-  /** Test seam: sink for the compact summary; defaults to the module `log`. */
-  log?: (line: string) => void;
-  /** Throttle marker path; defaults to `<GENIE_HOME>/.last-agent-sync`. */
-  markerPath?: string;
-  /** Injectable clock for the marker timestamp. */
-  now?: () => Date;
-  /**
-   * Explicit setup-only seam for managed Codex role convergence. Ordinary
-   * install/update callers omit it, so role mutation is structurally absent.
-   */
-  codexRefresh?: () => CodexAgentInstallResult | null;
-  /** Explicit lifecycle commands fail instead of converting convergence errors to warnings. */
-  strict?: boolean;
-  selection?: AgentSyncSelection;
-}
-
-export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): AgentSyncReport | null {
-  const emit = opts.log ?? log;
-  let successful = false;
-  try {
-    const report = (opts.sync ?? runAgentSync)({ selection: opts.selection });
-    for (const line of formatAgentSyncSummary(report)) emit(line);
-    const roleError = opts.codexRefresh ? refreshCodexIntegrationsSafe(report, emit, opts.codexRefresh) : null;
-    const failures = report.agents.flatMap((agent) => agent.failures ?? []);
-    if (report.source.pluginRoot === null) failures.push('no Genie plugin source was available');
-    if (report.skipped) failures.push(report.skipped);
-    if (roleError) failures.push(roleError);
-    if (opts.strict && failures.length > 0) throw new Error(failures.join('; '));
-    successful = failures.length === 0;
-    if (successful) {
-      touchAgentSyncMarker(opts.markerPath ?? join(GENIE_HOME, '.last-agent-sync'), (opts.now ?? (() => new Date()))());
-    }
-    return report;
-  } catch (err) {
-    emit(`agent sync failed: ${errMsg(err)} — will retry on the next genie update`);
-    if (opts.strict) throw err;
-    return null;
-  }
-}
-
-/**
- * Explicit managed-role convergence seam. Delivery/update callers never
- * provide it; setup may do so only after its matching-record and authorization
- * gates. The sync engine must have observed Codex, and lock-skipped runs never
- * invoke the callback. Failures remain retryable and strict-visible.
- */
-function refreshCodexIntegrationsSafe(
-  report: AgentSyncReport,
-  emit: (line: string) => void,
-  refresh: () => CodexAgentInstallResult | null,
-): string | null {
-  if (report.skipped || !report.agents.some((agent) => agent.agent === 'codex' && agent.detected)) return null;
-  try {
-    const result = refresh();
-    if (result === null) return 'Codex role-agent bundle is unavailable';
-    const parts = [`${result.installed} role-agent TOMLs refreshed`];
-    if (result.backedUp.length > 0) parts.push(`${result.backedUp.length} user-tuned backed up`);
-    if (result.skippedUserOwned.length > 0) parts.push(`${result.skippedUserOwned.length} user-owned kept`);
-    emit(`agent-sync: codex — ${parts.join(', ')}`);
-    return null;
-  } catch (err) {
-    const failure = `agent-sync: codex role-agent refresh failed: ${errMsg(err)} — will retry on the next genie update`;
-    emit(failure);
-    return failure;
-  }
-}
-
-/** Compact per-agent summary: detected + counts by action + advisories. */
-function formatAgentSyncSummary(report: AgentSyncReport): string[] {
-  if (report.source.pluginRoot === null) {
-    return ['agent-sync: no genie plugin source found (plugins/genie); skipped'];
-  }
-  if (report.skipped) return [`agent-sync: ${report.skipped}`];
-  const lines: string[] = [];
-  for (const agent of report.agents) {
-    if (!agent.detected) {
-      lines.push(`agent-sync: ${agent.agent} not detected — skipped`);
-      continue;
-    }
-    const counts = new Map<string, number>();
-    for (const skill of agent.skills) counts.set(skill.action, (counts.get(skill.action) ?? 0) + 1);
-    const parts = [...counts.entries()].map(([action, n]) => `${action} ${n}`);
-    for (const extra of agent.extras) parts.push(`${extra.kind} ${extra.action}`);
-    lines.push(`agent-sync: ${agent.agent} — ${parts.join(', ') || 'no changes'}`);
-    for (const advisory of agent.advisories) lines.push(`  ${agent.agent}: ${advisory}`);
-  }
-  if (report.backupsDir !== null) lines.push(`agent-sync: backups saved to ${report.backupsDir}`);
-  return lines;
-}
-
-/** Best-effort refresh of the SessionStart-hook throttle marker (ISO string). */
-function touchAgentSyncMarker(markerPath: string, now: Date): void {
-  try {
-    writeFileSync(markerPath, `${now.toISOString()}\n`);
-  } catch {
-    // the marker only optimizes the hook throttle; never fail the sync over it.
-  }
-}
-
-/**
  * Canonical operator-driven convergence routine. After delivery it runs only
  * inside the fresh binary's explicit `--post-delivery-converge` mode; already-
  * current and blocked-downgrade paths can call it in-process. Never launch a
@@ -2818,9 +2328,6 @@ function touchAgentSyncMarker(markerPath: string, now: Date): void {
  */
 export interface ManualUpdateConvergenceOptions {
   expectedVersion: string;
-  bundleRoot?: string;
-  runSync?: () => void;
-  refreshPlugins?: (options: RefreshUpdatePluginsOptions) => IntegrationResult[];
   log?: (line: string) => void;
   /** Persisted operator scope; explicit Codex authority is written only by setup. */
   selection?: IntegrationSelection;
@@ -2851,7 +2358,6 @@ export function runUpdateSkillsChannel(
 }
 
 export interface ManualUpdateConvergenceResult {
-  integrations: IntegrationResult[];
   /**
    * The skills.sh channel outcome, or `null` when the channel never ran
    * (consent `none`). Surfaced rather than discarded because a failed skills
@@ -2869,36 +2375,18 @@ export interface ManualUpdateConvergenceResult {
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { integrations: [], skills: null, retirement: null };
-  // Skills FIRST, before agent-sync: a host must never pass through a state
-  // with neither plugin skills nor skills.sh skills (wish `skills-everywhere`
+  if (selection === 'none') return { skills: null, retirement: null };
+  // Skills FIRST: a host must never pass through a state with neither the
+  // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
   // (`--all`) — the accepted consent widening of wish decision 3. A failure
   // here reports the remedy and sets exit 1; it never rolls back the promoted
   // binary and never blocks the remaining convergence.
   const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
-  // `runAgentSync` has no codex arm, so it structurally never writes Codex
-  // product skills or roles. A full update passes the real non-Codex selection
-  // through so auto/all still converge Claude + Hermes.
-  const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
-  if (agentSyncSelection !== null) {
-    (options.runSync ?? (() => runUpdateAgentSync(agentSyncSelection)))();
-  }
-  const pluginSelection = narrowUpdatePluginRefreshSelection(selection);
-  const integrations =
-    pluginSelection === null
-      ? []
-      : (options.refreshPlugins ?? refreshUpdatePlugins)({
-          bundleRoot: options.bundleRoot ?? GENIE_HOME,
-          expectedVersion: options.expectedVersion,
-          selection: pluginSelection,
-        }).filter((result) => result.runtime !== 'codex');
-  for (const result of integrations) {
-    const disabled = result.preservedDisabled ? '; disabled state preserved' : '';
-    emit(
-      `integration refresh: ${result.runtime} — ${result.ok ? result.detail : `FAILED: ${result.detail}`}${disabled}`,
-    );
-  }
+  // The client plugin refresh that used to sit here is gone: no Genie plugin
+  // ships for any client runtime any more, so there is nothing to converge
+  // between the skills channel and retirement.
+  //
   // LAST, and only behind a FRESH skills-channel install: the plugin-era assets
   // are retired exactly once the replacements are proven on disk. A `skipped` or
   // `failed` channel deliberately leaves the legacy assets in place — a host must
@@ -2911,7 +2399,7 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
           log: emit,
         })
       : null;
-  return { integrations, skills, retirement };
+  return { skills, retirement };
 }
 
 /**
@@ -3018,96 +2506,16 @@ export function createPrivateUpdateTempRoot(baseDir = tmpdir()): string {
  * sync aux content → clean staging.
  */
 /**
- * Parent-side attestation (deliverable 4/5): after the binary is delivered and
- * the payload is synced into GENIE_HOME, publish the exact delivery facts through
- * A's `publishDelivery` under the held lease, using OBSERVED reality — the
- * installed generation N from a live `codex plugin list` and the delivered T +
- * digest from a physical scan of the delivered tree (never the raw manifest).
- * When the delivery is pending (N ≠ T) and the prior binary is a protocol-1+
- * backup, also publish its digest-bound rollback capability sidecar. A pre-
- * contract backup gets NO sidecar, which makes the rollback capability floor
- * refuse to restore it. Once Codex is in scope, inability to observe or publish
- * the complete binding is terminal and must surface as delivery-incomplete.
+ * Raised when the promoted binary/payload cannot be bound to the delivery
+ * evidence that authorized it. The publication half of this boundary — the
+ * durable Codex delivery record — left with the activation store; what remains
+ * is the binding assertion that must still hold before an update reports
+ * success.
  */
-type DeliveryPublicationCompletion =
-  | { kind: 'not-in-scope' }
-  | { kind: 'matching' | 'published'; deliveryId: string }
-  | { kind: 'incomplete'; detail: string };
-
-export class CodexDeliveryPublicationError extends Error {
+export class DeliveryPublicationError extends Error {
   constructor(detail: string) {
-    super(`authenticated Codex delivery publication incomplete: ${detail}`);
-    this.name = 'CodexDeliveryPublicationError';
-  }
-}
-
-function publishCodexDeliveryFacts(
-  previousBackup: string | null,
-  lease: HeldLifecycleLease,
-  evidence: VerifiedDeliveryEvidence,
-  deliveryRoot: string,
-): DeliveryPublicationCompletion {
-  const selection = readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none' || selection === 'claude') return { kind: 'not-in-scope' };
-  let command: string | null = null;
-  try {
-    command = resolveRuntimeExecutable('codex', process.cwd());
-  } catch {
-    command = null;
-  }
-  if (command === null) {
-    return selection === 'auto'
-      ? { kind: 'not-in-scope' }
-      : { kind: 'incomplete', detail: 'Codex was explicitly selected but its executable is unavailable' };
-  }
-  const snapshot = observeCodexActivation({ genieHome: GENIE_HOME, command });
-  if (snapshot.canonical.status !== 'ok') {
-    return { kind: 'incomplete', detail: `canonical payload observation failed: ${snapshot.canonical.detail}` };
-  }
-  if (snapshot.query.status !== 'ok') {
-    return { kind: 'incomplete', detail: `Codex registration observation failed: ${snapshot.query.detail}` };
-  }
-  const registration = snapshot.query.registration;
-  const installedVersion = registration.present && registration.version ? registration.version.canonical : null;
-  const store = openCodexActivationStore({ genieHome: GENIE_HOME });
-  const published = publishCodexDelivery({
-    lease,
-    store,
-    installedVersion,
-    evidence,
-    deliveryRoot,
-    // Group E: a current-N delivery with a STALE record republishes (a matching
-    // record never does) — same fresh-host/converged-host truth as install.
-    existingRecord: snapshotDeliveryReadState(snapshot),
-  });
-  if ((published.outcome === 'published' || published.outcome === 'matching') && previousBackup !== null) {
-    publishBackupSidecarIfProtocolCapable(previousBackup, published.record.deliveryId);
-  }
-  if (published.outcome === 'published' || published.outcome === 'matching') {
-    return { kind: published.outcome, deliveryId: published.record.deliveryId };
-  }
-  return { kind: 'incomplete', detail: published.detail };
-}
-
-/**
- * Publish the rollback capability sidecar ONLY when the backup binary itself
- * proves protocol-1+ via its no-shell probe. A pre-contract backup (unknown
- * flag ⇒ nonzero/unparsable probe) or a sub-floor protocol yields NO sidecar, so
- * `enforceRollbackCapabilityFloor` later refuses to restore it — the explicit
- * first-fixed→pre-contract rollback refusal.
- */
-function publishBackupSidecarIfProtocolCapable(backupPath: string, deliveryId: string): void {
-  const probe = runBackupCapabilityProbe(backupPath);
-  if (probe.status !== 'ok' || probe.report === undefined) return;
-  if (probe.report.codexActivationProtocol < CODEX_ACTIVATION_PROTOCOL) return;
-  try {
-    publishBackupCapabilitySidecar({
-      backupBinaryPath: backupPath,
-      expectedPreviousVersion: probe.report.reportedVersion,
-      deliveryId,
-    });
-  } catch {
-    // Best-effort: a missing sidecar only means rollback refuses this backup.
+    super(`authenticated delivery binding incomplete: ${detail}`);
+    this.name = 'DeliveryPublicationError';
   }
 }
 
@@ -3115,7 +2523,6 @@ async function runDelivery(
   manifest: LatestManifest,
   platform: string,
   diagnosticsCtx: UpdateDiagnosticsContext,
-  codexLease: HeldLifecycleLease,
   dependencies: UpdateCommandDependencies = {},
 ): Promise<AuxiliaryTreeOutcome[]> {
   const externalRoot = createPrivateUpdateTempRoot();
@@ -3153,7 +2560,7 @@ async function runDelivery(
       `candidate version ${candidate.version} differs from selected ${normalizeVersion(manifest.version)}`,
     );
   }
-  const evidence = verifyDownloadedDeliveryEvidence(
+  verifyDownloadedDeliveryEvidence(
     {
       descriptorBytes: downloaded.descriptorBytes,
       bundleBytes: downloaded.bundleBytes,
@@ -3172,7 +2579,6 @@ async function runDelivery(
   );
 
   log('Promoting verified release generation...');
-  codexLease.assertOperation(codexLease.operationId);
   recoverPendingInstallPromotions({ genieHome: GENIE_HOME });
   admitted = admitExternalInstallStaging({
     genieHome: GENIE_HOME,
@@ -3181,7 +2587,6 @@ async function runDelivery(
   });
   try {
     verifyAdmittedInstallStagingPayload(admitted);
-    codexLease.assertOperation(codexLease.operationId);
     const promotion = promoteStagedInstall({
       genieHome: GENIE_HOME,
       stagingRoot: admitted.stagingRoot,
@@ -3275,36 +2680,24 @@ async function runDelivery(
         cleanupStagingArtifacts(externalRoot, tarballPath);
       },
     });
-    // The payload is now in GENIE_HOME; publish attested delivery facts (and the
-    // rollback sidecar for a protocol-capable backup) under the held lease.
+    // The payload is now in GENIE_HOME; bind the promoted binary and payload
+    // root back to the evidence that authorized this delivery.
     const deliveryRoot = resolveCanonicalPayloadRoot();
     const installedBinarySha256 = hashFileSha256(join(GENIE_BIN, 'genie'));
     if (deliveryRoot === null || installedBinarySha256 === null) {
-      throw new CodexDeliveryPublicationError('installed delivery root/binary could not be bound');
+      throw new DeliveryPublicationError('installed delivery root/binary could not be bound');
     }
     if (installedBinarySha256 !== candidate.binarySha256) {
-      throw new CodexDeliveryPublicationError('installed binary differs from the verified delivery evidence');
+      throw new DeliveryPublicationError('installed binary differs from the verified delivery evidence');
     }
-    let publication: DeliveryPublicationCompletion;
-    try {
-      publication = publishCodexDeliveryFacts(
-        diagnosticsCtx.previousBackup,
-        codexLease,
-        evidence,
-        realpathSync(deliveryRoot),
-      );
-    } catch (cause) {
-      throw new CodexDeliveryPublicationError(`delivery record publication failed: ${errMsg(cause)}`);
-    }
-    if (publication.kind === 'incomplete') throw new CodexDeliveryPublicationError(publication.detail);
     // A4: refresh only an existing Genie ownership claim. Runs after the
     // delivery record is published and never fails the update — see
     // refreshOrcaOwnershipAfterDelivery.
     await refreshOrcaOwnershipAfterDelivery();
     return auxiliaryOutcomes;
   } finally {
-    // The command boundary owns both lifecycle leases. This scope only closes
-    // admitted staging; the caller releases Codex first, then agent-sync.
+    // The command boundary owns the lifecycle lease. This scope only closes
+    // admitted staging; the caller releases the lease.
     if (admitted !== null) {
       try {
         if (promotionComplete) removeInstallStagingDirectory(admitted);
@@ -3643,10 +3036,8 @@ function cleanupStagingArtifacts(extractDir: string, tarballPath: string): void 
 }
 
 /**
- * Mirror plugins/, skills/, templates/ plus the marketplace-manifest dirs
- * (`.agents/`, `.claude-plugin/` — must sit beside plugins/ so their relative
- * `./plugins/genie` payload references stay truthful; mirrors AUX_LAYOUT_DIRS
- * in install.ts) from the extracted tarball into `~/.genie/`. Stage to a
+ * Mirror plugins/, skills/ and templates/ (mirrors AUX_LAYOUT_DIRS in
+ * install.ts) from the extracted tarball into `~/.genie/`. Stage to a
  * sibling `<dest>.new` directory and promote it with same-filesystem renames.
  * The previous live tree is retained until the fresh tree is verified. Portable
  * Node filesystem APIs do not provide an atomic non-empty directory exchange;
@@ -3667,8 +3058,6 @@ export function syncAuxiliaryContent(
     { src: join(extractDir, 'plugins'), dest: join(genieHome, 'plugins'), label: 'plugins' },
     { src: join(extractDir, 'skills'), dest: join(genieHome, 'skills'), label: 'skills' },
     { src: join(extractDir, 'templates'), dest: join(genieHome, 'templates'), label: 'templates' },
-    { src: join(extractDir, '.agents'), dest: join(genieHome, '.agents'), label: '.agents' },
-    { src: join(extractDir, '.claude-plugin'), dest: join(genieHome, '.claude-plugin'), label: '.claude-plugin' },
   ];
   const outcomes = targets.map((target) =>
     convergeAuxiliaryTree({
@@ -3700,31 +3089,15 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
 }
 
 async function runRollback(): Promise<DeferredUpdateTerminal | null> {
-  log('Checking protocol-safe rollback eligibility...');
-  const result = performProtocolSafeRollback({ genieBin: GENIE_BIN, genieHome: GENIE_HOME });
-  switch (result.status) {
-    case 'rolled-back':
-      success(`Rolled back to v${result.restoredVersion} (digest ${result.binarySha256.slice(0, 12)}…)`);
-      console.log();
-      return null;
-    case 'busy':
-      return new DeferredUpdateTerminal(
-        2,
-        `codex-lifecycle-busy: the ${result.holderKind ?? 'unknown'} lifecycle command holds the Codex lease; rollback refused before any exchange with zero mutation.`,
-        CODEX_LIFECYCLE_BUSY_TRAILER,
-        true,
-      );
-    case 'no-backup':
-    case 'refused':
-      return new DeferredUpdateTerminal(1, `Rollback refused: ${result.detail}`, undefined, true);
-    case 'aborted':
-      return new DeferredUpdateTerminal(
-        1,
-        `Rollback aborted before completion (the live binary is unchanged): ${result.detail}`,
-        undefined,
-        true,
-      );
-  }
+  // The protocol-safe rollback exchange belonged to the Codex activation
+  // lifecycle and left with it. `--rollback` stays a read-only refusal that
+  // names the supported recovery instead of silently doing nothing.
+  return new DeferredUpdateTerminal(
+    1,
+    'Rollback refused: automatic rollback was retired with the Codex plugin lifecycle. Reinstall an explicit signed version instead (see the release notes for the install.sh --version flow).',
+    undefined,
+    true,
+  );
 }
 
 /**

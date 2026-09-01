@@ -31,32 +31,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  type AgentSyncReport,
-  acquireLifecycleLease,
-  computeDirDigest,
-  computeFileDigest,
-  currentSyncLockHostId,
-  lifecycleLockPath,
-  runAgentSync,
-  stampWorkflow,
-} from '../../lib/agent-sync';
-import { observeCodexActivation, openCodexActivationStore } from '../../lib/codex-activation';
-import type { DeliveryEvidencePlatformId } from '../../lib/codex-delivery-evidence';
-import { mintTestDeliveryEvidence } from '../../lib/codex-delivery-evidence.test-support';
-import {
-  type HeldLifecycleLease,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../../lib/codex-lifecycle-lease';
-import type { CodexPluginProbe } from '../../lib/codex-project-mcp';
-import {
-  CANONICAL_GENIE_SKILL_NAMES,
-  type CodexHealthProof,
-  type CodexPluginOnlyDeps,
-  type CommandRunner,
-  type IntegrationSelection,
-  installCodexAgents,
-} from '../../lib/runtime-integrations';
+import { computeDirDigest, computeFileDigest } from '../../lib/atomic-fs';
+import { acquireLifecycleLease, currentSyncLockHostId, lifecycleLockPath } from '../../lib/lifecycle-lease';
 import {
   SKILLS_CLI_VERSION,
   type SkillsChannelConvergenceResult,
@@ -65,19 +41,12 @@ import {
 } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
-import type { PinnedManifest } from '../codex-delivery-repair.js';
 import {
-  type RefreshUpdatePluginsOptions,
-  refreshUpdatePlugins as refreshUpdatePluginsWithPhysicalVerification,
-} from '../update-integrations.js';
-import {
-  CodexDeliveryPublicationError,
+  DeliveryPublicationError,
   type LatestManifest,
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
   applyConvergenceExitSignal,
-  attemptAlreadyCurrentDeliveryRepair,
-  buildAlreadyCurrentRepairSeams,
   compareVersions,
   createPrivateUpdateTempRoot,
   decideDowngrade,
@@ -88,13 +57,9 @@ import {
   fetchLatestManifest,
   finalizeAuxiliaryDelivery,
   formatVerifyBanner,
-  handleAlreadyCurrentUpdate,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   manifestUrlForChannel,
-  mapAlreadyCurrentRepairOutcome,
-  narrowUpdateAgentSyncSelection,
-  narrowUpdatePluginRefreshSelection,
   normalizeVersion,
   persistChannel,
   refreshOrcaOwnershipAfterDelivery,
@@ -104,12 +69,9 @@ import {
   resolveUpdateExecutionMode,
   resumePendingDelivery,
   rollbackBinaryAt,
-  runAgentSyncSafe,
   runFreshBinaryPostDeliveryConvergence,
-  runLegacySyncOnlyConvergence,
   runManualUpdateConvergence,
   runNormalUpdatePublicationBoundary,
-  runUpdateAgentSync,
   runV4CleanupSafe,
   runVerifyProbe,
   shortCircuitIfCurrent,
@@ -126,54 +88,6 @@ import {
  * `src/lib/skills-installer.test.ts`.
  */
 const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
-
-function healthyUpdateCodexProbe(): CodexPluginProbe {
-  return {
-    cliAvailable: true,
-    status: 'ok',
-    installed: true,
-    enabled: true,
-    version: '5.260711.3',
-    activePluginRoot: '/fixture/plugin/root',
-    usable: true,
-    usabilityDetail: 'fixture usable',
-    detail: 'fixture healthy codex plugin',
-  };
-}
-
-/**
- * Full-update codex now converges through convergeCodexPluginOnly. These refresh
- * suites drive fake bundles, so stub the health/probe/retire/role-agent seams and
- * point retirement at an isolated empty fallback tier — convergeCodexPlugin itself
- * still runs for real against the injected runner.
- */
-function healthyUpdateCodexPluginOnly(overrides: CodexPluginOnlyDeps = {}): CodexPluginOnlyDeps {
-  return {
-    probe: () => healthyUpdateCodexProbe(),
-    prove: () =>
-      Object.freeze({
-        version: 1,
-        snapshot: healthyUpdateCodexProbe(),
-        activePluginRoot: '/fixture/plugin/root',
-        expectedVersion: '5.260711.3',
-        skillInventory: CANONICAL_GENIE_SKILL_NAMES,
-        payload: [],
-      }) as CodexHealthProof,
-    installAgents: () => ({ installed: 0, skippedUserOwned: [], keptModified: [], removed: [], backedUp: [] }),
-    fallbackSkillsDir: mkdtempSync(join(tmpdir(), 'genie-update-fallback-')),
-    ...overrides,
-  };
-}
-
-function refreshUpdatePlugins(options: RefreshUpdatePluginsOptions) {
-  return refreshUpdatePluginsWithPhysicalVerification({
-    ...options,
-    resolveExecutable: options.resolveExecutable ?? ((name) => name),
-    verifyCodexPayload: options.verifyCodexPayload ?? (() => undefined),
-    verifyClaudePayload: options.verifyClaudePayload ?? (() => undefined),
-    codexPluginOnly: healthyUpdateCodexPluginOnly(options.codexPluginOnly),
-  });
-}
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -513,14 +427,15 @@ describe('updateCommand wiring', () => {
     expect(source).toContain('--rollback');
   });
 
-  test('the already-current handoff prints plain language and returns before convergence', () => {
+  test('the already-current terminal reports, converges once, and returns', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    // A bare machine trailer must never be the whole human output. Publication
-    // returns its activation handoff without entering another authority.
-    expect(source).toContain('Codex plugin activation is pending: retire Codex tasks');
-    const handoffBranch = source.slice(source.indexOf('handleAlreadyCurrentUpdate'));
-    expect(handoffBranch).toContain('log(CODEX_DELIVERY_RESULT_TRAILER)');
-    expect(handoffBranch).toContain('process.exitCode = 2');
+    const branch = source.slice(source.indexOf('export async function handleAlreadyCurrentUpdate'));
+    // The activation handoff left with the Codex plugin lifecycle: the
+    // already-current path is now report + one convergence + marker retirement.
+    expect(branch).not.toContain('activation is pending');
+    expect(branch).toContain('Already up to date');
+    expect(branch).toContain('runConvergence');
+    expect(branch).toContain('retireLegacyMarker');
   });
 
   test('"Already up to date" exit logs version and channel', () => {
@@ -574,83 +489,13 @@ describe('updateCommand wiring', () => {
     expect(source.slice(explicitStart, explicitEnd)).toContain('projectDeferredUpdateTerminal(terminal)');
   });
 
-  test('a setup-held Codex lease refuses update before recovery or any delivery-owned mutation', async () => {
-    const priorExitCode = process.exitCode;
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
-    process.exitCode = undefined;
-    try {
-      await updateCommand(
-        { yes: true, stable: true },
-        {
-          fetchManifest: async () => commandManifest,
-          readInstalledVersion: () => '5.260700.1',
-          resolvePlatform: () => 'darwin-arm64',
-          acquireLease: () => {
-            events.push('agent-acquire');
-            return {
-              path: '/fixture/.agent-sync.lock',
-              release: () => events.push('agent-release'),
-            };
-          },
-          acquireCodexLease: () => {
-            events.push('codex-busy');
-            return {
-              ok: false,
-              reason: 'codex-lifecycle-busy',
-              holderKind: 'setup-activation',
-              detail: 'held by setup-activation',
-            };
-          },
-          recoverPendingState: () => events.push('MUTATION:recovery'),
-          persistSelectedChannel: async () => {
-            events.push('MUTATION:channel');
-          },
-          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
-          deliverSelectedManifest: async () => {
-            events.push('MUTATION:delivery');
-            return [];
-          },
-          finalizeSelectedDelivery: async () => {
-            events.push('MUTATION:finalize');
-            return true;
-          },
-        },
-      );
-
-      expect(events).toEqual(['agent-acquire', 'codex-busy', 'agent-release']);
-      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
-      expect(Number(process.exitCode)).toBe(2);
-      const output = [...stdout, ...stderr].join('\n');
-      expect(output).toContain('codex-lifecycle-busy');
-      expect(output).toContain('setup-activation');
-      expect(output).toContain('"deliveryComplete":false');
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
-    }
-  });
-
-  // -------------------------------------------------------------------------
-  // Lifecycle-lease busy grace (2026-08-02 incident): a live agent-sync holder
-  // used to surface as a raw `throw new Error(...)` — an unhandled stack trace
-  // in the operator's terminal — and the message reassured them that "the
-  // holder converges the same targets", which is false for an unrelated
-  // update/install/setup/uninstall.
-  // -------------------------------------------------------------------------
-
-  /** The exact refusal the production acquirer now produces for a live holder. */
   const BUSY_LOCK_PATH = '/fixture/home/.genie-lifecycle-0123456789abcdef.lock';
   const busyLeaseSkip = {
     skipped: `another Genie process holds the lock at ${BUSY_LOCK_PATH}; retry shortly, or remove the file if its owner has crashed`,
     cause: 'held' as const,
   };
 
-  test('a live agent-sync holder past the wait deadline exits 2 with an actionable line and no thrown error', async () => {
+  test('a live lease holder past the wait deadline exits 2 with an actionable line and no thrown error', async () => {
     const priorExitCode = process.exitCode;
     const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
     const stdout: string[] = [];
@@ -675,10 +520,6 @@ describe('updateCommand wiring', () => {
           acquireLease: () => {
             attempts += 1;
             return busyLeaseSkip;
-          },
-          acquireCodexLease: () => {
-            events.push('MUTATION:codex-lease');
-            throw new Error('the Codex lease must never be reached behind a busy agent-sync lease');
           },
           recoverPendingState: () => events.push('MUTATION:recovery'),
           persistSelectedChannel: async () => {
@@ -709,7 +550,7 @@ describe('updateCommand wiring', () => {
       expect(output).toContain('Another Genie lifecycle command is active');
       expect(output).toContain('holds the lock');
       expect(output).toContain(BUSY_LOCK_PATH);
-      // The misleading reassurance is gone, and an agent-sync holder is never
+      // The misleading reassurance is gone, and a lease holder is never
       // relabelled as a Codex refusal (install.sh parses that machine code).
       expect(output).not.toContain('the holder converges the same targets');
       expect(output).not.toContain('codex-lifecycle-busy');
@@ -726,294 +567,6 @@ describe('updateCommand wiring', () => {
     }
   });
 
-  test('an agent-sync holder that releases mid-wait lets update proceed past acquisition', async () => {
-    const priorExitCode = process.exitCode;
-    const priorWait = process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS;
-    const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
-    process.exitCode = undefined;
-    process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '5000';
-    let attempts = 0;
-    try {
-      await updateCommand(
-        { yes: true, stable: true },
-        {
-          fetchManifest: async () => commandManifest,
-          readInstalledVersion: () => '5.260700.1',
-          resolvePlatform: () => 'darwin-arm64',
-          acquireLease: () => {
-            attempts += 1;
-            events.push(`agent-attempt-${attempts}`);
-            if (attempts < 3) return busyLeaseSkip;
-            return { path: BUSY_LOCK_PATH, release: () => events.push('agent-release') };
-          },
-          // Acquisition succeeded, so the run reaches the first fencing
-          // observation — which is the proof it got past the busy branch.
-          acquireCodexLease: () => ({
-            ok: true,
-            operationId: 'f'.repeat(32),
-            kind: 'update-delivery',
-            assertOperation: () => {
-              events.push('codex-assert');
-              throw new Error('stale lifecycle authority');
-            },
-            release: () => events.push('codex-release'),
-          }),
-          recoverPendingState: () => events.push('MUTATION:recovery'),
-        },
-      );
-
-      expect(attempts).toBe(3);
-      expect(events).toEqual([
-        'agent-attempt-1',
-        'agent-attempt-2',
-        'agent-attempt-3',
-        'codex-assert',
-        'codex-release',
-        'agent-release',
-      ]);
-      // Exit 1 is the fencing terminal, NOT the exit-2 busy projection: the
-      // command never treated the transient holder as a refusal.
-      expect(Number(process.exitCode)).toBe(1);
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
-      if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
-      else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
-    }
-  });
-
-  test('an initial Codex fencing failure releases in reverse order before projecting and runs no mutation', async () => {
-    const priorExitCode = process.exitCode;
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      const line = args.join(' ');
-      stdout.push(line);
-      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
-      if (line.includes('"deliveryComplete":false')) events.push('terminal-trailer');
-    });
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      const line = args.join(' ');
-      stderr.push(line);
-      if (line.includes('Update failed: stale lifecycle authority')) events.push('terminal-error');
-    });
-    process.exitCode = undefined;
-    try {
-      await updateCommand(
-        { yes: true, stable: true },
-        {
-          fetchManifest: async () => commandManifest,
-          readInstalledVersion: () => '5.260700.1',
-          resolvePlatform: () => 'darwin-arm64',
-          acquireLease: () => {
-            events.push('agent-acquire');
-            return {
-              path: '/fixture/.agent-sync.lock',
-              release: () => events.push('agent-release'),
-            };
-          },
-          acquireCodexLease: () => {
-            events.push('codex-acquire');
-            return {
-              ok: true,
-              operationId: 'e'.repeat(32),
-              kind: 'update-delivery',
-              assertOperation: () => {
-                events.push('codex-assert');
-                throw new Error('stale lifecycle authority');
-              },
-              release: () => events.push('codex-release'),
-            };
-          },
-          recoverPendingState: () => events.push('MUTATION:recovery'),
-          persistSelectedChannel: async () => {
-            events.push('MUTATION:channel');
-          },
-          requireCanonicalInstall: () => events.push('MUTATION:canonical'),
-          deliverSelectedManifest: async () => {
-            events.push('MUTATION:delivery');
-            return [];
-          },
-          finalizeSelectedDelivery: async () => {
-            events.push('MUTATION:finalize');
-            return true;
-          },
-        },
-      );
-
-      expect(events).toEqual([
-        'agent-acquire',
-        'codex-acquire',
-        'codex-assert',
-        'codex-release',
-        'agent-release',
-        'terminal-error',
-        'terminal-trailer',
-      ]);
-      expect(events.some((event) => event.startsWith('MUTATION:'))).toBe(false);
-      expect(Number(process.exitCode)).toBe(1);
-      const output = [...stdout, ...stderr].join('\n');
-      expect(output).toContain('Update failed: stale lifecycle authority');
-      expect(output.match(/"deliveryComplete":false/g)).toHaveLength(1);
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode ?? 0;
-    }
-  });
-
-  test('normal update holds agent-sync then Codex through delivery and releases in reverse order', async () => {
-    const priorExitCode = process.exitCode;
-    const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
-    process.exitCode = undefined;
-    try {
-      await updateCommand(
-        { yes: true, stable: true },
-        {
-          fetchManifest: async () => {
-            events.push('fetch');
-            return commandManifest;
-          },
-          readInstalledVersion: () => {
-            events.push('read');
-            return '5.260700.1';
-          },
-          resolvePlatform: () => {
-            events.push('platform');
-            return 'darwin-arm64';
-          },
-          acquireLease: () => {
-            events.push('agent-acquire');
-            return {
-              path: '/fixture/.agent-sync.lock',
-              release: () => events.push('agent-release'),
-            };
-          },
-          acquireCodexLease: () => {
-            events.push('codex-acquire');
-            return {
-              ok: true,
-              operationId: 'c'.repeat(32),
-              kind: 'update-delivery',
-              assertOperation: () => events.push('codex-assert'),
-              release: () => events.push('codex-release'),
-            };
-          },
-          recoverPendingState: () => events.push('recover'),
-          persistSelectedChannel: async () => {
-            events.push('persist');
-          },
-          requireCanonicalInstall: () => events.push('canonical'),
-          deliverSelectedManifest: async () => {
-            events.push('deliver');
-            return [];
-          },
-          finalizeSelectedDelivery: async () => {
-            events.push('finalize');
-            return true;
-          },
-        },
-      );
-
-      expect(events).toEqual([
-        'fetch',
-        'read',
-        'platform',
-        'agent-acquire',
-        'codex-acquire',
-        'codex-assert',
-        'recover',
-        'read',
-        'persist',
-        'canonical',
-        'codex-assert',
-        'deliver',
-        'finalize',
-        'codex-release',
-        'agent-release',
-      ]);
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
-    }
-  });
-
-  test('same-version repair borrows the one command-held Codex lease without nested acquisition', async () => {
-    const priorExitCode = process.exitCode;
-    const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation(() => undefined);
-    const errorSpy = spyOn(console, 'error').mockImplementation(() => undefined);
-    process.exitCode = undefined;
-    const held: HeldLifecycleLease = {
-      ok: true,
-      operationId: 'd'.repeat(32),
-      kind: 'update-delivery',
-      assertOperation: () => events.push('codex-assert'),
-      release: () => events.push('codex-release'),
-    };
-    try {
-      await updateCommand(
-        { yes: true, stable: true },
-        {
-          fetchManifest: async () => commandManifest,
-          readInstalledVersion: () => commandManifest.version,
-          resolvePlatform: () => 'darwin-arm64',
-          acquireLease: () => {
-            events.push('agent-acquire');
-            return {
-              path: '/fixture/.agent-sync.lock',
-              release: () => events.push('agent-release'),
-            };
-          },
-          acquireCodexLease: () => {
-            events.push('codex-acquire');
-            return held;
-          },
-          recoverPendingState: () => events.push('recover'),
-          persistSelectedChannel: async () => {
-            events.push('persist');
-          },
-          alreadyCurrent: {
-            attemptRepair: async (_channel, _platform, lease) => {
-              events.push('repair');
-              expect(lease).toBe(held);
-              return { action: 'repaired-current' };
-            },
-            retireLegacyMarker: () => events.push('retire'),
-          },
-          requireCanonicalInstall: () => {
-            throw new Error('same-version path reached normal delivery');
-          },
-        },
-      );
-
-      expect(events).toEqual([
-        'agent-acquire',
-        'codex-acquire',
-        'codex-assert',
-        'recover',
-        'persist',
-        'repair',
-        'retire',
-        'codex-release',
-        'agent-release',
-      ]);
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
-    }
-  });
-});
-
-describe('normal update publication terminal boundary', () => {
   test('post-promotion publication failure is nonzero, emits one false trailer, and runs no success finalizer', async () => {
     const priorExitCode = process.exitCode;
     const stdout: string[] = [];
@@ -1025,7 +578,7 @@ describe('normal update publication terminal boundary', () => {
     try {
       const complete = await runNormalUpdatePublicationBoundary(
         async () => {
-          throw new CodexDeliveryPublicationError('delivery store is unwritable');
+          throw new DeliveryPublicationError('delivery store is unwritable');
         },
         async () => {
           successFinalizers += 1; // includes marker retirement in the real command boundary
@@ -1534,91 +1087,6 @@ describe('fetchLatestManifest (G5)', () => {
   });
 });
 
-describe('buildAlreadyCurrentRepairSeams — immutable manifest/asset adapter', () => {
-  test('the first raw-byte manifest object drives the exact tag/name/platform download; the second fetch only rechecks', async () => {
-    const platformId = resolvePlatformId();
-    const raw = `{
-  "schema_version": 1,
-  "channel": "dev",
-  "version": "${VERSION}",
-  "released_at": "2026-07-23T00:00:00.000Z",
-  "tarball_base": "https://example.invalid/releases/v${VERSION}",
-  "platforms": ["${platformId}"],
-  "ignored_future_field": "raw-byte-binding"
-}\n`;
-    const expectedDigest = createHash('sha256').update(raw).digest('hex');
-    const fetched = { object: null as LatestManifest | null };
-    let fetches = 0;
-    let downloads = 0;
-    const tempRoot = mkdtempSync(join(tmpdir(), 'update-repair-adapter-'));
-    const tempRoots: string[] = [];
-    const lease: HeldLifecycleLease = {
-      ok: true,
-      operationId: 'f'.repeat(32),
-      kind: 'update-delivery',
-      assertOperation() {},
-      release() {},
-    };
-    try {
-      const seams = buildAlreadyCurrentRepairSeams(
-        platformId,
-        {
-          version: VERSION,
-          pluginTreeSha256: 'a'.repeat(64),
-          binarySha256: 'b'.repeat(64),
-          deliveryRoot: '/physical/genie-home',
-        },
-        lease,
-        tempRoots,
-        '/logical/genie-home',
-        {
-          fetchManifest: async (channel) => {
-            fetches += 1;
-            const manifest = await fetchLatestManifest(channel, { fetcher: async () => raw });
-            if (fetched.object === null) fetched.object = manifest;
-            return manifest;
-          },
-          createTempRoot: () => tempRoot,
-          downloadAndVerifyDeliveryAssets: async (manifest, platform, destination) => {
-            downloads += 1;
-            expect(manifest).toBe(fetched.object as LatestManifest);
-            expect(manifest.manifestSha256).toBe(expectedDigest);
-            expect(manifest.released_at).toBe('2026-07-23T00:00:00.000Z');
-            expect(manifest.tarball_base).toBe(`https://example.invalid/releases/v${VERSION}`);
-            expect(platform).toBe(platformId);
-            return {
-              tarballPath: join(destination, `genie-${VERSION}-${platformId}.tar.gz`),
-              descriptorBytes: Buffer.from('{}'),
-              bundleBytes: Buffer.from('{}'),
-            };
-          },
-        },
-      );
-      const first = await seams.fetchManifest('dev');
-      if (first === null) throw new Error('expected first pinned manifest');
-      expect(first).toBe(fetched.object as LatestManifest);
-      await seams.downloadAndVerify(
-        {
-          channel: 'dev',
-          targetVersion: VERSION,
-          platformTriple: `${process.platform}-${process.arch}`,
-          platformId,
-          releaseTag: `v${VERSION}`,
-          releaseName: `genie-${VERSION}-${platformId}.tar.gz`,
-        },
-        first,
-      );
-      const second = await seams.fetchManifest('dev');
-      expect(second?.manifestSha256).toBe(expectedDigest);
-      expect(fetches).toBe(2);
-      expect(downloads).toBe(1);
-      expect(tempRoots).toEqual([tempRoot]);
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-  });
-});
-
 describe('resolvePlatformId (G5)', () => {
   test('returns one of the four supported platform identifiers', () => {
     // Don't pin a specific value — runs in CI on linux-x64; locally on
@@ -2082,7 +1550,8 @@ describe('syncAuxiliaryContent transactional outcomes', () => {
 
       const outcomes = syncAuxiliaryContent(extract, home);
 
-      expect(outcomes).toHaveLength(5);
+      expect(outcomes).toHaveLength(3);
+      expect(outcomes.map((outcome) => outcome.label)).toEqual(['plugins', 'skills', 'templates']);
       expect(outcomes.find((outcome) => outcome.label === 'plugins')?.status).toBe('refreshed');
       expect(readFileSync(join(home, 'plugins', 'payload.txt'), 'utf8')).toBe('fresh');
       expect(existsSync(join(home, 'plugins', '.orphaned_at'))).toBe(false);
@@ -2274,7 +1743,7 @@ describe('legacy pending delivery compatibility', () => {
       previousBinary: { present: true, fingerprint: fingerprint(join(bin, 'genie')) },
       versionStamp: { present: true, fingerprint: fingerprint(join(extract, 'VERSION')) },
       tarball: fingerprint(tarball),
-      auxiliary: ['plugins', 'skills', 'templates', '.agents', '.claude-plugin'].map((name) => ({
+      auxiliary: ['plugins', 'skills', 'templates'].map((name) => ({
         name,
         present: false,
         digest: null,
@@ -2521,190 +1990,29 @@ describe('runV4CleanupSafe', () => {
 });
 
 // ============================================================================
-// Agent-sync wiring (agent-sync wish G2). `genie update` is the ONE canonical
-// updater: the bounded sync phase runs on --sync-only, while a manual full
-// update converges integrations in the reviewed parent process. A newly
-// installed binary is never re-entered as `genie update`.
+// Convergence wiring. `genie update` is the ONE canonical updater: the bounded
+// convergence phase runs on --sync-only, while a manual full update converges
+// integrations in the reviewed parent process. A newly installed binary is
+// never re-entered as `genie update`.
 // ============================================================================
 
-describe('runAgentSyncSafe (agent-sync phase)', () => {
-  function makeReport(): AgentSyncReport {
-    return {
-      source: { pluginRoot: '/home/.genie/plugins/genie', hermesRoot: null, piRoot: null, version: '5.0.0' },
-      agents: [
-        {
-          agent: 'claude',
-          detected: true,
-          skills: [
-            { name: 'wish', action: 'created' },
-            { name: 'work', action: 'updated' },
-            { name: 'review', action: 'created' },
-          ],
-          extras: [{ kind: 'stamp', action: 'written', detail: '/x/council.js' }],
-          advisories: [],
-        },
-        { agent: 'codex', detected: false, skills: [], extras: [], advisories: [] },
-        {
-          agent: 'hermes',
-          detected: true,
-          skills: [],
-          extras: [{ kind: 'symlink', action: 'created' }],
-          advisories: ['hermes plugins enable genie failed: boom'],
-        },
-      ],
-      backupsDir: null,
-    };
-  }
-
-  test('runs the injected engine and prints a compact per-agent summary', () => {
-    const lines: string[] = [];
-    const marker = join(mkdtempSync(join(tmpdir(), 'genie-asm-')), '.last-agent-sync');
-    runAgentSyncSafe({ sync: makeReport, log: (l) => lines.push(l), markerPath: marker });
-    const joined = lines.join('\n');
-    expect(joined).toContain('claude');
-    expect(joined).toContain('created 2');
-    expect(joined).toContain('updated 1');
-    expect(joined).toContain('codex not detected');
-    expect(joined).toContain('hermes plugins enable genie failed'); // advisory surfaced
-  });
-
-  test('an engine throw is non-fatal and reported as an advisory', () => {
-    const lines: string[] = [];
-    const marker = join(mkdtempSync(join(tmpdir(), 'genie-asm-')), '.last-agent-sync');
-    expect(() =>
-      runAgentSyncSafe({
-        sync: () => {
-          throw new Error('boom');
-        },
-        log: (l) => lines.push(l),
-        markerPath: marker,
-      }),
-    ).not.toThrow();
-    expect(lines.join('\n')).toContain('agent sync failed: boom');
-  });
-
-  test('refreshes the ~/.genie/.last-agent-sync marker with an ISO timestamp', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
-    const marker = join(dir, '.last-agent-sync');
-    try {
-      runAgentSyncSafe({
-        sync: makeReport,
-        log: () => {},
-        markerPath: marker,
-        now: () => new Date('2026-07-10T00:00:00.000Z'),
-      });
-      expect(readFileSync(marker, 'utf-8').trim()).toBe('2026-07-10T00:00:00.000Z');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('marker is not refreshed when convergence fails so the retry remains immediate', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
-    const marker = join(dir, '.last-agent-sync');
-    try {
-      runAgentSyncSafe({
-        sync: () => {
-          throw new Error('x');
-        },
-        log: () => {},
-        markerPath: marker,
-      });
-      expect(existsSync(marker)).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('a delivery-owned sync has no managed Codex role callback and remains strict-successful when Codex is detected', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'genie-asm-'));
-    const marker = join(dir, '.last-agent-sync');
-    try {
-      const report = makeReport();
-      const codex = report.agents.find((agent) => agent.agent === 'codex');
-      if (codex) codex.detected = true;
-      expect(() =>
-        runAgentSyncSafe({
-          sync: () => report,
-          strict: true,
-          log: () => {},
-          markerPath: marker,
-        }),
-      ).not.toThrow();
-      expect(existsSync(marker)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test('updateCommand runs the sync-only fast path before any network/delivery', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    const cmdStart = source.indexOf('export async function updateCommand');
-    const cmdBody = source.slice(cmdStart);
-    const fastPathIdx = cmdBody.indexOf('await dispatchNonNormalUpdateMode(options)');
-    const fetchIdx = cmdBody.indexOf('dependencies.fetchManifest ?? fetchLatestManifest');
-    const deliveryIdx = cmdBody.indexOf('runDelivery(resolvedManifest');
-    expect(fastPathIdx).toBeGreaterThan(-1);
-    expect(fastPathIdx).toBeLessThan(fetchIdx);
-    expect(fastPathIdx).toBeLessThan(deliveryIdx);
-    // The compatibility mode routes before fetch and remains skills/role-only.
-    const dispatcher = source.slice(
-      source.indexOf('async function dispatchNonNormalUpdateMode'),
-      source.indexOf('async function confirmPlannedDelivery'),
-    );
-    expect(dispatcher).toContain("mode !== 'normal'");
-    expect(dispatcher).toContain('await runExplicitUpdateMode(mode)');
-    expect(dispatcher).not.toContain('runTrackedManualUpdateConvergence(');
-    expect(dispatcher).not.toContain('refreshUpdatePlugins(');
-    const legacyModeStart = source.indexOf('function runLegacySyncOnlyMode()');
-    const postDeliveryModeStart = source.indexOf('function runPostDeliveryConvergenceMode()', legacyModeStart);
-    const legacyMode = source.slice(legacyModeStart, postDeliveryModeStart);
-    expect(legacyMode).toContain('runLegacySyncOnlyConvergence({ selection, expectedVersion: VERSION })');
-    expect(legacyMode).not.toContain('runManualUpdateConvergence(');
-    expect(legacyMode).not.toContain('refreshUpdatePlugins(');
-    const convergenceStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
-    const convergenceEnd = source.indexOf('function announceUpdatePlanOrExit(', convergenceStart);
-    const convergence = source.slice(convergenceStart, convergenceEnd);
-    // D2: sync-only is agent-sync ONLY — no Codex plugin query/inspection/advisory
-    // and no plugin convergence at all. A genuine agent-sync failure is the only
-    // nonzero result.
-    expect(convergence).toContain('runUpdateAgentSync(agentSyncSelection)');
-    expect(convergence).not.toContain('legacySyncOnlyPluginAdvisory');
-    expect(convergence).not.toContain('inspectSyncOnlyCodexHealth');
-    expect(convergence).not.toContain('plugin');
-    expect(convergence).not.toContain('runManualUpdateConvergence(');
-    expect(convergence).not.toContain('refreshUpdatePlugins(');
-  });
-
-  test('short-circuit (already-current) path calls the sync phase before returning', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    const scIdx = source.indexOf('shortCircuitIfCurrent(installedVersion, latestVersion)');
-    expect(scIdx).toBeGreaterThan(-1);
-    expect(source.slice(scIdx, scIdx + 700)).toContain('runTrackedManualUpdateConvergence(');
-  });
-});
-
 describe('manual post-update convergence (2026-07-11 cascade regression)', () => {
-  test('runs the canonical convergence APIs and returns structured integration outcomes', () => {
+  test('runs the canonical convergence APIs and returns the structured channel outcome', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       expectedVersion: '5.260711.3',
-      bundleRoot: '/tmp/verified-bundle',
-      runSkills: noSkillsChannel,
+      runSkills: (selection) => {
+        calls.push(`parent-skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
       // Explicit selection: the default reads the host's persisted integration
       // consent, so omitting it makes the test depend on machine state (#2732).
       selection: 'all',
-      runSync: () => calls.push('parent-safe-sync'),
-      refreshPlugins: (options) => {
-        calls.push(`parent-plugin-refresh:${options.expectedVersion}:${options.selection}`);
-        return [{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }];
-      },
       log: (line) => calls.push(`log:${line}`),
     });
-    expect(calls[0]).toBe('parent-safe-sync');
-    expect(calls[1]).toBe('parent-plugin-refresh:5.260711.3:claude');
-    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'plugin refreshed' }]);
+    expect(calls[0]).toBe('parent-skills:all');
     expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+    expect(result.retirement).toBeNull();
   });
 
   test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
@@ -2714,80 +2022,41 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
-        runSync: () => {},
-        refreshPlugins: () => [
-          { runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true },
-          { runtime: 'claude', ok: true, detail: 'plugin refreshed' },
-        ],
         log: () => {},
       });
       expect(result.skills).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
-      applyConvergenceExitSignal(result, false);
+      applyConvergenceExitSignal(result);
       expect(process.exitCode).toBe(1);
     } finally {
       process.exitCode = savedExitCode ?? 0;
     }
   });
 
-  test('structurally excludes Codex queries and writes while retaining Claude/Hermes convergence', () => {
-    expect(narrowUpdatePluginRefreshSelection('auto')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('all')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('claude')).toBe('claude');
-    expect(narrowUpdatePluginRefreshSelection('codex')).toBeNull();
-    expect(narrowUpdatePluginRefreshSelection('none')).toBeNull();
-
-    let codexOnlySyncs = 0;
-    let codexOnlyRefreshes = 0;
-    const codexOnly = runManualUpdateConvergence({
-      expectedVersion: VERSION,
-      selection: 'codex',
-      runSkills: noSkillsChannel,
-      runSync: () => {
-        codexOnlySyncs += 1;
-      },
-      refreshPlugins: () => {
-        codexOnlyRefreshes += 1;
-        return [{ runtime: 'codex', ok: true, detail: 'must not run' }];
-      },
-    });
-    // `codex` is not `none`: the skills channel still runs (fixture-skipped here),
-    // only agent-sync and the plugin refresh are narrowed away.
-    expect(codexOnly).toEqual({
-      integrations: [],
-      skills: { status: 'skipped', reason: 'test fixture' },
+  test('no client plugin refresh survives: every non-none selection is skills then retirement only', () => {
+    // The Claude plugin refresh that once sat between the two left with the
+    // client plugin integrations, so a `codex` selection is no longer special:
+    // it is not `none`, so the skills channel runs (fixture-skipped here), and
+    // no runtime is queried at all.
+    for (const selection of ['codex', 'auto', 'all', 'claude'] as const) {
+      expect(
+        runManualUpdateConvergence({
+          expectedVersion: VERSION,
+          selection,
+          runSkills: noSkillsChannel,
+          log: () => {},
+        }),
+      ).toEqual({ skills: { status: 'skipped', reason: 'test fixture' }, retirement: null });
+    }
+    expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
+      skills: null,
       retirement: null,
     });
-    expect(codexOnlySyncs).toBe(0);
-    expect(codexOnlyRefreshes).toBe(0);
 
-    let selectedRefresh: IntegrationSelection | undefined;
-    const auto = runManualUpdateConvergence({
-      expectedVersion: VERSION,
-      selection: 'auto',
-      runSkills: noSkillsChannel,
-      runSync: () => {},
-      refreshPlugins: (options) => {
-        selectedRefresh = options.selection;
-        return [
-          { runtime: 'claude', ok: true, detail: 'refreshed' },
-          { runtime: 'codex', ok: true, detail: 'injected boundary violation' },
-        ];
-      },
-      log: () => {},
-    });
-    expect(selectedRefresh).toBe('claude');
-    expect(auto.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
-  });
-
-  test('update-owned agent sync disables setup-owned Codex role convergence', () => {
-    let captured: Parameters<typeof runAgentSyncSafe>[0] | undefined;
-    runUpdateAgentSync('auto', (options) => {
-      captured = options;
-      return null;
-    });
-    expect(captured?.selection).toBe('auto');
-    expect(captured?.strict).toBe(true);
-    expect(captured?.codexRefresh).toBeUndefined();
+    // Nothing in the update path can reach a client plugin registration.
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toContain('refreshUpdatePlugins');
+    expect(source).not.toContain('update-integrations');
+    expect(existsSync(join(import.meta.dir, '..', 'update-integrations.ts'))).toBe(false);
   });
 
   test('normal delivery invokes the fresh binary only through the explicit child protocol', () => {
@@ -2865,8 +2134,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       // Integration-neutral operator recovery: retry the update itself first
       // (the rerun re-converges), THEN the Codex activation steps if pending.
       expect(message).toContain('Rerun `genie update`');
-      expect(message).toContain('genie setup --codex');
-      expect(message.indexOf('Rerun `genie update`')).toBeLessThan(message.indexOf('genie setup --codex'));
+      expect(message).not.toContain('genie setup --codex');
     } finally {
       lease.release();
       rmSync(home, { recursive: true, force: true });
@@ -2929,51 +2197,6 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       rmSync(home, { recursive: true, force: true });
     }
   });
-
-  test('D2: sync-only runs ONLY agent-sync — no Codex plugin query/inspection/advisory', () => {
-    const events: string[] = [];
-    runLegacySyncOnlyConvergence({
-      selection: 'codex',
-      expectedVersion: '5.260711.7',
-      log: (line) => events.push(`log:${line}`),
-      sync: () => {
-        events.push('sync');
-      },
-    });
-    // The only observable effect is the injected agent-sync. No plugin advisory
-    // was emitted, and no plugin query/inspection ran (the spy `sync` is the sole
-    // side effect). A real run would only call runAgentSyncSafe.
-    expect(events).toEqual(['sync']);
-  });
-
-  test("D2: a genuine agent-sync failure is sync-only's ONLY nonzero result", () => {
-    expect(() =>
-      runLegacySyncOnlyConvergence({
-        selection: 'codex',
-        expectedVersion: '5.260711.7',
-        sync: () => {
-          throw new Error('strict sync failed');
-        },
-      }),
-    ).toThrow('strict sync failed');
-  });
-
-  test('D2: a missing/stale/disabled Codex plugin never makes sync-only fail (it never inspects one)', () => {
-    // No `runner`/`resolveExecutable`/`probe` seams are consulted — sync-only
-    // branches before every plugin observer. Even with codex selected and no
-    // Codex CLI reachable, the only work is agent-sync, which succeeds here.
-    let synced = false;
-    expect(() =>
-      runLegacySyncOnlyConvergence({
-        selection: 'codex',
-        expectedVersion: '5.260711.7',
-        sync: () => {
-          synced = true;
-        },
-      }),
-    ).not.toThrow();
-    expect(synced).toBe(true);
-  });
 });
 
 describe('skills.sh channel in the post-delivery convergence (wish skills-everywhere, group 1)', () => {
@@ -2987,7 +2210,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     process.exitCode = previousExitCode;
   });
 
-  test('installs skills BEFORE agent-sync and the plugin refresh (decision 2 ordering)', () => {
+  test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {
     const calls: string[] = [];
     runManualUpdateConvergence({
       expectedVersion: VERSION,
@@ -2996,14 +2219,15 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         calls.push(`skills:${selection}`);
         return { status: 'skipped', reason: 'test fixture' };
       },
-      runSync: () => calls.push('agent-sync'),
-      refreshPlugins: () => {
-        calls.push('plugin-refresh');
-        return [];
+      retirementHomes: {
+        home: mkdtempSync(join(tmpdir(), 'genie-converge-order-home-')),
+        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order-genie-')),
       },
-      log: () => undefined,
+      log: (line) => calls.push(`log:${line}`),
     });
-    expect(calls).toEqual(['skills:all', 'agent-sync', 'plugin-refresh']);
+    // A `skipped` channel deliberately leaves the legacy assets in place, so
+    // retirement never runs — skills is the first and only step it gates.
+    expect(calls).toEqual(['skills:all']);
   });
 
   test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
@@ -3016,8 +2240,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
           seen.push(received);
           return { status: 'skipped', reason: 'test fixture' };
         },
-        runSync: () => undefined,
-        refreshPlugins: () => [],
         log: () => undefined,
       });
     }
@@ -3033,8 +2255,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         skills += 1;
         return { status: 'skipped', reason: 'test fixture' };
       },
-      runSync: () => undefined,
-      refreshPlugins: () => [],
       log: () => undefined,
     });
     expect(skills).toBe(0);
@@ -3049,8 +2269,6 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         emit('skills: fixture line');
         return { status: 'skipped', reason: 'test fixture' };
       },
-      runSync: () => undefined,
-      refreshPlugins: () => [],
       log: (line) => lines.push(line),
     });
     expect(lines).toContain('skills: fixture line');
@@ -3066,527 +2284,48 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         process.exitCode = 1;
         return { status: 'failed', reason: 'skills CLI exited 1: boom' };
       },
-      runSync: () => calls.push('agent-sync'),
-      refreshPlugins: () => [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
       log: () => undefined,
     });
-    expect(calls).toEqual(['skills', 'agent-sync']);
-    expect(result.integrations).toEqual([{ runtime: 'claude', ok: true, detail: 'refreshed' }]);
+    expect(calls).toEqual(['skills']);
+    expect(result.retirement).toBeNull();
     expect(process.exitCode).toBe(1);
   });
 
-  test('D2 stays intact: --sync-only convergence never touches the skills channel', () => {
+  test('the convergence is skills -> retirement, with no plugin refresh, sync step or throttle marker', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    const start = source.indexOf('export function runLegacySyncOnlyConvergence(');
-    const end = source.indexOf('function announceUpdatePlanOrExit(', start);
-    const convergence = source.slice(start, end);
-    expect(convergence).not.toContain('runSkills');
-    expect(convergence).not.toContain('SkillsChannel');
+    // The `~/.genie/.last-agent-sync` throttle marker and the engine that wrote
+    // it are gone; nothing in the update path refreshes or reads either.
+    expect(source).not.toContain('.last-agent-sync');
+    expect(source).not.toContain('runAgentSync');
+    expect(source).not.toContain('runUpdateAgentSync');
+
+    const start = source.indexOf('export function runManualUpdateConvergence(');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    const skillsIdx = body.indexOf('runUpdateSkillsChannel');
+    const retireIdx = body.indexOf('runLegacyIntegrationRetirement');
+    expect(skillsIdx).toBeGreaterThan(-1);
+    expect(retireIdx).toBeGreaterThan(skillsIdx);
+    // The client plugin refresh that used to sit between them is gone.
+    expect(body).not.toContain('refreshUpdatePlugins');
+
+    // Every explicit mode runs behind the acquired lifecycle lease.
+    const leaseIdx = source.indexOf('const lifecycleLease = acquireRequiredLifecycleLease();');
+    expect(leaseIdx).toBeGreaterThan(-1);
+    expect(source.indexOf("mode === 'sync-only'")).toBeGreaterThan(leaseIdx);
+  });
+
+  test('--sync-only converges through the same manual convergence, with no per-agent sync step', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    const start = source.indexOf('function runLegacySyncOnlyMode(');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    expect(body).toContain('runTrackedManualUpdateConvergence(VERSION)');
+    expect(body).not.toContain('Sync(');
+    // No manifest fetch, no download, no binary swap inside the mode.
+    for (const forbidden of ['fetchLatestManifest', 'downloadAndVerifyTarball', 'runDelivery']) {
+      expect(body).not.toContain(forbidden);
+    }
   });
 });
-
-describe('runManualUpdateConvergence — hermes leg restored end-to-end (restore-hermes-sync-leg regression)', () => {
-  // A prior release (#2572) narrowed every production selection to 'claude'
-  // before it reached runAgentSync, so `genie update`'s hermes leg (which
-  // only fires on a verbatim 'auto'/'all' selection) silently stopped
-  // converging — confirmed live via `genie update --sync-only` printing only
-  // 'agent-sync: claude'. This suite drives the REAL runSync path (no `sync`
-  // mock) through real GENIE_HOME/HERMES_HOME fixtures, isolated the way
-  // doctor.test.ts isolates its lifecycle env, to prove the hermes leg
-  // converges again and that the PR #2576 duplicate-external_dirs repair is
-  // reachable from the update lifecycle, not just the low-level helper test.
-  const ENV_KEYS = ['HOME', 'GENIE_HOME', 'HERMES_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
-  let isolatedHome: string;
-  let savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>>;
-  let genieHome: string;
-  let hermesHome: string;
-  let genieBin: string;
-
-  beforeEach(() => {
-    isolatedHome = mkdtempSync(join(tmpdir(), 'genie-update-hermes-'));
-    savedEnv = {};
-    for (const key of ENV_KEYS) {
-      if (process.env[key] !== undefined) savedEnv[key] = process.env[key];
-    }
-    genieHome = join(isolatedHome, 'genie');
-    hermesHome = join(isolatedHome, 'hermes');
-    process.env.HOME = isolatedHome;
-    process.env.GENIE_HOME = genieHome;
-    process.env.HERMES_HOME = hermesHome;
-    process.env.CLAUDE_CONFIG_DIR = join(isolatedHome, 'claude'); // absent: claude leg simply undetected
-    process.env.CODEX_HOME = join(isolatedHome, 'codex');
-
-    // Minimal real genie plugin source: a populated skills root + VERSION +
-    // an executable bin/genie (resolveProductSkillsRoot and the delivery checks
-    // require real files, not injected targets, since this test exercises
-    // the default env-resolved paths exactly like production `genie update`).
-    mkdirSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha'), { recursive: true });
-    writeFileSync(join(genieHome, 'plugins', 'genie', 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
-    // resolveGenieSource requires plugins/hermes-genie NEXT TO plugins/genie for
-    // ctx.hermesRoot to resolve — without it, syncHermes bails before either
-    // config leg runs (see the 'hermes source ... not found' advisory).
-    mkdirSync(join(genieHome, 'plugins', 'hermes-genie'), { recursive: true });
-    writeFileSync(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
-    writeFileSync(join(genieHome, 'VERSION'), '9.9.9\n');
-    mkdirSync(join(genieHome, 'bin'), { recursive: true });
-    genieBin = join(genieHome, 'bin', 'genie');
-    writeFileSync(genieBin, '#!/usr/bin/env bun\n');
-    chmodSync(genieBin, 0o755);
-    mkdirSync(hermesHome, { recursive: true });
-  });
-
-  afterEach(() => {
-    for (const key of ENV_KEYS) {
-      const saved = savedEnv[key];
-      if (saved === undefined) Reflect.deleteProperty(process.env, key);
-      else process.env[key] = saved;
-    }
-    rmSync(isolatedHome, { recursive: true, force: true });
-  });
-
-  /**
-   * Mirrors `runManualUpdateConvergence`'s own default `runSync` closure
-   * (narrow the selection, then `runAgentSyncSafe`), but pins `markerPath`
-   * inside the isolated tmpdir. `update.ts`'s `GENIE_HOME` constant is
-   * captured once at module import time, before this suite's `beforeEach` can
-   * repoint `process.env.GENIE_HOME` — the default marker path would
-   * otherwise write `.last-agent-sync` outside this test's sandbox. The sync
-   * engine itself is unaffected: `runAgentSync` resolves every target via the
-   * live `resolveGenieHome()`/`resolveHermesHome()` env reads, so this still
-   * exercises the real narrowing + the real engine end-to-end.
-   */
-  function realRunSync(selection: IntegrationSelection): () => void {
-    return () => {
-      const agentSyncSelection = narrowUpdateAgentSyncSelection(selection);
-      if (agentSyncSelection !== null) {
-        runAgentSyncSafe({
-          strict: true,
-          selection: agentSyncSelection,
-          markerPath: join(isolatedHome, '.last-agent-sync'),
-          // hermesBinary: null keeps this test-safe (no `hermes plugins enable`
-          // exec) — the same posture agent-sync.test.ts's `run()` fixture takes.
-          sync: (opts) => runAgentSync({ ...opts, hermesBinary: null }),
-        });
-      }
-    };
-  }
-
-  test('selection auto converges Hermes skills without recreating the retired MCP route', () => {
-    const result = runManualUpdateConvergence({
-      expectedVersion: '9.9.9',
-      selection: 'auto',
-      runSkills: noSkillsChannel,
-      runSync: realRunSync('auto'),
-      refreshPlugins: () => [],
-      log: () => undefined,
-    });
-    expect(result.integrations).toEqual([]);
-
-    const configPath = join(hermesHome, 'config.yaml');
-    const text = readFileSync(configPath, 'utf8');
-    expect(text).not.toContain('mcp_servers:');
-    expect(text).not.toContain(genieBin);
-    expect(text).toContain('skills:');
-    expect(text).toContain('external_dirs:');
-    expect(text).toContain(join(genieHome, 'plugins', 'genie', 'skills'));
-  });
-
-  test('selection auto repairs a config damaged with the duplicate-external_dirs shape (PR #2576)', () => {
-    const configPath = join(hermesHome, 'config.yaml');
-    const skillsRoot = join(genieHome, 'plugins', 'genie', 'skills');
-    // Exact damaged shape from an earlier buggy release: `skills:` carries BOTH
-    // an inline empty `external_dirs: []` and a later block-style `external_dirs`
-    // holding the genie-marked managed entry — spec-invalid duplicate-key YAML.
-    const damaged = `skills:\n  external_dirs: []\n  template_vars: true\n  external_dirs:\n    - ${JSON.stringify(skillsRoot)}  # genie:managed:skills.external_dirs\n`;
-    writeFileSync(configPath, damaged);
-
-    runManualUpdateConvergence({
-      expectedVersion: '9.9.9',
-      selection: 'auto',
-      runSkills: noSkillsChannel,
-      runSync: realRunSync('auto'),
-      refreshPlugins: () => [],
-      log: () => undefined,
-    });
-
-    const text = readFileSync(configPath, 'utf8');
-    expect(text.match(/external_dirs:/g)?.length).toBe(1);
-    expect(text).toContain('template_vars: true');
-    const parsed = Bun.YAML.parse(text) as { skills: { external_dirs: string[]; template_vars: boolean } };
-    expect(parsed.skills.external_dirs).toEqual([skillsRoot]);
-    expect(parsed.skills.template_vars).toBe(true);
-  });
-});
-
-describe('operator-driven plugin refresh', () => {
-  let pluginStateDir: string;
-
-  beforeEach(() => {
-    pluginStateDir = mkdtempSync(join(tmpdir(), 'genie-update-plugin-state-'));
-  });
-
-  afterEach(() => {
-    rmSync(pluginStateDir, { recursive: true, force: true });
-  });
-
-  test('CLI detection is not consent: validly absent integrations remain absent', () => {
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: true, claude: true },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        if (command === 'codex') return { exitCode: 0, stdout: '{"installed":[]}', stderr: '' };
-        return { exitCode: 0, stdout: '[]', stderr: '' };
-      },
-    });
-
-    expect(results).toEqual([]);
-    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
-  });
-
-  test('a Codex resolver failure does not suppress the independently selected Claude refresh', () => {
-    const resolved: string[] = [];
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      selection: 'all',
-      detected: { codex: true, claude: true },
-      resolveExecutable(name) {
-        resolved.push(name);
-        if (name === 'codex') throw new Error('unsafe Codex executable');
-        return '/fixture/claude';
-      },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return { exitCode: 0, stdout: '[]', stderr: '' };
-      },
-    });
-
-    expect(resolved).toEqual(['codex', 'claude']);
-    expect(calls).toEqual(['/fixture/claude plugin list --json']);
-    expect(results).toEqual([{ runtime: 'codex', ok: false, detail: 'unsafe Codex executable' }]);
-  });
-
-  test('a Codex convergence cleanup exception is isolated and Claude still runs', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-cross-runtime-'));
-    const configPath = join(root, 'config.toml');
-    const statePath = join(pluginStateDir, '.integration-refresh-codex.json');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = false\n');
-    let codexLists = 0;
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: root,
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      selection: 'all',
-      codexConfigPath: configPath,
-      detected: { codex: true, claude: true },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        if (command === 'claude') return { exitCode: 0, stdout: '[]', stderr: '' };
-        if (args.join(' ') === 'plugin list --json') {
-          codexLists += 1;
-          if (codexLists === 2) {
-            rmSync(statePath, { force: true });
-            mkdirSync(statePath);
-          }
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              installed: [{ pluginId: 'genie@automagik', enabled: false, version: '5.260711.3' }],
-            }),
-            stderr: '',
-          };
-        }
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-
-    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-    expect(calls).toContain('claude plugin list --json');
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  test('indeterminate pre-update state fails closed without installing either integration', () => {
-    const calls: string[] = [];
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: true, claude: true },
-      runner(command, args) {
-        calls.push(`${command} ${args.join(' ')}`);
-        return { exitCode: 0, stdout: '{}', stderr: '' };
-      },
-    });
-
-    expect(results).toHaveLength(2);
-    expect(results.every((result) => !result.ok && result.detail.includes('malformed JSON'))).toBe(true);
-    expect(calls).toEqual(['codex plugin list --json', 'claude plugin list --json']);
-  });
-
-  test('D1/D3: N≠T delivery defers activation — no plugin add, no cache advance, exit-2 action-required', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-refresh-'));
-    const configPath = join(root, 'config.toml');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
-    const calls: string[] = [];
-    const runner: CommandRunner = (command, args) => {
-      calls.push(`${command} ${args.join(' ')}`);
-      if (args.join(' ') === 'plugin list --json') {
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            installed: [{ pluginId: 'genie@automagik', enabled: true, version: '5.260710.2' }],
-          }),
-          stderr: '',
-        };
-      }
-      return { exitCode: 0, stdout: '', stderr: '' };
-    };
-    try {
-      const results = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexConfigPath: configPath,
-        runner,
-      });
-      expect(results).toHaveLength(1);
-      // Delivered but NOT activated: the installed N generation is left intact.
-      expect(results[0]).toMatchObject({
-        runtime: 'codex',
-        ok: true,
-        deliveryComplete: true,
-        actionRequired: true,
-      });
-      expect(results[0].detail).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
-      expect(results[0].detail).toContain('retire tasks → genie setup --codex → /hooks → new task');
-      // The classification is the ONLY codex command; NO cache-advancing add/marketplace.
-      expect(calls).toEqual(['codex plugin list --json']);
-      expect(calls).not.toContain('codex plugin add genie@automagik --json');
-      expect(calls).not.toContain(`codex plugin marketplace add ${root} --json`);
-      // The plugin enabled flag is never touched by a deferred delivery.
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = true');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('returns a structured timed-out integration result', () => {
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: true, claude: false },
-      runner: () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true }),
-    });
-    expect(results[0]).toMatchObject({ runtime: 'codex', ok: false, timedOut: true });
-    expect(results[0].detail).toContain('timed out');
-  });
-
-  test('D1/D3: an indeterminate (malformed) plugin query fails closed — never cache-advances', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-failed-refresh-'));
-    const configPath = join(root, 'config.toml');
-    writeFileSync(configPath, '[plugins."genie@automagik"]\nenabled = true\n');
-    const calls: string[] = [];
-    try {
-      const results = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexConfigPath: configPath,
-        runner(_command, args) {
-          calls.push(args.join(' '));
-          if (args.join(' ') === 'plugin list --json') {
-            return { exitCode: 0, stdout: '{"unexpected":[]}', stderr: '' };
-          }
-          return { exitCode: 0, stdout: '', stderr: '' };
-        },
-      });
-
-      // A state the gate cannot classify fails closed (exit 1) with zero mutation.
-      expect(results[0]).toMatchObject({ runtime: 'codex', ok: false });
-      expect(results[0]?.actionRequired).toBeUndefined();
-      expect(results[0]?.detail).toContain('cannot classify plugin state');
-      expect(calls).toEqual(['plugin list --json']);
-      expect(calls).not.toContain('plugin add genie@automagik --json');
-      expect(readFileSync(configPath, 'utf8')).toContain('enabled = true');
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('D1/D3: stale (N≠T) delivery makes ZERO plugin add/remove and leaves the old cache byte-identical', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-update-plugin-stale-generation-'));
-    const codexHome = join(root, 'codex');
-    const oldCache = join(codexHome, 'plugins', 'cache', 'automagik', 'genie', '5.260710.2', 'payload.txt');
-    mkdirSync(join(oldCache, '..'), { recursive: true });
-    writeFileSync(oldCache, 'old-cache-bytes\n');
-    const calls: string[] = [];
-    const runner: CommandRunner = (_command, args) => {
-      const command = args.join(' ');
-      calls.push(command);
-      if (command === 'plugin list --json') {
-        return {
-          exitCode: 0,
-          stdout: '{"installed":[{"pluginId":"genie@automagik","enabled":true,"version":"5.260710.2"}]}',
-          stderr: '',
-        };
-      }
-      return { exitCode: 0, stdout: '', stderr: '' };
-    };
-    try {
-      const result = refreshUpdatePlugins({
-        bundleRoot: root,
-        expectedVersion: '5.260711.3',
-        stateDir: pluginStateDir,
-        detected: { codex: true, claude: false },
-        codexHome,
-        runner,
-      });
-      // Delivered, activation deferred: N stays present and physically unverified.
-      expect(result[0]).toMatchObject({ runtime: 'codex', ok: true, deliveryComplete: true, actionRequired: true });
-      expect(result[0]?.detail).toContain('Codex plugin left at v5.260710.2 (no cache advance)');
-      // ZERO cache-advancing commands — not even a single "non-destructive" add.
-      expect(calls).not.toContain('plugin add genie@automagik --json');
-      expect(calls).not.toContain('plugin remove genie@automagik --json');
-      expect(calls).not.toContain('plugin marketplace add');
-      expect(readFileSync(oldCache, 'utf8')).toBe('old-cache-bytes\n');
-      // A pure delivery deferral opens no durable convergence intent journal.
-      expect(existsSync(join(pluginStateDir, '.integration-refresh-codex.json'))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('actively restores and verifies a disabled Claude plugin after refresh', () => {
-    const calls: string[] = [];
-    const timeouts: Array<number | undefined> = [];
-    let lists = 0;
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: false, claude: true },
-      timeoutMs: 777,
-      runner(command, args, options) {
-        calls.push(`${command} ${args.join(' ')}`);
-        timeouts.push(options?.timeoutMs);
-        if (args.join(' ') === 'plugin list --json') {
-          lists += 1;
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([
-              {
-                id: 'genie@automagik',
-                enabled: lists === 1 ? false : lists === 2,
-                version: lists === 1 ? '5.260710.2' : '5.260711.3',
-              },
-            ]),
-            stderr: '',
-          };
-        }
-        return { exitCode: 0, stdout: '', stderr: '' };
-      },
-    });
-
-    expect(results).toEqual([
-      {
-        runtime: 'claude',
-        ok: true,
-        detail: 'plugin/hooks refreshed to v5.260711.3',
-        preservedDisabled: true,
-      },
-    ]);
-    expect(calls).toEqual([
-      'claude plugin list --json',
-      'claude plugin marketplace add /tmp/fixture-bundle',
-      'claude plugin update genie@automagik',
-      'claude plugin list --json',
-      'claude plugin disable genie@automagik',
-      'claude plugin list --json',
-    ]);
-    expect(timeouts.every((timeout) => timeout === 777)).toBe(true);
-  });
-
-  test('Claude disable command failure is a structured refresh failure, not preservation fiction', () => {
-    let lists = 0;
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: false, claude: true },
-      runner(_command, args) {
-        if (args.join(' ') === 'plugin list --json') {
-          lists += 1;
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([
-              {
-                id: 'genie@automagik',
-                enabled: lists !== 1,
-                version: lists === 1 ? '5.260710.2' : '5.260711.3',
-              },
-            ]),
-            stderr: '',
-          };
-        }
-        if (args.join(' ') === 'plugin disable genie@automagik') {
-          return { exitCode: 1, stdout: '', stderr: 'disable refused' };
-        }
-        return { exitCode: 0, stdout: '', stderr: '' };
-      },
-    });
-
-    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
-    expect(results[0]?.detail).toContain('disable refused');
-    expect(results[0]?.preservedDisabled).not.toBe(true);
-  });
-
-  test('Claude post-disable state must verify disabled before preservation is reported', () => {
-    let lists = 0;
-    const results = refreshUpdatePlugins({
-      bundleRoot: '/tmp/fixture-bundle',
-      expectedVersion: '5.260711.3',
-      stateDir: pluginStateDir,
-      detected: { codex: false, claude: true },
-      runner(_command, args) {
-        if (args.join(' ') === 'plugin list --json') {
-          lists += 1;
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify([
-              {
-                id: 'genie@automagik',
-                enabled: lists !== 1,
-                version: lists === 1 ? '5.260710.2' : '5.260711.3',
-              },
-            ]),
-            stderr: '',
-          };
-        }
-        return { exitCode: 0, stdout: '', stderr: '' };
-      },
-    });
-
-    expect(lists).toBe(3);
-    expect(results[0]).toMatchObject({ runtime: 'claude', ok: false });
-    expect(results[0]?.detail).toContain('disabled-state restore verification failed');
-    expect(results[0]?.preservedDisabled).not.toBe(true);
-  });
-});
-
-// ============================================================================
-// Scheduler-signal age filter (wish v4-home-residue-doctor): a June disk-full
-// incident must not resurface as "Recent scheduler signals" weeks later.
-// ============================================================================
 
 describe('summarizeJsonlSignals age filter', () => {
   const HOUR = 60 * 60 * 1000;
@@ -3645,41 +2384,6 @@ describe('summarizeJsonlSignals age filter', () => {
     const summary = summarizeJsonlSignals(path, NOW);
     expect(summary.signals.map((s) => s.event)).toEqual(['no.timestamp']);
     expect(summary.newestStaleTimestamp).toBeNull();
-  });
-});
-
-// ===========================================================================
-// A14/R3: --sync-only INSPECTS codex health and fails nonzero + byte-identical
-// on a missing / disabled / stale plugin, never enabling or swapping anything.
-// ===========================================================================
-describe('--sync-only is agent-sync only (D2 — wish decision 3)', () => {
-  test('narrowUpdateAgentSyncSelection passes the real selection through (restore-hermes-sync-leg)', () => {
-    // codex/none: agent-sync has nothing to do (codex is plugin-only; none is none).
-    expect(narrowUpdateAgentSyncSelection('codex')).toBeNull();
-    expect(narrowUpdateAgentSyncSelection('none')).toBeNull();
-    // auto/all/claude pass through UNCHANGED. Collapsing these to 'claude' (the
-    // prior behavior) silently killed runAgentSync's hermes leg, which only
-    // fires on a verbatim 'auto'/'all' — see runAgentSync in agent-sync.ts.
-    expect(narrowUpdateAgentSyncSelection('auto')).toBe('auto');
-    expect(narrowUpdateAgentSyncSelection('all')).toBe('all');
-    expect(narrowUpdateAgentSyncSelection('claude')).toBe('claude');
-  });
-
-  test('the convergence option surface + body carry NO Codex plugin query/inspection seam', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    // Option interface: no runner/resolveExecutable/probe/prove/inspectCodex hook.
-    const ifaceStart = source.indexOf('export interface LegacySyncOnlyConvergenceOptions');
-    const iface = source.slice(ifaceStart, source.indexOf('\n}', ifaceStart));
-    for (const field of ['inspectCodex', 'probe', 'prove', 'runner', 'resolveExecutable']) {
-      expect(iface).not.toContain(field);
-    }
-    // Function body (past its docstring): agent-sync only, no plugin command.
-    const fnStart = source.indexOf('export function runLegacySyncOnlyConvergence(');
-    const body = source.slice(fnStart, source.indexOf('\n}', fnStart));
-    expect(body).toContain('runUpdateAgentSync(agentSyncSelection)');
-    expect(body).not.toContain('plugin');
-    expect(body).not.toContain('probe');
-    expect(body).not.toContain('inspect');
   });
 });
 
@@ -3750,379 +2454,6 @@ describe('--sync-only behind a live lifecycle lease (executed)', () => {
   });
 });
 
-describe('applyConvergenceExitSignal — exit 2 only on delivery-pending (D3 guardrail)', () => {
-  let logs: string[];
-  let spy: ReturnType<typeof spyOn>;
-  const savedExitCode = process.exitCode;
-
-  beforeEach(() => {
-    process.exitCode = 0;
-    logs = [];
-    spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      logs.push(args.map(String).join(' '));
-    });
-  });
-  afterEach(() => {
-    spy.mockRestore();
-    process.exitCode = savedExitCode ?? 0;
-  });
-
-  test('a non-codex (claude) failure exits 1 and emits NO trailer', () => {
-    applyConvergenceExitSignal({
-      integrations: [{ runtime: 'claude', ok: false, detail: 'boom' }],
-      skills: null,
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(1);
-    expect(logs.join('\n')).not.toContain('deliveryComplete');
-  });
-
-  test('an all-ok convergence sets no failure/action-required code and emits no trailer', () => {
-    applyConvergenceExitSignal({
-      integrations: [{ runtime: 'claude', ok: true, detail: 'refreshed' }],
-      skills: null,
-      retirement: null,
-    });
-    // Neither the exit-1 (failure) nor exit-2 (action-required) code is set.
-    expect(process.exitCode).toBe(0);
-    expect(logs.join('\n')).not.toContain('deliveryComplete');
-  });
-
-  test('a codex action-required delivery exits 2 and emits the trailer exactly once', () => {
-    applyConvergenceExitSignal({
-      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
-      skills: null,
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(2);
-    expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
-  });
-
-  test('a failed integration wins over action-required (exit 1, no trailer)', () => {
-    applyConvergenceExitSignal({
-      integrations: [
-        { runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true },
-        { runtime: 'claude', ok: false, detail: 'boom' },
-      ],
-      skills: null,
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(1);
-    expect(logs.join('\n')).not.toContain('deliveryComplete');
-  });
-
-  test('emitTrailer=false (fresh-binary parent) sets exit 2 without printing the trailer', () => {
-    applyConvergenceExitSignal(
-      {
-        integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', actionRequired: true }],
-        skills: null,
-        retirement: null,
-      },
-      false,
-    );
-    expect(process.exitCode).toBe(2);
-    expect(logs.join('\n')).not.toContain('deliveryComplete');
-  });
-
-  // A pending `setup --codex` (action-required) is ROUTINE on a Codex host. It
-  // must never downgrade a real skills-channel failure from exit 1 to exit 2,
-  // which is what discarding the skills result used to do.
-  test('a failed skills install wins over action-required (exit 1, no trailer)', () => {
-    applyConvergenceExitSignal({
-      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
-      skills: { status: 'failed', reason: 'skills CLI exited 1: boom' },
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(1);
-    expect(logs.join('\n')).not.toContain('deliveryComplete');
-  });
-
-  test('an installed skills channel leaves the action-required exit 2 intact', () => {
-    applyConvergenceExitSignal({
-      integrations: [{ runtime: 'codex', ok: true, detail: 'deferred', deliveryComplete: true, actionRequired: true }],
-      skills: {
-        status: 'installed',
-        record: {
-          ref: 'v9.9.9',
-          cliVersion: '1.5.23',
-          inventory: ['wish'],
-          agentDirs: ['/home/tester/.claude/skills'],
-          installedAt: '2026-08-30T12:00:00.000Z',
-        },
-      },
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(2);
-    expect(logs.filter((line) => line.includes('"deliveryComplete":true'))).toHaveLength(1);
-  });
-
-  test('a skills failure alone (no integrations) still exits 1', () => {
-    applyConvergenceExitSignal({
-      integrations: [],
-      skills: { status: 'failed', reason: 'no skills found' },
-      retirement: null,
-    });
-    expect(process.exitCode).toBe(1);
-  });
-});
-
-describe('mapAlreadyCurrentRepairOutcome — pure repair→directive mapping (Group D deliverable 1)', () => {
-  test('an old-parent publish (activation-pending) hands off to setup', () => {
-    expect(
-      mapAlreadyCurrentRepairOutcome({
-        kind: 'published',
-        record: {
-          schemaVersion: 2,
-          deliveryId: 'a'.repeat(32),
-          targetVersion: '5.260722.11',
-          canonicalPayloadSha256: 'a'.repeat(64),
-          channel: 'dev',
-          deliveredAt: '2026-07-22T00:00:00.000Z',
-          evidenceDigest: 'e'.repeat(64),
-          platformId: 'darwin-arm64',
-          platformTriple: 'darwin-arm64',
-          releaseTag: 'v5.260722.11',
-          releaseName: 'genie-5.260722.11-darwin-arm64.tar.gz',
-          releaseManifestSha256: 'b'.repeat(64),
-          artifactSha256: 'd'.repeat(64),
-          installedBinarySha256: 'c'.repeat(64),
-          deliveryRoot: '/home/test/.genie',
-        },
-        handoff: 'activation-pending',
-        artifactSha256: 'd'.repeat(64),
-      }),
-    ).toEqual({ action: 'exit-handoff' });
-  });
-
-  test('a target-current publish reports the repair as an immediate terminal handoff', () => {
-    expect(
-      mapAlreadyCurrentRepairOutcome({
-        kind: 'published',
-        record: {
-          schemaVersion: 2,
-          deliveryId: 'a'.repeat(32),
-          targetVersion: '5.260722.11',
-          canonicalPayloadSha256: 'a'.repeat(64),
-          channel: 'dev',
-          deliveredAt: '2026-07-22T00:00:00.000Z',
-          evidenceDigest: 'e'.repeat(64),
-          platformId: 'darwin-arm64',
-          platformTriple: 'darwin-arm64',
-          releaseTag: 'v5.260722.11',
-          releaseName: 'genie-5.260722.11-darwin-arm64.tar.gz',
-          releaseManifestSha256: 'b'.repeat(64),
-          artifactSha256: 'd'.repeat(64),
-          installedBinarySha256: 'c'.repeat(64),
-          deliveryRoot: '/home/test/.genie',
-        },
-        handoff: 'current',
-        artifactSha256: 'd'.repeat(64),
-      }),
-    ).toEqual({ action: 'repaired-current' });
-  });
-
-  test('already-matching proceeds; channel advance routes upgrade; failure is explicit', () => {
-    expect(mapAlreadyCurrentRepairOutcome({ kind: 'already-matching' })).toEqual({ action: 'proceed-current' });
-    const advancedManifest: PinnedManifest = {
-      schema_version: 1,
-      channel: 'dev',
-      version: '5.260722.12',
-      released_at: '2026-07-22T01:00:00Z',
-      tarball_base: 'https://example.invalid',
-      platforms: ['darwin-arm64'],
-      manifestBytes: '{}',
-      manifestSha256: 'f'.repeat(64),
-    };
-    expect(
-      mapAlreadyCurrentRepairOutcome({
-        kind: 'channel-advanced',
-        from: '5.260722.11',
-        to: '5.260722.12',
-        manifest: advancedManifest,
-      }),
-    ).toEqual({ action: 'route-upgrade', manifest: advancedManifest });
-    expect(
-      mapAlreadyCurrentRepairOutcome({
-        kind: 'failed',
-        stage: 'download-verify',
-        detail: 'x',
-        deliveryComplete: false,
-      }),
-    ).toEqual({ action: 'failed', detail: 'download-verify: x' });
-  });
-});
-
-describe('handleAlreadyCurrentUpdate — same-version terminal authority', () => {
-  const advancedManifest: PinnedManifest = {
-    schema_version: 1,
-    channel: 'dev',
-    version: '5.260722.12',
-    released_at: '2026-07-22T01:00:00Z',
-    tarball_base: 'https://example.invalid',
-    platforms: ['darwin-arm64'],
-    manifestBytes: '{"version":"5.260722.12"}',
-    manifestSha256: 'f'.repeat(64),
-  };
-
-  async function runDirective(directive: Awaited<ReturnType<typeof attemptAlreadyCurrentDeliveryRepair>>) {
-    const priorExitCode = process.exitCode;
-    const output: string[] = [];
-    let convergenceRuns = 0;
-    let markerRetirements = 0;
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => output.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => output.push(args.join(' ')));
-    process.exitCode = 0;
-    try {
-      const manifest = await handleAlreadyCurrentUpdate('dev', 'darwin-arm64', VERSION, VERSION, {
-        attemptRepair: async () => directive,
-        runConvergence: () => {
-          convergenceRuns += 1;
-        },
-        retireLegacyMarker: () => {
-          markerRetirements += 1;
-        },
-      });
-      return {
-        manifest,
-        output: output.join('\n'),
-        exitCode: process.exitCode,
-        convergenceRuns,
-        markerRetirements,
-      };
-    } finally {
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-      process.exitCode = priorExitCode ?? 0;
-    }
-  }
-
-  test('failed is terminal, nonzero, and performs no convergence or marker retirement', async () => {
-    const result = await runDirective({ action: 'failed', detail: 'download-verify: invalid provenance' });
-    expect(result.manifest).toBeNull();
-    expect(result.exitCode).toBe(1);
-    expect(result.convergenceRuns).toBe(0);
-    expect(result.markerRetirements).toBe(0);
-    expect(result.output).toContain('Codex delivery repair failed: download-verify: invalid provenance');
-    expect(result.output).toContain('"deliveryComplete":false');
-    expect(result.output).not.toContain('Already up to date');
-  });
-
-  test('route-upgrade returns the exact advanced manifest without same-version finalizers', async () => {
-    const result = await runDirective({ action: 'route-upgrade', manifest: advancedManifest });
-    expect(result.manifest).toBe(advancedManifest);
-    expect(result.exitCode).toBe(0);
-    expect(result.convergenceRuns).toBe(0);
-    expect(result.markerRetirements).toBe(0);
-    expect(result.output).toContain(`→ ${advancedManifest.version}`);
-    expect(result.output).not.toContain('Already up to date');
-  });
-
-  test('exit-handoff retires only delivery metadata before the typed activation handoff', async () => {
-    const result = await runDirective({ action: 'exit-handoff' });
-    expect(result.manifest).toBeNull();
-    expect(result.exitCode).toBe(2);
-    expect(result.convergenceRuns).toBe(0);
-    expect(result.markerRetirements).toBe(1);
-    expect(result.output).toContain('Codex plugin activation is pending');
-    expect(result.output.match(/"deliveryComplete":true/g)).toHaveLength(1);
-    expect(result.output).not.toContain('Already up to date');
-  });
-
-  test('repaired-current retires delivery metadata without convergence, trailer, or success masquerade', async () => {
-    const result = await runDirective({ action: 'repaired-current' });
-    expect(result.manifest).toBeNull();
-    expect(result.exitCode).toBe(0);
-    expect(result.convergenceRuns).toBe(0);
-    expect(result.markerRetirements).toBe(1);
-    expect(result.output).toContain('Repaired the missing Codex delivery record');
-    expect(result.output).not.toContain('deliveryComplete');
-    expect(result.output).not.toContain('Already up to date');
-  });
-
-  test('ordinary already-matching reruns retain convergence and marker-retirement semantics', async () => {
-    const result = await runDirective({ action: 'proceed-current' });
-    expect(result.manifest).toBeNull();
-    expect(result.exitCode).toBe(0);
-    expect(result.convergenceRuns).toBe(1);
-    expect(result.markerRetirements).toBe(1);
-    expect(result.output).toContain(`Already up to date (v${VERSION}, channel dev)`);
-  });
-});
-
-describe('attemptAlreadyCurrentDeliveryRepair — fail-closed skip with no install (CI-portable, no network/codex)', () => {
-  let prevGenieHome: string | undefined;
-  let dir: string;
-
-  beforeEach(() => {
-    prevGenieHome = process.env.GENIE_HOME;
-    dir = mkdtempSync(join(tmpdir(), 'update-repair-skip-'));
-    process.env.GENIE_HOME = dir;
-  });
-
-  afterEach(() => {
-    if (prevGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
-    else process.env.GENIE_HOME = prevGenieHome;
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  test('an empty GENIE_HOME reports an explicit incomplete repair without lease/download/mutation', async () => {
-    // No plugins/genie payload and no binary ⇒ observeInstalledForRepair returns
-    // null ⇒ the repair fails closed before network or codex CLI access.
-    const directive = await attemptAlreadyCurrentDeliveryRepair('dev', 'linux-x64', undefined, dir);
-    expect(directive).toEqual({ action: 'failed', detail: 'installed payload/binary could not be observed' });
-    // No lease file was created (the skip returns before lease acquisition).
-    expect(existsSync(join(dir, '.codex-lifecycle.lock'))).toBe(false);
-    // No delivery record was minted.
-    expect(existsSync(join(dir, '.codex-plugin-delivery-record.json'))).toBe(false);
-  });
-
-  test('a symlinked GENIE_HOME fast-path binds the physical canonical delivery root', async () => {
-    const physicalHome = join(dir, 'physical-genie-home');
-    const logicalHome = join(dir, 'logical-genie-home');
-    mkdirSync(join(physicalHome, 'plugins', 'genie'), { recursive: true });
-    mkdirSync(join(physicalHome, 'bin'), { recursive: true });
-    writeFileSync(join(physicalHome, 'plugins', 'genie', 'plugin.json'), '{"name":"genie"}\n');
-    writeFileSync(join(physicalHome, 'VERSION'), `${VERSION}\n`);
-    writeFileSync(join(physicalHome, 'bin', 'genie'), '#!/bin/sh\n');
-    symlinkSync(physicalHome, logicalHome);
-    const snapshot = observeCodexActivation({ genieHome: logicalHome, command: null });
-    if (snapshot.canonical.status !== 'ok') throw new Error(snapshot.canonical.detail);
-    const platformId = resolvePlatformId();
-    const { evidence, pack } = mintTestDeliveryEvidence({
-      descriptor: {
-        version: snapshot.canonical.version.canonical,
-        channel: 'dev',
-        platformId: platformId as DeliveryEvidencePlatformId,
-        platformTriple: snapshot.canonical.platformTriple,
-        releaseTag: `v${VERSION}`,
-        releaseName: `genie-${VERSION}-${platformId}.tar.gz`,
-        canonicalPayloadSha256: snapshot.canonical.digest,
-        installedBinarySha256: snapshot.canonical.installedBinarySha256,
-      },
-    });
-    const lease = acquireCodexLifecycleLease('update-delivery', { genieHome: logicalHome });
-    if (!lease.ok) throw new Error(lease.detail);
-    try {
-      openCodexActivationStore({ genieHome: logicalHome }).publishDelivery(lease, {
-        evidence,
-        deliveryRoot: snapshot.canonical.deliveryRoot,
-      });
-    } finally {
-      lease.release();
-    }
-    expect(snapshot.canonical.deliveryRoot).toBe(realpathSync(physicalHome));
-    expect(
-      await attemptAlreadyCurrentDeliveryRepair('dev', platformId, undefined, logicalHome, {
-        evidenceVerification: pack.dependencies,
-      }),
-    ).toEqual({ action: 'proceed-current' });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Plugin-era retirement wiring (wish `skills-everywhere`, group 2)
-// ---------------------------------------------------------------------------
-
 describe('runManualUpdateConvergence — plugin-era retirement runs last, behind a fresh skills install', () => {
   const MANAGED_ROLE_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
   const COUNCIL_TEMPLATE = "export const meta = { name: 'council' };\nconst LENS_ROOT = '__GENIE_LENS_ROOT__';\n";
@@ -4173,6 +2504,48 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     );
   }
 
+  /** The stamped council workflow plus its ownership sidecar, as the stamper left them. */
+  function putManagedCouncilWorkflow(workflowsDir: string, body: string): void {
+    const targetPath = join(workflowsDir, 'council.js');
+    put(targetPath, body);
+    chmodSync(targetPath, 0o644);
+    const manifestPath = join(workflowsDir, 'council.js.genie-sync.json');
+    put(
+      manifestPath,
+      `${JSON.stringify(
+        {
+          managedBy: 'genie-agent-sync',
+          version: '9.9.9',
+          digest: computeFileDigest(targetPath),
+          syncedAt: RETIREMENT_NOW.toISOString(),
+          identityVersion: 2,
+          targetMode: 0o644,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    chmodSync(manifestPath, 0o644);
+  }
+
+  /** Codex role agents plus the v2 ownership inventory, as the role writer left them. */
+  function putManagedCodexRoleAgents(codexHome: string, files: Record<string, string>): void {
+    const agentsDir = join(codexHome, 'agents');
+    const inventory: Record<string, { identity: { kind: 'regular'; mode: number; digest: string } }> = {};
+    for (const [name, content] of Object.entries(files)) {
+      const path = join(agentsDir, name);
+      put(path, content);
+      chmodSync(path, 0o644);
+      inventory[name] = { identity: { kind: 'regular', mode: 0o644, digest: computeFileDigest(path) } };
+    }
+    const inventoryPath = join(agentsDir, '.genie-role-agents.json');
+    put(
+      inventoryPath,
+      `${JSON.stringify({ version: 2, managedBy: 'genie-codex-role-agents', files: inventory }, null, 2)}\n`,
+    );
+    chmodSync(inventoryPath, 0o600);
+  }
+
   /**
    * A host carrying EVERY plugin-era surface, plus the skills.sh copies that
    * already occupy the bare-name skill slots — the real post-channel state, and
@@ -4205,7 +2578,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     // Codex plugin era.
     put(join(fixture.codexHome, 'config.toml'), '[otel]\nkeep = true\n\n[plugins."genie@automagik"]\nenabled = true\n');
     put(join(fixture.codexHome, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
-    installCodexAgents(genieHome, fixture.codexHome);
+    putManagedCodexRoleAgents(fixture.codexHome, { 'genie-reviewer.toml': MANAGED_ROLE_TOML });
     putManagedSkill(join(fixture.codexHome, 'skills', '.curated', 'alpha'), '# curated alpha\n');
 
     // Claude plugin era.
@@ -4214,15 +2587,10 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
       `${JSON.stringify({ plugins: [{ id: 'genie@automagik' }, { id: 'other@market' }] }, null, 2)}\n`,
     );
     put(join(fixture.claudeDir, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
-    expect(
-      stampWorkflow({
-        templatePath: join(pluginRoot, 'workflows', 'council.js'),
-        pluginRoot,
-        targetDir: join(fixture.claudeDir, 'workflows'),
-        version: '9.9.9',
-        now: () => RETIREMENT_NOW,
-      }).action,
-    ).toBe('written');
+    putManagedCouncilWorkflow(
+      join(fixture.claudeDir, 'workflows'),
+      COUNCIL_TEMPLATE.replace('__GENIE_LENS_ROOT__', pluginRoot),
+    );
     const agentPath = join(fixture.claudeDir, 'agents', 'reviewer.md');
     put(agentPath, '# reviewer\n');
     put(
@@ -4281,38 +2649,19 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     });
   }
 
-  /** One full convergence pass, with agent-sync bound to the fixture's homes. */
+  /** One full convergence pass against the fixture's homes. */
   function converge(
     fixture: RetirementFixture,
     skills: SkillsChannelConvergenceResult,
   ): {
     lines: string[];
-    sync: AgentSyncReport;
     retirement: ReturnType<typeof runManualUpdateConvergence>['retirement'];
   } {
     const lines: string[] = [];
-    let sync: AgentSyncReport | undefined;
     const result = runManualUpdateConvergence({
       expectedVersion: '9.9.9',
       selection: 'all',
       runSkills: () => skills,
-      runSync: () => {
-        sync = runAgentSync({
-          genieHome: fixture.genieHome,
-          targets: {
-            claude: fixture.claudeDir,
-            codex: fixture.codexHome,
-            hermes: fixture.hermesHome,
-            pi: fixture.piExtensionsDir,
-            agentsSkills: join(fixture.home, '.agents', 'skills'),
-          },
-          hermesBinary: null,
-          piBinary: null,
-          now: () => RETIREMENT_NOW,
-          log: () => undefined,
-        });
-      },
-      refreshPlugins: () => [],
       retirementHomes: {
         home: fixture.home,
         genieHome: fixture.genieHome,
@@ -4323,8 +2672,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
       },
       log: (line) => lines.push(line),
     });
-    if (sync === undefined) throw new Error('agent-sync did not run');
-    return { lines, sync, retirement: result.retirement };
+    return { lines, retirement: result.retirement };
   }
 
   function installedSkills(): SkillsChannelConvergenceResult {
@@ -4357,10 +2705,6 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     return createHash('sha256').update(parts.join('\n')).digest('hex');
   }
 
-  function extras(sync: AgentSyncReport, agent: string, kind: string): string | undefined {
-    return sync.agents.find((entry) => entry.agent === agent)?.extras.find((extra) => extra.kind === kind)?.action;
-  }
-
   test('a fresh record: pass one retires every surface, pass two is a byte-for-byte no-op', () => {
     const fixture = makeRetirementFixture();
     plantRecord(fixture, releaseTag(VERSION));
@@ -4386,31 +2730,29 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
 
     const first = converge(fixture, installedSkills());
     expect(first.retirement?.failures).toEqual([]);
+    // Retirement now owns every plugin-era surface outright. Two of them —
+    // the bare-name claude skill mirror and the hermes MCP marker block — used
+    // to be cleaned by the per-agent convergence engine's own lanes before retirement
+    // ran; with that engine deleted they reach retirement still present, which
+    // is exactly the surface set a real post-deletion host presents.
     expect(first.retirement?.removed.map((entry) => entry.surface).sort()).toEqual([
       'claude-agent',
       'claude-enabled-plugin',
       'claude-marketplace-registration',
       'claude-plugin-cache',
       'claude-plugin-registry',
+      'claude-skill',
       'claude-workflow',
       'codex-legacy-curated-skill',
       'codex-plugin-cache',
       'codex-plugin-registration',
       'codex-role-agent',
+      'codex-role-agent-inventory',
+      'hermes-mcp-server',
       'hermes-plugin-link',
       'hermes-skills-external-dir',
       'pi-extension-link',
     ]);
-    // Two surfaces are already owned by agent-sync's own never-suppressed cleanup
-    // lanes, so retirement correctly finds them absent by the time it runs:
-    // the hermes MCP marker block, and the bare-name claude skill mirror (a
-    // managed ORPHAN once the plugin source no longer ships that name).
-    expect(extras(first.sync, 'hermes', 'mcp-config')).toBe('updated');
-    expect(first.sync.agents.find((entry) => entry.agent === 'claude')?.skills).toContainEqual({
-      name: 'legacy-mirror',
-      action: 'removed',
-    });
-    expect(existsSync(join(fixture.claudeDir, 'skills', 'legacy-mirror'))).toBe(false);
     // The two user-owned Claude registries keep every key but genie's own.
     expect(JSON.parse(readFileSync(join(fixture.claudeDir, 'plugins', 'known_marketplaces.json'), 'utf8'))).toEqual({
       'other-market': { source: { source: 'git', repo: 'someone/else' } },
@@ -4423,39 +2765,16 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     const second = converge(fixture, installedSkills());
     expect(second.retirement?.removed).toEqual([]);
     expect(second.lines).toContain('nothing to retire');
-    // Every plugin-era writer arm stands down, on both passes.
-    expect(extras(second.sync, 'claude', 'agents-mirror')).toBe('suppressed');
-    expect(extras(second.sync, 'claude', 'stamp')).toBe('suppressed');
-    expect(extras(second.sync, 'hermes', 'symlink')).toBe('suppressed');
-    expect(extras(second.sync, 'hermes', 'skills-dir')).toBe('suppressed');
-    expect(extras(second.sync, 'pi', 'symlink')).toBe('suppressed');
-    // …and the bare-name skill mirror stays inert against the skills.sh copy.
-    expect(second.sync.agents.find((entry) => entry.agent === 'claude')?.skills).toEqual([
-      {
-        name: 'alpha',
-        action: 'skipped-unmanaged-kept',
-        detail: 'no ownership manifest; existing directory preserved',
-      },
-    ]);
     expect(treeHash(fixture.home)).toBe(afterFirst);
   });
 
-  test('a stale record: the writers fire, and a non-installed channel skips retirement entirely', () => {
+  test('a non-installed channel skips retirement entirely', () => {
     const fixture = makeRetirementFixture();
     plantRecord(fixture, 'v0.0.1');
 
     const run = converge(fixture, { status: 'failed', reason: 'skills CLI exited 1: boom' });
     expect(run.retirement).toBeNull();
     expect(run.lines).not.toContain('nothing to retire');
-
-    // Every arm reports a real convergence outcome ("already correct" included) —
-    // never `suppressed`, which is the only value a stood-down arm ever reports.
-    expect(extras(run.sync, 'claude', 'stamp')).toBe('skipped');
-    expect(extras(run.sync, 'claude', 'agents-mirror')).toBeUndefined();
-    expect(extras(run.sync, 'hermes', 'symlink')).toBe('unchanged');
-    expect(extras(run.sync, 'hermes', 'skills-dir')).toBe('unchanged');
-    expect(extras(run.sync, 'pi', 'symlink')).toBe('unchanged');
-    expect(run.sync.agents.flatMap((entry) => entry.extras).some((extra) => extra.action === 'suppressed')).toBe(false);
 
     // Nothing was retired: every plugin-era asset is still exactly where it was.
     expect(readFileSync(join(fixture.codexHome, 'config.toml'), 'utf8')).toContain('[plugins."genie@automagik"]');
@@ -4470,7 +2789,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
     const body = source.slice(source.indexOf('export function runManualUpdateConvergence('));
     const convergence = body.slice(0, body.indexOf('\n}\n'));
     expect(convergence.indexOf('runLegacyIntegrationRetirement(')).toBeGreaterThan(
-      convergence.indexOf('refreshUpdatePlugins)('),
+      convergence.indexOf('runUpdateSkillsChannel)('),
     );
     expect(convergence).toContain("skills.status === 'installed'");
     // Never at the install seam, never from doctor.

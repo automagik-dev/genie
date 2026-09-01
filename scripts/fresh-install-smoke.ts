@@ -1,16 +1,11 @@
 #!/usr/bin/env bun
 
 /**
- * Exercise the exact Codex source-plugin layout without relying on symlink
- * dereference, a globally installed Genie CLI, or Claude-only skill variables.
- *
- * Plugin-only contract (wish `repair-genie-codex-hooks-and-dedupe-skills`): this
- * smoke validates the PLUGIN payload + manifest MCP shape that the installed
- * plugin is the sole provider of — it never asserts any `~/.agents/skills`
- * product-skill fallback lane (that lane is retired; see
- * `codex-plugin-only-smoke.ts` for the black-box lifecycle proof). Its
- * Claude-manifest and Codex-manifest MCP checks remain the authoritative plugin
- * MCP-shape gate and must keep passing.
+ * Exercise the shipped `skills/` tree exactly as a fresh install delivers it:
+ * no symlink dereference, no globally installed Genie CLI, and no Claude-only
+ * skill variables. Every check reads the physical skills tree and the bundled
+ * resources each SKILL.md names, so a skill that only works out of a source
+ * checkout — or out of a plugin payload that no longer ships — fails here.
  */
 
 import {
@@ -21,87 +16,19 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertHookContentBinding } from './hook-content-binding.ts';
 import { validateSkillMetadata } from './skills-lint.ts';
-import { SHIPPED_SKILL_NAMES, assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
 export function repositoryRootFromModuleUrl(moduleUrl: string): string {
   return resolve(dirname(fileURLToPath(moduleUrl)), '..');
 }
 
 const REPO_ROOT = repositoryRootFromModuleUrl(import.meta.url);
-
-export const CODEX_ROLE_PROFILE_FILES = [
-  'genie-engineer-complex.toml',
-  'genie-engineer-standard.toml',
-  'genie-engineer-trivial.toml',
-  'genie-final-gate.toml',
-  'genie-fixer.toml',
-  'genie-reviewer.toml',
-  'genie-scout.toml',
-] as const;
-
-export const CLAUDE_ROLE_AGENT_FILES = [
-  'engineer-complex.md',
-  'engineer-standard.md',
-  'engineer-trivial.md',
-  'final-gate.md',
-  'fixer.md',
-  'reviewer.md',
-  'scout.md',
-] as const;
-
-const CODEX_ROLE_PROFILE_CONTRACTS = {
-  'genie-engineer-complex.toml': {
-    name: 'genie_engineer_complex',
-    effort: 'xhigh',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-engineer-standard.toml': {
-    name: 'genie_engineer_standard',
-    effort: 'high',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-engineer-trivial.toml': {
-    name: 'genie_engineer_trivial',
-    effort: 'low',
-    sandboxMode: 'workspace-write',
-  },
-  'genie-final-gate.toml': { name: 'genie_final_gate', effort: 'high', sandboxMode: 'read-only' },
-  'genie-fixer.toml': { name: 'genie_fixer', effort: 'medium', sandboxMode: 'workspace-write' },
-  'genie-reviewer.toml': { name: 'genie_reviewer', effort: 'xhigh', sandboxMode: null },
-  'genie-scout.toml': { name: 'genie_scout', effort: 'low', sandboxMode: 'read-only' },
-} as const satisfies Record<
-  (typeof CODEX_ROLE_PROFILE_FILES)[number],
-  { name: string; effort: string; sandboxMode: 'workspace-write' | 'read-only' | null }
->;
-
-const CLAUDE_ROLE_AGENT_CONTRACTS = {
-  'engineer-complex.md': { name: 'engineer-complex', model: 'opus', effort: 'xhigh' },
-  'engineer-standard.md': { name: 'engineer-standard', model: 'opus', effort: 'high' },
-  'engineer-trivial.md': { name: 'engineer-trivial', model: 'opus', effort: 'low' },
-  'final-gate.md': { name: 'final-gate', model: 'fable', effort: 'high' },
-  'fixer.md': { name: 'fixer', model: 'opus', effort: 'medium' },
-  'reviewer.md': { name: 'reviewer', model: 'opus', effort: 'xhigh' },
-  'scout.md': { name: 'scout', model: 'haiku', effort: 'low' },
-} as const satisfies Record<(typeof CLAUDE_ROLE_AGENT_FILES)[number], { name: string; model: string; effort: string }>;
-
-const REVIEWER_CONTEXT_MARKERS = [
-  'DESIGN.md',
-  'Plan review',
-  'completed execution',
-  'PR review',
-  'SHIP',
-  'FIX-FIRST',
-  'BLOCKED',
-];
 
 class SmokeFailure extends Error {}
 
@@ -111,36 +38,51 @@ function fail(message: string): never {
 
 interface SmokeArgs {
   skillsDir: string;
-  pluginRoot?: string;
-  expectProductInventory: boolean;
+  requireShippedInventory: boolean;
 }
 
+/**
+ * The shipped inventory is the set of `SKILL.md`-bearing directories under the
+ * repository `skills/` tree, enforced by default — `--skills-dir` runs
+ * included, because those are exactly the staged and extracted payload trees
+ * `build-binary.sh` hands us, and a payload that lost a skill must fail here.
+ * `--allow-partial-inventory` is the narrow opt-out for synthetic fixture trees
+ * in tests; no release path passes it.
+ */
 function parseArgs(argv: string[]): SmokeArgs {
   let skillsDir = join(REPO_ROOT, 'skills');
-  let pluginRoot: string | undefined = join(REPO_ROOT, 'plugins', 'genie');
-  let customSkills = false;
-  let customPlugin = false;
+  let requireShippedInventory = true;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--skills-dir') {
       const next = argv[i + 1];
       if (!next) fail('--skills-dir requires a path argument');
       skillsDir = resolve(next);
-      customSkills = true;
       i++;
       continue;
     }
-    if (argv[i] === '--plugin-root') {
-      const next = argv[i + 1];
-      if (!next) fail('--plugin-root requires a path argument');
-      pluginRoot = resolve(next);
-      customPlugin = true;
-      i++;
+    if (argv[i] === '--allow-partial-inventory') {
+      requireShippedInventory = false;
       continue;
     }
     fail(`unknown argument: ${argv[i]}`);
   }
-  if (customSkills && !customPlugin) pluginRoot = undefined;
-  return { skillsDir, pluginRoot, expectProductInventory: !customSkills && !customPlugin };
+  return { skillsDir, requireShippedInventory };
+}
+
+function assertShippedInventory(names: string[]): void {
+  const shipped = listSkillNames(join(REPO_ROOT, 'skills'));
+  if (names.join('\n') === shipped.join('\n')) return;
+  const missing = shipped.filter((name) => !names.includes(name));
+  const unexpected = names.filter((name) => !shipped.includes(name));
+  const detail = [
+    missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+    unexpected.length > 0 ? `unexpected: ${unexpected.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('; ');
+  fail(
+    `shipped skill inventory mismatch: expected ${shipped.length} skills, got ${names.length}${detail ? ` (${detail})` : ''}`,
+  );
 }
 
 function listSkillNames(skillsDir: string): string[] {
@@ -155,109 +97,6 @@ function listSkillNames(skillsDir: string): string[] {
 function isWithin(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !rel.startsWith(sep));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function exactPhysicalFiles(root: string, relativeDir: string, expected: readonly string[]): string {
-  const directory = join(root, relativeDir);
-  if (!existsSync(directory) || !lstatSync(directory).isDirectory()) fail(`role directory not found: ${directory}`);
-  if (lstatSync(directory).isSymbolicLink()) fail(`role directory must be physical: ${directory}`);
-  const entries = readdirSync(directory, { withFileTypes: true });
-  const names = entries.map((entry) => entry.name).sort();
-  if (names.join('\n') !== [...expected].sort().join('\n')) {
-    fail(`${relativeDir} role inventory differs (expected ${expected.join(', ')}, got ${names.join(', ')})`);
-  }
-  for (const entry of entries) {
-    const file = join(directory, entry.name);
-    if (!entry.isFile() || entry.isSymbolicLink() || lstatSync(file).isSymbolicLink()) {
-      fail(`role profile must be a physical file: ${file}`);
-    }
-  }
-  return directory;
-}
-
-function checkCodexRoleProfiles(pluginRoot: string): void {
-  const directory = exactPhysicalFiles(pluginRoot, 'codex-agents', CODEX_ROLE_PROFILE_FILES);
-  for (const fileName of CODEX_ROLE_PROFILE_FILES) {
-    const file = join(directory, fileName);
-    let parsed: unknown;
-    try {
-      parsed = Bun.TOML.parse(readFileSync(file, 'utf8'));
-    } catch (error) {
-      fail(`${fileName} is not parseable TOML: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const contract = CODEX_ROLE_PROFILE_CONTRACTS[fileName];
-    const accessMatches =
-      contract.sandboxMode === null
-        ? parsed !== undefined &&
-          isRecord(parsed) &&
-          parsed.approval_policy === 'never' &&
-          parsed.default_permissions === ':read-only' &&
-          parsed.sandbox_mode === undefined
-        : parsed !== undefined && isRecord(parsed) && parsed.sandbox_mode === contract.sandboxMode;
-    if (
-      !isRecord(parsed) ||
-      parsed.name !== contract.name ||
-      parsed.model_reasoning_effort !== contract.effort ||
-      !accessMatches ||
-      typeof parsed.description !== 'string' ||
-      parsed.description.trim() === '' ||
-      typeof parsed.developer_instructions !== 'string' ||
-      parsed.developer_instructions.trim() === ''
-    ) {
-      fail(`${fileName} must match the canonical ${contract.name} role contract`);
-    }
-    if (fileName === 'genie-reviewer.toml' && isRecord(parsed)) {
-      const instructions = typeof parsed.developer_instructions === 'string' ? parsed.developer_instructions : '';
-      const missing = REVIEWER_CONTEXT_MARKERS.filter((marker) => !instructions.includes(marker));
-      if (missing.length > 0) {
-        fail(`genie-reviewer.toml must cover design, plan, execution, and PR contexts (${missing.join(', ')})`);
-      }
-    }
-  }
-}
-
-function checkClaudeRoleAgents(pluginRoot: string): void {
-  const directory = exactPhysicalFiles(pluginRoot, 'agents', CLAUDE_ROLE_AGENT_FILES);
-  for (const fileName of CLAUDE_ROLE_AGENT_FILES) {
-    const file = join(directory, fileName);
-    const raw = readFileSync(file, 'utf8');
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(raw);
-    if (!frontmatter) fail(`${fileName} must start with closed YAML frontmatter`);
-    let parsed: unknown;
-    try {
-      parsed = Bun.YAML.parse(frontmatter[1]);
-    } catch (error) {
-      fail(`${fileName} is not parseable YAML: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const contract = CLAUDE_ROLE_AGENT_CONTRACTS[fileName];
-    if (
-      !isRecord(parsed) ||
-      parsed.name !== contract.name ||
-      typeof parsed.description !== 'string' ||
-      parsed.description.trim() === '' ||
-      parsed.model !== contract.model ||
-      parsed.effort !== contract.effort ||
-      raw.slice(frontmatter[0].length).trim() === ''
-    ) {
-      fail(`${fileName} must match the canonical ${contract.name} role contract`);
-    }
-    if (fileName === 'reviewer.md') {
-      const body = raw.slice(frontmatter[0].length);
-      const missing = REVIEWER_CONTEXT_MARKERS.filter((marker) => !body.includes(marker));
-      if (missing.length > 0) {
-        fail(`reviewer.md must cover design, plan, execution, and PR contexts (${missing.join(', ')})`);
-      }
-    }
-  }
-}
-
-function checkRoleInventories(pluginRoot: string): void {
-  checkCodexRoleProfiles(pluginRoot);
-  checkClaudeRoleAgents(pluginRoot);
 }
 
 function checkMetadata(skillsDir: string, names: string[]): void {
@@ -407,134 +246,6 @@ function documentedWishScaffoldCommand(instructions: string, wishDir: string, sl
   return command;
 }
 
-function resolvePluginSkills(pluginRoot: string): { skillsDir: string; manifest: Record<string, unknown> } {
-  const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
-  if (!existsSync(manifestPath)) fail(`Codex plugin manifest missing: ${manifestPath}`);
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-  if (typeof manifest.skills !== 'string' || !manifest.skills.startsWith('./')) {
-    fail('Codex plugin manifest skills path must start with ./');
-  }
-  const declared = resolve(pluginRoot, manifest.skills);
-  if (!isWithin(resolve(pluginRoot), declared))
-    fail(`Codex plugin skills path escapes plugin root: ${manifest.skills}`);
-  if (!existsSync(declared)) fail(`Codex plugin skills path is missing: ${manifest.skills}`);
-  if (lstatSync(declared).isSymbolicLink()) fail(`Codex plugin skills path must be physical: ${manifest.skills}`);
-  const realPluginRoot = realpathSync(pluginRoot);
-  const realSkills = realpathSync(declared);
-  if (!isWithin(realPluginRoot, realSkills))
-    fail(`Codex plugin skills path resolves outside plugin root: ${manifest.skills}`);
-  return { skillsDir: declared, manifest };
-}
-
-function checkStarterPrompts(manifest: Record<string, unknown>, names: string[]): void {
-  const interfaceMetadata = manifest.interface as { defaultPrompt?: unknown } | undefined;
-  const prompts = interfaceMetadata?.defaultPrompt;
-  if (!Array.isArray(prompts) || !prompts.every((prompt) => typeof prompt === 'string')) {
-    fail('Codex plugin interface.defaultPrompt must be an array of strings');
-  }
-  for (const required of ['wish', 'work', 'review']) {
-    if (!names.includes(required) || !prompts.some((prompt) => prompt.includes(`$genie:${required}`))) {
-      fail(`Codex plugin starter prompts must name $genie:${required}`);
-    }
-  }
-}
-
-function checkPluginMcpLayout(pluginRoot: string, manifest: Record<string, unknown>): void {
-  // A7 removed every plugin MCP route and launcher.
-  if ('mcpServers' in manifest) fail('Codex plugin manifest must not declare mcpServers (plugin MCP route removed)');
-  const iface = manifest.interface;
-  const capabilities =
-    typeof iface === 'object' && iface !== null && !Array.isArray(iface)
-      ? (iface as { capabilities?: unknown }).capabilities
-      : undefined;
-  if (Array.isArray(capabilities) && capabilities.includes('MCP')) {
-    fail('Codex plugin must not advertise the MCP capability (plugin MCP route removed)');
-  }
-  if (existsSync(join(pluginRoot, '.mcp.json'))) fail('Codex plugin must not ship a .mcp.json route file');
-  const launcher = resolve(pluginRoot, 'scripts', 'mcp-launcher.cjs');
-  if (existsSync(launcher)) fail(`retired MCP launcher must not ship: ${launcher}`);
-}
-
-function checkClaudePluginMcpLayout(pluginRoot: string): void {
-  const manifestPath = join(pluginRoot, '.claude-plugin', 'plugin.json');
-  if (!existsSync(manifestPath)) fail(`Claude plugin manifest missing: ${manifestPath}`);
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-  if ('mcpServers' in manifest) fail('Claude plugin manifest must not declare retired MCP servers');
-}
-
-// The exact bounded read-only H3 launcher, pinned identically across the source
-// manifest and every extracted tarball. Release gates and the extracted-payload
-// verifier depend on this string not drifting between surfaces.
-const CANONICAL_H3_COMMAND = 'node "${PLUGIN_ROOT}/scripts/session-context.cjs"';
-const CANONICAL_H3_COMMAND_WINDOWS = 'node "%PLUGIN_ROOT%\\scripts\\session-context.cjs"';
-
-function checkH3SessionStartCommand(pluginRoot: string): void {
-  const manifestPath = join(pluginRoot, 'hooks', 'codex-hooks.json');
-  if (!existsSync(manifestPath)) fail(`Codex hook manifest missing: ${manifestPath}`);
-  const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-    hooks?: { SessionStart?: Array<{ hooks?: Array<{ command?: unknown; commandWindows?: unknown }> }> };
-  };
-  const sessionStart = parsed.hooks?.SessionStart;
-  const hook = sessionStart?.[0]?.hooks?.[0];
-  if (!sessionStart || sessionStart.length !== 1 || !hook) {
-    fail('Codex hook manifest must declare exactly one SessionStart (H3) hook');
-  }
-  if (hook.command !== CANONICAL_H3_COMMAND || hook.commandWindows !== CANONICAL_H3_COMMAND_WINDOWS) {
-    fail('Codex H3 SessionStart launcher must be the exact bounded read-only session-context.cjs command');
-  }
-}
-
-function checkPluginLayout(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
-  const { skillsDir, manifest } = resolvePluginSkills(pluginRoot);
-  const actual = listSkillNames(skillsDir);
-  if (actual.join('\n') !== [...expectedNames].sort().join('\n')) {
-    fail(`plugin skill inventory differs (expected ${expectedNames.length}, got ${actual.length})`);
-  }
-  assertPluginSkillsInSync({
-    canonicalDir: canonicalSkills,
-    pluginSkillsDir: skillsDir,
-    expectedSkillNames: expectedNames,
-  });
-  checkStarterPrompts(manifest, expectedNames);
-  checkPluginMcpLayout(pluginRoot, manifest);
-  checkClaudePluginMcpLayout(pluginRoot);
-  checkH3SessionStartCommand(pluginRoot);
-  try {
-    assertHookContentBinding(
-      join(pluginRoot, 'hooks', 'codex-hooks.json'),
-      join(pluginRoot, 'scripts', 'dispatch-runtime.cjs'),
-    );
-  } catch (error) {
-    fail(`Codex hook launcher content binding failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  checkRoleInventories(pluginRoot);
-}
-
-/** Copy the plugin exactly as a source marketplace does, without dereferencing links. */
-function checkSourceCopy(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
-  const workRoot = mkdtempSync(join(tmpdir(), 'genie-source-plugin-'));
-  try {
-    const copiedRoot = join(workRoot, 'genie');
-    cpSync(pluginRoot, copiedRoot, { recursive: true, dereference: false, verbatimSymlinks: true });
-    checkPluginLayout(copiedRoot, canonicalSkills, expectedNames);
-  } finally {
-    rmSync(workRoot, { recursive: true, force: true });
-  }
-}
-
-/** Mirror Codex's versioned cache nesting and verify relative MCP paths there too. */
-function checkCacheCopy(pluginRoot: string, canonicalSkills: string, expectedNames: string[]): void {
-  const workRoot = mkdtempSync(join(tmpdir(), 'genie-cache-plugin-'));
-  try {
-    const cachedRoot = join(workRoot, 'cache', 'automagik', 'genie', 'fixture-version');
-    mkdirSync(join(workRoot, 'cache', 'automagik', 'genie'), { recursive: true });
-    cpSync(pluginRoot, cachedRoot, { recursive: true, dereference: false, verbatimSymlinks: true });
-    checkPluginLayout(cachedRoot, canonicalSkills, expectedNames);
-  } finally {
-    rmSync(workRoot, { recursive: true, force: true });
-  }
-}
-
 /** Execute the exact scaffold workflow documented by the shipped wish skill. */
 function runWishScaffoldSmoke(skillsDir: string): void {
   const wishDir = join(skillsDir, 'wish');
@@ -590,22 +301,14 @@ function main(): void {
   try {
     const args = parseArgs(process.argv.slice(2));
     const names = listSkillNames(args.skillsDir);
-    if (args.expectProductInventory && names.join('\n') !== [...SHIPPED_SKILL_NAMES].sort().join('\n')) {
-      fail(`expected ${SHIPPED_SKILL_NAMES.length} shipped skills, got ${names.length}`);
-    }
+    if (args.requireShippedInventory) assertShippedInventory(names);
     checkMetadata(args.skillsDir, names);
     checkSkillStarterPrompts(args.skillsDir, names);
     checkDesignReviewEvidenceTool(args.skillsDir, names);
     const refs = checkBundledReferences(args.skillsDir, names);
     runWishScaffoldSmoke(args.skillsDir);
-    if (args.pluginRoot) {
-      checkPluginLayout(args.pluginRoot, args.skillsDir, names);
-      checkSourceCopy(args.pluginRoot, args.skillsDir, names);
-      checkCacheCopy(args.pluginRoot, args.skillsDir, names);
-    }
-    const roleSummary = args.pluginRoot ? ', 7 Codex + 7 Claude role profiles' : '';
     console.log(
-      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references${roleSummary}, source/package parity, Claude variables unset)`,
+      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references, Claude variables unset)`,
     );
   } catch (error) {
     if (!(error instanceof SmokeFailure)) throw error;

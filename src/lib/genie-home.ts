@@ -1,7 +1,7 @@
 /**
  * Genie home + agent directory resolution.
  *
- * Every path the agent-sync engine reads or writes is derived from one of these
+ * Every path the lifecycle commands read or write is derived from one of these
  * roots. Each honors its conventional environment override so tests can
  * redirect ALL state into a tmpdir and never touch the real `$HOME`, and so
  * operators can relocate any one agent's config without moving the others.

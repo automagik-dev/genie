@@ -219,7 +219,6 @@ jobs:
       attestations: read
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
-      dogfood_matrix: ${{ steps.build.outputs.dogfood_matrix }}
       update_path_matrix: ${{ steps.build.outputs.update_path_matrix }}
       candidate_manifest_name: ${{ steps.build.outputs.candidate_manifest_name }}
       candidate_manifest_sha256: ${{ steps.build.outputs.candidate_manifest_sha256 }}
@@ -289,7 +288,6 @@ jobs:
             --manifest "$SELECTED_MANIFEST" \
             --artifact-dir dist \
             --output candidate-dogfood-matrix.json
-          DOGFOOD_MATRIX="$(tr -d '\n' < candidate-dogfood-matrix.json)"
           # release-update-path-smoke runs the two Linux legs of the SAME
           # manifest-derived inventory. It is a projection of
           # candidate-dogfood-matrix.json, never a hand-written platform list:
@@ -397,7 +395,6 @@ jobs:
           done
           {
             echo "matrix={\"include\":${MATRIX}}"
-            echo "dogfood_matrix=${DOGFOOD_MATRIX}"
             echo "update_path_matrix=${UPDATE_PATH_MATRIX}"
             echo "candidate_manifest_name=${CANDIDATE_MANIFEST_NAME}"
             echo "candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}"
@@ -559,277 +556,28 @@ jobs:
               --manifest "$manifest"
           done
 
-  codex-native-dogfood:
-    name: Codex standalone task/board dogfood / ${{ matrix.platform }}
-    needs: [prepare-delivery-evidence, attest-delivery-evidence, delivery-evidence-compatibility]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      attestations: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare-delivery-evidence.outputs.dogfood_matrix) }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          # The harness and validators are trusted release controls. The exact
-          # candidate from source_sha is consumed only as a signed archive.
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.11
-
-      - name: Install trusted harness dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Install pinned real Codex app-server
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install -g @openai/codex@0.144.1
-          CODEX_PATH="$(node -e 'console.log(require("node:fs").realpathSync(process.argv[1]))' "$(command -v codex)")"
-          [[ "$("$CODEX_PATH" --version)" == "codex-cli 0.144.1" ]]
-          echo "GENIE_DOGFOOD_REAL_CODEX=${CODEX_PATH}" >> "$GITHUB_ENV"
-
-      - name: Install cosign for previous-stable verification
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-        with:
-          cosign-release: 'v2.4.1'
-
-      # The upstream installer action bootstraps through a linux-amd64 binary,
-      # so it can never run on this job's arm64 runners (darwin-arm64 ENOEXEC,
-      # ubuntu-24.04-arm exit 2). Install the platform-correct release asset
-      # directly, pinned to the upstream SHA256SUM.md ledger for v2.7.1.
-      - name: Install slsa-verifier for previous-stable verification
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$(uname -s)-$(uname -m)" in
-            Linux-x86_64)  ASSET=slsa-verifier-linux-amd64  SHA256=946dbec729094195e88ef78e1734324a27869f03e2c6bd2f61cbc06bd5350339 ;;
-            Linux-aarch64) ASSET=slsa-verifier-linux-arm64  SHA256=5d3b2349ede7bfec19e7a21569f18b9f7410145ad12e9584b175370669e14061 ;;
-            Darwin-arm64)  ASSET=slsa-verifier-darwin-arm64 SHA256=39abfcf5f1d690c3e889ce3d2d6a8b87711424d83368511868d414e8f8bcb05c ;;
-            *)
-              echo "::error::unsupported runner platform for slsa-verifier: $(uname -s)-$(uname -m)"
-              exit 1
-              ;;
-          esac
-          mkdir -p "${RUNNER_TEMP}/slsa-verifier-bin"
-          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" \
-            "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/${ASSET}"
-          echo "${SHA256}  ${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier" | shasum -a 256 -c -
-          chmod +x "${RUNNER_TEMP}/slsa-verifier-bin/slsa-verifier"
-          echo "${RUNNER_TEMP}/slsa-verifier-bin" >> "$GITHUB_PATH"
-
-      # Ubuntu 24.04 images permit creating unprivileged user namespaces but
-      # AppArmor denies capability use inside them, so the real Codex sandbox
-      # dies at loopback setup ("bwrap: loopback: Failed RTM_NEWADDR"). Lift the
-      # restriction so the dogfood exercises Codex's actual bubblewrap sandbox
-      # instead of disabling it.
-      - name: Allow the Codex bubblewrap sandbox to configure its network namespace
-        if: runner.os == 'Linux'
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      # The harness fails a capability probe on ANY stderr output, and the
-      # adapter's first `docker run` of an unpulled image streams pull progress
-      # to stderr. Pull the exact pinned digest up front so probe stderr stays
-      # clean. Image pin must match scripts/run-musl-dogfood.sh.
-      - name: Pre-pull the pinned Alpine image for the musl execution adapter
-        if: matrix.execution == 'alpine-container'
-        run: docker pull -q 'alpine:3.19@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1'
-
-      - name: Download exact verified previous-stable inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: codex-dogfood-previous-release
-          path: dogfood-entry/inputs/previous
-
-      - name: Download exact candidate signed triplet
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: genie-${{ matrix.version }}-${{ matrix.platform }}-signed
-          path: dogfood-entry/inputs/candidate
-
-      - name: Download exact candidate manifest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: delivery-candidate-manifests
-          path: dogfood-entry/inputs/candidate/manifests
-
-      - name: Download canonical candidate descriptors
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: delivery-descriptors
-          path: dogfood-entry/inputs/candidate/descriptors
-
-      - name: Download exact candidate delivery endorsement
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: delivery-endorsement-${{ matrix.channel }}-${{ matrix.platform }}
-          path: dogfood-entry/inputs/candidate/descriptors
-
-      - name: Resolve native execution adapter
-        id: adapter
-        shell: bash
-        env:
-          EXECUTION_KIND: ${{ matrix.execution }}
-        run: |
-          set -euo pipefail
-          case "$EXECUTION_KIND" in
-            host-native)
-              echo 'path=' >> "$GITHUB_OUTPUT"
-              ;;
-            alpine-container)
-              ADAPTER="${GITHUB_WORKSPACE}/scripts/run-musl-dogfood.sh"
-              [[ -f "$ADAPTER" && ! -L "$ADAPTER" && -x "$ADAPTER" ]] || {
-                echo "::error::pinned musl execution adapter is unavailable"
-                exit 1
-              }
-              echo "path=${ADAPTER}" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "::error::manifest matrix selected unknown execution kind ${EXECUTION_KIND}"
-              exit 1
-              ;;
-          esac
-
-      - name: Run exact N to T lifecycle and emit reusable evidence
-        shell: bash
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          PREVIOUS_VERSION: ${{ needs.prepare-delivery-evidence.outputs.previous_version }}
-          CANDIDATE_VERSION: ${{ matrix.version }}
-          CANDIDATE_CHANNEL: ${{ matrix.channel }}
-          CANDIDATE_MANIFEST_NAME: ${{ matrix.manifest }}
-          EXECUTION_ADAPTER: ${{ steps.adapter.outputs.path }}
-        run: |
-          set -euo pipefail
-          PREVIOUS_ARTIFACT="dogfood-entry/inputs/previous/genie-${PREVIOUS_VERSION}-${PLATFORM}.tar.gz"
-          CANDIDATE_ARTIFACT="dogfood-entry/inputs/candidate/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz"
-          CANDIDATE_DESCRIPTOR="dogfood-entry/inputs/candidate/descriptors/genie-${CANDIDATE_VERSION}-${PLATFORM}.tar.gz.${CANDIDATE_CHANNEL}.delivery.json"
-          EVIDENCE="dogfood-entry/codex-dogfood-${CANDIDATE_VERSION}-${PLATFORM}.md"
-          RUNNER_ARGS=(
-            --previous-artifact "$PREVIOUS_ARTIFACT"
-            --previous-manifest dogfood-entry/inputs/previous/manifest.json
-            --previous-bundle "${PREVIOUS_ARTIFACT}.bundle"
-            --previous-provenance "${PREVIOUS_ARTIFACT}.intoto.jsonl"
-            --candidate-artifact "$CANDIDATE_ARTIFACT"
-            --candidate-manifest "dogfood-entry/inputs/candidate/manifests/${CANDIDATE_MANIFEST_NAME}"
-            --candidate-descriptor "$CANDIDATE_DESCRIPTOR"
-            --candidate-bundle "${CANDIDATE_DESCRIPTOR}.sigstore.json"
-            --platform-id "$PLATFORM"
-            --output-evidence "$EVIDENCE"
-          )
-          if [[ -n "$EXECUTION_ADAPTER" ]]; then
-            RUNNER_ARGS+=(--execution-adapter "$EXECUTION_ADAPTER")
-          fi
-          bun tests/support/codex-dogfood-entry-runner.ts "${RUNNER_ARGS[@]}"
-          bun scripts/validate-live-dogfood-evidence.ts \
-            --file "$EVIDENCE" \
-            --inputs-root dogfood-entry
-
-      - name: Upload exact per-entry evidence and referenced inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: codex-dogfood-evidence-${{ matrix.platform }}
-          path: dogfood-entry
-          if-no-files-found: error
-          retention-days: 30
-
-  codex-dogfood-completeness:
-    name: Require complete Codex standalone dogfood matrix
-    needs: [prepare-delivery-evidence, codex-native-dogfood]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Reject failed, skipped, or unavailable standalone entries
-        shell: bash
-        env:
-          PREPARE_RESULT: ${{ needs.prepare-delivery-evidence.result }}
-          STANDALONE_RESULT: ${{ needs.codex-native-dogfood.result }}
-          EXPECTED_MATRIX: ${{ needs.prepare-delivery-evidence.outputs.dogfood_matrix }}
-          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          [[ "$PREPARE_RESULT" == success && "$STANDALONE_RESULT" == success ]] || {
-            echo "::error::Codex dogfood is incomplete (prepare=${PREPARE_RESULT}, standalone=${STANDALONE_RESULT})"
-            exit 1
-          }
-          [[ -n "$EXPECTED_MATRIX" && -n "$EXPECTED_MANIFEST_SHA256" ]] || {
-            echo "::error::Codex dogfood candidate identity is unavailable"
-            exit 1
-          }
-
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.11
-
-      - name: Download manifest-derived candidate matrix
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: codex-dogfood-candidate-matrix
-          path: aggregate
-
-      - name: Download every native entry
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: codex-dogfood-evidence-*
-          path: aggregate/entries
-
-      - name: Validate one-to-one evidence and persist candidate identity
-        shell: bash
-        env:
-          EXPECTED_VERSION: ${{ inputs.version }}
-          EXPECTED_CHANNEL: ${{ inputs.channel }}
-          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
-          EXPECTED_MATRIX: ${{ needs.prepare-delivery-evidence.outputs.dogfood_matrix }}
-          EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          [[ "$(tr -d '\n' < aggregate/candidate-dogfood-matrix.json)" == "$EXPECTED_MATRIX" ]] || {
-            echo "::error::downloaded candidate matrix differs from the matrix used to schedule native jobs"
-            exit 1
-          }
-          bun scripts/validate-dogfood-matrix-evidence.ts \
-            --matrix aggregate/candidate-dogfood-matrix.json \
-            --evidence-dir aggregate/entries \
-            --version "$EXPECTED_VERSION" \
-            --channel "$EXPECTED_CHANNEL" \
-            --source-sha "$EXPECTED_SOURCE_SHA" \
-            --candidate-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
-            --output aggregate/codex-dogfood-completeness.json
-
-      - name: Upload complete Codex dogfood evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: codex-dogfood-completeness
-          path: aggregate/codex-dogfood-completeness.json
-          if-no-files-found: error
-          retention-days: 90
-
   # ---------------------------------------------------------------------------
-  # Wish `skills-everywhere`, C5 — two candidate-facing smokes added ALONGSIDE
-  # the Codex dogfood matrix above (which is unchanged) and required by
-  # `publish` below.
+  # Wish `skills-everywhere`, C5 — two candidate-facing smokes required by
+  # `publish` below. Wish `skills-everywhere-b`, G6: they are now the ONLY
+  # candidate-execution gates. The Codex standalone task/board dogfood matrix
+  # and its completeness roll-up that used to sit here were deleted with the
+  # Codex plugin subsystem they exercised; `publish.needs` therefore carries
+  # six edges, not seven. `prepare-delivery-evidence` keeps
+  # deriving `candidate-dogfood-matrix.json` and the verified previous-stable
+  # inputs — `release-update-path-smoke` and `stable-release-security-gate`
+  # both consume them.
   # ---------------------------------------------------------------------------
 
   # The skills.sh channel is the ONE supported way genie product skills reach an
   # agent home, so a release candidate must prove the PRODUCTION argv from
   # src/lib/skills-installer.ts actually lands byte-identical skills there.
   #
-  # The ref is the candidate COMMIT, not the release tag: no `v<version>` tag
-  # exists yet at this point in the pipeline, and skills.sh resolves a full
-  # 40-hex SHA as a ref (verified 2026-08-30 against automagik-dev/genie).
+  # The source is a LOCAL PATH, not a GitHub ref: skills@1.5.23 ignores the
+  # `@<ref>` suffix and always serves the repository's default branch (measured
+  # three ways on 2026-08-31), which made a ref-pinned gate assert `main`'s tree
+  # rather than the candidate's. The candidate checkout's own `skills/` stands
+  # in for the delivered `$GENIE_HOME/skills` tree the shipped binary points at
+  # (wish `skills-everywhere-b`, G1) — same argv shape, genuinely pinned.
   #
   # This job checks out `inputs.source_sha` rather than the admitted control
   # commit because the candidate tree is the COMPARISON SUBJECT here, not
@@ -863,8 +611,8 @@ jobs:
         with:
           node-version: '22'
 
-      # Same pin as codex-native-dogfood's app-server install and ci.yml's
-      # codex-smoke, so all three agree on exactly one Codex generation.
+      # Pinned to exactly one Codex generation. This job's live `codex exec`
+      # is the only remaining Codex execution in the release workflow.
       - name: Install pinned real Codex CLI
         run: npm install -g @openai/codex@0.144.1
 
@@ -878,20 +626,18 @@ jobs:
       # second unpinned npm install to a release gate without changing a single
       # assertion below.
       - name: Install the candidate's skills with the production argv
-        env:
-          SKILLS_REF: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/skills-evidence"
           # Byte-for-byte the argv built by src/lib/skills-installer.ts
-          # (`npx -y skills@<SKILLS_CLI_VERSION> add automagik-dev/genie@<ref>
-          # --all --copy -g`), with the candidate SHA standing in for the
-          # not-yet-existing release tag.
+          # (`npx -y skills@<SKILLS_CLI_VERSION> add <GENIE_HOME>/skills --all
+          # --copy -g`), with this checkout's `skills/` standing in for the
+          # delivered `$GENIE_HOME/skills` tree.
           # The argv is exact; only the ATTEMPT is bounded-retried, because the
-          # call clones over the network from npm and GitHub and a transport
-          # blip must not read as a release-blocking product failure.
+          # call still downloads the CLI from npm and a transport blip must not
+          # read as a release-blocking product failure.
           attempt=1
-          until npx -y skills@1.5.23 add "automagik-dev/genie@${SKILLS_REF}" --all --copy -g \
+          until npx -y skills@1.5.23 add "${GITHUB_WORKSPACE}/skills" --all --copy -g \
             >"${RUNNER_TEMP}/skills-evidence/install.log" 2>&1; do
             if (( attempt >= 3 )); then
               cat "${RUNNER_TEMP}/skills-evidence/install.log"
@@ -980,8 +726,8 @@ jobs:
 
       # Ubuntu 24.04 images permit unprivileged user namespaces but AppArmor
       # denies capability use inside them, so the real Codex sandbox dies at
-      # loopback setup. Same lift as codex-native-dogfood; only needed for the
-      # live `codex exec` below, so it is gated identically.
+      # loopback setup. Only needed for the live `codex exec` below, so it is
+      # gated identically.
       - name: Allow the Codex bubblewrap sandbox to configure its network namespace
         if: ${{ env.HAS_OPENAI_KEY == 'true' }}
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -1016,21 +762,20 @@ jobs:
   #
   # `prepare-delivery-evidence`, `delivery-evidence-compatibility` and
   # `stable-release-security-gate` reason about the candidate's evidence.
-  # `codex-native-dogfood` does run the update-side delivery path, but only
-  # INSIDE the Codex-plugin harness, on a host that harness builds for itself:
-  # a fake Codex CLI on PATH, a trusted-projects config, and a plugin cache
-  # pre-seeded with N.
+  # None of them RUNS the update-side delivery path.
   #
-  # This job runs that same update-side code path — `genie update
-  # --publish-local-delivery`, the candidate binary publishing an authenticated
-  # delivery out of verified local bytes — on a PLAIN host: no Codex home, no
-  # plugin registration, no harness, and a live generation that is the real
-  # previous stable N. Real N as the parent, real T as the binary, no Codex
-  # anywhere is the shape of an ordinary user's machine, and it is exercised
-  # nowhere else in this pipeline. The assertion is the delivery contract
-  # itself: exit 2, a `activation-pending` result trailer, `deliveryComplete`
-  # true — delivery published, activation still withheld until explicit
-  # consent.
+  # This job runs that update-side code path — `genie update
+  # --publish-local-delivery`, the candidate binary verifying an authenticated
+  # delivery out of verified local bytes — on a PLAIN host: no harness, no
+  # pre-seeded cache, and a live generation that is the real previous stable
+  # N. Real N as the parent, real T as the binary is the shape of an ordinary
+  # user's machine, and it is exercised nowhere else in this pipeline. The
+  # assertion is the delivery contract itself: exit 0, a `delivery-verified`
+  # result trailer, `deliveryComplete` true — the offline evidence pack
+  # (artifact digest, manifest, DSSE, caller observation) verified against the
+  # exact local candidate. There is no activation step left to defer: wish
+  # `skills-everywhere-b` G3 deleted the Codex activation store, so the mode's
+  # terminal is verification, not a pending publish.
   #
   # It is deliberately NOT a networked `genie update`: at this point in the
   # pipeline the candidate has no GitHub Release and no
@@ -1045,7 +790,7 @@ jobs:
   # capability report, the local delivery publication, and standalone
   # task/board on both a repository seeded under N and an untouched one.
   #
-  # The step sequence is copied from codex-native-dogfood (checkout of the
+  # The step sequence is the standard candidate-execution preamble (checkout of the
   # admitted control commit, pinned bun, trusted dependencies, cosign, the
   # platform-correct slsa-verifier, the digest-pinned Alpine pre-pull, the
   # artifact downloads and the execution-adapter resolution); only the
@@ -1081,8 +826,8 @@ jobs:
         with:
           cosign-release: 'v2.4.1'
 
-      # Same direct, ledger-pinned install codex-native-dogfood uses: the
-      # upstream installer action bootstraps through a linux-amd64 binary.
+      # Direct, ledger-pinned install: the upstream installer action
+      # bootstraps through a linux-amd64 binary, which cannot run on arm64.
       - name: Install slsa-verifier for release verification
         shell: bash
         run: |
@@ -1310,10 +1055,9 @@ jobs:
             printf 'standalone task/board OK (%s)\n' "$label"
           }
 
-          # The update-side delivery path itself, driven exactly as
-          # tests/support/codex-dogfood-harness.ts drives it (argv, request
-          # schema, GENIE_RELEASE_DOGFOOD=1, expected exit 2), but on this bare
-          # host. Inputs are copied under DOGFOOD_ROOT first because
+          # The update-side delivery path itself: the production argv, the
+          # request schema and GENIE_RELEASE_DOGFOOD=1, on this bare host.
+          # Inputs are copied under DOGFOOD_ROOT first because
           # run-musl-dogfood.sh requires every path the candidate touches to be
           # physically contained in that one canonical root.
           publish_local_delivery() {
@@ -1336,19 +1080,19 @@ jobs:
             output="$(run_genie update --publish-local-delivery "$request" 2>&1)" || status=$?
             unset GENIE_RELEASE_DOGFOOD
             printf '%s\n' "$output"
-            [[ "$status" -eq 2 ]] || {
-              echo "::error::update-path.delivery expected exit 2 (delivery published, activation pending), got ${status}"
+            [[ "$status" -eq 0 ]] || {
+              echo "::error::update-path.delivery expected exit 0 (offline delivery evidence verified), got ${status}"
               exit 1
             }
             trailer="$(printf '%s\n' "$output" | grep -o '{.*}' | tail -n 1)"
             printf '%s' "$trailer" | jq -e '
-              .schemaVersion == 1 and .code == "activation-pending" and
+              .schemaVersion == 1 and .code == "delivery-verified" and
               .deliveryComplete == true and .retry == false and (.nextAction | length) > 0
             ' >/dev/null || {
-              echo "::error::update-path.delivery trailer is not the activation-pending delivery contract: ${trailer}"
+              echo "::error::update-path.delivery trailer is not the delivery-verified contract: ${trailer}"
               exit 1
             }
-            printf 'genie update --publish-local-delivery -> exit 2 %s\n' "$trailer"
+            printf 'genie update --publish-local-delivery -> exit 0 %s\n' "$trailer"
           }
 
           SEEDED="${ROOT}/repos/seeded"
@@ -1618,7 +1362,6 @@ jobs:
       - admit
       - attest-delivery-evidence
       - delivery-evidence-compatibility
-      - codex-dogfood-completeness
       - skills-install-smoke
       - release-update-path-smoke
       - stable-release-security-gate
@@ -1628,7 +1371,6 @@ jobs:
         needs.admit.result == 'success' &&
         needs.attest-delivery-evidence.result == 'success' &&
         needs.delivery-evidence-compatibility.result == 'success' &&
-        needs.codex-dogfood-completeness.result == 'success' &&
         needs.skills-install-smoke.result == 'success' &&
         needs.release-update-path-smoke.result == 'success' &&
         needs.stable-release-security-gate.result == 'success'

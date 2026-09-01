@@ -1,4 +1,3 @@
-import type { HeldLifecycleLease, LifecycleLeaseBusy, LifecycleLeaseResult } from './codex-lifecycle-lease.js';
 import type { LifecycleLease } from './lifecycle-lease.js';
 
 export interface ReleasableLifecycleLease {
@@ -8,28 +7,19 @@ export interface ReleasableLifecycleLease {
 export type OrderedLifecycleLeaseAcquisition =
   | {
       ok: true;
-      agentSyncLease: LifecycleLease;
-      codexLease: HeldLifecycleLease;
+      lifecycleLease: LifecycleLease;
     }
   | {
       ok: false;
-      busy: 'agent-sync';
+      busy: 'lifecycle';
       detail: string;
-    }
-  | {
-      ok: false;
-      busy: 'codex';
-      refusal: LifecycleLeaseBusy;
     };
 
 export type HeldOrderedLifecycleLeases = Extract<OrderedLifecycleLeaseAcquisition, { ok: true }>;
 
 /**
- * The one busy sentence every lifecycle path prints for an agent-sync holder.
- * It carries the acquirer's own (path-naming) detail forward and is deliberately
- * NOT a Codex refusal: no `codex-lifecycle-busy` code and no machine trailer,
- * because install.sh parses those and would be told a falsehood about which
- * subsystem is busy.
+ * The one busy sentence every lifecycle path prints for a live lease holder.
+ * It carries the acquirer's own (path-naming) detail forward.
  *
  * Three consumers: `update.ts` (no suffix), `install.ts` (no suffix), and
  * `uninstall.ts` (suffix ` No files were removed; retry once it completes.`).
@@ -41,75 +31,24 @@ export function lifecycleBusyMessage(detail: string, suffix?: string): string {
 }
 
 /**
- * Acquire the process-wide agent-sync lease before the Codex lifecycle lease.
- * A Codex loser releases the already-held outer lease before returning busy.
+ * Acquire the process-wide lifecycle lease.
+ *
+ * This was an ordered pair while the Codex plugin owned its own lease and the
+ * per-agent convergence engine held the outer half; with both retired the pair
+ * collapses to the single remaining lease. The tagged shape is kept so every
+ * lifecycle command keeps its one busy-projection site.
  */
 export function acquireOrderedLifecycleLeases(
-  acquireAgentSync: () => LifecycleLease | { skipped: string },
-  acquireCodex: () => LifecycleLeaseResult,
+  acquire: () => LifecycleLease | { skipped: string },
 ): OrderedLifecycleLeaseAcquisition {
-  const agentSyncLease = acquireAgentSync();
-  if ('skipped' in agentSyncLease) {
-    return { ok: false, busy: 'agent-sync', detail: agentSyncLease.skipped };
+  const lifecycleLease = acquire();
+  if ('skipped' in lifecycleLease) {
+    return { ok: false, busy: 'lifecycle', detail: lifecycleLease.skipped };
   }
-
-  let codexLease: LifecycleLeaseResult;
-  try {
-    codexLease = acquireCodex();
-  } catch (acquisitionError) {
-    releaseAfterFailedAcquisition(acquisitionError, agentSyncLease);
-  }
-  if (!codexLease.ok) {
-    releaseOrderedLifecycleLeases(null, agentSyncLease);
-    return { ok: false, busy: 'codex', refusal: codexLease };
-  }
-  return { ok: true, agentSyncLease, codexLease };
+  return { ok: true, lifecycleLease };
 }
 
-/**
- * Release in exact reverse acquisition order. Both releases are attempted;
- * one failure is preserved and two are aggregated inner-first.
- */
-export function releaseOrderedLifecycleLeases(
-  codexLease: ReleasableLifecycleLease | null,
-  agentSyncLease: ReleasableLifecycleLease,
-): void {
-  let codexReleaseFailed = false;
-  let codexReleaseError: unknown;
-  try {
-    codexLease?.release();
-  } catch (error) {
-    codexReleaseFailed = true;
-    codexReleaseError = error;
-  }
-
-  let agentSyncReleaseFailed = false;
-  let agentSyncReleaseError: unknown;
-  try {
-    agentSyncLease.release();
-  } catch (error) {
-    agentSyncReleaseFailed = true;
-    agentSyncReleaseError = error;
-  }
-
-  if (codexReleaseFailed && agentSyncReleaseFailed) {
-    throw new AggregateError(
-      [codexReleaseError, agentSyncReleaseError],
-      'Codex and agent-sync lifecycle lease releases both failed',
-    );
-  }
-  if (codexReleaseFailed) throw codexReleaseError;
-  if (agentSyncReleaseFailed) throw agentSyncReleaseError;
-}
-
-function releaseAfterFailedAcquisition(acquisitionError: unknown, agentSyncLease: ReleasableLifecycleLease): never {
-  try {
-    agentSyncLease.release();
-  } catch (releaseError) {
-    throw new AggregateError(
-      [acquisitionError, releaseError],
-      'Codex lifecycle lease acquisition and agent-sync lifecycle lease release both failed',
-    );
-  }
-  throw acquisitionError;
+/** Release the held lifecycle lease. */
+export function releaseOrderedLifecycleLeases(lifecycleLease: ReleasableLifecycleLease): void {
+  lifecycleLease.release();
 }

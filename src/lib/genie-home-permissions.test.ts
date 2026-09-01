@@ -9,9 +9,7 @@
  * rejects any directory whose mode carries `0o022`.
  *
  * Several unrelated modules can win the race to be that first creator, so the
- * invariant is asserted here in one place rather than per module. The lease
- * path — the site the original incident traced to — additionally keeps its own
- * colocated regression test in codex-lifecycle-lease.test.ts.
+ * invariant is asserted here in one place rather than per module.
  *
  * Assertions are on the RESULTING mode, never on umask mechanics, so they hold
  * across platforms and runtimes (local darwin/bun vs. the Linux CI where the
@@ -177,6 +175,15 @@ describe('GENIE_HOME first-creation permissions', () => {
     expect(offenders).toEqual([]);
   });
 
+  test('every SCAN_EXEMPTIONS entry still matches exactly one real call site', () => {
+    // A content-anchored exemption that stops matching is the failure mode the
+    // line-anchored key hid: it silently re-classified the call as compliant.
+    const consumed = new Set<number>();
+    scanUnsafeGenieHomeMkdirs(REPO_ROOT, consumed);
+    const stale = SCAN_EXEMPTIONS.filter((_, index) => !consumed.has(index)).map((entry) => entry.call);
+    expect(stale, 'stale SCAN_EXEMPTIONS entries — re-point or delete them').toEqual([]);
+  });
+
   test('GENIE_HOME creators the scan cannot see keep an explicit safe mode', () => {
     // The scan reads expressions, so it only sees GENIE_HOME when a token
     // survives local const expansion. These sites receive the path as a
@@ -184,15 +191,9 @@ describe('GENIE_HOME first-creation permissions', () => {
     // visible at the call and the scan structurally cannot flag them. Pin them
     // by hand — verified reachable, and each regressed the incident on its own.
     const pinned: Array<[file: string, marker: string, why: string]> = [
-      ['src/term-commands/hook/trust.ts', 'mkdirSync(dir, {', '<GENIE_HOME>/hooks via `genie hook trust`'],
       ['src/lib/genie-config.ts', 'mkdirSync(dir, {', 'GENIE_HOME via getGenieDir()'],
       ['src/genie-commands/auxiliary-trees.ts', 'mkdirSync(dirname(options.destination), {', 'GENIE_HOME parent'],
-      ['src/lib/codex-lifecycle-lease.ts', 'mkdirSync(dirOf(path), {', 'GENIE_HOME via the lease path'],
-      [
-        'src/lib/codex-activation-persistence.ts',
-        'mkdirSync(dir, {',
-        'atomicWriteFileSync — every caller writes under GENIE_HOME',
-      ],
+      ['src/lib/atomic-fs.ts', 'mkdirSync(dir, {', 'atomicWriteFileSync — every caller writes under GENIE_HOME'],
     ];
 
     for (const [file, marker, why] of pinned) {
@@ -232,25 +233,37 @@ const SAFE_MODE = /mode:\s*0o[0-7]?[0-7][0145][0145]\b/;
  */
 const MKDIR_CALL = /mkdirSync\(\s*([^;]+?),\s*\{([^;]*?)\}\s*,?\s*\)/g;
 
+/** One reviewed call the token heuristic over-matches, pinned by content. */
+interface ScanExemption {
+  /** Repo-relative source file the exempt call lives in. */
+  file: string;
+  /** The exempt `mkdirSync(...)` call itself, whitespace-normalized. */
+  call: string;
+  /** A second literal from the same file that pins WHICH call this is. */
+  anchor: string;
+  /** Why this call provably never creates GENIE_HOME. */
+  reason: string;
+}
+
 /**
  * Verified NOT to create GENIE_HOME, despite matching the token heuristic.
- * Keyed by `<path>:<line>` with the reason it is exempt.
+ *
+ * Content-anchored, never line-anchored: the previous `<path>:<line>` key had
+ * already been re-pointed once by an unrelated rehome, and a drifted key fails
+ * OPEN — it stops matching, the real exemption disappears, and the only signal
+ * is a new offender nobody connects to the move. Here a stale entry fails
+ * CLOSED instead: `every exemption matches exactly one call` asserts each entry
+ * still fires, so a moved or edited call site is a named test failure rather
+ * than a silent re-classification.
  */
-const SCAN_EXEMPTIONS = new Map<string, string>([
-  [
-    // NOTE: this key is LINE-anchored, so it must be re-pointed whenever
-    // agent-sync.ts grows or shrinks above the call (it last moved when the
-    // atomic-fs / lifecycle-lease rehome shortened the file).
-    'src/lib/agent-sync.ts:4962',
-    // Triggered by the identifier `before`: the scan's file-scoped const map
-    // resolves it to the file's FIRST `const before = lstatSync(path)`,
-    // whose `path` cascades into a genieHome token. The
-    // real target here is `join(transactionDir, 'before')` inside a council
-    // workflow transaction dir the preceding renameSync already published, so
-    // GENIE_HOME is never created.
-    'council workflow transaction dir, not GENIE_HOME (scan token collision)',
-  ],
-]);
+const SCAN_EXEMPTIONS: ScanExemption[] = [];
+
+/** Index of every exemption the last scan actually consumed. */
+function exemptionIndex(file: string, call: string): number {
+  return SCAN_EXEMPTIONS.findIndex(
+    (exemption) => exemption.file === file && exemption.call === call.replace(/\s+/g, ' '),
+  );
+}
 
 interface UnsafeMkdir {
   site: string;
@@ -268,10 +281,11 @@ interface UnsafeMkdir {
  * deliberate: over-matching costs one reviewed SCAN_EXEMPTIONS entry, while
  * under-matching would silently ship the bug this file exists to prevent.
  */
-function scanUnsafeGenieHomeMkdirs(repoRoot: string): UnsafeMkdir[] {
+function scanUnsafeGenieHomeMkdirs(repoRoot: string, consumed = new Set<number>()): UnsafeMkdir[] {
   const offenders: UnsafeMkdir[] = [];
   for (const file of sourceFiles(join(repoRoot, 'src'))) {
     const source = readFileSync(file, 'utf8');
+    const relativeFile = relative(repoRoot, file);
     const consts = new Map<string, string>();
     for (const line of source.split('\n')) {
       const declaration = /^\s*(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/.exec(line);
@@ -283,8 +297,15 @@ function scanUnsafeGenieHomeMkdirs(repoRoot: string): UnsafeMkdir[] {
       const target = call[1].replace(/\s+/g, ' ');
       if (!GENIE_HOME_TOKENS.test(expandIdentifiers(target, consts))) continue;
       const line = source.slice(0, call.index).split('\n').length;
-      const site = `${relative(repoRoot, file)}:${line}`;
-      if (!SCAN_EXEMPTIONS.has(site)) offenders.push({ site, target });
+      const site = `${relativeFile}:${line}`;
+      const exempt = exemptionIndex(relativeFile, call[0]);
+      // The anchor must still be present, or the call moved to a site the
+      // reviewed rationale no longer describes and the exemption is void.
+      if (exempt >= 0 && source.includes(SCAN_EXEMPTIONS[exempt].anchor)) {
+        consumed.add(exempt);
+        continue;
+      }
+      offenders.push({ site, target });
     }
   }
   return offenders;

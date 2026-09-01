@@ -26,29 +26,9 @@ describe('release payload version contract', () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-release-payload-version-'));
     roots.push(root);
     writeJson(root, 'package.json', { name: '@automagik/genie', version: '5.000000.0' });
-    for (const path of [
-      'plugins/genie/package.json',
-      'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.codex-plugin/plugin.json',
-      'plugins/genie/.kimi-plugin/plugin.json',
-      'plugins/genie/orca-plugin.json',
-    ]) {
+    for (const path of ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json']) {
       writeJson(root, path, { name: 'genie', version: '5.000000.0' });
     }
-    writeJson(root, '.claude-plugin/marketplace.json', {
-      name: 'automagik',
-      plugins: [{ name: 'genie', version: '5.000000.0', source: './plugins/genie' }],
-    });
-    writeJson(root, '.agents/plugins/marketplace.json', {
-      name: 'automagik',
-      plugins: [
-        {
-          name: 'genie',
-          source: { source: 'local', path: './plugins/genie' },
-          policy: { installation: 'AVAILABLE' },
-        },
-      ],
-    });
     return root;
   }
 
@@ -67,9 +47,9 @@ describe('release payload version contract', () => {
   test('stamps and verifies VERSION plus every copied version-bearing manifest', () => {
     const root = fixture();
     const version = '5.260711.9-rc.1';
-    writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', {
+    writeJson(root, 'plugins/genie/package.json', {
       metadata: { version: 'nested-must-not-change' },
-      name: 'genie',
+      name: 'genie-plugin',
       version: '5.000000.0',
     });
 
@@ -77,29 +57,21 @@ describe('release payload version contract', () => {
 
     expect(() => verifyReleasePayloadVersion(root, version)).not.toThrow();
     expect(readFileSync(join(root, 'VERSION'), 'utf8')).toBe(`${version}\n`);
-    for (const path of [
-      'plugins/genie/package.json',
-      'plugins/genie/.claude-plugin/plugin.json',
-      'plugins/genie/.codex-plugin/plugin.json',
-      'plugins/genie/.kimi-plugin/plugin.json',
-      'plugins/genie/orca-plugin.json',
-    ]) {
+    for (const path of ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json']) {
       expect(JSON.parse(readFileSync(join(root, path), 'utf8')).version).toBe(version);
     }
-    expect(
-      JSON.parse(readFileSync(join(root, 'plugins/genie/.codex-plugin/plugin.json'), 'utf8')).metadata.version,
-    ).toBe('nested-must-not-change');
-    const claude = JSON.parse(readFileSync(join(root, '.claude-plugin/marketplace.json'), 'utf8'));
-    expect(claude.plugins[0].version).toBe(version);
+    expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).metadata.version).toBe(
+      'nested-must-not-change',
+    );
   });
 
   test('verification catches one diverging copied manifest', () => {
     const root = fixture();
     const version = '5.260711.10';
     stampReleasePayloadVersion(root, version);
-    writeJson(root, 'plugins/genie/.codex-plugin/plugin.json', { name: 'genie', version: '5.260711.9' });
+    writeJson(root, 'plugins/genie/package.json', { name: 'genie-plugin', version: '5.260711.9' });
 
-    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('.codex-plugin/plugin.json');
+    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('plugins/genie/package.json');
   });
 
   test('verification catches a diverging or missing native Orca manifest', () => {
@@ -117,9 +89,9 @@ describe('release payload version contract', () => {
     const root = fixture();
     expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
 
-    writeJson(root, 'plugins/genie/.kimi-plugin/plugin.json', { name: 'genie', version: '5.999999.1' });
+    writeJson(root, 'plugins/genie/package.json', { name: 'genie-plugin', version: '5.999999.1' });
     expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch in');
-    expect(() => verifyCommittedReleaseVersions(root)).toThrow('.kimi-plugin/plugin.json');
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('plugins/genie/package.json');
   });
 
   // The Orca manifest's shipped copy is stamped inside the payload; the
@@ -135,20 +107,13 @@ describe('release payload version contract', () => {
     expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.10');
   });
 
-  test('fails closed on missing metadata, malformed versions, and an invalid Codex marketplace target', () => {
+  test('fails closed on missing metadata and malformed versions', () => {
     const root = fixture();
     rmSync(join(root, 'plugins/genie/package.json'));
     expect(() => stampReleasePayloadVersion(root, '5.260711.10')).toThrow('metadata is missing');
 
     const second = fixture();
     expect(() => stampReleasePayloadVersion(second, '../escape')).toThrow('invalid release version');
-
-    const third = fixture();
-    stampReleasePayloadVersion(third, '5.260711.10');
-    writeJson(third, '.agents/plugins/marketplace.json', {
-      plugins: [{ name: 'genie', source: { source: 'local', path: '../outside' } }],
-    });
-    expect(() => verifyReleasePayloadVersion(third, '5.260711.10')).toThrow('must target local ./plugins/genie');
   });
 
   test('build-binary wires both stage stamping and post-copy verification', () => {

@@ -9,9 +9,12 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { validateWish } from '../plugins/genie/scripts/src/validate-wish.js';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
+// The wish validator, rehomed here from the retired `plugins/genie/scripts/src/`
+// tree. It stays biome-ignored (its formatting is inherited verbatim from the
+// plugin-era original) so a reformat cannot be mistaken for a rule change.
+import { validateWish } from './validate-wish.js';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');

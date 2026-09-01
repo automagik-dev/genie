@@ -12,24 +12,22 @@
  *
  * Syncs versions across:
  * - package.json (root)
- * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
- * - plugins/genie/.codex-plugin/plugin.json (Codex)
  * - plugins/genie/orca-plugin.json (Orca)
  * - plugins/genie/package.json (runtime payload metadata)
- * - .claude-plugin/marketplace.json (marketplace listing)
- * - plugins/hermes-genie/plugin.yaml (Hermes native surface, YAML manifest)
+ *
+ * `--check` is the read-only mode: it reports that exact target set and whether
+ * each file is bump-ready, then exits 0 without writing. The BARE command always
+ * performs a real bump, so `--check` is the only form safe to run as validation.
  *
  * CI staging (GITHUB_ACTIONS only): after rewriting, this script `git add`s every
  * file it actually touched. This exists because the release workflow's own
- * `git add -A '*.json' 'src/lib/version.ts'` list predates the YAML manifests —
- * it re-guesses the version-carrying file set and silently omitted plugin.yaml,
- * so a bump could ship with a stale Hermes manifest (defect D2). The list of
- * version files lives here, not in the workflow, so this is the one place that
- * always knows the full set. Keeping the fix here (rather than in the workflow)
- * matters because `.github/workflows/**` can't always be updated in the same
- * change — some environments lack workflow-scoped push credentials. Staging is
- * best-effort: a git failure warns but never fails the sync, and the workflow's
- * own `git add` still covers the JSON files as belt-and-suspenders.
+ * `git add -A '*.json' 'src/lib/version.ts'` list re-guesses the version-carrying
+ * file set instead of reading it from here, so a bump could ship with a stale
+ * manifest (defect D2). The list of version files lives here, not in the
+ * workflow, so this is the one place that always knows the full set. Keeping the
+ * fix here (rather than in the workflow) matters because `.github/workflows/**`
+ * can't always be updated in the same change — some environments lack
+ * workflow-scoped push credentials.
  */
 
 import { execFileSync, execSync } from 'node:child_process';
@@ -37,7 +35,6 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { replaceTopLevelStringProperty } from './json-top-level-string.js';
-import { assertPluginSkillsInSync } from './sync-plugin-skills.ts';
 
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
@@ -85,67 +82,6 @@ export async function updateJsonVersion(filePath: string, version: string): Prom
   }
 }
 
-/**
- * Rewrite only the top-level `version:` line of a YAML manifest, preserving the
- * rest of the document byte-for-byte. Throws unless exactly one top-level
- * `version:` line exists (nested/indented `version:` keys are ignored).
- */
-export function replaceTopLevelYamlVersion(source: string, version: string): string {
-  const lines = source.split('\n');
-  let replaced = 0;
-  const out = lines.map((line) => {
-    // Top-level key only: no leading whitespace before `version:`.
-    if (!/^version:(\s|$)/.test(line)) return line;
-    replaced += 1;
-    return `version: ${version}`;
-  });
-  if (replaced !== 1) throw new Error(`expected exactly one top-level version line, found ${replaced}`);
-  return out.join('\n');
-}
-
-export async function updateYamlVersion(filePath: string, version: string): Promise<boolean> {
-  if (!existsSync(filePath)) {
-    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
-    return false;
-  }
-  try {
-    const source = await readFile(filePath, 'utf-8');
-    const updated = replaceTopLevelYamlVersion(source, version);
-    await writeFile(filePath, updated);
-    console.log(`  ✓ ${filePath}`);
-    return true;
-  } catch (err) {
-    console.error(`  ✗ Failed: ${filePath}`, err);
-    return false;
-  }
-}
-
-export async function updateClaudeMarketplaceVersion(filePath: string, version: string): Promise<boolean> {
-  if (!existsSync(filePath)) {
-    console.warn(`  ⚠ Skipped (not found): ${filePath}`);
-    return false;
-  }
-  try {
-    const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      throw new Error('marketplace must be an object');
-    const plugins = Reflect.get(parsed, 'plugins');
-    if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
-    const matches = plugins.filter((entry): entry is Record<string, unknown> =>
-      Boolean(entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie'),
-    );
-    if (matches.length !== 1) throw new Error('marketplace must contain exactly one genie entry');
-    if (typeof matches[0].version !== 'string') throw new Error('genie entry version must be a string');
-    matches[0].version = version;
-    await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`);
-    console.log(`  ✓ ${filePath}`);
-    return true;
-  } catch (err) {
-    console.error(`  ✗ Failed: ${filePath}`, err);
-    return false;
-  }
-}
-
 async function assertVersionFileShape(filePath: string): Promise<void> {
   if (!existsSync(filePath)) throw new Error('file is missing');
   const source = await readFile(filePath, 'utf-8');
@@ -155,33 +91,12 @@ async function assertVersionFileShape(filePath: string): Promise<void> {
   replaceTopLevelStringProperty(source, 'version', Reflect.get(parsed, 'version') as string);
 }
 
-async function assertYamlVersionFileShape(filePath: string): Promise<void> {
-  if (!existsSync(filePath)) throw new Error('file is missing');
-  const source = await readFile(filePath, 'utf-8');
-  // Throws unless exactly one top-level version line is present.
-  replaceTopLevelYamlVersion(source, '0.0.0');
-}
-
-async function assertClaudeMarketplaceShape(filePath: string): Promise<void> {
-  if (!existsSync(filePath)) throw new Error('file is missing');
-  const parsed: unknown = JSON.parse(await readFile(filePath, 'utf-8'));
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('marketplace must be an object');
-  const plugins = Reflect.get(parsed, 'plugins');
-  if (!Array.isArray(plugins)) throw new Error('marketplace must contain a plugins array');
-  const matches = plugins.filter(
-    (entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && Reflect.get(entry, 'name') === 'genie',
-  );
-  if (matches.length !== 1 || typeof Reflect.get(matches[0], 'version') !== 'string') {
-    throw new Error('marketplace must contain exactly one versioned genie entry');
-  }
-}
-
 /**
  * In CI only, stage the files this sync actually rewrote so the auto-version
  * commit ships them. Under GITHUB_ACTIONS a git failure must fail the sync —
- * silently warning and continuing re-introduces the plugin.yaml version-skew
- * defect this staging exists to prevent (the workflow's own `git add` list is
- * stale and omits it). Uses an arg-array (never a shell string) so paths
+ * silently warning and continuing re-introduces the version-skew defect this
+ * staging exists to prevent (the workflow's own `git add` list is stale and
+ * re-guesses the set). Uses an arg-array (never a shell string) so paths
  * can't be interpolated into a command line.
  */
 function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
@@ -193,35 +108,50 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
   }
 }
 
+/**
+ * The authoritative version-file set, in stamping order. Three files since wish
+ * `skills-everywhere-b` retired the Codex/Claude/Kimi/Hermes/pi manifests; the
+ * same list is enumerated by `scripts/release-payload-version.ts`,
+ * `scripts/release-guard.sh` and `.github/workflows/version.yml`, which is why
+ * `--check` exists: it is the only way to read this set without bumping.
+ */
+export const VERSION_FILES = ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json'] as const;
+
+export function versionFilePaths(rootDir: string): string[] {
+  return VERSION_FILES.map((relativePath) => join(rootDir, relativePath));
+}
+
+export interface VersionCheckReport {
+  targets: string[];
+  failures: string[];
+}
+
+/**
+ * Read-only companion to `synchronizeVersionFiles`: report the exact bump
+ * targets and whether each is shaped so a bump could stamp it, WITHOUT writing
+ * anything and without deriving a new version. The bare command performs a real
+ * bump, so this is the only runnable verification of the version-file set.
+ */
+export async function versionCheckReport(rootDir: string): Promise<VersionCheckReport> {
+  const targets = versionFilePaths(rootDir);
+  const failures: string[] = [];
+  for (const path of targets) {
+    try {
+      await assertVersionFileShape(path);
+    } catch (error) {
+      failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { targets, failures };
+}
+
 /** Update every authoritative version file and fail the command on any partial write. */
 export async function synchronizeVersionFiles(rootDir: string, version: string): Promise<void> {
-  const paths = [
-    join(rootDir, 'package.json'),
-    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/.codex-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/.kimi-plugin/plugin.json'),
-    join(rootDir, 'plugins/genie/orca-plugin.json'),
-    join(rootDir, 'plugins/genie/package.json'),
-    join(rootDir, 'plugins/pi-genie/package.json'),
-  ];
-  const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
-  const yamlPaths = [join(rootDir, 'plugins/hermes-genie/plugin.yaml')];
+  const paths = versionFilePaths(rootDir);
   const preflightFailures: string[] = [];
   for (const path of paths) {
     try {
       await assertVersionFileShape(path);
-    } catch (error) {
-      preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  try {
-    await assertClaudeMarketplaceShape(marketplacePath);
-  } catch (error) {
-    preflightFailures.push(`${marketplacePath}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  for (const path of yamlPaths) {
-    try {
-      await assertYamlVersionFileShape(path);
     } catch (error) {
       preflightFailures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -233,10 +163,7 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   const outcomes: Array<{ path: string; ok: boolean }> = [];
   for (const path of paths) outcomes.push({ path, ok: await updateJsonVersion(path, version) });
 
-  outcomes.push({ path: marketplacePath, ok: await updateClaudeMarketplaceVersion(marketplacePath, version) });
-  for (const path of yamlPaths) outcomes.push({ path, ok: await updateYamlVersion(path, version) });
-
-  // Stage every file we actually rewrote so CI commits the full set (incl. YAML).
+  // Stage every file we actually rewrote so CI commits the full set.
   stageRewrittenFilesInCi(
     rootDir,
     outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.path),
@@ -246,10 +173,32 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
   if (failed.length > 0) throw new Error(`version synchronization failed for: ${failed.join(', ')}`);
 }
 
+async function runCheck(rootDir: string): Promise<void> {
+  const report = await versionCheckReport(rootDir);
+  console.log(`version --check: ${report.targets.length} version file(s), no writes performed`);
+  for (const relativePath of VERSION_FILES) console.log(`  • ${relativePath}`);
+  if (report.failures.length > 0) {
+    throw new Error(`version files are not bump-ready:\n  ${report.failures.join('\n  ')}`);
+  }
+  console.log('\n✅ Every version file is present and bump-ready');
+}
+
 async function main() {
-  assertPluginSkillsInSync();
-  const version = generateVersion();
   const rootDir = join(dirname(import.meta.path), '..');
+  const argv = process.argv.slice(2);
+
+  // Argument handling is deliberately strict and comes BEFORE any mutation: the
+  // bare command performs a real, irreversible bump, so an unrecognized flag
+  // must never degrade into one.
+  if (argv.length > 0) {
+    if (argv.length === 1 && argv[0] === '--check') {
+      await runCheck(rootDir);
+      return;
+    }
+    throw new Error(`usage: bun scripts/version.ts [--check]  (got: ${argv.join(' ')})`);
+  }
+
+  const version = generateVersion();
 
   console.log(`Version: ${version}`);
   console.log('Updating files:');

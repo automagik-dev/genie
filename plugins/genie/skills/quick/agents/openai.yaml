@@ -1,4 +1,0 @@
-interface:
-  display_name: "Quick Delivery"
-  short_description: "Ship a tiny low-risk dev change within one hour"
-  default_prompt: "Deliver this eligible tiny change through verified dev read-back within one hour."

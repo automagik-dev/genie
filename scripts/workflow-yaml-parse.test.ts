@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -9,8 +9,9 @@ import { join } from 'node:path';
  * `publish.needs` is the only thing that makes a smoke a RELEASE GATE rather
  * than decoration, and a job block can be reindented or renamed by an unrelated
  * edit without any other test noticing. This parses both workflows as YAML —
- * never by grep — and asserts the wiring, including that the pre-existing Codex
- * dogfood matrix is still present and still required.
+ * never by grep — and asserts the wiring, including (since wish
+ * `skills-everywhere-b`, G6) that the retired Codex dogfood matrix is gone and
+ * that its removal cost `publish` exactly one edge.
  *
  * Parser: `Bun.YAML.parse`, so no python/PyYAML and no new dependency. It is a
  * Bun builtin (present on the 1.3.11 CI pin and the 1.3.14 dev machines); the
@@ -52,12 +53,6 @@ function needsOf(definition: YamlRecord): string[] {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value)) return value.map((entry) => String(entry));
   return [];
-}
-
-function stepNames(definition: YamlRecord): string[] {
-  const steps = definition.steps;
-  if (!Array.isArray(steps)) return [];
-  return steps.filter(isRecord).map((step) => String(step.name ?? step.uses ?? ''));
 }
 
 function runScripts(definition: YamlRecord): string {
@@ -109,29 +104,76 @@ describe('release-publish.yml gates', () => {
     expect(condition).toContain("needs.release-update-path-smoke.result == 'success'");
   });
 
-  test('the Codex dogfood matrix is untouched and still required', () => {
+  test('the Codex dogfood matrix is gone and nothing needs it', () => {
     const names = Object.keys(jobs(workflow(RELEASE_PUBLISH)));
-    expect(names).toContain('codex-native-dogfood');
-    expect(names).toContain('codex-dogfood-completeness');
+    expect(names).not.toContain('codex-native-dogfood');
+    expect(names).not.toContain('codex-dogfood-completeness');
+    for (const id of names) {
+      expect(needsOf(job(workflow(RELEASE_PUBLISH), id))).not.toContain('codex-native-dogfood');
+      expect(needsOf(job(workflow(RELEASE_PUBLISH), id))).not.toContain('codex-dogfood-completeness');
+    }
+  });
 
-    const dogfood = job(workflow(RELEASE_PUBLISH), 'codex-native-dogfood');
-    expect(needsOf(dogfood)).toEqual([
-      'prepare-delivery-evidence',
+  /**
+   * The removal above cost `publish` EXACTLY one edge. Pinning the full set (and
+   * the matching `if:` guard for each survivor) is what makes a future accidental
+   * drop of another gate a test failure rather than a silently weaker release.
+   */
+  test('publish requires exactly the six surviving gates, each with its if-guard', () => {
+    const publish = job(workflow(RELEASE_PUBLISH), 'publish');
+    const needs = needsOf(publish);
+    expect(needs).toEqual([
+      'admit',
       'attest-delivery-evidence',
       'delivery-evidence-compatibility',
+      'skills-install-smoke',
+      'release-update-path-smoke',
+      'stable-release-security-gate',
     ]);
-    expect(stepNames(dogfood)).toContain('Run exact N to T lifecycle and emit reusable evidence');
+    const condition = String(publish.if ?? '');
+    expect(condition).toContain('always()');
+    for (const gate of needs) {
+      expect(condition).toContain(`needs.${gate}.result == 'success'`);
+    }
+  });
 
-    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'codex-dogfood-completeness'))).toEqual([
-      'prepare-delivery-evidence',
-      'codex-native-dogfood',
-    ]);
-
-    const needs = needsOf(job(workflow(RELEASE_PUBLISH), 'publish'));
-    expect(needs).toContain('codex-dogfood-completeness');
-    expect(String(job(workflow(RELEASE_PUBLISH), 'publish').if ?? '')).toContain(
-      "needs.codex-dogfood-completeness.result == 'success'",
+  /**
+   * `scripts/candidate-dogfood-matrix.ts` outlives the dogfood matrix it was
+   * named for: `prepare-delivery-evidence` derives the platform inventory and
+   * the update-path projection from it, and `stable-release-security-gate` —
+   * itself a `publish.needs` edge — re-derives and `cmp`s it. Both consumers are
+   * pinned here so a later "it is only for the dogfood" cleanup fails loudly.
+   */
+  test('candidate-dogfood-matrix.ts survives with both of its consuming jobs', () => {
+    expect(runScripts(job(workflow(RELEASE_PUBLISH), 'prepare-delivery-evidence'))).toContain(
+      'bun scripts/candidate-dogfood-matrix.ts',
     );
+    expect(runScripts(job(workflow(RELEASE_PUBLISH), 'stable-release-security-gate'))).toContain(
+      'bun scripts/candidate-dogfood-matrix.ts',
+    );
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'publish'))).toContain('stable-release-security-gate');
+  });
+
+  /**
+   * G6 deleted three executable release controls. A workflow that still invokes
+   * one of them is green locally and red only in a real release run, so every
+   * `run:` block in every workflow is checked against the deleted set.
+   */
+  test('no workflow invokes a script deleted with the dogfood matrix', () => {
+    const deleted = [
+      'tests/support/codex-dogfood-entry-runner.ts',
+      'tests/support/codex-dogfood-harness.ts',
+      'scripts/validate-live-dogfood-evidence.ts',
+      'scripts/validate-dogfood-matrix-evidence.ts',
+      'scripts/build.js',
+      'scripts/sync.js',
+    ];
+    for (const name of readdirSync(join(REPO_ROOT, '.github', 'workflows')).filter((entry) => entry.endsWith('.yml'))) {
+      const source = readFileSync(join(REPO_ROOT, '.github', 'workflows', name), 'utf8');
+      for (const path of deleted) {
+        expect(`${name}: ${source.includes(path)}`).toBe(`${name}: false`);
+      }
+    }
   });
 
   test('skills-install-smoke waits on the prepared delivery evidence', () => {
@@ -172,9 +214,9 @@ describe('release-publish.yml gates', () => {
     // The one thing here that no earlier job does on a plain, Codex-free host.
     expect(smoke).toContain('update --publish-local-delivery');
     expect(smoke).toContain('GENIE_RELEASE_DOGFOOD=1');
-    expect(smoke).toContain('.code == "activation-pending"');
+    expect(smoke).toContain('.code == "delivery-verified"');
     expect(smoke).toContain('.deliveryComplete == true');
-    expect(smoke).toContain('"$status" -eq 2');
+    expect(smoke).toContain('"$status" -eq 0');
     // Still the signed-bytes gate it always was.
     expect(smoke).toContain('bash scripts/verify-release.sh --local');
     expect(smoke).toContain('bun scripts/verify-delivery-evidence-pack.ts');
@@ -228,7 +270,7 @@ describe('ci.yml gates', () => {
   test('the inventory parity check is its own job, and unit stays network-free', () => {
     const names = Object.keys(jobs(workflow(CI)));
     expect(names).toContain('skills-inventory-parity');
-    expect(names).toEqual(expect.arrayContaining(['unit', 'e2e', 'codex-smoke', 'quality-gate']));
+    expect(names).toEqual(expect.arrayContaining(['unit', 'e2e', 'quality-gate']));
 
     const parity = runScripts(job(workflow(CI), 'skills-inventory-parity'));
     expect(parity).toContain('skills-inventory-parity.ts');
@@ -262,9 +304,17 @@ describe('pins agree across the workflows and the shipped source', () => {
     }
   });
 
-  test('the new smoke reuses the Codex pin and the Alpine image digest already in use', () => {
+  /**
+   * Before wish `skills-everywhere-b` G6 there were two of each pin (the Codex
+   * dogfood matrix carried one, the skills/update-path smokes the other), and
+   * this test's job was to prove they agreed. With the matrix deleted the smokes
+   * hold the only copy, so the assertion becomes "still exactly one, and it is
+   * still the same value the musl adapter uses" — a second, divergent pin
+   * reintroduced anywhere still fails here.
+   */
+  test('the surviving smokes keep a single Codex pin and the musl adapter Alpine digest', () => {
     const codexPins = [...releasePublishText.matchAll(/@openai\/codex@([\w.]+)/g)].map((match) => match[1]);
-    expect(codexPins.length).toBeGreaterThan(1);
+    expect(codexPins.length).toBeGreaterThan(0);
     expect(new Set(codexPins).size).toBe(1);
 
     const adapterImage = readFileSync(join(REPO_ROOT, 'scripts', 'run-musl-dogfood.sh'), 'utf8').match(
@@ -274,7 +324,7 @@ describe('pins agree across the workflows and the shipped source', () => {
     const workflowImages = [...releasePublishText.matchAll(/alpine:[\w.]+@sha256:[0-9a-f]{64}/g)].map(
       (match) => match[0],
     );
-    expect(workflowImages).toHaveLength(2);
+    expect(workflowImages).toHaveLength(1);
     expect(new Set(workflowImages)).toEqual(new Set([adapterImage as string]));
   });
 });

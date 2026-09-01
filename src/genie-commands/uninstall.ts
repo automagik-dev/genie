@@ -9,7 +9,6 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
-  type Dirent,
   type Stats,
   closeSync,
   existsSync,
@@ -32,53 +31,10 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { z } from 'zod';
-import {
-  AGENT_SYNC_LOCK_NAME,
-  type AgentFileMutationEvent,
-  type AgentFilesManifestView,
-  type AgentManifestCommitEvent,
-  type AgentPathSnapshot,
-  CODEX_FALLBACK_RETIREMENT_ROOT,
-  type FlatAgentOp,
-  type FlatAgentOutcome,
-  KEPT_SUFFIX,
-  MANIFEST_NAME,
-  TARGET_NAME,
-  acquireAgentSyncLock,
-  allocateExclusiveBackupRoot,
-  captureAgentPathSnapshot,
-  codexLegacyCuratedDir,
-  inspectManagedSkillTree,
-  inspectManagedWorkflow,
-  readAgentFilesManifestState,
-  recoverManagedSkillTransactions,
-  recoverManagedWorkflowTransactions,
-  removeManagedSkillTree,
-  removeManagedWorkflow,
-  resolveAgentsSkillsDir,
-  runFlatAgentTransaction,
-} from '../lib/agent-sync.js';
 import { hookScriptExists } from '../lib/claude-settings.js';
-// A's canonical result-trailer serializer (via B's stable facade) + the codex
-// lifecycle lease. Uninstall is a deliberately separate destructive authority: it
-// acquires the lease after confirmation but before the first removal so it
-// serialises against setup/update/rollback/install, and it never mints or accepts
-// an activation assertion/permit.
-import { serializeActivationResultTrailer } from '../lib/codex-activation-executor.js';
-import {
-  type AcquireLeaseOptions,
-  type LifecycleLeaseKind,
-  type LifecycleLeaseResult,
-  acquireLifecycleLease as acquireCodexLifecycleLease,
-} from '../lib/codex-lifecycle-lease.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
-import {
-  resolveClaudeDir,
-  resolveCodexDir,
-  resolveGenieHome,
-  resolveHermesHome,
-  resolvePiExtensionsDir,
-} from '../lib/genie-home.js';
+import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from '../lib/genie-home.js';
+import { runLegacyIntegrationRetirement } from '../lib/legacy-integration-retirement.js';
 import {
   type LifecycleLease,
   type LifecycleLeaseSkip,
@@ -92,9 +48,7 @@ import {
   releaseOrderedLifecycleLeases,
 } from '../lib/ordered-lifecycle-leases.js';
 import {
-  inspectCodexAgentOwnership,
   inspectRuntimeIntegrationEvidence,
-  recoverCodexAgentTransactions,
   removeRuntimeIntegrations,
   resolveRuntimeExecutable,
 } from '../lib/runtime-integrations.js';
@@ -122,13 +76,6 @@ export interface PathContainmentApi {
 const HOST_PATH_CONTAINMENT_API: PathContainmentApi = { resolve, relative, isAbsolute, sep };
 
 const UNINSTALL_BATCH_MAX_BYTES = 4 * 1024 * 1024;
-const SKILL_TRANSACTION_ROOT = '.genie-sync-transactions';
-const SKILL_TRANSACTION_PREFIXES = ['.staging-', 'txn-', 'delete-', '.conflict-'];
-const SKILL_TRANSACTION_CONFLICT_PREFIX = '.conflict-';
-const COUNCIL_TRANSACTION_PREFIXES = ['.council.genie-txn-', '.council.genie-delete-', '.council.genie-conflict-'];
-const COUNCIL_TRANSACTION_CONFLICT_PREFIXES = ['.council.genie-delete-conflict-', '.council.genie-conflict-'];
-const CODEX_ROLE_TRANSACTION_PREFIXES = ['.genie-role-agents.txn-', '.genie-role-agents.conflict-'];
-const CODEX_ROLE_TRANSACTION_CONFLICT_PREFIX = '.genie-role-agents.conflict-';
 
 const absolutePathSchema = z
   .string()
@@ -168,7 +115,59 @@ const ownedSourceSymlinkSchema = z
 
 export type OwnedSourceSymlink = z.infer<typeof ownedSourceSymlinkSchema>;
 
-const agentSnapshotIdentitySchema = z.discriminatedUnion('kind', [
+const uninstallBatchMemberSchema = z.string().regex(/^(asset|rules|runtime|home|symlink):[a-f0-9]{64}$/);
+const uninstallBatchProgressSchema = z
+  .object({
+    active: uninstallBatchMemberSchema.nullable(),
+    completed: z.array(uninstallBatchMemberSchema).max(1024),
+    // Durable receipts for identity-mismatched members: removal was never
+    // authorized, yet the batch may still clear (see UninstallBatchProgressController).
+    preserved: z.array(uninstallBatchMemberSchema).max(1024),
+  })
+  .strict();
+const uninstallBatchScopeSchema = z
+  .object({
+    genieHomeIdentity: physicalRootIdentitySchema.nullable(),
+    // SHA-256 commitment to the exact, exclusion-free physical snapshots of
+    // every removable GENIE_HOME child at authoritative planning time.
+    genieHomeRemovalDigest: digestSchema.nullable(),
+    ownedRules: provenV4RulesSchema.nullable(),
+    removeMarketplace: z.boolean(),
+    runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    symlinks: z.array(ownedSourceSymlinkSchema).max(2),
+  })
+  .strict();
+
+export type UninstallBatchScope = z.infer<typeof uninstallBatchScopeSchema>;
+
+const uninstallBatchDecisionSchema = z
+  .object({
+    schemaVersion: z.literal(4),
+    genieHome: absolutePathSchema,
+    scope: uninstallBatchScopeSchema,
+    progress: uninstallBatchProgressSchema,
+    digest: digestSchema,
+  })
+  .strict();
+
+export type UninstallBatchDecision = z.infer<typeof uninstallBatchDecisionSchema>;
+
+type UninstallBatchPayload = Omit<UninstallBatchDecision, 'digest'>;
+
+// ---------------------------------------------------------------------------
+// Legacy read-only shapes. Authentic v1/v2/v3 journals are discarded and
+// re-recorded as v4 from current live state (executeUninstallBatch); these
+// schemas exist only so migration can authenticate them before discard, never
+// to act on stale pathname-only authority. Unauthentic/corrupt journals fail
+// closed. v3 became legacy when the synced managed-asset and Codex role-agent
+// members left the batch with their removal engines.
+// ---------------------------------------------------------------------------
+// Managed-asset shapes that only ever appear in a legacy journal now: the
+// per-agent convergence engine that produced them is gone, so nothing plans or
+// removes them. They stay here verbatim because a legacy record must parse under its
+// EXACT original key set before its digest can be authenticated and discarded.
+const legacyAgentSnapshotIdentitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('absent') }).strict(),
   z.object({ kind: z.literal('file'), digest: digestSchema, mode: physicalModeSchema }).strict(),
   z.object({ kind: z.literal('directory'), digest: digestSchema, mode: physicalModeSchema }).strict(),
@@ -176,10 +175,7 @@ const agentSnapshotIdentitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('other'), mode: physicalModeSchema }).strict(),
 ]);
 
-// Per-kind physical identity the classifier already computed at plan time. Every
-// removable managed asset carries the exact identity uninstall is authorized to
-// delete; a mismatch at removal proves a distinct object occupies the path.
-const agentAssetIdentitySchema = z.discriminatedUnion('kind', [
+const legacyAgentAssetIdentitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('skill'), contentDigest: digestSchema, manifestDigest: digestSchema }).strict(),
   z
     .object({
@@ -201,22 +197,19 @@ const agentAssetIdentitySchema = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('agent'),
       ownedDigest: agentOwnedDigestSchema,
-      snapshot: agentSnapshotIdentitySchema,
+      snapshot: legacyAgentSnapshotIdentitySchema,
     })
     .strict(),
 ]);
 
-export type AgentAssetIdentity = z.infer<typeof agentAssetIdentitySchema>;
-type AgentSnapshotIdentity = z.infer<typeof agentSnapshotIdentitySchema>;
-
-// A removable asset records its identity; a kept (modified/corrupt) asset records
-// none because it holds user data now and is never a deletion candidate.
-const agentAssetSchema = z.discriminatedUnion('disposition', [
-  z.object({ path: absolutePathSchema, disposition: z.literal('remove'), identity: agentAssetIdentitySchema }).strict(),
+const legacyAgentAssetSchema = z.discriminatedUnion('disposition', [
+  z
+    .object({ path: absolutePathSchema, disposition: z.literal('remove'), identity: legacyAgentAssetIdentitySchema })
+    .strict(),
   z.object({ path: absolutePathSchema, disposition: z.literal('keep') }).strict(),
 ]);
 
-const codexRoleAgentSchema = z.discriminatedUnion('disposition', [
+const legacyCodexRoleAgentSchema = z.discriminatedUnion('disposition', [
   z
     .object({
       name: codexRoleNameSchema,
@@ -227,56 +220,6 @@ const codexRoleAgentSchema = z.discriminatedUnion('disposition', [
   z.object({ name: codexRoleNameSchema, disposition: z.literal('keep') }).strict(),
 ]);
 
-const uninstallBatchMemberSchema = z.string().regex(/^(asset|rules|runtime|home|symlink):[a-f0-9]{64}$/);
-const uninstallBatchProgressSchema = z
-  .object({
-    active: uninstallBatchMemberSchema.nullable(),
-    completed: z.array(uninstallBatchMemberSchema).max(1024),
-    // Durable receipts for identity-mismatched members: removal was never
-    // authorized, yet the batch may still clear (see UninstallBatchProgressController).
-    preserved: z.array(uninstallBatchMemberSchema).max(1024),
-  })
-  .strict();
-const uninstallBatchScopeSchema = z
-  .object({
-    agentAssets: z.array(agentAssetSchema).max(512),
-    codexRoleAgents: z.array(codexRoleAgentSchema).max(128),
-    codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
-    genieHomeIdentity: physicalRootIdentitySchema.nullable(),
-    // SHA-256 commitment to the exact, exclusion-free physical snapshots of
-    // every removable GENIE_HOME child at authoritative planning time.
-    genieHomeRemovalDigest: digestSchema.nullable(),
-    ownedRules: provenV4RulesSchema.nullable(),
-    removeMarketplace: z.boolean(),
-    runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
-    runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
-    symlinks: z.array(ownedSourceSymlinkSchema).max(2),
-  })
-  .strict();
-
-export type UninstallBatchScope = z.infer<typeof uninstallBatchScopeSchema>;
-
-const uninstallBatchDecisionSchema = z
-  .object({
-    schemaVersion: z.literal(3),
-    genieHome: absolutePathSchema,
-    scope: uninstallBatchScopeSchema,
-    progress: uninstallBatchProgressSchema,
-    digest: digestSchema,
-  })
-  .strict();
-
-export type UninstallBatchDecision = z.infer<typeof uninstallBatchDecisionSchema>;
-
-type UninstallBatchPayload = Omit<UninstallBatchDecision, 'digest'>;
-
-// ---------------------------------------------------------------------------
-// Legacy read-only shapes. Authentic v1/v2 journals are discarded and
-// re-recorded as v3 from current live state (executeUninstallBatch); these
-// schemas exist only so migration can authenticate them before discard, never
-// to act on stale pathname-only authority. Unauthentic/corrupt journals fail
-// closed.
-// ---------------------------------------------------------------------------
 const uninstallBatchScopeSchemaV1 = z
   .object({
     agentAssets: z
@@ -313,8 +256,8 @@ type UninstallBatchDecisionV1 = z.infer<typeof uninstallBatchDecisionSchemaV1>;
 
 const uninstallBatchScopeSchemaV2 = z
   .object({
-    agentAssets: z.array(agentAssetSchema).max(512),
-    codexRoleAgents: z.array(codexRoleAgentSchema).max(128),
+    agentAssets: z.array(legacyAgentAssetSchema).max(512),
+    codexRoleAgents: z.array(legacyCodexRoleAgentSchema).max(128),
     codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
     genieHomePresent: z.boolean(),
     ownedRulesPath: absolutePathSchema.nullable(),
@@ -336,16 +279,43 @@ const uninstallBatchDecisionSchemaV2 = z
 
 type UninstallBatchDecisionV2 = z.infer<typeof uninstallBatchDecisionSchemaV2>;
 
+const uninstallBatchScopeSchemaV3 = z
+  .object({
+    agentAssets: z.array(legacyAgentAssetSchema).max(512),
+    codexRoleAgents: z.array(legacyCodexRoleAgentSchema).max(128),
+    codexRoleInventoryStatus: z.enum(['missing', 'valid', 'corrupt']),
+    genieHomeIdentity: physicalRootIdentitySchema.nullable(),
+    genieHomeRemovalDigest: digestSchema.nullable(),
+    ownedRules: provenV4RulesSchema.nullable(),
+    removeMarketplace: z.boolean(),
+    runtimeClients: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    runtimePlugins: z.object({ codex: z.boolean(), claude: z.boolean() }).strict(),
+    symlinks: z.array(ownedSourceSymlinkSchema).max(2),
+  })
+  .strict();
+const uninstallBatchDecisionSchemaV3 = z
+  .object({
+    schemaVersion: z.literal(3),
+    genieHome: absolutePathSchema,
+    scope: uninstallBatchScopeSchemaV3,
+    progress: uninstallBatchProgressSchema,
+    digest: digestSchema,
+  })
+  .strict();
+
+type UninstallBatchDecisionV3 = z.infer<typeof uninstallBatchDecisionSchemaV3>;
+
 type UninstallBatchReadState =
   | { kind: 'none' }
-  | { kind: 'v3'; decision: UninstallBatchDecision; journalIdentity: PhysicalRootIdentity }
+  | { kind: 'v4'; decision: UninstallBatchDecision; journalIdentity: PhysicalRootIdentity }
+  | { kind: 'legacy-v3'; decision: UninstallBatchDecisionV3; journalIdentity: PhysicalRootIdentity }
   | { kind: 'legacy-v2'; decision: UninstallBatchDecisionV2; journalIdentity: PhysicalRootIdentity }
   | { kind: 'legacy-v1'; decision: UninstallBatchDecisionV1; journalIdentity: PhysicalRootIdentity };
 
 /** Thrown for an authentic legacy journal that must be safely re-planned. */
 export class LegacyUninstallBatchJournalError extends Error {
   constructor(
-    readonly schemaVersion: 1 | 2,
+    readonly schemaVersion: 1 | 2 | 3,
     readonly interruptedMember: string | null,
   ) {
     super(`uninstall batch journal is an authentic legacy v${schemaVersion} record awaiting migration`);
@@ -435,7 +405,7 @@ function uninstallBatchPayload(decision: UninstallBatchDecision): UninstallBatch
   };
 }
 
-// Accepts a v1 or v2 payload; both authenticate under the same canonical digest.
+// Accepts any journal generation's payload; all authenticate under the same canonical digest.
 function uninstallBatchDigest(payload: object): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
@@ -443,14 +413,6 @@ function uninstallBatchDigest(payload: object): string {
 function assertExactUninstallScope(scope: UninstallBatchScope): void {
   if ((scope.genieHomeIdentity === null) !== (scope.genieHomeRemovalDigest === null)) {
     throw new Error('uninstall batch must bind Genie root identity and exact removal commitment together');
-  }
-  const assetPaths = scope.agentAssets.map((asset) => asset.path);
-  if (new Set(assetPaths).size !== assetPaths.length) {
-    throw new Error('uninstall batch journal contains duplicate agent-asset paths');
-  }
-  const roleNames = scope.codexRoleAgents.map((agent) => agent.name);
-  if (new Set(roleNames).size !== roleNames.length) {
-    throw new Error('uninstall batch journal contains duplicate Codex role-agent names');
   }
   const symlinkNames = scope.symlinks.map((symlink) => symlink.name);
   if (new Set(symlinkNames).size !== symlinkNames.length) {
@@ -492,7 +454,7 @@ function authenticatedUninstallBatch(genieHome: string, scope: UninstallBatchSco
   const parsedScope = uninstallBatchScopeSchema.parse(scope);
   assertExactUninstallScope(parsedScope);
   const payload: UninstallBatchPayload = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     genieHome: resolve(genieHome),
     scope: parsedScope,
     progress: { active: null, completed: [], preserved: [] },
@@ -517,9 +479,6 @@ function assertUninstallBatchLocation(genieHome: string, journalPath: string): v
   const cleanupRoots = [
     canonicalHome,
     join(resolveClaudeDir(), 'skills'),
-    join(resolveClaudeDir(), 'workflows'),
-    resolveAgentsSkillsDir(),
-    codexLegacyCuratedDir(resolveCodexDir()),
     join(resolveCodexDir(), 'agents'),
     join(resolveHermesHome(), 'plugins'),
     resolvePiExtensionsDir(),
@@ -550,7 +509,7 @@ function authenticateUninstallDigest(payload: object, digest: string, journalPat
 }
 
 /**
- * Authenticate a parsed journal as v3 or a legacy v1/v2 record. The current
+ * Authenticate a parsed journal as v4 or a legacy v1/v2/v3 record. The current
  * record is fully cross-checked; a legacy record is authenticated only enough
  * to prove it is ours before migration discards its stale authority.
  */
@@ -560,13 +519,23 @@ function authenticateUninstallBatch(
   journalPath: string,
   journalIdentity: PhysicalRootIdentity,
 ): UninstallBatchReadState {
-  const v3 = uninstallBatchDecisionSchema.safeParse(parsed);
-  if (v3.success && v3.data.genieHome === resolve(genieHome)) {
-    const decision = v3.data;
+  const v4 = uninstallBatchDecisionSchema.safeParse(parsed);
+  if (v4.success && v4.data.genieHome === resolve(genieHome)) {
+    const decision = v4.data;
     assertExactUninstallScope(decision.scope);
     assertExactUninstallProgress(decision.progress, decision.scope, decision.genieHome);
     authenticateUninstallDigest(uninstallBatchPayload(decision), decision.digest, journalPath);
-    return { kind: 'v3', decision, journalIdentity };
+    return { kind: 'v4', decision, journalIdentity };
+  }
+  const v3 = uninstallBatchDecisionSchemaV3.safeParse(parsed);
+  if (v3.success && v3.data.genieHome === resolve(genieHome)) {
+    const decision = v3.data;
+    authenticateUninstallDigest(
+      { schemaVersion: 3, genieHome: decision.genieHome, scope: decision.scope, progress: decision.progress },
+      decision.digest,
+      journalPath,
+    );
+    return { kind: 'legacy-v3', decision, journalIdentity };
   }
   const v2 = uninstallBatchDecisionSchemaV2.safeParse(parsed);
   if (v2.success && v2.data.genieHome === resolve(genieHome)) {
@@ -629,13 +598,13 @@ function readUninstallBatchState(genieHome: string): UninstallBatchReadState {
 export function readUninstallBatchDecision(genieHome = getGenieDir()): UninstallBatchDecision | null {
   const state = readUninstallBatchState(genieHome);
   if (state.kind === 'none') return null;
-  if (state.kind === 'legacy-v1' || state.kind === 'legacy-v2') {
+  if (state.kind === 'legacy-v1' || state.kind === 'legacy-v2' || state.kind === 'legacy-v3') {
     throw new LegacyUninstallBatchJournalError(state.decision.schemaVersion, state.decision.progress.active);
   }
   return state.decision;
 }
 
-/** Read-only active-member evidence for the preview across v1 and v2 journals; never throws. */
+/** Read-only active-member evidence for the preview across v1, v2 and v3 journals; never throws. */
 export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()): string | null {
   try {
     const state = readUninstallBatchState(genieHome);
@@ -645,7 +614,7 @@ export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()
   }
 }
 
-/** Re-authenticate the exact legacy journal, then discard it so a fresh v3 decision can be recorded. */
+/** Re-authenticate the exact legacy journal, then discard it so a fresh v4 decision can be recorded. */
 export interface UninstallJournalMutationOptions {
   beforeCapture?: (journalPath: string) => void;
   afterCapture?: (journalPath: string, capturedPath: string) => void;
@@ -670,7 +639,7 @@ export function discardLegacyUninstallBatchDecision(
   options: UninstallJournalMutationOptions = {},
 ): void {
   const state = readUninstallBatchState(genieHome);
-  if (state.kind !== 'legacy-v1' && state.kind !== 'legacy-v2') {
+  if (state.kind !== 'legacy-v1' && state.kind !== 'legacy-v2' && state.kind !== 'legacy-v3') {
     throw new Error('uninstall batch journal is no longer an authentic legacy record');
   }
   const journalPath = uninstallBatchJournalPath(genieHome);
@@ -740,15 +709,14 @@ export function uninstallBatchMemberId(kind: UninstallBatchMemberKind, key: stri
 }
 
 export function uninstallBatchRuntimeMemberId(scope: UninstallBatchScope): string {
-  // The runtime member id hashes the whole codexRoleAgents array, so recording
-  // per-agent identity in v2 changes the id versus a v1 journal. That is fine:
-  // v1 journals are migrated (discarded + re-recorded) before any member runs,
-  // so no receipt is ever compared across the two schema versions.
+  // Role-agent removal left the batch with its transaction engine, so the
+  // runtime member id now hashes only the client-plugin/marketplace scope. A
+  // legacy journal that hashed the role-agent array is migrated (discarded +
+  // re-recorded) before any member runs, so no receipt is ever compared across
+  // schema versions.
   return uninstallBatchMemberId(
     'runtime',
     JSON.stringify({
-      codexRoleAgents: scope.codexRoleAgents,
-      codexRoleInventoryStatus: scope.codexRoleInventoryStatus,
       removeMarketplace: scope.removeMarketplace,
       runtimeClients: scope.runtimeClients,
       runtimePlugins: scope.runtimePlugins,
@@ -757,39 +725,11 @@ export function uninstallBatchRuntimeMemberId(scope: UninstallBatchScope): strin
 }
 
 function hasRuntimeIntegrationWork(scope: UninstallBatchScope): boolean {
-  return (
-    scope.codexRoleInventoryStatus !== 'missing' ||
-    scope.codexRoleAgents.length > 0 ||
-    scope.runtimePlugins.codex ||
-    scope.runtimePlugins.claude ||
-    scope.removeMarketplace
-  );
-}
-
-function flatAgentBatchMember(scope: UninstallBatchScope): string | null {
-  const agentPaths = scope.agentAssets
-    .filter((asset) => asset.disposition === 'remove' && asset.identity.kind === 'agent')
-    .map((asset) => asset.path);
-  if (agentPaths.length === 0) return null;
-  const roots = new Set(agentPaths.map((path) => dirname(path)));
-  if (roots.size !== 1) throw new Error('uninstall batch flat-agent actions span multiple manifest directories');
-  return uninstallBatchMemberId(
-    'asset',
-    `flat-agents:${agentPaths
-      .map((path) => resolve(path))
-      .sort()
-      .join('\n')}`,
-  );
+  return scope.runtimePlugins.codex || scope.runtimePlugins.claude || scope.removeMarketplace;
 }
 
 function uninstallBatchMembers(scope: UninstallBatchScope, genieHome: string): Set<string> {
-  const members = new Set(
-    scope.agentAssets
-      .filter((asset) => asset.disposition === 'remove' && asset.identity.kind !== 'agent')
-      .map((asset) => uninstallBatchMemberId('asset', asset.path)),
-  );
-  const agentMember = flatAgentBatchMember(scope);
-  if (agentMember !== null) members.add(agentMember);
+  const members = new Set<string>();
   if (scope.ownedRules !== null) members.add(uninstallBatchMemberId('rules', scope.ownedRules.path));
   if (hasRuntimeIntegrationWork(scope)) members.add(uninstallBatchRuntimeMemberId(scope));
   if (scope.genieHomeIdentity !== null) members.add(uninstallBatchMemberId('home', resolve(genieHome)));
@@ -805,7 +745,7 @@ export function updateUninstallBatchProgress(
   options: UninstallJournalMutationOptions = {},
 ): UninstallBatchDecision {
   const currentState = readUninstallBatchState(genieHome);
-  if (currentState.kind !== 'v3') throw new Error('uninstall batch journal disappeared during progress update');
+  if (currentState.kind !== 'v4') throw new Error('uninstall batch journal disappeared during progress update');
   const current = currentState.decision;
   if (current.digest !== expectedDigest) throw new Error('uninstall batch journal changed during progress update');
   const parsedProgress = uninstallBatchProgressSchema.parse(progress);
@@ -830,7 +770,7 @@ export function updateUninstallBatchProgress(
       options.beforeCapture,
     );
     options.afterCapture?.(journalPath, capture.capturedPath);
-    authenticateCapturedJournal(capture, genieHome, 'v3', expectedDigest);
+    authenticateCapturedJournal(capture, genieHome, 'v4', expectedDigest);
     try {
       linkSync(staging, journalPath);
     } catch {
@@ -858,7 +798,7 @@ export function clearUninstallBatchDecision(
   options: UninstallJournalMutationOptions = {},
 ): void {
   const state = readUninstallBatchState(genieHome);
-  if (state.kind !== 'v3') throw new Error('uninstall batch journal disappeared before finalization');
+  if (state.kind !== 'v4') throw new Error('uninstall batch journal disappeared before finalization');
   const decision = state.decision;
   if (decision.digest !== expectedDigest) throw new Error('uninstall batch journal changed before finalization');
   const journalPath = uninstallBatchJournalPath(genieHome);
@@ -869,7 +809,7 @@ export function clearUninstallBatchDecision(
     options.beforeCapture,
   );
   options.afterCapture?.(journalPath, capture.capturedPath);
-  authenticateCapturedJournal(capture, genieHome, 'v3', expectedDigest);
+  authenticateCapturedJournal(capture, genieHome, 'v4', expectedDigest);
   deleteCapturedRemovalPath(capture);
   fsyncDirectoryBestEffort(dirname(journalPath));
 }
@@ -1096,905 +1036,11 @@ export function removeSymlinks(
   return { removed, preserved, failures };
 }
 
-// ============================================================================
-// agent-sync managed assets (wish agent-sync) — removed only when provably ours
-// ============================================================================
-
-export interface AgentSyncRemovalTargets {
-  claudeDir?: string;
-  codexDir?: string;
-  /** Shared `~/.agents/skills` tier codex skills are synced into (detection root stays `codexDir`). */
-  agentsSkillsDir?: string;
-  hermesHome?: string;
-  /** pi's extension discovery dir — parent of the auto-synced `extensions/genie` link. */
-  piExtensionsDir?: string;
-  genieHome?: string;
-  /** Injectable clock for deterministic state-backup and kept-aside paths in tests. */
-  now?: () => Date;
-  /** Deterministic race barrier after classification/capture and before a flat-agent mutation. */
-  beforeAgentFileMutation?: (event: AgentSyncRemovalMutationEvent) => void;
-  /** Deterministic barrier inside the single manifest commit of the flat-agent transaction. */
-  beforeAgentManifestCommit?: (event: AgentManifestCommitEvent) => void;
-}
-
-/** Uninstall shares the transaction core's mutation event verbatim. */
-export type AgentSyncRemovalMutationEvent = AgentFileMutationEvent;
-
-function directoryHasMatchingEntry(path: string, matches: (name: string) => boolean): boolean {
-  try {
-    return readdirSync(path).some(matches);
-  } catch (error) {
-    // An existing but unreadable/non-directory transaction root is still work:
-    // authoritative recovery will surface the fail-closed error under the lease.
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
-  }
-}
-
-const REMOVAL_QUARANTINE_PREFIX = '.genie-uninstall-';
-
-function retainedRemovalQuarantines(targets: AgentSyncRemovalTargets = {}): string[] {
-  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
-  const hermesHome = targets.hermesHome ?? resolveHermesHome();
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  const genieCaptureParent = dirname(genieHome);
-  const genieCapturePrefix = `.${basename(genieHome)}.uninstall-capture-`;
-  const parents = new Set<string>([
-    LOCAL_BIN,
-    join(claudeDir, 'rules'),
-    join(hermesHome, 'plugins'),
-    targets.piExtensionsDir ?? resolvePiExtensionsDir(),
-    dirname(uninstallBatchJournalPath(genieHome)),
-    genieCaptureParent,
-  ]);
-  try {
-    for (const profile of readdirSync(join(hermesHome, 'profiles'), { withFileTypes: true })) {
-      if (profile.isDirectory() && !profile.isSymbolicLink()) {
-        parents.add(join(hermesHome, 'profiles', profile.name, 'plugins'));
-      }
-    }
-  } catch {
-    // Missing profiles are normal; unreadable parents are surfaced elsewhere.
-  }
-  const retained: string[] = [];
-  for (const parent of parents) {
-    try {
-      for (const name of readdirSync(parent)) {
-        if (
-          name.startsWith(REMOVAL_QUARANTINE_PREFIX) ||
-          (resolve(parent) === resolve(genieCaptureParent) && name.startsWith(genieCapturePrefix))
-        ) {
-          retained.push(join(parent, name));
-        }
-      }
-    } catch {
-      // A missing parent has no retained capture. Existing unreadable ownership
-      // roots are caught by their authoritative inspectors.
-    }
-  }
-  return retained.sort();
-}
-
-/** Pure pending-transaction evidence for the pre-confirmation preview. */
-export function hasPendingUninstallTransactions(targets: AgentSyncRemovalTargets = {}): boolean {
-  if (retainedRemovalQuarantines(targets).length > 0) return true;
-  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
-  const codexDir = targets.codexDir ?? resolveCodexDir();
-  const skillParents = [
-    join(claudeDir, 'skills'),
-    targets.agentsSkillsDir ?? resolveAgentsSkillsDir(),
-    codexLegacyCuratedDir(codexDir),
-  ];
-  if (
-    skillParents.some((parent) =>
-      directoryHasMatchingEntry(join(parent, SKILL_TRANSACTION_ROOT), (name) =>
-        SKILL_TRANSACTION_PREFIXES.some((prefix) => name.startsWith(prefix)),
-      ),
-    )
-  ) {
-    return true;
-  }
-  if (
-    directoryHasMatchingEntry(join(claudeDir, 'workflows'), (name) =>
-      COUNCIL_TRANSACTION_PREFIXES.some((prefix) => name.startsWith(prefix)),
-    )
-  ) {
-    return true;
-  }
-  return directoryHasMatchingEntry(join(codexDir, 'agents'), (name) =>
-    CODEX_ROLE_TRANSACTION_PREFIXES.some((prefix) => name.startsWith(prefix)),
-  );
-}
-
-function unresolvedTransactionConflictFailures(claudeDir: string, codexDir: string, agentsSkillsDir: string): string[] {
-  const failures: string[] = [];
-  for (const root of [join(claudeDir, 'skills'), agentsSkillsDir, codexLegacyCuratedDir(codexDir)]) {
-    const transactionRoot = join(root, SKILL_TRANSACTION_ROOT);
-    if (directoryHasMatchingEntry(transactionRoot, (name) => name.startsWith(SKILL_TRANSACTION_CONFLICT_PREFIX))) {
-      failures.push(`unresolved managed-skill transaction conflict requires review at ${transactionRoot}`);
-    }
-  }
-  const workflows = join(claudeDir, 'workflows');
-  if (
-    directoryHasMatchingEntry(workflows, (name) =>
-      COUNCIL_TRANSACTION_CONFLICT_PREFIXES.some((prefix) => name.startsWith(prefix)),
-    )
-  ) {
-    failures.push(`unresolved council workflow transaction conflict requires review at ${workflows}`);
-  }
-  const agentsDir = join(codexDir, 'agents');
-  if (directoryHasMatchingEntry(agentsDir, (name) => name.startsWith(CODEX_ROLE_TRANSACTION_CONFLICT_PREFIX))) {
-    failures.push(`unresolved Codex role-agent transaction conflict requires review at ${agentsDir}`);
-  }
-  return failures;
-}
-
-/**
- * Recover every published external-asset transaction before authoritative
- * ownership enumeration. All roots are attempted so one failure cannot hide a
- * second parked object; any failure blocks the whole uninstall batch.
- */
-export function recoverUninstallTransactions(targets: AgentSyncRemovalTargets = {}): void {
-  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
-  const codexDir = targets.codexDir ?? resolveCodexDir();
-  const agentsSkillsDir = targets.agentsSkillsDir ?? resolveAgentsSkillsDir();
-  const attempts: Array<{ label: string; path: string; recover: () => void }> = [
-    {
-      label: 'Claude managed skill',
-      path: join(claudeDir, 'skills'),
-      recover: () => recoverManagedSkillTransactions(join(claudeDir, 'skills')),
-    },
-    {
-      label: 'shared Codex managed skill',
-      path: agentsSkillsDir,
-      recover: () => recoverManagedSkillTransactions(agentsSkillsDir),
-    },
-    {
-      label: 'legacy Codex managed skill',
-      path: codexLegacyCuratedDir(codexDir),
-      recover: () => recoverManagedSkillTransactions(codexLegacyCuratedDir(codexDir)),
-    },
-    {
-      label: 'council workflow',
-      path: join(claudeDir, 'workflows'),
-      recover: () => recoverManagedWorkflowTransactions(join(claudeDir, 'workflows')),
-    },
-    {
-      label: 'Codex role-agent',
-      path: join(codexDir, 'agents'),
-      recover: () => recoverCodexAgentTransactions(codexDir),
-    },
-  ];
-  const failures: string[] = [];
-  for (const attempt of attempts) {
-    try {
-      attempt.recover();
-    } catch (error) {
-      failures.push(
-        `pending ${attempt.label} transaction could not be recovered at ${attempt.path}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-  failures.push(...unresolvedTransactionConflictFailures(claudeDir, codexDir, agentsSkillsDir));
-  const retained = retainedRemovalQuarantines(targets);
-  if (retained.length > 0) {
-    failures.push(`retained uninstall capture requires no-clobber recovery review: ${retained.join(', ')}`);
-  }
-  if (failures.length > 0) throw new Error(failures.join('; '));
-}
-
-/** Legacy suffix used by older uninstalls; those relinquished dirs remain invisible. */
-const LEGACY_KEPT_MARKER = '.genie-kept';
-
-interface AgentSyncAsset {
-  agent: 'claude' | 'codex' | 'hermes' | 'pi';
-  kind: 'skill' | 'agent' | 'workflow' | 'link';
-  path: string;
-  /** True when content diverged or ownership metadata is corrupt; uninstall preserves it. */
-  modified?: boolean;
-  /** Workflow-only digest ownership sidecar removed together with a clean target. */
-  metadataPath?: string;
-  /**
-   * The exact physical identity captured by this classification. Present only for
-   * a removable (clean) asset; the uninstall batch records it so a later retry can
-   * refuse a replacement occupying the same path (F43).
-   */
-  identity?: AgentAssetIdentity;
-  /** Flat Claude agents only: the shared manifest entry that owns this path. */
-  manifestEntry?: { dir: string; name: string; digest: string };
-  /** Flat Claude agents only: ownership exists but the live file is already absent. */
-  missing?: boolean;
-  /** Flat Claude agents only: exact snapshot captured at classification — the removal CAS target. */
-  agentSnapshot?: AgentPathSnapshot;
-}
-
-function collectManagedSkillDirs(
-  parent: string,
-  agent: AgentSyncAsset['agent'],
-  out: AgentSyncAsset[],
-  restrictToPaths?: ReadonlySet<string>,
-): void {
-  let names: string[];
-  try {
-    names = readdirSync(parent);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    // Dirs a previous uninstall already relinquished are the user's now — never re-collect.
-    if (name.includes(LEGACY_KEPT_MARKER)) continue;
-    // The Codex fallback-retirement quarantine is retained evidence (R6): uninstall
-    // classifies but never deletes it, so it is invisible to managed-skill collection.
-    if (name === CODEX_FALLBACK_RETIREMENT_ROOT) continue;
-    const dir = join(parent, name);
-    // Batch removal re-collects once per planned member; skip the full-tree digest
-    // of any dir outside this call's allowlist BEFORE inspecting it, so a batch of
-    // N members costs N single-dir digests instead of N × (every managed dir).
-    if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(dir))) continue;
-    let isDir = false;
-    try {
-      isDir = lstatSync(dir).isDirectory();
-    } catch {
-      isDir = false;
-    }
-    if (!isDir) continue;
-    // One inspection yields both the disposition and the identity, so the batch
-    // records exactly what classification observed. No manifest → invisible;
-    // manifest but diverged/corrupt → modified (user data), no identity.
-    const report = inspectManagedSkillTree(dir);
-    if (report.state === 'unmanaged') continue;
-    if (report.state === 'managed-clean' && report.contentDigest !== undefined && report.manifestDigest !== undefined) {
-      out.push({
-        agent,
-        kind: 'skill',
-        path: dir,
-        modified: false,
-        identity: { kind: 'skill', contentDigest: report.contentDigest, manifestDigest: report.manifestDigest },
-      });
-    } else {
-      out.push({ agent, kind: 'skill', path: dir, modified: true });
-    }
-  }
-}
-
-function agentSnapshotIdentity(snapshot: AgentPathSnapshot): AgentSnapshotIdentity {
-  if (snapshot.kind === 'absent') return { kind: 'absent' };
-  if (snapshot.kind === 'file') {
-    return { kind: 'file', digest: snapshot.digest, mode: snapshot.stat.mode & 0o7777 };
-  }
-  if (snapshot.kind === 'directory') {
-    return { kind: 'directory', digest: snapshot.digest, mode: snapshot.stat.mode & 0o7777 };
-  }
-  if (snapshot.kind === 'symlink') return { kind: 'symlink', target: snapshot.target };
-  return { kind: 'other', mode: snapshot.stat.mode & 0o7777 };
-}
-
-function agentIdentityMatches(expected: AgentAssetIdentity, asset: AgentSyncAsset): boolean {
-  if (expected.kind !== 'agent' || asset.identity?.kind !== 'agent') return false;
-  return (
-    expected.ownedDigest === asset.identity.ownedDigest &&
-    JSON.stringify(expected.snapshot) === JSON.stringify(asset.identity.snapshot)
-  );
-}
-
-/** Collect only flat Claude-agent names explicitly owned by the shared per-file manifest. */
-function collectManagedAgentFiles(
-  parent: string,
-  manifest: AgentFilesManifestView,
-  out: AgentSyncAsset[],
-  restrictToPaths?: ReadonlySet<string>,
-): void {
-  if (manifest.kind !== 'managed') return;
-  for (const [name, entry] of Object.entries(manifest.files).sort(([left], [right]) => left.localeCompare(right))) {
-    const path = join(parent, name);
-    if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(path))) continue;
-    let snapshot: AgentPathSnapshot | undefined;
-    try {
-      snapshot = captureAgentPathSnapshot(path);
-    } catch {
-      // Uninspectable manifest-owned data is never a deletion/action candidate.
-      out.push({
-        agent: 'claude',
-        kind: 'agent',
-        path,
-        modified: true,
-        manifestEntry: { dir: parent, name, digest: entry.digest },
-      });
-      continue;
-    }
-    const missing = snapshot.kind === 'absent';
-    const clean = snapshot.kind === 'file' && snapshot.digest === entry.digest;
-    out.push({
-      agent: 'claude',
-      kind: 'agent',
-      path,
-      modified: !missing && !clean,
-      missing,
-      agentSnapshot: snapshot,
-      manifestEntry: { dir: parent, name, digest: entry.digest },
-      identity: { kind: 'agent', ownedDigest: entry.digest, snapshot: agentSnapshotIdentity(snapshot) },
-    });
-  }
-}
-
-function collectManagedCouncil(claudeDir: string, out: AgentSyncAsset[], restrictToPaths?: ReadonlySet<string>): void {
-  if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(join(claudeDir, 'workflows', TARGET_NAME)))) return;
-  const workflow = inspectManagedWorkflow(join(claudeDir, 'workflows'));
-  if (workflow.state === 'unmanaged') return;
-  if (
-    workflow.state === 'managed-clean' &&
-    workflow.targetDigest !== undefined &&
-    workflow.manifestDigest !== undefined &&
-    workflow.targetMode !== undefined &&
-    workflow.manifestMode !== undefined
-  ) {
-    out.push({
-      agent: 'claude',
-      kind: 'workflow',
-      path: workflow.targetPath,
-      metadataPath: workflow.manifestPath,
-      modified: false,
-      identity: {
-        kind: 'workflow',
-        targetDigest: workflow.targetDigest,
-        manifestDigest: workflow.manifestDigest,
-        targetMode: workflow.targetMode,
-        manifestMode: workflow.manifestMode,
-      },
-    });
-    return;
-  }
-  out.push({
-    agent: 'claude',
-    kind: 'workflow',
-    path: workflow.targetPath,
-    metadataPath: workflow.manifestPath,
-    modified: true,
-  });
-}
-
-/**
- * A synced plugin link (hermes `plugins/genie`, pi `extensions/genie`) is ours
- * only when the symlink resolves into the genie home. A user's own link pointing
- * at a dev checkout, and any real dir/file at the same path, are never collected.
- */
-function collectPluginLinkPath(
-  linkPath: string,
-  genieHome: string,
-  agent: AgentSyncAsset['agent'],
-  out: AgentSyncAsset[],
-  restrictToPaths?: ReadonlySet<string>,
-): void {
-  if (restrictToPaths !== undefined && !restrictToPaths.has(resolve(linkPath))) return;
-  let stat: ReturnType<typeof lstatSync>;
-  try {
-    stat = lstatSync(linkPath);
-  } catch {
-    return;
-  }
-  if (!stat.isSymbolicLink()) return;
-  try {
-    const target = readlinkSync(linkPath);
-    const after = lstatSync(linkPath);
-    if (!after.isSymbolicLink() || !samePhysicalRootIdentity(physicalRootIdentity(stat), physicalRootIdentity(after))) {
-      return;
-    }
-    const resolved = resolve(dirname(linkPath), target);
-    const home = resolve(genieHome);
-    // Record the raw link target as identity so removal re-verifies the exact
-    // pointer before unlinking a symlink the user may have repointed since.
-    if (isSameOrContainedPath(home, resolved)) {
-      out.push({
-        agent,
-        kind: 'link',
-        path: linkPath,
-        identity: { kind: 'link', target, identity: physicalRootIdentity(after) },
-      });
-    }
-  } catch {
-    /* unreadable symlink → leave it */
-  }
-}
-
-function collectHermesLinks(
-  hermesHome: string,
-  genieHome: string,
-  out: AgentSyncAsset[],
-  restrictToPaths?: ReadonlySet<string>,
-): void {
-  collectPluginLinkPath(join(hermesHome, 'plugins', 'genie'), genieHome, 'hermes', out, restrictToPaths);
-  const profilesRoot = join(hermesHome, 'profiles');
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(profilesRoot, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entry.name) || entry.name === '.' || entry.name === '..') continue;
-    const profileRoot = resolve(profilesRoot, entry.name);
-    if (!isSameOrContainedPath(profilesRoot, profileRoot)) continue;
-    collectPluginLinkPath(join(profileRoot, 'plugins', 'genie'), genieHome, 'hermes', out, restrictToPaths);
-  }
-}
-
-/**
- * Read-only scan for genie-managed agent assets (skills, stamped council.js, hermes/pi links).
- * `restrictToPaths` (resolved paths) bounds the scan to those exact objects, so a
- * batch removing N members re-inspects only each planned path instead of digesting
- * every managed dir once per member. Classification of each returned path is
- * unchanged — it is still freshly inspected on every call.
- */
-export function collectAgentSyncAssets(
-  targets: AgentSyncRemovalTargets = {},
-  restrictToPaths?: ReadonlySet<string>,
-): AgentSyncAsset[] {
-  return inspectAgentSyncAssets(targets, restrictToPaths).assets;
-}
-
-export interface AgentSyncAssetInspection {
-  assets: AgentSyncAsset[];
-  claudeAgentManifest: AgentFilesManifestView;
-}
-
-/** Preserve strict manifest state alongside the asset list for fail-closed callers. */
-export function inspectAgentSyncAssets(
-  targets: AgentSyncRemovalTargets = {},
-  restrictToPaths?: ReadonlySet<string>,
-): AgentSyncAssetInspection {
-  const claudeDir = targets.claudeDir ?? resolveClaudeDir();
-  const codexDir = targets.codexDir ?? resolveCodexDir();
-  const hermesHome = targets.hermesHome ?? resolveHermesHome();
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  const out: AgentSyncAsset[] = [];
-  const claudeAgentManifest = readAgentFilesManifestState(join(claudeDir, 'agents'));
-  collectManagedSkillDirs(join(claudeDir, 'skills'), 'claude', out, restrictToPaths);
-  collectManagedAgentFiles(join(claudeDir, 'agents'), claudeAgentManifest, out, restrictToPaths);
-  // Live codex tier + the retired `.curated` lane (machines that never synced
-  // post-migration still carry managed dirs there). Manifest-gated either way —
-  // unmanaged siblings in the shared ~/.agents/skills tier are invisible.
-  collectManagedSkillDirs(targets.agentsSkillsDir ?? resolveAgentsSkillsDir(), 'codex', out, restrictToPaths);
-  collectManagedSkillDirs(codexLegacyCuratedDir(codexDir), 'codex', out, restrictToPaths);
-  collectManagedCouncil(claudeDir, out, restrictToPaths);
-  collectHermesLinks(hermesHome, genieHome, out, restrictToPaths);
-  // The agent-sync `pi` lane auto-creates `<pi agent dir>/extensions/genie` →
-  // `$GENIE_HOME/plugins/pi-genie`. Uninstall removes GENIE_HOME, so the link
-  // must be collected here or every auto-installed pi user keeps a dangling
-  // symlink. Identity-checked exactly like the hermes link: only a symlink that
-  // resolves INTO the genie home is ours.
-  collectPluginLinkPath(
-    join(targets.piExtensionsDir ?? resolvePiExtensionsDir(), 'genie'),
-    genieHome,
-    'pi',
-    out,
-    restrictToPaths,
-  );
-  return { assets: out, claudeAgentManifest };
-}
-
-export interface AgentSyncRemovalResult {
-  /** Assets deleted outright (digest-clean skills, stamped council.js, hermes/pi links). */
-  removed: string[];
-  /** User-modified/corrupt-metadata/identity-mismatched assets preserved byte-identically at their paths. */
-  kept: string[];
-  /** Subset of `kept` whose live identity diverged from a recorded batch identity (vs. a plain user edit). */
-  identityMismatch: string[];
-  /** Per-asset failures. Callers keep Genie installed so cleanup can be retried. */
-  failures: Array<{ path: string; detail: string }>;
-  /** Non-fatal transaction/concurrency details for paths left safe and visible. */
-  advisories?: string[];
-  /** Set when the shared sync/uninstall lock was held by another process. */
-  skipped?: string;
-}
-
-export interface AgentSyncRemovalOptions {
-  beforeManagedDirRemoval?: (destDir: string, stage: 'before-park' | 'before-delete') => void;
-  beforeWorkflowRemoval?: (stage: 'before-park' | 'before-delete') => void;
-  /** Deterministic boundary after a plugin link (hermes/pi) is proven and before atomic capture. */
-  beforeManagedLinkCapture?: (path: string) => void;
-  /**
-   * Durable uninstall-batch allowlist with the recorded identity per planned path.
-   * Membership filters which assets are candidates; identity binds removal so a
-   * replacement at the same path is preserved, not deleted under path authority.
-   */
-  plannedAssets?: readonly { path: string; identity: AgentAssetIdentity }[];
-}
-
-function recoverTransactionsBeforeRemoval(targets: AgentSyncRemovalTargets): { path: string; detail: string } | null {
-  const recoveryPath = join(targets.claudeDir ?? resolveClaudeDir(), 'skills');
-  try {
-    recoverUninstallTransactions(targets);
-    return null;
-  } catch (error) {
-    return {
-      path: recoveryPath,
-      detail: `pending external asset transaction could not be recovered; no agent assets were removed: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
-}
-
-/**
- * Remove every asset {@link collectAgentSyncAssets} finds — except managed skill
- * dirs whose digest diverged from their manifest: those hold user edits and are
- * left byte-identical at the same path. Uninstall does not get to rename,
- * disable, rewrite, or relinquish ownership of a user-modified artifact.
- */
-export function removeAgentSyncAssets(
-  targets: AgentSyncRemovalTargets = {},
-  options: AgentSyncRemovalOptions = {},
-): AgentSyncRemovalResult {
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  let lock: { release: () => void } | null;
-  try {
-    lock = acquireAgentSyncLock(genieHome);
-  } catch (error) {
-    const skipped = `agent-sync lock acquisition failed closed; uninstall left synced assets untouched: ${errorMessage(error)}`;
-    return {
-      removed: [],
-      kept: [],
-      identityMismatch: [],
-      failures: [{ path: genieHome, detail: skipped }],
-      advisories: [skipped],
-      skipped,
-    };
-  }
-  if (lock === null) {
-    const skipped = 'another agent-sync mutation holds the lock; uninstall left synced assets untouched';
-    return {
-      removed: [],
-      kept: [],
-      identityMismatch: [],
-      failures: [{ path: genieHome, detail: skipped }],
-      advisories: [skipped],
-      skipped,
-    };
-  }
-  try {
-    return removeAgentSyncAssetsLocked(targets, options);
-  } finally {
-    lock.release();
-  }
-}
-
-function removeAgentSyncAssetsLocked(
-  targets: AgentSyncRemovalTargets = {},
-  options: AgentSyncRemovalOptions = {},
-): AgentSyncRemovalResult {
-  const result: AgentSyncRemovalResult = { removed: [], kept: [], identityMismatch: [], failures: [] };
-  const recoveryFailure = recoverTransactionsBeforeRemoval(targets);
-  if (recoveryFailure) {
-    result.failures.push(recoveryFailure);
-    return result;
-  }
-  const plannedByPath =
-    options.plannedAssets === undefined
-      ? null
-      : new Map(options.plannedAssets.map((planned) => [resolve(planned.path), planned.identity]));
-  // Scope the (expensive, full-tree-digesting) collection to exactly the planned
-  // paths. The resulting membership is identical to collecting everything then
-  // filtering, but a per-member batch call no longer digests every sibling.
-  const restrictToPaths = plannedByPath === null ? undefined : new Set(plannedByPath.keys());
-  const inspection = inspectAgentSyncAssets(targets, restrictToPaths);
-  if (inspection.claudeAgentManifest.kind === 'unsafe') {
-    const manifestPath = join(targets.claudeDir ?? resolveClaudeDir(), 'agents', MANIFEST_NAME);
-    result.failures.push({
-      path: manifestPath,
-      detail: `Claude agent ownership manifest is unsafe: ${inspection.claudeAgentManifest.reason}`,
-    });
-    return result;
-  }
-  const assets = inspection.assets.filter((asset) => plannedByPath === null || plannedByPath.has(resolve(asset.path)));
-  removeCollectedAgentAssets(assets, targets, options, plannedByPath, result);
-  return result;
-}
-
-function recordAgentAssetDisposition(
-  disposition: 'removed' | 'unmanaged' | 'kept-modified' | 'kept-identity-mismatch',
-  path: string,
-  result: AgentSyncRemovalResult,
-): void {
-  if (disposition === 'removed') {
-    result.removed.push(path);
-    return;
-  }
-  result.kept.push(path);
-  if (disposition === 'kept-identity-mismatch') result.identityMismatch.push(path);
-}
-
-/** Atomically capture and remove only the exact recorded plugin-link (hermes/pi) inode. */
-function removeManagedLink(
-  linkPath: string,
-  expected: Extract<AgentAssetIdentity, { kind: 'link' }> | undefined,
-  result: AgentSyncRemovalResult,
-  beforeCapture?: (path: string) => void,
-): void {
-  let liveTarget: string;
-  let liveIdentity: PhysicalRootIdentity;
-  try {
-    const stat = lstatSync(linkPath);
-    if (!stat.isSymbolicLink()) {
-      // A real object now occupies the recorded link path; never delete it.
-      result.kept.push(linkPath);
-      result.identityMismatch.push(linkPath);
-      return;
-    }
-    liveIdentity = physicalRootIdentity(stat);
-    liveTarget = readlinkSync(linkPath);
-  } catch (error) {
-    // Already gone before we reached it: an idempotent no-op, not a failure.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
-  }
-  if (
-    expected !== undefined &&
-    (liveTarget !== expected.target || !samePhysicalRootIdentity(liveIdentity, expected.identity))
-  ) {
-    result.kept.push(linkPath);
-    result.identityMismatch.push(linkPath);
-    return;
-  }
-  const capture = captureExpectedRemovalPath(
-    linkPath,
-    expected?.identity ?? liveIdentity,
-    'plugin-link',
-    beforeCapture,
-  );
-  const capturedStat = lstatSync(capture.capturedPath);
-  const capturedTarget = capturedStat.isSymbolicLink() ? readlinkSync(capture.capturedPath) : null;
-  if (!capturedStat.isSymbolicLink() || capturedTarget !== (expected?.target ?? liveTarget)) {
-    restoreCapturedNoClobber(capture, `captured plugin link content changed: ${linkPath}`);
-  }
-  deleteCapturedRemovalPath(capture);
-  result.removed.push(linkPath);
-}
-
-function pushAgentAdvisory(result: AgentSyncRemovalResult, advisory: string): void {
-  if (result.advisories === undefined) result.advisories = [];
-  result.advisories.push(advisory);
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /** Lazily allocate one exclusive backup generation and persist the exact validated bytes. */
-function createAgentFileBackup(targets: AgentSyncRemovalTargets): (name: string, bytes: Buffer) => string {
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  const stamp = (targets.now ?? (() => new Date()))().toISOString();
-  let backupRoot: string | null = null;
-  return (name, bytes) => {
-    if (backupRoot === null) backupRoot = allocateExclusiveBackupRoot(genieHome, `agent-sync-uninstall-${stamp}`);
-    const destination = join(backupRoot, 'claude', 'agents', name);
-    // Under `<GENIE_HOME>/state-backups/…`. The allocator above already creates
-    // that parent at 0o700; declaring it here too removes the ordering
-    // dependence so this can never be the unsafe first creator.
-    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-    writeFileSync(destination, bytes, { flag: 'wx' });
-    return destination;
-  };
-}
-
-function planAgentRemoval(
-  asset: AgentSyncAsset,
-  backupAgentBytes: (name: string, bytes: Buffer) => string,
-  result: AgentSyncRemovalResult,
-): FlatAgentOp | null {
-  const entry = asset.manifestEntry;
-  if (entry === undefined) return null;
-  if (asset.missing) return { kind: 'disown', name: entry.name, ownedDigest: entry.digest, prune: true };
-  const snapshot = asset.agentSnapshot;
-  if (snapshot === undefined || snapshot.kind === 'absent') {
-    result.failures.push({ path: asset.path, detail: 'could not inspect the manifest-owned agent during removal' });
-    return null;
-  }
-  if (asset.modified !== true && snapshot.kind === 'file') {
-    let backupPath: string;
-    try {
-      backupPath = backupAgentBytes(entry.name, snapshot.bytes);
-    } catch (error) {
-      result.failures.push({ path: asset.path, detail: `durable backup failed: ${errorMessage(error)}` });
-      return null;
-    }
-    return {
-      kind: 'retire',
-      name: entry.name,
-      expected: snapshot,
-      ownedDigest: entry.digest,
-      disposal: 'discard',
-      operation: 'remove',
-      backupPath,
-    };
-  }
-  return {
-    kind: 'retire',
-    name: entry.name,
-    expected: snapshot,
-    ownedDigest: entry.digest,
-    disposal: 'keep-aside',
-    operation: 'keep',
-  };
-}
-
-function reportAgentRemovalOutcome(
-  outcome: FlatAgentOutcome,
-  committed: boolean,
-  dir: string,
-  result: AgentSyncRemovalResult,
-): void {
-  const operation = outcome.op;
-  const path = join(dir, operation.name);
-  if (outcome.status === 'failed' || outcome.status === 'stale') {
-    const detail = outcome.reason ?? 'flat-agent transaction did not settle this path';
-    result.failures.push({ path, detail });
-    pushAgentAdvisory(result, `kept ${path}: ${detail}`);
-    return;
-  }
-  if (!committed) return;
-  if (operation.kind === 'disown') return;
-  if (operation.kind === 'publish') return;
-  if (outcome.status === 'applied') {
-    if (outcome.keptPath !== undefined) result.kept.push(outcome.keptPath);
-    if (operation.disposal === 'discard') result.removed.push(path);
-    if (operation.disposal === 'keep-aside' && outcome.keptPath === undefined) {
-      result.failures.push({ path, detail: 'modified agent was disowned without a visible kept-aside path' });
-    }
-    return;
-  }
-  if (outcome.conflict === 'changed-before-capture') {
-    pushAgentAdvisory(result, `left concurrently changed agent ${path} live and unowned`);
-    return;
-  }
-  if (outcome.keptPath !== undefined) {
-    result.kept.push(outcome.keptPath);
-    pushAgentAdvisory(
-      result,
-      `left concurrently appeared agent ${path} live and unowned; preserved prior bytes at ${outcome.keptPath}`,
-    );
-    return;
-  }
-  pushAgentAdvisory(result, `left concurrently appeared agent ${path} live and unowned`);
-}
-
-/** Execute all selected flat-agent actions in one shared manifest transaction. */
-function removeManagedAgentAssets(
-  assets: AgentSyncAsset[],
-  targets: AgentSyncRemovalTargets,
-  result: AgentSyncRemovalResult,
-): void {
-  const dir = assets[0]?.manifestEntry?.dir;
-  if (dir === undefined) return;
-  const backupAgentBytes = createAgentFileBackup(targets);
-  const operations: FlatAgentOp[] = [];
-  for (const asset of assets) {
-    const operation = planAgentRemoval(asset, backupAgentBytes, result);
-    if (operation !== null) operations.push(operation);
-  }
-  if (operations.length === 0) return;
-  try {
-    const transaction = runFlatAgentTransaction(dir, operations, {
-      now: targets.now ?? (() => new Date()),
-      beforeFileMutation: targets.beforeAgentFileMutation,
-      beforeManifestCommit: targets.beforeAgentManifestCommit,
-    });
-    for (const advisory of transaction.advisories) pushAgentAdvisory(result, advisory);
-    for (const outcome of transaction.outcomes) {
-      reportAgentRemovalOutcome(outcome, transaction.committed, dir, result);
-    }
-    if (!transaction.committed && !transaction.outcomes.some((outcome) => outcome.status === 'failed')) {
-      result.failures.push({
-        path: dir,
-        detail: transaction.advisories.join('; ') || 'flat-agent manifest transaction did not commit',
-      });
-    }
-  } catch (error) {
-    const detail = `flat-agent removal transaction failed: ${errorMessage(error)}`;
-    result.failures.push({ path: dir, detail });
-    pushAgentAdvisory(result, detail);
-  }
-}
-
-function recordAgentAssetIdentityMismatch(path: string, result: AgentSyncRemovalResult, advisory?: string): void {
-  result.kept.push(path);
-  result.identityMismatch.push(path);
-  if (advisory !== undefined) pushAgentAdvisory(result, advisory);
-}
-
-/** Reconcile and mutate one collected non-agent asset against its recorded authority. */
-function removeCollectedManagedAsset(
-  asset: AgentSyncAsset,
-  expectedIdentity: AgentAssetIdentity | undefined,
-  targets: AgentSyncRemovalTargets,
-  options: AgentSyncRemovalOptions,
-  result: AgentSyncRemovalResult,
-): void {
-  try {
-    if (asset.kind === 'workflow' && asset.metadataPath) {
-      const disposition = removeManagedWorkflow(join(targets.claudeDir ?? resolveClaudeDir(), 'workflows'), {
-        beforeRemoval: options.beforeWorkflowRemoval,
-        expectedIdentity: expectedIdentity?.kind === 'workflow' ? expectedIdentity : undefined,
-      });
-      recordAgentAssetDisposition(disposition, asset.path, result);
-      return;
-    }
-    if (asset.kind === 'skill') {
-      const disposition = removeManagedSkillTree(asset.path, {
-        genieHome: targets.genieHome,
-        agent: asset.agent,
-        beforeManagedDirRemoval: options.beforeManagedDirRemoval,
-        expectedIdentity: expectedIdentity?.kind === 'skill' ? expectedIdentity : undefined,
-      });
-      recordAgentAssetDisposition(disposition, asset.path, result);
-      return;
-    }
-    removeManagedLink(
-      asset.path,
-      expectedIdentity?.kind === 'link' ? expectedIdentity : undefined,
-      result,
-      options.beforeManagedLinkCapture,
-    );
-  } catch (error) {
-    if (error instanceof UninstallIdentityMismatchError) {
-      recordAgentAssetIdentityMismatch(asset.path, result, error.message);
-      return;
-    }
-    result.failures.push({ path: asset.path, detail: errorMessage(error) });
-  }
-}
-
-/** Settle recorded links that disappeared from live collection without widening the plan. */
-function removeUncollectedPlannedLinks(
-  assets: AgentSyncAsset[],
-  plannedByPath: Map<string, AgentAssetIdentity> | null,
-  options: AgentSyncRemovalOptions,
-  result: AgentSyncRemovalResult,
-): void {
-  if (plannedByPath === null) return;
-  const collectedPaths = new Set(assets.map((asset) => resolve(asset.path)));
-  for (const [path, identity] of plannedByPath) {
-    if (identity.kind !== 'link' || collectedPaths.has(path)) continue;
-    try {
-      removeManagedLink(path, identity, result, options.beforeManagedLinkCapture);
-    } catch (error) {
-      if (error instanceof UninstallIdentityMismatchError) {
-        recordAgentAssetIdentityMismatch(path, result, error.message);
-      } else {
-        result.failures.push({ path, detail: errorMessage(error) });
-      }
-    }
-  }
-}
-
-function removeCollectedAgentAssets(
-  assets: AgentSyncAsset[],
-  targets: AgentSyncRemovalTargets,
-  options: AgentSyncRemovalOptions,
-  plannedByPath: Map<string, AgentAssetIdentity> | null,
-  result: AgentSyncRemovalResult,
-): void {
-  const agentAssets: AgentSyncAsset[] = [];
-  for (const asset of assets) {
-    const expectedIdentity = plannedByPath?.get(resolve(asset.path));
-    // Defense in depth: a recorded identity whose kind does not match the object
-    // now occupying the path is a physical replacement of a different kind. Refuse
-    // it as an identity mismatch rather than degrading to an unbound removal.
-    if (expectedIdentity !== undefined && expectedIdentity.kind !== asset.kind) {
-      recordAgentAssetIdentityMismatch(asset.path, result);
-      continue;
-    }
-    if (asset.kind === 'agent') {
-      if (expectedIdentity !== undefined && !agentIdentityMatches(expectedIdentity, asset)) {
-        recordAgentAssetIdentityMismatch(asset.path, result);
-      } else {
-        agentAssets.push(asset);
-      }
-      continue;
-    }
-    removeCollectedManagedAsset(asset, expectedIdentity, targets, options, result);
-  }
-  removeUncollectedPlannedLinks(assets, plannedByPath, options, result);
-  removeManagedAgentAssets(agentAssets, targets, result);
-}
-
 export interface UninstallFailure {
   step: string;
   detail: string;
@@ -2065,7 +1111,7 @@ export function executeUninstallBatch(
   } catch (error) {
     if (!(error instanceof LegacyUninstallBatchJournalError)) throw error;
     // Authentic legacy journal from a prior release: discard it and re-record a
-    // fresh v3 decision from the CURRENT live scope. In particular, v2 carried
+    // fresh v4 decision from the CURRENT live scope. In particular, v2 carried
     // only a pathname-presence boolean for GENIE_HOME and can never authorize a
     // deletion. Safe because every published
     // external transaction was recovered before this ran and each member removal
@@ -2193,10 +1239,7 @@ export interface UninstallWorkSnapshot {
   hasHookScript: boolean;
   hasOrchestrationRules: boolean;
   hasPendingBatch?: boolean;
-  hasPendingTransactions?: boolean;
   symlinkCount: number;
-  hasAgentAssets: boolean;
-  codexRoleInventoryStatus: 'missing' | 'valid' | 'corrupt';
   runtimeEvidence: { codex: boolean; claude: boolean };
   removeMarketplace: boolean;
 }
@@ -2207,10 +1250,7 @@ export function hasUninstallWork(snapshot: UninstallWorkSnapshot): boolean {
     snapshot.hasHookScript ||
     snapshot.hasOrchestrationRules ||
     snapshot.hasPendingBatch === true ||
-    snapshot.hasPendingTransactions === true ||
     snapshot.symlinkCount > 0 ||
-    snapshot.hasAgentAssets ||
-    snapshot.codexRoleInventoryStatus !== 'missing' ||
     snapshot.runtimeEvidence.codex ||
     snapshot.runtimeEvidence.claude ||
     snapshot.removeMarketplace
@@ -2251,16 +1291,10 @@ export interface UninstallPlan {
   ownedRules: ProvenV4Rules | null;
   existingSymlinks: string[];
   ownedSourceSymlinks: OwnedSourceSymlink[];
-  agentAssets: AgentSyncAsset[];
-  claudeAgentManifest: AgentFilesManifestView;
-  hasAgentAssets: boolean;
-  codexRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>;
-  managedRoleAgents: ReturnType<typeof inspectCodexAgentOwnership>['entries'];
   runtimeClients: RuntimeClientAvailability;
   runtimeEvidence: ReturnType<typeof inspectRuntimeIntegrationEvidence>;
   removeMarketplace: boolean;
   hasPendingBatch: boolean;
-  hasPendingTransactions: boolean;
 }
 
 export interface UninstallPlanInspectors {
@@ -2270,13 +1304,9 @@ export interface UninstallPlanInspectors {
   hookScriptExists?: () => boolean;
   detectV4Install?: typeof detectV4Install;
   existingSymlinks?: (genieDir: string) => string[];
-  collectAgentSyncAssets?: typeof collectAgentSyncAssets;
-  inspectAgentFilesManifestState?: (dir: string) => AgentFilesManifestView;
-  inspectCodexAgentOwnership?: typeof inspectCodexAgentOwnership;
   inspectRuntimeClientAvailability?: typeof inspectRuntimeClientAvailability;
   inspectRuntimeIntegrationEvidence?: typeof inspectRuntimeIntegrationEvidence;
   hasPendingBatch?: (genieDir: string) => boolean;
-  hasPendingTransactions?: typeof hasPendingUninstallTransactions;
 }
 
 function captureProvenV4RulesIdentity(path: string): ProvenV4Rules {
@@ -2319,21 +1349,6 @@ export function inspectUninstallPlan(
     }
     ownedRules = after;
   }
-  // Production consumes one manifest inspection for both the asset allowlist
-  // and source-retirement gate. Test-only legacy injectors remain paired with
-  // an explicit manifest seam instead of causing a second production read.
-  const agentInspection =
-    inspectors.collectAgentSyncAssets === undefined && inspectors.inspectAgentFilesManifestState === undefined
-      ? inspectAgentSyncAssets()
-      : {
-          assets: (inspectors.collectAgentSyncAssets ?? collectAgentSyncAssets)(),
-          claudeAgentManifest:
-            inspectors.inspectAgentFilesManifestState?.(join(resolveClaudeDir(), 'agents')) ??
-            ({ kind: 'absent' } as const),
-        };
-  const agentAssets = agentInspection.assets;
-  const claudeAgentManifest = agentInspection.claudeAgentManifest;
-  const codexRoleAgents = (inspectors.inspectCodexAgentOwnership ?? inspectCodexAgentOwnership)();
   const runtimeClients = (inspectors.inspectRuntimeClientAvailability ?? inspectRuntimeClientAvailability)();
   const genieHomeIdentity =
     inspectors.captureGenieHomeIdentity !== undefined || inspectors.hasGenieDir !== undefined
@@ -2370,176 +1385,18 @@ export function inspectUninstallPlan(
     ownedRules,
     existingSymlinks,
     ownedSourceSymlinks,
-    agentAssets,
-    claudeAgentManifest,
-    hasAgentAssets: agentAssets.length > 0,
-    codexRoleAgents,
-    managedRoleAgents: codexRoleAgents.entries.filter((entry) => entry.ownership.startsWith('managed-')),
     runtimeClients,
     runtimeEvidence: (inspectors.inspectRuntimeIntegrationEvidence ?? inspectRuntimeIntegrationEvidence)(),
     removeMarketplace,
     hasPendingBatch: (inspectors.hasPendingBatch ?? hasPendingUninstallBatch)(genieDir),
-    hasPendingTransactions: (inspectors.hasPendingTransactions ?? hasPendingUninstallTransactions)(),
   };
-}
-
-interface PlannedRemovalAsset {
-  path: string;
-  identity: AgentAssetIdentity;
-}
-
-interface PlannedFlatAgent extends PlannedRemovalAsset {
-  identity: Extract<AgentAssetIdentity, { kind: 'agent' }>;
-}
-
-function recordRemovalFailures(removal: AgentSyncRemovalResult, label: string, result: UninstallResult): void {
-  for (const failure of removal.failures) {
-    result.failures.push({ step: `${label} ${contractPath(failure.path)}`, detail: failure.detail });
-  }
-}
-
-function removeOneNonAgentAsset(
-  asset: PlannedRemovalAsset,
-  result: UninstallResult,
-  progress: UninstallBatchProgressController,
-): void {
-  const member = uninstallBatchMemberId('asset', asset.path);
-  if (progress.isCompleted(member) || progress.isPreserved(member)) return;
-  progress.begin(member);
-  const removal = removeAgentSyncAssetsLocked({}, { plannedAssets: [{ path: asset.path, identity: asset.identity }] });
-  if (removal.failures.length > 0) {
-    if (removal.removed.length === 0) progress.abort(member);
-    recordRemovalFailures(removal, 'Removing synced asset', result);
-    return;
-  }
-  if (removal.kept.length === 0) {
-    progress.complete(member);
-    if (removal.removed.length > 0) {
-      console.log(`  \x1b[32m+\x1b[0m Removed managed asset: ${contractPath(asset.path)}`);
-    }
-    return;
-  }
-  const detail =
-    removal.identityMismatch.length > 0
-      ? 'recorded removable asset was replaced by a different managed object after the uninstall batch; preserved it byte-identical'
-      : 'recorded removable asset was modified after the uninstall batch; preserved it byte-identical';
-  console.log(`  \x1b[33m!\x1b[0m Preserved managed asset byte-identical: ${contractPath(asset.path)}`);
-  recordPreservation(result, { step: `Preserving synced asset ${contractPath(asset.path)}`, detail });
-  progress.preserve(member);
-}
-
-function appendRemovalAdvisories(removal: AgentSyncRemovalResult, result: UninstallResult): void {
-  if (removal.advisories === undefined || removal.advisories.length === 0) return;
-  if (result.notes === undefined) result.notes = [];
-  result.notes.push(...removal.advisories);
-}
-
-function settleFlatAgentProgress(
-  member: string,
-  removal: AgentSyncRemovalResult,
-  result: UninstallResult,
-  progress: UninstallBatchProgressController,
-): void {
-  if (removal.identityMismatch.length === 0) {
-    progress.complete(member);
-    return;
-  }
-  for (const path of removal.identityMismatch) {
-    recordPreservation(result, {
-      step: `Preserving flat agent ${contractPath(path)}`,
-      detail: 'recorded flat-agent identity changed after the uninstall batch; preserved it byte-identical',
-    });
-  }
-  progress.preserve(member);
-}
-
-function reportFlatAgentRemoval(removal: AgentSyncRemovalResult): void {
-  for (const path of removal.removed) {
-    console.log(`  \x1b[32m+\x1b[0m Removed managed flat agent: ${contractPath(path)}`);
-  }
-  for (const path of removal.kept.filter((path) => !removal.identityMismatch.includes(path))) {
-    console.log(`  \x1b[33m!\x1b[0m Preserved modified flat agent at ${contractPath(path)}`);
-  }
-}
-
-function removeFlatAgentBatch(
-  plannedAgents: PlannedFlatAgent[],
-  result: UninstallResult,
-  progress: UninstallBatchProgressController,
-): void {
-  if (plannedAgents.length === 0) return;
-  const member = uninstallBatchMemberId(
-    'asset',
-    `flat-agents:${plannedAgents
-      .map((asset) => resolve(asset.path))
-      .sort()
-      .join('\n')}`,
-  );
-  if (progress.isCompleted(member) || progress.isPreserved(member)) return;
-  progress.begin(member);
-  const removal = removeAgentSyncAssetsLocked(
-    {},
-    { plannedAssets: plannedAgents.map((asset) => ({ path: asset.path, identity: asset.identity })) },
-  );
-  appendRemovalAdvisories(removal, result);
-  if (removal.failures.length > 0) {
-    // removeAgentSyncAssetsLocked has returned, so there is no ambiguous in-flight
-    // mutation left behind. Any successful per-file outcomes are idempotent and
-    // the immutable batch scope can safely retry the still-present members.
-    // Clear the active receipt on every structured failure; retaining it here
-    // permanently strands the batch after a partial success.
-    progress.abort(member);
-    recordRemovalFailures(removal, 'Removing flat agent', result);
-    return;
-  }
-  settleFlatAgentProgress(member, removal, result, progress);
-  reportFlatAgentRemoval(removal);
-}
-
-function removeSyncedAgentAssets(
-  agentAssets: UninstallBatchScope['agentAssets'],
-  result: UninstallResult,
-  progress: UninstallBatchProgressController,
-): void {
-  if (!agentAssets.some((asset) => asset.disposition === 'remove')) return;
-  console.log('\x1b[2mRemoving synced agent assets...\x1b[0m');
-  for (const asset of agentAssets) {
-    if (asset.disposition !== 'remove' || asset.identity.kind === 'agent') continue;
-    removeOneNonAgentAsset({ path: asset.path, identity: asset.identity }, result, progress);
-    if (result.failures.length > 0) return;
-  }
-  const flatAgents: PlannedFlatAgent[] = [];
-  for (const asset of agentAssets) {
-    if (asset.disposition === 'remove' && asset.identity.kind === 'agent') {
-      flatAgents.push({ path: asset.path, identity: asset.identity });
-    }
-  }
-  removeFlatAgentBatch(flatAgents, result, progress);
 }
 
 export function uninstallBatchIntegrationViolations(
   scope: UninstallBatchScope,
-  currentRoles: Pick<ReturnType<typeof inspectCodexAgentOwnership>, 'status' | 'entries'>,
   currentRuntime: ReturnType<typeof inspectRuntimeIntegrationEvidence>,
 ): string[] {
   const violations: string[] = [];
-  if (currentRoles.status === 'corrupt') {
-    violations.push('Codex role-agent ownership inventory is corrupt');
-  } else if (currentRoles.status !== scope.codexRoleInventoryStatus && currentRoles.status !== 'missing') {
-    violations.push(
-      `Codex role-agent inventory status changed (${scope.codexRoleInventoryStatus} -> ${currentRoles.status})`,
-    );
-  }
-  const planned = new Map(scope.codexRoleAgents.map((agent) => [agent.name, agent.disposition]));
-  const widenedOrReclassified = currentRoles.entries
-    .filter((entry) => entry.ownership.startsWith('managed-'))
-    .filter(
-      (entry) =>
-        !planned.has(entry.name) || (planned.get(entry.name) === 'keep' && entry.ownership === 'managed-clean'),
-    );
-  if (widenedOrReclassified.length > 0) {
-    violations.push(`unexpected Codex role agents: ${widenedOrReclassified.map((entry) => entry.name).join(', ')}`);
-  }
   for (const runtime of ['codex', 'claude'] as const) {
     if (currentRuntime.errors[runtime].length > 0) {
       violations.push(`${runtime} integration state is unreadable: ${currentRuntime.errors[runtime].join('; ')}`);
@@ -2567,9 +1424,8 @@ function removeIntegrationState(
 ): void {
   const member = uninstallBatchRuntimeMemberId(scope);
   if (progress.isCompleted(member)) return;
-  const current = inspectCodexAgentOwnership();
   const runtimeEvidence = inspectRuntimeIntegrationEvidence();
-  const violations = uninstallBatchIntegrationViolations(scope, current, runtimeEvidence);
+  const violations = uninstallBatchIntegrationViolations(scope, runtimeEvidence);
   if (violations.length > 0) {
     result.failures.push({
       step: 'Validating runtime integration uninstall allowlist',
@@ -2579,40 +1435,11 @@ function removeIntegrationState(
   }
   progress.begin(member);
   const failureCount = result.failures.length;
-  // Restrict role-agent removal to the recorded plan and bind it to the recorded
-  // identity, so a role TOML swapped for a different clean file is preserved.
-  const plannedRoleAgents = new Map<string, { digest: string; mode: number }>();
-  for (const agent of scope.codexRoleAgents) {
-    if (agent.disposition === 'remove') {
-      plannedRoleAgents.set(agent.name, { digest: agent.identity.digest, mode: agent.identity.mode });
-    }
-  }
   const integrations = removeRuntimeIntegrations({
     removeMarketplace: scope.removeMarketplace,
     installedEvidence: scope.runtimePlugins,
     detected: uninstallBatchRuntimeTargets(scope),
-    plannedRoleAgents,
   });
-  for (const name of integrations.agents.keptModified) {
-    console.log(`  \x1b[33m!\x1b[0m Preserved Codex role agent byte-identical: ${name}`);
-    if (plannedRoleAgents.has(name)) {
-      recordPreservation(result, {
-        step: `Preserving Codex role agent ${name}`,
-        detail: 'recorded removable role agent was modified after the uninstall batch; preserved it byte-identical',
-      });
-    }
-  }
-  for (const name of integrations.agents.keptIdentityMismatch) {
-    console.log(`  \x1b[33m!\x1b[0m Preserved Codex role agent byte-identical (identity mismatch): ${name}`);
-    recordPreservation(result, {
-      step: `Preserving Codex role agent ${name}`,
-      detail:
-        'recorded removable role agent was replaced after the uninstall batch; preserved the replacement byte-identical',
-    });
-  }
-  for (const failure of integrations.agents.failures) {
-    result.failures.push({ step: `Removing Codex role agent ${failure.name}`, detail: failure.detail });
-  }
   for (const step of integrations.steps) {
     if (!step.ok) result.failures.push({ step: `Removing ${step.runtime} ${step.operation}`, detail: step.detail });
   }
@@ -2759,8 +1586,14 @@ function isNodeErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
+/**
+ * The only GENIE_HOME child uninstall preserves. The lifecycle lease this
+ * command holds is a SIBLING of GENIE_HOME, so no live lock file is inside the
+ * tree being removed; the historical in-home mutation lock left with the engine
+ * that created it and is now ordinary residue the removal clears.
+ */
 function preservedGenieDirEntry(name: string): boolean {
-  return name === 'state-backups' || name === AGENT_SYNC_LOCK_NAME;
+  return name === 'state-backups';
 }
 
 export interface GenieHomeRemovalOptions {
@@ -3054,16 +1887,6 @@ function removeGenieHomeMember(
   }
   const member = uninstallBatchMemberId('home', resolve(genieDir));
   if (progress.isCompleted(member) || progress.isPreserved(member)) return null;
-  const manifest = readAgentFilesManifestState(join(resolveClaudeDir(), 'agents'));
-  if (manifest.kind === 'unsafe' || (manifest.kind === 'managed' && Object.keys(manifest.files).length > 0)) {
-    return {
-      step: 'Validating Claude agent ownership manifest before source removal',
-      detail:
-        manifest.kind === 'unsafe'
-          ? `manifest is unsafe: ${manifest.reason}`
-          : `manifest still owns ${Object.keys(manifest.files).length} role-agent file(s)`,
-    };
-  }
   progress.begin(member);
   const failure = tryRemoveStep('Removing genie directory...', 'Install state removed (state backups preserved)', () =>
     removeGenieDirPreservingStateBackups(genieDir, expectedIdentity, expectedRemovalDigest, options),
@@ -3129,9 +1952,6 @@ function performUninstallScope(
     return result;
   }
 
-  // Managed assets live outside GENIE_HOME, so remove them before deleting it.
-  removeSyncedAgentAssets(scope.agentAssets, result, progress);
-  if (result.failures.length > 0) return result;
   if (hasRuntimeIntegrationWork(scope)) {
     removeIntegrationState(scope, result, progress);
     if (result.failures.length > 0) return result;
@@ -3157,189 +1977,8 @@ function performUninstallScope(
   return result;
 }
 
-export interface PerformUninstallDependencies {
-  /** Fully injected external agent roots for noninteractive full-flow tests. */
-  agentSyncTargets?: AgentSyncRemovalTargets;
-  /** Avoid consulting process-global legacy rules state in isolated tests. */
-  orchestrationRulesPath?: string;
-  /** Deterministic capture/backup boundaries for injected v4 rules fixtures. */
-  v4RulesRemoval?: V4RulesRemovalOptions;
-  /** Injected source-link directory and capture boundary for compatibility fixtures. */
-  sourceSymlinkLocalBin?: string;
-  sourceSymlinkRemoval?: Pick<SourceSymlinkRemovalOptions, 'beforeCapture'>;
-  /** Avoid process-global runtime integration mutation in isolated tests. */
-  removeRuntimeIntegrations?: (removeMarketplace: boolean) => void;
-  /** Deterministic barriers for source-root replacement fixtures. */
-  genieHomeRemoval?: GenieHomeRemovalOptions;
-}
-
-interface CompatibilityUninstallPlan {
-  targets: AgentSyncRemovalTargets;
-  genieHome: string;
-  genieHomeIdentity: PhysicalRootIdentity | null;
-  genieHomeRemovalDigest: string | null;
-  hasCurrentAgentAssets: boolean;
-  injectedRules: ProvenV4Rules | null;
-  removeMarketplace: boolean;
-  sourceSymlinkLocalBin: string;
-  sourceSymlinks: Map<OwnedSourceSymlink['name'], OwnedSourceSymlink>;
-}
-
-/** Build the immutable authority used by the legacy injected test seam. */
-function planCompatibilityUninstall(
-  existingSymlinks: string[],
-  genieDir: string,
-  hasGenieDir: boolean,
-  hasAgentAssets: boolean,
-  removeMarketplace: boolean,
-  dependencies: PerformUninstallDependencies,
-): CompatibilityUninstallPlan | null {
-  const targets = dependencies.agentSyncTargets ?? {};
-  const genieHome = targets.genieHome ?? resolveGenieHome();
-  const agentInspection = inspectAgentSyncAssets(targets);
-  if (agentInspection.claudeAgentManifest.kind === 'unsafe') return null;
-  const hasCurrentAgentAssets = hasAgentAssets && agentInspection.assets.length > 0;
-  const genieHomeIdentity = hasGenieDir ? inspectRemovableGenieRoot(genieDir) : null;
-  const genieHomeRemovalDigest =
-    genieHomeIdentity === null ? null : captureGenieHomeRemovalDigest(genieDir, genieHomeIdentity);
-  const injectedRules =
-    dependencies.orchestrationRulesPath !== undefined && existsSync(dependencies.orchestrationRulesPath)
-      ? captureProvenV4RulesIdentity(dependencies.orchestrationRulesPath)
-      : null;
-  const sourceSymlinkLocalBin = dependencies.sourceSymlinkLocalBin ?? LOCAL_BIN;
-  const plannedNames = existingSymlinks.filter((name): name is (typeof SYMLINKS)[number] =>
-    SYMLINKS.some((candidate) => candidate === name),
-  );
-  const sourceSymlinks = new Map<OwnedSourceSymlink['name'], OwnedSourceSymlink>();
-  for (const name of plannedNames) {
-    const owned = ownedSourceSymlink(join(sourceSymlinkLocalBin, name), genieDir);
-    if (owned !== null) sourceSymlinks.set(name, owned);
-  }
-  if (
-    !hasCurrentAgentAssets &&
-    genieHomeIdentity === null &&
-    injectedRules === null &&
-    existingSymlinks.length === 0 &&
-    !removeMarketplace
-  ) {
-    return null;
-  }
-  return {
-    targets,
-    genieHome,
-    genieHomeIdentity,
-    genieHomeRemovalDigest,
-    hasCurrentAgentAssets,
-    injectedRules,
-    removeMarketplace,
-    sourceSymlinkLocalBin,
-    sourceSymlinks,
-  };
-}
-
-/** Execute a compatibility plan while its lifecycle lock remains held. */
-function executeCompatibilityUninstall(
-  genieDir: string,
-  plan: CompatibilityUninstallPlan,
-  dependencies: PerformUninstallDependencies,
-): void {
-  if (plan.hasCurrentAgentAssets) {
-    const removal = removeAgentSyncAssetsLocked(plan.targets);
-    if (removal.failures.length > 0) return;
-  }
-  if (plan.injectedRules !== null) {
-    try {
-      removeProvenV4Rules(genieDir, plan.injectedRules, dependencies.v4RulesRemoval);
-    } catch (error) {
-      console.log(`  \x1b[33m!\x1b[0m Preserved v4 rules: ${errorMessage(error)}`);
-      return;
-    }
-  }
-  (dependencies.removeRuntimeIntegrations ?? removeRuntimeIntegrations)(plan.removeMarketplace);
-  const manifest = readAgentFilesManifestState(join(plan.targets.claudeDir ?? resolveClaudeDir(), 'agents'));
-  if (manifest.kind === 'unsafe' || (manifest.kind === 'managed' && Object.keys(manifest.files).length > 0)) return;
-  if (plan.genieHomeIdentity !== null && plan.genieHomeRemovalDigest !== null) {
-    try {
-      removeGenieDirPreservingStateBackups(
-        genieDir,
-        plan.genieHomeIdentity,
-        plan.genieHomeRemovalDigest,
-        dependencies.genieHomeRemoval,
-      );
-    } catch (error) {
-      console.log(`  \x1b[33m!\x1b[0m Preserved Genie install state: ${errorMessage(error)}`);
-      return;
-    }
-  }
-  if (plan.sourceSymlinks.size > 0) {
-    removeSymlinks(plan.sourceSymlinkLocalBin, genieDir, [...plan.sourceSymlinks.keys()], {
-      planned: plan.sourceSymlinks,
-      beforeCapture: dependencies.sourceSymlinkRemoval?.beforeCapture,
-    });
-  }
-}
-
-/**
- * Fully injected compatibility seam retained for noninteractive uninstall-flow
- * tests. Production uses the authenticated batch path below; both paths hold the
- * same sync lock through flat-agent removal, runtime cleanup, and source deletion.
- */
-export function performUninstall(
-  _hasHookScript: boolean,
-  existingSymlinks: string[],
-  genieDir: string,
-  hasGenieDir: boolean,
-  hasAgentAssets: boolean,
-  removeMarketplace: boolean,
-  dependencies: PerformUninstallDependencies = {},
-): void {
-  const plan = planCompatibilityUninstall(
-    existingSymlinks,
-    genieDir,
-    hasGenieDir,
-    hasAgentAssets,
-    removeMarketplace,
-    dependencies,
-  );
-  if (plan === null) return;
-
-  let lock: { release: () => void } | null;
-  try {
-    lock = acquireAgentSyncLock(plan.genieHome);
-  } catch {
-    return;
-  }
-  if (lock === null) return;
-  try {
-    executeCompatibilityUninstall(genieDir, plan, dependencies);
-  } finally {
-    lock.release();
-  }
-}
-
 function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
   return {
-    agentAssets: plan.agentAssets
-      .map((asset): UninstallBatchScope['agentAssets'][number] =>
-        // Flat agents carry an identity for clean deletion, missing-entry pruning,
-        // and modified-content keep-aside. Other modified/corrupt assets stay put.
-        asset.identity !== undefined && (asset.kind === 'agent' || !asset.modified)
-          ? { path: resolve(asset.path), disposition: 'remove', identity: asset.identity }
-          : { path: resolve(asset.path), disposition: 'keep' },
-      )
-      .sort((left, right) => left.path.localeCompare(right.path)),
-    codexRoleAgents: plan.managedRoleAgents
-      .map((agent): UninstallBatchScope['codexRoleAgents'][number] =>
-        agent.ownership === 'managed-clean' && agent.identity !== undefined
-          ? {
-              name: agent.name,
-              disposition: 'remove',
-              identity: { digest: agent.identity.digest, mode: agent.identity.mode },
-            }
-          : { name: agent.name, disposition: 'keep' },
-      )
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    codexRoleInventoryStatus: plan.codexRoleAgents.status,
     genieHomeIdentity: plan.genieHomeIdentity,
     genieHomeRemovalDigest: plan.genieHomeRemovalDigest,
     ownedRules: plan.ownedRules,
@@ -3441,10 +2080,6 @@ export function performFreshUninstallPlan(
   execution: UninstallPlan;
   result: UninstallResult;
 } {
-  // The confirmation preview is intentionally pure and may not see a live
-  // sibling while an owned object is parked. Recover all published transaction
-  // roots under the lifecycle lease before this authoritative enumeration.
-  recoverUninstallTransactions();
   // Record-driven and outside GENIE_HOME, so it must run before the batch
   // deletes the home that holds the record.
   const skillsRemoval = removeSkillsChannelInstall(genieDir);
@@ -3473,16 +2108,21 @@ export function performFreshUninstallPlan(
       },
     };
   }
+  // Plugin-era leftovers the batch below does not enumerate (marketplace caches,
+  // role-agent inventories, Hermes/pi links, historical curated lanes) are
+  // retired backup-first before the home itself is removed. Never fatal: a
+  // retirement failure leaves an operator-owned asset in place, and the ordinary
+  // uninstall report still runs.
+  try {
+    runLegacyIntegrationRetirement({
+      homes: { home: homedir(), genieHome: genieDir },
+      log: (line) => console.log(`  \x1b[2m${line}\x1b[0m`),
+    });
+  } catch (error) {
+    console.log(`  \x1b[33m~\x1b[0m legacy integration retirement skipped: ${errorMessage(error)}`);
+  }
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
-    ...(execution.claudeAgentManifest.kind === 'unsafe'
-      ? [`Claude agent ownership manifest is unsafe: ${execution.claudeAgentManifest.reason}`]
-      : []),
-    ...(execution.codexRoleAgents.status === 'corrupt'
-      ? [
-          `Codex role-agent ownership inventory is corrupt: ${execution.codexRoleAgents.error ?? execution.codexRoleAgents.inventoryPath}`,
-        ]
-      : []),
     ...execution.runtimeEvidence.errors.codex,
     ...execution.runtimeEvidence.errors.claude,
     ...execution.runtimeClients.errors.codex,
@@ -3547,12 +2187,10 @@ function reportPendingBatchPreview(genieDir: string): void {
   }
 }
 
-function reportAgentSyncLockFailure(error?: unknown): void {
+function reportUninstallLeaseFailure(detail: string): void {
   process.exitCode = 1;
-  const suffix =
-    error === undefined ? 'another agent-sync mutation is active.' : 'the shared agent-sync lock is unsafe.';
-  console.log(`\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; ${suffix}`);
-  if (error !== undefined) console.log(`  \x1b[31m-\x1b[0m ${errorMessage(error)}`);
+  console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; the lifecycle lease was not acquired.');
+  console.log(`  \x1b[31m-\x1b[0m ${detail}`);
   console.log();
 }
 
@@ -3576,21 +2214,15 @@ function executeFreshUninstall(genieDir: string, removeMarketplace: boolean): vo
 }
 
 function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean): void {
-  let agentSyncLock: { release: () => void } | null;
-  try {
-    agentSyncLock = acquireAgentSyncLock(genieDir);
-  } catch (error) {
-    reportAgentSyncLockFailure(error);
-    return;
-  }
-  if (agentSyncLock === null) {
-    reportAgentSyncLockFailure();
+  const lease = acquireLifecycleLease(genieDir);
+  if ('skipped' in lease) {
+    reportUninstallLeaseFailure(lease.skipped);
     return;
   }
   try {
     executeFreshUninstall(genieDir, removeMarketplace);
   } finally {
-    agentSyncLock.release();
+    lease.release();
   }
 }
 
@@ -3599,59 +2231,22 @@ export interface UninstallDeps {
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
   /**
-   * Codex lifecycle-lease acquisition seam. Uninstall serialises against
-   * setup/update/rollback/install through the SAME lease (`resolveGenieHome`),
-   * so a busy holder makes uninstall a `codex-lifecycle-busy` loser.
-   */
-  acquireCodexLifecycleLease?: (kind: LifecycleLeaseKind, options?: AcquireLeaseOptions) => LifecycleLeaseResult;
-  /**
-   * Outer agent-sync lifecycle-lease seam, mirroring install's `acquireLease`.
+   * Lifecycle-lease seam, mirroring install's `acquireLease`.
    * Tests can drive a busy/held holder without a real lock file, and the bounded
    * wait wraps whatever is injected here.
    */
   acquireLease?: () => LifecycleLease | LifecycleLeaseSkip;
 }
 
-/**
- * The stable, ANSI-free single-line exit-2 trailer for a lifecycle-lease loser
- * (D9). Built with A's canonical serializer — uninstall never redefines the
- * trailer type. `deliveryComplete:false` because nothing was removed: another
- * lifecycle command held the lease.
- */
-function codexLifecycleBusyTrailer(holderKind: string | null): string {
-  return serializeActivationResultTrailer({
-    schemaVersion: 1,
-    code: 'codex-lifecycle-busy',
-    deliveryComplete: false,
-    retry: true,
-    nextAction: holderKind
-      ? `retry after the current ${holderKind} lifecycle command releases the lease`
-      : 'retry after the current lifecycle command releases the lease',
-  });
-}
-
 function acquireUninstallLifecycleLeasesOrProject(
   genieDir: string,
   deps: UninstallDeps,
 ): HeldOrderedLifecycleLeases | null {
-  const acquireAgentSync = deps.acquireLease ?? (() => acquireLifecycleLease(genieDir));
-  const acquired = acquireOrderedLifecycleLeases(
-    () => acquireLifecycleLeaseWithWait(acquireAgentSync),
-    () => (deps.acquireCodexLifecycleLease ?? acquireCodexLifecycleLease)('uninstall'),
-  );
+  const acquireLease = deps.acquireLease ?? (() => acquireLifecycleLease(genieDir));
+  const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (acquired.ok) return acquired;
-  if (acquired.busy === 'agent-sync') {
-    // An agent-sync holder is NOT `codex-lifecycle-busy`: no machine trailer is
-    // emitted here, because install.sh parses that code and would be misled
-    // about which subsystem is holding the lease. One stderr line, exit 2.
-    console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
-    process.exitCode = 2;
-    return null;
-  }
-  process.stdout.write(`${codexLifecycleBusyTrailer(acquired.refusal.holderKind)}\n`);
-  console.error(
-    `\x1b[33mcodex-lifecycle-busy:\x1b[0m ${acquired.refusal.detail}. No files were removed; retry once it completes.`,
-  );
+  // One stderr line, exit 2: nothing was removed.
+  console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
   process.exitCode = 2;
   return null;
 }
@@ -3674,19 +2269,14 @@ export async function uninstallCommand(
     legacyReport,
     hasOwnedRules,
     existingSymlinks,
-    agentAssets,
-    hasAgentAssets,
-    codexRoleAgents,
-    managedRoleAgents,
     runtimeEvidence,
     hasPendingBatch,
-    hasPendingTransactions,
   } = preview;
   const rulesStatus = legacyReport.rulesFile.status;
   const rulesPath = legacyReport.rulesFile.path;
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
-  console.log('  \x1b[31m-\x1b[0m Genie plugins and digest-owned Codex role agents');
+  console.log('  \x1b[31m-\x1b[0m Genie client plugin registrations');
   if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
   if (hasOwnedRules)
     console.log(`  \x1b[31m-\x1b[0m Marker-proven v4 orchestration rules (${contractPath(rulesPath)})`);
@@ -3697,41 +2287,6 @@ export async function uninstallCommand(
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
-  const keptAssets = agentAssets.filter(
-    (asset) => asset.modified && (asset.kind !== 'agent' || asset.identity === undefined),
-  );
-  const keptAsideAgents = agentAssets.filter(
-    (asset) => asset.kind === 'agent' && asset.modified && asset.identity?.kind === 'agent',
-  );
-  const removableAssets = agentAssets.length - keptAssets.length;
-  if (removableAssets > 0)
-    console.log(
-      `  \x1b[31m-\x1b[0m Synced agent assets: ${removableAssets} managed skill dir(s)/agent file(s)/council.js/plugin link(s) across claude/codex/hermes/pi`,
-    );
-  if (keptAssets.length > 0) {
-    console.log(
-      `  \x1b[33m~\x1b[0m KEPT byte-identical (modified or ownership metadata needs review): ${keptAssets.length} managed asset(s):`,
-    );
-    for (const asset of keptAssets) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
-  }
-  if (keptAsideAgents.length > 0) {
-    console.log(
-      `  \x1b[33m~\x1b[0m Modified flat agents will be preserved under *${KEPT_SUFFIX} and disowned: ${keptAsideAgents.length} file(s):`,
-    );
-    for (const asset of keptAsideAgents) console.log(`      \x1b[33m${contractPath(asset.path)}\x1b[0m`);
-  }
-  if (managedRoleAgents.length > 0) {
-    const modified = managedRoleAgents.filter((entry) => entry.ownership === 'managed-modified').length;
-    console.log(
-      `  \x1b[31m-\x1b[0m Codex role agents: ${managedRoleAgents.length - modified} clean; ${modified} modified will be kept byte-identical`,
-    );
-  }
-  if (codexRoleAgents.status === 'corrupt') {
-    console.log('  \x1b[33m!\x1b[0m Codex role-agent ownership inventory is corrupt and requires review');
-  }
-  if (hasPendingTransactions) {
-    console.log('  \x1b[31m-\x1b[0m Recover and re-evaluate pending managed asset transactions');
-  }
   if (hasPendingBatch) reportPendingBatchPreview(genieDir);
   console.log();
 
@@ -3741,10 +2296,7 @@ export async function uninstallCommand(
       hasHookScript: false,
       hasOrchestrationRules: hasOwnedRules,
       hasPendingBatch,
-      hasPendingTransactions,
       symlinkCount: existingSymlinks.length,
-      hasAgentAssets,
-      codexRoleInventoryStatus: codexRoleAgents.status,
       runtimeEvidence,
       removeMarketplace: options.removeMarketplace ?? false,
     })
@@ -3775,14 +2327,13 @@ export async function uninstallCommand(
     return;
   }
 
-  // Existing agent-sync safeguard lock (unchanged). Acquired after confirmation.
-  // Ratified acquisition point: agent-sync first, then the exclusive Codex
-  // lifecycle lease, after destructive confirmation but before the first removal.
+  // Existing lifecycle safeguard lock. Acquired after destructive confirmation
+  // but before the first removal.
   const acquired = acquireUninstallLifecycleLeasesOrProject(genieDir, deps);
   if (acquired === null) return;
   try {
     executeConfirmedUninstall(genieDir, options.removeMarketplace ?? false);
   } finally {
-    releaseOrderedLifecycleLeases(acquired.codexLease, acquired.agentSyncLease);
+    releaseOrderedLifecycleLeases(acquired.lifecycleLease);
   }
 }

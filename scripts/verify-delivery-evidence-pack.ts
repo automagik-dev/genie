@@ -5,7 +5,7 @@ import {
   type DeliveryEvidenceDescriptor,
   verifiedDeliveryEvidenceFacts,
   verifyDownloadedDeliveryEvidence,
-} from '../src/lib/codex-delivery-evidence.ts';
+} from '../src/lib/delivery-evidence-verify.ts';
 
 function fail(message: string): never {
   console.error(`delivery-evidence-compatibility: ${message}`);

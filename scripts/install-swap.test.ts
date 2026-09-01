@@ -49,7 +49,7 @@ echo "${version}"
 `;
 }
 
-/** Build the exact eight-member release payload consumed by the promoter. */
+/** Build the exact seven-member release payload consumed by the promoter. */
 function buildTarball(root: string, opts: { version: string; withBinary?: boolean; sidecar?: string }): string {
   const tree = mkdtempSync(join(root, 'tree-'));
   const driver = join(root, 'promoter-driver.ts');
@@ -74,7 +74,7 @@ function buildTarball(root: string, opts: { version: string; withBinary?: boolea
   }
   writeFileSync(join(tree, 'VERSION'), `${opts.version}\n`, { mode: 0o644 });
   writeFileSync(join(tree, 'LICENSE'), 'fixture license\n', { mode: 0o644 });
-  for (const name of ['plugins', 'skills', 'templates', '.agents', '.claude-plugin']) {
+  for (const name of ['plugins', 'skills', 'templates']) {
     mkdirSync(join(tree, name), { recursive: true, mode: 0o755 });
     writeFileSync(join(tree, name, opts.sidecar ?? 'marker.txt'), `sidecar:${name}\n`, { mode: 0o644 });
   }
@@ -143,7 +143,7 @@ describe('install.sh .steal lifecycle-lock protocol (F42/F45–F47/F50 — must 
   // The ordered set of functions that make up the durable `.steal` recovery
   // protocol + its shell/TS parity. Their concatenated source is pinned so any
   // edit to this contract fails loudly. To intentionally rotate the pin, change
-  // these functions in lockstep with src/lib/agent-sync.ts's stealStaleLock and
+  // these functions in lockstep with src/lib/lifecycle-lease.ts's stealStaleLock and
   // update the digest below in the SAME review.
   const PROTECTED_FUNCTIONS = [
     'logical_absolute_path',
@@ -212,7 +212,7 @@ describe('install.sh transactional binary promotion (F31a)', () => {
     expect(readFileSync(join(layout.bin, 'VERSION'), 'utf8')).toBe('5.260714.1\n');
     const previous = join(layout.bin, '.previous');
     expect(existsSync(previous) ? readdirSync(previous) : []).toEqual([]);
-    for (const name of ['plugins', 'skills', 'templates', '.agents', '.claude-plugin']) {
+    for (const name of ['plugins', 'skills', 'templates']) {
       expect(lstatSync(join(layout.bin, name)).isDirectory()).toBe(true);
       expect(lstatSync(join(layout.bin, name)).isSymbolicLink()).toBe(false);
     }
