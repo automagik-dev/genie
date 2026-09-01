@@ -536,8 +536,9 @@ const EXPECTED_CODEX_ROLE_AGENT_TOTAL = CANONICAL_CODEX_ROLE_AGENT_NAMES.length;
  * mode + content digest) of a role-agent file a Genie release legitimately fanned
  * into `~/.codex/agents/`. The allowlist is the union across releases (the reviewer
  * carries several), so a legacy install whose reviewer is an older-but-genuine
- * profile is still recognizable. Membership alone never authorizes a write — see
- * {@link installCodexAgents}: adoption additionally requires committed Codex consent.
+ * profile is still recognizable. Membership is read-only evidence and never
+ * authorizes a write: the role-agent writer was deleted with the Codex plugin
+ * subsystem, so the only consumers left are the retirement classifier and doctor.
  */
 interface RoleAgentHistoricalProfile {
   name: string;
@@ -776,11 +777,11 @@ function roleFileHasManagedSentinel(path: string): boolean {
 
 /**
  * Read-only display classification of one role file (never mutates, never reads
- * inventory a second time). This is the reporting analog of the mutation-authority
+ * inventory a second time). This is the reporting analog of
  * {@link classifyCodexAgentFile}: it maps an entry to the operator-facing
- * {@link CodexAgentDisplayState}. Adoptability is a pure identity fact here — the
- * committed-consent gate lives in {@link installCodexAgents}, so doctor can show
- * "adoptable-historical" without implying anything was (or will be) written.
+ * {@link CodexAgentDisplayState}. Adoptability is a pure identity fact here, and
+ * no writer survives to act on it, so doctor can show "adoptable-historical"
+ * without implying anything was (or will be) written.
  */
 function classifyCodexAgentDisplayState(
   path: string,

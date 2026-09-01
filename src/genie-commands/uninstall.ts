@@ -604,7 +604,7 @@ export function readUninstallBatchDecision(genieHome = getGenieDir()): Uninstall
   return state.decision;
 }
 
-/** Read-only active-member evidence for the preview across v1 and v2 journals; never throws. */
+/** Read-only active-member evidence for the preview across v1, v2 and v3 journals; never throws. */
 export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()): string | null {
   try {
     const state = readUninstallBatchState(genieHome);
@@ -614,7 +614,7 @@ export function pendingUninstallBatchInterruptedMember(genieHome = getGenieDir()
   }
 }
 
-/** Re-authenticate the exact legacy journal, then discard it so a fresh v3 decision can be recorded. */
+/** Re-authenticate the exact legacy journal, then discard it so a fresh v4 decision can be recorded. */
 export interface UninstallJournalMutationOptions {
   beforeCapture?: (journalPath: string) => void;
   afterCapture?: (journalPath: string, capturedPath: string) => void;
@@ -639,7 +639,7 @@ export function discardLegacyUninstallBatchDecision(
   options: UninstallJournalMutationOptions = {},
 ): void {
   const state = readUninstallBatchState(genieHome);
-  if (state.kind !== 'legacy-v1' && state.kind !== 'legacy-v2') {
+  if (state.kind !== 'legacy-v1' && state.kind !== 'legacy-v2' && state.kind !== 'legacy-v3') {
     throw new Error('uninstall batch journal is no longer an authentic legacy record');
   }
   const journalPath = uninstallBatchJournalPath(genieHome);
@@ -1111,7 +1111,7 @@ export function executeUninstallBatch(
   } catch (error) {
     if (!(error instanceof LegacyUninstallBatchJournalError)) throw error;
     // Authentic legacy journal from a prior release: discard it and re-record a
-    // fresh v3 decision from the CURRENT live scope. In particular, v2 carried
+    // fresh v4 decision from the CURRENT live scope. In particular, v2 carried
     // only a pathname-presence boolean for GENIE_HOME and can never authorize a
     // deletion. Safe because every published
     // external transaction was recovered before this ran and each member removal

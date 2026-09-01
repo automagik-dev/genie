@@ -503,6 +503,37 @@ describe('durable uninstall batch', () => {
     return journalPath;
   }
 
+  /**
+   * Write an AUTHENTIC legacy v3 journal (v3 shape + v3 digest) at the canonical
+   * path. v3 was the CURRENT generation every shipped 5.2608xx binary wrote, so
+   * an interrupted uninstall on any released host leaves exactly this file — the
+   * one generation the v4 bump made legacy.
+   */
+  function writeLegacyV3Journal(active: string | null = null): string {
+    const payload = {
+      schemaVersion: 3 as const,
+      genieHome: resolve(genieHome),
+      scope: {
+        agentAssets: [] as unknown[],
+        codexRoleAgents: [] as unknown[],
+        codexRoleInventoryStatus: 'missing',
+        genieHomeIdentity: null,
+        genieHomeRemovalDigest: null,
+        ownedRules: null,
+        removeMarketplace: false,
+        runtimeClients: { codex: false, claude: false },
+        runtimePlugins: { codex: false, claude: false },
+        symlinks: [] as unknown[],
+      },
+      progress: { active, completed: [] as unknown[], preserved: [] as unknown[] },
+    };
+    const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const journalPath = uninstallBatchJournalPath(genieHome);
+    mkdirSync(dirname(journalPath), { recursive: true, mode: 0o700 });
+    writeFileSync(journalPath, `${JSON.stringify({ ...payload, digest }, null, 2)}\n`, { mode: 0o600 });
+    return journalPath;
+  }
+
   function journalReplacementRace(
     boundary: 'beforeCapture' | 'afterCapture',
     caseName: string,
@@ -816,6 +847,48 @@ describe('durable uninstall batch', () => {
     expect(outcome.result.failures).toEqual([]);
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
     expect(existsSync(genieHome)).toBe(true);
+  });
+
+  test('an authentic legacy v3 journal is discarded and re-recorded as v4, then execution proceeds', () => {
+    // v3 is the generation every released binary wrote, so this is the migration
+    // lane a real interrupted-uninstall host takes on the first v4 binary. If the
+    // discard guard forgets v3, `genie uninstall` fails closed forever here.
+    writeLegacyV3Journal();
+    const member = uninstallBatchMemberId('symlink', 'genie');
+    const events: string[] = [];
+
+    const outcome = executeUninstallBatch(genieHome, scope(['genie']), (decisionScope, progress) => {
+      events.push('cleanup');
+      expect(decisionScope.symlinks.map((a) => a.name)).toEqual(['genie']);
+      progress.begin(member);
+      progress.complete(member);
+      return { failures: [] };
+    });
+
+    expect(outcome.decision.schemaVersion).toBe(4);
+    expect(outcome.result.failures).toEqual([]);
+    expect(events).toEqual(['cleanup']);
+    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+  });
+
+  test('a migrated legacy v3 journal with an interrupted member surfaces a note', () => {
+    const staleMember = uninstallBatchMemberId('symlink', 'term');
+    writeLegacyV3Journal(staleMember);
+
+    const outcome = executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect((outcome.result.notes ?? []).some((note) => note.includes(staleMember))).toBe(true);
+  });
+
+  test('a tampered legacy v3 journal fails closed and is not migrated', () => {
+    const journalPath = writeLegacyV3Journal();
+    const parsed = JSON.parse(readFileSync(journalPath, 'utf8')) as { scope: { removeMarketplace: boolean } };
+    parsed.scope.removeMarketplace = true;
+    writeFileSync(journalPath, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+
+    expect(() => executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }))).toThrow('authentication failed');
+    expect(existsSync(journalPath)).toBe(true);
   });
 
   test('a migrated legacy v1 journal with an interrupted member surfaces a note', () => {

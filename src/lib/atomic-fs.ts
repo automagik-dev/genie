@@ -329,8 +329,8 @@ function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
 // (a digest is defined by its traversal), and `MANIFEST_NAME` /
 // `PHYSICAL_TREE_IDENTITY_VERSION` come along because the digest grammar is
 // defined in terms of both. `legacy-integration-retirement.ts` is the only
-// surviving consumer of the wider set (`computeExactDirDigest`,
-// `computeLegacyRegularTreeDigest`, `physicalEntryKind`, `PhysicalTreeEntry`).
+// surviving consumer of the wider set (`computeLegacyRegularTreeDigest`,
+// `physicalEntryKind`, `PhysicalTreeEntry`).
 
 /** Manifest marker written into every managed skill dir. Exported: single source of truth. */
 export const MANIFEST_NAME = '.genie-sync.json';
