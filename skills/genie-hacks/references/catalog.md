@@ -110,7 +110,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Solution:** Use the selected client's documented hook surface and keep commands deterministic and local. In Codex, non-managed hooks are skipped until the user reviews and trusts the exact definition hash; use canonical tool names (`Bash`, `apply_patch`, MCP names) and plugin `PLUGIN_ROOT`/`PLUGIN_DATA`. Claude/Hermes keep their own event envelopes. Never use lifecycle hooks for silent installers or self-updates.
 - **Code:**
   ```bash
-  # Identity used by hook dispatch (also the default task-checkout worker)
+  # Identity the genie CLI reads (also the default task-checkout worker)
   export GENIE_AGENT_NAME=my-agent
 
   # In an interactive Codex session, inspect and trust with /hooks.
@@ -138,7 +138,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Code:**
   ```bash
   # 1. Cheaper driver for bulk scaffolding wishes: dispatch with the
-  #    engineer-trivial named role (model/effort set in its agent profile)
+  #    implementor-low named role (model/effort set in its agent profile)
 
   # 2. Tight wish scoping
   # BAD:  "Refactor the entire codebase"

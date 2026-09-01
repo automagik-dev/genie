@@ -888,13 +888,19 @@ describe('Group E release and documentation contracts', () => {
       expect(parsed.interface?.default_prompt).not.toMatch(/\$(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*/i);
     }
 
+    // skills.sh is the ONE skills channel after wish skills-everywhere-b: the
+    // overview names it, keeps the default-branch caveat on the manual command,
+    // and no longer promises a plugin/user-tier fallback of any kind.
     const skillsOverview = read('skills/README.md');
-    expect(skillsOverview).toContain(
-      'Codex user tier (only a separately installed personal copy; Genie no longer seeds this tier)',
-    );
+    expect(skillsOverview).toContain('npx skills add automagik-dev/genie');
+    expect(skillsOverview).toContain("repository's default branch");
+    expect(skillsOverview).toContain('`genie update` installs the exact delivered');
+    expect(skillsOverview).toContain('separately installed personal copy of a skill is');
     expect(skillsOverview).not.toContain('CLI-managed product fallback');
-    expect(skillsOverview).toContain('persists Codex maintenance consent');
-    expect(skillsOverview).toContain('later explicit `genie update`');
+    expect(skillsOverview).not.toContain('persists Codex maintenance consent');
+    // The retired plugin mirror and its generator are gone from the contract.
+    expect(skillsOverview).not.toContain('sync-plugin-skills');
+    expect(skillsOverview).not.toContain('plugins/genie/skills/');
   });
 
   test('lifecycle and operator docs name design, plan, and implementation review as distinct mandatory gates', () => {
