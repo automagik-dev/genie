@@ -865,11 +865,16 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).not.toContain('/hooks');
   });
 
-  test('manual docs use explicit tiers while all physical skill cards remain selector-free', () => {
+  test('manual docs use skills.sh discovery forms while all physical skill cards remain selector-free', () => {
     const docs = `${read('README.md')}\n${read('skills/README.md')}`;
+    // Wish `skills-everywhere-c` Decision 8: `$genie:` selectors are banned
+    // vocabulary; the manual invocation forms are the runtime's own discovery
+    // surfaces ($name in Codex, /name in Claude Code, bare names elsewhere).
     for (const skill of ['brainstorm', 'wish', 'review', 'work']) {
-      expect(docs).toContain(`$genie:${skill}`);
+      expect(docs).toContain(`$${skill}`);
+      expect(docs).toContain(`/${skill}`);
     }
+    expect(docs).not.toContain('$genie:');
     expect(docs).toContain('separately installed personal');
 
     const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
