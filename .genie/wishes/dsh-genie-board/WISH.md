@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | FIX-FIRST |
+| **Status** | APPROVED |
 | **Slug** | `dsh-genie-board` |
 | **Date** | 2026-09-03 |
 | **Author** | Sofia with Felipe |
@@ -273,7 +273,22 @@ Fix-loop budget is exhausted (`2/2`). Cause: `ambiguous-spec` for the hydration 
 
 ### Decision resolution — direct Felipe approval (2026-09-03)
 
-Felipe directly authorized the bounded plan amendment: complete aggregate views from one structured read; one immutable candidate version derived before build/sign/publish; and the authorized, human-approved stable workflow with fail-closed proof of exactly four platform artifacts and every required plugin member. The amended plan removes partial hydration, makes candidate stamping non-circular, and adds per-artifact digest/signature/provenance/member verification. Status remains `FIX-FIRST` until a fresh independent plan review returns `SHIP`; no implementation, release, push, or topic publication is authorized by this amendment.
+Felipe directly authorized the bounded plan amendment: complete aggregate views from one structured read; one immutable candidate version derived before build/sign/publish; and the authorized, human-approved stable workflow with fail-closed proof of exactly four platform artifacts and every required plugin member. The amended plan removes partial hydration, makes candidate stamping non-circular, and adds per-artifact digest/signature/provenance/member verification. No implementation, release, push, or topic publication was authorized by this amendment.
+
+### Plan review round 3 — SHIP (2026-09-03T19:48:26Z)
+
+- **Reviewed commit:** `9c5ba2714c52be97ad1742d7f2f3d1bd6c65a0c0`
+- **Reviewer:** Steve, `juice/GLM-5.3` (full non-Flash GLM family; cross-family from Sofia/OpenAI GPT)
+- **Mode:** independent, read-only, detached snapshot; runtime exposed no separate reasoning control, so maximum deliberation was required in the brief
+- **Validation:** exact HEAD and detached state confirmed; `git status --porcelain` empty before/after; `wishes:lint` passed (86 files); amendment diff and live board/release interfaces inspected
+- **Verdict:** **SHIP** — 0 CRITICAL, 0 HIGH; all three prior blockers closed
+
+Closure evidence:
+1. Complete aggregate board detail is one deterministic read with no partial/on-demand hydration and whole-response failure on missing detail.
+2. Candidate identity is derived and bound before build; Group 2 tests the comparator without a published-version dependency; Group 3 stamps the same candidate into every shipped compatibility/version field.
+3. The protected stable approval precedes build/sign/publish; signed and post-publication verification require exactly four platform stems, per-artifact SHA-256/cosign/SLSA proof, explicit plugin members, and exact candidate versions.
+
+Non-blocking review notes: document that `minimumGenieVersion` intentionally equals the co-shipped plugin release, and record the exact DSH binary path/version in smoke output. Plan status advances to `APPROVED`; implementation and every release/publication gate remain separately authorized.
 
 ---
 
