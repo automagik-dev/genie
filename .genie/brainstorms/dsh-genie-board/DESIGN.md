@@ -83,8 +83,8 @@ After an independent design review returns SHIP, persist the evidence below and 
 <!-- genie-design-review:start -->
 ## Design Review Evidence
 
-- **Verdict:** PENDING
-- **Reviewed content SHA-256:** PENDING
-- **Reviewer:** PENDING
-- **Reviewed at:** PENDING
+- **Verdict:** SHIP
+- **Reviewed content SHA-256:** `073cce9acfc9a256756a87440cf752559fc9fd9a1d31d8ca7c36615fcece4aaf`
+- **Reviewer:** agent:steve:dashboard:0950bf4d-628a-4797-b387-2d2dcaf3273a
+- **Reviewed at:** 2026-09-03T13:29:28.000Z
 <!-- genie-design-review:end -->
