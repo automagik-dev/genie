@@ -36,14 +36,15 @@ Ship a dual-face DSH Web plugin that displays and operates the authoritative Gen
 | 1 | Co-locate the package in public Genie. | Adapter and CLI compatibility ship together without exposing the private DSH monorepo. |
 | 2 | Use only current CLI commands and validated JSON. | SQLite is private and former protocol surfaces are retired. |
 | 3 | Resolve DSH workspace ids on the Host and map a strict action union to argv. | Browser input never becomes a path, executable, raw command, or arbitrary argv. |
-| 4 | Use board JSON as the canonical lane snapshot and unconditionally enrich rendered cards with `genie task status <id> --json`. | Assignment, heartbeat/liveness, enforced blocks, dependencies, timeline, and comments are all machine-readable; human output is never a compatibility contract. |
-| 5 | Add and freeze the exact status JSON contract in Group 1, then enforce its first released Genie version in the plugin manifest and at runtime. | Compatibility fails closed before a board command when the installed Genie is too old; documentation is not the enforcement boundary. |
-| 6 | Refresh the selected board after every mutation. | The browser never displays optimistic state. |
+| 4 | Make `genie board --board <ref> --json` the one complete aggregate read for lanes, cards, assignment, liveness, blocks, dependencies, timeline, and comments. | Every board response is complete and deterministic; there is no per-card, partial, or on-demand hydration path. |
+| 5 | Derive one immutable candidate version before release build/sign/publish, then stamp the staged plugin version and minimum Genie version from that same candidate. | Group 2 implements and tests the comparator without depending on an already-published release; every shipped artifact binds compatibility to its own candidate. |
+| 6 | Refresh the selected board with the complete aggregate after every mutation. | The browser never displays optimistic or partially hydrated state. |
+| 7 | Use the authorized stable Release workflow and its protected human approval, then fail closed unless exactly four platform tarballs individually pass digest, signature, provenance, version, and plugin-member verification. | Publication and the GitHub topic cannot outrun release identity or artifact proof. |
 
 ## Simplicity Case
 
 - **Simplest complete design:** one dual-face plugin, one strict Host adapter, and the existing Genie CLI as sole authority.
-- **Added machinery:** route fencing, action validation, process/output caps, and optional structured status enrichment are required by browser-triggered mutations and requested card detail.
+- **Added machinery:** route fencing, action validation, process/output caps, and one complete aggregate schema are required by browser-triggered mutations and requested card detail.
 - **Deferred until measured:** polling, SSE, caches, deltas, batching, autonomous execution, cron, and resumable requests require explicit demand or measured refresh latency.
 - **Complexity removed:** no durable state, daemon, socket, synchronization protocol, human-output parser, duplicate ledger, or configurable command surface.
 
@@ -54,7 +55,7 @@ Ship a dual-face DSH Web plugin that displays and operates the authoritative Gen
 
 ## Success Criteria
 
-- [ ] DSH Web selects an eligible workspace/board and renders lanes/cards matching validated CLI JSON, including structured assignment, block, liveness, and comment data.
+- [ ] DSH Web selects an eligible workspace/board and renders lanes/cards from one complete aggregate CLI read, including structured assignment, block, liveness, dependency, timeline, and comment data.
 - [ ] All supported mutations map to fixed Genie argv and return a fresh confirmed snapshot.
 - [ ] Unsafe workspace/action/input, timeout, aggregate limit, malformed JSON, missing executable, and non-zero exit fail visibly without out-of-scope mutation.
 - [ ] No shell, browser-provided path/executable/argv, direct SQLite access, human-output parser, plugin ledger, watcher, or daemon exists.
@@ -83,30 +84,30 @@ Ship a dual-face DSH Web plugin that displays and operates the authoritative Gen
 
 ## Execution Groups
 
-### Group 1: Structured CLI contract
+### Group 1: Complete aggregate CLI contract
 
-**Goal:** Freeze the smallest stable JSON surface the plugin needs without parsing human output.
+**Goal:** Freeze one complete, deterministic board JSON read without parsing human output or hydrating cards separately.
 
 **Deliverables:**
-1. Additive, unconditional `genie task status <id> --json` support with success, unknown-id, stderr/exit-code, exact-key, nullability, and idempotent-read tests. Human `task status` output remains unchanged.
-2. Freeze this versioned response and reject additional/missing keys in fixtures:
+1. Extend `genie board --board <ref> --json` additively so one invocation returns `schemaVersion: 1`, board scope, ordered lanes, and every card's complete detail. Keep human board/task output unchanged and retain the exact `genie board list --json` contract (`id`, `name`, `laneCount`, `cardCount`).
+2. Freeze this exact per-card aggregate shape and reject additional/missing keys and invalid nullability in fixtures:
 
    ```ts
    {
-     schemaVersion: 1,
-     task: {
-       id: string, boardId: string | null, title: string,
-       status: 'blocked' | 'ready' | 'in_progress' | 'done',
-       claimedBy: string | null, claimedAt: number | null,
-       wish: string | null, group: string | null,
-       assignedAgent: string | null, assignedReason: string | null,
-       createdAt: number, updatedAt: number, lane: string | null,
-       agentKind: string | null, heartbeatAt: number | null,
-       liveness: 'running' | 'idle' | 'stale' | null,
-       blockedBy: string | null, blockedReason: string | null,
-       enforcedBlock: { reason: string, kind: 'work' | 'hold' } | null
-     },
-     dependencies: Array<{ id: string, title: string, status: 'blocked' | 'ready' | 'in_progress' | 'done' }>,
+     id: string, boardId: string | null, title: string,
+     status: 'blocked' | 'ready' | 'in_progress' | 'done',
+     claimedBy: string | null, claimedAt: number | null,
+     wish: string | null, group: string | null,
+     assignedAgent: string | null, assignedReason: string | null,
+     createdAt: number, updatedAt: number, lane: string | null,
+     agentKind: string | null, heartbeatAt: number | null,
+     liveness: 'running' | 'idle' | 'stale' | null,
+     blockedBy: string | null, blockedReason: string | null,
+     enforcedBlock: { reason: string, kind: 'work' | 'hold' } | null,
+     dependencies: Array<{
+       id: string, title: string,
+       status: 'blocked' | 'ready' | 'in_progress' | 'done'
+     }>,
      timeline: Array<{
        id: number, kind: string, note: string | null,
        authorKind: string | null, author: string | null, createdAt: number
@@ -118,19 +119,19 @@ Ship a dual-face DSH Web plugin that displays and operates the authoritative Gen
    }
    ```
 
-   `liveness` is null when `claimedBy` is null and otherwise is derived from `heartbeatAt`; `comments` is the ordered `kind === 'comment'` projection of `timeline` with non-null comment text.
-3. Retain exact fixtures for `genie board list --json` (`id`, `name`, `laneCount`, `cardCount`) and lane-board JSON (`scope`; ordered lanes with `name`, `label`, `action`, and exact card keys). Record the first Genie release containing status schema version 1 as the compatibility floor consumed by Group 2.
+   Lanes keep their existing order; cards keep the board's existing order; dependencies sort by task id; timeline sorts by `createdAt` then `id`; comments are the ordered `kind === 'comment'` projection of that timeline with non-null text. `liveness` is null when `claimedBy` is null and otherwise derives from `heartbeatAt`.
+3. Fetch and join the aggregate in one repository read transaction/query path so every card belongs to the same snapshot. Missing or malformed detail fails the entire command non-zero; the JSON contract has no `partial`, `truncated`, cursor, hydration, or on-demand state. Add success, unknown-board, empty-board, multi-card ordering, stderr/exit-code, exact-key, nullability, and idempotent-read tests.
 
 **Acceptance Criteria:**
-- [ ] `genie task status <id> --json` is always implemented and returns the exact schema above, including heartbeat/liveness, assignment, enforced block/provenance, dependencies, timeline, and structured comments.
-- [ ] No human CLI output is parsed; every consumed board/status JSON key has an exact fixture/schema assertion.
+- [ ] One `genie board --board <ref> --json` invocation returns every rendered card and all required assignment, block, liveness, dependency, timeline, and comment data from one complete snapshot.
+- [ ] No human CLI output or per-card `task status` call is consumed; every aggregate key, ordering rule, and fail-closed case has an exact fixture/schema assertion.
 
 **Validation:**
 ```bash
-bun test src/term-commands/v5-board.test.ts src/term-commands/v5-task.test.ts && bun run check
+bun test src/term-commands/v5-board.test.ts && bun run check
 ```
 
-Full gate is required because this changes a shared CLI contract.
+Full gate is required because this changes a shared aggregate CLI contract.
 
 **depends-on:** none
 **blocks:** Group 2
@@ -142,8 +143,8 @@ Full gate is required because this changes a shared CLI contract.
 **Goal:** Deliver the secure, Host-confirmed DSH Web board experience.
 
 **Deliverables:**
-1. Create `plugins/dsh-genie-board/package.json`, `agent.cordis.yml`, `cordis.patch.yml`, TypeScript/build configuration, source/tests, and the package-local `build` script; add root `build:plugin` as `bun --cwd plugins/dsh-genie-board run build`.
-2. Put the exact first compatible Genie release from Group 1 in the plugin manifest/package metadata and enforce the same floor at Host startup by running the fixed executable as `genie --no-interactive --version`; an older/unparseable version serves no board route.
+1. Create `plugins/dsh-genie-board/package.json`, `agent.cordis.yml`, `cordis.patch.yml`, `README.md`, `NOTICE`, TypeScript/build configuration, source/tests, and the package-local `build` script. Freeze `dist/index.js` as the Host bundle and `dist/client.js` as the browser bundle; add root `build:plugin` as `bun --cwd plugins/dsh-genie-board run build`.
+2. Implement a `minimumGenieVersion` plugin field and strict semver comparator without hard-coding a not-yet-published release. Source and linked-profile tests use the checkout root version; Group 3 stamps both the shipped plugin version and `minimumGenieVersion` from its already-derived immutable candidate. At Host startup run the fixed executable as `genie --no-interactive --version`; an older/unparseable version serves no board route.
 3. Resolve a workspace id only through DSH `workspaceRegistry`; canonicalize the registry result with `realpath`, require a physical repository containing `.genie`, and use that canonical path as `cwd`. Never accept a browser path. Resolve the Genie executable once from the Host-owned installation, canonicalize it to an absolute executable regular file, and never search for or override it per request.
 4. Spawn with `shell: false` and an exact Host-owned environment allowlist: `PATH`, `HOME`, `GENIE_HOME`, `NO_COLOR=1`, `GENIE_AGENT_NAME=<host-derived-identity>`, and `GENIE_AGENT_KIND=dsh`; drop every other variable and accept no environment value from the browser.
 5. Implement this normative action table; every argv vector includes `--no-interactive` and no action may synthesize another vector:
@@ -152,7 +153,6 @@ Full gate is required because this changes a shared CLI contract.
    |--------|-----------------------|
    | List boards | `genie --no-interactive board list --json` |
    | Read board | `genie --no-interactive board --board <validated-ref> --json` |
-   | Read card detail | `genie --no-interactive task status <id> --json` |
    | Create | `genie --no-interactive task create --title <title> --board <ref>` |
    | Move | `genie --no-interactive task move <id> --to <lane>` |
    | Comment | `genie --no-interactive task comment <id> <text>` |
@@ -163,14 +163,14 @@ Full gate is required because this changes a shared CLI contract.
    | Done | `genie --no-interactive task done <id>` |
 
 6. Validate `workspaceId` by exact registry membership; accept `boardRef` only when it equals an id returned by validated board-list JSON; require task ids matching `^t_[a-z0-9]+$`; require lane to equal a lane name from the selected validated board; trim and bound title to 1–200 UTF-8 bytes, comment text to 1–4000, and block reason to 1–1000; reject NUL/control characters, unknown object keys, non-boolean `hold`, and all browser-supplied worker/path/executable/environment/command/argv fields.
-7. Bound each request to at most 20 Genie processes total, concurrency 4, a 10-second aggregate deadline, and 4 MiB aggregate stdout plus stderr. Kill remaining children on the first timeout/limit/error; validate exit code and closed JSON schemas before use; return an explicit partial-detail warning when the process cap leaves cards unenriched. Test every bound deterministically, including hostile identifiers and command-injection attempts.
-8. Implement browser selectors, lanes/cards/details/errors, mutations, refresh, and visibility recovery; each mutation response re-reads the board and status JSON and never applies optimistic state.
+7. Use exactly one Genie process for board list/load and at most two sequential processes for a mutation plus its complete aggregate refresh, with a 10-second aggregate deadline and 4 MiB aggregate stdout plus stderr. Kill the active child on timeout/limit/error; validate exit code and the closed aggregate schema before use; any missing/oversized/malformed detail fails the whole response. Test every bound deterministically, including hostile identifiers and command-injection attempts.
+8. Implement browser selectors, lanes/cards/details/errors, mutations, refresh, and visibility recovery; each mutation response performs one complete board aggregate re-read and never applies optimistic or partially hydrated state.
 9. Add `scripts/dsh-genie-board-smoke.ts`: create isolated fixture repo/profile state, run `dsh plugin --profile web add link:<absolute-plugin-dir>`, launch `dsh web --no-open --host 127.0.0.1 --port 0`, stop/relaunch it after install, prove `dsh plugin --profile web list --depth 0` reports `@automagik/genie-dsh-board`, read back the plugin health/compatibility route, perform board list/load plus reversible create/move through the Host route, and in `finally` stop the server, run `dsh plugin --profile web remove @automagik/genie-dsh-board`, and delete only the temporary profile/repository.
 
 **Acceptance Criteria:**
-- [ ] Rendering matches fixture-backed Host snapshots; mutations use fixed argv and refresh.
+- [ ] Rendering matches one complete fixture-backed Host aggregate; mutations use fixed argv and perform one complete refresh.
 - [ ] Every unsafe/failure case is bounded and cannot invoke an out-of-scope command.
-- [ ] The manifest and runtime reject every Genie version below the first release containing status schema version 1.
+- [ ] The manifest and runtime reject every Genie version below the immutable candidate value stamped by Group 3, while source/linked tests prove the comparator against the checkout version without depending on a prior publication.
 - [ ] Package build and the linked-profile install/restart/read-back/board-operation/cleanup smoke pass against DSH `0.1.1-rc.2` or a newer explicitly proven floor.
 - [ ] No database access, persistence, watcher, poller, shell, or browser-supplied executable/path/argv exists.
 
@@ -186,19 +186,30 @@ Full gate plus plugin build covers runtime and trust-boundary risk.
 
 ---
 
-### Group 3: Install, release, and discoverability
+### Group 3: Immutable candidate, release proof, and discoverability
 
-**Goal:** Prove the packaged plugin can be installed locally before advertising it.
+**Goal:** Publish only a human-approved stable candidate whose four platform artifacts prove the complete plugin payload.
 
 **Deliverables:**
-1. Install/compatibility docs and provenance/NOTICE with the manifest-enforced Genie floor from Group 2.
-2. Include `plugins/dsh-genie-board/` in `scripts/build-binary.sh`; extend `scripts/release-payload-version.ts` so package/manifest versions are stamped and verified in staged and extracted payloads; update `scripts/release-payload-version.test.ts`, `scripts/release-docs.test.ts`, `scripts/version-format.test.ts`, `scripts/version-ci-staging.test.ts`, and payload inventory/parity tests. Do not replace or modify the existing `scripts/verify-release.sh` interface.
-3. From a clean checkout, build and inspect `linux-x64-glibc`, `linux-x64-musl`, `linux-arm64`, and `darwin-arm64`; each tarball must contain the built plugin, manifest/patch, docs/NOTICE, and matching root/plugin versions.
-4. After the candidate has a signed tag and all four tarballs plus `.bundle` and `.intoto.jsonl` sidecars, run the existing verifier against that concrete tag. Only after all checks pass, add the GitHub topic and verify it by read-back.
+1. Add install/compatibility docs and provenance/NOTICE. Source and linked builds use the checkout root version; no source file guesses a future release number.
+2. Extend `scripts/release-payload-version.ts` and its tests so the release workflow's already-resolved `VERSION` stamps and verifies all version-bearing staged and extracted members: root `VERSION`, existing Genie manifests, `plugins/dsh-genie-board/package.json.version`, and the DSH manifest's plugin version and `minimumGenieVersion`. Stamping happens before tarball creation, and any missing/divergent field fails the build.
+3. Preserve the repository's authorized release identity sequence:
+   - `.github/workflows/version.yml` derives a single candidate `VERSION`, binds it to an immutable tag/source SHA and successful source CI before any release build, and never reuses that identity;
+   - the final stable release is started by a maintainer through `.github/workflows/release.yml` with that exact version/tag SHA/CI run;
+   - the protected `production` environment approval must succeed before `authorize`, build, sign/attest, or publish can run.
+   The same candidate value flows unchanged through build, signature, provenance, release asset names, plugin version, and `minimumGenieVersion`.
+4. Add `scripts/verify-dsh-genie-board-release.ts` plus tests with two explicit modes: `--unsigned-artifact-dir` proves local tar inventory/member/version completeness, while `--signed-artifact-dir` and `--release` additionally require cryptographic sidecars and digest binding. Wire signed-artifact mode into `.github/workflows/release-publish.yml` after signed artifacts are downloaded but before draft reconciliation/publication. For the supplied candidate and channel, signed-artifact/release mode must fail closed unless:
+   - the tarball stem set is exactly `linux-x64-glibc`, `linux-x64-musl`, `linux-arm64`, and `darwin-arm64`, with one nonempty `.bundle` and `.intoto.jsonl` beside each;
+   - each tarball's recomputed SHA-256 equals its channel delivery descriptor's `artifactSha256`;
+   - `scripts/verify-release.sh --local <tarball>` passes independently for each tarball, proving its cosign identity and SLSA provenance;
+   - each extracted tarball contains every required plugin member: `package.json`, `agent.cordis.yml`, `cordis.patch.yml`, `README.md`, `NOTICE`, `dist/index.js`, and `dist/client.js`;
+   - each extracted root/plugin/manifest version and `minimumGenieVersion` equals the immutable candidate exactly.
+5. After the stable release is published, run the same verifier in release-download mode against `v$VERSION` and read back the release tag/source binding. Only that green post-publication proof permits adding the `dsh-plugin` GitHub topic; read the topic back afterward. A dev release, local build, unsigned tarball, missing platform, OR-style member check, or approval from the release initiator does not satisfy this gate.
 
 **Acceptance Criteria:**
-- [ ] Artifact contains the plugin/manifests/docs with matching versions.
-- [ ] All four supported artifacts contain the plugin and pass inventory/version inspection; the linked smoke from Group 2 changes no user repository.
+- [ ] Candidate version/tag/source/CI identity exists before build and flows unchanged through all four tarballs, plugin metadata, signatures, provenance, descriptors, and the published stable release.
+- [ ] The protected human approval precedes build/sign/publish, and the pre-publication verifier rejects any missing/extra platform stem, digest mismatch, missing/invalid sidecar, missing required plugin member, or version mismatch.
+- [ ] All four exact published tarballs independently pass SHA-256, cosign, SLSA, complete-member, and version/floor checks; the linked smoke from Group 2 changes no user repository.
 - [ ] Topic publication occurs last and is verified by read-back.
 
 **Validation:**
@@ -209,15 +220,16 @@ bun run build:plugin
 VERSION="$(jq -r .version package.json)"
 for PLATFORM in linux-x64-glibc linux-x64-musl linux-arm64 darwin-arm64; do
   bun run build:binary -- --platform "$PLATFORM" --version "$VERSION"
-  tar -tzf "dist/genie-$VERSION-$PLATFORM.tar.gz" | grep -E '^\./plugins/dsh-genie-board/(package.json|agent.cordis.yml|cordis.patch.yml|dist/)'
 done
-bun run verify:release -- "v$VERSION"
+bun scripts/verify-dsh-genie-board-release.ts --unsigned-artifact-dir dist --version "$VERSION"
+# Final gate after the separately approved stable Release workflow publishes:
+bun scripts/verify-dsh-genie-board-release.ts --release "v$VERSION" --channel stable
 ```
 
-The final command is intentionally post-publication: `v$VERSION` must be the concrete signed candidate tag. The live verifier downloads every platform artifact and requires each adjacent `.bundle` and `.intoto.jsonl`; a merely local unsigned build does not satisfy this gate.
+The unsigned verifier mode proves only locally built inventory and member/version completeness and cannot authorize publication. Signed-artifact mode is mandatory inside the approved release workflow; the final release-download run is mandatory after publication and proves exactly four published platform tarballs individually against their digest, signature, provenance, complete plugin inventory, and immutable candidate identity before topic publication.
 
 **depends-on:** Group 2
-**blocks:** release/topic publication
+**blocks:** stable release/topic publication
 
 ---
 
@@ -235,7 +247,7 @@ The final command is intentionally post-publication: `v$VERSION` must be the con
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | DSH APIs drift from installed `0.1.1-rc.2`. | Medium | Use locally proven injections, linked smoke, and tested engine floor. |
-| Per-card detail creates subprocess pressure. | Medium | Hard cap count/concurrency/bytes/time and expose partial-detail warnings. |
+| Complete aggregate detail increases one response's size. | Medium | Bound one snapshot by bytes/time and fail the whole response rather than expose partial state. |
 | Additive JSON becomes a public contract. | Medium | Fixture every key and pin plugin compatibility floor. |
 | Release payload omits co-located files. | High | Update manifests and verify final tarballs from a clean checkout. |
 
@@ -259,15 +271,21 @@ Remaining HIGH gaps after the second review round:
 
 Fix-loop budget is exhausted (`2/2`). Cause: `ambiguous-spec` for the hydration contract and `missing-context` for the release-candidate workflow. Owner: Sofia/Felipe. Next gate: resolve those product/release decisions, amend the plan, and obtain a fresh independent plan review. Implementation, release work, and external publication remain blocked.
 
+### Decision resolution — direct Felipe approval (2026-09-03)
+
+Felipe directly authorized the bounded plan amendment: complete aggregate views from one structured read; one immutable candidate version derived before build/sign/publish; and the authorized, human-approved stable workflow with fail-closed proof of exactly four platform artifacts and every required plugin member. The amended plan removes partial hydration, makes candidate stamping non-circular, and adds per-artifact digest/signature/provenance/member verification. Status remains `FIX-FIRST` until a fresh independent plan review returns `SHIP`; no implementation, release, push, or topic publication is authorized by this amendment.
+
 ---
 
 ## Files to Create/Modify
 
 ```
 plugins/dsh-genie-board/**
-src/term-commands/v5-task.ts
-src/term-commands/v5-task.test.ts
+src/term-commands/v5-board.ts
+src/term-commands/v5-board.test.ts
 scripts/dsh-genie-board-smoke.ts
+scripts/verify-dsh-genie-board-release.ts
+scripts/verify-dsh-genie-board-release.test.ts
 scripts/build-binary.sh
 scripts/release-payload-version.ts
 scripts/release-payload-version.test.ts
@@ -275,6 +293,7 @@ scripts/release-docs.test.ts
 scripts/version-format.test.ts
 scripts/version-ci-staging.test.ts
 scripts/orca-manifest-parity.test.ts
+.github/workflows/release-publish.yml
 package.json
 README.md
 .genie/brainstorms/dsh-genie-board/**
