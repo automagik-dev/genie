@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `dsh-genie-board` |
 | **Date** | 2026-09-03 |
 | **Author** | Sofia with Felipe |
