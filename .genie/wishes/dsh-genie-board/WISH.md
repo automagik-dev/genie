@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | FIX-FIRST |
 | **Slug** | `dsh-genie-board` |
 | **Date** | 2026-09-03 |
 | **Author** | Sofia with Felipe |
@@ -243,7 +243,21 @@ The final command is intentionally post-publication: `v$VERSION` must be the con
 
 ## Review Results
 
-_The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here._
+### Plan review round 2 — FIX-FIRST (2026-09-03T14:28:27Z)
+
+- **Reviewed commit:** `a886373a1cca05578ffd3c5ff503e89801f4ada9`
+- **Reviewer:** `agent:steve:dashboard:8dc1921d-9f6b-41d0-9095-8ac7ee731afb`
+- **Mode:** independent, read-only, detached snapshot
+- **Validation:** `wishes:lint`, design-evidence verification, diff check, shell syntax, CLI/source contract checks all passed; snapshot remained clean.
+- **Verdict:** **FIX-FIRST** — 0 CRITICAL, 3 HIGH.
+
+Remaining HIGH gaps after the second review round:
+
+1. **Detail hydration is contradictory.** The plan promises unconditional complete detail while also allowing partial/on-demand enrichment under a 20-process cap. Choose either one aggregate complete JSON read or a fully specified partial/on-demand contract, including deterministic ordering and mutation-budget accounting.
+2. **Compatibility-floor sequencing is circular.** Group 2 depends on a “first released version” that Group 3 has not released. Define a candidate/version-stamping contract produced by the same release, then prove that exact version in Group 3, or add and reconcile an explicit earlier release gate.
+3. **Published-release proof is incomplete.** The tar membership check can pass with only one required member; the verifier does not itself require the four named artifacts or inspect plugin contents, and no executable step creates or identifies the signed candidate and sidecars. Specify the authorized candidate workflow and independently assert every required member in each exact artifact before publication.
+
+Fix-loop budget is exhausted (`2/2`). Cause: `ambiguous-spec` for the hydration contract and `missing-context` for the release-candidate workflow. Owner: Sofia/Felipe. Next gate: resolve those product/release decisions, amend the plan, and obtain a fresh independent plan review. Implementation, release work, and external publication remain blocked.
 
 ---
 
