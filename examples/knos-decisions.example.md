@@ -5,8 +5,8 @@
 
 ## Decisions
 
-- **rule 1** - Framework: `bun:test` (import from `'bun:test'`) _(source: CLAUDE.md)_
-- **rule 2** - Pattern: colocated `*.test.ts` next to source. _(source: CLAUDE.md)_
+- Framework: `bun:test` (import from `'bun:test'`) _(source: CLAUDE.md)_
+- Pattern: colocated `*.test.ts` next to source. _(source: CLAUDE.md)_
 
 ## Being worked on right now
 
