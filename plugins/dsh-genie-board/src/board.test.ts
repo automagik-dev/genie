@@ -112,6 +112,49 @@ describe('closed inputs and fixed argv', () => {
     for (const text of ['', '   ', 'x\0x', 'x\nx', 'x\tx', '\ntitle', 'title\n'])
       expect(requestSchema.safeParse({ ...input, text }).success).toBe(false);
   });
+  test.each([
+    ['C1 next line', '\u0085'],
+    ['C1 control sequence introducer', '\u009b'],
+    ['bidi override', '\u202e'],
+    ['bidi isolate', '\u2066'],
+    ['zero width space', '\u200b'],
+    ['byte order mark', '\ufeff'],
+    ['line separator', '\u2028'],
+    ['paragraph separator', '\u2029'],
+    ['supplementary format control', '\u{e0001}'],
+  ])('rejects %s at every text boundary before any CLI call', async (_name, control) => {
+    const f = await fixture();
+    await f.list();
+    await f.load();
+    const before = f.calls.length;
+    for (const value of [`${control}text`, `te${control}xt`, `text${control}`]) {
+      for (const input of [
+        { action: 'create', ...selection, title: value },
+        { action: 'comment', ...selection, id: 't_abc', text: value },
+        { action: 'block', ...selection, id: 't_abc', text: value },
+      ]) {
+        await expect(f.service.request(input)).rejects.toThrow('Control characters are not allowed');
+        expect(f.calls.length).toBe(before);
+      }
+    }
+  });
+  test('ordinary Unicode text is trimmed and forwarded unchanged for all three actions', async () => {
+    const f = await fixture();
+    await f.list();
+    await f.load();
+    const value = 'café 漢字 🙂 e\u0301';
+    const padded = `  ${value}  `;
+    const vectors = [
+      [{ action: 'create', title: padded }, ['task', 'create', '--title', value, '--board', 'b_abc']],
+      [{ action: 'comment', id: 't_abc', text: padded }, ['task', 'comment', '--', 't_abc', value]],
+      [{ action: 'block', id: 't_abc', text: padded }, ['task', 'block', 't_abc', '--reason', value]],
+    ] as const;
+    for (const [input, argv] of vectors) {
+      const before = f.calls.length;
+      await f.service.request({ ...selection, ...input });
+      expect(f.calls.slice(before)).toEqual([[...argv], ['board', '--board', 'b_abc', '--json']]);
+    }
+  });
   test('byte bounds for title/comment/reason', () => {
     for (const [action, field, limit] of [
       ['create', 'title', 200],

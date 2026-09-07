@@ -62,19 +62,9 @@ export const boardsSchema = z.array(
 );
 const bounded = (max: number) =>
   text
-    .refine(
-      (value) =>
-        !Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127),
-      'Control characters are not allowed',
-    )
+    .refine((value) => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value), 'Control characters are not allowed')
     .transform((value) => value.trim())
-    .refine(
-      (value) =>
-        value.length > 0 &&
-        Buffer.byteLength(value) <= max &&
-        !Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127),
-      'Invalid text',
-    );
+    .refine((value) => value.length > 0 && Buffer.byteLength(value) <= max, 'Invalid text');
 const base = { workspaceId: text.min(1).max(200), boardRef: text.regex(/^b_[a-z0-9]+$/) };
 export const requestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list'), workspaceId: base.workspaceId }).strict(),
