@@ -1712,22 +1712,26 @@ function mapHire(row: RawHire): HireRosterRow {
  * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
  * preserves the original `hired_at` by OMITTING `hired_at` from the `ON CONFLICT
  * DO UPDATE SET` list — an unset column keeps its stored value, so the first
- * hire's timestamp survives every re-hire and the call converges on one row. A
- * single statement is atomic on its own; the WAL + busy_timeout the handle
- * carries (see sqlite-open.ts) serializes it against concurrent writers.
+ * hire's timestamp survives every re-hire and the call converges on one row.
+ * RETURNING captures the result inside that same write statement, so a racing
+ * unhire cannot remove the row between the upsert and a separate result read.
+ * WAL + busy_timeout (see sqlite-open.ts) serializes concurrent writers.
  */
 export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
   const now = Date.now();
   const state = input.state ?? 'hired';
-  db.query(
-    `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+  const row = db
+    .query(
+      `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
        profile  = excluded.profile,
        worktree = excluded.worktree,
-       state    = excluded.state`,
-  ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
-  return getHire(db, input.wish, input.agentAdapterId) as HireRosterRow;
+       state    = excluded.state
+     RETURNING *`,
+    )
+    .get(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state) as RawHire;
+  return mapHire(row);
 }
 
 /**

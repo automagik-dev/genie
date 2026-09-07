@@ -1383,6 +1383,89 @@ describe('hire roster (single-row upsert / delete)', () => {
   });
 });
 
+describe('multi-process hire/unhire return race', () => {
+  test('every hire returns its complete row even when another process unhires it', async () => {
+    const dbPath = join(dir, 'hire-unhire.db');
+    const seed = openDb({ path: dbPath });
+    hireAgent(seed, { wish: 'race', agentAdapterId: 'adapter', worktree: '/wt/seed' });
+    seed.close();
+    const workerPath = join(dir, 'hire-unhire-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+import { hireAgent, unhireAgent } from ${JSON.stringify(join(import.meta.dir, 'task-state.ts'))};
+const [dbPath, op] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+process.stdout.write('ready');
+await Bun.stdin.text();
+let invalid = 0;
+let removed = 0;
+try {
+  for (let i = 0; i < 3000; i++) {
+    if (op === 'unhire') {
+      if (unhireAgent(db, 'race', 'adapter')) removed++;
+    } else {
+      const row = hireAgent(db, {
+        wish: 'race', agentAdapterId: 'adapter', profile: 'profile-' + i,
+        worktree: '/wt/' + i, state: 'active',
+      });
+      if (!row || row.wish !== 'race' || row.agentAdapterId !== 'adapter' ||
+          row.profile !== 'profile-' + i || row.worktree !== '/wt/' + i ||
+          row.state !== 'active' || !Number.isInteger(row.hiredAt) || row.hiredAt <= 0) invalid++;
+    }
+  }
+  process.stdout.write(JSON.stringify({ invalid, removed }));
+} finally {
+  db.close();
+}
+`,
+    );
+    const workers = ['hire', 'unhire'].map((op) =>
+      Bun.spawn(['bun', 'run', workerPath, dbPath, op], {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
+      }),
+    );
+    try {
+      // Both handles are open before either loop begins, so startup cannot
+      // serialize away the race. The child waits for stdin EOF after readiness.
+      await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          const ready = await reader.read();
+          reader.releaseLock();
+          expect(new TextDecoder().decode(ready.value)).toBe('ready');
+        }),
+      );
+      for (const worker of workers) worker.stdin.end();
+      const results = await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          let output = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            output += new TextDecoder().decode(value);
+          }
+          return { output, stderr: await new Response(worker.stderr).text(), code: await worker.exited };
+        }),
+      );
+      for (const result of results) {
+        expect(result.code).toBe(0);
+        expect(result.stderr).toBe('');
+      }
+      expect(JSON.parse(results[0].output).invalid).toBe(0);
+      expect(JSON.parse(results[1].output).removed).toBeGreaterThan(0);
+    } finally {
+      for (const worker of workers) worker.kill();
+      await Promise.all(workers.map((worker) => worker.exited));
+    }
+  }, 30_000);
+});
+
 // ---------------------------------------------------------------------------
 // Multi-PROCESS roster write vs task-create race: concurrent bun processes hire
 // agents and create tasks against the same on-disk WAL database. Every writer
