@@ -1,0 +1,16 @@
+{
+  "name": "@automagik/genie-dsh-board",
+  "version": "5.260901.3",
+  "minimumGenieVersion": "5.260901.3",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": { ".": "./dist/index.js", "./client": "./dist/client.js", "./package.json": "./package.json" },
+  "files": ["dist", "agent.cordis.yml", "cordis.patch.yml", "README.md", "NOTICE"],
+  "scripts": { "build": "bun run build.ts", "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dsh": {
+    "engines": { "dsh": ">=0.1.2-rc.1" },
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }
+  }
+}

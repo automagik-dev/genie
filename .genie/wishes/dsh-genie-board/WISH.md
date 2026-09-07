@@ -143,7 +143,7 @@ Full gate is required because this changes a shared aggregate CLI contract.
 **Goal:** Deliver the secure, Host-confirmed DSH Web board experience.
 
 **Deliverables:**
-1. Create `plugins/dsh-genie-board/package.json`, `agent.cordis.yml`, `cordis.patch.yml`, `README.md`, `NOTICE`, TypeScript/build configuration, source/tests, and the package-local `build` script. Freeze `dist/index.js` as the Host bundle and `dist/client.js` as the browser bundle; add root `build:plugin` as `bun --cwd plugins/dsh-genie-board run build`.
+1. Create `plugins/dsh-genie-board/package.json`, `agent.cordis.yml`, `cordis.patch.yml`, `README.md`, `NOTICE`, TypeScript/build configuration, source/tests, and the package-local `build` script. Freeze `dist/index.js` as the Host bundle and `dist/client.js` as the browser bundle; add root `build:plugin` as `bun run --cwd plugins/dsh-genie-board build` (verified Bun invocation; the earlier flag ordering printed usage without building).
 2. Implement a `minimumGenieVersion` plugin field and strict semver comparator without hard-coding a not-yet-published release. Source and linked-profile tests use the checkout root version; Group 3 stamps both the shipped plugin version and `minimumGenieVersion` from its already-derived immutable candidate. At Host startup run the fixed executable as `genie --no-interactive --version`; an older/unparseable version serves no board route.
 3. Resolve a workspace id only through DSH `workspaceRegistry`; canonicalize the registry result with `realpath`, require a physical repository containing `.genie`, and use that canonical path as `cwd`. Never accept a browser path. Resolve the Genie executable once from the Host-owned installation, canonicalize it to an absolute executable regular file, and never search for or override it per request.
 4. Spawn with `shell: false` and an exact Host-owned environment allowlist: `PATH`, `HOME`, `GENIE_HOME`, `NO_COLOR=1`, `GENIE_AGENT_NAME=<host-derived-identity>`, and `GENIE_AGENT_KIND=dsh`; drop every other variable and accept no environment value from the browser.
@@ -155,7 +155,7 @@ Full gate is required because this changes a shared aggregate CLI contract.
    | Read board | `genie --no-interactive board --board <validated-ref> --json` |
    | Create | `genie --no-interactive task create --title <title> --board <ref>` |
    | Move | `genie --no-interactive task move <id> --to <lane>` |
-   | Comment | `genie --no-interactive task comment <id> <text>` |
+   | Comment | `genie --no-interactive task comment -- <id> <text>` |
    | Block | `genie --no-interactive task block <id> --reason <text> [--hold]` |
    | Unblock | `genie --no-interactive task unblock <id>` |
    | Checkout | `genie --no-interactive task checkout <id> --worker <host-derived-identity>` |
@@ -167,12 +167,24 @@ Full gate is required because this changes a shared aggregate CLI contract.
 8. Implement browser selectors, lanes/cards/details/errors, mutations, refresh, and visibility recovery; each mutation response performs one complete board aggregate re-read and never applies optimistic or partially hydrated state.
 9. Add `scripts/dsh-genie-board-smoke.ts`: create isolated fixture repo/profile state, run `dsh plugin --profile web add link:<absolute-plugin-dir>`, launch `dsh web --no-open --host 127.0.0.1 --port 0`, stop/relaunch it after install, prove `dsh plugin --profile web list --depth 0` reports `@automagik/genie-dsh-board`, read back the plugin health/compatibility route, perform board list/load plus reversible create/move through the Host route, and in `finally` stop the server, run `dsh plugin --profile web remove @automagik/genie-dsh-board`, and delete only the temporary profile/repository.
 
+**Execution clarification — bounded selection evidence (2026-09-07):**
+
+The fixed comment vector includes the standard `--` option terminator so valid comment text such as `--help` is stored as prose rather than interpreted as a CLI option. A real-CLI regression must verify the stored comment, not merely a successful exit or mocked argv. This is an owner-approved argument-boundary correction within the existing comment action.
+
+To satisfy the fixed subprocess budgets while validating selected identifiers, the Host may retain only validated board IDs and the task-ID/lane-name sets of one selected board per registered workspace. This is selection-validation evidence, not authentication or a response cache: no aggregate is stored or served, every returned board is freshly read, and there is no persistence, polling, TTL, queue or capability protocol.
+
+Bind evidence to workspace ID, canonical repository path and selected board ID. Allow one active operation per workspace (including list/load/mutation/refresh); reject overlaps with a retryable conflict. Replace evidence only after complete validation. Invalidate selected evidence on failures, registry removal, path rebinding and board changes. If mutation succeeds but refresh fails, report that the operation may have completed and require a new load; never retry automatically. Enforce verified DSH authentication and same-origin fencing before accessing evidence or spawning; reject missing/mismatched mutation Origin and unsupported content types. Membership reflects the latest confirmed selection; supported CLI mutations do not reassign tasks between boards, and concurrent state transitions retain CLI checks.
+
+Required tests cover concurrent board switches, mutation during load, invalidation after failures, workspace path rebinding, foreign task IDs, malformed refresh after successful mutation and cross-origin requests, with process-count assertions. This narrow allowance resolves the read-validation/process-budget tension; the prohibition on general caches and ledgers remains.
+
+Independent contract review: `/root/g1_review` required these exact concurrency/validity safeguards; owner incorporated them before implementation. Final G2 review must verify their implementation. Independent reread returned **SHIP** for the clarification, reviewed WISH SHA-256 `95f4cbb3cfe904117bece4d1b742591e7e2dc68514427b4200acd3d17b6db143` before this receipt was added; this is contract approval, not implementation acceptance. The installed DSH floor is now 0.1.2-rc.1 and must be proven by the real smoke. When no public sidebar extension exists, a labeled Genie launcher and accessible dialog mounted through public client apply/effect is an acceptable entry point; no DOM observer or private runtime API.
+
 **Acceptance Criteria:**
-- [ ] Rendering matches one complete fixture-backed Host aggregate; mutations use fixed argv and perform one complete refresh.
-- [ ] Every unsafe/failure case is bounded and cannot invoke an out-of-scope command.
+- [x] Rendering matches one complete fixture-backed Host aggregate; mutations use fixed argv and perform one complete refresh.
+- [x] Every unsafe/failure case is bounded and cannot invoke an out-of-scope command.
 - [ ] The manifest and runtime reject every Genie version below the immutable candidate value stamped by Group 3, while source/linked tests prove the comparator against the checkout version without depending on a prior publication.
-- [ ] Package build and the linked-profile install/restart/read-back/board-operation/cleanup smoke pass against DSH `0.1.1-rc.2` or a newer explicitly proven floor.
-- [ ] No database access, persistence, watcher, poller, shell, or browser-supplied executable/path/argv exists.
+- [x] Package build and the linked-profile install/restart/read-back/board-operation/cleanup smoke pass against DSH `0.1.1-rc.2` or a newer explicitly proven floor.
+- [x] No database access, persistence, watcher, poller, shell, or browser-supplied executable/path/argv exists.
 
 **Validation:**
 ```bash
@@ -332,6 +344,27 @@ Corrective route: resolve or formally clear the repository-baseline failures, th
 - **Full gate:** `bun run check` exited 0; **1990 pass / 1 skip / 0 fail**, 8407 assertions across 96 test files, 262.56 seconds. Frozen dependency install and build passed.
 - **Dogfood:** built `dist/genie.js` against an isolated HOME and repository; board creation, task creation, comment, move and aggregate read returned the expected lane, comment and timeline. No personal profile or repository changed.
 - G1 code review, full validation and built-CLI smoke are accepted. G2/G3 and stable publication remain pending; this is not whole-wish release acceptance.
+
+### G2 implementation review — 2026-09-07T19:33Z — FIX-FIRST, round 1
+
+- Independent reviewer `/root/g2_review` inspected all 13 plugin files, smoke and root configuration against HEAD `9cef95e4ccc5e9c597d16fdf3d7dec1598b8640b`; reviewed content SHA-256 `a48a527744ebb5c02f8915aaa3085e7502ca3d31a052433b678dcdbcf2e05ae1`.
+- P1: exact Host routes bypassed DSH's authenticated `/api` prefix. Require the installed public `connection.requestRejection(req)` browser-cookie check before every route, in addition to Origin/loopback fencing. The original unauthenticated smoke is not acceptance evidence.
+- P2: option-shaped comment text could exit successfully without writing a comment. The owner approved the fixed `--` argument terminator above; regression must read back the literal stored text through the real CLI.
+- Focused independent run: 13 pass, 161 assertions. The first browser attempt did not mount the launcher and supplies no visual acceptance. Engineer is correcting both findings and repeating authenticated smoke/rendered validation; final review and current full gate remain pending.
+
+### G2 implementation re-review — 2026-09-07 — SHIP, fix loop 1
+
+- Independent reviewer `/root/g2_review` returned **SHIP**, no unresolved findings, on all 17 files in frozen source manifest SHA-256 `7395d3c0064d65fc8a568527df755859753bfe51336d4d8b978d6eadb328783a`, atop HEAD `9cef95e4ccc5e9c597d16fdf3d7dec1598b8640b`. Owner independently verified every manifest entry.
+- P1 closed: every route applies public DSH connection authentication before workspace access or operations; real smoke exchanges the launch token and proves missing/invalid cookies return 401. P2 closed: real CLI writes the literal `--help` comment using the fixed option terminator; rendered details confirm it.
+- Independent focused validation: **19 pass, 249 assertions, zero failures**, including regenerated browser factory. Reviewed fixed actions, selection/concurrency invalidation, valid canonical-path rebinding, refresh failure, process/output budgets and authentication boundaries.
+- Real installed DSH **0.1.2-rc.1** smoke proves installation, restart, authenticated operations and cleanup. Reviewer and owner inspected wide/narrow/history images; browser evidence also proves card details, comment submission, horizontal lane scroll, history access, Escape and restored focus.
+- Parent full gate is running on the frozen repaired files. This receipt accepts code and rendered behavior; group completion still requires that current full gate.
+
+### G2 owner acceptance — 2026-09-07
+
+- Parent `bun run check` on the repaired frozen source exited **0**: **2009 pass / 1 skip / 0 fail**, 8653 assertions across 98 files, 270.63 seconds. Scope is the repository-mandated full gate for runtime, trust-boundary and build/configuration changes.
+- Parent `bun run build:plugin`, focused plugin tests (**19 pass / 249 assertions**) and real `bun scripts/dsh-genie-board-smoke.ts` each exited **0**. The owner smoke separately proves authenticated install/list/restart/health/load/create/move and literal option-shaped comment, followed by plugin removal and temporary-state cleanup.
+- Combined with independent code/security/quality and rendered **SHIP**, Group 2 implementation is accepted. The comparator is proven for source/linked builds; immutable candidate stamping and extracted runtime-floor proof remain explicitly owned by Group 3, so the combined future-artifact checkbox above remains open.
 
 ---
 

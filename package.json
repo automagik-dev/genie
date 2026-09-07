@@ -1,7 +1,7 @@
 {
   "name": "@automagik/genie",
   "version": "5.260901.3",
-  "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
+  "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 \u2014 install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -19,7 +19,7 @@
     "lint:docs-markdown": "ls docs/incident-response/canisterworm.mdx docs/installation.mdx docs/release-notes.mdx > /dev/null && markdownlint-cli2 SECURITY.md docs/incident-response/canisterworm.mdx docs/installation.mdx docs/release-notes.mdx",
     "format": "biome format --write .",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p plugins/dsh-genie-board/tsconfig.json",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
@@ -28,7 +28,8 @@
     "lint:orca-bundle": "bun scripts/orca-bundle-parity.ts --check",
     "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:orca-bundle && bun test",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:orca-bundle",
-    "verify:release": "scripts/verify-release.sh"
+    "verify:release": "scripts/verify-release.sh",
+    "build:plugin": "bun run --cwd plugins/dsh-genie-board build"
   },
   "dependencies": {
     "@inquirer/prompts": "7.10.1",

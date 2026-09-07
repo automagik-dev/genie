@@ -1,0 +1,7 @@
+Genie DSH Board
+Copyright 2026 Namastex Labs. Licensed under the repository MIT license.
+
+Original plugin implementation for the public Cordis lifecycle, DSH workspace
+registry and DSH WebServer interfaces. DSH is developed by DeepSeek AI and is
+not part of this package. No implementation from the separate dsh-genie project
+is included. The Host bundle includes Zod (MIT), copyright Colin McDonnell.
