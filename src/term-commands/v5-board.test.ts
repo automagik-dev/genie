@@ -514,6 +514,9 @@ describe('scoped board JSON aggregate v1', () => {
     db.query('UPDATE tasks SET id = ? WHERE id = ?').run('a-dependency', depA.id);
     db.query('UPDATE tasks SET id = ?, created_at = 10 WHERE id = ?').run('z-card', cardB.id);
     db.query('UPDATE tasks SET id = ?, created_at = 10 WHERE id = ?').run('a-card', cardA.id);
+    // This access path sorts equal timestamps by id unless the aggregate
+    // explicitly requests its insertion-order tie-break.
+    db.run('CREATE INDEX test_board_created_id ON tasks(board_id, created_at, id)');
     addDependency(db, 'a-card', 'z-dependency');
     addDependency(db, 'a-card', 'a-dependency');
     // Insert same-time ids in descending order. Timeline and its comment

@@ -266,8 +266,12 @@ test('semver strict ordering includes prereleases and rejects malformed versions
     expect(compatible(actual, minimum)).toBe(result);
 });
 test('process environment is an exact allowlist', () => {
+  const env = hostEnvironment('host');
+  expect(env.GENIE_AGENT_NAME).toBe('host');
+  expect(env.GENIE_AGENT_KIND).toBe('dsh');
+  expect(env.NO_COLOR).toBe('1');
   expect(
-    Object.keys(hostEnvironment('host')).every((key) =>
+    Object.keys(env).every((key) =>
       ['PATH', 'HOME', 'GENIE_HOME', 'NO_COLOR', 'GENIE_AGENT_NAME', 'GENIE_AGENT_KIND'].includes(key),
     ),
   ).toBe(true);

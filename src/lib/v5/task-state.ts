@@ -1467,7 +1467,7 @@ export function readBoardTaskSnapshot(
   const read = db.transaction((): BoardTaskAggregate[] => {
     const params = filter.wish ? [boardId, filter.wish] : [boardId];
     const tasks = db
-      .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at`)
+      .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at, rowid`)
       .all(...params) as RawTask[];
     if (tasks.length === 0) return [];
     // One JSON binding avoids variable limits while retaining task_id index probes.
