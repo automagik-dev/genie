@@ -18,7 +18,14 @@ const env = {
 let server: ChildProcess | undefined;
 let installed = false;
 async function command(binary: string, args: string[], cwd = root): Promise<string> {
-  const proc = Bun.spawn([binary, ...args], { cwd, env, stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn([binary, ...args], {
+    cwd,
+    env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    timeout: 120_000,
+    killSignal: 'SIGKILL',
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
