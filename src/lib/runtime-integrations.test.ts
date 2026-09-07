@@ -56,15 +56,18 @@ describe('bounded integration subprocess and Codex plugin state', () => {
         '-e',
         [
           'const { spawn } = require("node:child_process");',
-          'const child = spawn(process.execPath, ["-e", "process.on(\\"SIGTERM\\",()=>{});setInterval(()=>{},1000)"], { stdio: "ignore" });',
-          'process.stdout.write(String(child.pid));',
+          `const child = spawn(process.execPath, ["-e", ${JSON.stringify('process.on("SIGTERM",()=>{});process.stdout.write("ready");setInterval(()=>{},1000)')}], { stdio: ["ignore", "pipe", "ignore"] });`,
+          'child.stdout.once("data", () => process.stdout.write(String(child.pid)));',
           'process.on("SIGTERM",()=>{});',
           'setInterval(()=>{},1000);',
         ].join(''),
       ],
-      { timeoutMs: 50, maxOutputBytes: 1_024, killGraceMs: 30 },
+      // Allow both processes to start; stdout acknowledges the descendant's TERM handler.
+      { timeoutMs: 1_000, maxOutputBytes: 1_024, killGraceMs: 30 },
     );
     expect(result.timedOut).toBe(true);
+    // Empty output must never become PID 0 (our entire process group).
+    expect(result.stdout).toMatch(/^[1-9][0-9]*$/);
     const descendantPid = Number(result.stdout);
     expect(Number.isSafeInteger(descendantPid)).toBe(true);
     let alive = true;
