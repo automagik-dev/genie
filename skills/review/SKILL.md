@@ -140,10 +140,13 @@ write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
 | PR review (before merge) | Merge to `dev` (agents) or approve for human merge |
 
 ### FIX-FIRST loop
+
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
 1. Diagnose first. For `overdesigned-plan`, return to `brainstorm`/`wish` without consuming a fix attempt.
 2. Otherwise auto-invoke `fix` with the severity-tagged gap list.
-3. After `fix` completes, re-run `review` (max 2 fix loops).
-4. Still FIX-FIRST after 2 loops → return BLOCKED with an Escalation Diagnosis; never raise model or effort automatically.
+3. After `fix` completes, re-run `review` (at most `B` fix loops per group).
+4. Still FIX-FIRST after `B` loops → return BLOCKED with an Escalation Diagnosis; never raise model or effort automatically.
 
 When a failure's root cause is unclear, invoke `trace` before dispatching `fix` — `fix` then applies the cause-specific correction from the trace report. An unclear cause is not evidence of `model-capacity`.
 

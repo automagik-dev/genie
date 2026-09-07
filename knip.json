@@ -1,7 +1,14 @@
 {
   "$schema": "https://unpkg.com/knip@6.29.0/schema.json",
-  "entry": ["skills/genie-orca-work/scripts/*.ts"],
-  "project": ["skills/genie-orca-work/scripts/**/*.ts", "src/**/*.ts"],
+  "entry": [
+    "skills/genie-orca-work/scripts/*.ts",
+    "plugins/dsh-genie-board/src/index.ts",
+    "plugins/dsh-genie-board/src/client.ts",
+    "plugins/dsh-genie-board/build.ts",
+    "plugins/dsh-genie-board/src/*.test.ts",
+    "plugins/dsh-genie-board/build.test.ts"
+  ],
+  "project": ["skills/genie-orca-work/scripts/**/*.ts", "src/**/*.ts", "plugins/dsh-genie-board/src/**/*.ts"],
   "ignoreBinaries": ["ldd", "omni"],
   "ignoreExportsUsedInFile": true
 }

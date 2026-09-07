@@ -982,8 +982,38 @@ describe('Group E release and documentation contracts', () => {
     expect(review).toContain('unjustified stateful machinery');
     expect(review).toContain('a HIGH gap');
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
-    expect(fix).toContain('up to 2 loops');
+    expect(fix).toContain('up to `B` loops');
     expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
+  });
+
+  test('fix-loop budgets preserve explicit override authority and repair safeguards across lifecycle routes', () => {
+    for (const path of [
+      'skills/fix/SKILL.md',
+      'skills/review/SKILL.md',
+      'skills/work/SKILL.md',
+      'skills/dream/SKILL.md',
+      'skills/genie/reference/lifecycle.md',
+      'skills/genie-orca-review/SKILL.md',
+      'skills/genie-orca-work/SKILL.md',
+    ]) {
+      const skill = read(path);
+      expect(skill).toContain('budget `B` once per group: default 2');
+      expect(skill).toContain('only an explicit higher-priority user/workspace instruction');
+      expect(skill).toContain('another positive integer');
+      expect(skill).toContain('Carry `B` and the attempts already used across handoffs');
+      expect(skill).toContain(
+        'Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review',
+      );
+      expect(skill).not.toMatch(/(?:max|at most|up to|Cap) (?:2|\*\*2\*\*) (?:fix )?loops|after 2 (?:failed )?loops/);
+    }
+    for (const skill of ['fix', 'review', 'work']) {
+      expect(read(`skills/${skill}/SKILL.md`)).toContain('at most two escalation attempts per group');
+    }
+    expect(read('skills/fix/SKILL.md')).toContain('effort_escalations=<used>/2');
+    expect(read('skills/work/SKILL.md')).toContain('On FIX-FIRST, one fix loop.');
+    expect(read('skills/work/SKILL.md')).toContain('This separate quality-pass cap is not expanded by `B`.');
+    expect(read('skills/dream/SKILL.md')).toContain('max 3 attempts; poll CI status');
+    expect(read('skills/genie-orca-work/SKILL.md')).toContain('re-dispatch one tier up, once.');
   });
 
   test('router pays Genie lifecycle cost only when it adds value', () => {

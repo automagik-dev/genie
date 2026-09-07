@@ -1061,10 +1061,61 @@ describe('declared routing — roster allowlist + assignment state API (W1)', ()
 
 describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockstep)', () => {
   // Mirrors roadmap-sync's canonicalHash: sha256 over the parsed JSON form, so
-  // whitespace/formatting differences never count as content changes.
+  // whitespace and object-key order never count as content changes.
   function canonicalHash(value: unknown): string {
-    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const canonical = JSON.stringify(value, (_key, current: unknown) => {
+      if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+      return Object.fromEntries(
+        Object.keys(current)
+          .sort()
+          .map((key) => [key, (current as Record<string, unknown>)[key]]),
+      );
+    });
+    return createHash('sha256').update(canonical).digest('hex');
   }
+
+  test('an equal file/db pair refreshes an old order-sensitive marker without rewriting the snapshot', () => {
+    const repo = join(dir, 'hash-upgrade');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    createTask(db, { title: 'existing card' });
+    const snapshot = roadmapSnapshot(db);
+    const legacyHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const markerPath = join(repo, '.genie', 'roadmap-sync');
+    const content = `${JSON.stringify(snapshot, null, 2)}\n`;
+    writeFileSync(filePath, content);
+    writeFileSync(markerPath, JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash }));
+
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    expect(readFileSync(filePath, 'utf-8')).toBe(content);
+    const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
+    expect(marker.fileHash).not.toBe(legacyHash);
+    expect(marker.fileHash).toBe(marker.dbHash);
+    expect(syncRoadmap(db, repo).action).toBe('none');
+  });
+
+  test('an old order-sensitive marker with pending edits refuses to overwrite either side', () => {
+    const repo = join(dir, 'hash-upgrade-pending');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    createTask(db, { title: 'existing card' });
+    const snapshot = roadmapSnapshot(db);
+    const legacyHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const markerPath = join(repo, '.genie', 'roadmap-sync');
+    const content = `${JSON.stringify(snapshot, null, 2)}\n`;
+    const marker = JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash });
+    writeFileSync(filePath, content);
+    writeFileSync(markerPath, marker);
+    const pending = createTask(db, { title: 'unpublished card' });
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('diverged');
+    expect(result.message).toContain('genie task import --replace');
+    expect(result.message).toContain('genie task export --write');
+    expect(readFileSync(filePath, 'utf-8')).toBe(content);
+    expect(readFileSync(markerPath, 'utf-8')).toBe(marker);
+    expect(getTask(db, pending.id)?.title).toBe('unpublished card');
+  });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
     const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent on parser' });
@@ -1330,6 +1381,89 @@ describe('hire roster (single-row upsert / delete)', () => {
       },
     ]);
   });
+});
+
+describe('multi-process hire/unhire return race', () => {
+  test('every hire returns its complete row even when another process unhires it', async () => {
+    const dbPath = join(dir, 'hire-unhire.db');
+    const seed = openDb({ path: dbPath });
+    hireAgent(seed, { wish: 'race', agentAdapterId: 'adapter', worktree: '/wt/seed' });
+    seed.close();
+    const workerPath = join(dir, 'hire-unhire-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+import { hireAgent, unhireAgent } from ${JSON.stringify(join(import.meta.dir, 'task-state.ts'))};
+const [dbPath, op] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+process.stdout.write('ready');
+await Bun.stdin.text();
+let invalid = 0;
+let removed = 0;
+try {
+  for (let i = 0; i < 3000; i++) {
+    if (op === 'unhire') {
+      if (unhireAgent(db, 'race', 'adapter')) removed++;
+    } else {
+      const row = hireAgent(db, {
+        wish: 'race', agentAdapterId: 'adapter', profile: 'profile-' + i,
+        worktree: '/wt/' + i, state: 'active',
+      });
+      if (!row || row.wish !== 'race' || row.agentAdapterId !== 'adapter' ||
+          row.profile !== 'profile-' + i || row.worktree !== '/wt/' + i ||
+          row.state !== 'active' || !Number.isInteger(row.hiredAt) || row.hiredAt <= 0) invalid++;
+    }
+  }
+  process.stdout.write(JSON.stringify({ invalid, removed }));
+} finally {
+  db.close();
+}
+`,
+    );
+    const workers = ['hire', 'unhire'].map((op) =>
+      Bun.spawn(['bun', 'run', workerPath, dbPath, op], {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
+      }),
+    );
+    try {
+      // Both handles are open before either loop begins, so startup cannot
+      // serialize away the race. The child waits for stdin EOF after readiness.
+      await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          const ready = await reader.read();
+          reader.releaseLock();
+          expect(new TextDecoder().decode(ready.value)).toBe('ready');
+        }),
+      );
+      for (const worker of workers) worker.stdin.end();
+      const results = await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          let output = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            output += new TextDecoder().decode(value);
+          }
+          return { output, stderr: await new Response(worker.stderr).text(), code: await worker.exited };
+        }),
+      );
+      for (const result of results) {
+        expect(result.code).toBe(0);
+        expect(result.stderr).toBe('');
+      }
+      expect(JSON.parse(results[0].output).invalid).toBe(0);
+      expect(JSON.parse(results[1].output).removed).toBeGreaterThan(0);
+    } finally {
+      for (const worker of workers) worker.kill();
+      await Promise.all(workers.map((worker) => worker.exited));
+    }
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
