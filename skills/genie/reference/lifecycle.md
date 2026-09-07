@@ -46,6 +46,8 @@ external blocker is recorded; authorized merge plus required QA → `SHIPPED`.
 The reviewer remains read-only and never edits WISH.md or task state. A chat
 verdict that was not persisted does not advance the lifecycle.
 
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
 ## Skill Catalog
 
 | Skill | Purpose | When to use |
@@ -54,7 +56,7 @@ verdict that was not persisted does not advance the lifecycle.
 | `wish` | Convert a design into a structured plan at `.genie/wishes/<slug>/WISH.md` — scope, execution groups, acceptance criteria, validation | Idea is concrete, needs a plan |
 | `review` | Genie criteria gate — SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps | Before and after `work`, or any plan/PR |
 | `work` | Execute an approved wish — dispatch native subagents per group in waves, fix loops, validation | Wish is SHIP-approved |
-| `fix` | Resolve FIX-FIRST gaps, re-review, escalate after 2 failed loops | Review returned FIX-FIRST |
+| `fix` | Resolve FIX-FIRST gaps, re-review, diagnose unresolved gaps after `B` loops (default 2) | Review returned FIX-FIRST |
 | `council` | Multi-perspective deliberation with specialist viewpoints | Major design decisions, tradeoffs |
 | `refine` | Transform a brief into a production-ready prompt | Prompt needs sharpening |
 | `report` | Investigate bugs — trace, capture evidence, open a GitHub issue with confirmation | Bug reports |

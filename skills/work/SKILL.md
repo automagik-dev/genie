@@ -17,6 +17,8 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
 - An approved wish exists and `review` returned SHIP on the plan
 - Orchestrator needs to dispatch implementation to subagents
 
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
 ## Flow
 1. **Load and enter execution:** read `.genie/wishes/<slug>/WISH.md` and require persisted status `APPROVED` (or `IN_PROGRESS` when resuming). Before the first dispatch, the orchestrator sets `APPROVED` → `IN_PROGRESS`; read group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
 2. **Pick the wave:** every group whose `depends-on` groups are done, per the wish's Execution Strategy.
@@ -26,8 +28,8 @@ When you are spawned as a subagent for a group, your dispatch prompt carries the
    ```
    If two agents race one task, exactly one wins; the loser gets a conflict error and stands down.
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
-5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most 2 fix loops.
-6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop.
+5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most `B` fix loops.
+6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop. This separate quality-pass cap is not expanded by `B`.
 7. **Validate:** run the group's validation command yourself through the active runtime's shell surface; record the output and the scope rationale as
    evidence. Confirm it remains proportional to the actual diff, widening it when implementation reached beyond the
    plan: documentation-only changes, including deterministic generated documentation or plugin skill mirrors, use

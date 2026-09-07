@@ -19,6 +19,8 @@ description: "Coordinator loop for an approved wish on Orca — one Run per wish
 
 ## The loop (verbatim command shapes)
 
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
 ```bash
 ORCA orchestration run-create --objective "<wish slug> (<LINEAR-ID>): <one line>" --json
 # one task per group; spec = self-contained engineer brief (template below); deps = the wish's depends_on
@@ -36,7 +38,7 @@ Per message in a Delivery:
 - `worker_done` (payload carries taskId/dispatchId/outcome/filesModified):
   1. `ORCA orchestration worker-release --dispatch <id> --json` (always, success or failure; keep live only on explicit user request via `worker-retain`).
   2. **Review**: `task-create` a read-only review brief (template below), `worker-start --task <review> --worktree name:<slug>-g<n> --agent <reviewer>` — a different agent/model than the engineer.
-  3. On review `worker_done`: parse `VERDICT:` — `SHIP` → mark group done in your head and in Linear (below); `FIX-FIRST` → `task-create` a fix brief quoting the findings, dispatch a fast worker into the same worktree (`--terminal <engineer handle>` if still live, else `--worktree name:…`), max **2** loops, then escalate to the human gate; `BLOCKED` → stop the group, post the blocker on the Linear child, continue other groups.
+  3. On review `worker_done`: parse `VERDICT:` — `SHIP` → mark group done in your head and in Linear (below); `FIX-FIRST` → `task-create` a fix brief quoting the findings, dispatch a fast worker into the same worktree (`--terminal <engineer handle>` if still live, else `--worktree name:…`), at most `B` loops per group, then escalate to the human gate; `BLOCKED` → stop the group, post the blocker on the Linear child, continue other groups.
 - Acknowledge only after every message is handled: `ORCA orchestration check --ack <delivery_id> --wait … --json`.
 
 Dependent groups become `ready` automatically when their deps complete; start them on the next sweep (`task-list --ready --brief --json`). An integrator group (full gate, docs, tripwires) runs last on the integrated wish branch: merge each group branch into the wish branch **yourself** (coordinator-owned git), then dispatch.
