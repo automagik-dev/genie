@@ -1277,6 +1277,8 @@ describe('roadmap.json canonical sync', () => {
     expect(listed.stdout).toContain('keeper');
   });
 
+  // This round-trip intentionally runs 13 real CLI subprocesses. Their startup
+  // cost exceeds Bun's default 5s under the full suite; keep a bounded 20s gate.
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });
@@ -1336,7 +1338,7 @@ describe('roadmap.json canonical sync', () => {
     } finally {
       rmSync(clone, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });
 
 // Same subprocess invocation as `cli`, but with extra env vars layered on — used
