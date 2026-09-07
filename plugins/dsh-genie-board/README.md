@@ -20,8 +20,9 @@ dsh web --no-open --host 127.0.0.1 --port 0
 ```
 
 The immutable artifacts are `dist/index.js` (Host) and `dist/client.js` (browser).
-`minimumGenieVersion` in package.json is the checkout version for source builds;
-the release packaging step stamps it and the package version together. Startup
+Source builds use the root checkout version as their compatibility floor.
+Release packaging stamps `minimumGenieVersion` and package version together and
+rebuilds the Host with that exact candidate without changing checkout metadata. Startup
 checks strict SemVer using the fixed executable's version; incompatible or invalid
 versions expose health only, with no board operation routes.
 
@@ -74,3 +75,24 @@ The smoke installs into a disposable DSH_HOME, registers a disposable repository
 through the real workspace registry, starts/stops/restarts DSH, verifies plugin
 listing and compatibility, creates and moves a task through Host routes, then
 removes the plugin and temporary state in `finally`. Personal profiles are not used.
+
+## Release verification
+
+The release payload includes this document, NOTICE, both Cordis manifests,
+package metadata and both Host/browser bundles. The repository verifier requires
+all seven members independently on all four supported platforms:
+
+```sh
+bun scripts/verify-dsh-genie-board-release.ts --unsigned-artifact-dir dist --version VERSION
+bun scripts/verify-dsh-genie-board-release.ts --signed-artifact-dir dist --version VERSION --channel stable
+bun scripts/verify-dsh-genie-board-release.ts --release vVERSION --channel stable
+```
+
+Unsigned mode proves packaging only. Signed modes require `cosign`,
+`slsa-verifier`, and `gh` in PATH. They verify descriptor digests, cosign identity,
+SLSA provenance, and the signed delivery endorsement binding the descriptor to
+its candidate/source identity for every artifact. Release mode
+reads back the published tag/source binding. Stable publication still requires
+the protected production approval in the existing Release workflow. Only after
+that publication and the release-mode proof may a maintainer add the `dsh-plugin`
+repository topic and read it back. No local build authorizes that action.

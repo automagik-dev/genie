@@ -32,3 +32,30 @@ test('build regenerates Host bundle and lazy DSH browser factory', async () => {
     }).apply,
   ).toBe('function');
 }, 20_000);
+
+test('candidate build embeds override floor without changing source metadata', async () => {
+  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const root = import.meta.dir;
+  const output = await mkdtemp(join(tmpdir(), 'genie-candidate-host-'));
+  const before = await readFile(join(root, 'package.json'), 'utf8');
+  const sourceVersion = JSON.parse(await readFile(join(root, '../../package.json'), 'utf8')).version;
+  const candidate = `${sourceVersion}-candidate-proof`;
+  try {
+    const process = Bun.spawn(['bun', 'run', 'build', candidate, output], {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [code, stderr] = await Promise.all([process.exited, new Response(process.stderr).text()]);
+    expect(code).toBe(0);
+    expect(stderr).not.toContain('error:');
+    const host = await import(join(output, 'index.js'));
+    expect(host.minimumGenieVersion).toBe(candidate);
+    expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(before);
+    const source = await import('./src/index');
+    expect(source.minimumGenieVersion).toBe(sourceVersion);
+  } finally {
+    await rm(output, { recursive: true, force: true });
+  }
+}, 20_000);

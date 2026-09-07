@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import manifest from '../package.json';
+import sourcePackage from '../../../package.json';
+declare const __GENIE_BUILD_VERSION__: string;
 import { DEADLINE_MS, compatible, execute, hostEnvironment, resolveExecutable } from './process';
 import { BoardService, type Registry } from './service';
 
@@ -16,7 +17,8 @@ interface Context {
   effect(effect: () => () => void, label?: string): void;
 }
 export const inject = ['workspaceRegistry', 'webServer', 'connection'];
-export const minimumGenieVersion = manifest.minimumGenieVersion;
+export const minimumGenieVersion =
+  typeof __GENIE_BUILD_VERSION__ === 'undefined' ? sourcePackage.version : __GENIE_BUILD_VERSION__;
 export function trusted(req: IncomingMessage): boolean {
   const address = req.socket.remoteAddress;
   if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address ?? '')) return false;

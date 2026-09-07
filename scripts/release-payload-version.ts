@@ -13,7 +13,11 @@ import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 
 const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/;
 
-const TOP_LEVEL_VERSION_FILES = ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json'] as const;
+const TOP_LEVEL_VERSION_FILES = [
+  'plugins/genie/package.json',
+  'plugins/genie/orca-plugin.json',
+  'plugins/dsh-genie-board/package.json',
+] as const;
 
 /**
  * Committed files whose version must already equal package.json before a
@@ -82,12 +86,21 @@ export function stampReleasePayloadVersion(payloadRoot: string, version: string)
     replaceTopLevelVersion(join(payloadRoot, relativePath), version);
   }
 
+  const manifestPath = join(payloadRoot, 'plugins/dsh-genie-board/package.json');
+  if (typeof readObject(manifestPath).minimumGenieVersion !== 'string') throw new Error('missing minimumGenieVersion');
+  writeFileSync(
+    manifestPath,
+    replaceTopLevelStringProperty(readFileSync(manifestPath, 'utf8'), 'minimumGenieVersion', version),
+  );
   writeFileSync(join(payloadRoot, 'VERSION'), `${version}\n`);
 }
 
 /** Fail closed if any copied release metadata disagrees with VERSION. */
 export function verifyReleasePayloadVersion(payloadRoot: string, expectedVersion: string): void {
   assertVersion(expectedVersion);
+  const floor = readObject(join(payloadRoot, 'plugins/dsh-genie-board/package.json')).minimumGenieVersion;
+  if (floor !== expectedVersion)
+    throw new Error(`minimumGenieVersion mismatch: expected ${expectedVersion}, got ${floor}`);
   const stampPath = join(payloadRoot, 'VERSION');
   if (!existsSync(stampPath)) throw new Error(`release payload metadata is missing: ${stampPath}`);
   const stamp = readFileSync(stampPath, 'utf8').trim();

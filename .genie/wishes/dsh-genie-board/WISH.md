@@ -182,7 +182,7 @@ Independent contract review: `/root/g1_review` required these exact concurrency/
 **Acceptance Criteria:**
 - [x] Rendering matches one complete fixture-backed Host aggregate; mutations use fixed argv and perform one complete refresh.
 - [x] Every unsafe/failure case is bounded and cannot invoke an out-of-scope command.
-- [ ] The manifest and runtime reject every Genie version below the immutable candidate value stamped by Group 3, while source/linked tests prove the comparator against the checkout version without depending on a prior publication.
+- [x] The manifest and runtime reject every Genie version below the immutable candidate value stamped by Group 3, while source/linked tests prove the comparator against the checkout version without depending on a prior publication.
 - [x] Package build and the linked-profile install/restart/read-back/board-operation/cleanup smoke pass against DSH `0.1.1-rc.2` or a newer explicitly proven floor.
 - [x] No database access, persistence, watcher, poller, shell, or browser-supplied executable/path/argv exists.
 
@@ -365,6 +365,28 @@ Corrective route: resolve or formally clear the repository-baseline failures, th
 - Parent `bun run check` on the repaired frozen source exited **0**: **2009 pass / 1 skip / 0 fail**, 8653 assertions across 98 files, 270.63 seconds. Scope is the repository-mandated full gate for runtime, trust-boundary and build/configuration changes.
 - Parent `bun run build:plugin`, focused plugin tests (**19 pass / 249 assertions**) and real `bun scripts/dsh-genie-board-smoke.ts` each exited **0**. The owner smoke separately proves authenticated install/list/restart/health/load/create/move and literal option-shaped comment, followed by plugin removal and temporary-state cleanup.
 - Combined with independent code/security/quality and rendered **SHIP**, Group 2 implementation is accepted. The comparator is proven for source/linked builds; immutable candidate stamping and extracted runtime-floor proof remain explicitly owned by Group 3, so the combined future-artifact checkbox above remains open.
+
+### G3 implementation review — 2026-09-07 — SHIP
+
+- Independent reviewer `/root/g3_review` inspected all 12 changed/new release, build, runtime metadata, test and documentation files, including both publication paths and the updated contributor release contract. **SHIP**, no remaining findings.
+- Frozen patch SHA-256 `8924c120504f9239e455b61472d583164d3356b41c9bc4cd4a2596d748b8b435` (33399 bytes): ten tracked-file diffs, followed by new verifier test and source diffs. Parent independently reproduced the hash before adding this ledger.
+- Review closed P1 unauthenticated descriptor source binding by requiring pinned delivery attestation and exact predicate equality. It closed P2 false-positive trust tests with separate cosign/SLSA failure stages and all-four-platform invocation checks; missing executables do not satisfy these tests.
+- Independent focused validation: **30 pass / 0 fail / 70 assertions**, including payload versions, existing trust helper, descriptor tampering, release tag mismatch, required members and unsafe archive links; diff check passed.
+- Parent current full gate and final rebuilt artifact verification remain implementation-acceptance gates. Deterministic trust fixtures prove orchestration, not real signed publication. Protected stable publication, release-download proof and topic publication remain pending the human-approved release.
+
+### G3 live approval-policy correction and aggregate validation — 2026-09-07
+
+- Owner read back the actual GitHub `production` environment: its two required reviewers were configured, but `prevent_self_review` was false. Independent reviewer confirmed this contradicted the approved non-initiator release gate. The owner enabled `prevent_self_review` under that approved requirement, preserving both reviewer IDs/types and deployment branch policy. Fresh environment and branch-policy reads confirm the setting is true, the same two reviewers remain, and `main` remains the sole allowed branch. No release or deployment was started.
+- First parent full gate: **2023 pass / 1 skip / 1 fail / 1 error**. The one failure was the existing 13-subprocess roadmap round-trip exceeding Bun's default 5-second test timeout; teardown killed the final child, causing the secondary exit-143 assertion. The unchanged focused case passed in 3.04 seconds.
+- Minimal repair gives only that 13-subprocess test a bounded 20-second budget with an explanatory comment; every behavior assertion remains unchanged. The focused canonical-sync group then passed **7 tests / 62 assertions**, affected case 2.96 seconds. Independent review and a fresh parent aggregate gate will close this repair.
+- Final four locally built candidate artifacts passed owner extraction checks: all required plugin files, root/Orca/DSH version metadata, compiled Host floor `5.260907.99`, and current README/NOTICE. Native Linux glibc binary version also matched. Owner unsigned verifier and source/linked DSH smoke each exited 0; these remain local premerge proofs, not published signature evidence.
+- Independent follow-up accepted the scoped timing repair: **SHIP**, diff SHA-256 `eeae081f438858a42c526b7686a244b18031c96be012a84de9b78efc8de74633`, all assertions retained. Reviewer also independently compared production environment before/after evidence and confirmed the only protection change was `prevent_self_review: false → true`; reviewers and the sole `main` policy are identical.
+
+### G3 premerge implementation acceptance — 2026-09-07
+
+- Fresh parent `bun run check` exited **0**: **2024 pass / 1 skip / 0 fail**, 8692 assertions across 99 files, 284.78 seconds. Full gate covers release/CI, shared runtime metadata, build and test-fixture changes.
+- Parent source plugin build, real authenticated DSH source/linked smoke, final four-artifact unsigned verifier and independent extraction/runtime-floor checks all exited **0**. Independent code/security review and the scoped fixture repair are **SHIP**.
+- Group 3's implementation is accepted for the requested reviewed/dogfooded `dev → main` PR. Actual stable publication, published signature/provenance verification, and topic publication remain unperformed and open. The Group 3 release task and whole wish therefore remain in progress; this is not a released/SHIPPED wish. Other approved independent queue items may continue while that post-main gate awaits the human release.
 
 ---
 
