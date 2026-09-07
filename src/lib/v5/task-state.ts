@@ -102,6 +102,8 @@ export interface BoardRow {
   name: string;
   /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
   lanes: Lane[] | null;
+  /** True only when a non-null stored lane definition is not JSON-array data. */
+  laneMetadataMalformed: boolean;
   createdAt: number;
 }
 
@@ -203,6 +205,34 @@ export interface TaskEvent {
   authorKind: string | null;
   author: string | null;
   createdAt: number;
+}
+
+/** A dependency summary embedded in the complete board JSON snapshot. */
+export interface BoardTaskDependency {
+  id: string;
+  title: string;
+  status: TaskStatus;
+}
+
+/** A non-empty comment projection embedded in the complete board JSON snapshot. */
+export interface BoardTaskComment {
+  id: number;
+  note: string;
+  authorKind: string | null;
+  author: string | null;
+  createdAt: number;
+}
+
+/**
+ * Complete, closed card contract for one scoped board JSON snapshot. Unlike
+ * TaskRow and the human projections, this type deliberately includes every
+ * detail needed by an external board client.
+ */
+export interface BoardTaskAggregate extends TaskCardRow {
+  liveness: Liveness | null;
+  dependencies: BoardTaskDependency[];
+  timeline: Array<Omit<TaskEvent, 'taskId'>>;
+  comments: BoardTaskComment[];
 }
 
 export interface AppendEventInput {
@@ -555,19 +585,26 @@ interface RawBoardRow {
   created_at: number;
 }
 
-/** Parse the stored lanes JSON back into `Lane[]`, tolerating malformed data. */
-function parseLanes(raw: string | null): Lane[] | null {
-  if (raw == null) return null;
+/** Parse stored lane JSON while retaining whether non-null metadata was malformed. */
+function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: boolean } {
+  if (raw == null) return { lanes: null, malformed: false };
   try {
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Lane[]) : null;
+    return Array.isArray(parsed) ? { lanes: parsed as Lane[], malformed: false } : { lanes: null, malformed: true };
   } catch {
-    return null;
+    return { lanes: null, malformed: true };
   }
 }
 
 function mapBoard(row: RawBoardRow): BoardRow {
-  return { id: row.id, name: row.name, lanes: parseLanes(row.lanes), createdAt: row.created_at };
+  const parsed = parseLanes(row.lanes);
+  return {
+    id: row.id,
+    name: row.name,
+    lanes: parsed.lanes,
+    laneMetadataMalformed: parsed.malformed,
+    createdAt: row.created_at,
+  };
 }
 
 /**
@@ -583,7 +620,7 @@ export function createBoard(db: Database, name: string, lanes?: Lane[]): BoardRo
   const normalizedLanes = lanes && lanes.length > 0 ? lanes : null;
   const lanesJson = normalizedLanes ? JSON.stringify(normalizedLanes) : null;
   db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)').run(id, name, lanesJson, createdAt);
-  return { id, name, lanes: normalizedLanes, createdAt };
+  return { id, name, lanes: normalizedLanes, laneMetadataMalformed: false, createdAt };
 }
 
 export function getBoard(db: Database, id: string): BoardRow | null {
@@ -1346,6 +1383,161 @@ export function commentCounts(db: Database): Map<string, number> {
     .query("SELECT task_id, count(*) AS n FROM task_events WHERE kind = 'comment' GROUP BY task_id")
     .all() as Array<{ task_id: string; n: number }>;
   return new Map(rows.map((r) => [r.task_id, r.n]));
+}
+
+/** Bounded display-only identifier; persisted values and payloads stay unchanged. */
+export function boardDetailIdentifier(value: string | number): string {
+  const text = String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?');
+  return text.length > 48 ? `${text.slice(0, 45)}...` : text;
+}
+
+interface RawBoardDependency {
+  task_id: string;
+  id: string | null;
+  title: string | null;
+  status: string | null;
+}
+
+function requireTaskStatus(value: string | null, context: string): TaskStatus {
+  if (value === 'blocked' || value === 'ready' || value === 'in_progress' || value === 'done') return value;
+  throw new Error(`Malformed board detail: ${context} has invalid status.`);
+}
+
+function requireString(value: unknown, context: string): string {
+  if (typeof value === 'string') return value;
+  throw new Error(`Malformed board detail: ${context} must be a string.`);
+}
+
+function requireNullableString(value: unknown, context: string): string | null {
+  if (value === null || typeof value === 'string') return value;
+  throw new Error(`Malformed board detail: ${context} must be a string or null.`);
+}
+
+function requireNumber(value: unknown, context: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  throw new Error(`Malformed board detail: ${context} must be a finite number.`);
+}
+
+function mapAggregateTask(row: RawTask): TaskCardRow {
+  const id = requireString(row.id, 'task id');
+  const blockedBy = requireNullableString(row.blocked_by, `task ${boardDetailIdentifier(id)} blockedBy`);
+  const blockedReason = requireNullableString(row.blocked_reason, `task ${boardDetailIdentifier(id)} blockedReason`);
+  const blockKind = requireNullableString(row.block_kind, `task ${boardDetailIdentifier(id)} block kind`);
+  if (blockKind !== null && blockKind !== 'work' && blockKind !== 'hold') {
+    throw new Error(`Malformed board detail: task ${boardDetailIdentifier(id)} has invalid block kind.`);
+  }
+  return {
+    id,
+    boardId: requireNullableString(row.board_id, `task ${boardDetailIdentifier(id)} boardId`),
+    title: requireString(row.title, `task ${boardDetailIdentifier(id)} title`),
+    status: requireTaskStatus(row.status, `task ${boardDetailIdentifier(id)}`),
+    claimedBy: requireNullableString(row.claimed_by, `task ${boardDetailIdentifier(id)} claimedBy`),
+    claimedAt:
+      row.claimed_at === null ? null : requireNumber(row.claimed_at, `task ${boardDetailIdentifier(id)} claimedAt`),
+    wish: requireNullableString(row.wish, `task ${boardDetailIdentifier(id)} wish`),
+    group: requireNullableString(row.group_name, `task ${boardDetailIdentifier(id)} group`),
+    assignedAgent: requireNullableString(row.assigned_agent, `task ${boardDetailIdentifier(id)} assignedAgent`),
+    assignedReason: requireNullableString(row.assigned_reason, `task ${boardDetailIdentifier(id)} assignedReason`),
+    createdAt: requireNumber(row.created_at, `task ${boardDetailIdentifier(id)} createdAt`),
+    updatedAt: requireNumber(row.updated_at, `task ${boardDetailIdentifier(id)} updatedAt`),
+    lane: requireNullableString(row.lane, `task ${boardDetailIdentifier(id)} lane`),
+    agentKind: requireNullableString(row.agent_kind, `task ${boardDetailIdentifier(id)} agentKind`),
+    heartbeatAt:
+      row.heartbeat_at === null
+        ? null
+        : requireNumber(row.heartbeat_at, `task ${boardDetailIdentifier(id)} heartbeatAt`),
+    blockedBy,
+    blockedReason,
+    enforcedBlock: blockedBy === null ? null : { reason: blockedReason ?? '', kind: blockKind ?? 'work' },
+  };
+}
+
+/**
+ * Read every detail for a board's cards from one SQLite snapshot. All rows are
+ * fetched in three set queries inside one deferred read transaction: cards,
+ * their dependency summaries, and their timelines. No caller hydrates cards
+ * individually, and any malformed joined detail aborts the whole snapshot.
+ */
+export function readBoardTaskSnapshot(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'> = {},
+  now = Date.now(),
+): BoardTaskAggregate[] {
+  const read = db.transaction((): BoardTaskAggregate[] => {
+    const params = filter.wish ? [boardId, filter.wish] : [boardId];
+    const tasks = db
+      .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at`)
+      .all(...params) as RawTask[];
+    if (tasks.length === 0) return [];
+    // One JSON binding avoids variable limits while retaining task_id index probes.
+    const taskIds = JSON.stringify(tasks.map((row) => requireString(row.id, 'task id')));
+    const dependencies = db
+      .query(
+        `SELECT td.task_id, dep.id, dep.title, dep.status
+         FROM task_dependencies td
+         LEFT JOIN tasks dep ON dep.id = td.depends_on_id
+         WHERE td.task_id IN (SELECT value FROM json_each(?))
+         ORDER BY td.task_id, dep.id`,
+      )
+      .all(taskIds) as RawBoardDependency[];
+    const events = db
+      .query(
+        `SELECT e.* FROM task_events e
+         WHERE e.task_id IN (SELECT value FROM json_each(?))
+         ORDER BY e.task_id, e.created_at, e.id`,
+      )
+      .all(taskIds) as RawTaskEvent[];
+
+    const dependenciesByTask = new Map<string, BoardTaskDependency[]>();
+    for (const dependency of dependencies) {
+      const taskId = requireString(dependency.task_id, 'dependency owner id');
+      const id = requireString(dependency.id, `task ${boardDetailIdentifier(taskId)} dependency id`);
+      const summaries = dependenciesByTask.get(taskId) ?? [];
+      summaries.push({
+        id,
+        title: requireString(dependency.title, `dependency ${boardDetailIdentifier(id)} title`),
+        status: requireTaskStatus(dependency.status, `dependency ${boardDetailIdentifier(id)}`),
+      });
+      dependenciesByTask.set(taskId, summaries);
+    }
+
+    const timelineByTask = new Map<string, Array<Omit<TaskEvent, 'taskId'>>>();
+    for (const row of events) {
+      const taskId = requireString(row.task_id, 'timeline task id');
+      const event = {
+        id: requireNumber(row.id, `task ${boardDetailIdentifier(taskId)} event id`),
+        kind: requireString(row.kind, `task ${boardDetailIdentifier(taskId)} event kind`),
+        note: requireNullableString(row.note, `task ${boardDetailIdentifier(taskId)} event note`),
+        authorKind: requireNullableString(row.author_kind, `task ${boardDetailIdentifier(taskId)} event authorKind`),
+        author: requireNullableString(row.author, `task ${boardDetailIdentifier(taskId)} event author`),
+        createdAt: requireNumber(row.created_at, `task ${boardDetailIdentifier(taskId)} event createdAt`),
+      };
+      if (event.kind === 'comment' && event.note === null) {
+        throw new Error(
+          `Malformed board detail: task ${boardDetailIdentifier(taskId)} comment ${boardDetailIdentifier(event.id)} has null text.`,
+        );
+      }
+      const timeline = timelineByTask.get(taskId) ?? [];
+      timeline.push(event);
+      timelineByTask.set(taskId, timeline);
+    }
+
+    return tasks.map((row) => {
+      const card = mapAggregateTask(row);
+      const timeline = timelineByTask.get(card.id) ?? [];
+      return {
+        ...card,
+        liveness: card.claimedBy === null ? null : livenessFromHeartbeat(card.heartbeatAt, now),
+        dependencies: dependenciesByTask.get(card.id) ?? [],
+        timeline,
+        comments: timeline
+          .filter((event): event is typeof event & { note: string } => event.kind === 'comment' && event.note !== null)
+          .map(({ id, note, authorKind, author, createdAt }) => ({ id, note, authorKind, author, createdAt })),
+      };
+    });
+  });
+  return read.deferred() as BoardTaskAggregate[];
 }
 
 // ============================================================================

@@ -16,6 +16,7 @@ import { cardBadges } from '../lib/v5/card-render.js';
 import { openDb, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import {
   type BoardRow,
+  type BoardTaskAggregate,
   DEFAULT_LIFECYCLE_LANES,
   type Lane,
   type LaneTaskRow,
@@ -23,6 +24,7 @@ import {
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
+  boardDetailIdentifier,
   commentCounts,
   countBoardTasks,
   createBoard,
@@ -31,6 +33,7 @@ import {
   listTasks,
   listTasksWithLane,
   moveTask,
+  readBoardTaskSnapshot,
   resolveBoard,
 } from '../lib/v5/task-state.js';
 import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../lib/wish-status.js';
@@ -281,6 +284,13 @@ function handleBoardWithDb(opts: BoardOptions): void {
       scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
 
+    if (opts.json && board?.laneMetadataMalformed) {
+      throw new Error(
+        `Malformed board detail: board ${boardDetailIdentifier(board.id)} lanes must be an array or null.`,
+      );
+    }
+    if (opts.json && board?.lanes) requireAggregateLanes(board.lanes);
+
     // A scoped board that defines lanes renders on the lifecycle axis. Every
     // other scope (no board, or a laneless board) falls through to the frozen
     // status render below — kept byte-identical (Group B owns any rework).
@@ -350,49 +360,38 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
   return byLane;
 }
 
-/**
- * One card on the additive lane `--json` path — the frozen ten TaskRow keys
- * plus the two declared-routing fields and `lane` + `enforcedBlock`, picked
- * explicitly so the lane shape states exactly what it serializes. Key order
- * matches the pre-assignment spread, so lane output changes by exactly the two
- * added fields; the TaskCardRow runtime layer (identity, heartbeat, block
- * provenance) stays off this path.
- */
-function toLaneJsonCard(t: LaneTaskRow): LaneTaskRow {
-  return {
-    id: t.id,
-    boardId: t.boardId,
-    title: t.title,
-    status: t.status,
-    claimedBy: t.claimedBy,
-    claimedAt: t.claimedAt,
-    wish: t.wish,
-    group: t.group,
-    assignedAgent: t.assignedAgent,
-    assignedReason: t.assignedReason,
-    createdAt: t.createdAt,
-    updatedAt: t.updatedAt,
-    lane: t.lane,
-    enforcedBlock: t.enforcedBlock,
-  };
+/** Validate persisted lane metadata at the scoped aggregate serialization boundary. */
+function requireAggregateLanes(lanes: Lane[]): void {
+  for (const [index, lane] of lanes.entries()) {
+    if (lane === null || typeof lane !== 'object' || Array.isArray(lane)) {
+      throw new Error(`Malformed board detail: lane ${index} must be an object.`);
+    }
+    if (typeof lane.name !== 'string') {
+      throw new Error(`Malformed board detail: lane ${index} name must be a string.`);
+    }
+    if (lane.label !== undefined && typeof lane.label !== 'string') {
+      throw new Error(`Malformed board detail: lane ${index} label must be a string when present.`);
+    }
+    if (lane.action !== undefined && typeof lane.action !== 'string') {
+      throw new Error(`Malformed board detail: lane ${index} action must be a string when present.`);
+    }
+  }
 }
 
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // `--json` keeps the additive lane shape. Its cards carry the two declared-
-  // routing fields (`assignedAgent`/`assignedReason`) plus exactly one runtime
-  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so
-  // a lane consumer can tell a parked card from a live one and read who it is
-  // routed to. Identity, heartbeat, and block provenance stay off this path,
-  // and the frozen laneless `--json` remains byte-identical.
+  // A scoped lane board is the complete v1 aggregate contract. The repository
+  // reader returns all cards, dependencies, and events from one SQLite read
+  // transaction; grouping here only preserves the board's declared lane order.
   if (json) {
-    const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
+    if (!filter.boardId) throw new Error('A board id is required for aggregate JSON output.');
+    const byLane = groupByLane<BoardTaskAggregate>(lanes, readBoardTaskSnapshot(db, filter.boardId, filter));
     const laneGroups = lanes.map((l) => ({
       name: l.name,
       label: l.label ?? null,
       action: l.action ?? null,
-      cards: (byLane.get(l.name) ?? []).map(toLaneJsonCard),
+      cards: byLane.get(l.name) ?? [],
     }));
-    out(JSON.stringify({ scope: scopeLabel, lanes: laneGroups }, null, 2));
+    out(JSON.stringify({ schemaVersion: 1, scope: scopeLabel, lanes: laneGroups }, null, 2));
     return;
   }
 

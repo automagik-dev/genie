@@ -290,6 +290,49 @@ Closure evidence:
 
 Non-blocking review notes: document that `minimumGenieVersion` intentionally equals the co-shipped plugin release, and record the exact DSH binary path/version in smoke output. Plan status advances to `APPROVED`; implementation and every release/publication gate remain separately authorized.
 
+### Group 1 execution review round 1 — FIX-FIRST (2026-09-03T20:44:39Z)
+
+- **Reviewed base:** `7c8b5afef` plus the uncommitted Group 1 diff
+- **Diff SHA-256:** `5de022e12e2fbf51c4c99c96b5c0edb304e326598e04be5aa95c189e85c03300`
+- **Reviewer:** independent native execution reviewer; read-only working-tree review
+- **Validation:** `git diff --check` passed; focused board suite passed (50 tests); `bun run check` reached 1955 pass / 1 skip / 9 fail in untouched release/update/local-delivery tests.
+- **Verdict:** **FIX-FIRST** — 0 CRITICAL, 2 HIGH, 2 MEDIUM.
+
+Blocking gaps:
+1. Malformed persisted lane metadata could serialize an invalid lane object with exit 0 instead of failing the whole aggregate.
+2. Tests did not prove the constant set-query/single-transaction snapshot contract or the required range of malformed/nullability failures.
+
+Non-blocking gaps: make equal-timestamp ordering and all liveness states discriminating, and strengthen byte-level compatibility fixtures for unchanged CLI surfaces. Fix loop 1 is active; the task remains `in_progress`.
+
+### Group 1 execution review round 2 — BLOCKED (2026-09-03T20:59:04Z)
+
+- **Reviewed base:** `7c8b5afef` plus the corrected uncommitted Group 1 diff
+- **Diff SHA-256:** `a1b323b4073221ddb77eed59a8a64a7169837906b4fab66773d5f191498b003d`
+- **Reviewer:** independent native execution reviewer; read-only working-tree review
+- **Code verdict:** no remaining Group 1 findings; every round-one gap is closed.
+- **Validation:** `git diff --check`, focused board suite (70 tests), typecheck, and scoped Biome passed. `bun run check` reached 1975 pass / 1 skip / 9 fail.
+- **Verdict:** **BLOCKED** — the wish requires a green full gate, and the same nine release/update/local-delivery failures reproduce on untouched detached `HEAD`.
+
+Corrective route: resolve or formally clear the repository-baseline failures, then rerun `bun run check`. No further Group 1 code fix is indicated; task `t_mtlkd9ad80ce9781` remains `in_progress`.
+
+
+### Group 1 execution review round 3 — code SHIP (2026-09-07)
+
+- **Reviewer:** independent Codex native reviewer `/root/g1_review`; not the original GLM implementation author.
+- **Reviewed HEAD:** `fef77105405991b2f316626b664abdbcdeb7bd08` plus preserved G1 changes, replayed on current dev without conflict.
+- **Full diff SHA-256 before this ledger entry:** `a422d2b135fe31ac9fb1507c8c523c95221cf142f4fb2e0735f2d5abdef3e554`.
+- **Code/test diff SHA-256:** `57019e9daf27c7ca212000c8976ce41c4b604a363ab75fc088aac4260a61ae2c`.
+- **Verdict:** code **SHIP**, no actionable findings. Snapshot consistency, indexed task-scoped JSON-set reads, 33k-card behavior, ordering/nullability, malformed-detail rejection, sanitized identifiers and unchanged output contracts reviewed.
+- **Validation:** independent focused suite 76 pass / 0 fail, 382 assertions; diff check passed. Full repository gate is separate and remains pending recovery of reproduced release-test failures. No task-done or release claim.
+
+### Group 1 acceptance — full gate green (2026-09-07)
+
+- Baseline repairs independently reviewed **SHIP** by `/root/g1_review`; three-file diff digest `6c03b3e23eb59098b7554256dfd5d1cf741811a79e1a889204b389dc6cc57cf9`, committed as `4928e3988`.
+- Root causes: release integration scenarios exceeded implicit test deadlines; Bun preserved a test-owned exit code when restored to undefined; a descendant-cleanup fixture could interpret empty stdout as PID zero. Assertions remain intact; subprocesses are bounded and cleanup validates a positive PID.
+- **Full gate:** `bun run check` exited 0; **1990 pass / 1 skip / 0 fail**, 8407 assertions across 96 test files, 262.56 seconds. Frozen dependency install and build passed.
+- **Dogfood:** built `dist/genie.js` against an isolated HOME and repository; board creation, task creation, comment, move and aggregate read returned the expected lane, comment and timeline. No personal profile or repository changed.
+- G1 code review, full validation and built-CLI smoke are accepted. G2/G3 and stable publication remain pending; this is not whole-wish release acceptance.
+
 ---
 
 ## Files to Create/Modify
