@@ -40,9 +40,17 @@ export function resolveSyncMarkerPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'roadmap-sync');
 }
 
-/** Content hash over the canonical (whitespace-independent) JSON form. */
+/** Content hash over the canonical JSON form, independent of whitespace and object-key order. */
 function canonicalHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const canonical = JSON.stringify(value, (_key, current: unknown) => {
+    if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+    return Object.fromEntries(
+      Object.keys(current)
+        .sort()
+        .map((key) => [key, (current as Record<string, unknown>)[key]]),
+    );
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 /**

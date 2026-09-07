@@ -1215,6 +1215,65 @@ describe('roadmap.json canonical sync', () => {
     expect(settled.code).toBe(0);
   });
 
+  test('imported snapshots with reordered object keys remain in sync', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+
+    const published = await cli(repo, 'export', '--write');
+    expect(published.stderr).toBe('');
+    expect(published.code).toBe(0);
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as unknown;
+    const reorderKeys = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(reorderKeys);
+      if (value !== null && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .reverse()
+            .map(([key, child]) => [key, reorderKeys(child)]),
+        );
+      }
+      return value;
+    };
+    writeFileSync(snapshotPath, `${JSON.stringify(reorderKeys(snapshot), null, 2)}\n`);
+
+    const imported = await cli(repo, 'import', '--replace');
+    expect(imported.code).toBe(0);
+    expect(imported.stderr).toBe('');
+    const settled = await cli(repo, 'sync');
+    expect(settled.code).toBe(0);
+    expect(settled.stdout).toContain('in sync (none)');
+    expect(settled.stderr).toBe('');
+  });
+
+  test.each(['content', 'array order'])('sync detects changed %s after a canonical baseline', async (change) => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'first card' });
+    createTask(db, { title: 'second card' });
+    db.close();
+    const published = await cli(repo, 'export', '--write');
+    expect(published.code).toBe(0);
+    expect(published.stderr).toBe('');
+
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as StateExport;
+    if (change === 'content') snapshot.tasks[0].title = 'changed card';
+    else snapshot.tasks.reverse();
+    writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+
+    const synced = await cli(repo, 'sync');
+    expect(synced.code).toBe(0);
+    expect(synced.stderr).toBe('');
+    expect(synced.stdout).toContain('Board refreshed');
+    const imported = openDb({ cwd: repo });
+    try {
+      expect(getTask(imported, snapshot.tasks[0].id)?.title).toBe(snapshot.tasks[0].title);
+    } finally {
+      imported.close();
+    }
+  });
+
   test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
