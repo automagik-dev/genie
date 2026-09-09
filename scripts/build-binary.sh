@@ -68,6 +68,7 @@ bun build --compile \
   --outfile "${STAGE}/genie"
 
 cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
+bun run --cwd "${REPO_ROOT}/plugins/dsh-genie-board" build "${VERSION}" "${STAGE}/plugins/dsh-genie-board/dist"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
@@ -125,7 +126,14 @@ bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERS
 for required in \
   "LICENSE" \
   "plugins/genie/orca-plugin.json" \
-  "plugins/genie/orca-entrypoint.min.js"; do
+  "plugins/genie/orca-entrypoint.min.js" \
+  "plugins/dsh-genie-board/package.json" \
+  "plugins/dsh-genie-board/agent.cordis.yml" \
+  "plugins/dsh-genie-board/cordis.patch.yml" \
+  "plugins/dsh-genie-board/README.md" \
+  "plugins/dsh-genie-board/NOTICE" \
+  "plugins/dsh-genie-board/dist/index.js" \
+  "plugins/dsh-genie-board/dist/client.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 

@@ -561,7 +561,7 @@ describe('updateCommand wiring', () => {
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
+      process.exitCode = priorExitCode ?? 0;
       if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
       else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
     }
@@ -2207,7 +2207,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   });
 
   afterEach(() => {
-    process.exitCode = previousExitCode;
+    process.exitCode = previousExitCode ?? 0;
   });
 
   test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {

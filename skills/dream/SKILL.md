@@ -57,11 +57,13 @@ Each worker, independently:
 
 ## Phase 2: Review + PR
 
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
 **Trigger:** all workers in the layer reported done or blocked.
 
 1. Dispatch one reviewer subagent per PR via the native delegation surface (reviewer ≠ worker) to run `review` against the wish's acceptance criteria.
 2. Read bot comments critically — never blindly accept automated findings.
-3. On FIX-FIRST: diagnose first; return an overdesigned plan to wish/design review, otherwise dispatch `fix` for valid gaps (max 2 loops per PR). On another architectural issue: escalate in the report, no fix attempt.
+3. On FIX-FIRST: diagnose first; return an overdesigned plan to wish/design review, otherwise dispatch `fix` for valid gaps (at most `B` loops per group, including attempts already used during execution). On another architectural issue: escalate in the report, no fix attempt.
 4. CI must be green before proceeding — poll status, do not sleep.
 5. On SHIP: mark the PR review-complete.
 

@@ -29,7 +29,9 @@ A reviewer is a **read-only worker dispatched by the coordinator**, never the en
 
 ## Fix loop
 
-Coordinator re-dispatches a **fast** worker into the same worktree with the findings quoted verbatim and "apply exactly this, nothing else". Cap 2 loops per group; the coordinator may verify a trivial delta itself instead of a second review. After the cap → human gate.
+Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+
+Coordinator re-dispatches a **fast** worker into the same worktree with the findings quoted verbatim and "apply exactly this, nothing else". Cap `B` loops per group. After every fix, dispatch an independent re-reviewer who is not the fixer. If the re-review is still not SHIP after `B` attempts, stop fixing and follow [Escalation Diagnosis](../fix/SKILL.md#escalation-diagnosis), then its cause-specific route or human gate as applicable. Diagnosis does not reset the budget or grant additional fix attempts.
 
 ## What the integrated gate catches that group review does not
 

@@ -1,0 +1,3 @@
+- insert:
+    - id: genie-dsh-board
+      name: '@automagik/genie-dsh-board'
