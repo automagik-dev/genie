@@ -281,7 +281,10 @@ function handleBoardWithDb(opts: BoardOptions): void {
     const filter: TaskFilter = {};
     let scopeLabel = 'all tasks';
     let board: BoardRow | null = null;
-    if (opts.board) {
+    // `!== undefined`, not truthiness: `--board ""` (an unset shell variable)
+    // must be refused by the resolver, never silently widen the read to every
+    // task in the repo.
+    if (opts.board !== undefined) {
       board = resolveBoard(db, opts.board);
       filter.boardId = board.id;
       scopeLabel = `board "${board.name}"`;
