@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
+  BOARD_JSON_EVENT_LIMIT,
   DEFAULT_LIFECYCLE_LANES,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
@@ -34,6 +35,7 @@ import {
   getTaskEvents,
   getTaskLane,
   moveTask,
+  readBoardAggregate,
   readBoardTaskSnapshot,
   recordHeartbeat,
 } from '../lib/v5/task-state.js';
@@ -461,10 +463,13 @@ describe('lane-grouped render', () => {
       'boardId',
       'claimedAt',
       'claimedBy',
+      'commentCount',
       'comments',
       'createdAt',
       'dependencies',
       'enforcedBlock',
+      'eventCount',
+      'eventsTruncated',
       'group',
       'heartbeatAt',
       'id',
@@ -706,28 +711,177 @@ describe('scoped board JSON aggregate v1', () => {
     });
   }
 
-  const malformedLanes = [
+  // `block_kind` is unconstrained TEXT that `task import` stores verbatim, so an
+  // unrecognized kind is importable data — it may never make `--json` exit 1
+  // while the human render shows the block.
+  for (const kind of ['paused', '', 'HOLD', 'work ']) {
+    test(`coerces the unknown block kind ${JSON.stringify(kind)} on BOTH paths`, async () => {
+      const db = openDb({ cwd: repo });
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, { title: 'oddly blocked', boardId: roadmap.id, lane: 'Idea' });
+      blockTask(db, task.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
+      db.query('UPDATE tasks SET block_kind = ? WHERE id = ?').run(kind, task.id);
+      db.close();
+
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      const human = await board(repo, '--board', 'roadmap');
+      expect(json).toMatchObject({ code: 0, stderr: '' });
+      expect(human).toMatchObject({ code: 0, stderr: '' });
+      expect(json.stderr).not.toContain('invalid block kind');
+      const payload = JSON.parse(json.stdout) as {
+        lanes: Array<{ name: string; cards: Array<{ id: string; enforcedBlock: { reason: string; kind: string } }> }>;
+      };
+      const card = payload.lanes.find((l) => l.name === 'Idea')?.cards.find((c) => c.id === task.id);
+      // The one coercion both paths share: anything but exactly `hold` is `work`.
+      expect(card?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+      expect(human.stdout).toContain('oddly blocked');
+    });
+  }
+
+  test('serializes a stored hold kind unchanged', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'parked', boardId: roadmap.id, lane: 'Idea' });
+    blockTask(db, task.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    db.close();
+
+    const json = await board(repo, '--board', 'roadmap', '--json');
+    expect(json).toMatchObject({ code: 0, stderr: '' });
+    const payload = JSON.parse(json.stdout) as {
+      lanes: Array<{ name: string; cards: Array<{ id: string; enforcedBlock: { reason: string; kind: string } }> }>;
+    };
+    expect(payload.lanes.find((l) => l.name === 'Idea')?.cards.find((c) => c.id === task.id)?.enforcedBlock).toEqual({
+      reason: 'parked until Q3',
+      kind: 'hold',
+    });
+  });
+
+  // Unusable lane metadata is importable (`task import` validates table shape
+  // only) and no board verb repairs it, so it may never make `--json` the one
+  // path that refuses the board. ONE validator decides for both paths.
+  const unusableLanes = [
     ['invalid JSON', '{'],
     ['non-array JSON', '{}'],
     ['non-object entry', '[null]'],
+    ['nested-array entry', '[[]]'],
     ['missing name', '[{}]'],
+    ['empty name', '[{"name":""}]'],
     ['wrong name', '[{"name":7}]'],
     ['wrong label', '[{"name":"Idea","label":7}]'],
-    ['null label', '[{"name":"Idea","label":null}]'],
     ['wrong action', '[{"name":"Idea","action":7}]'],
-    ['null action', '[{"name":"Idea","action":null}]'],
   ] as const;
 
-  for (const [name, lanes] of malformedLanes) {
-    test(`fails closed for ${name} lane metadata`, async () => {
+  const LANELESS_NOTICE = 'Note: board "roadmap" has no usable lane metadata; rendering it as a laneless board.\n';
+
+  for (const [name, lanes] of unusableLanes) {
+    test(`renders laneless — never a malformed-board exit — for ${name} lane metadata`, async () => {
       const db = openDb({ cwd: repo });
       const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      createTask(db, { title: 'stranded card', boardId: roadmap.id, lane: 'Idea' });
       db.query('UPDATE boards SET lanes = ? WHERE id = ?').run(lanes, roadmap.id);
       db.close();
 
-      expectMalformedBoard(await board(repo, '--board', 'roadmap', '--json'));
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      const human = await board(repo, '--board', 'roadmap');
+      // Same decision, same message, same exit code on both paths.
+      expect(json.code).toBe(0);
+      expect(human.code).toBe(json.code);
+      expect(json.stderr).toBe(LANELESS_NOTICE);
+      expect(human.stderr).toBe(LANELESS_NOTICE);
+      expect(json.stderr).not.toContain('Malformed board detail');
+      // The laneless board falls through to the FROZEN status payload.
+      const payload = JSON.parse(json.stdout) as { scope: string; columns: Record<string, unknown[]> };
+      expect(Object.keys(payload)).toEqual(['scope', 'columns']);
+      expect(payload.columns.ready).toHaveLength(1);
+      expect(human.stdout).toContain('stranded card');
     });
   }
+
+  // `label: null` / `action: null` is the exact shape the lane emitter itself
+  // writes, so a round-trip of emitted output must parse back to lanes.
+  for (const [name, lanes] of [
+    ['null label', '[{"name":"Idea","label":null},{"name":"Done"}]'],
+    ['null action', '[{"name":"Idea","action":null},{"name":"Done"}]'],
+    ['both null', '[{"name":"Idea","label":null,"action":null},{"name":"Done"}]'],
+  ] as const) {
+    test(`accepts round-tripped ${name} lane metadata on both paths`, async () => {
+      const db = openDb({ cwd: repo });
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      createTask(db, { title: 'idea card', boardId: roadmap.id, lane: 'Idea' });
+      db.query('UPDATE boards SET lanes = ? WHERE id = ?').run(lanes, roadmap.id);
+      db.close();
+
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      expect(json).toMatchObject({ code: 0, stderr: '' });
+      const payload = JSON.parse(json.stdout) as {
+        schemaVersion: number;
+        lanes: Array<{ name: string; label: string | null; action: string | null; cards: Array<{ title: string }> }>;
+      };
+      expect(payload.schemaVersion).toBe(1);
+      expect(payload.lanes.map((lane) => lane.name)).toEqual(['Idea', 'Done']);
+      expect(payload.lanes[0].label).toBeNull();
+      expect(payload.lanes[0].action).toBeNull();
+      expect(payload.lanes[0].cards.map((card) => card.title)).toEqual(['idea card']);
+
+      const human = await board(repo, '--board', 'roadmap');
+      expect(human).toMatchObject({ code: 0, stderr: '' });
+      expect(human.stdout).toContain('Idea');
+      expect(human.stdout).toContain('idea card');
+    });
+  }
+
+  test('caps the embedded timeline and comments while reporting the true totals', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const busy = createTask(db, { title: 'busy card', boardId: roadmap.id, lane: 'Idea' });
+    const quiet = createTask(db, { title: 'quiet card', boardId: roadmap.id, lane: 'Idea' });
+    const insert = db.query('INSERT INTO task_events (task_id, kind, note, created_at) VALUES (?, ?, ?, ?)');
+    // 60 events, 30 of them comments, interleaved and strictly ordered.
+    for (let index = 0; index < 60; index += 1) {
+      const comment = index % 2 === 0;
+      insert.run(busy.id, comment ? 'comment' : 'move', `event ${index}`, 1000 + index);
+    }
+    insert.run(quiet.id, 'comment', 'only comment', 1);
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result).toMatchObject({ code: 0, stderr: '' });
+    const payload = JSON.parse(result.stdout) as {
+      lanes: Array<{
+        name: string;
+        cards: Array<{
+          title: string;
+          timeline: Array<{ note: string }>;
+          eventCount: number;
+          eventsTruncated: boolean;
+          comments: Array<{ note: string }>;
+          commentCount: number;
+        }>;
+      }>;
+    };
+    const cards = new Map((payload.lanes.find((l) => l.name === 'Idea')?.cards ?? []).map((c) => [c.title, c]));
+    const capped = cards.get('busy card');
+    expect(capped).toBeDefined();
+    if (!capped) throw new Error('expected the busy card');
+    expect(BOARD_JSON_EVENT_LIMIT).toBe(25);
+    expect(capped.eventCount).toBe(60);
+    expect(capped.eventsTruncated).toBe(true);
+    // The newest window, still chronological — never the oldest, never reordered.
+    expect(capped.timeline).toHaveLength(BOARD_JSON_EVENT_LIMIT);
+    expect(capped.timeline.map((event) => event.note)).toEqual(
+      Array.from({ length: 25 }, (_, offset) => `event ${35 + offset}`),
+    );
+    expect(capped.commentCount).toBe(30);
+    expect(capped.comments).toHaveLength(BOARD_JSON_EVENT_LIMIT);
+    expect(capped.comments[0].note).toBe('event 10');
+    expect(capped.comments[24].note).toBe('event 58');
+    // A short card is not truncated and carries its whole history.
+    const short = cards.get('quiet card');
+    expect(short).toMatchObject({ eventCount: 1, eventsTruncated: false, commentCount: 1 });
+    expect(short?.timeline).toHaveLength(1);
+    // The 4 MiB budget the plugin reads this under is what the cap protects.
+    expect(result.stdout.length).toBeLessThan(4 * 1024 * 1024);
+  });
 
   test('an unknown board JSON read fails with exit 1, empty stdout, and clear stderr', async () => {
     const result = await board(repo, '--board', 'ghost', '--json');
@@ -904,6 +1058,53 @@ describe('board aggregate repository snapshot', () => {
         .flatMap((read) => read.plan)
         .join('\n'),
     ).not.toMatch(/SCAN (td|e)(?: |$)/);
+    reader.close();
+  });
+
+  test('reads the board lanes inside the same deferred snapshot as its cards', () => {
+    const writer = openDb({ cwd: repo });
+    const roadmap = createBoard(writer, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(writer, { title: 'idea card', boardId: roadmap.id, lane: 'Idea' });
+    writer.close();
+
+    const reader = openDb({ cwd: repo });
+    const reads: Array<{ sql: string; inTransaction: boolean }> = [];
+    const originalQuery = reader.query.bind(reader);
+    Object.defineProperty(reader, 'query', {
+      configurable: true,
+      value: (sql: string) => {
+        const statement = originalQuery(sql);
+        return new Proxy(statement, {
+          get(target, property) {
+            const value = Reflect.get(target, property, target);
+            if (property !== 'all' && property !== 'get') {
+              return typeof value === 'function' ? value.bind(target) : value;
+            }
+            return (...args: unknown[]) => {
+              reads.push({ sql, inTransaction: reader.inTransaction });
+              return Reflect.apply(value as (...values: unknown[]) => unknown, target, args);
+            };
+          },
+        });
+      },
+    });
+
+    const snapshot = readBoardAggregate(reader, roadmap.id);
+    reader.close();
+
+    expect(snapshot.board.lanes?.map((lane) => lane.name)).toEqual(DEFAULT_LIFECYCLE_LANES.map((lane) => lane.name));
+    expect(snapshot.cards.map((card) => card.title)).toEqual(['idea card']);
+    // The lane definition the cards are grouped into comes from the SAME
+    // snapshot as the cards — never from a read taken before the transaction.
+    const laneRead = reads.find((read) => read.sql.includes('FROM boards'));
+    expect(laneRead).toBeDefined();
+    expect(laneRead?.inTransaction).toBe(true);
+    expect(reads.every((read) => read.inTransaction)).toBe(true);
+  });
+
+  test('an unknown board id fails the aggregate with the typed board error', () => {
+    const reader = openDb({ cwd: repo });
+    expect(() => readBoardAggregate(reader, 'b_missing')).toThrow('Board not found: b_missing');
     reader.close();
   });
 
