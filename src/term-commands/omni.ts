@@ -66,9 +66,19 @@ async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
 
   const db = openGlobalDb();
   const controller = new AbortController();
-  const stop = () => controller.abort();
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  // Which signal stopped the run, if any. `omni serve` is a foreground resident:
+  // the shell contract for one is to leave with 128+signum, and to leave
+  // PROMPTLY — the NATS connect used to ignore both signals for its whole ~20s
+  // retry window (dogfood r2 §3.3 #4).
+  let stopSignal: 'SIGINT' | 'SIGTERM' | undefined;
+  const stopOn = (signal: 'SIGINT' | 'SIGTERM') => () => {
+    stopSignal ??= signal;
+    controller.abort();
+  };
+  const onInt = stopOn('SIGINT');
+  const onTerm = stopOn('SIGTERM');
+  process.once('SIGINT', onInt);
+  process.once('SIGTERM', onTerm);
 
   try {
     await runOmniServe({
@@ -79,15 +89,22 @@ async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
       log: (line) => out(line),
     });
   } catch (error) {
-    // One operator-readable line: what failed and which endpoint it was using,
-    // both config-redacted. The caller turns this into `Error: <line>` + exit 1.
-    const detail = redact(error instanceof Error ? error.message : String(error));
-    throw new Error(`omni serve failed: ${detail} (NATS ${redact(rt.natsUrl)})`);
+    // A signalled stop is not a failure, whatever the shutdown path reported.
+    if (!stopSignal) {
+      // One operator-readable line: what failed and which endpoint it was using,
+      // both config-redacted. The caller turns this into `Error: <line>` + exit 1.
+      const detail = redact(error instanceof Error ? error.message : String(error));
+      throw new Error(`omni serve failed: ${detail} (NATS ${redact(rt.natsUrl)})`);
+    }
   } finally {
-    process.off('SIGINT', stop);
-    process.off('SIGTERM', stop);
+    process.off('SIGINT', onInt);
+    process.off('SIGTERM', onTerm);
     db.close();
   }
+
+  // An in-flight transport connect keeps the event loop alive long after the
+  // run is over, so the exit is explicit rather than awaited.
+  if (stopSignal) process.exit(stopSignal === 'SIGINT' ? 130 : 143);
 }
 
 // ============================================================================

@@ -373,3 +373,80 @@ describe('omni handshake keypair provisioning', () => {
     expect(() => omniTest.assertNotInsideGitRepo(join(process.cwd(), '.genie', 'keys'))).toThrow(/git working tree/);
   });
 });
+
+/**
+ * Dogfood r2 §3.3 #4 — SIGINT/SIGTERM were ignored for the entire ~20 s NATS
+ * connect: `process.once('SIGINT', stop)` aborted a controller the connect path
+ * never observed, so Ctrl-C left the operator waiting for the transport's own
+ * timeout (measured 19 255 ms / 19 351 ms).
+ */
+describe('omni serve — a stop signal during the NATS connect', () => {
+  const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
+
+  /** A socket that accepts the connection and then never speaks NATS, so the
+   *  transport sits in its retry window instead of failing fast. */
+  function silentListener(): { port: number; stop: () => void } {
+    const server = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: { data: () => {}, open: () => {}, close: () => {}, error: () => {} },
+    });
+    return { port: server.port, stop: () => server.stop(true) };
+  }
+
+  async function serveThenSignal(signal: 'SIGINT' | 'SIGTERM'): Promise<{
+    code: number | null;
+    signalled: number;
+    stdout: string;
+    stderr: string;
+  }> {
+    const listener = silentListener();
+    const home = mkdtempSync(join(tmpdir(), 'omni-serve-signal-'));
+    try {
+      const proc = Bun.spawn(['bun', GENIE_CLI, 'omni', 'serve'], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          GENIE_HOME: home,
+          OMNI_APPROVALS_ENABLED: '1',
+          OMNI_INSTANCE: 'inst-A',
+          OMNI_APPROVAL_CHAT: 'chat-42',
+          OMNI_NATS_URL: `nats://127.0.0.1:${listener.port}`,
+        },
+      });
+      // Let the process reach the connect, then ask it to stop.
+      await Bun.sleep(1_500);
+      const sentAt = Date.now();
+      proc.kill(signal === 'SIGINT' ? 2 : 15);
+      const code = await proc.exited;
+      const signalled = Date.now() - sentAt;
+      return {
+        code,
+        signalled,
+        stdout: await new Response(proc.stdout).text(),
+        stderr: await new Response(proc.stderr).text(),
+      };
+    } finally {
+      listener.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test('SIGINT aborts the in-flight connect within a second and exits 130', async () => {
+    const res = await serveThenSignal('SIGINT');
+    expect(res.signalled).toBeLessThan(1_000);
+    expect(res.code).toBe(130);
+    expect(res.stdout.trimEnd().split('\n')).toEqual(['[omni] stopped']);
+    expect(res.stderr).toBe('');
+  }, 30_000);
+
+  test('SIGTERM does the same and exits 143', async () => {
+    const res = await serveThenSignal('SIGTERM');
+    expect(res.signalled).toBeLessThan(1_000);
+    expect(res.code).toBe(143);
+    expect(res.stdout.trimEnd().split('\n')).toEqual(['[omni] stopped']);
+    expect(res.stderr).toBe('');
+  }, 30_000);
+});

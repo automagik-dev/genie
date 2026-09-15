@@ -2592,6 +2592,58 @@ function redactOmniError(error: unknown, redact: OmniRedactor): Error {
   return new Error(redact(error instanceof Error ? error.message : String(error)));
 }
 
+/**
+ * Open the NATS connection without swallowing a stop signal.
+ *
+ * `@nats-io/transport-node`'s `connect()` takes no AbortSignal and retries for
+ * ~20 s against a host that accepts the socket but never speaks the protocol,
+ * so until 2026-09-15 a SIGINT or SIGTERM during that window did nothing at all
+ * — `omni serve` left only when the transport itself gave up (dogfood r2 §3.3
+ * #4). The connect is therefore raced against the caller's signal.
+ *
+ * `undefined` means "aborted before a connection existed": the caller returns
+ * without reporting a failure. The orphaned connect is neutralized rather than
+ * abandoned — if it later succeeds its connection is closed, and its rejection
+ * is swallowed so it cannot surface as an unhandled rejection.
+ */
+async function connectUnlessAborted(
+  factory: NatsFactory,
+  servers: string,
+  signal: AbortSignal | undefined,
+): Promise<NatsLike | undefined> {
+  const connecting = factory({ servers });
+  const neutralize = (): void => {
+    void connecting.then(
+      (conn) => {
+        void Promise.resolve(conn.close()).catch(() => {});
+      },
+      () => {},
+    );
+  };
+  if (!signal) return await connecting;
+  if (signal.aborted) {
+    neutralize();
+    return undefined;
+  }
+  return await new Promise<NatsLike | undefined>((resolve, reject) => {
+    const onAbort = () => {
+      neutralize();
+      resolve(undefined);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    connecting.then(
+      (conn) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(conn);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   const { db, config } = opts;
   const redact = createOmniRedactor(config);
@@ -2608,13 +2660,20 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
   let timer: ReturnType<typeof setInterval> | undefined;
   let hasPrimaryError = false;
   let primaryError: unknown;
+  let stoppedDuringConnect = false;
 
   const cleanupErrors: Error[] = [];
 
   try {
     lease = openOmniServeLease(db, leaseTtlMs);
 
-    nc = await factory({ servers: config.natsUrl });
+    nc = await connectUnlessAborted(factory, config.natsUrl, opts.signal);
+    if (!nc) {
+      // Stopped while the transport was still dialling. Nothing was subscribed
+      // and nothing was claimed; the finally block still releases the lease.
+      stoppedDuringConnect = true;
+      return;
+    }
     runner = createOmniRunner({
       ...opts.runnerDeps,
       db,
@@ -2660,7 +2719,7 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
     if (cleanupErrors.length > 0 && hasPrimaryError) {
       for (const error of cleanupErrors) log(`[omni] cleanup error after primary failure: ${error.message}`);
     }
-    if (nc) log('[omni] stopped');
+    if (nc || stoppedDuringConnect) log('[omni] stopped');
   }
   if (hasPrimaryError) throw redactOmniError(primaryError, redact);
   if (cleanupErrors.length > 0) {
