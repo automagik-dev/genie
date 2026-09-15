@@ -43,9 +43,9 @@ Patterns written for earlier models that now hurt. Remove them and put the repla
 
 | Remove | Because | Replace with |
 |---|---|---|
-| Anti-formatting rules: "no bullets", "never use headers", `<avoid_excessive_markdown_and_bullet_points>` blocks | Fable 5.1 already formats less; these suppress structure the content needs | The formatting rule (item 6) |
+| Anti-formatting rules: "no bullets", "never use headers", `<avoid_excessive_markdown_and_bullet_points>` blocks | Fable 5.1 already formats less; these suppress structure the content needs | The formatting rule (item 6). A rule that mandates formatting is not on this list |
 | Narration suppressors: "hold all findings for the final response", "no commentary between tool calls", "keep updates brief" | Fable 5.1 already writes fewer updates; these leave the reader in the dark | The progress-update line (item 1) |
-| Anti-laziness and over-triggering: "ALWAYS call", "CRITICAL: You MUST", "if in doubt, use the tool" | Overtriggers | Plain conditions: "Use this when…" |
+| Anti-laziness and over-triggering: "ALWAYS call", "CRITICAL: You MUST", "if in doubt, use the tool" | Overtriggers | The same rule in plain language: "Use this when…", "Answer in bullet points". Drop the shouting, keep the instruction |
 | Thinking and effort control in text: "think very hard", "use extended thinking", "budget your thinking", `<thinking>`/`<answer>` scaffolds, word-avoidance tables for "think" | Thinking is always on and adaptive; effort is an API parameter | Nothing (item 10 for long deliverables) |
 | Eagerness dials, persistence pep talks, context-anchor rituals ("every 3 turns restate the objective") | Fable 5.1 tracks long runs without them; rituals add noise | Item 2 when the run is unattended |
 | Decorative personas with no rubric or authority boundary | Cost tokens, change nothing | The mission and its stakes |
@@ -157,6 +157,8 @@ Add, in place of any anti-formatting rule:
 ```text
 Use lists and bullet points when asked to, or when the content is multifaceted enough that they help with clarity. If the person explicitly requests minimal formatting, always format your responses without bullet points, headers, lists, or bold emphasis, as requested. In conversational, personal, or emotional exchanges, keep to plain prose.
 ```
+
+A rule that mandates formatting ("always answer in bullet points", "use a table for comparisons") is an author decision, not an anti-formatting rule: keep it, in plain language, with its reason when the input gives one, and leave item 6 out unless the input also suppresses formatting.
 
 Skip: prompts whose output format is fully specified by a schema or file format.
 
@@ -328,7 +330,7 @@ Blend when a prompt spans shapes: an agent that reviews code is an autonomous ag
 - The task, scope, and audience are unchanged; nothing was added that the input did not ask for.
 - Sections that already worked came back verbatim; only flagged lines changed.
 - Every added block has a trigger visible in the input.
-- Verbatim blocks are as written, especially the opening sentence of item 2.
+- Verbatim blocks are as written, especially the opening sentence of item 2. An adaptation for the prompt at hand is its own sentence before or after the block, never a clause inside it.
 - No ALL-CAPS commands, no anti-formatting rules, no effort or thinking directives, no prefill, no narration suppressors, no history-rewriting instructions.
 - Rules say what to do; each non-obvious one carries its reason.
 - Tags are closed, examples sit in `<example>` tags, and tool names in examples match the prompt's tools.
