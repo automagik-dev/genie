@@ -1091,6 +1091,39 @@ describe('doctor: skills.sh channel', () => {
     });
   });
 
+  test('preserved retired skill dirs warn with their path and reason', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    // Retired dirs the last update could not archive. They are not in
+    // `inventory`, so every per-home line still reads 2/2: without this check
+    // the host reports clean while the directories sit there forever.
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      preserved: [
+        { agentDir: join(isolatedHome, '.claude', 'skills'), skill: 'trace', reason: 'no recorded content digest' },
+        {
+          agentDir: join(isolatedHome, '.agents', 'skills'),
+          skill: 'perf',
+          reason: 'content changed since the recorded install',
+        },
+      ],
+    });
+
+    const results = skillsChannelResults();
+    expect(byName(results, 'skills: claude').status).toBe('pass');
+    const retirement = byName(results, 'skills: retirement');
+    expect(retirement.status).toBe('warn');
+    expect(retirement.detail).toBe(
+      `2 preserved retired skill dir(s): ${join(isolatedHome, '.claude', 'skills', 'trace')} (no recorded content digest); ${join(isolatedHome, '.agents', 'skills', 'perf')} (content changed since the recorded install)`,
+    );
+    expect(retirement.suggestion).toBe('Review them, remove them, then run `genie update` to retry retirement');
+  });
+
+  test('a record with nothing preserved emits no retirement check', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(skillsChannelResults().map((result) => result.name)).not.toContain('skills: retirement');
+  });
+
   test('a Codex host reports `skills: agents`, never a false `skills: codex` warning', () => {
     // skills.sh 1.5.23 `--all --copy -g` creates no `~/.codex/skills`; Codex
     // reads `~/.agents/skills`. A bare `~/.codex` must not produce a check.
