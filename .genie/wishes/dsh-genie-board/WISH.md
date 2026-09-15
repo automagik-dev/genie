@@ -388,6 +388,13 @@ Corrective route: resolve or formally clear the repository-baseline failures, th
 - Parent source plugin build, real authenticated DSH source/linked smoke, final four-artifact unsigned verifier and independent extraction/runtime-floor checks all exited **0**. Independent code/security review and the scoped fixture repair are **SHIP**.
 - Group 3's implementation is accepted for the requested reviewed/dogfooded `dev → main` PR. Actual stable publication, published signature/provenance verification, and topic publication remain unperformed and open. The Group 3 release task and whole wish therefore remain in progress; this is not a released/SHIPPED wish. Other approved independent queue items may continue while that post-main gate awaits the human release.
 
+### Council — DSH skills provider (2026-09-15)
+
+- **Question:** integrate genie's skills into DSH the way `JohnXu22786/skill-framework` (`dsh-praxis`) does — a `ctx.skills` SkillProvider registered by this plugin, and the Skills panel reading the unified registry.
+- **Run:** saved workflow `.claude/workflows/council.js`, run `wf_e01ce520-338`, five lenses + synthesis. Verdicts: architecture oppose (high), delivery support-with-conditions (medium), product support-with-conditions (medium), security oppose (high), dissent oppose (high). Synthesis: **gather-evidence**, gated on one observation.
+- **Gate 0 (observed, same day):** the composed web profile disables the base host `skill-filesystem` row (`dsh-web-app` moves discovery behind agent presets); the `standard` and `ptc` presets re-mount `skill-filesystem` (default roots) and `tool-skill`. Instantiating `SkillRegistry` + `skill-filesystem` from the installed 0.1.5-rc.2 packages against this checkout lists 46 skills, `complete: true`; all 14 genie skills resolve as source `user-agents`, provider `filesystem`, resource base `~/.agents/skills/<name>`, and `wish` renders `Base directory for this skill: ~/.agents/skills/wish`. `DSH_AGENTS_HOME` is unset in the launchd service environment.
+- **Decision recorded:** no SkillProvider. skills.sh + DSH's stock discovery of `~/.agents/skills` is genie's first-party delivery to the DSH body. No `./skills/*` package export, no bundled root, no `inject: ['skills']` on the board row, no registry-backed Skills panel (it would drop resources/path, pull ~35 third-party skills into the Genie panel, and leak host paths against the C2 invariant). Per-checkout dogfood is a profile config row (`id: skill-filesystem`, `customSkillDirs: ['<checkout>/skills']`, rank 300, watched), an explicit operator choice. Recorded in `plugins/dsh-genie-board/README.md` and the CLAUDE.md skills-channel gotchas.
+
 ---
 
 ## Files to Create/Modify

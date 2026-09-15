@@ -10,7 +10,19 @@ a registered repository workspace picker.
   Refresh and returning to the visible tab read a complete board again; there is no
   polling.
 - **Skills** lists the repository's `skills/<name>/SKILL.md` catalog with a filter,
-  the shipped resources of each skill, and the document body.
+  the shipped resources of each skill, and the document body. The panel is a
+  read-only view of the git-tracked source; it does not feed the DSH model. The
+  DSH body already reads genie's skills through the one recorded channel: `genie
+  install`/`update` copy the pinned tree into `~/.agents/skills`, which DSH's stock
+  `skill-filesystem` discoverer (mounted by the `standard` and `ptc` agent presets)
+  serves as source `user-agents`, rank 500, with each skill directory as its
+  resource base. A council on 2026-09-15 decided against a plugin `ctx.skills`
+  provider: it would duplicate delivery outside the install record, bypass the
+  `--integrations none` consent, need its own invalidation, and couple the board
+  row to the skill service. To dogfood a checkout instead of the installed copy,
+  add a profile patch row — `id: skill-filesystem`, `config.customSkillDirs:
+  ['<checkout>/skills']` (rank 300, watched) — which shadows the release copy as an
+  explicit, visible operator choice.
 - **Workflows** lists the repository's `.claude/workflows/<name>.js` catalog (the
   canonical saved-workflow format), each script's phases and when-to-use guidance,
   and the script body. Both catalogs are read-only: nothing is executed from the
