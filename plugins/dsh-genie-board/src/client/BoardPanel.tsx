@@ -35,6 +35,184 @@ function CardButton({ card, selected, onSelect }: { card: Card; selected: boolea
   );
 }
 
+/** "3m", "2h", "5d", or "just now"; used for both stamps and held-for durations. */
+function span(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+function who(event: { author: string | null; authorKind: string | null }): string {
+  if (event.author && event.authorKind) return `${event.author} · ${event.authorKind}`;
+  return event.author ?? event.authorKind ?? 'unknown';
+}
+
+/** Chat-style conversation: comments and worker reports in order, oldest first. */
+function Conversation({
+  card,
+  busy,
+  onSend,
+}: { card: Card; busy: boolean; onSend: (kind: 'comment' | 'block' | 'hold', text: string) => void }) {
+  const [text, setText] = useState('');
+  const messages = card.timeline.filter((event) => event.kind === 'comment' || event.kind === 'report');
+  const send = (kind: 'comment' | 'block' | 'hold') => {
+    if (!text.trim()) return;
+    onSend(kind, text);
+    setText('');
+  };
+  return (
+    <section className="gb-chat" aria-label="Conversation">
+      <div className="gb-chat-log">
+        {messages.length === 0 && (
+          <p className="gb-chat-empty">
+            No comments or reports yet. Agents post here as they claim, work and hand off this card.
+          </p>
+        )}
+        {messages.map((event) => (
+          <article key={event.id} className="gb-msg" data-kind={event.kind}>
+            <header>
+              <strong>{event.author ?? 'unknown'}</strong>
+              {event.authorKind && <span className="gb-msg-kind">{event.authorKind}</span>}
+              {event.kind === 'report' && <Tag tone="info">report</Tag>}
+              <time title={new Date(event.createdAt).toLocaleString()}>{when(event.createdAt)}</time>
+            </header>
+            <p>{event.note}</p>
+          </article>
+        ))}
+      </div>
+      <form
+        className="gb-composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send('comment');
+        }}
+      >
+        <textarea
+          className="gb-textarea"
+          aria-label="Write a comment"
+          placeholder="Comment on this card… (⌘↵ to send)"
+          value={text}
+          rows={2}
+          onChange={(e) => setText(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              send('comment');
+            }
+          }}
+        />
+        <div className="gb-row">
+          <Button size="sm" variant="primary" type="submit" disabled={busy || !text.trim()}>
+            Comment
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || !text.trim()}
+            onClick={() => send('block')}
+            title="Block with this text as the reason"
+          >
+            Block
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || !text.trim()}
+            onClick={() => send('hold')}
+            title="Put on hold with this text as the reason"
+          >
+            Hold
+          </Button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+/** Audit rail: every event since creation, with how long the card sat in the previous state. */
+function Audit({ card, now }: { card: Card; now: number }) {
+  const rows: { key: string; at: number; label: string; by?: string; held: number }[] = [];
+  let previous = card.createdAt;
+  rows.push({ key: 'created', at: card.createdAt, label: 'Created', held: 0 });
+  for (const event of card.timeline) {
+    const label =
+      event.kind === 'move' && event.note
+        ? `Moved ${event.note}`
+        : event.kind === 'claim'
+          ? `Claimed${event.note ? ` (${event.note.replace(/^claimed by /, '')})` : ''}`
+          : event.kind === 'release'
+            ? `Released${event.note ? ` · ${event.note}` : ''}`
+            : event.kind === 'wish'
+              ? `Wish ${event.note ?? ''}`
+              : event.kind === 'comment'
+                ? 'Commented'
+                : event.kind === 'report'
+                  ? 'Reported'
+                  : event.kind === 'block'
+                    ? `Blocked${event.note ? `: ${event.note}` : ''}`
+                    : event.kind === 'unblock'
+                      ? 'Unblocked'
+                      : event.kind === 'done'
+                        ? 'Completed'
+                        : event.note
+                          ? `${event.kind}: ${event.note}`
+                          : event.kind;
+    rows.push({ key: String(event.id), at: event.createdAt, label, by: who(event), held: event.createdAt - previous });
+    previous = event.createdAt;
+  }
+  const sinceLast = now - previous;
+  return (
+    <aside className="gb-audit" aria-label="History">
+      <h3>
+        History
+        {card.eventsTruncated ? (
+          <span className="gb-sub">
+            {' '}
+            · last {card.timeline.length} of {card.eventCount}
+          </span>
+        ) : null}
+      </h3>
+      <ol className="gb-audit-list">
+        {rows.map((row, index) => (
+          <li key={row.key}>
+            <time title={new Date(row.at).toLocaleString()}>{when(row.at)}</time>
+            <div>
+              <span className="gb-audit-label">{row.label}</span>
+              {row.by && <span className="gb-audit-by">{row.by}</span>}
+              {index > 0 && row.held > 60_000 && <span className="gb-audit-held">after {span(row.held)}</span>}
+            </div>
+          </li>
+        ))}
+        <li className="gb-audit-now">
+          <time>now</time>
+          <div>
+            <span className="gb-audit-label">
+              {STATUS_LABEL[card.status]}
+              {card.lane ? ` in ${card.lane}` : ''}
+            </span>
+            <span className="gb-audit-held">for {span(sinceLast)}</span>
+          </div>
+        </li>
+      </ol>
+      <dl className="gb-kv">
+        <dt>Age</dt>
+        <dd>{span(now - card.createdAt)}</dd>
+        {card.claimedAt && (
+          <>
+            <dt>Claimed</dt>
+            <dd>{span(now - card.claimedAt)} ago</dd>
+          </>
+        )}
+        <dt>Events</dt>
+        <dd>{card.eventCount}</dd>
+      </dl>
+    </aside>
+  );
+}
+
 function Detail({
   card,
   lanes,
@@ -47,177 +225,119 @@ function Detail({
   onAction: (action: string, extra?: Record<string, unknown>) => void;
 }) {
   const [lane, setLane] = useState(card.lane ?? lanes[0]?.name ?? '');
-  const [note, setNote] = useState('');
   useEffect(() => {
     setLane(card.lane ?? lanes[0]?.name ?? '');
-    setNote('');
   }, [card.lane, lanes]);
   const claimed = Boolean(card.claimedBy);
+  const now = Date.now();
   return (
-    <aside className="gb-detail" aria-label="Task detail">
-      <div>
-        <h2>{card.title}</h2>
-        <span className="gb-mono">{card.id}</span>
-      </div>
-      <div className="gb-row">
-        <Tag tone={card.status === 'done' ? 'success' : card.status === 'blocked' ? 'danger' : 'info'}>
-          {STATUS_LABEL[card.status]}
-        </Tag>
-        {card.liveness && <Tag tone="neutral">{card.liveness}</Tag>}
-        {card.enforcedBlock && (
-          <Tag tone="danger">
-            {card.enforcedBlock.kind === 'hold' ? 'On hold' : 'Blocked'}: {card.enforcedBlock.reason}
+    <div className="gb-detail" aria-label="Task detail">
+      <header className="gb-detail-head">
+        <div className="gb-detail-title">
+          <h2>{card.title}</h2>
+          <span className="gb-mono">{card.id}</span>
+        </div>
+        <div className="gb-row">
+          <Tag tone={card.status === 'done' ? 'success' : card.status === 'blocked' ? 'danger' : 'info'}>
+            {STATUS_LABEL[card.status]}
           </Tag>
-        )}
-      </div>
-      <dl className="gb-kv">
-        <dt>Owner</dt>
-        <dd>{card.claimedBy ? `${card.claimedBy}${card.agentKind ? ` (${card.agentKind})` : ''}` : 'Unclaimed'}</dd>
-        {card.assignedAgent && (
-          <>
-            <dt>Assigned</dt>
-            <dd>
-              {card.assignedAgent}
-              {card.assignedReason ? ` — ${card.assignedReason}` : ''}
-            </dd>
-          </>
-        )}
-        {card.wish && (
-          <>
-            <dt>Wish</dt>
-            <dd>
+          {card.claimedBy ? (
+            <Tag tone="neutral">
+              {card.claimedBy}
+              {card.agentKind ? ` · ${card.agentKind}` : ''}
+            </Tag>
+          ) : (
+            <Tag tone="quiet">Unclaimed</Tag>
+          )}
+          {card.liveness && (
+            <Tag tone={card.liveness === 'running' ? 'success' : card.liveness === 'stale' ? 'warning' : 'quiet'}>
+              {card.liveness}
+            </Tag>
+          )}
+          {card.wish && (
+            <Tag tone="quiet">
               {card.wish}
               {card.group ? ` · ${card.group}` : ''}
-            </dd>
-          </>
-        )}
-        <dt>Updated</dt>
-        <dd>{when(card.updatedAt)}</dd>
-      </dl>
-      <h3>Move</h3>
-      <div className="gb-row">
-        <select
-          className="gb-select"
-          aria-label="Destination lane"
-          value={lane}
-          onChange={(e) => setLane(e.currentTarget.value)}
-        >
-          {lanes.map((entry) => (
-            <option key={entry.name} value={entry.name}>
-              {entry.label ?? entry.name}
-            </option>
-          ))}
-        </select>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || lane === card.lane}
-          onClick={() => onAction('move', { lane })}
-        >
-          Move
-        </Button>
-      </div>
-      <h3>Actions</h3>
-      <div className="gb-row">
-        {claimed ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => onAction('release')}>
-            Release
-          </Button>
-        ) : (
+            </Tag>
+          )}
+          {card.assignedAgent && <Tag tone="quiet">→ {card.assignedAgent}</Tag>}
+          {card.enforcedBlock && (
+            <Tag tone="danger">
+              {card.enforcedBlock.kind === 'hold' ? 'On hold' : 'Blocked'}: {card.enforcedBlock.reason}
+            </Tag>
+          )}
+        </div>
+        <div className="gb-row gb-toolbar">
+          <select
+            className="gb-select"
+            aria-label="Destination lane"
+            value={lane}
+            onChange={(e) => setLane(e.currentTarget.value)}
+          >
+            {lanes.map((entry) => (
+              <option key={entry.name} value={entry.name}>
+                {entry.label ?? entry.name}
+              </option>
+            ))}
+          </select>
           <Button
             size="sm"
-            variant="primary"
-            disabled={busy || card.status === 'done'}
-            onClick={() => onAction('checkout')}
+            variant="outline"
+            disabled={busy || lane === card.lane}
+            onClick={() => onAction('move', { lane })}
           >
-            Claim
+            Move
           </Button>
-        )}
-        {card.enforcedBlock && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => onAction('unblock')}>
-            Unblock
+          {claimed ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => onAction('release')}>
+              Release
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={busy || card.status === 'done'}
+              onClick={() => onAction('checkout')}
+            >
+              Claim
+            </Button>
+          )}
+          {card.enforcedBlock && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => onAction('unblock')}>
+              Unblock
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || card.status === 'done'}
+            onClick={() => onAction('done')}
+          >
+            Complete
           </Button>
-        )}
-        <Button size="sm" variant="outline" disabled={busy || card.status === 'done'} onClick={() => onAction('done')}>
-          Complete
-        </Button>
-      </div>
-      <h3>Note</h3>
-      <textarea
-        className="gb-textarea"
-        aria-label="Comment or block reason"
-        placeholder="Comment, or a reason to block or hold"
-        value={note}
-        onChange={(e) => setNote(e.currentTarget.value)}
-      />
-      <div className="gb-row">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !note.trim()}
-          onClick={() => onAction('comment', { text: note })}
-        >
-          Comment
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !note.trim()}
-          onClick={() => onAction('block', { text: note })}
-        >
-          Block
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy || !note.trim()}
-          onClick={() => onAction('block', { text: note, hold: true })}
-        >
-          Hold
-        </Button>
-      </div>
-      {card.dependencies.length > 0 && (
-        <>
-          <h3>Dependencies</h3>
-          <ul className="gb-timeline">
+        </div>
+        {card.dependencies.length > 0 && (
+          <div className="gb-row">
+            <span className="gb-sub">Depends on</span>
             {card.dependencies.map((dependency) => (
-              <li key={dependency.id}>
-                <Tag tone={dependency.status === 'done' ? 'success' : 'outline'}>{STATUS_LABEL[dependency.status]}</Tag>
-                <span>{dependency.title}</span>
-              </li>
+              <Tag key={dependency.id} tone={dependency.status === 'done' ? 'success' : 'outline'}>
+                {dependency.title}
+              </Tag>
             ))}
-          </ul>
-        </>
-      )}
-      {card.comments.length > 0 && (
-        <>
-          <h3>Comments</h3>
-          <ul className="gb-timeline">
-            {card.comments.map((comment) => (
-              <li key={comment.id}>
-                <time>{when(comment.createdAt)}</time>
-                <span>
-                  <strong>{comment.author ?? 'Unknown'}</strong> {comment.note}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      <h3>History{card.eventsTruncated ? ` (last ${card.timeline.length} of ${card.eventCount})` : ''}</h3>
-      <ul className="gb-timeline">
-        {card.timeline.map((event) => (
-          <li key={event.id}>
-            <time>{when(event.createdAt)}</time>
-            <span>
-              {event.kind}
-              {event.author ? ` · ${event.author}` : ''}
-              {event.note ? ` — ${event.note}` : ''}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </aside>
+          </div>
+        )}
+      </header>
+      <div className="gb-detail-body">
+        <Conversation
+          card={card}
+          busy={busy}
+          onSend={(kind, text) =>
+            onAction(kind === 'comment' ? 'comment' : 'block', kind === 'hold' ? { text, hold: true } : { text })
+          }
+        />
+        <Audit card={card} now={now} />
+      </div>
+    </div>
   );
 }
 
