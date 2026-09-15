@@ -1509,15 +1509,48 @@ describe('timeline verbs', () => {
     expect(ev.authorKind).toBe('hermes');
   });
 
-  test('heartbeat records a liveness pulse', async () => {
+  test('heartbeat records a liveness pulse on a claimed card', async () => {
     const id = await seed('pulse');
+    const claim = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(claim.code).toBe(0);
     const before = Date.now();
     const r = await cli(repo, 'heartbeat', id);
     expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
     const db = openDb({ cwd: repo });
     const card = getTaskCard(db, id);
     db.close();
     expect(card?.heartbeatAt).toBeGreaterThanOrEqual(before);
+  });
+
+  /**
+   * Regression (dogfood r2 minor 15): `heartbeat` on a never-claimed card
+   * exited 0 and stamped `heartbeat_at` on a `ready` card with `claimed_by`
+   * NULL — liveness for a worker that does not exist.
+   */
+  test('heartbeat on an unclaimed card is refused with a typed error and exit 1', async () => {
+    const id = await seed('never claimed');
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('not claimed');
+    expect(r.stderr).toContain(`genie task checkout ${id} --worker`);
+    expect(r.stderr).not.toContain('at <anonymous>');
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.heartbeatAt).toBeNull();
+    expect(card?.claimedBy).toBeNull();
+  });
+
+  test('heartbeat on a released card is refused again', async () => {
+    const id = await seed('released');
+    expect((await cli(repo, 'checkout', id, '--worker', 'w1')).code).toBe(0);
+    expect((await cli(repo, 'heartbeat', id)).code).toBe(0);
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('not claimed');
   });
 });
 

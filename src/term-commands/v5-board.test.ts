@@ -412,7 +412,10 @@ describe('lane-grouped render', () => {
     });
     blockTask(db, held.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
     blockTask(db, broken.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
-    recordHeartbeat(db, held.id);
+    // A heartbeat on an UNCLAIMED card is refused by the state API; the only
+    // way that row state still exists is a legacy/imported db, so write it
+    // directly here rather than through recordHeartbeat.
+    db.query('UPDATE tasks SET heartbeat_at = ? WHERE id = ?').run(Date.now(), held.id);
     db.close();
 
     const r = await board(repo, '--board', 'roadmap', '--json');
@@ -611,7 +614,10 @@ describe('scoped board JSON aggregate v1', () => {
     recordHeartbeat(db, running.id, now);
     recordHeartbeat(db, idle.id, now - LIVENESS_RUNNING_MS - 60_000);
     recordHeartbeat(db, stale.id, now - LIVENESS_STALE_MS - 60_000);
-    recordHeartbeat(db, open.id, now);
+    // `open` is deliberately unclaimed: recordHeartbeat refuses that card, so
+    // the legacy row state (heartbeat without a claim) is written directly. It
+    // must still derive `liveness: null` — liveness belongs to a live claim.
+    db.query('UPDATE tasks SET heartbeat_at = ? WHERE id = ?').run(now, open.id);
     db.close();
 
     const result = await board(repo, '--board', 'roadmap', '--json');

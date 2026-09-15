@@ -667,6 +667,10 @@ describe('runtime layer — liveness (pure, injected timestamps)', () => {
 
   test('recordHeartbeat writes heartbeat_at, visible on the card projection', () => {
     const a = createTask(db, { title: 'a' });
+    // A heartbeat is only meaningful for a live claim — claim first, or the
+    // write is refused (TaskNotClaimedError).
+    claimTask(db, a.id, 'w1');
+    db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(a.id);
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
     const t = recordHeartbeat(db, a.id, NOW);
     expect(t).toBe(NOW);
@@ -801,6 +805,7 @@ describe('lane projection carries enforcedBlock', () => {
 
   test('the lane projection gains ONLY enforcedBlock beyond TaskRow — provenance and heartbeat stay off it', () => {
     const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent' });
+    claimTask(db, a.id, 'w1');
     blockTask(db, a.id, 'r', HUMAN, 'hold');
     recordHeartbeat(db, a.id);
     const row = listTasksWithLane(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;

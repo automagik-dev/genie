@@ -516,6 +516,23 @@ export class TaskReleaseError extends Error {
 }
 
 /**
+ * A heartbeat was refused because the card carries no live claim. Liveness is
+ * derived from `heartbeat_at` on a CLAIMED card, so writing the timestamp onto
+ * an unclaimed card records a worker that does not exist — the card still reads
+ * `ready`/`claimed_by NULL` while its timeline says something is running.
+ */
+export class TaskNotClaimedError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super(
+      `Cannot heartbeat task ${taskId}: it is not claimed — run \`genie task checkout ${taskId} --worker <name>\` first`,
+    );
+    this.name = 'TaskNotClaimedError';
+    this.taskId = taskId;
+  }
+}
+
+/**
  * A completion was refused because the status CAS in {@link completeTask}
  * matched no row: the card is already `done` (or a concurrent transition moved
  * it out of a completable status between decision and write). The status is
@@ -1418,7 +1435,12 @@ export function clearTaskAssignment(
  * self-reported). Returns the timestamp written. Injectable clock for tests.
  */
 export function recordHeartbeat(db: Database, taskId: string, now: number = Date.now()): number {
-  requireTask(db, taskId);
+  const row = db.query('SELECT claimed_by FROM tasks WHERE id = ?').get(taskId) as { claimed_by: string | null } | null;
+  if (!row) throw new UnknownTaskError(taskId);
+  // An unclaimed card has no worker to be alive: refuse instead of stamping a
+  // liveness timestamp nothing owns (`genie task heartbeat` used to exit 0 on a
+  // `ready` card with `claimed_by` NULL).
+  if (row.claimed_by === null) throw new TaskNotClaimedError(taskId);
   db.query('UPDATE tasks SET heartbeat_at = ?, updated_at = ? WHERE id = ?').run(now, now, taskId);
   return now;
 }
