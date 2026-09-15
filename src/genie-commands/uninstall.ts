@@ -2014,40 +2014,60 @@ export interface SkillsChannelRemoval {
   recordRemoved: boolean;
 }
 
+/** Accumulator shared by the inventory sweep and the preserved-retirement sweep. */
+interface SkillsRemovalSink {
+  removed: string[];
+  failures: string[];
+  preserved: string[];
+}
+
+/**
+ * Delete one recorded directory only when `expected` still proves it is genie's
+ * byte-identical install. No digest (a legacy record, a directory that appeared
+ * after the install, a retirement genie never proved) or a digest mismatch
+ * (user-modified/foreign content) preserves it instead — never delete
+ * unverified directories.
+ */
+function removeVerifiedSkillDir(target: string, expected: string | undefined, sink: SkillsRemovalSink): void {
+  const stat = lstatOrNull(target);
+  // Only real directories genie recorded; a symlink or file at that name was
+  // not written by `--copy` and stays untouched.
+  if (stat === null || !stat.isDirectory()) return;
+  const current = computeSkillDirDigest(target);
+  if (expected === undefined || current === null || current !== expected) {
+    sink.preserved.push(target);
+    return;
+  }
+  try {
+    rmSync(target, { recursive: true, force: true });
+    sink.removed.push(target);
+  } catch (error) {
+    sink.failures.push(`${target}: ${errorMessage(error)}`);
+  }
+}
+
 export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
   const record = readSkillsInstallRecord(genieHome);
   if (record === null) return { record: null, removed: [], failures: [], preserved: [], recordRemoved: false };
-  const removed: string[] = [];
-  const failures: string[] = [];
-  const preserved: string[] = [];
+  const sink: SkillsRemovalSink = { removed: [], failures: [], preserved: [] };
   for (const agentDir of record.agentDirs) {
     if (!isAbsolute(agentDir)) continue;
     for (const name of record.inventory) {
       // One traversal guard, owned by the module that also writes the record.
       if (!isSafeSkillName(name)) continue;
-      const target = join(agentDir, name);
-      const stat = lstatOrNull(target);
-      // Only real directories genie recorded; a symlink or file at that name
-      // was not written by `--copy` and stays untouched.
-      if (stat === null || !stat.isDirectory()) continue;
-      // Delete only what the record can prove is still genie's byte-identical
-      // install. No digest entry (a legacy record, or a directory that appeared
-      // after the install) or a digest mismatch (user-modified/foreign content)
-      // preserves the directory instead — never delete unverified directories.
-      const recordedDigest = record.dirDigests?.[target];
-      const currentDigest = computeSkillDirDigest(target);
-      if (recordedDigest === undefined || currentDigest === null || currentDigest !== recordedDigest) {
-        preserved.push(target);
-        continue;
-      }
-      try {
-        rmSync(target, { recursive: true, force: true });
-        removed.push(target);
-      } catch (error) {
-        failures.push(`${target}: ${errorMessage(error)}`);
-      }
+      removeVerifiedSkillDir(join(agentDir, name), record.dirDigests?.[join(agentDir, name)], sink);
     }
   }
+  // Retired skill directories the last install could not archive. They are NOT
+  // in `inventory` (this release no longer delivers them), so without this
+  // sweep an uninstall would leave them on disk with no record left to find
+  // them by. Only entries genie proved at retirement time carry a digest, so
+  // only those can be removed; the rest are reported.
+  for (const entry of record.preserved ?? []) {
+    if (!isAbsolute(entry.agentDir) || !isSafeSkillName(entry.skill)) continue;
+    removeVerifiedSkillDir(join(entry.agentDir, entry.skill), entry.digest, sink);
+  }
+  const { removed, failures, preserved } = sink;
   // The record is the receipt for retrying an incomplete removal, so it is
   // deleted only after a fully clean sweep of every recorded directory.
   if (failures.length > 0 || preserved.length > 0) {
@@ -2067,7 +2087,7 @@ function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
   for (const failure of removal.failures) console.log(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
   for (const dir of removal.preserved) {
     console.log(
-      `  \x1b[33m~\x1b[0m skills.sh channel: preserved ${dir} (unverified: content differs from the recorded install or the record predates digests)`,
+      `  \x1b[33m~\x1b[0m skills.sh channel: preserved ${dir} (unverified: content differs from the recorded install, the record predates digests, or retirement could not prove it)`,
     );
   }
 }

@@ -32,6 +32,7 @@ import {
   recordExportBaseline,
   recordImportBaseline,
   roadmapSnapshot,
+  serializeSnapshot,
   syncRoadmap,
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
@@ -583,7 +584,9 @@ function handleExport(opts: ExportOptions): void {
     try {
       const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
       if (target === null) {
-        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
+        // Same serializer as `--write`: one export of one database is one byte
+        // sequence, whatever each machine's physical column order happens to be.
+        process.stdout.write(serializeSnapshot(exportState(db)));
         return;
       }
       const sliced = isRoadmapSlicePath(target);
@@ -620,8 +623,15 @@ function handleSync(): void {
     const db = openDb();
     try {
       const result = syncRoadmap(db);
+      // The git hooks run this as `task sync || true`, so the exit code alone
+      // reaches nobody: a refusal has to be readable in the hook output, on the
+      // stream reserved for it, and has to name the two resolving commands.
+      if (result.action === 'diverged') {
+        const detail = result.message ?? 'The local board and .genie/roadmap.json both changed since the last sync.';
+        process.stderr.write(`warn: ${detail}\n`);
+        process.exit(1);
+      }
       out(result.message ?? `Board and snapshot are in sync (${result.action}).`);
-      if (result.action === 'diverged') process.exit(1);
     } finally {
       db.close();
     }

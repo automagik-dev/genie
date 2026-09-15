@@ -1094,7 +1094,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     expect(syncRoadmap(db, repo).action).toBe('none');
   });
 
-  test('an old order-sensitive marker with pending edits refuses to overwrite either side', () => {
+  test('an old order-sensitive marker with pending edits publishes them (db-only change)', () => {
     const repo = join(dir, 'hash-upgrade-pending');
     mkdirSync(join(repo, '.genie'), { recursive: true });
     createTask(db, { title: 'existing card' });
@@ -1108,13 +1108,17 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     writeFileSync(markerPath, marker);
     const pending = createTask(db, { title: 'unpublished card' });
 
+    // The pre-`hashVersion` marker is still a usable baseline (it is compared
+    // with the algorithm that wrote it), so this reads as what it is: the file
+    // sits exactly where the baseline left it and only the db moved. Publishing
+    // can lose nothing — an upgrade alone must not manufacture a divergence.
     const result = syncRoadmap(db, repo);
-    expect(result.action).toBe('diverged');
-    expect(result.message).toContain('genie task import --replace');
-    expect(result.message).toContain('genie task export --write');
-    expect(readFileSync(filePath, 'utf-8')).toBe(content);
-    expect(readFileSync(markerPath, 'utf-8')).toBe(marker);
+    expect(result.action).toBe('exported');
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as ReturnType<typeof roadmapSnapshot>;
+    expect(published.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
     expect(getTask(db, pending.id)?.title).toBe('unpublished card');
+    // And the baseline is migrated on the way out.
+    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(2);
   });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
@@ -1982,4 +1986,98 @@ try {
     expect(releaseEvents.length).toBe(1);
     expect(releaseEvents[0].note).toBe('completed');
   }, 30_000);
+});
+
+describe('mutating verbs return the row their own write captured', () => {
+  /**
+   * Make a concurrent hard-delete land in the window a post-commit re-read would
+   * have used: the row is gone the instant the verb's transaction commits. A
+   * verb that read the card back AFTER its commit returns `null` through an
+   * unchecked `as TaskRow` cast, which the CLI surfaces as the raw
+   * `null is not an object` TypeError; a verb whose write captured the row
+   * (RETURNING, or a read inside the transaction) is unaffected.
+   */
+  function deleteOnCommit(connection: Database, taskId: string): void {
+    const originalTransaction = connection.transaction.bind(connection);
+    Object.defineProperty(connection, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as {
+          (...args: unknown[]): unknown;
+          immediate: (...args: unknown[]) => unknown;
+          deferred: (...args: unknown[]) => unknown;
+        };
+        const purge = <T>(result: T): T => {
+          connection.query('DELETE FROM task_events WHERE task_id = ?').run(taskId);
+          connection.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+          return result;
+        };
+        const wrapped = (...args: unknown[]) => purge(transaction(...args));
+        wrapped.immediate = (...args: unknown[]) => purge(transaction.immediate(...args));
+        wrapped.deferred = (...args: unknown[]) => purge(transaction.deferred(...args));
+        return wrapped;
+      },
+    });
+  }
+
+  const verbs: Array<{ name: string; prepare?: (taskId: string) => void; run: (taskId: string) => TaskRow }> = [
+    { name: 'claimTask', run: (id) => claimTask(db, id, 'worker') },
+    { name: 'completeTask', run: (id) => completeTask(db, id) },
+    {
+      name: 'releaseTask',
+      prepare: (id) => {
+        claimTask(db, id, 'worker');
+      },
+      run: (id) => releaseTask(db, id, HUMAN),
+    },
+    { name: 'blockTask', run: (id) => blockTask(db, id, 'why', HUMAN) },
+    {
+      name: 'unblockTask',
+      prepare: (id) => {
+        blockTask(db, id, 'why', HUMAN);
+      },
+      run: (id) => unblockTask(db, id, HUMAN),
+    },
+    { name: 'moveTask', run: (id) => moveTask(db, id, 'Work', HUMAN).task },
+  ];
+
+  for (const verb of verbs) {
+    test(`${verb.name} survives a delete racing its commit`, () => {
+      const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, { title: 'raced card', boardId: board.id, lane: 'Idea' });
+      verb.prepare?.(task.id);
+      deleteOnCommit(db, task.id);
+
+      const returned = verb.run(task.id);
+      expect(returned.id).toBe(task.id);
+      expect(returned.title).toBe('raced card');
+      // The card really is gone — the verb reported its OWN write, not a re-read.
+      expect(getTask(db, task.id)).toBeNull();
+    });
+  }
+
+  test('createTask survives a delete racing its commit', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const probe = createTask(db, { title: 'probe', boardId: board.id });
+    db.query('DELETE FROM tasks WHERE id = ?').run(probe.id);
+    // The next generated id is unknown up front, so purge every task instead.
+    const originalTransaction = db.transaction.bind(db);
+    Object.defineProperty(db, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => {
+          const result = transaction(...args);
+          db.query('DELETE FROM task_events').run();
+          db.query('DELETE FROM tasks').run();
+          return result;
+        };
+      },
+    });
+
+    const created = createTask(db, { title: 'raced creation', boardId: board.id });
+    expect(created.title).toBe('raced creation');
+    expect(created.status).toBe('ready');
+    expect(getTask(db, created.id)).toBeNull();
+  });
 });

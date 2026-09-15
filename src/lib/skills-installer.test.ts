@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
@@ -452,7 +453,14 @@ describe('retiring removed skills during an upgrade', () => {
         '# previous trace\n',
       );
     }
-    expect(first.warnings?.filter((line) => line.includes('skills: retired'))).toHaveLength(2);
+    // ONE line per removed SKILL, not one per (agent dir x skill), plus one
+    // line naming the backup root (F14: 11 skills x 57 homes was 627 lines).
+    expect(first.warnings).toEqual([
+      'skills: retired trace from 2 agent dir(s)',
+      `skills: retirement backups under ${join(backups, generations[0] as string)}`,
+    ]);
+    // The backup root sorts by time, so `state-backups` listings stay ordered.
+    expect(generations[0]).toMatch(/^skills-retirement-\d{4}-\d{2}-\d{2}T[\d-]+Z$/);
     expect(install().ok).toBe(true);
     expect(readdirSync(backups)).toEqual(generations);
   });
@@ -649,6 +657,169 @@ describe('retiring removed skills during an upgrade', () => {
     else expect(readdirSync(target)).toEqual([]);
     expect(readFileSync(join(parked, 'SKILL.md'), 'utf8')).toBe('# concurrent edit\n');
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+  });
+
+  /**
+   * What a cross-filesystem `renameSync` really throws. `GENIE_HOME` on another
+   * mount (`/data/genie`, a bind-mounted agent home, a container volume) used
+   * to abort the whole install here — before the record was written — so every
+   * retry of the suggested `genie update` failed identically forever.
+   */
+  function crossDeviceRename(...blocked: string[]): (source: string, destination: string) => void {
+    return (source, destination) => {
+      if (blocked.includes(source)) {
+        const error: NodeJS.ErrnoException = new Error('EXDEV: cross-device link not permitted');
+        error.code = 'EXDEV';
+        throw error;
+      }
+      renameSync(source, destination);
+    };
+  }
+
+  test('EXDEV falls back to copy-then-remove, and the record is still written', () => {
+    const { dirs, spawn } = previousInstall();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn,
+      renameRetiredSkill: crossDeviceRename(...dirs.map((dir) => join(dir, 'trace'))),
+    });
+    expect(outcome.ok).toBe(true);
+    const record = readSkillsInstallRecord(genieHome);
+    expect(record?.ref).toBe(`v${VERSION_UNDER_TEST}`);
+    expect(record?.inventory).toEqual(['review']);
+    // Nothing was preserved: the copy fallback archived both homes.
+    expect(record?.preserved).toBeUndefined();
+    const generations = readdirSync(join(genieHome, 'state-backups'));
+    expect(generations).toHaveLength(1);
+    for (const [index, dir] of dirs.entries()) {
+      expect(existsSync(join(dir, 'trace'))).toBe(false);
+      const agent = index === 0 ? '.claude' : '.agents';
+      // Backup-first: the bytes are in the backup root, verified there before
+      // the original was removed.
+      expect(
+        readFileSync(
+          join(genieHome, 'state-backups', generations[0] as string, agent, 'skills', 'trace', 'SKILL.md'),
+          'utf8',
+        ),
+      ).toBe('# previous trace\n');
+    }
+    expect(outcome.warnings?.[0]).toBe('skills: retired trace from 2 agent dir(s)');
+  });
+
+  test('the EXDEV copy reproduces symlinks verbatim, so the post-move digest still verifies', () => {
+    const { dirs, record, spawn } = previousInstall();
+    const target = join(dirs[0] as string, 'trace');
+    symlinkSync('./SKILL.md', join(target, 'alias.md'));
+    (record.dirDigests as Record<string, string>)[target] = computeSkillDirDigest(target) as string;
+    writeSkillsInstallRecord(genieHome, record);
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn,
+      renameRetiredSkill: crossDeviceRename(target),
+    });
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(target)).toBe(false);
+    const generation = readdirSync(join(genieHome, 'state-backups'))[0] as string;
+    // A rewritten (absolutized) link target would change the digest the copy is
+    // verified against, and the directory would have been preserved instead.
+    expect(readlinkSync(join(genieHome, 'state-backups', generation, '.claude', 'skills', 'trace', 'alias.md'))).toBe(
+      './SKILL.md',
+    );
+  });
+
+  test('a rename failure that is not EXDEV fails the install and leaks no empty backup root', () => {
+    const { dirs, record, spawn } = previousInstall();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn,
+      renameRetiredSkill: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.reason).toContain('could not finalize');
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
+    // Every retry used to leave one more empty `skills-retirement-*` tree here.
+    expect(readdirSync(join(genieHome, 'state-backups'))).toEqual([]);
+  });
+
+  test('preserved directories stay in the record with a reason, and a reverted edit is retired next update', () => {
+    const { dirs, record, spawn } = previousInstall(['trace', 'perf']);
+    const claude = dirs[0] as string;
+    const edited = join(claude, 'trace');
+    writeFileSync(join(edited, 'SKILL.md'), '# user edit\n');
+    delete record.dirDigests?.[join(claude, 'perf')];
+    writeSkillsInstallRecord(genieHome, record);
+    const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+
+    const first = install();
+    expect(first.ok).toBe(true);
+    // The pre-fix record dropped both of these, so doctor read clean, uninstall
+    // left them, and no later update ever looked at them again.
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      {
+        agentDir: claude,
+        skill: 'trace',
+        reason: 'content changed since the recorded install',
+        digest: record.dirDigests?.[edited] as string,
+      },
+      { agentDir: claude, skill: 'perf', reason: 'no recorded content digest' },
+    ]);
+    expect(first.warnings).toEqual([
+      'skills: retired perf from 1 agent dir(s)',
+      'skills: retired trace from 1 agent dir(s)',
+      `skills: retirement backups under ${join(genieHome, 'state-backups', readdirSync(join(genieHome, 'state-backups'))[0] as string)}`,
+      `skills: preserved retired skill ${edited} (content changed since the recorded install); review it manually`,
+      `skills: preserved retired skill ${join(claude, 'perf')} (no recorded content digest); review it manually`,
+    ]);
+
+    // The user reverts their edit; the NEXT update retries the retirement using
+    // the digest the preserved entry carried forward.
+    writeFileSync(join(edited, 'SKILL.md'), '# previous trace\n');
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect(existsSync(edited)).toBe(false);
+    expect(second.warnings).toContain('skills: retired trace from 1 agent dir(s)');
+    // `perf` has no digest to prove, so it is reported for a human, forever.
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: claude, skill: 'perf', reason: 'no recorded content digest' },
+    ]);
+  });
+
+  test('a skill this release delivers again drops out of the preserved list', () => {
+    const { dirs, record, spawn } = previousInstall();
+    const claude = dirs[0] as string;
+    writeFileSync(join(claude, 'trace', 'SKILL.md'), '# user edit\n');
+    writeSkillsInstallRecord(genieHome, record);
+    expect(runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn }).ok).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toHaveLength(1);
+
+    // `trace` is delivered again: it is no longer a retirement at all.
+    const source = fixtureSkillsTree(['review', 'trace']);
+    const redeliver: CommandRunner = () => {
+      for (const dir of dirs) cpSync(source, dir, { recursive: true });
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: redeliver,
+    });
+    expect(outcome.ok).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toBeUndefined();
+    expect(readSkillsInstallRecord(genieHome)?.inventory).toEqual(['review', 'trace']);
   });
 });
 

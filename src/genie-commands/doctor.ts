@@ -37,6 +37,7 @@ import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
+  type SkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
   readSkillsInstallRecord,
@@ -385,9 +386,37 @@ function evaluateAgentSkillHome(spec: AgentSkillHomeSpec, context: SkillsChannel
   return { name, status: 'warn', detail, suggestion: SKILLS_CHANNEL_SUGGESTION, skillsChannel: rider };
 }
 
+/** How many preserved retirement paths the check names before summarizing. */
+const MAX_PRESERVED_SKILL_PATHS = 5;
+
+const SKILLS_RETIREMENT_SUGGESTION = 'Review them, remove them, then run `genie update` to retry retirement';
+
+/**
+ * Retired skill directories genie could not archive.
+ *
+ * They ride the install record on purpose: an entry dropped from the record is
+ * never retried by `genie update`, never removed by `genie uninstall`, and
+ * invisible here — the host reads `skills: claude 14/14` while a retired skill
+ * sits in the home forever. Doctor stays a read-only observer; it names them.
+ */
+function evaluatePreservedRetirements(record: SkillsInstallRecord | null): CheckResult | null {
+  const preserved = record?.preserved ?? [];
+  if (preserved.length === 0) return null;
+  const paths = preserved.map((entry) => `${join(entry.agentDir, entry.skill)} (${entry.reason})`);
+  const named = paths.slice(0, MAX_PRESERVED_SKILL_PATHS);
+  const rest = paths.length - named.length;
+  return {
+    name: 'skills: retirement',
+    status: 'warn',
+    detail: `${preserved.length} preserved retired skill dir(s): ${named.join('; ')}${rest > 0 ? `; +${rest} more` : ''}`,
+    suggestion: SKILLS_RETIREMENT_SUGGESTION,
+  };
+}
+
 /**
  * One line per known agent skill home, plus a `skills: channel` warning when no
- * install record exists at all.
+ * install record exists at all, plus a `skills: retirement` warning naming
+ * every directory the last install preserved instead of archiving.
  *
  * The comparison inventory is the record's when there is one; without a record
  * the delivered tree under `<GENIE_HOME>/skills` is the only remaining truth
@@ -422,6 +451,8 @@ export function checkSkillsChannel(options: { home?: string; genieHome?: string 
     binaryTag,
   };
   for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
+  const retirement = evaluatePreservedRetirements(record);
+  if (retirement !== null) results.push(retirement);
   return results;
 }
 

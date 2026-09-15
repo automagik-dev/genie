@@ -34,6 +34,14 @@ the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
 its sidecars) plus legacy v4 state paths — is gitignored; the markdown
 documents are committed.
 
+`roadmap.json` (the canonical board snapshot, tracked) is written in **canonical
+JSON — every object's keys sorted, recursively** — so its bytes depend on the
+snapshot's content alone and never on the exporting database's physical column
+order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
+`.genie/roadmap-sync` marker records the hash algorithm behind its baseline pair
+as `hashVersion`, and a marker without one is compared with the pre-sorting hash
+so upgrading genie never by itself reads as divergence.
+
 ### Worktree sharing
 
 All linked worktrees of a repository share **one** `genie.db`. The path is
@@ -287,18 +295,80 @@ Vestigial (pending drop): the wish-group execution machinery is production-dead 
 
 ## Row projections — which shapes carry the runtime layer
 
-The runtime columns above exist in one table but are exposed by three deliberately
+The runtime columns above exist in one table but are exposed by deliberately
 different projections. Which one a caller maps through IS the contract:
 
 | Projection | Adds | Serialized by |
 |------------|------|---------------|
 | `TaskRow` | — (frozen) | laneless board `--json`, MCP tools, `task export` tasks |
 | `LaneTaskRow` | `lane`, `enforcedBlock` | lane-grouped board `--json` |
-| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | nothing — human render + `task status` only |
+| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | human render, `task status`, and the scoped board aggregate |
+| `BoardTaskAggregate` | `liveness`, `dependencies`, `timeline` + counts, `comments` + count | scoped lane board `--json` only |
 
 `TaskRow` is **frozen**: its key set is asserted byte-for-byte by test, and no
-runtime field may ever be added to it. `TaskCardRow` is the widest projection but
-is never serialized — it feeds badge rendering, so widening it is safe.
+runtime field may ever be added to it.
+
+`TaskCardRow` **is serialized** — by the scoped board aggregate, which extends it.
+Widening it therefore widens a machine contract and is no longer free. It is
+still the projection the human render and `task status` map through, and that
+sharing IS the contract: the aggregate mapper validates a row's scalars and then
+calls the SAME `mapTaskCard`, so the two paths can never disagree about a card.
+Concretely, an unrecognized `block_kind` coerces to `work` on both — importable
+data never makes `--json` exit 1 where the human render succeeds.
+
+### The scoped board aggregate (`board --board <ref> --json`)
+
+`{ schemaVersion: 1, scope, eventLimit, lanes: [{ name, label, action, cards }] }`.
+The board's lane definition and every card, dependency, and event come from **one
+deferred read transaction** (`readBoardAggregate`), so cards are grouped into the
+lane definition that was stored alongside them.
+
+- **`schemaVersion` is 1 and extension is additive.** Consumers ignore unknown
+  keys; a key is never removed or retyped without bumping the version.
+- **Per-card event and comment caps.** `timeline` and `comments` each carry at
+  most `BOARD_JSON_EVENT_LIMIT` (25) entries — the **most recent** ones, still in
+  chronological order. `eventCount` and `commentCount` always report the true
+  totals and `eventsTruncated` says whether the timeline is a suffix. A card
+  timeline is append-only and unbounded while every consumer reads this payload
+  as one response under a fixed byte budget, so an unbounded embed makes a
+  long-lived board permanently unloadable.
+- **A whole-response byte budget, not just a per-card one.** The per-card cap
+  bounds a card's DEPTH; a board is unbounded in card COUNT too, so a thousand
+  cards of ten events each overflow the budget with every card well inside the
+  cap. `BOARD_JSON_MAX_BYTES` (3.5 MiB — the DSH plugin caps ONE request, a
+  mutation's output plus the refresh that follows it, at 4 MiB, and 512 KiB of
+  that is reserved for the mutation output and stderr) bounds the serialized
+  response. The emitter walks `BOARD_JSON_EVENT_LIMIT_STEPS` (`25, 10, 5, 2, 0`)
+  widest-first and emits the first response that fits; the applied cap is the
+  root **`eventLimit`**, always present, so a client can say what it is not
+  showing. **Depth degrades, the card set never does** — cards are never dropped
+  or paginated away, and the counts stay the true totals at every step. A
+  degraded response prints one `Note: board "…" is large; each card's embedded
+  history was capped at N events …` on stderr and still exits 0.
+- **A board that fits at no cap is refused by name.** When even a history-free
+  response exceeds the budget (~850 bytes per history-free card, so roughly
+  4,000 cards), the read
+  exits 1 with `Error: Board "…" is too large to emit as one JSON response: N
+  cards serialize to X MiB …; narrow the read with --wish <slug>, or split the
+  board.` — an actionable sentence a client prints verbatim, never an opaque
+  downstream truncation. The human render of the same board is unaffected: the
+  budget belongs to the machine payload, not to the board.
+- **Fails closed only on genuinely non-scalar storage** — the shapes SQLite can
+  hold but the JSON contract cannot express (a BLOB title, a status outside the
+  enum, a `comment` event with a NULL note). Every diagnostic is one bounded
+  `Malformed board detail: …` line.
+- **Laneless semantics are decided once, for both paths.** `boards.lanes` is
+  untrusted TEXT that `task import`/`sync` accepts unvalidated and no board verb
+  repairs, so `normalizeLanes` is the single validator both the human render and
+  `--json` go through. A stored `label`/`action` of `null` — exactly the shape
+  this aggregate itself emits — reads as absent, so a round-trip of emitted
+  output parses back to the lanes it came from. Anything unusable (not an array,
+  an entry that is not an object, a missing/blank/non-string `name`, a non-string
+  `label`/`action`) makes the board **laneless**: both paths print the same
+  one-line `Note: board "…" has no usable lane metadata; …` on stderr, exit 0,
+  and render the laneless board — `--json` falls through to the frozen
+  `{ scope, columns }` status payload. A laneless board is never a
+  `Malformed board detail` failure on one path only.
 
 `LaneTaskRow.enforcedBlock` is the one deliberate runtime field on a serialized
 additive shape: `null` when the card is unblocked, otherwise
