@@ -9,5 +9,6 @@
   ],
   "project": ["src/**/*.ts", "plugins/dsh-genie-board/src/**/*.{ts,tsx}"],
   "ignoreBinaries": ["ldd", "omni"],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": ["react"]
 }

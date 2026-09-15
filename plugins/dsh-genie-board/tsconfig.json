@@ -7,12 +7,9 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "react": ["../../.dsh-types/react"],
-      "react/jsx-runtime": ["../../.dsh-types/react/jsx-runtime"],
-      "react-dom": ["../../.dsh-types/react-dom"],
-      "@deepseek-ai/dsh-client-ui-primitives": ["../../.dsh-types/primitives.d.ts"]
+      "@deepseek-ai/dsh-client-ui-primitives": ["./types/primitives.d.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "build.ts", "build.test.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "build.ts", "build.test.ts"],
   "exclude": ["dist"]
 }

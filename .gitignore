@@ -136,4 +136,3 @@ core
 .warp/
 
 # Local type declarations for the DSH plugin typecheck (fetched, not tracked)
-.dsh-types/
