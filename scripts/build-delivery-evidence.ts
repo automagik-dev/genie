@@ -1,20 +1,10 @@
 #!/usr/bin/env bun
 
 import { createHash } from 'node:crypto';
-import {
-  chmodSync,
-  closeSync,
-  lstatSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  readSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve, sep } from 'node:path';
+import { extractTarball, sha256File } from './release-archive-safety.js';
 
 const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -81,22 +71,6 @@ function parseArguments(argv: string[]): Arguments {
   return args as Arguments;
 }
 
-function sha256File(path: string): string {
-  const digest = createHash('sha256');
-  const fd = openSync(path, 'r');
-  try {
-    const buffer = Buffer.alloc(64 * 1024);
-    for (;;) {
-      const count = readSync(fd, buffer, 0, buffer.length, null);
-      if (count <= 0) break;
-      digest.update(buffer.subarray(0, count));
-    }
-  } finally {
-    closeSync(fd);
-  }
-  return digest.digest('hex');
-}
-
 function collectPhysicalTreeEntries(root: string, current: string, entries: string[]): void {
   for (const name of readdirSync(current).sort()) {
     const absolute = join(current, name);
@@ -123,46 +97,6 @@ function physicalTreeDigest(root: string): string {
   digest.update('genie-codex-activation-tree-v1\0');
   for (const entry of entries.sort()) digest.update(entry);
   return digest.digest('hex');
-}
-
-function assertSafeArchiveListing(tarball: string): void {
-  const listing = Bun.spawnSync(['tar', '-tzf', tarball], { stdout: 'pipe', stderr: 'pipe' });
-  if (listing.exitCode !== 0) fail(`cannot list tarball: ${listing.stderr.toString().trim()}`);
-  for (const raw of listing.stdout.toString().split('\n')) {
-    if (!raw) continue;
-    const path = raw.replace(/^\.\//, '').replace(/\/$/, '');
-    if (!path) continue;
-    if (path.startsWith('/') || path.includes('\\') || path.split('/').some((part) => part === '..')) {
-      fail(`unsafe archive path ${raw}`);
-    }
-  }
-  const verbose = Bun.spawnSync(['tar', '-tvzf', tarball], { stdout: 'pipe', stderr: 'pipe' });
-  if (verbose.exitCode !== 0) fail(`cannot inspect tarball entry types: ${verbose.stderr.toString().trim()}`);
-  for (const line of verbose.stdout.toString().split('\n')) {
-    if (!line) continue;
-    const kind = line[0];
-    if (kind !== '-' && kind !== 'd') fail(`archive contains link or unsupported member type ${kind}`);
-  }
-}
-
-function assertPhysicalArchiveTree(current: string): void {
-  for (const name of readdirSync(current)) {
-    const path = join(current, name);
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) fail(`archive extracted a symlink at ${path}`);
-    if (stat.isDirectory()) assertPhysicalArchiveTree(path);
-    else if (!stat.isFile()) fail(`archive extracted an unsupported entry at ${path}`);
-  }
-}
-
-function extractTarball(tarball: string, root: string): void {
-  assertSafeArchiveListing(tarball);
-  const extracted = Bun.spawnSync(['tar', '-xzf', tarball, '--no-same-owner', '--no-same-permissions', '-C', root], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  if (extracted.exitCode !== 0) fail(`cannot extract tarball: ${extracted.stderr.toString().trim()}`);
-  assertPhysicalArchiveTree(root);
 }
 
 function assertManifestBinding(args: Arguments): void {
@@ -207,7 +141,12 @@ function main(): void {
   const extractionRoot = mkdtempSync(join(tmpdir(), 'genie-delivery-evidence-'));
   try {
     chmodSync(extractionRoot, 0o700);
-    extractTarball(args.tarball, extractionRoot);
+    // The shared archive-safety helpers throw; this gate answers with exit 2.
+    try {
+      extractTarball(args.tarball, extractionRoot);
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
     const binary = join(extractionRoot, 'genie');
     const binaryStat = lstatSync(binary);
     if (!binaryStat.isFile() || binaryStat.isSymbolicLink()) fail('tarball genie member must be a physical file');
@@ -237,4 +176,4 @@ function main(): void {
   }
 }
 
-main();
+if (import.meta.main) main();
