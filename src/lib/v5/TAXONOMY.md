@@ -42,7 +42,16 @@ order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
 as `hashVersion`, and a marker without one is compared with the pre-sorting hash
 so upgrading genie never by itself reads as divergence.
 
+Because the bytes are a function of the content alone, **importing a committed
+`roadmap.json` and exporting it again reproduces it byte for byte**, and a
+one-card change diffs as that one card rather than as a whole-file rewrite.
 
+**Every snapshot genie emits carries `hire_roster: []`** — stdout, the canonical
+`--write`, and any other `--write` path alike. Hire rows hold machine-local
+worktree paths, and a snapshot is a publishable artifact wherever it is written;
+the rows stay in the database. The symmetric rule on the way back in: an import
+never destroys local hires unless the snapshot it is applying brings hire rows
+of its own.
 
 ### Two databases, never one file
 

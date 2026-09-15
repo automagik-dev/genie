@@ -1180,18 +1180,31 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
+  test('explicit relative canonical path behaves like the default; no export path leaks hires', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
     hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
     db.close();
 
-    // Custom-file --write carries the COMPLETE state (hire_roster included), so
-    // a backup.json → import --replace round-trip cannot silently drop hires.
+    // m10: a snapshot is publishable wherever it is written, so the
+    // machine-local hire_roster never travels — not on a custom --write path
+    // either. The rows stay in the db, and the backup still round-trips because
+    // an import that brings no hires leaves the local roster alone.
     const backup = await cli(repo, 'export', '--write', 'backup.json');
     expect(backup.code).toBe(0);
     const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
-    expect(backupState.hire_roster).toHaveLength(1);
+    expect(backupState.hire_roster).toEqual([]);
+    expect(backupState.tasks).toHaveLength(1);
+
+    const restored = await cli(repo, 'import', 'backup.json', '--replace');
+    expect(restored.code).toBe(0);
+    const afterBackupImport = openDb({ cwd: repo });
+    const survivingHires = afterBackupImport.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    afterBackupImport.close();
+    expect(survivingHires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
 
     // The canonical path spelled explicitly (relative) still emits the roadmap
     // slice and still counts as canonical on import: local hires preserved.
