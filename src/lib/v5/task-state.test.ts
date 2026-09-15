@@ -281,6 +281,25 @@ describe('lane moves + task_events timeline', () => {
   test('appendTaskEvent rejects an unknown task', () => {
     expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
   });
+
+  // M6: the append is check-then-insert. Under a concurrent delete the insert
+  // used to violate the task_events foreign key and surface the raw
+  // `FOREIGN KEY constraint failed`. The immediate transaction closes the
+  // window; this asserts the translation that backstops a lost write lock.
+  test('appendTaskEvent raises the typed not-found error, never a raw FOREIGN KEY failure', () => {
+    const task = createTask(db, { title: 'doomed' });
+    db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+    let caught: unknown;
+    try {
+      appendTaskEvent(db, task.id, { kind: 'comment', note: 'too late' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownTaskError);
+    expect((caught as Error).message).toBe(`Task not found: ${task.id}`);
+    expect((caught as Error).message).not.toContain('FOREIGN KEY');
+  });
+});
 });
 
 describe('setTaskWish — card identity without delete-and-recreate', () => {

@@ -1160,7 +1160,7 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
       )
       .get(now, taskId) as RawTask | null;
     if (completed) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'completed',
         authorKind: author?.authorKind ?? undefined,
@@ -1217,7 +1217,7 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
       )
       .get(now, taskId) as RawTask | null;
     if (released) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'released',
         authorKind: author.authorKind ?? undefined,
@@ -1257,7 +1257,7 @@ export function blockTask(
       )
       .get(blockedBy, reason, kind, now, taskId) as RawTask | null;
     if (!blocked) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'block',
       note: reason,
       authorKind: author.authorKind ?? undefined,
@@ -1280,7 +1280,7 @@ export function unblockTask(db: Database, taskId: string, author: EventAuthor): 
       )
       .get(now, taskId) as RawTask | null;
     if (!unblocked) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
@@ -1350,7 +1350,7 @@ export function assignTask(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'assign',
       note: `assigned to ${pair.agent}: ${pair.reason}`,
       authorKind: author.authorKind ?? undefined,
@@ -1385,7 +1385,7 @@ export function clearTaskAssignment(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'clear',
       note: `assignment cleared (was ${current.assignedAgent}: ${current.assignedReason})`,
       authorKind: author.authorKind ?? undefined,
@@ -1459,11 +1459,12 @@ function mapTaskEvent(row: RawTaskEvent): TaskEvent {
 }
 
 /**
- * Append one authored event to a card's timeline. This is the MINIMAL API the
- * move verb needs; the full verb surface (comment/block/release/report) lands in
- * a later group on top of this table.
+ * Append one authored event to a card's timeline. Caller owns the transaction —
+ * every in-module caller already holds an immediate one, so the existence check
+ * and the insert are atomic against a concurrent delete. The exported
+ * {@link appendTaskEvent} is the standalone entry point.
  */
-export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
   requireTask(db, taskId);
   const createdAt = Date.now();
   const res = db
@@ -1478,6 +1479,30 @@ export function appendTaskEvent(db: Database, taskId: string, event: AppendEvent
     author: event.author ?? null,
     createdAt,
   };
+}
+
+/**
+ * Append one authored event to a card's timeline (`task comment` / `task report`
+ * and every other standalone append).
+ *
+ * BEGIN IMMEDIATE around the existence check AND the insert: without it a
+ * concurrent `task delete` in another worktree lands between the two and the
+ * insert fails the `task_events.task_id` foreign key, surfacing the raw
+ * `FOREIGN KEY constraint failed` — no verb, no card id, no remedy. Under the
+ * write lock the delete is serialized, so the check decides the insert.
+ *
+ * The FK translation below is the belt to that braces: a straggler that
+ * exhausts busy_timeout can still lose the lock and see the constraint fire.
+ * The card is then genuinely gone, which is exactly {@link UnknownTaskError}.
+ */
+export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+  const append = db.transaction((): TaskEvent => appendTaskEventInTx(db, taskId, event));
+  try {
+    return append.immediate() as TaskEvent;
+  } catch (err) {
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) throw new UnknownTaskError(taskId);
+    throw err;
+  }
 }
 
 /** A card's timeline events in append order. */
@@ -1747,7 +1772,7 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
       .query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ? RETURNING *')
       .get(toLane, now, taskId) as RawTask | null;
     if (!moved) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'move',
       note,
       authorKind: author.authorKind ?? undefined,
@@ -1819,7 +1844,7 @@ export function setTaskWish(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'wish',
       note,
       authorKind: author.authorKind ?? undefined,
