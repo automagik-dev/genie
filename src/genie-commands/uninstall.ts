@@ -2012,6 +2012,15 @@ export interface SkillsChannelRemoval {
    * cleanliness — they stay in place and are reported, never removed.
    */
   preserved: string[];
+  /**
+   * The subset of `removed` that came from the record's `preserved` retirement
+   * entries rather than its current inventory. They are named individually in
+   * the report: a retired directory a previous update could not archive is the
+   * one class of removal an operator has been told to expect a human decision
+   * about, and burying it in a `removed <n> recorded skill dir(s)` count meant
+   * nothing ever said which of them uninstall finally deleted.
+   */
+  removedRetired: string[];
   recordRemoved: boolean;
 }
 
@@ -2049,7 +2058,9 @@ function removeVerifiedSkillDir(target: string, expected: string | undefined, si
 
 export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
   const record = readSkillsInstallRecord(genieHome);
-  if (record === null) return { record: null, removed: [], failures: [], preserved: [], recordRemoved: false };
+  if (record === null) {
+    return { record: null, removed: [], failures: [], preserved: [], removedRetired: [], recordRemoved: false };
+  }
   const sink: SkillsRemovalSink = { removed: [], failures: [], preserved: [] };
   for (const agentDir of record.agentDirs) {
     if (!isAbsolute(agentDir)) continue;
@@ -2064,17 +2075,26 @@ export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemo
   // sweep an uninstall would leave them on disk with no record left to find
   // them by. Only entries genie proved at retirement time carry a digest, so
   // only those can be removed; the rest are reported.
+  const inventorySweepCount = sink.removed.length;
   for (const entry of record.preserved ?? []) {
     if (!isAbsolute(entry.agentDir) || !isSafeSkillName(entry.skill)) continue;
     removeVerifiedSkillDir(join(entry.agentDir, entry.skill), entry.digest, sink);
   }
   const { removed, failures, preserved } = sink;
+  const removedRetired = removed.slice(inventorySweepCount);
   // The record is the receipt for retrying an incomplete removal, so it is
   // deleted only after a fully clean sweep of every recorded directory.
   if (failures.length > 0 || preserved.length > 0) {
-    return { record, removed, failures, preserved, recordRemoved: false };
+    return { record, removed, failures, preserved, removedRetired, recordRemoved: false };
   }
-  return { record, removed, failures, preserved, recordRemoved: deleteSkillsInstallRecord(genieHome) };
+  return {
+    record,
+    removed,
+    failures,
+    preserved,
+    removedRetired,
+    recordRemoved: deleteSkillsInstallRecord(genieHome),
+  };
 }
 
 function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
@@ -2085,6 +2105,9 @@ function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
   console.log(
     `  \x1b[32m+\x1b[0m skills.sh channel: removed ${removal.removed.length} recorded skill dir(s) (${removal.record.ref})`,
   );
+  for (const dir of removal.removedRetired) {
+    console.log(`  \x1b[32m+\x1b[0m skills.sh channel: removed preserved retired skill dir ${dir}`);
+  }
   for (const failure of removal.failures) console.log(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
   for (const dir of removal.preserved) {
     console.log(

@@ -206,7 +206,25 @@ never over a GitHub ref — the signed tarball's own bytes are the only source g
 public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be
 ahead of or behind any release.
 
-Successful updates also retire removed skills whose content still matches the previous install record, keeping their bytes under `~/.genie/state-backups/skills-retirement-*`. Modified or unverified copies remain for manual review. If retirement fails, `genie update` retains the previous record and reports a retry.
+Retirement runs **before** the install pass, so a home the skills CLI replaces has already been backed up. Removed
+skills whose content still matches the previous install record are archived under
+`~/.genie/state-backups/skills-retirement-<timestamp>/`, mirroring their path relative to `$HOME`. Modified or
+unverified copies remain for manual review; a recorded agent home that no longer exists is reported and kept in the
+record. If retirement fails, `genie update` retains the previous record and reports a retry.
+
+#### Restoring from a retirement backup
+
+Restore with `--no-preserve=mode` (or `rsync -a --no-perms`). A plain `cp -a` copies the backup's own directory
+metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently becomes `drwx------`:
+
+```bash
+BK=~/.genie/state-backups/skills-retirement-<timestamp>
+cp -a --no-preserve=mode "$BK/." "$HOME/"
+# or, equivalently:
+rsync -a --no-perms "$BK/" "$HOME/"
+```
+
+Both forms restore the removed trees and leave the modes of pre-existing directories alone.
 
 Every known agent skill home gets a copy:
 

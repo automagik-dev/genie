@@ -72,6 +72,21 @@ function okRunner(record: { argv: string[][] }): CommandRunner {
   };
 }
 
+/**
+ * `okRunner` plus what the real CLI does: copy the delivered tree into every
+ * agent home that exists. A zero exit that writes nothing is now a failure of
+ * its own (see "a zero exit that wrote no verifiable skill directory"), so a
+ * test that wants a SUCCESSFUL install has to deliver something.
+ */
+function deliveringOkRunner(record: { argv: string[][] }): CommandRunner {
+  const inner = okRunner(record);
+  return (command, args, options) => {
+    const source = args[args.indexOf('add') + 1] as string;
+    for (const entry of existingAgentSkillHomes(home)) cpSync(source, entry.dir, { recursive: true });
+    return inner(command, args, options);
+  };
+}
+
 const alwaysFound = (name: string) => `/usr/bin/${name}`;
 
 beforeEach(() => {
@@ -298,11 +313,58 @@ describe('runSkillsInstall', () => {
 
     expect(outcome.ok).toBe(false);
     const warning = (outcome.ok === false ? (outcome.warnings ?? []) : []).find((line) => line.includes('collision:'));
-    expect(warning).toContain(`skills: collision: ${join(claudeSkills, 'wish')} (wish) — backed up to `);
+    expect(warning).toContain(
+      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — a foreign dir in an agent home this install writes; backed up to `,
+    );
     const backupRoot = (warning as string).split('backed up to ')[1] as string;
     expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       '# a foreign wish skill\n',
     );
+  });
+
+  /**
+   * M4: the snapshot used to union the known homes with an UNFILTERED `$HOME`
+   * scan, so any `<anything>/skills/<name>/` directory under the home was
+   * copied into GENIE_HOME and reported as an overwrite. On the 2026-09-15
+   * dogfood host that was 152 directories — `~/.Trash`, `~/backups`, another
+   * product's agent tree — none of which the installer ever writes, all of them
+   * provably byte-identical afterwards. Candidates are now exactly the homes
+   * `--all` writes plus the homes the previous record proves it wrote.
+   */
+  test('only agent homes the install writes are snapshotted; foreign trees elsewhere are untouched', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
+    // Not an agent home: a stray `skills/` tree the scan used to sweep in.
+    const stray = join(home, 'workspace', 'skills', 'wish');
+    mkdirSync(stray, { recursive: true });
+    writeFileSync(join(stray, 'SKILL.md'), '# someone else\n', 'utf8');
+    const trashed = join(home, '.Trash', 'skills', 'wish');
+    mkdirSync(trashed, { recursive: true });
+    writeFileSync(join(trashed, 'SKILL.md'), '# deleted by the user\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const collisions = (outcome.ok ? (outcome.warnings ?? []) : []).filter((line) => line.includes('collision:'));
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0]).toContain(join(claudeSkills, 'wish'));
+    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish' }]);
+    const backupRoot = (collisions[0] as string).split('backed up to ')[1] as string;
+    expect(existsSync(join(backupRoot, '.claude', 'skills', 'wish'))).toBe(true);
+    // Nothing outside an agent home was read into the backup, and both stray
+    // trees are exactly as the user left them.
+    expect(existsSync(join(backupRoot, 'workspace'))).toBe(false);
+    expect(existsSync(join(backupRoot, '.Trash'))).toBe(false);
+    expect(readFileSync(join(stray, 'SKILL.md'), 'utf8')).toBe('# someone else\n');
+    expect(readFileSync(join(trashed, 'SKILL.md'), 'utf8')).toBe('# deleted by the user\n');
   });
 
   test("stderr's last line wins over stdout when both streams are populated", () => {
@@ -458,6 +520,7 @@ describe('retiring removed skills during an upgrade', () => {
     expect(first.warnings).toEqual([
       'skills: retired trace from 2 agent dir(s)',
       `skills: retirement backups under ${join(backups, generations[0] as string)}`,
+      'skills: retirement: 2 archived, 0 preserved, 0 already absent of 2 recorded target(s)',
     ]);
     // The backup root sorts by time, so `state-backups` listings stay ordered.
     expect(generations[0]).toMatch(/^skills-retirement-\d{4}-\d{2}-\d{2}T[\d-]+Z$/);
@@ -507,7 +570,13 @@ describe('retiring removed skills during an upgrade', () => {
     expect(outcome.warnings?.filter((line) => line.includes('preserved retired skill'))).toHaveLength(2);
   });
 
-  test('failed installation leaves removed skills and the old record untouched', () => {
+  /**
+   * M1: retirement now runs BEFORE the install pass, so a failing install no
+   * longer leaves the retired bytes where `skills.sh --all` can destroy them.
+   * The record is still untouched, so `genie update` retries; the bytes are in
+   * `state-backups/` and the warnings say so even on the failure path.
+   */
+  test('a failed installation keeps the old record, and the bytes it already archived', () => {
     const { dirs, record } = previousInstall();
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
@@ -518,12 +587,25 @@ describe('retiring removed skills during an upgrade', () => {
     });
     expect(outcome.ok).toBe(false);
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
-    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
-    expect(existsSync(join(genieHome, 'state-backups'))).toBe(false);
+    const generation = readdirSync(join(genieHome, 'state-backups'))[0] as string;
+    for (const [index, dir] of dirs.entries()) {
+      expect(existsSync(join(dir, 'trace'))).toBe(false);
+      const agent = index === 0 ? '.claude' : '.agents';
+      expect(
+        readFileSync(join(genieHome, 'state-backups', generation, agent, 'skills', 'trace', 'SKILL.md'), 'utf8'),
+      ).toBe('# previous trace\n');
+    }
+    expect(outcome.warnings).toContain('skills: retired trace from 2 agent dir(s)');
   });
 
-  test('a zero exit without verified replacement bytes cannot retire old skills', () => {
-    const { dirs, record } = previousInstall();
+  /**
+   * The replacement check retirement can no longer make for itself, now that it
+   * runs first: a zero exit that wrote no verifiable skill directory anywhere
+   * is still a failure, so no record is written and `genie update` keeps
+   * retrying instead of recording an install that never landed.
+   */
+  test('a zero exit that wrote no verifiable skill directory is still a failure', () => {
+    const { record } = previousInstall();
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
       genieHome,
@@ -532,17 +614,23 @@ describe('retiring removed skills during an upgrade', () => {
       spawn: okRunner({ argv: [] }),
     });
     expect(outcome.ok).toBe(false);
-    expect(!outcome.ok && outcome.reason).toContain('replacement skills were not verified');
+    expect(!outcome.ok && outcome.reason).toBe('the skills CLI wrote no verifiable skill directory');
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
-    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
-    expect(existsSync(join(genieHome, 'state-backups'))).toBe(false);
   });
 
+  /**
+   * M1, the ordering contract: a home whose replacement bytes never land (or
+   * land edited, or as a symlink) still has its retired directory archived,
+   * because the archive was taken before the install ran. The pre-fix code
+   * retired AFTER the install and used the post-install digests as a veto, so
+   * this home kept a directory the record then dropped — and a home skills.sh
+   * had already replaced was silently skipped instead.
+   */
   test.each(['missing', 'edited', 'symlinked'])(
-    'an %s replacement preserves that home without blocking retirement elsewhere',
+    'an %s replacement in one home does not strand the retired bytes',
     (replacement) => {
       const { dirs, spawn } = previousInstall();
-      const preserved = dirs[1] as string;
+      const damaged = dirs[1] as string;
       const outcome = runSkillsInstall({
         version: VERSION_UNDER_TEST,
         genieHome,
@@ -550,7 +638,7 @@ describe('retiring removed skills during an upgrade', () => {
         which: alwaysFound,
         spawn: (...args) => {
           const result = spawn(...args);
-          const target = join(preserved, 'review');
+          const target = join(damaged, 'review');
           if (replacement === 'edited') writeFileSync(join(target, 'SKILL.md'), '# personal review\n');
           else {
             rmSync(target, { recursive: true });
@@ -560,21 +648,20 @@ describe('retiring removed skills during an upgrade', () => {
         },
       });
       expect(outcome.ok).toBe(true);
-      expect(existsSync(join(dirs[0] as string, 'trace'))).toBe(false);
-      expect(readFileSync(join(preserved, 'trace', 'SKILL.md'), 'utf8')).toBe('# previous trace\n');
-      expect(outcome.warnings).toContain(
-        `skills: preserved retired skill ${join(preserved, 'trace')} (replacement set unverified in this home); review it manually`,
-      );
-      expect(readSkillsInstallRecord(genieHome)?.ref).toBe(`v${VERSION_UNDER_TEST}`);
-      expect(readSkillsInstallRecord(genieHome)?.inventory).toEqual(['review']);
+      expect(readSkillsInstallRecord(genieHome)?.preserved).toBeUndefined();
       const generations = readdirSync(join(genieHome, 'state-backups'));
       expect(generations).toHaveLength(1);
-      expect(
-        readFileSync(
-          join(genieHome, 'state-backups', generations[0] as string, '.claude', 'skills', 'trace', 'SKILL.md'),
-          'utf8',
-        ),
-      ).toBe('# previous trace\n');
+      for (const [index, dir] of dirs.entries()) {
+        expect(existsSync(join(dir, 'trace'))).toBe(false);
+        const agent = index === 0 ? '.claude' : '.agents';
+        expect(
+          readFileSync(
+            join(genieHome, 'state-backups', generations[0] as string, agent, 'skills', 'trace', 'SKILL.md'),
+            'utf8',
+          ),
+        ).toBe('# previous trace\n');
+      }
+      expect(outcome.warnings).toContain('skills: retired trace from 2 agent dir(s)');
     },
   );
 
@@ -585,7 +672,7 @@ describe('retiring removed skills during an upgrade', () => {
     const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
     const failed = install();
     expect(failed.ok).toBe(false);
-    expect(!failed.ok && failed.reason).toContain('could not finalize');
+    expect(!failed.ok && failed.reason).toContain('could not retire the skills this release drops');
     expect(!failed.ok && failed.remedy).toContain('genie update');
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
     for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
@@ -746,7 +833,7 @@ describe('retiring removed skills during an upgrade', () => {
       },
     });
     expect(outcome.ok).toBe(false);
-    expect(!outcome.ok && outcome.reason).toContain('could not finalize');
+    expect(!outcome.ok && outcome.reason).toContain('could not retire the skills this release drops');
     expect(readSkillsInstallRecord(genieHome)).toEqual(record);
     for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
     // Every retry used to leave one more empty `skills-retirement-*` tree here.
@@ -781,6 +868,7 @@ describe('retiring removed skills during an upgrade', () => {
       `skills: retirement backups under ${join(genieHome, 'state-backups', readdirSync(join(genieHome, 'state-backups'))[0] as string)}`,
       `skills: preserved retired skill ${edited} (content changed since the recorded install); review it manually`,
       `skills: preserved retired skill ${join(claude, 'perf')} (no recorded content digest); review it manually`,
+      'skills: retirement: 2 archived, 2 preserved, 0 already absent of 4 recorded target(s)',
     ]);
 
     // The user reverts their edit; the NEXT update retries the retirement using
@@ -794,6 +882,135 @@ describe('retiring removed skills during an upgrade', () => {
     expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
       { agentDir: claude, skill: 'perf', reason: 'no recorded content digest' },
     ]);
+  });
+
+  /**
+   * M1/M2, the dogfood regression. A whole recorded agent home vanished between
+   * the record and the retirement pass (`skills.sh --all` recreated
+   * `~/.openclaw` mid-run). The pre-fix code printed `retired trace from 2
+   * agent dir(s)` against a 3-home record, said nothing about the third, and
+   * then wrote a record that no longer contained it — erasing the only evidence
+   * the home was ever recorded, from the transcript, from `genie doctor`, and
+   * from `genie uninstall`'s removal authority.
+   */
+  test('a recorded agent home that vanished is reported, counted, and kept in the record', () => {
+    const source = fixtureSkillsTree(['review']);
+    const dirs = [join(home, '.claude', 'skills'), join(home, '.agents', 'skills'), join(home, '.openclaw', 'skills')];
+    const dirDigests: Record<string, string> = {};
+    for (const dir of dirs) {
+      const target = join(dir, 'trace');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, 'SKILL.md'), '# previous trace\n');
+      dirDigests[target] = computeSkillDirDigest(target) as string;
+    }
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['trace'],
+      agentDirs: dirs,
+      dirDigests,
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const gone = dirs[2] as string;
+    rmSync(join(home, '.openclaw'), { recursive: true });
+
+    const lines: string[] = [];
+    const result = runSkillsChannelConvergence({
+      selection: 'auto',
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      log: (line) => lines.push(line),
+      spawn: () => {
+        for (const dir of dirs.slice(0, 2)) cpSync(source, dir, { recursive: true });
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    expect(result.status).toBe('installed');
+    expect(lines).toContain(
+      `skills: recorded agent dir ${gone} no longer exists; kept in the record so the next run still names it`,
+    );
+    expect(lines).toContain(`skills: retirement: ${join(gone, 'trace')} was already gone — nothing to archive`);
+    expect(lines).toContain('skills: retired trace from 2 agent dir(s)');
+    expect(lines).toContain('skills: retirement: 2 archived, 0 preserved, 1 already absent of 3 recorded target(s)');
+    // The record still names the home `genie uninstall` would have to sweep.
+    expect(readSkillsInstallRecord(genieHome)?.agentDirs).toContain(gone);
+  });
+
+  /**
+   * M1's root shape, independent of who deleted the home: the install pass
+   * replaces an agent home wholesale, taking the retired directory with it.
+   * Because retirement now runs FIRST, the bytes are already in the backup
+   * root — the pre-fix ordering archived nothing at all for that home.
+   */
+  test('an agent home the install pass replaces has already been archived', () => {
+    const source = fixtureSkillsTree(['review']);
+    const { dirs } = previousInstall();
+    const replaced = dirs[1] as string;
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => {
+        // `skills.sh --all` recreating the home: everything under it is gone.
+        rmSync(join(home, '.agents'), { recursive: true, force: true });
+        for (const dir of dirs) cpSync(source, dir, { recursive: true });
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    });
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(replaced, 'trace'))).toBe(false);
+    const generation = readdirSync(join(genieHome, 'state-backups'))[0] as string;
+    expect(
+      readFileSync(join(genieHome, 'state-backups', generation, '.agents', 'skills', 'trace', 'SKILL.md'), 'utf8'),
+    ).toBe('# previous trace\n');
+    expect(outcome.warnings).toContain('skills: retired trace from 2 agent dir(s)');
+  });
+
+  test('already-gone targets are named up to five, then counted', () => {
+    const names = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7'];
+    const { dirs, spawn } = previousInstall(names);
+    const claude = dirs[0] as string;
+    for (const name of names) rmSync(join(claude, name), { recursive: true });
+    const outcome = runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+    expect(outcome.ok).toBe(true);
+    const absent = (outcome.warnings ?? []).filter((line) => line.includes('was already gone'));
+    expect(absent).toHaveLength(5);
+    expect(outcome.warnings).toContain('skills: retirement: +2 more recorded target(s) were already gone');
+    expect(outcome.warnings).toContain(
+      'skills: retirement: 7 archived, 0 preserved, 7 already absent of 14 recorded target(s)',
+    );
+  });
+
+  /**
+   * m4's other half: doctor reports a preserved entry whose path is gone as
+   * RESOLVED, and this is the update that makes that true — the entry leaves
+   * the record, and the run says so instead of passing over it in silence.
+   */
+  test('a preserved dir the operator deleted is reported absent and leaves the record', () => {
+    const { dirs, record, spawn } = previousInstall(['trace']);
+    const claude = dirs[0] as string;
+    const gone = join(claude, 'trace');
+    delete record.dirDigests?.[gone];
+    writeSkillsInstallRecord(genieHome, record);
+    const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+
+    expect(install().ok).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: claude, skill: 'trace', reason: 'no recorded content digest' },
+    ]);
+
+    rmSync(gone, { recursive: true });
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect(second.warnings).toContain(`skills: retirement: ${gone} was already gone — nothing to archive`);
+    expect(second.warnings).toContain(
+      'skills: retirement: 0 archived, 0 preserved, 1 already absent of 1 recorded target(s)',
+    );
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toBeUndefined();
   });
 
   test('a skill this release delivers again drops out of the preserved list', () => {
@@ -1327,7 +1544,7 @@ describe('runSkillsChannelConvergence', () => {
         genieHome,
         home,
         which: alwaysFound,
-        spawn: okRunner(calls),
+        spawn: deliveringOkRunner(calls),
         log: (line) => lines.push(line),
       });
       expect(calls.argv[0]).toContain('--all');
@@ -1375,7 +1592,9 @@ describe('runSkillsChannelConvergence', () => {
 
     expect(result.status).toBe('failed');
     expect(lines[0]).toStartWith('Skills install failed: skills CLI exited 1: boom.');
-    expect(lines[1]).toContain(`skills: collision: ${join(claudeSkills, 'wish')} (wish) — backed up to `);
+    expect(lines[1]).toContain(
+      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — a foreign dir in an agent home this install writes; backed up to `,
+    );
     expect(process.exitCode).toBe(1);
   });
 });
@@ -1385,9 +1604,17 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
     const bin = join(root, 'bin');
     mkdirSync(bin, { recursive: true });
     const argvLog = join(root, 'npx-argv.txt');
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(claudeSkills, { recursive: true });
     for (const name of ['node', 'npx']) {
       const shim = join(bin, name);
-      writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, 'utf8');
+      // The shim delivers as well as logging: a zero exit that writes no
+      // verifiable skill directory is a failure in its own right.
+      writeFileSync(
+        shim,
+        `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\ncp -R "$4/." "${claudeSkills}/" 2>/dev/null || true\nexit 0\n`,
+        'utf8',
+      );
       chmodSync(shim, 0o755);
     }
     fixtureSkillsTree(['wish']);
@@ -1515,7 +1742,9 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
     const record = readSkillsInstallRecord(genieHome);
     expect(record?.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish' }]);
     const collisionLine = lines.find((line) => line.includes('collision:'));
-    expect(collisionLine).toContain(`collision: ${join(claudeSkills, 'wish')} (wish) — backed up to `);
+    expect(collisionLine).toContain(
+      `collision: ${join(claudeSkills, 'wish')} (wish) — a foreign dir in an agent home this install writes; backed up to `,
+    );
     const backupRoot = (collisionLine as string).split('backed up to ')[1] as string;
     expect(backupRoot.startsWith(join(genieHome, 'state-backups', 'skills-collision-'))).toBe(true);
     // The backup holds the ORIGINAL bytes; the live path now holds ours.
