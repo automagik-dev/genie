@@ -1,6 +1,6 @@
 # Genie Hacks Catalog
 
-The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs). Every entry is grounded against the live v5 CLI (`genie --help`); entries born in the v4 daemon era carry a *v4 note* with the live replacement.
+The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs). Every entry is grounded on the live v5 CLI (`genie --help` is the source of truth). `genie task` and `genie board` commands apply in standalone lifecycle mode; under explicitly selected Orca authority, Orca owns dispatch and task state.
 
 ## Categories
 
@@ -9,7 +9,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 | Providers | `providers` | Provider switching, model selection, BYOA |
 | Teams | `teams` | Multi-agent coordination, team patterns |
 | Skills | `skills` | Custom skills, skill chains, automation |
-| Hooks | `hooks` | Git hooks, event-driven flows |
+| Hooks | `hooks` | Runtime hooks, event-driven flows |
 | Cost | `cost` | Token optimization, model routing, budget control |
 | Integration | `integration` | External tools, APIs, CI/CD, Slack, etc. |
 | Debugging | `debugging` | Agent debugging, tracing, fixing bad behavior |
@@ -22,186 +22,109 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **ID:** `provider-switching`
 - **Title:** Provider Switching — Right Model for the Job
 - **Category:** providers
-- **Problem:** One model and reasoning level is being used for every task even though exploration, implementation, and adversarial review have different needs.
-- **Solution:** Pick the terminal client per wish through the dispatch role, then configure model, effort, and permissions in that client's named-agent surface. Codex uses `~/.codex/agents/*.toml`; Claude/Hermes use their native role configuration. Keep host-specific routing out of shared `SKILL.md` frontmatter.
+- **Problem:** One model and reasoning level serves every task, although exploration, implementation, and adversarial review have different needs.
+- **Solution:** Choose the client per wish through the dispatch role, then set model, effort, and permissions in that client's named-agent surface (Codex: `~/.codex/agents/*.toml`; Claude and Hermes: their native role configuration). Use a fast read-heavy configuration for exploration and the strongest justified configuration for demanding review. Keep host-specific routing out of shared `SKILL.md` frontmatter.
 - **Code:**
   ```bash
-  # Fast scaffolding wish: dispatch engineers with a codex-backed named role
-  genie task checkout <task-id> --worker engineer  # then dispatch via the client's named role
-
-  # Define review roles in the selected client's agent configuration with a
-  # read-only sandbox and higher reasoning only when the task warrants it.
+  genie task checkout <task-id> --worker engineer   # standalone claim, then dispatch via the client's named role
   ```
-  Use a fast read-heavy configuration for exploration and the strongest justified configuration for demanding review.
-- **Benefit:** Match latency and depth to the cognitive demand without encoding host-specific model settings in skills.
-- **When to use:** Mixed workloads — boilerplate generation vs. nuanced code review. When cost or speed matters per task.
-- ***v4 note:*** daemon per-role provider flags are gone. Provider choice now lives in the dispatch role; role behavior lives in each client's native agent configuration.
+- **Benefit:** Latency and depth match the cognitive demand without encoding model settings in skills.
+- **When to use:** Mixed workloads, or when cost or speed matters per task.
 
 ### hack: team-coordination
 - **ID:** `team-coordination`
-- **Title:** Multi-Team Coordination at Scale
+- **Title:** Multi-Wish Coordination
 - **Category:** teams
-- **Problem:** You have multiple wishes that depend on each other, and running them sequentially wastes time.
-- **Solution:** Use `dream` to batch-execute wishes with dependency ordering. Use the active runtime's native subagents for independent work, steer the same thread with follow-up messaging, and isolate parallel writers per the concurrency contract in AGENTS.md and the `work` skill's Dispatch section. Track shared wish state in the task DB.
+- **Problem:** Several approved wishes depend on each other and running them one at a time wastes time.
+- **Solution:** Use `dream` to batch-execute `APPROVED` wishes in dependency order. Run independent work through the runtime's native subagents, steer a running thread with follow-up messaging, and give parallel writers disjoint files or isolated worktrees per `AGENTS.md` and the `work` skill.
 - **Code:**
   ```bash
-  # Queue wishes for overnight execution
-  # Invoke the dream skill in the active client.
-
-  # Run independent wishes in parallel through native subagents (see the
-  # dream skill for batch orchestration)
-
-  # Monitor both from any terminal (state is shared SQLite)
-  genie board --wish auth-refactor
+  genie board --wish auth-refactor        # standalone: shared SQLite state, readable from any terminal
   genie board --wish api-v2
   genie task list --status in_progress
   ```
-- **Benefit:** Parallel execution of independent wishes. Overnight batch runs that produce PRs by morning.
-- **When to use:** Projects with 3+ wishes queued. Sprint planning where multiple features can be parallelized.
-- ***v4 note:*** daemon-era create/status/send verbs are gone. Orchestration now uses native subagents plus the SQLite task DB.
+- **Benefit:** Independent wishes run in parallel with one shared view of state.
+- **When to use:** Several approved wishes queued, or sprint planning with parallelizable features.
 
 ### hack: overnight-batch
 - **ID:** `overnight-batch`
 - **Title:** Overnight Batch Execution with dream
 - **Category:** batch
-- **Problem:** You have a backlog of approved wishes but limited daytime hours to supervise execution.
-- **Solution:** Use `dream` to queue SHIP-ready wishes, set dependency order, and let agents execute overnight. Wake up to PRs and a DREAM-REPORT.md.
+- **Problem:** A backlog of approved wishes and limited hours to supervise execution.
+- **Solution:** Invoke the `dream` skill in the active client, pick the `APPROVED` wishes, confirm the dependency-ordered plan, and let it run. In the morning read the report.
 - **Code:**
   ```bash
-  # 1. Sanity-check what is ready to run
-  genie task list --status ready
-
-  # 2. Launch the dream run
-  # Invoke the dream skill in the active client.
-  # Select wishes: 1 3 5 (or "all")
-  # Confirm the execution plan
-  # Go to sleep
-
-  # 3. Morning: check results
-  cat .genie/DREAM-REPORT.md
+  genie task list --status ready          # standalone: what is claimable
+  cat .genie/DREAM-REPORT.md              # next morning
   gh pr list --author @me
   ```
-- **Benefit:** 8+ hours of unattended execution. Multiple PRs ready for review by morning.
-- **When to use:** End of day with 2+ SHIP-ready wishes. Sprint velocity needs a boost without more human hours.
+- **Benefit:** Unattended execution of approved work, with PRs and a report ready for review.
+- **When to use:** End of day with approved wishes waiting.
 
 ### hack: custom-skills
 - **ID:** `custom-skills`
 - **Title:** Custom Skills for Repeated Workflows
 - **Category:** skills
-- **Problem:** You keep typing the same sequence of commands or giving the same instructions repeatedly.
-- **Solution:** Use the active client's skill-authoring workflow. In Codex, `$skill-creator` creates personal skills under `~/.agents/skills/<name>/` or repository skills under `.agents/skills/<name>/`. Keep shared `SKILL.md` frontmatter to `name` and `description`; Codex UI policy belongs in `agents/openai.yaml`.
-- **Code:**
-  ```bash
-  # Ask Codex:
-  $skill-creator create a deploy-check skill with tests, migrations,
-  env validation, and build verification.
-
-  # Then invoke it:
-  $deploy-check
-  ```
-- **Benefit:** Encode tribal knowledge as reusable skills. New team members get instant access to workflows.
-- **When to use:** Any workflow you've explained more than twice. CI-like checks you want to run locally before pushing.
+- **Problem:** The same command sequence or instructions get typed repeatedly.
+- **Solution:** Use the active client's skill-authoring workflow. In Codex, the skill creator writes personal skills under `~/.agents/skills/<name>/` or repository skills under `.agents/skills/<name>/`; ask it, for example, to create a `deploy-check` skill covering tests, migrations, env validation, and build verification, then invoke `deploy-check` by name. Keep shared `SKILL.md` frontmatter to `name` and `description`; Codex UI metadata belongs in `agents/openai.yaml`.
+- **Benefit:** Tribal knowledge becomes a reusable skill new team members can invoke.
+- **When to use:** Any workflow explained more than twice; local pre-push checks.
 
 ### hack: hook-automation
 - **ID:** `hook-automation`
-- **Title:** Event Automation with Genie Hooks
+- **Title:** Event Automation with Runtime Hooks
 - **Category:** hooks
-- **Problem:** You want automatic reactions to development events — guarding branches, injecting agent identity, blocking unsafe tool calls.
-- **Solution:** Use the selected client's documented hook surface and keep commands deterministic and local. In Codex, non-managed hooks are skipped until the user reviews and trusts the exact definition hash; use canonical tool names (`Bash`, `apply_patch`, MCP names) and plugin `PLUGIN_ROOT`/`PLUGIN_DATA`. Claude/Hermes keep their own event envelopes. Never use lifecycle hooks for silent installers or self-updates.
+- **Problem:** You want automatic reactions to development events: guarding branches, injecting agent identity, blocking unsafe tool calls.
+- **Solution:** Genie installs no hooks into any runtime. If the active client offers hooks, discover its documented hook surface and schema in that client's own reference and follow them; do not copy a schema from memory. Keep hook commands deterministic and local, review each definition before trusting it, and never use lifecycle hooks for silent installers or self-updates.
 - **Code:**
   ```bash
-  # Identity the genie CLI reads (also the default task-checkout worker)
-  export GENIE_AGENT_NAME=my-agent
-
-  # In an interactive Codex session, inspect and trust with /hooks.
+  export GENIE_AGENT_NAME=my-agent        # identity the genie CLI reads; the default task-checkout worker
   ```
-  Project hook in `.codex/hooks.json`:
-  ```json
-  {
-    "hooks": {
-      "PreToolUse": [{
-        "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "echo 'Tool being used: Bash'" }]
-      }]
-    }
-  }
-  ```
-- **Benefit:** Automated reactions to development events. Less manual orchestration.
-- **When to use:** Teams wanting CI-like automation within the agent workflow. Projects where wish-to-PR should be fully autonomous.
+- **Benefit:** Automated, reviewed reactions to events without hidden workflows.
+- **When to use:** CI-like automation inside the agent workflow, once the client's hook surface is confirmed.
 
 ### hack: cost-optimization
 - **ID:** `cost-optimization`
 - **Title:** Cost Optimization Strategies
 - **Category:** cost
-- **Problem:** Agent usage costs add up, especially with large teams or long-running dream runs.
-- **Solution:** Match the model and reasoning effort to each named-agent role, scope wishes tightly, run `refine` on prompts before dispatch, and use the selected client's usage telemetry for evidence (Codex JSONL/app indicators or the equivalent client surface).
+- **Problem:** Agent usage costs add up with large teams or long dream runs.
+- **Solution:** Match model and reasoning effort to each named-agent role (an `implementor-low` role for bulk scaffolding), scope wishes tightly ("Extract auth middleware into src/middleware/auth.ts", not "Refactor the entire codebase"), run the `refine` skill on briefs before dispatch, and take cost evidence from the client's supported usage surface.
 - **Code:**
   ```bash
-  # 1. Cheaper driver for bulk scaffolding wishes: dispatch with the
-  #    implementor-low named role (model/effort set in its agent profile)
-
-  # 2. Tight wish scoping
-  # BAD:  "Refactor the entire codebase"
-  # GOOD: "Extract auth middleware into src/middleware/auth.ts"
-
-  # 3. Refine prompts before dispatching
-  # Invoke the refine skill in the active client.
-
-  # 4. In automation, capture turn usage
-  codex exec --json "run the bounded task" | jq
+  codex exec --json "run the bounded task" | jq   # in automation, capture turn usage
   ```
-- **Benefit:** 30-50% cost reduction by matching provider to task complexity. Tighter scoping means fewer fix loops.
-- **When to use:** Budget-conscious teams. High agent concurrency. Before scaling to `dream` batch runs.
-- ***v4 note:*** token math over daemon transcript logs is gone. Use the active client's supported usage surface instead.
+- **Benefit:** Spend follows task complexity; tighter scope means fewer fix loops. Measure your own savings; they vary by workload.
+- **When to use:** Budget-conscious teams, high agent concurrency, before scaling `dream` runs.
 
 ### hack: integration-patterns
 - **ID:** `integration-patterns`
 - **Title:** Integration Patterns — Connect Genie to Your Stack
 - **Category:** integration
-- **Problem:** You want Genie to integrate with existing tools — Slack notifications, CI/CD pipelines, monitoring.
-- **Solution:** Prefer installed connectors for GitHub and messaging actions, and use shell or webhooks only for gaps. External messages, issue creation, workflow dispatch, and other outward writes require explicit authorization and exact target confirmation.
+- **Problem:** Genie should feed existing tools: Slack notifications, CI/CD pipelines, monitoring.
+- **Solution:** Prefer installed connectors for GitHub and messaging; use shell or webhooks only for gaps. External messages, issue creation, workflow dispatch, and other outward writes need explicit authorization and an exact target.
 - **Code:**
   ```bash
-  # Post to Slack via webhook
-  curl -X POST "$SLACK_WEBHOOK_URL" \
-    -H 'Content-Type: application/json' \
+  curl -X POST "$SLACK_WEBHOOK_URL" -H 'Content-Type: application/json' \
     -d '{"text": "Genie: wish auth-refactor done. PR #123"}'
-
-  # Create GitHub issues from findings
-  gh issue create --title "Bug: auth token expiry" \
-    --body "Found during trace: refresh fails silently"
-
-  # Trigger CI after PR
+  gh issue create --title "Bug: auth token expiry" --body-file report.md
   gh workflow run ci.yml --ref feat/my-feature
   ```
-- **Benefit:** Genie becomes part of your existing workflow. Notifications go where your team already looks.
-- **When to use:** Teams with Slack/Discord channels. Projects with CI/CD pipelines that should trigger on agent PRs.
+- **Benefit:** Notifications and follow-ups land where the team already looks.
+- **When to use:** Teams with chat channels or pipelines that should react to agent PRs.
 
 ### hack: debugging-tips
 - **ID:** `debugging-tips`
-- **Title:** Debugging Agent Issues Like a Pro
+- **Title:** Debugging Agent Issues
 - **Category:** debugging
-- **Problem:** An agent is stuck, producing wrong output, or a team isn't making progress.
-- **Solution:** Use `trace` for root-cause analysis, `genie doctor` for install health, and the task DB for where work is stuck. Native clients return each subagent's final summary to the orchestrator — the push-based completion signal means nothing needs watching in the terminal.
+- **Problem:** An agent is stuck, producing wrong output, or a run is not making progress.
+- **Solution:** Invoke the `report` skill for a root-cause investigation (no issue is filed unless asked), `genie doctor` for install health, and the task DB for where work is stuck. Subagents return their final summary to the orchestrator, so nothing needs watching in a terminal. Before re-claiming a stuck `in_progress` task with `genie task checkout`, confirm who holds the claim and that the worker is no longer live, and act only with the coordinator's recovery authority; elapsed time alone justifies nothing. `genie task done` is never an unstick shortcut, it is the coordinator's call after review and validation.
 - **Code:**
   ```bash
-  # Systematic investigation of an unknown failure
-  # Invoke the trace skill in the active client.
-
-  # Health-check the genie installation
-  genie doctor
-
-  # Where is work stuck? Task and board state live in SQLite
-  genie task list --status blocked
+  genie doctor                            # install health
+  genie task list --status blocked        # standalone task state
   genie task status <task-id>
   genie board --wish my-wish-slug
-
-  # Full state dump for post-mortems (JSON)
-  genie task export
-
-  # Unstick: closing the blocker recomputes the ready set
-  genie task done <task-id>
+  genie task export                       # JSON state dump for a post-mortem
   ```
-- **Benefit:** Full visibility into agent behavior. Systematic debugging instead of guessing.
-- **When to use:** Agent taking too long. Output quality dropping. Team progress stalled. Post-mortem on failed dream run.
-- ***v4 note:*** daemon-era log/status/reset verbs are gone; state moved to SQLite (`genie task ...`, `genie board`) and live output to native subagent threads.
+- **Benefit:** Systematic investigation instead of guessing.
+- **When to use:** A slow agent, dropping output quality, a stalled run, or a post-mortem on a failed dream run.

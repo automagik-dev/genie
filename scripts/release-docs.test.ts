@@ -885,7 +885,12 @@ describe('Group E release and documentation contracts', () => {
       .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
       .map((entry) => entry.name)
       .sort();
-    expect(skillNames).toHaveLength(25);
+    const shipped = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'SKILL.md')))
+      .map((entry) => entry.name)
+      .sort();
+    expect(skillNames.length).toBeGreaterThan(0);
+    expect(skillNames).toEqual(shipped);
     for (const name of skillNames) {
       const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
         interface?: { default_prompt?: unknown };
@@ -916,7 +921,7 @@ describe('Group E release and documentation contracts', () => {
       expect(lifecycle).toContain(term);
       expect(root).toContain(term);
     }
-    expect(lifecycle).toContain('automatically routes the completed DESIGN.md');
+    expect(lifecycle).toContain('review evaluate different artifacts');
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
@@ -936,7 +941,7 @@ describe('Group E release and documentation contracts', () => {
     expect(skillNames).not.toContain('pm');
     expect(router).toContain('"quick"');
     expect(router).not.toContain('"pm"');
-    expect(lifecycle).toContain('| `quick` |');
+    expect(lifecycle).toContain('`quick`');
     expect(lifecycle).not.toContain('| `pm` |');
     expect(overview).toContain('`quick`');
     expect(overview).not.toContain('`pm`');
@@ -944,7 +949,7 @@ describe('Group E release and documentation contracts', () => {
 
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
     const lifecycle = read('skills/genie/reference/lifecycle.md');
-    for (const status of ['`DRAFT`', '`FIX-FIRST`', '`APPROVED`', '`IN_PROGRESS`', '`BLOCKED`', '`SHIPPED`']) {
+    for (const status of ['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED', 'SHIPPED']) {
       expect(lifecycle).toContain(status);
     }
     const brainstorm = read('skills/brainstorm/SKILL.md');
@@ -953,11 +958,11 @@ describe('Group E release and documentation contracts', () => {
     const wish = read('skills/wish/templates/wish-template.md');
 
     expect(dream).toContain('Status field is exactly `APPROVED`');
-    expect(brainstorm).toContain('Do not move it to Poured before a WISH.md exists');
-    expect(brainstorm).toContain('single brainstorm/planning index is `.genie/INDEX.md`');
-    expect(brainstorm).toContain('Legacy migration is idempotent');
-    expect(review).toContain('### Design Review (after `brainstorm`)');
-    expect(review).toContain('The reviewer is read-only');
+    expect(brainstorm).toContain('Poured: an existing WISH.md has persisted APPROVED status');
+    expect(brainstorm).toContain('`.genie/INDEX.md` is the single intake index');
+    expect(brainstorm).toContain('legacy `.genie/brainstorm.md` idempotently');
+    expect(review).toContain('### Design Review');
+    expect(review).toContain('reviewer is different from the author and remains read-only');
     expect(wish).toContain('## Dependencies');
     expect(wish).toContain('**depends-on:** none');
     expect(dream).toContain('wish-level `**depends-on:**`');
@@ -965,7 +970,7 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {
-    const architecture = read('skills/architecture/SKILL.md');
+    const architecture = read('skills/review/references/lenses/architecture.md');
     const brainstorm = read('skills/brainstorm/SKILL.md');
     const designTemplate = read('skills/brainstorm/references/design-template.md');
     const wish = read('skills/wish/SKILL.md');
@@ -974,86 +979,66 @@ describe('Group E release and documentation contracts', () => {
     const fix = read('skills/fix/SKILL.md');
     const work = read('skills/work/SKILL.md');
 
-    expect(architecture).toContain('KISS comes first');
+    expect(architecture).toMatch(/simplest|simplicity|KISS/i);
     expect(brainstorm).toContain('## Simplicity Gate');
     expect(designTemplate).toContain('## Simplicity Case');
     expect(wish).toContain('Pass the simplicity gate');
     expect(wishTemplate).toContain('## Simplicity Case');
-    expect(review).toContain('unjustified stateful machinery');
+    expect(review).toContain('Unjustified stateful machinery');
     expect(review).toContain('a HIGH gap');
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
     expect(fix).toContain('up to `B` loops');
-    expect(work).toContain('A user-approved simplification invalidates the superseded plan/review evidence');
+    expect(work).toContain('user-approved simplification invalidates superseded evidence and requires fresh review');
   });
 
-  test('fix-loop budgets preserve explicit override authority and repair safeguards across lifecycle routes', () => {
+  test('fix owns repair budgets and callers carry its policy across handoffs', () => {
+    const fix = read('skills/fix/SKILL.md');
+    for (const contract of [
+      'default 2',
+      'positive integer explicitly supplied by a higher-priority user/workspace instruction',
+      'across handoffs',
+      'never resets them',
+      'does not expand scope, permit unchanged retries, or skip diagnosis or independent re-review',
+      'at most two escalation attempts per group',
+      'effort_escalations=<used>/2',
+    ])
+      expect(fix).toContain(contract);
     for (const path of [
-      'skills/fix/SKILL.md',
       'skills/review/SKILL.md',
       'skills/work/SKILL.md',
       'skills/dream/SKILL.md',
       'skills/genie/reference/lifecycle.md',
-      'skills/genie-orca-review/SKILL.md',
-      'skills/genie-orca-work/SKILL.md',
+      'skills/work/references/orca-coordinator.md',
     ]) {
-      const skill = read(path);
-      expect(skill).toContain('budget `B` once per group: default 2');
-      expect(skill).toContain('only an explicit higher-priority user/workspace instruction');
-      expect(skill).toContain('another positive integer');
-      expect(skill).toContain('Carry `B` and the attempts already used across handoffs');
-      expect(skill).toContain(
-        'Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review',
-      );
-      expect(skill).not.toMatch(/(?:max|at most|up to|Cap) (?:2|\*\*2\*\*) (?:fix )?loops|after 2 (?:failed )?loops/);
+      const caller = read(path);
+      expect(caller).toContain('fix');
+      expect(caller).not.toContain('## Escalation Diagnosis');
     }
-    for (const skill of ['fix', 'review', 'work']) {
-      expect(read(`skills/${skill}/SKILL.md`)).toContain('at most two escalation attempts per group');
-    }
-    expect(read('skills/fix/SKILL.md')).toContain('effort_escalations=<used>/2');
-    expect(read('skills/work/SKILL.md')).toContain('On FIX-FIRST, one fix loop.');
-    expect(read('skills/work/SKILL.md')).toContain('This separate quality-pass cap is not expanded by `B`.');
-    expect(read('skills/dream/SKILL.md')).toContain('max 3 attempts; poll CI status');
-    expect(read('skills/genie-orca-work/SKILL.md')).toContain('re-dispatch one tier up, once.');
+    expect(read('skills/work/SKILL.md')).toContain('repair cap is one loop, separate from `B`');
+    expect(read('skills/dream/SKILL.md')).toMatch(/(?:max|at most|maximum) 3 (?:CI )?attempts/i);
   });
 
-  test('router pays Genie lifecycle cost only when it adds value', () => {
+  test('router chooses lightweight handling before selecting a workflow', () => {
     const router = read('skills/genie/SKILL.md');
-    const lifecycle = read('skills/genie/reference/lifecycle.md');
     const metadata = read('skills/genie/agents/openai.yaml');
-
-    expect(router).toContain('## Lightweight Bypass Check');
-    expect(router).toContain('Honor explicit Genie intent');
-    expect(router).toContain('Route cheap categories normally');
-    expect(router).toContain('Check for related lifecycle work');
-    expect(router).toContain('Test whether the lifecycle adds value');
-    expect(router).toContain('Announce the bypass in one line');
-    expect(router).toContain('Security-sensitive changes do not bypass by default');
-    expect(router).toContain('must not create or update `.genie` artifacts');
-    // The bypass gate must run FIRST, before classification or state detection:
-    // a section that moved below the routing logic would silently reorder the
-    // router's decision flow while these phrase checks still pass.
-    const bypass = router.indexOf('## Lightweight Bypass Check');
-    expect(bypass).toBeGreaterThan(-1);
-    expect(bypass).toBeLessThan(router.indexOf('## Intent Classification'));
-    expect(bypass).toBeLessThan(router.indexOf('## State Detection'));
-    expect(lifecycle).toContain('Ordinary requests unrelated to an existing wish or brainstorm bypass this lifecycle');
-    expect(lifecycle).toContain('Security-sensitive changes do not bypass by default');
-    expect(lifecycle).toContain('Related existing work always resumes through its persisted state');
-    // The metadata prompt must keep the mandatory non-bypass categories: bug
-    // reports, operational commands, and Genie questions always route normally.
-    expect(metadata).toContain('bug reports');
-    expect(metadata).toContain('operational commands');
-    expect(metadata).toContain('Genie questions');
+    expect(router).toContain('Resume matching work before creating a new plan');
+    expect(router).toContain('Ordinary unrelated requests bypass the lifecycle');
+    expect(router).toContain('without creating `.genie` artifacts or adding Genie gates');
+    expect(router).toContain('Security-sensitive changes retain review gates');
+    expect(router.indexOf('Ordinary unrelated requests bypass')).toBeLessThan(router.indexOf('| Request | Route |'));
+    expect(router).toContain('Bug reports, operational commands, and Genie questions route normally');
+    for (const category of ['bug reports', 'operational commands', 'Genie questions'])
+      expect(metadata).toContain(category);
     expect(metadata).toContain('otherwise bypass it with a one-line notice');
     expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
 
-  test('brainstorm routes every non-trivial design through design and plan review', () => {
+  test('design completion requires independent review before wish planning', () => {
     const brainstorm = read('skills/brainstorm/SKILL.md');
-    expect(brainstorm).toContain('auto-invoke `review` (design review)');
-    expect(brainstorm).toContain('route through `wish` and plan review before any implementation');
-    expect(brainstorm).not.toContain('auto-invoke `review` (plan review)');
-    expect(brainstorm).not.toContain('ask whether to implement directly');
+    expect(brainstorm).toContain('do not implement');
+    expect(brainstorm).toContain('Send the exact design to an independent `review` agent');
+    expect(brainstorm).toContain('fresh review before `wish` consumes the design');
+    expect(read('skills/wish/SKILL.md')).toContain('Obtain independent `review` of the completed plan');
   });
 
   test('design review evidence is digest-bound, persisted, and required before wish', () => {

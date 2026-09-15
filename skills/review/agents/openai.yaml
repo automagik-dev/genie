@@ -1,4 +1,4 @@
 interface:
-  display_name: "Genie Review Gate"
-  short_description: "Gate plans, implementations, and pull requests"
-  default_prompt: "Validate this artifact against its stated criteria and return a grounded verdict."
+  display_name: "Review"
+  short_description: "Assess plans, code, PRs, and repository quality"
+  default_prompt: "Independently review this target against its criteria, using relevant audit lenses and current evidence. Return severity-tagged findings and a verdict without applying fixes."
