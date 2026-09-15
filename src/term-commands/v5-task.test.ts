@@ -1080,6 +1080,76 @@ describe('task import', () => {
     expect(mismatch.code).toBe(1);
     expect(mismatch.stderr).toContain('schemaVersion 999');
   });
+
+  /**
+   * Regression (dogfood r2 minors 12/13): a non-scalar used to reach bun:sqlite
+   * as `Binding expected string, TypedArray, boolean, number, bigint or null`
+   * with no locator, and a string in an INTEGER column imported with exit 0.
+   */
+  describe('malformed column values', () => {
+    /** Export the seeded state, mutate one cell, and re-import with --replace. */
+    async function importWithMutation(mutate: (snapshot: StateExport) => void): Promise<CliResult> {
+      const snapshotPath = join(repo, '.genie', 'roadmap.json');
+      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as StateExport;
+      mutate(snapshot);
+      writeFileSync(snapshotPath, JSON.stringify(snapshot));
+      return cli(repo, 'import', '--replace');
+    }
+
+    beforeEach(async () => {
+      seedState();
+      expect((await cli(repo, 'export', '--write')).code).toBe(0);
+    });
+
+    test('a non-scalar in a TEXT column names the file, table, row and column', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).title = { x: 1 };
+      });
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain(join(repo, '.genie', 'roadmap.json'));
+      expect(r.stderr).toContain('Snapshot table "tasks" row 0');
+      expect(r.stderr).toContain('column "title" expects a string, got an object');
+      expect(r.stderr).toContain('database was left unchanged');
+      expect(r.stderr).not.toContain('Binding expected');
+    });
+
+    test('a non-numeric value in an INTEGER column is refused, not silently stored', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).created_at = 'abc';
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "created_at" expects an integer, got the string "abc"');
+
+      // Nothing partial landed: the pre-import rows are untouched.
+      const db = openDb({ cwd: repo });
+      const rows = db.query('SELECT title, typeof(created_at) AS t FROM tasks ORDER BY title').all() as Array<{
+        title: string;
+        t: string;
+      }>;
+      db.close();
+      expect(rows.map((row) => row.title)).toEqual(['dependent', 'root']);
+      expect(rows.every((row) => row.t === 'integer')).toBe(true);
+    });
+
+    test('an array in boards.lanes is refused and no partial import lands', async () => {
+      const r = await importWithMutation((s) => {
+        (s.boards[0] as unknown as Record<string, unknown>).lanes = ['Idea', 'Done'];
+        s.tasks = [];
+        s.task_dependencies = [];
+        s.stage_log = [];
+        s.task_events = [];
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "lanes" expects a string, got an array');
+      // --replace wipes inside the transaction: a rejected snapshot must leave
+      // every pre-import row in place.
+      const db = openDb({ cwd: repo });
+      const counts = db.query('SELECT COUNT(*) AS n FROM tasks').get() as { n: number };
+      db.close();
+      expect(counts.n).toBe(2);
+    });
+  });
 });
 
 describe('roadmap.json canonical sync', () => {

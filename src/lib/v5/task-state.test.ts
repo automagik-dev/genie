@@ -13,6 +13,7 @@ import {
   DEFAULT_LIFECYCLE_LANES,
   DEFAULT_STALE_MS,
   DuplicateBoardError,
+  EmptyBoardRefError,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
   LaneError,
@@ -20,6 +21,7 @@ import {
   TaskBlockedError,
   TaskCompleteError,
   TaskHasDependentsError,
+  TaskNotClaimedError,
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
@@ -62,6 +64,7 @@ import {
   recomputeReady,
   recordHeartbeat,
   releaseTask,
+  resolveBoard,
   setTaskWish,
   unblockTask,
   unhireAgent,
@@ -1813,8 +1816,160 @@ describe('importState — replace is a full wipe even without operational rows',
       // title NOT NULL in schema — null must not surface as a raw SQLite error.
       tasks: [{ id: 't_bad', title: null, status: 'ready', created_at: 1, updated_at: 1 }],
     };
+    expect(() => importState(db, bad as unknown, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 \(id "t_bad"\): column "title" must not be null/,
+    );
+    expect(exportState(db)).toEqual(before); // nothing was written
+  });
+
+  test('a row-schema failure the column model cannot see still classifies as SnapshotFormatError', () => {
+    const before = exportState(db);
+    const bad = {
+      ...before,
+      // Every column is a well-typed scalar; only the FOREIGN KEY is broken, so
+      // the failure comes from SQLite and must still be reclassified.
+      task_dependencies: [{ task_id: 't_ghost', depends_on_id: 't_ghost2' }],
+    };
     expect(() => importState(db, bad as unknown, { replace: true })).toThrow(/Snapshot rows could not be imported/);
-    expect(exportState(db)).toEqual(before); // transaction rolled back
+    expect(exportState(db)).toEqual(before);
+  });
+});
+
+/**
+ * Regression (dogfood r2 minors 12/13): `validateSnapshot` type-checks every
+ * column against the declared schema BEFORE any write, so a non-scalar no
+ * longer reaches bun:sqlite as a context-free `Binding expected string,
+ * TypedArray, boolean, number, bigint or null`, and a string in an INTEGER
+ * column is no longer stored by type affinity as a corrupt timestamp.
+ */
+describe('importState — per-column scalar validation', () => {
+  function snapshotWithTask(overrides: Record<string, unknown>): Record<string, unknown> {
+    const base = exportState(db);
+    return {
+      ...base,
+      tasks: [
+        { id: 't_probe', board_id: null, title: 'probe', status: 'ready', created_at: 1, updated_at: 2, ...overrides },
+      ],
+    };
+  }
+
+  test('a non-scalar in a TEXT column is refused, naming table, row and column', () => {
+    const before = exportState(db);
+    expect(() => importState(db, snapshotWithTask({ title: { x: 1 } }), { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 \(id "t_probe"\): column "title" expects a string, got an object/,
+    );
+    expect(() => importState(db, snapshotWithTask({ title: { x: 1 } }), { replace: true })).toThrow(
+      /database was left unchanged/,
+    );
+    expect(exportState(db)).toEqual(before);
+  });
+
+  test('a non-numeric value in an INTEGER column is refused instead of silently stored', () => {
+    expect(() => importState(db, snapshotWithTask({ created_at: 'abc' }), { replace: true })).toThrow(
+      /column "created_at" expects an integer, got the string "abc"/,
+    );
+    expect(() => importState(db, snapshotWithTask({ created_at: 1.5 }), { replace: true })).toThrow(
+      /column "created_at" expects an integer, got the number 1.5/,
+    );
+    expect(listTasks(db)).toHaveLength(0);
+  });
+
+  test('an array in boards.lanes (TEXT holding JSON) is refused', () => {
+    const base = exportState(db);
+    const bad = {
+      ...base,
+      boards: [{ id: 'b_1', name: 'main', lanes: ['Idea', 'Done'], created_at: 1 }],
+    };
+    expect(() => importState(db, bad, { replace: true })).toThrow(
+      /Snapshot table "boards" row 0 \(id "b_1"\): column "lanes" expects a string, got an array/,
+    );
+    expect(listBoards(db)).toHaveLength(0);
+  });
+
+  test('a row that is not an object at all is refused with its table and index', () => {
+    const base = exportState(db);
+    expect(() => importState(db, { ...base, tasks: ['t_1'] }, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 is not a JSON object \(got the string "t_1"\)/,
+    );
+  });
+
+  test('a required column that is absent is named, not reported as a binding failure', () => {
+    const base = exportState(db);
+    const bad = { ...base, tasks: [{ id: 't_probe', status: 'ready', created_at: 1, updated_at: 2 }] };
+    expect(() => importState(db, bad, { replace: true })).toThrow(/column "title" is missing and has no default/);
+  });
+
+  test('the multi-row locator names the offending row index, and nothing partial lands', () => {
+    const base = exportState(db);
+    const bad = {
+      ...base,
+      tasks: [
+        { id: 't_ok', board_id: null, title: 'fine', status: 'ready', created_at: 1, updated_at: 1 },
+        { id: 't_bad', board_id: null, title: 'bad', status: 'ready', created_at: true, updated_at: 1 },
+      ],
+    };
+    expect(() => importState(db, bad, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 1 \(id "t_bad"\): column "created_at" expects an integer, got the boolean true/,
+    );
+    // No partial import: the first, well-formed row never landed either.
+    expect(listTasks(db)).toHaveLength(0);
+  });
+
+  test('an ALTER-TABLE-backfilled column is covered by the same model', () => {
+    expect(() => importState(db, snapshotWithTask({ heartbeat_at: 'soon' }), { replace: true })).toThrow(
+      /column "heartbeat_at" expects an integer, got the string "soon"/,
+    );
+    expect(() => importState(db, snapshotWithTask({ assigned_agent: 7 }), { replace: true })).toThrow(
+      /column "assigned_agent" expects a string, got the number 7/,
+    );
+  });
+
+  test('a well-typed snapshot still imports, and wish_groups rows stay tolerated-and-dropped', () => {
+    const base = exportState(db);
+    const good = {
+      ...base,
+      tasks: [{ id: 't_probe', board_id: null, title: 'probe', status: 'ready', created_at: 1, updated_at: 2 }],
+      // Dead machinery: never inserted, therefore never column-validated.
+      wish_groups: [{ wish: 'w', name: 'g', status: 'nonsense', depends_on: [], created_at: 'x' }],
+    };
+    const summary = importState(db, good, { replace: true });
+    expect(summary.tasks).toBe(1);
+    expect(summary.wishGroups).toBe(0);
+    expect(listTasks(db)[0].title).toBe('probe');
+  });
+});
+
+/**
+ * Regression (dogfood r2 minor 15 / cosmetic c3): liveness is only meaningful
+ * for a claimed card, and an empty board ref is an unset variable, never a
+ * request for every task in the repo.
+ */
+describe('typed refusals — heartbeat and board scoping', () => {
+  test('recordHeartbeat refuses an unclaimed card and writes nothing', () => {
+    const task = createTask(db, { title: 'unclaimed' });
+    expect(() => recordHeartbeat(db, task.id)).toThrow(TaskNotClaimedError);
+    expect(() => recordHeartbeat(db, task.id)).toThrow(/not claimed/);
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
+  });
+
+  test('recordHeartbeat stamps a claimed card, and refuses again after release', () => {
+    const task = createTask(db, { title: 'claimed' });
+    claimTask(db, task.id, 'w1');
+    expect(recordHeartbeat(db, task.id, 4242)).toBe(4242);
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBe(4242);
+    releaseTask(db, task.id, HUMAN);
+    expect(() => recordHeartbeat(db, task.id)).toThrow(TaskNotClaimedError);
+  });
+
+  test('recordHeartbeat on an unknown id is still UnknownTaskError', () => {
+    expect(() => recordHeartbeat(db, 't_nope')).toThrow(UnknownTaskError);
+  });
+
+  test('resolveBoard refuses an empty ref instead of widening the scope', () => {
+    createBoard(db, 'main');
+    expect(() => resolveBoard(db, '')).toThrow(EmptyBoardRefError);
+    expect(() => resolveBoard(db, '   ')).toThrow(/board id must not be empty/);
+    expect(resolveBoard(db, 'main').name).toBe('main');
   });
 });
 

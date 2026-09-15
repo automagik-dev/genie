@@ -56,6 +56,21 @@ reordering once, as its own content-free write, instead of having it ride along
 with the next card and bury that card in a whole-file diff. A `diverged` verdict
 normalizes nothing: it touches neither side, by contract.
 
+**An import type-checks every column before it writes anything.** A snapshot is
+untrusted input (`roadmap.json` survives git merges and hand edits), so
+`validateSnapshot` compares each row's cells against the live schema's declared
+column model — read from `PRAGMA table_info`, so an `ALTER TABLE`-backfilled
+column such as `heartbeat_at` or `assigned_agent` is covered by the same rule —
+before the first `INSERT`. A cell must be a scalar of the column's declared
+affinity (INTEGER ⇒ a JSON integer, TEXT ⇒ a JSON string) and a NOT NULL /
+PRIMARY KEY column must be present and non-null. A violation is one
+`SnapshotFormatError` naming the file, the table, the row index (with its id)
+and the column; **nothing is written**, so there is no partial import. This is
+what keeps a non-scalar from surfacing as a context-free bun:sqlite `Binding
+expected string, TypedArray, boolean, number, bigint or null`, and what stops
+SQLite's type affinity from silently storing `"abc"` as a card's `created_at`.
+`wish_groups` is exempt: its rows are tolerated-and-dropped, never inserted.
+
 **Every snapshot genie emits carries `hire_roster: []`** — stdout, the canonical
 `--write`, and any other `--write` path alike. Hire rows hold machine-local
 worktree paths, and a snapshot is a publishable artifact wherever it is written;
@@ -201,6 +216,14 @@ records a hold; plain `block` records `work`; `unblock` clears provenance,
 reason, and kind together. Stored kinds are untrusted TEXT (a hand-merged
 `roadmap.json` reaches the mapper unvalidated), so anything but exactly `hold`
 normalizes to `work` at read time rather than at the column.
+
+**A heartbeat belongs to a live claim; an empty board ref is never "every
+board".** `recordHeartbeat` refuses a card whose `claimed_by` is NULL
+(`TaskNotClaimedError`, exit 1 at the CLI) — stamping liveness on an unclaimed
+card records a worker that does not exist, and the card would still read `ready`.
+Symmetrically, `resolveBoard('')` raises `EmptyBoardRefError` instead of
+resolving: an empty `--board` is an unset shell variable, and widening it to the
+unscoped board silently answers a different question than the one asked.
 
 **`tasks.wish` is the lifecycle slug a card tracks — broadened semantic.** It is
 no longer "the WISH.md slug once a wish exists"; it is the single stable slug

@@ -39,6 +39,7 @@ import {
 import {
   type BlockKind,
   type ImportSummary,
+  SnapshotFormatError,
   type TaskCardRow,
   type TaskFilter,
   type TaskRow,
@@ -657,6 +658,19 @@ function handleSync(): void {
   });
 }
 
+/**
+ * Run the import transaction, re-labelling a snapshot-format refusal with the
+ * source path. Every other failure (lock contention, IO) propagates untouched.
+ */
+function runImport(apply: { immediate: () => unknown }, source: string): ImportSummary {
+  try {
+    return apply.immediate() as ImportSummary;
+  } catch (err) {
+    if (err instanceof SnapshotFormatError) throw new SnapshotFormatError(`${source}: ${err.message}`);
+    throw err;
+  }
+}
+
 function handleImport(file: string | undefined, opts: ImportOptions): void {
   run(() => {
     // Normalize before the canonical comparison: an explicit relative spelling
@@ -691,7 +705,9 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
         if (canonical) recordImportBaseline(db, snapshot);
         return result;
       });
-      const summary = apply.immediate() as ImportSummary;
+      // A malformed snapshot names the file it came from: `validateSnapshot`
+      // knows the table/row/column, only this frame knows the path.
+      const summary = runImport(apply, source);
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );
