@@ -287,18 +287,59 @@ Vestigial (pending drop): the wish-group execution machinery is production-dead 
 
 ## Row projections — which shapes carry the runtime layer
 
-The runtime columns above exist in one table but are exposed by three deliberately
+The runtime columns above exist in one table but are exposed by deliberately
 different projections. Which one a caller maps through IS the contract:
 
 | Projection | Adds | Serialized by |
 |------------|------|---------------|
 | `TaskRow` | — (frozen) | laneless board `--json`, MCP tools, `task export` tasks |
 | `LaneTaskRow` | `lane`, `enforcedBlock` | lane-grouped board `--json` |
-| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | nothing — human render + `task status` only |
+| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | human render, `task status`, and the scoped board aggregate |
+| `BoardTaskAggregate` | `liveness`, `dependencies`, `timeline` + counts, `comments` + count | scoped lane board `--json` only |
 
 `TaskRow` is **frozen**: its key set is asserted byte-for-byte by test, and no
-runtime field may ever be added to it. `TaskCardRow` is the widest projection but
-is never serialized — it feeds badge rendering, so widening it is safe.
+runtime field may ever be added to it.
+
+`TaskCardRow` **is serialized** — by the scoped board aggregate, which extends it.
+Widening it therefore widens a machine contract and is no longer free. It is
+still the projection the human render and `task status` map through, and that
+sharing IS the contract: the aggregate mapper validates a row's scalars and then
+calls the SAME `mapTaskCard`, so the two paths can never disagree about a card.
+Concretely, an unrecognized `block_kind` coerces to `work` on both — importable
+data never makes `--json` exit 1 where the human render succeeds.
+
+### The scoped board aggregate (`board --board <ref> --json`)
+
+`{ schemaVersion: 1, scope, lanes: [{ name, label, action, cards }] }`. The board's
+lane definition and every card, dependency, and event come from **one deferred
+read transaction** (`readBoardAggregate`), so cards are grouped into the lane
+definition that was stored alongside them.
+
+- **`schemaVersion` is 1 and extension is additive.** Consumers ignore unknown
+  keys; a key is never removed or retyped without bumping the version.
+- **Event and comment caps.** `timeline` and `comments` each carry at most
+  `BOARD_JSON_EVENT_LIMIT` (25) entries — the **most recent** ones, still in
+  chronological order. `eventCount` and `commentCount` always report the true
+  totals and `eventsTruncated` says whether the timeline is a suffix. A card
+  timeline is append-only and unbounded while every consumer reads this payload
+  as one response under a fixed byte budget (the DSH plugin caps a read at
+  4 MiB), so an unbounded embed makes a long-lived board permanently unloadable.
+- **Fails closed only on genuinely non-scalar storage** — the shapes SQLite can
+  hold but the JSON contract cannot express (a BLOB title, a status outside the
+  enum, a `comment` event with a NULL note). Every diagnostic is one bounded
+  `Malformed board detail: …` line.
+- **Laneless semantics are decided once, for both paths.** `boards.lanes` is
+  untrusted TEXT that `task import`/`sync` accepts unvalidated and no board verb
+  repairs, so `normalizeLanes` is the single validator both the human render and
+  `--json` go through. A stored `label`/`action` of `null` — exactly the shape
+  this aggregate itself emits — reads as absent, so a round-trip of emitted
+  output parses back to the lanes it came from. Anything unusable (not an array,
+  an entry that is not an object, a missing/blank/non-string `name`, a non-string
+  `label`/`action`) makes the board **laneless**: both paths print the same
+  one-line `Note: board "…" has no usable lane metadata; …` on stderr, exit 0,
+  and render the laneless board — `--json` falls through to the frozen
+  `{ scope, columns }` status payload. A laneless board is never a
+  `Malformed board detail` failure on one path only.
 
 `LaneTaskRow.enforcedBlock` is the one deliberate runtime field on a serialized
 additive shape: `null` when the card is unblocked, otherwise
