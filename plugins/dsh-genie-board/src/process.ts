@@ -7,6 +7,15 @@ export const MAX_OUTPUT = 4 * 1024 * 1024;
 export const DEADLINE_MS = 10_000;
 /** How much of a failing command's stderr the Host keeps for its message. */
 export const MAX_STDERR_KEPT = 8 * 1024;
+/**
+ * What a human sees when a command outruns {@link MAX_OUTPUT}. Genie bounds the
+ * board aggregate below this budget itself (it degrades each card's embedded
+ * history, and refuses an unfittable board with its own named `Error:` line), so
+ * reaching this limit means the workspace is emitting more than this Host can
+ * read — which is a board size problem, not an opaque overflow.
+ */
+export const OUTPUT_LIMIT_MESSAGE =
+  'This board is too large for one response (over 4 MiB). Scope it to a wish, or split the board.';
 export interface Budget {
   expires: number;
   bytes: number;
@@ -102,7 +111,7 @@ export function execute(
     const timer = setTimeout(() => fail(new Error('Genie deadline exceeded')), remaining);
     const read = (chunk: Buffer, stdout: boolean) => {
       budget.bytes += chunk.length;
-      if (budget.bytes > MAX_OUTPUT) return fail(new Error('Genie output limit exceeded'));
+      if (budget.bytes > MAX_OUTPUT) return fail(new Error(OUTPUT_LIMIT_MESSAGE));
       if (stdout) chunks.push(chunk);
       else errors = (errors + chunk.toString('utf8')).slice(-MAX_STDERR_KEPT);
     };

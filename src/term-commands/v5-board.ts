@@ -15,6 +15,9 @@ import { color, padRight, truncate } from '../lib/term-format.js';
 import { cardBadges } from '../lib/v5/card-render.js';
 import { openDb, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import {
+  BOARD_JSON_EVENT_LIMIT,
+  BOARD_JSON_EVENT_LIMIT_STEPS,
+  BOARD_JSON_MAX_BYTES,
   type BoardRow,
   type BoardTaskAggregate,
   DEFAULT_LIFECYCLE_LANES,
@@ -395,14 +398,97 @@ function renderLaneAggregate(db: Database, boardId: string, filter: TaskFilter, 
   const lanes = snapshot.board.lanes;
   if (!lanes) return false;
   const byLane = groupByLane<BoardTaskAggregate>(lanes, snapshot.cards);
-  const laneGroups = lanes.map((l) => ({
+  const laneGroups: AggregateLaneGroup[] = lanes.map((l) => ({
     name: l.name,
     label: l.label ?? null,
     action: l.action ?? null,
     cards: byLane.get(l.name) ?? [],
   }));
-  out(JSON.stringify({ schemaVersion: 1, scope: scopeLabel, lanes: laneGroups }, null, 2));
+  const { json, eventLimit } = serializeBoardAggregate(scopeLabel, laneGroups, snapshot.board);
+  // A degraded response is not a failure, but a human must be able to see that
+  // this board is at the edge of the budget before its history silently thins.
+  if (eventLimit < BOARD_JSON_EVENT_LIMIT) note(degradedNotice(snapshot.board, eventLimit));
+  out(json);
   return true;
+}
+
+/** One lane of the scoped aggregate payload, before the response budget applies. */
+interface AggregateLaneGroup {
+  name: string;
+  label: string | null;
+  action: string | null;
+  cards: BoardTaskAggregate[];
+}
+
+/**
+ * Re-cap one card's embedded history to `limit`, keeping the counts truthful:
+ * `eventCount`/`commentCount` are the card's real totals at every cap, and
+ * `eventsTruncated` describes the slice this response actually carries.
+ */
+function capCardHistory(card: BoardTaskAggregate, limit: number): BoardTaskAggregate {
+  if (card.timeline.length <= limit && card.comments.length <= limit) return card;
+  const timeline = limit === 0 ? [] : card.timeline.slice(-limit);
+  return {
+    ...card,
+    timeline,
+    eventsTruncated: card.eventCount > timeline.length,
+    comments: limit === 0 ? [] : card.comments.slice(-limit),
+  };
+}
+
+/**
+ * Serialize the aggregate under the WHOLE-response budget, not just the per-card
+ * one. The per-card cap bounds a card's depth; a board is unbounded in card
+ * count too, so a thousand short cards overflow a fixed read budget with every
+ * card well inside the cap. The emitter therefore walks
+ * {@link BOARD_JSON_EVENT_LIMIT_STEPS} widest-first and emits the first response
+ * that fits {@link BOARD_JSON_MAX_BYTES}; the applied cap rides the payload as
+ * the root `eventLimit` so a client can say what it is not showing. A board that
+ * does not fit even with no history at all is refused by name — an actionable
+ * `Error:` line the caller can print, never an opaque truncation downstream.
+ */
+function serializeBoardAggregate(
+  scopeLabel: string,
+  lanes: AggregateLaneGroup[],
+  board: BoardRow,
+): { json: string; eventLimit: number } {
+  let bytes = 0;
+  for (const eventLimit of BOARD_JSON_EVENT_LIMIT_STEPS) {
+    const capped = lanes.map((lane) => ({
+      ...lane,
+      cards: lane.cards.map((card) => capCardHistory(card, eventLimit)),
+    }));
+    const json = JSON.stringify({ schemaVersion: 1, scope: scopeLabel, eventLimit, lanes: capped }, null, 2);
+    // `out` appends the newline the consumer counts against its own budget.
+    bytes = Buffer.byteLength(json, 'utf8') + 1;
+    if (bytes <= BOARD_JSON_MAX_BYTES) return { json, eventLimit };
+  }
+  throw new Error(boardTooLargeMessage(board, lanes, bytes));
+}
+
+/** Bytes as MiB with one decimal, for a message a human reads once. */
+function mib(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+/** The stderr note for a response whose per-card history had to be narrowed. */
+function degradedNotice(board: BoardRow, eventLimit: number): string {
+  const events = eventLimit === 1 ? 'event' : 'events';
+  return [
+    `Note: board "${board.name}" is large; each card's embedded history was capped at ${eventLimit} ${events}`,
+    `to fit the ${mib(BOARD_JSON_MAX_BYTES)} MiB response budget`,
+    '(eventCount/commentCount still report the true totals).',
+  ].join(' ');
+}
+
+/** The refusal for a board that cannot be emitted as one response at any cap. */
+function boardTooLargeMessage(board: BoardRow, lanes: AggregateLaneGroup[], bytes: number): string {
+  const cards = lanes.reduce((total, lane) => total + lane.cards.length, 0);
+  return [
+    `Board "${board.name}" is too large to emit as one JSON response: ${cards} cards serialize to`,
+    `${mib(bytes)} MiB with no embedded history at all, over the ${mib(BOARD_JSON_MAX_BYTES)} MiB budget.`,
+    'Narrow the read with --wish <slug>, or split the board.',
+  ].join(' ');
 }
 
 function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string): void {

@@ -318,20 +318,41 @@ data never makes `--json` exit 1 where the human render succeeds.
 
 ### The scoped board aggregate (`board --board <ref> --json`)
 
-`{ schemaVersion: 1, scope, lanes: [{ name, label, action, cards }] }`. The board's
-lane definition and every card, dependency, and event come from **one deferred
-read transaction** (`readBoardAggregate`), so cards are grouped into the lane
-definition that was stored alongside them.
+`{ schemaVersion: 1, scope, eventLimit, lanes: [{ name, label, action, cards }] }`.
+The board's lane definition and every card, dependency, and event come from **one
+deferred read transaction** (`readBoardAggregate`), so cards are grouped into the
+lane definition that was stored alongside them.
 
 - **`schemaVersion` is 1 and extension is additive.** Consumers ignore unknown
   keys; a key is never removed or retyped without bumping the version.
-- **Event and comment caps.** `timeline` and `comments` each carry at most
-  `BOARD_JSON_EVENT_LIMIT` (25) entries — the **most recent** ones, still in
+- **Per-card event and comment caps.** `timeline` and `comments` each carry at
+  most `BOARD_JSON_EVENT_LIMIT` (25) entries — the **most recent** ones, still in
   chronological order. `eventCount` and `commentCount` always report the true
   totals and `eventsTruncated` says whether the timeline is a suffix. A card
   timeline is append-only and unbounded while every consumer reads this payload
-  as one response under a fixed byte budget (the DSH plugin caps a read at
-  4 MiB), so an unbounded embed makes a long-lived board permanently unloadable.
+  as one response under a fixed byte budget, so an unbounded embed makes a
+  long-lived board permanently unloadable.
+- **A whole-response byte budget, not just a per-card one.** The per-card cap
+  bounds a card's DEPTH; a board is unbounded in card COUNT too, so a thousand
+  cards of ten events each overflow the budget with every card well inside the
+  cap. `BOARD_JSON_MAX_BYTES` (3.5 MiB — the DSH plugin caps ONE request, a
+  mutation's output plus the refresh that follows it, at 4 MiB, and 512 KiB of
+  that is reserved for the mutation output and stderr) bounds the serialized
+  response. The emitter walks `BOARD_JSON_EVENT_LIMIT_STEPS` (`25, 10, 5, 2, 0`)
+  widest-first and emits the first response that fits; the applied cap is the
+  root **`eventLimit`**, always present, so a client can say what it is not
+  showing. **Depth degrades, the card set never does** — cards are never dropped
+  or paginated away, and the counts stay the true totals at every step. A
+  degraded response prints one `Note: board "…" is large; each card's embedded
+  history was capped at N events …` on stderr and still exits 0.
+- **A board that fits at no cap is refused by name.** When even a history-free
+  response exceeds the budget (~850 bytes per history-free card, so roughly
+  4,000 cards), the read
+  exits 1 with `Error: Board "…" is too large to emit as one JSON response: N
+  cards serialize to X MiB …; narrow the read with --wish <slug>, or split the
+  board.` — an actionable sentence a client prints verbatim, never an opaque
+  downstream truncation. The human render of the same board is unaffected: the
+  budget belongs to the machine payload, not to the board.
 - **Fails closed only on genuinely non-scalar storage** — the shapes SQLite can
   hold but the JSON contract cannot express (a BLOB title, a status outside the
   enum, a `comment` event with a NULL note). Every diagnostic is one bounded
