@@ -561,14 +561,48 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
 
     const results = checkV4Residue(fxHome, fxGenieHome);
-    const keptNames = results.filter((r) => r.name.startsWith('kept (uncertain):')).map((r) => r.name);
-    expect(keptNames.sort()).toEqual(['kept (uncertain): .genie', 'kept (uncertain): tmux.conf.bak']);
-    for (const r of results.filter((x) => x.name.startsWith('kept (uncertain):'))) expect(r.status).toBe('pass');
+    // ONE summarized row: the entry names ride the detail, because a name built
+    // from whatever the genie home holds is not a stable cross-release diff key
+    // (r2 #7 — same class as `v4 residue: plugin cache <version>`).
+    const kept = results.filter((r) => r.name === 'kept (uncertain)');
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.status).toBe('pass');
+    expect(kept[0]?.detail).toContain('.genie, tmux.conf.bak');
+    expect(results.filter((r) => r.name.startsWith('kept (uncertain):'))).toEqual([]);
 
     cleanupV4({ home: fxHome, genieHome: fxGenieHome });
     expect(existsSync(join(fxGenieHome, 'tmux.conf.bak'))).toBe(true);
     expect(existsSync(join(fxGenieHome, '.genie'))).toBe(true);
     expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
+  });
+
+  // r2 #7 residual: the healthy-checkout scan in `doctorCommand` only sees the
+  // names ONE residue-free run happened to emit, so every failure-branch and
+  // every dynamically built name was structurally outside its reach — and
+  // `v4 residue: plugin cache 4.260421.17` lived there. This scans the
+  // name-producing function itself, with every dynamic branch seeded at once.
+  test('no check name embeds a version, on the fully seeded v4-residue path', () => {
+    mkdirSync(join(fxGenieHome, 'state'), { recursive: true });
+    writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
+    writeFileSync(join(fxGenieHome, 'tmux.conf.bak'), 'old tmux\n', 'utf-8');
+    mkdirSync(join(fxHome, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(fxHome, '.claude', 'rules', 'genie-orchestration.md'), 'genie spawn everything\n', 'utf-8');
+    for (const version of ['4.260421.17', '4.250101.1']) {
+      const dir = join(fxHome, '.claude', 'plugins', 'cache', 'automagik', 'genie', version);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, '.orphaned_at'), '2026-01-01\n', 'utf-8');
+      writeFileSync(join(dir, 'plugin.json'), '{}\n', 'utf-8');
+    }
+
+    const results = checkV4Residue(fxHome, fxGenieHome);
+
+    expect(results.map((r) => r.name).filter((name) => /\d+\.\d+/.test(name))).toEqual([]);
+    const cache = results.find((r) => r.name === 'v4 residue: plugin cache');
+    expect(cache?.status).toBe('warn');
+    expect(cache?.detail).toContain('2 orphaned version dir(s)');
+    expect(cache?.detail).toContain('4.250101.1, 4.260421.17');
+    // One row per cache dir would also reintroduce duplicate names.
+    expect(new Set(results.map((r) => r.name)).size).toBe(results.length);
   });
 
   test('doctor --fix --json: stdout is valid JSON, relic removed (chatter on stderr)', () => {
