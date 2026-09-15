@@ -32,8 +32,9 @@ name is not documented, and a 2026-09-15 probe in this repo resolved the name
 `council` to the stale user copy, so never rely on shadowing: keep names unique
 across both scopes, invoke by explicit path when in doubt, and delete a stale
 `~/.claude/workflows/council.js` left by the old stamped install (its lens root is
-dead). Skills share the slash namespace with workflows; `council` currently names
-both the skill and this workflow, which is an open item in the catalog wish.
+dead; deleted on the dogfood host 2026-09-15). Skills share the slash namespace
+with workflows: the `council` skill is deliberately the front door that runs this
+workflow and carries no lens roster of its own (`scripts/council-workflow-parity.test.ts`).
 
 ## Entries
 

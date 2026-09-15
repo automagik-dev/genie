@@ -193,7 +193,7 @@ Skills are the product. Invoke them as `/name` in Claude Code, or by name or pla
 | `wish` | Turn a design into a scoped WISH.md with execution groups |
 | `work` | Dispatch native role subagents wave by wave |
 | `review` | Severity-gated verdict — SHIP, FIX-FIRST, or BLOCKED |
-| `council` | Independent architecture, delivery, product, security, and dissent assessment |
+| `council` | Runs the saved `council` workflow (`.claude/workflows/council.js`): five independent lenses plus a synthesis, assess-only |
 
 Shared skill bodies use a runtime-neutral delegation contract: they name portable roles and let each runtime map them onto its own native subagents. Genie installs no custom agent profiles. Subagents share a workspace, so task claims own scope; worktree isolation, when required, is orchestrator-arranged per the dispatch contract. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
 

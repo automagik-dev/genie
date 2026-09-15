@@ -2,15 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Drift guard: the lens roster inlined in .claude/workflows/council.js must match the
-// numbered lens list in skills/council/SKILL.md, so the two rosters cannot diverge.
+// Single-source guard: the council lens roster lives only in .claude/workflows/council.js.
+// The council skill is a front door that runs that workflow and must not carry its own roster.
 
 const ROOT = join(import.meta.dir, '..');
-
-function skillLenses(): string[] {
-  const md = readFileSync(join(ROOT, 'skills', 'council', 'SKILL.md'), 'utf8');
-  return [...md.matchAll(/^\d+\. \*\*([A-Za-z]+)\*\*/gm)].map((m) => m[1].toLowerCase());
-}
+const CANONICAL_LENSES = ['architecture', 'delivery', 'product', 'security', 'dissent'];
 
 function workflowLenses(): string[] {
   const js = readFileSync(join(ROOT, '.claude', 'workflows', 'council.js'), 'utf8');
@@ -19,8 +15,16 @@ function workflowLenses(): string[] {
   return [...block[1].matchAll(/key: '([a-z]+)'/g)].map((m) => m[1]);
 }
 
-describe('council workflow mirrors the council skill', () => {
-  test('lens rosters are identical and ordered the same', () => {
-    expect(workflowLenses()).toEqual(skillLenses());
+describe('council skill fronts the council workflow', () => {
+  const skill = readFileSync(join(ROOT, 'skills', 'council', 'SKILL.md'), 'utf8');
+
+  test('the workflow carries the five canonical lenses in order', () => {
+    expect(workflowLenses()).toEqual(CANONICAL_LENSES);
+  });
+
+  test('the skill points at the workflow and carries no roster of its own', () => {
+    expect(skill).toContain('.claude/workflows/council.js');
+    expect(skill).toContain('saved name `council`');
+    expect(/^\d+\. \*\*[A-Za-z]+\*\*/m.test(skill)).toBe(false);
   });
 });

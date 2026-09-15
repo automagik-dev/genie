@@ -40,7 +40,8 @@
 | 1 | `.claude/workflows/` in the repo is the canonical catalog; no root `workflows/` directory | Felipe: ".claude/workflows canon, yet repo-based". One tracked copy, found by the native tool's project scope, and by the DSH fork from the same path. A second directory would need a drift guard for no benefit. |
 | 2 | The first example is the five-lens council from `skills/council/SKILL.md`, with lens briefs inline in the script | The skill already defines the lenses and both response formats. Inline briefs make the script path-free, which is what killed the old stamped `council.js`. |
 | 3 | Contract enforcement is a static test, not a runtime | The native tool is the runtime and cannot run in CI; the static half (meta literal, name match, forbidden tokens) is what CI can hold. |
-| 4 | The orphaned `~/.claude/workflows/council.js` is superseded by shadowing, and its removal is a documented manual step | Project scope wins in this repo; in other repos the orphan would still run with a dead path, so the README tells the operator to delete it. Genie writes nothing under `~/.claude` in this wish. |
+| 4 | The orphaned `~/.claude/workflows/council.js` is deleted, not shadowed | Shadowing is undocumented and a same-session probe resolved the name to the orphan; its stamped lens root is dead, so nothing is lost. Deleted on the dogfood host 2026-09-15 (Felipe: "the stale workflow I didn't know even exist, so I trust your judgement"); the README tells other operators to do the same. Genie writes nothing under `~/.claude` in this wish. |
+| 5 | The `council` skill is unified as the front door of the workflow, not retired | Felipe: "unify the skill to trigger the workflow, or retire it entirely". The skill is what skills.sh ships and what wins the slash namespace, so keeping it as a thin trigger resolves the name collision functionally: `/council` runs the skill, the skill runs the workflow. Its inline lens procedure is removed so the roster has one source, guarded by `scripts/council-workflow-parity.test.ts`. |
 
 ## Simplicity Case
 
@@ -60,7 +61,7 @@
 - [ ] Running `/council` natively from this repo with a decision statement returns a report with five lens sections and a synthesis in the skill's `Decision / Consensus / Dissent / Conditions / Evidence gaps / Next action` shape; the run is recorded under Review Results with its outcome.
 - [ ] `.claude/workflows/README.md` states the contract listed in Scope IN.
 - [ ] `bun test scripts/workflows-meta.test.ts` passes over every `.claude/workflows/*.js` and fails on fixtures with a mismatched `meta.name`, a non-literal `meta`, or any forbidden token (imports, `require`, clock, process, filesystem, shell, network, timers, dynamic code, quoted absolute paths).
-- [ ] `bun test scripts/council-workflow-parity.test.ts` proves the lens roster in `council.js` equals the numbered list in `skills/council/SKILL.md`.
+- [ ] `bun test scripts/council-workflow-parity.test.ts` proves `council.js` carries the five canonical lenses and `skills/council/SKILL.md` points at the workflow without a roster of its own.
 
 ## Execution Strategy
 
@@ -115,7 +116,8 @@ bun -e "const s=require('fs').readFileSync('.claude/workflows/council.js','utf8'
 **Deliverables:**
 1. `scripts/workflows-meta.test.ts`: for every `.claude/workflows/*.js`, asserts the file starts with `export const meta = {` whose literal parses and whose `name` equals the filename stem; asserts no `import`, `require(`, `Date.now`, `Math.random`, or quoted absolute path (`/Users/`, `/home/`, `/opt/`, `/var/`, `/tmp/`) outside comments, using the same meta-strip regex as the Group 1 validation so the two checks cannot drift; asserts the remainder parses as an async function body.
 2. Negative fixtures inside the test (strings, not files) proving the name-mismatch, non-literal-meta and forbidden-token assertions fire.
-3. `scripts/council-workflow-parity.test.ts`: the lens roster inlined in `council.js` must equal the numbered lens list in `skills/council/SKILL.md` (drift guard for Decision 2).
+3. `scripts/council-workflow-parity.test.ts`: `council.js` carries the five canonical lenses and `skills/council/SKILL.md` fronts the workflow with no roster of its own (single-source guard for Decisions 2 and 5).
+4. `skills/council/SKILL.md` rewritten as the front door: builds `args`, runs the saved workflow on the runtime's workflow surface (Claude Code by name or explicit path; DSH once the sibling wish ships), relays the report; no inline dispatch.
 
 **Acceptance Criteria:**
 - [ ] The test passes on `council.js` and `pm-ledger-verify.js`.
@@ -135,7 +137,7 @@ bun run check && bun test scripts/workflows-meta.test.ts scripts/council-workflo
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
-- [ ] Functional: `/council` appears in a Claude Code session opened in this repo and runs with a one-line decision.
+- [ ] Functional: `/council` in a fresh Claude Code session opened in this repo runs the saved workflow (the run summary shows "Pressure-test a decision…") with a one-line decision.
 - [ ] Integration: `/pm-ledger-verify` still runs unchanged from the same catalog.
 - [ ] Regression: `bun run check` stays green with the catalog test in the sweep.
 
@@ -171,7 +173,7 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Decision under assessment:** this wish and its sibling. The council corroborated the plan for the catalog half and pushed the fork half toward revise; its conditions are dispositioned below.
 - **Applied in this wish (2026-09-15):** static test broadened to the README's full forbidden list plus DSH's restricted-source tokens and a pure-literal `meta` guard; `pm-ledger-verify.js` lens-attribution bug fixed (index after `filter(Boolean)`); README no longer asserts project-over-personal shadowing; `scripts/council-workflow-parity.test.ts` ties the inlined roster to `skills/council/SKILL.md`; this evidence block names the invocation surface.
 - **Applied in the sibling wish:** upstream already bans the clock (its QuickJS bootstrap, not its token list), so that deliverable becomes error-message alignment; `@dsh-external/workflow` is git-only, not on npm; a seam-comparison gate against DSH's first-party `ctx.workflowEngine` precedes any fork work, with a kill criterion; host DSH version reconciliation; fail-closed policy for correctness-affecting options; finite defaults outside the conformance profile; `outputSchema` capability assertion.
-- **Needs Felipe:** (1) the `council` name collision between `skills/council` and this workflow (the slash listing resolves to the skill): rename one surface or make the skill delegate to the workflow; (2) a fresh-session probe to record which `council` surface runs with the orphan present, from this repo and from a non-genie cwd; (3) whether to add a CODEOWNERS entry for `.claude/**`.
+- **Resolved 2026-09-15 (Felipe):** (1) the `council` name collision: the skill is unified as the workflow's front door (Decision 5), so `/council` resolving to the skill is the intended path; (2) the orphan `~/.claude/workflows/council.js` is deleted (Decision 4), so no stale surface remains to probe; a fresh-session run is still the QA criterion. **Still open:** whether to add a CODEOWNERS entry for `.claude/**`.
 - **Deferred with triggers (unchanged):** install channel and tarball packaging; `genie doctor` warning for the orphan; retirement-surface routing for `~/.claude/workflows/council.js`.
 - **Group 1 and Group 2 state:** deliverables landed on branch `wish/workflows-catalog`; Group 2 validation `bun run check` ran with the only failures being 19 pre-existing tests in `plugins/dsh-genie-board/src/board.test.ts` and `src/lib/orca-orchestration-adapter.test.ts`, reproduced identically on untouched dev HEAD `67a8d08b1`.
 
@@ -183,7 +185,9 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 .claude/workflows/council.js          (new: first canonical example)
 .claude/workflows/README.md           (new: catalog contract)
 scripts/workflows-meta.test.ts        (new: static contract test)
-scripts/council-workflow-parity.test.ts (new: roster drift guard)
+scripts/council-workflow-parity.test.ts (new: single-source guard)
+skills/council/SKILL.md                (rewritten as the workflow's front door)
+README.md                             (skills table row)
 .claude/workflows/pm-ledger-verify.js (one-line lens attribution fix)
 .genie/wishes/workflows-catalog/council-2026-09-15.md (recorded council run)
 .genie/INDEX.md                       (entry)
