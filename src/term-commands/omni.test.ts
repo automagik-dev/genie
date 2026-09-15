@@ -452,6 +452,102 @@ describe('omni serve — a stop signal during the NATS connect', () => {
 });
 
 /**
+ * A signalled stop is not a failure — but a shutdown that FAILED during one is
+ * not silent either. Treating "a stop signal was seen" as "discard every error"
+ * hid a rejecting transport close, a spawned agent that never settled inside the
+ * drain budget, and — worst — a lease that would not release, which refuses the
+ * next `genie omni serve` for the whole TTL with nothing ever printed.
+ */
+describe('omni serve — a shutdown failure during a signalled stop is still reported', () => {
+  const OMNI_MODULE = join(import.meta.dir, 'omni.ts');
+  const NATS_URL = 'nats://omni-badclose-user:omni-badclose-secret@127.0.0.1:4222';
+
+  /** A child that reaches the fully-connected state through a fake NATS whose
+   *  `close()` rejects, so SIGINT lands on a shutdown that cannot succeed. */
+  const CHILD_SOURCE = `
+import { __test__ } from ${JSON.stringify(OMNI_MODULE)};
+let stopped = false;
+let wake;
+const subscription = {
+  unsubscribe() { stopped = true; wake?.(); },
+  async *[Symbol.asyncIterator]() {
+    while (!stopped) await new Promise((resolve) => { wake = resolve; });
+  },
+};
+const nats = {
+  subscribe: () => subscription,
+  publish: () => {},
+  flush: async () => {},
+  close: async () => { throw new Error('nats close exploded'); },
+};
+await __test__.serveCommand(async () => nats);
+process.stdout.write('[probe] serveCommand returned normally\\n');
+`;
+
+  async function signalConnectedServeWithFailingClose(): Promise<{
+    code: number | null;
+    stdout: string;
+    stderr: string;
+  }> {
+    const home = mkdtempSync(join(tmpdir(), 'omni-serve-badclose-'));
+    try {
+      const child = join(home, 'connected-badclose.mjs');
+      writeFileSync(child, CHILD_SOURCE);
+      const proc = Bun.spawn(['bun', child], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          GENIE_HOME: home,
+          OMNI_APPROVALS_ENABLED: '1',
+          OMNI_INSTANCE: 'inst-A',
+          OMNI_APPROVAL_CHAT: 'chat-42',
+          OMNI_NATS_URL: NATS_URL,
+        },
+      });
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let stdout = '';
+      // Signal only once the resident is fully connected and serving.
+      while (!stdout.includes('[omni] serving')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += decoder.decode(value, { stream: true });
+      }
+      proc.kill(2);
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += decoder.decode(value, { stream: true });
+      }
+      return { code: await proc.exited, stdout, stderr: await new Response(proc.stderr).text() };
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test('SIGINT keeps exit 130 but names the shutdown failure in one redacted line', async () => {
+    const res = await signalConnectedServeWithFailingClose();
+    expect(res.code).toBe(130);
+    expect(res.stdout).toContain('[omni] serving');
+    expect(res.stdout).toContain('[omni] stopped');
+
+    const stderrLines = res.stderr.trimEnd().split('\n').filter(Boolean);
+    expect(stderrLines.length).toBe(1);
+    const [line] = stderrLines;
+    expect(line).toContain('omni serve stopped with errors');
+    // The AggregateError members are named, not just its own summary message.
+    expect(line).toContain('Omni NATS close: nats close exploded');
+    expect(line).toContain('(NATS ');
+    // Still a diagnostic, never a stack trace, and never raw credentials.
+    expect(line).not.toContain('    at ');
+    expect(line).not.toContain('omni-badclose-secret');
+    expect(line).toContain('[REDACTED]');
+  }, 30_000);
+});
+
+/**
  * Dogfood r2 §3.3 #8–#11 — every omni failure path is ONE line that names what
  * to check: the URL that could not be reached, the lease that is held, or the
  * settings that are missing (in both their config and `OMNI_*` spellings).

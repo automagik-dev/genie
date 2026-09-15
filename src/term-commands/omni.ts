@@ -72,6 +72,23 @@ function approvalsNotEnabledMessage(rt: OmniRuntimeConfig, verb: string): string
   return `Omni approvals are not enabled, so ${verb} has nothing to talk to. Missing: ${missingApprovalSettings(rt).join(', ')}.`;
 }
 
+/**
+ * Flatten any error — `AggregateError` members included — into ONE line.
+ *
+ * `runOmniServe` reports every shutdown failure (a transport `close()` that
+ * rejects, a spawned agent that will not settle inside the drain budget, a
+ * lease that will not release) as the members of a single `AggregateError`,
+ * whose own `message` is just `Omni shutdown failed`. Printing that message
+ * alone would name none of them.
+ */
+function flattenOmniError(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const parts = error.errors.map((entry) => flattenOmniError(entry)).filter((part) => part.length > 0);
+    return parts.length > 0 ? `${error.message}: ${parts.join('; ')}` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ============================================================================
 // omni serve
 // ============================================================================
@@ -106,13 +123,18 @@ async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
       log: (line) => out(line),
     });
   } catch (error) {
-    // A signalled stop is not a failure, whatever the shutdown path reported.
-    if (!stopSignal) {
-      // One operator-readable line: what failed and which endpoint it was using,
-      // both config-redacted. The caller turns this into `Error: <line>` + exit 1.
-      const detail = redact(error instanceof Error ? error.message : String(error));
-      throw new Error(`omni serve failed: ${detail} (NATS ${redact(rt.natsUrl)})`);
-    }
+    // One operator-readable line: what failed and which endpoint it was using,
+    // both config-redacted.
+    const detail = redact(flattenOmniError(error));
+    const line = `${detail} (NATS ${redact(rt.natsUrl)})`;
+    // A signal is not itself a failure — the abort path resolves cleanly and
+    // never lands here — so a signalled stop keeps its 128+signum exit. But a
+    // shutdown that FAILED is never silent: a lease that would not release
+    // (the next `omni serve` is then refused for the whole TTL) or an agent
+    // that would not settle has to reach the operator either way. The caller
+    // turns the thrown form into `Error: <line>` + exit 1.
+    if (!stopSignal) throw new Error(`omni serve failed: ${line}`);
+    process.stderr.write(`omni serve stopped with errors: ${line}\n`);
   } finally {
     process.off('SIGINT', onInt);
     process.off('SIGTERM', onTerm);
