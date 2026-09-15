@@ -38,9 +38,9 @@ import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
-  readSkillsInstallRecord,
   releaseTag,
 } from '../lib/skills-installer.js';
 import { writeErr, writeOut } from '../lib/term-output.js';
@@ -569,7 +569,20 @@ function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckRes
 export function checkSkillsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
   const home = resolveHostHome(options.home);
   const genieHome = options.genieHome ?? resolveGlobalGenieHome();
-  const record = readSkillsInstallRecord(genieHome);
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is NOT "no record": it is a receipt genie can no longer
+  // act on, and every consumer now refuses on it, so doctor names the field.
+  if (read.status === 'invalid') {
+    return [
+      {
+        name: 'skills: channel',
+        status: 'warn',
+        detail: read.error.message,
+        suggestion: `Repair or remove ${read.error.path}, then run \`genie update\` — until then \`genie uninstall\` refuses to touch the recorded skill dirs.`,
+      },
+    ];
+  }
+  const record = read.status === 'ok' ? read.record : null;
   const binaryTag = releaseTag(VERSION);
   const inventory =
     record !== null && record.inventory.length > 0

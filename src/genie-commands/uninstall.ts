@@ -57,8 +57,8 @@ import {
   type SkillsInstallRecord,
   computeSkillDirDigest,
   deleteSkillsInstallRecord,
+  inspectSkillsInstallRecord,
   isSafeSkillName,
-  readSkillsInstallRecord,
 } from '../lib/skills-installer.js';
 import { printErr, printOut } from '../lib/term-output.js';
 import { detectV4Install } from './legacy-v4.js';
@@ -2004,6 +2004,14 @@ function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
  */
 export interface SkillsChannelRemoval {
   record: SkillsInstallRecord | null;
+  /**
+   * Set when a record file IS present but genie cannot trust it (bad JSON, or a
+   * field the schema rejects). The sweep then does NOTHING: before this, one
+   * schema-invalid `preserved[]` entry made the record read as absent, uninstall
+   * printed `no install record; nothing to remove.`, exited 0, deleted
+   * `~/.genie` — and left every recorded skill directory orphaned (r2 #14).
+   */
+  malformed: string | null;
   removed: string[];
   failures: string[];
   /**
@@ -2032,6 +2040,19 @@ interface SkillsRemovalSink {
   preserved: string[];
 }
 
+/** The one remedy line for a record genie cannot read. */
+const MALFORMED_RECORD_REMEDY =
+  'Repair or remove the skills install record, then rerun `genie uninstall` — nothing was removed.';
+
+/**
+ * ONE wording for a preserved skill directory, used verbatim by the inline
+ * report and by the failure list an operator actually acts on (r2 c2: the two
+ * used to differ, and the actionable one omitted the retirement cause).
+ */
+export function preservedSkillDirDetail(dir: string): string {
+  return `preserved ${dir} (unverified: content differs from the recorded install, the record predates digests, or retirement could not prove it); remove it manually, then rerun \`genie uninstall\``;
+}
+
 /**
  * Delete one recorded directory only when `expected` still proves it is genie's
  * byte-identical install. No digest (a legacy record, a directory that appeared
@@ -2058,9 +2079,29 @@ function removeVerifiedSkillDir(target: string, expected: string | undefined, si
 }
 
 export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
-  const record = readSkillsInstallRecord(genieHome);
+  const read = inspectSkillsInstallRecord(genieHome);
+  if (read.status === 'invalid') {
+    return {
+      record: null,
+      malformed: read.error.message,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    };
+  }
+  const record = read.status === 'ok' ? read.record : null;
   if (record === null) {
-    return { record: null, removed: [], failures: [], preserved: [], removedRetired: [], recordRemoved: false };
+    return {
+      record: null,
+      malformed: null,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    };
   }
   const sink: SkillsRemovalSink = { removed: [], failures: [], preserved: [] };
   for (const agentDir of record.agentDirs) {
@@ -2086,10 +2127,11 @@ export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemo
   // The record is the receipt for retrying an incomplete removal, so it is
   // deleted only after a fully clean sweep of every recorded directory.
   if (failures.length > 0 || preserved.length > 0) {
-    return { record, removed, failures, preserved, removedRetired, recordRemoved: false };
+    return { record, malformed: null, removed, failures, preserved, removedRetired, recordRemoved: false };
   }
   return {
     record,
+    malformed: null,
     removed,
     failures,
     preserved,
@@ -2099,6 +2141,11 @@ export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemo
 }
 
 function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
+  if (removal.malformed !== null) {
+    printOut(`\x1b[31m-\x1b[0m skills.sh channel: ${removal.malformed}`);
+    printOut(`  \x1b[33m!\x1b[0m ${MALFORMED_RECORD_REMEDY}`);
+    return;
+  }
   if (removal.record === null) {
     printOut('\x1b[36mi\x1b[0m skills.sh channel: no install record; nothing to remove.');
     return;
@@ -2111,9 +2158,7 @@ function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
   }
   for (const failure of removal.failures) printOut(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
   for (const dir of removal.preserved) {
-    printOut(
-      `  \x1b[33m~\x1b[0m skills.sh channel: preserved ${dir} (unverified: content differs from the recorded install, the record predates digests, or retirement could not prove it)`,
-    );
+    printOut(`  \x1b[33m~\x1b[0m skills.sh channel: ${preservedSkillDirDetail(dir)}`);
   }
 }
 
@@ -2129,6 +2174,24 @@ export function performFreshUninstallPlan(
   // deletes the home that holds the record.
   const skillsRemoval = removeSkillsChannelInstall(genieDir);
   reportSkillsChannelRemoval(skillsRemoval);
+  if (skillsRemoval.malformed !== null) {
+    // Fail closed: nothing was removed and nothing will be. GENIE_HOME (and the
+    // record inside it) stays put so the operator can repair it and retry.
+    return {
+      execution: inspectUninstallPlan(genieDir, removeMarketplace),
+      result: {
+        failures: [
+          {
+            step: 'skills.sh channel',
+            detail: `${skillsRemoval.malformed}; ${MALFORMED_RECORD_REMEDY}`,
+          },
+        ],
+        notes: [
+          'skills.sh channel removal refused: the install record is unreadable, so nothing was removed and GENIE_HOME was kept.',
+        ],
+      },
+    };
+  }
   if (skillsRemoval.failures.length > 0 || skillsRemoval.preserved.length > 0) {
     // Anything not cleanly removed keeps its receipt: the skills install record
     // lives inside GENIE_HOME, so the plan must stop before the batch deletes
@@ -2143,7 +2206,7 @@ export function performFreshUninstallPlan(
           ...skillsRemoval.preserved.map(
             (dir): UninstallFailure => ({
               step: 'skills.sh channel',
-              detail: `${dir} preserved (unverified: content differs from the recorded install or the record predates digests); remove it manually, then rerun \`genie uninstall\``,
+              detail: preservedSkillDirDetail(dir),
             }),
           ),
         ],

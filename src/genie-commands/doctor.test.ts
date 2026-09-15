@@ -1114,6 +1114,24 @@ describe('doctor: skills.sh channel', () => {
     });
   });
 
+  /** X3: a malformed record is a finding of its own, never "no install record". */
+  test('a schema-invalid record warns with the offending field and the repair remedy', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(genieHome);
+    const recordPath = join(genieHome, 'skills-install.json');
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>;
+    record.preserved = [{ agentDir: join(isolatedHome, '.claude', 'skills'), skill: '../etc', reason: 'x' }];
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    const results = skillsChannelResults();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'skills: channel', status: 'warn' });
+    expect(results[0]?.detail).toContain('preserved.0.skill');
+    expect(results[0]?.detail).not.toContain('no install record');
+    expect(results[0]?.suggestion).toContain(recordPath);
+  });
+
   test('preserved retired skill dirs warn with their path and reason', () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta', 'trace']);
     seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta', 'perf']);

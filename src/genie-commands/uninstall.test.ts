@@ -197,6 +197,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     const second = removeSkillsChannelInstall(genieHome);
     expect(second).toEqual({
       record: null,
+      malformed: null,
       removed: [],
       failures: [],
       preserved: [],
@@ -205,10 +206,45 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     });
   });
 
+  /**
+   * X3 (r2 §3.3 #14). A record that IS there but does not satisfy the schema is
+   * not "no record": the sweep refuses, removes nothing, and keeps the receipt.
+   * The shipped behaviour printed `no install record; nothing to remove.`,
+   * exited 0, deleted `~/.genie`, and orphaned every recorded skill dir.
+   */
+  test('a schema-invalid record refuses the sweep and removes nothing', () => {
+    const live = seedSkillDir(claudeSkills, 'work');
+    seedRecord(['work'], [claudeSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    // One valid preserved entry beside one whose skill name the schema rejects.
+    writeFileSync(
+      skillsInstallRecordPath(genieHome),
+      JSON.stringify({
+        ...record,
+        preserved: [
+          { agentDir: claudeSkills, skill: 'trace', reason: 'user-edited' },
+          { agentDir: claudeSkills, skill: '../../../etc', reason: 'traversal' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.malformed).toContain('preserved.1.skill');
+    expect(removal.record).toBeNull();
+    expect(removal.removed).toEqual([]);
+    expect(removal.recordRemoved).toBe(false);
+    // Nothing on disk moved, and the receipt survives for the retry.
+    expect(existsSync(live)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+  });
+
   test('no record is nothing to do', () => {
     const foreign = seedSkillDir(claudeSkills, 'wish');
     expect(removeSkillsChannelInstall(genieHome)).toEqual({
       record: null,
+      malformed: null,
       removed: [],
       failures: [],
       preserved: [],
@@ -459,6 +495,34 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     expect(existsSync(genieHome)).toBe(true);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(wish)).toBe(true);
+    expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
+  });
+
+  /**
+   * X3, at the command seam: a malformed record makes the whole plan refuse —
+   * one message, GENIE_HOME kept, nothing on disk touched. The shipped
+   * behaviour reported success and deleted `~/.genie`.
+   */
+  test('a malformed record refuses the plan, keeps GENIE_HOME and removes nothing', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    if (digest === null) throw new Error('fixture skill dir was not digestable');
+    seedChannelRecord(wish, digest);
+    const record = JSON.parse(readFileSync(skillsInstallRecordPath(genieHome), 'utf8')) as Record<string, unknown>;
+    record.preserved = [{ agentDir: claudeSkills, skill: '../../../etc', reason: 'traversal' }];
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(record), 'utf8');
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.step).toBe('skills.sh channel');
+    expect(outcome.result.failures[0]?.detail).toContain('preserved.0.skill');
+    expect(outcome.result.failures[0]?.detail).toContain('nothing was removed');
+    expect(output.some((line) => line.includes('no install record; nothing to remove.'))).toBe(false);
+    expect(existsSync(wish)).toBe(true);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
   });
 

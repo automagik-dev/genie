@@ -31,9 +31,11 @@ import {
   KNOWN_AGENT_SKILL_HOMES,
   SKILLS_CLI_VERSION,
   type SkillsInstallRecord,
+  SkillsInstallRecordError,
   buildSkillsAddArgv,
   computeSkillDirDigest,
   existingAgentSkillHomes,
+  inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isNpmChatterLine,
   isSafeSkillName,
@@ -1746,12 +1748,59 @@ describe('install record', () => {
     expect(read?.dirDigests).toBeUndefined();
   });
 
-  test('an absent, malformed, or traversal-carrying record reads as null', () => {
+  /**
+   * X3 (r2 §3.3 #14). An ABSENT record is `null`; a record that is THERE but
+   * unreadable is a typed throw, so no consumer can mistake "genie cannot read
+   * its own receipt" for "nothing was ever installed".
+   */
+  test('an absent record reads as null; a malformed one throws a typed error naming the field', () => {
     expect(readSkillsInstallRecord(genieHome)).toBeNull();
+    expect(inspectSkillsInstallRecord(genieHome)).toEqual({ status: 'absent' });
 
     writeFileSync(skillsInstallRecordPath(genieHome), '{ not json', 'utf8');
-    expect(readSkillsInstallRecord(genieHome)).toBeNull();
+    expect(() => readSkillsInstallRecord(genieHome)).toThrow(SkillsInstallRecordError);
 
+    // The dogfood shape: one schema-invalid `preserved[]` entry beside a valid
+    // one. It used to void the whole record silently.
+    writeFileSync(
+      skillsInstallRecordPath(genieHome),
+      JSON.stringify({
+        ref: 'v1',
+        cliVersion: '1.5.23',
+        inventory: ['wish'],
+        agentDirs: [join(home, '.claude', 'skills')],
+        preserved: [
+          { agentDir: join(home, '.claude', 'skills'), skill: 'work', reason: 'user-edited' },
+          { agentDir: join(home, '.claude', 'skills'), skill: '../../../etc', reason: 'traversal' },
+        ],
+        installedAt: 'now',
+      }),
+      'utf8',
+    );
+    const read = inspectSkillsInstallRecord(genieHome);
+    expect(read.status).toBe('invalid');
+    const error = read.status === 'invalid' ? read.error : null;
+    expect(error).toBeInstanceOf(SkillsInstallRecordError);
+    expect(error?.field).toBe('preserved.1.skill');
+    expect(error?.path).toBe(skillsInstallRecordPath(genieHome));
+    expect(error?.message).toContain(skillsInstallRecordPath(genieHome));
+    expect(error?.message).toContain('preserved.1.skill');
+
+    // And the installer refuses rather than installing over a record it cannot
+    // read (which would widen what a later uninstall silently misses).
+    fixtureSkillsTree(['wish']);
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok === false && outcome.reason).toContain('preserved.1.skill');
+  });
+
+  test('a traversal-carrying record is malformed too, never silently empty', () => {
     writeFileSync(
       skillsInstallRecordPath(genieHome),
       JSON.stringify({
@@ -1763,7 +1812,7 @@ describe('install record', () => {
       }),
       'utf8',
     );
-    expect(readSkillsInstallRecord(genieHome)).toBeNull();
+    expect(() => readSkillsInstallRecord(genieHome)).toThrow(/inventory\.0/);
 
     writeFileSync(
       skillsInstallRecordPath(genieHome),
@@ -1776,7 +1825,7 @@ describe('install record', () => {
       }),
       'utf8',
     );
-    expect(readSkillsInstallRecord(genieHome)).toBeNull();
+    expect(() => readSkillsInstallRecord(genieHome)).toThrow(/agentDirs\.0/);
   });
 
   test('a symlinked record is rejected like a non-physical consent file', () => {
@@ -1796,7 +1845,7 @@ describe('install record', () => {
     expect(readSkillsInstallRecord(genieHome)).toBeNull();
   });
 
-  test('an agentDir carrying a .. segment reads as null even though it is absolute', () => {
+  test('an agentDir carrying a .. segment is malformed even though it is absolute', () => {
     writeFileSync(
       skillsInstallRecordPath(genieHome),
       JSON.stringify({
@@ -1808,7 +1857,7 @@ describe('install record', () => {
       }),
       'utf8',
     );
-    expect(readSkillsInstallRecord(genieHome)).toBeNull();
+    expect(() => readSkillsInstallRecord(genieHome)).toThrow(/agentDirs\.0/);
   });
 
   test('a throwing publish leaves no staging file behind', () => {

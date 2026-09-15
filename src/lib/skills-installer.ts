@@ -281,29 +281,82 @@ export function skillsInstallRecordPath(genieHome: string = resolveGenieHome()):
 }
 
 /**
- * `null` for absent, unreadable, non-JSON, or schema-invalid records — and for
- * anything at that path that is not a PHYSICAL regular file. A symlink there is
- * an attacker-supplied redirect into a file genie would then treat as an
- * uninstall manifest, so it is rejected the same way
- * `readIntegrationConsentState` rejects one (rejected as absent rather than
- * thrown: this reader's whole contract is "never throw").
+ * A record file that exists but cannot be trusted. Thrown by
+ * {@link readSkillsInstallRecord} so every consumer FAILS CLOSED: before this
+ * existed, one schema-invalid `preserved[]` entry made the whole record read as
+ * "no install record", and `genie uninstall` then printed
+ * `no install record; nothing to remove.`, exited 0, deleted `~/.genie` and
+ * left every recorded skill directory orphaned (r2 §3.3 #14).
  */
-export function readSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecord | null {
+export class SkillsInstallRecordError extends Error {
+  /** The offending field path, e.g. `preserved.0.skill`, or `<document>`. */
+  readonly field: string;
+  /** The record file the error is about. */
+  readonly path: string;
+
+  constructor(options: { path: string; field: string; detail: string }) {
+    super(`skills install record at ${options.path} is malformed: ${options.field} — ${options.detail}`);
+    this.name = 'SkillsInstallRecordError';
+    this.field = options.field;
+    this.path = options.path;
+  }
+}
+
+/** The three honest answers about a record file. Never throws. */
+export type SkillsInstallRecordRead =
+  | { status: 'ok'; record: SkillsInstallRecord }
+  | { status: 'absent' }
+  | { status: 'invalid'; error: SkillsInstallRecordError };
+
+/**
+ * The full-fidelity reader: `absent` for a missing/unreadable record and for
+ * anything at that path that is not a PHYSICAL regular file (a symlink there is
+ * an attacker-supplied redirect into a file genie would otherwise treat as an
+ * uninstall manifest, rejected the same way `readIntegrationConsentState`
+ * rejects one), `invalid` for a record that IS there but is not JSON or does
+ * not satisfy the schema.
+ */
+export function inspectSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecordRead {
   const path = skillsInstallRecordPath(genieHome);
   let raw: string;
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    if (!stat.isFile() || stat.isSymbolicLink()) return { status: 'absent' };
     raw = readFileSync(path, 'utf8');
   } catch {
-    return null;
+    return { status: 'absent' };
   }
+  let document: unknown;
   try {
-    const parsed = skillsInstallRecordSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
+    document = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: 'invalid',
+      error: new SkillsInstallRecordError({ path, field: '<document>', detail: errorMessage(error) }),
+    };
   }
+  const parsed = skillsInstallRecordSchema.safeParse(document);
+  if (parsed.success) return { status: 'ok', record: parsed.data };
+  const issue = parsed.error.issues[0];
+  return {
+    status: 'invalid',
+    error: new SkillsInstallRecordError({
+      path,
+      field: issue === undefined || issue.path.length === 0 ? '<document>' : issue.path.join('.'),
+      detail: issue?.message ?? 'does not satisfy the install-record schema',
+    }),
+  };
+}
+
+/**
+ * `null` when there is no record. THROWS {@link SkillsInstallRecordError} when
+ * a record is present but malformed — the fail-closed half of the contract.
+ * Callers that must not throw use {@link inspectSkillsInstallRecord}.
+ */
+export function readSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecord | null {
+  const read = inspectSkillsInstallRecord(genieHome);
+  if (read.status === 'invalid') throw read.error;
+  return read.status === 'ok' ? read.record : null;
 }
 
 /**
@@ -1354,7 +1407,18 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // the names the install is about to write. The delivered tree is genie's own
   // and the CLI only reads it, so the value is still the one recorded below.
   const inventory = inventoryFromSkillsDir(skillsRoot);
-  const previous = readSkillsInstallRecord(options.genieHome);
+  // Fail closed on a malformed record: it is the retirement plan, the collision
+  // baseline and uninstall's removal authority all at once, so installing over
+  // one genie cannot read would silently widen what a later uninstall misses.
+  const read = inspectSkillsInstallRecord(options.genieHome);
+  if (read.status === 'invalid') {
+    return {
+      ok: false,
+      reason: read.error.message,
+      remedy: `Repair or remove ${skillsInstallRecordPath(options.genieHome)}, then run: genie update`,
+    };
+  }
+  const previous = read.status === 'ok' ? read.record : null;
   const vanished = reportVanishedAgentDirs(previous, warnings);
 
   // RETIREMENT RUNS BEFORE THE INSTALL PASS. `--all` rewrites every supported
