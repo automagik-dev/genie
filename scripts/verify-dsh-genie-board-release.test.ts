@@ -93,7 +93,10 @@ test('signed mode rejects missing/empty sidecars, descriptor mismatch and invali
   expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('empty');
   f.pack();
   rmSync(`${first}.intoto.jsonl`);
-  expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow();
+  expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('missing/empty regular file:');
+  expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow(
+    `provenance sidecar of genie-${version}-darwin-arm64.tar.gz`,
+  );
   f.pack();
   const descriptor = JSON.parse(readFileSync(`${first}.stable.delivery.json`, 'utf8'));
   descriptor.artifactSha256 = '0'.repeat(64);
@@ -225,6 +228,59 @@ test('the staged release payload and the verifier share one plugin member list',
   }
   // Seven members, pinned in exactly one place.
   expect(DSH_PLUGIN_MEMBERS).toHaveLength(7);
+});
+
+/**
+ * r2 c4: an ABSENT payload member threw Node's own
+ * `ENOENT: no such file or directory, statx '<temp path>'` from inside the
+ * verifier's `statSync`, while a zero-byte one got the crafted message — and
+ * neither named the tarball the member was missing from. Both now report the
+ * verifier's own refusal, naming the member and its candidate tarball.
+ */
+describe("absent and empty payload members report the verifier's own message", () => {
+  function failure(directory: string): string {
+    try {
+      verifyArtifacts(directory, version);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error('verifyArtifacts unexpectedly passed');
+  }
+
+  test('an absent member names the member and its tarball, never raw libuv text', () => {
+    const f = fixture();
+    rmSync(join(f.payload, 'plugins/dsh-genie-board/dist/client.js'));
+    f.pack();
+    const message = failure(f.artifacts);
+    expect(message).toContain('missing/empty regular file:');
+    expect(message).toContain('payload member plugins/dsh-genie-board/dist/client.js');
+    expect(message).toContain(join(f.artifacts, `genie-${version}-darwin-arm64.tar.gz`));
+    expect(message).not.toContain('ENOENT');
+    expect(message).not.toContain('statx');
+  });
+
+  test('a zero-byte member reports the same shape', () => {
+    const f = fixture();
+    f.put('plugins/dsh-genie-board/NOTICE', '');
+    f.pack();
+    const message = failure(f.artifacts);
+    expect(message).toContain('missing/empty regular file:');
+    expect(message).toContain('payload member plugins/dsh-genie-board/NOTICE');
+    expect(message).toContain(join(f.artifacts, `genie-${version}-darwin-arm64.tar.gz`));
+  });
+
+  test('an absent candidate tarball is refused by name, not by libuv', () => {
+    const f = fixture();
+    const missing = join(f.artifacts, `genie-${version}-linux-arm64.tar.gz`);
+    rmSync(missing);
+    // readdirSync no longer lists it, so the four-count guard fires first; the
+    // member gate is what a replaced-but-unreadable candidate reaches.
+    writeFileSync(missing, '');
+    const message = failure(f.artifacts);
+    expect(message).toContain('missing/empty regular file:');
+    expect(message).toContain(`candidate tarball genie-${version}-linux-arm64.tar.gz`);
+    expect(message).not.toContain('ENOENT');
+  });
 });
 
 describe('network steps', () => {
