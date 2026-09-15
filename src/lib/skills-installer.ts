@@ -33,7 +33,8 @@
  * would have orphaned the other 53 homes. `agentDirs` is therefore a bounded
  * post-install discovery scan of `$HOME` unioned with that table (decision 3),
  * and a pre-install collision snapshot backs up every foreign same-named skill
- * directory `--copy` is about to overwrite (decision 5).
+ * directory `--copy` is about to overwrite, in every home genie can name before
+ * the spawn (decision 5).
  *
  * Failure policy: a failed skills install NEVER rolls back the promoted binary.
  * The convergence helper prints the exact remedy command, sets `exitCode = 1`,
@@ -730,9 +731,23 @@ export interface SkillsCollision {
   skill: string;
 }
 
+/**
+ * One candidate as the PRE-install snapshot found it.
+ *
+ * `digest` is the foreign directory's content digest at that moment: the
+ * evidence `finalizeCollisionSnapshot` uses afterwards to decide whether the
+ * install actually replaced it, instead of guessing from a discovery heuristic.
+ * `backedUp` says whether its bytes were copied under the backup root — only
+ * homes genie can name in advance are copied (see `collisionBackupHomes`).
+ */
+export interface StagedSkillsCollision extends SkillsCollision {
+  digest: string | null;
+  backedUp: boolean;
+}
+
 export interface SkillsCollisionSnapshot {
-  collisions: SkillsCollision[];
-  /** Allocated lazily: `null` when nothing collided. */
+  collisions: StagedSkillsCollision[];
+  /** Allocated lazily: `null` when nothing was copied. */
   backupRoot: string | null;
   /** Directories that could not be backed up, and were therefore NOT recorded. */
   failures: string[];
@@ -741,6 +756,12 @@ export interface SkillsCollisionSnapshot {
 export interface SkillsCollisionSnapshotOptions {
   /** Candidate skill homes that already exist, absolute. */
   homes: readonly string[];
+  /**
+   * The subset of `homes` whose collisions are COPIED into the backup root.
+   * Everything else is fingerprinted only — detected, digested and reported,
+   * never duplicated into GENIE_HOME. Defaults to every home.
+   */
+  backupHomes?: readonly string[];
   inventory: readonly string[];
   /** The delivered source tree the install is about to copy from. */
   sourceRoot: string;
@@ -785,7 +806,7 @@ function isForeignSkillDir(
 
 /**
  * Copy every foreign same-named skill directory out of harm's way BEFORE the
- * install overwrites it.
+ * install overwrites it — but only in the homes `backupHomes` names.
  *
  * `--all` gives no per-home veto, so "refuse for that home" is unimplementable
  * without abandoning the `--all` contract (decisions 4/5): collisions are
@@ -794,18 +815,30 @@ function isForeignSkillDir(
  * backed up is NOT recorded as handled; it is reported as a failure instead, so
  * the operator line can never claim a backup that does not exist.
  *
+ * A candidate outside `backupHomes` is still DETECTED — its digest is taken —
+ * but none of its bytes are read into the backup. That is M4: on the 2026-09-15
+ * dogfood host 152 directories under `~/.Trash`, `~/backups`, `~/workspace` and
+ * another product'"'"'s tree were copied into GENIE_HOME by a snapshot that swept
+ * the whole `$HOME` walk, and the installer wrote none of them.
+ *
  * Never throws.
  */
 export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions): SkillsCollisionSnapshot {
   const now = options.now ?? (() => new Date());
   const previous = options.previous ?? null;
-  const collisions: SkillsCollision[] = [];
+  const collisions: StagedSkillsCollision[] = [];
   const failures: string[] = [];
+  const backupHomes = options.backupHomes === undefined ? null : new Set(options.backupHomes);
   let backupRoot: string | null = null;
   for (const home of options.homes) {
     for (const skill of options.inventory) {
       const target = join(home, skill);
       if (!isForeignSkillDir(target, { sourceRoot: options.sourceRoot, skill, previous })) continue;
+      const digest = computeSkillDirDigest(target);
+      if (backupHomes !== null && !backupHomes.has(home)) {
+        collisions.push({ dir: target, skill, digest, backedUp: false });
+        continue;
+      }
       const mirrored = relative(options.home, target);
       if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) {
         failures.push(`${target}: outside ${options.home}; not backed up`);
@@ -826,7 +859,7 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
         failures.push(`${target}: ${errorMessage(error)}`);
         continue;
       }
-      collisions.push({ dir: target, skill });
+      collisions.push({ dir: target, skill, digest, backedUp: true });
     }
   }
   return { collisions, backupRoot, failures };
@@ -1359,11 +1392,11 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   }
 
   const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
-  // What the snapshot staged is judged — kept, reported, or discarded — only
-  // once discovery knows which homes this run wrote. `null` means it never got
-  // that far, and then nothing staged is discarded.
-  const finalizeCollisions = (written: readonly string[] | null): SkillsCollision[] =>
-    finalizeCollisionSnapshot({ snapshot, home, previous, written, warnings });
+  // What the snapshot staged is judged — kept and reported, or discarded — by
+  // re-digesting the originals after the spawn. It is therefore correct on
+  // every exit path below, including the ones where the install never ran.
+  const finalizeCollisions = (): SkillsCollision[] =>
+    finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
   const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot });
   const run = options.spawn ?? runBoundedIntegrationCommand;
@@ -1376,11 +1409,11 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       maxOutputBytes: SKILLS_INSTALL_OUTPUT_LIMIT_BYTES,
     });
   } catch (error) {
-    finalizeCollisions(null);
+    finalizeCollisions();
     return { ok: false, reason: error instanceof Error ? error.message : String(error), remedy, warnings };
   }
   if (result.exitCode !== 0) {
-    finalizeCollisions(null);
+    finalizeCollisions();
     return { ok: false, reason: describeFailure(result), remedy, warnings };
   }
 
@@ -1389,7 +1422,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // Recording an empty inventory would make uninstall a silent no-op over
   // skills that are actually on disk.
   if (inventory.length === 0) {
-    finalizeCollisions(null);
+    finalizeCollisions();
     return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy, warnings };
   }
 
@@ -1409,12 +1442,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // itself now that it runs first: the retired bytes are already archived and
   // reported, and refusing the record keeps `genie update` retrying.
   if (Object.keys(dirDigests).length === 0) {
-    finalizeCollisions(null);
+    finalizeCollisions();
     return { ok: false, reason: 'the skills CLI wrote no verifiable skill directory', remedy, warnings };
   }
-  // A capped or failed scan cannot prove what the install wrote, so it is not
-  // allowed to discard a staged copy either.
-  const collisions = finalizeCollisions(agents.scanOk ? agents.dirs : null);
+  const collisions = finalizeCollisions();
   try {
     const record: SkillsInstallRecord = {
       ref: releaseTag(options.version),
@@ -1449,15 +1480,12 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
  * list can track a self-discovering CLI whose registry names 77 agents — every
  * `skills` directory the bounded `$HOME` walk finds.
  *
- * The walk is deliberately UNFILTERED here: the snapshot has to copy the bytes
- * BEFORE the install can overwrite them, and at that point the set of homes
- * this run writes is not yet knowable. Narrowing detection to the known table
- * would silently lose a foreign skill in any of the 53 homes on the 2026-09-15
- * dogfood host that the four-row table does not name. Over-collection is
- * corrected AFTER the install instead, by `finalizeCollisionSnapshot`, which
- * discards every staged copy outside the set the install provably wrote — so
- * the backup an operator is finally told about contains nothing the installer
- * never touched (M4), and nothing foreign is ever destroyed unbacked (M1).
+ * The walk is deliberately UNFILTERED here — but DETECTION is all it feeds.
+ * Narrowing detection to the known table would lose the signal for any of the
+ * 53 homes on the 2026-09-15 dogfood host that the four-row table does not
+ * name. What gets COPIED is the far narrower `collisionBackupHomes` set, and
+ * what is finally kept and reported is decided by digest evidence in
+ * `finalizeCollisionSnapshot`.
  */
 function collisionCandidateHomes(context: {
   home: string;
@@ -1487,22 +1515,54 @@ function collisionCandidateHomes(context: {
   return homes;
 }
 
+/** True when at least one delivered skill name under `home` is provably genie's own. */
+function hasGenieOwnedSkill(
+  home: string,
+  context: { skillsRoot: string; inventory: readonly string[]; previous: SkillsInstallRecord | null },
+): boolean {
+  for (const skill of context.inventory) {
+    if (!isSafeSkillName(skill)) continue;
+    const target = join(home, skill);
+    if (!isDirectory(target)) continue;
+    if (isGenieOwned(target, readProbeFile(join(context.skillsRoot, skill, 'SKILL.md')), context.previous)) return true;
+  }
+  return false;
+}
+
 /**
- * The homes a staged collision copy is KEPT and reported for: everything the
- * post-install discovery proved this run wrote, plus the homes `--all` targets
- * by construction (the known table and the previous record's own dirs, which
- * discovery can miss when the walk cannot reach them).
+ * The homes whose collisions are COPIED before the spawn — genie's answer to
+ * "which directories is the installer about to write?", answered with evidence
+ * rather than with a `$HOME` sweep:
+ *
+ *  - the known table, which `--all` writes by construction;
+ *  - every dir the previous record proves the CLI wrote last time (57 of them
+ *    on the dogfood host, 53 outside the table — this is what keeps M1's
+ *    `~/.openclaw` case backed up);
+ *  - any other discovered home that ALREADY carries a genie-owned skill dir, so
+ *    a home genie delivered to before a record existed is covered too.
+ *
+ * Everything else the walk finds — `~/.Trash/skills`, `~/backups/skills`, a
+ * checkout under `~/workspace` — is detected and digested but never duplicated
+ * into GENIE_HOME. If such a directory nevertheless changes across the install,
+ * `finalizeCollisionSnapshot` says so in plain words instead of pretending a
+ * backup exists.
  */
-function collisionRetentionHomes(context: {
+function collisionBackupHomes(context: {
   home: string;
+  skillsRoot: string;
+  inventory: readonly string[];
   previous: SkillsInstallRecord | null;
-  written: readonly string[];
-}): Set<string> {
-  return new Set([
-    ...context.written,
+  candidates: readonly string[];
+}): string[] {
+  const homes = new Set<string>([
     ...agentSkillHomes(context.home).map((entry) => entry.dir),
     ...(context.previous?.agentDirs ?? []),
   ]);
+  for (const dir of context.candidates) {
+    if (homes.has(dir)) continue;
+    if (hasGenieOwnedSkill(dir, context)) homes.add(dir);
+  }
+  return [...homes];
 }
 
 /** Remove now-empty ancestors of `path`, stopping below (and excluding) `stopAt`. */
@@ -1534,65 +1594,132 @@ function discardStagedCollision(collision: SkillsCollision, context: { backupRoo
   removeEmptyAncestors(staged, context.backupRoot);
 }
 
+/** The snapshot found this directory, and it is byte-for-byte what it was then. */
+function collisionIsUntouched(collision: StagedSkillsCollision): boolean {
+  if (collision.digest === null) return false;
+  return computeSkillDirDigest(collision.dir) === collision.digest;
+}
+
 /**
  * Decide which staged collision copies survive, and report them honestly.
  *
- * `written` is `null` when the install did not complete (a spawn failure, a
- * non-zero exit, a capped discovery scan): the set of homes this run wrote is
- * then unknown, so NOTHING is discarded — a staged copy may already be the only
- * surviving copy of the user's bytes. The homes `--all` targets are still named
- * one line each, and the remainder is summarized in a single line rather than
- * the 152 the dogfood host printed.
+ * Retention is decided by EVIDENCE, never by a verdict about which homes the
+ * install "probably" wrote: a staged copy is discarded only when the original
+ * is still exactly what the snapshot copied. Anything else — replaced, removed,
+ * or unreadable — keeps its copy and is reported. That is what makes the
+ * failure paths safe too: a spawn that never ran leaves every original intact,
+ * so its staging cleans itself up, while a spawn that died halfway keeps
+ * precisely the copies whose originals it had already overwritten.
  *
  * Never throws; returns the collisions that belong in the record.
  */
 function finalizeCollisionSnapshot(context: {
   snapshot: SkillsCollisionSnapshot;
   home: string;
-  previous: SkillsInstallRecord | null;
-  /** Homes discovery proved this install wrote, or `null` when it did not complete. */
-  written: readonly string[] | null;
+  genieHome: string;
   warnings: string[];
 }): SkillsCollision[] {
   const { snapshot, warnings } = context;
   for (const failure of snapshot.failures) {
     warnings.push(`skills: collision not backed up: ${failure}`);
   }
-  if (snapshot.collisions.length === 0 || snapshot.backupRoot === null) return [];
   const backupRoot = snapshot.backupRoot;
-  const retained = collisionRetentionHomes({
-    home: context.home,
-    previous: context.previous,
-    written: context.written ?? [],
-  });
   const kept: SkillsCollision[] = [];
-  const staged: SkillsCollision[] = [];
   for (const collision of snapshot.collisions) {
-    if (retained.has(dirname(collision.dir))) kept.push(collision);
-    else staged.push(collision);
-  }
-  for (const collision of kept) {
+    if (collisionIsUntouched(collision)) {
+      if (collision.backedUp && backupRoot !== null) {
+        discardStagedCollision(collision, { backupRoot, home: context.home });
+      }
+      continue;
+    }
+    kept.push({ dir: collision.dir, skill: collision.skill });
     warnings.push(
-      `skills: collision: ${collision.dir} (${collision.skill}) — a foreign dir in an agent home this install writes; backed up to ${backupRoot}`,
+      collision.backedUp && backupRoot !== null
+        ? `skills: collision: ${collision.dir} (${collision.skill}) — the install replaced a foreign skill dir; its previous contents are backed up to ${backupRoot}`
+        : `skills: collision: ${collision.dir} (${collision.skill}) — the install changed a foreign skill dir that lies outside every agent home genie could name before the install, so no copy of it was taken`,
     );
   }
-  if (context.written === null) {
-    if (staged.length > 0) {
-      warnings.push(
-        `skills: collision: ${staged.length} further foreign skill dir(s) were staged under ${backupRoot} before the install completed; the written set is unknown, so none was discarded`,
-      );
-    }
-    return kept;
-  }
-  for (const collision of staged) discardStagedCollision(collision, { backupRoot, home: context.home });
-  if (kept.length === 0) {
-    try {
-      rmSync(backupRoot, { recursive: true, force: true });
-    } catch {
-      // A backup root that cannot be removed is harmless; it is already empty.
-    }
-  }
+  pruneCollisionBackups({ genieHome: context.genieHome, home: context.home });
   return kept;
+}
+
+const COLLISION_PRUNE_MAX_ROOTS = 32;
+const COLLISION_PRUNE_MAX_FILES = 4000;
+const COLLISION_PRUNE_MAX_FILE_BYTES = 4 * 1024 * 1024;
+
+/** Byte-equal regular files at both paths, within the compare budget. */
+function sameFileContents(left: string, right: string): boolean {
+  try {
+    const leftStat = lstatSync(left);
+    const rightStat = lstatSync(right);
+    if (!leftStat.isFile() || !rightStat.isFile()) return false;
+    if (leftStat.size !== rightStat.size) return false;
+    if (leftStat.size > COLLISION_PRUNE_MAX_FILE_BYTES) return false;
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when every file under `root` still has a byte-identical live original,
+ * i.e. the copy protects nothing. Anything unreadable, unexpected or over
+ * budget answers `false`, so a doubtful backup is always kept.
+ */
+function collisionBackupIsRedundant(root: string, home: string, budget: { files: number }): boolean {
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!entry.isFile()) return false;
+      if (--budget.files < 0) return false;
+      const rel = relative(root, path);
+      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
+      if (!sameFileContents(path, join(home, rel))) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Drop the `skills-collision-*` roots that no longer protect anything —
+ * including the ones an EARLIER run left behind when it could not prove what
+ * the install had written. A root is removed only when every file in it still
+ * matches its live original, so a root holding the user's replaced bytes is
+ * never touched; an empty root trivially qualifies. Never throws.
+ */
+function pruneCollisionBackups(context: { genieHome: string; home: string }): void {
+  const base = join(context.genieHome, 'state-backups');
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(base, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const budget = { files: COLLISION_PRUNE_MAX_FILES };
+  let roots = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('skills-collision-')) continue;
+    if (++roots > COLLISION_PRUNE_MAX_ROOTS) return;
+    const root = join(base, entry.name);
+    if (!collisionBackupIsRedundant(root, context.home, budget)) continue;
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // A root that cannot be removed is harmless: it is a redundant copy.
+    }
+  }
 }
 
 /**
@@ -1616,8 +1743,10 @@ function snapshotCollisionsSafely(context: {
   const empty: SkillsCollisionSnapshot = { collisions: [], backupRoot: null, failures: [] };
   if (context.inventory.length === 0) return empty;
   try {
+    const candidates = collisionCandidateHomes(context);
     return snapshotSkillsCollisions({
-      homes: collisionCandidateHomes(context),
+      homes: candidates,
+      backupHomes: collisionBackupHomes({ ...context, candidates }),
       inventory: context.inventory,
       sourceRoot: context.skillsRoot,
       genieHome: context.genieHome,
