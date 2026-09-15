@@ -3,10 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SKILL_CATEGORIES, SKILL_MUTATES_LEVELS } from './skills-inventory-parity.ts';
 import {
   BANNED_TOKEN_GUIDANCE,
+  checkMutationLine,
   checkResourceLine,
   collectBannedTokenViolations,
+  collectMutationViolations,
   collectResourceViolations,
   extractInlineCodeSpans,
   getGenieCommands,
@@ -438,7 +441,7 @@ describe('end-to-end: retired-vocabulary and directory-shape fixtures', () => {
     writeFileSync(join(skillDir, 'templates', 'brief.md'), '# brief\n\nDispatch a scout first.\n');
     const { code, stderr } = runLintIn(dir);
     expect(code).toBe(0);
-    expect(stderr).toContain('0 retired tokens, 0 structure violations');
+    expect(stderr).toContain('0 retired tokens, 0 mutates-none violations, 0 structure violations');
   });
 });
 
@@ -449,5 +452,213 @@ describe('isResourceAllowlisted', () => {
     expect(isResourceAllowlisted('/repo/skills/genie-hacks/references/catalog.md', skillsDir)).toBe(true);
     expect(isResourceAllowlisted('/repo/skills/README.md', skillsDir)).toBe(true);
     expect(isResourceAllowlisted('/repo/skills/wish/SKILL.md', skillsDir)).toBe(false);
+  });
+});
+
+describe('frontmatter taxonomy — optional closed enums', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'skills-lint-taxonomy-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeTaxonomySkill(extra: readonly string[]): void {
+    writeSkillIn(
+      dir,
+      'fixture',
+      [
+        '---',
+        'name: fixture',
+        'description: "Use fixture for this test workflow."',
+        ...extra,
+        '---',
+        '',
+        '# Fixture',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  test('absent category and mutates are legal', () => {
+    writeTaxonomySkill([]);
+    const metadata = validateSkillMetadata(join(dir, 'fixture'));
+    expect(metadata.violations).toEqual([]);
+    expect(metadata.category).toBeNull();
+    expect(metadata.mutates).toBeNull();
+    expect(runLintIn(dir).code).toBe(0);
+  });
+
+  test('every enum member is accepted', () => {
+    for (const category of SKILL_CATEGORIES) {
+      for (const mutates of SKILL_MUTATES_LEVELS) {
+        writeTaxonomySkill([`category: ${category}`, `mutates: ${mutates}`]);
+        expect(validateSkillMetadata(join(dir, 'fixture')).violations).toEqual([]);
+      }
+    }
+  });
+
+  test('an unknown category value fails and names the enum', () => {
+    writeTaxonomySkill(['category: orchestration']);
+    expect(validateSkillMetadata(join(dir, 'fixture')).violations).toEqual([
+      'unsupported category: orchestration (one of lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops)',
+    ]);
+    const { code, stderr } = runLintIn(dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain('unsupported category: orchestration');
+  });
+
+  test('an unknown mutates value fails and names the enum', () => {
+    writeTaxonomySkill(['mutates: filesystem']);
+    expect(validateSkillMetadata(join(dir, 'fixture')).violations).toEqual([
+      'unsupported mutates: filesystem (one of none, documents, repo, external)',
+    ]);
+    const { code, stderr } = runLintIn(dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain('unsupported mutates: filesystem');
+  });
+
+  test('a key outside the four is still unsupported', () => {
+    writeTaxonomySkill(['model: opus']);
+    expect(validateSkillMetadata(join(dir, 'fixture')).violations).toEqual(['unsupported frontmatter field: model']);
+  });
+});
+
+describe('checkMutationLine — repo-write commands inside a fence', () => {
+  test('names each repo-write command class', () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['git commit -m "x"', 'git commit'],
+      ['git push origin dev', 'git push'],
+      ['git merge dev', 'git merge'],
+      ['git rebase origin/dev', 'git rebase'],
+      ['gh pr create --fill', 'gh pr create'],
+      ['gh pr merge --squash', 'gh pr merge'],
+      ['genie task export --write', 'genie task export --write'],
+      ['genie task done t_1', 'genie task <mutating verb>'],
+      ['rm -rf .genie/tmp', 'rm -rf'],
+      ['cp -r skills/wish /tmp/wish', 'cp -r'],
+      ['mkdir -p .genie/wishes/slug', 'mkdir -p'],
+      ['echo hi > notes.md', '> redirection into a path'],
+      ['bun run check >> build.log', '> redirection into a path'],
+    ];
+    for (const [line, command] of cases) {
+      expect(checkMutationLine(line).map((v) => v.command)).toContain(command);
+    }
+  });
+
+  test('read-only commands and placeholder angle brackets stay clean', () => {
+    expect(checkMutationLine('genie task list --json')).toEqual([]);
+    expect(checkMutationLine('genie task status t_1')).toEqual([]);
+    expect(checkMutationLine('genie board --wish slug')).toEqual([]);
+    expect(checkMutationLine('git status --short')).toEqual([]);
+    // A closing placeholder bracket followed by a space is not a redirect.
+    expect(checkMutationLine('omni connect <instance-id> <agent-name>')).toEqual([]);
+    // 2>&1 is not a redirect into a path.
+    expect(checkMutationLine('bun run check 2>&1')).toEqual([]);
+  });
+
+  test('scans ``` fences of any language and reports the 1-indexed line', () => {
+    const md = ['# doc', '', '```text', 'git push origin dev', '```', ''].join('\n');
+    expect(collectMutationViolations(md)).toEqual([{ command: 'git push', line: 4, snippet: 'git push origin dev' }]);
+  });
+
+  test('inline code and prose are NOT scanned — only fences are', () => {
+    const md = "The coordinator relays it with `genie task comment <id> --worker orchestrator -- '…'` once.";
+    expect(collectMutationViolations(md)).toEqual([]);
+    expect(collectMutationViolations('Do not run git push from this skill.')).toEqual([]);
+  });
+});
+
+describe('end-to-end: the advisory mutates label is earned', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'skills-lint-mutates-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeLabelled(mutates: string): void {
+    writeSkillIn(
+      dir,
+      'labelled',
+      [
+        '---',
+        'name: labelled',
+        'description: "Use labelled for this test workflow."',
+        `mutates: ${mutates}`,
+        '---',
+        '',
+        '# labelled',
+        '',
+        '```bash',
+        'git push origin dev',
+        '```',
+        '',
+      ].join('\n'),
+    );
+  }
+
+  test('`mutates: none` with a fenced git push fails', () => {
+    writeLabelled('none');
+    const { code, stderr } = runLintIn(dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain('claim `mutates: none` but fence a repo write');
+    expect(stderr).toContain('labelled/SKILL.md:10: [mutates-none] git push — git push origin dev');
+  });
+
+  test('`mutates: repo` with the same fence passes', () => {
+    writeLabelled('repo');
+    expect(runLintIn(dir).code).toBe(0);
+  });
+
+  test('the skills-lint:ignore marker does NOT exempt the mutates-none rule', () => {
+    writeSkillIn(
+      dir,
+      'ignored',
+      [
+        '---',
+        'name: ignored',
+        'description: "Use ignored for this test workflow."',
+        'mutates: none',
+        '---',
+        '',
+        '<!-- skills-lint:ignore -->',
+        '',
+        '```bash',
+        'gh pr merge --squash',
+        '```',
+        '',
+      ].join('\n'),
+    );
+    const { code, stderr } = runLintIn(dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain('[mutates-none] gh pr merge');
+  });
+
+  test('a mutates-none skill with only read-only fences passes', () => {
+    writeSkillIn(
+      dir,
+      'reader',
+      [
+        '---',
+        'name: reader',
+        'description: "Use reader for this test workflow."',
+        'mutates: none',
+        '---',
+        '',
+        '# reader',
+        '',
+        '```bash',
+        'genie task status <task-id>',
+        'genie board --json',
+        '```',
+        '',
+      ].join('\n'),
+    );
+    expect(runLintIn(dir).code).toBe(0);
   });
 });
