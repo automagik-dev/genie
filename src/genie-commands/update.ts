@@ -62,6 +62,7 @@ import {
 import { parseReleaseVersion, scanPhysicalTree } from '../lib/release-payload-proof.js';
 import { type IntegrationSelection, readIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
+import { printOut, writeErr, writeOut } from '../lib/term-output.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
@@ -940,29 +941,30 @@ export function formatVerifyBanner(result: VerifyResult): string[] {
 }
 
 // ============================================================================
-// Output primitives — direct ANSI; NO_COLOR honored.
+// Output primitives — compose ANSI freely; the write sink gates it.
 // ============================================================================
 
-function colorEnabled(): boolean {
-  if (process.env.NO_COLOR) return false;
-  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
-  return Boolean(process.stdout.isTTY);
-}
-
+/**
+ * Wrap `text` in `open`…`close` unconditionally. Whether the escapes survive
+ * is decided by `printOut`/`writeErr` (src/lib/term-output.ts) against the
+ * stream the line is actually written to. The local gate this replaced tested
+ * `process.stdout.isTTY` for every line — including the ones that go to
+ * stderr — and never honoured `TERM=dumb`.
+ */
 function colorize(open: string, close: string, text: string): string {
-  return colorEnabled() ? `${open}${text}${close}` : text;
+  return `${open}${text}${close}`;
 }
 
 function log(message: string): void {
-  console.log(`${colorize('\x1b[32m', '\x1b[0m', '▸')} ${message}`);
+  printOut(`${colorize('\x1b[32m', '\x1b[0m', '▸')} ${message}`);
 }
 
 function success(message: string): void {
-  console.log(`${colorize('\x1b[32m', '\x1b[0m', '✔')} ${message}`);
+  printOut(`${colorize('\x1b[32m', '\x1b[0m', '✔')} ${message}`);
 }
 
 function error(message: string): void {
-  console.log(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
+  printOut(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
 }
 
 function isTruthyEnv(value: string | undefined): boolean {
@@ -1284,9 +1286,7 @@ let nextDeprecationEmitted = false;
 function emitNextDeprecationOnce(): void {
   if (nextDeprecationEmitted) return;
   nextDeprecationEmitted = true;
-  process.stderr.write(
-    'warning: --next is deprecated; use --dev instead (--next will be removed in a future release)\n',
-  );
+  writeErr('warning: --next is deprecated; use --dev instead (--next will be removed in a future release)\n');
 }
 
 /** Test-only: reset the deprecation latch so successive in-process resolves
@@ -1389,9 +1389,7 @@ function resolveChannelFromConfig(): ReleaseChannel {
   const path = getGenieConfigPath();
   const read = readConfigTolerant();
   if (read.kind === 'unreadable') {
-    process.stderr.write(
-      `warning: could not read ${contractPath(path)} (${read.reason}); falling back to stable channel\n`,
-    );
+    writeErr(`warning: could not read ${contractPath(path)} (${read.reason}); falling back to stable channel\n`);
     return 'stable';
   }
   const channel = channelFromToken(read.raw.updateChannel);
@@ -1402,12 +1400,12 @@ function resolveChannelFromConfig(): ReleaseChannel {
   // JSON-parseable but schema-invalid — recover the channel from the raw key
   // rather than silently resetting to stable.
   if (channel) {
-    process.stderr.write(
+    writeErr(
       `warning: could not fully read ${contractPath(path)} (invalid config); keeping channel ${channel} from updateChannel\n`,
     );
     return channel;
   }
-  process.stderr.write(
+  writeErr(
     `warning: could not fully read ${contractPath(path)} (invalid config, no usable updateChannel); falling back to stable channel\n`,
   );
   return 'stable';
@@ -1435,7 +1433,7 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
   // preserves every other key verbatim; an unparseable file is left untouched.
   const read = readConfigTolerant();
   if (read.kind === 'unreadable') {
-    process.stderr.write(
+    writeErr(
       `warning: ${contractPath(getGenieConfigPath())} is unparseable (${read.reason}); leaving it untouched — channel ${channel} not persisted\n`,
     );
     return;
@@ -1822,9 +1820,9 @@ async function confirmPlannedDelivery(
     `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion)}?`,
   );
   if (proceed) return true;
-  console.log();
+  printOut();
   log('Update declined.');
-  console.log();
+  printOut();
   return false;
 }
 
@@ -2009,7 +2007,7 @@ export function projectLocalDeliveryVerification(
 
 function emitLocalDeliveryVerification(projection: LocalDeliveryVerificationProjection): void {
   for (const line of projection.stdout) log(line);
-  for (const line of projection.stderr) process.stderr.write(`${line}\n`);
+  for (const line of projection.stderr) writeErr(`${line}\n`);
   process.exitCode = projection.exitCode;
 }
 
@@ -2085,7 +2083,7 @@ export async function handleAlreadyCurrentUpdate(
     latestVersion ?? normalizeVersion(installedVersion),
   );
   (dependencies.retireLegacyMarker ?? retireLegacyInstallMarkerSafe)();
-  console.log();
+  printOut();
   return null;
 }
 
@@ -2160,7 +2158,7 @@ class DeferredUpdateTerminal extends Error {
 function projectDeferredUpdateTerminal(terminal: DeferredUpdateTerminal): void {
   error(terminal.message);
   if (terminal.trailer !== undefined) log(terminal.trailer);
-  if (terminal.trailingBlankLine) console.log();
+  if (terminal.trailingBlankLine) printOut();
   process.exitCode = terminal.exitCode;
 }
 
@@ -2206,10 +2204,10 @@ export async function updateCommand(
   // the signal the rollback capability floor relies on.
   if (await dispatchNonNormalUpdateMode(options)) return;
 
-  console.log();
-  console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
-  console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
-  console.log();
+  printOut();
+  printOut(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
+  printOut(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
+  printOut();
 
   const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
@@ -2222,7 +2220,7 @@ export async function updateCommand(
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
   const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
   const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
-  console.log();
+  printOut();
 
   if (!(await confirmPlannedDelivery(options, plannedInstalledVersion, latestVersion))) return;
 
@@ -2248,7 +2246,7 @@ export async function updateCommand(
 
       if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
         runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
-        console.log();
+        printOut();
         return;
       }
 
@@ -3106,7 +3104,7 @@ async function runRollback(): Promise<DeferredUpdateTerminal | null> {
  */
 async function promptConfirm(question: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
-  process.stdout.write(`${question} [Y/n] `);
+  writeOut(`${question} [Y/n] `);
   return new Promise((resolve) => {
     const onData = (chunk: Buffer) => {
       process.stdin.removeListener('data', onData);
@@ -3135,19 +3133,19 @@ function printDiagnosticsSummary(diagnostics: {
   newestStaleTimestamp?: string | null;
 }): void {
   log('Post-update diagnostics captured.');
-  console.log(`  Report: ${diagnostics.path}`);
-  console.log('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
-  console.log('  local process state, and recent scheduler/TUI log signals.');
+  printOut(`  Report: ${diagnostics.path}`);
+  printOut('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
+  printOut('  local process state, and recent scheduler/TUI log signals.');
   if (diagnostics.signals.length === 0) {
     if (diagnostics.newestStaleTimestamp) {
-      console.log(`  No recent scheduler signals; last entry ${diagnostics.newestStaleTimestamp}`);
+      printOut(`  No recent scheduler signals; last entry ${diagnostics.newestStaleTimestamp}`);
     }
     return;
   }
-  console.log('  Recent scheduler signals:');
+  printOut('  Recent scheduler signals:');
   for (const signal of diagnostics.signals.slice(0, 3)) {
     const errorDetail = signal.lastError ? ` — ${signal.lastError}` : '';
-    console.log(`    ${signal.level}:${signal.event} ×${signal.count}${errorDetail}`);
+    printOut(`    ${signal.level}:${signal.event} ×${signal.count}${errorDetail}`);
   }
 }
 
@@ -3167,9 +3165,9 @@ async function capturePostUpdateDiagnostics(
 }
 
 function printVerifyBanner(result: VerifyResult): void {
-  console.log();
-  for (const line of formatVerifyBanner(result)) console.log(`  ${line}`);
-  console.log();
+  printOut();
+  for (const line of formatVerifyBanner(result)) printOut(`  ${line}`);
+  printOut();
 }
 
 interface MaintenanceOptions {

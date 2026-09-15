@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import {
   designReviewDigest,
   designReviewViolations,
@@ -126,6 +126,79 @@ describe('digest-bound design review evidence', () => {
       expect(readFileSync(designPath, 'utf8')).toBe(changed);
     } finally {
       rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * M9/m18: `skills/wish/references/design-review-evidence.mjs` used to be an
+ * 18-line shim re-exporting `../../brainstorm/references/…`, and skills.sh
+ * supports installing one skill (`--skill wish`). Without a sibling
+ * `brainstorm/` the wish design gate died with ERR_MODULE_NOT_FOUND instead of
+ * refusing cleanly — the gate could not run at all. The shim's own rationale
+ * ("Product distributions always ship the complete 23-skill set") was stale on
+ * a 14-workflow release, and it was that assumption that justified the import.
+ */
+describe('every shipped skill is self-contained', () => {
+  const SKILLS_ROOT = join(import.meta.dir, '..', 'skills');
+  const WISH_SCRIPT = join(SKILLS_ROOT, 'wish', 'references', 'design-review-evidence.mjs');
+  // Deliberately wider than the escape sweep that missed M9, which matched only
+  // `(md|ts)` behind a single `../`.
+  const ESCAPE = /(\.\.\/)+[A-Za-z0-9/_.-]+\.(?:md|ts|mjs|js|cjs|sh|py|yaml|yml|json)/g;
+
+  function skillFiles(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) skillFiles(path, out);
+      else if (entry.isFile()) out.push(path);
+    }
+    return out;
+  }
+
+  test('no shipped skill file names a path outside its own skill directory', () => {
+    const escapes: string[] = [];
+    for (const skill of readdirSync(SKILLS_ROOT, { withFileTypes: true })) {
+      if (!skill.isDirectory()) continue;
+      const skillRoot = join(SKILLS_ROOT, skill.name);
+      for (const file of skillFiles(skillRoot)) {
+        for (const match of readFileSync(file, 'utf8').matchAll(ESCAPE)) {
+          const resolved = resolve(dirname(file), match[0]);
+          if (resolved !== skillRoot && !resolved.startsWith(`${skillRoot}/`)) {
+            escapes.push(`${relative(SKILLS_ROOT, file)} -> ${match[0]}`);
+          }
+        }
+      }
+    }
+    expect(escapes).toEqual([]);
+  });
+
+  test('the wish and brainstorm copies of the evidence helper are byte-identical', () => {
+    expect(readFileSync(WISH_SCRIPT)).toEqual(readFileSync(EVIDENCE_SCRIPT));
+  });
+
+  test('the wish copy runs with no sibling skill installed', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-subset-skill-'));
+    try {
+      // Exactly what `skills.sh --skill wish` lays down: one skill, no siblings.
+      const references = join(root, 'skills', 'wish', 'references');
+      mkdirSync(references, { recursive: true });
+      const script = join(references, 'design-review-evidence.mjs');
+      cpSync(WISH_SCRIPT, script);
+      const design = join(root, 'DESIGN.md');
+      writeFileSync(design, TEMPLATE, 'utf8');
+
+      const digest = Bun.spawnSync(['node', script, 'digest', design], { stdout: 'pipe', stderr: 'pipe' });
+      expect(digest.stderr.toString()).toBe('');
+      expect(digest.exitCode).toBe(0);
+      expect(digest.stdout.toString().trim()).toBe(REVIEWED_SHA256);
+      // The gate itself still refuses an unstamped design — cleanly, exit 1.
+      const verify = Bun.spawnSync(['node', script, 'verify', design], { stdout: 'pipe', stderr: 'pipe' });
+      expect(verify.exitCode).toBe(1);
+      expect(verify.stderr.toString()).not.toContain('ERR_MODULE_NOT_FOUND');
+      expect(verify.stderr.toString()).toContain('design review verdict must be SHIP');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

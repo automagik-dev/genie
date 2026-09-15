@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 
+// SHIPPED TWICE, BYTE-IDENTICALLY: `brainstorm/references/` creates the
+// evidence block and `wish/references/` verifies it, and skills.sh supports
+// installing ONE skill (`--skill wish`), so neither copy may reach outside its
+// own skill directory. The wish copy used to be a shim re-exporting this file
+// through `../../brainstorm/...`, which died with ERR_MODULE_NOT_FOUND on any
+// subset install — the wish design gate could not run at all rather than
+// refusing cleanly. `scripts/design-review-evidence.test.ts` pins the two
+// copies byte-for-byte, so edit this file and copy it over the other.
+
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

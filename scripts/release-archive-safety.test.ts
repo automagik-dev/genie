@@ -9,6 +9,13 @@ import {
   sha256File,
 } from './release-archive-safety';
 
+// process.umask() with no argument is deprecated in Node; read it by setting and restoring.
+function currentUmask(): number {
+  const previous = process.umask(0o022);
+  process.umask(previous);
+  return previous;
+}
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -111,5 +118,23 @@ test('extraction never inherits archived ownership or permissions', () => {
   expect(extract).toContain('--no-same-owner');
   expect(extract).toContain('--no-same-permissions');
   // Whatever the archive recorded, the extracted payload keeps this process's umask.
-  expect(statSync(join(out, 'nested', 'file.txt')).mode & 0o777).toBe(0o777 & ~0o022);
+  expect(statSync(join(out, 'nested', 'file.txt')).mode & 0o777).toBe(0o777 & ~currentUmask());
+});
+
+// Regression: the gate must be green on a restrictive-umask host, not only under 022.
+test('the extracted mode follows the live umask, not a hardcoded 022', () => {
+  const w = workspace();
+  chmodSync(join(w.payload, 'nested', 'file.txt'), 0o777);
+  w.pack();
+  const restore = process.umask(0o077);
+  try {
+    const out = mkdtempSync(join(tmpdir(), 'genie-archive-umask-'));
+    roots.push(out);
+    extractTarball(w.tarball, out);
+    expect(currentUmask()).toBe(0o077);
+    expect(statSync(join(out, 'nested', 'file.txt')).mode & 0o777).toBe(0o777 & ~currentUmask());
+    expect(statSync(join(out, 'nested', 'file.txt')).mode & 0o777).toBe(0o700);
+  } finally {
+    process.umask(restore);
+  }
 });

@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { type InstallPromotionDependencies, recoverPendingInstallPromotions } from '../lib/install-promotion.js';
 import { LIFECYCLE_LEASE_OWNER_ENV, LIFECYCLE_LEASE_PATH_ENV, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import {
@@ -290,5 +290,83 @@ describe('hidden installer promoter command', () => {
     });
     expect(readFileSync(join(f.bin, 'VERSION'), 'utf8')).toBe('1.0.0\n');
     expect(readFileSync(join(internalStage, 'VERSION'), 'utf8')).toBe('2.0.0\n');
+  });
+});
+
+/**
+ * Dogfood m14: `install.sh` into a fresh RELOCATED `GENIE_HOME` (`GENIE_HOME=$H/.genie`
+ * with `$H/.genie` — or `$H` itself — not yet on disk) died with
+ * `could not create GENIE_HOME/bin`. `ensurePhysicalInstallDirectory` called
+ * `mkdirSync(path, { mode: 0o700 })` with no `recursive`, so ENOENT on the
+ * missing ancestor aborted the very first install on that host.
+ */
+describe('a first install into a relocated GENIE_HOME whose ancestors do not exist (m14)', () => {
+  function freshFixture(depth: string[]) {
+    const root = mkdtempSync(join(tmpdir(), 'genie-install-promote-fresh-'));
+    roots.push(root);
+    const userHome = join(root, 'user');
+    // The user home exists (install.sh runs as that user) but GENIE_HOME and
+    // every level below it do NOT.
+    mkdirSync(userHome, { recursive: true, mode: 0o755 });
+    const genieHome = join(userHome, ...depth);
+    const staging = join(root, 'release-payload');
+    mkdirSync(staging, { mode: 0o700 });
+    writePayload(staging, '2.0.0');
+
+    const owner = `12345:${'b'.repeat(32)}:unknown`;
+    const ownerFile = join(root, '.installer-owner');
+    // The lease file is a SIBLING of GENIE_HOME, so it exists before GENIE_HOME does.
+    const leasePath = lifecycleLockPath(genieHome);
+    mkdirSync(dirname(leasePath), { recursive: true, mode: 0o700 });
+    writeFileSync(ownerFile, `${owner}\n`, { mode: 0o600 });
+    linkSync(ownerFile, leasePath);
+    process.env.GENIE_HOME = genieHome;
+    process.env[LIFECYCLE_LEASE_PATH_ENV] = leasePath;
+    process.env[LIFECYCLE_LEASE_OWNER_ENV] = owner;
+    return { root, userHome, genieHome, bin: join(genieHome, 'bin'), staging, owner, ownerFile, leasePath };
+  }
+
+  test('creates GENIE_HOME/bin recursively and promotes the payload', () => {
+    const f = freshFixture(['.genie']);
+    expect(existsSync(f.genieHome)).toBe(false);
+
+    const output: string[] = [];
+    run(f as ReturnType<typeof fixture>, output);
+
+    expect(existsSync(f.bin)).toBe(true);
+    expect(readFileSync(join(f.bin, 'VERSION'), 'utf8')).toBe('2.0.0\n');
+    expect(JSON.parse(output[0] as string)).toMatchObject({ outcome: 'committed' });
+  });
+
+  test('a GENIE_HOME several levels deep is created too', () => {
+    const f = freshFixture(['relocated', 'state', '.genie']);
+    expect(existsSync(f.genieHome)).toBe(false);
+
+    run(f as ReturnType<typeof fixture>);
+
+    expect(readFileSync(join(f.bin, 'VERSION'), 'utf8')).toBe('2.0.0\n');
+  });
+
+  test('the created directories are private (0700), not world-readable', () => {
+    const f = freshFixture(['.genie']);
+    run(f as ReturnType<typeof fixture>);
+
+    expect(lstatSync(f.genieHome).mode & 0o777).toBe(0o700);
+    expect(lstatSync(f.bin).mode & 0o777).toBe(0o700);
+  });
+
+  test('a SYMLINK standing where GENIE_HOME/bin belongs is still refused, not silently accepted', () => {
+    // `recursive: true` on the leaf would make mkdirSync succeed on an existing
+    // path of any kind; the leaf therefore stays non-recursive and the lstat
+    // check below still owns the decision.
+    const f = freshFixture(['.genie']);
+    const decoy = join(f.root, 'decoy-bin');
+    mkdirSync(f.genieHome, { recursive: true, mode: 0o700 });
+    mkdirSync(decoy, { mode: 0o700 });
+    symlinkSync(decoy, f.bin);
+
+    expect(() => run(f as ReturnType<typeof fixture>)).toThrow(InstallPromoteCommandError);
+    expect(lstatSync(f.bin).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(decoy, 'VERSION'))).toBe(false);
   });
 });

@@ -60,8 +60,11 @@ export const cardSchema = z
     timeline: z.array(event),
     eventCount: time.int(),
     eventsTruncated: z.boolean(),
-    // A comment note may be the empty string: `task comment -- <id> ''` stores
-    // it and the aggregate emits it verbatim.
+    // A comment note may be the empty string. The CLI refuses one
+    // (`task comment -- <id> ''` exits 1 with "a non-empty comment is
+    // required."), so an empty note only ever reaches the aggregate through
+    // imported data (`task import` of a snapshot that carries one), which the
+    // aggregate then emits verbatim — so the schema must still accept it.
     comments: z.array(event.omit({ kind: true }).extend({ note: text }).passthrough()),
     commentCount: time.int(),
   })
