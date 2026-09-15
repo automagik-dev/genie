@@ -51,6 +51,7 @@ import {
   isGenieSymlink,
   isSameOrContainedPath,
   performFreshUninstallPlan,
+  preservedSkillDirDetail,
   readUninstallBatchDecision,
   recordUninstallBatchDecision,
   removeProvenV4Rules,
@@ -496,6 +497,40 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(wish)).toBe(true);
     expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
+  });
+
+  /**
+   * X7 (r2 c2): the inline report and the failure list an operator ACTS on used
+   * to carry two different sentences for the same preserved directory, and the
+   * actionable one dropped the retirement cause. Nothing locked them together —
+   * both surfaces merely had to contain the path and the word `preserved`, so a
+   * future edit could re-diverge them silently. This pins BOTH to the single
+   * exported helper, byte for byte.
+   */
+  test('the preserved-dir line is byte-identical on stdout and in the failure list', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    seedChannelRecord(wish, 'deadbeef'.repeat(8)); // never matches the live content
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    const expected = preservedSkillDirDetail(wish);
+    // The cause an operator needs and the remedy they act on, in one sentence.
+    expect(expected).toContain('retirement could not prove it');
+    expect(expected).toContain('remove it manually, then rerun `genie uninstall`');
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.detail).toBe(expected);
+
+    const prefix = 'skills.sh channel: preserved ';
+    const printed = output
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping the SGR colour codes the sink emits
+      .map((line) => line.replace(/\u001B\[[0-9;]*m/g, '').trim())
+      .filter((line) => line.includes(prefix))
+      // Drop only the `~` status marker and the channel prefix; the rest is the
+      // sentence itself and must survive byte for byte.
+      .map((line) => line.slice(line.indexOf(prefix) + 'skills.sh channel: '.length));
+    expect(printed).toEqual([expected]);
   });
 
   /**
