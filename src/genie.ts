@@ -22,6 +22,7 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
+import { colorizeFor } from './lib/term-color.js';
 import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
@@ -66,10 +67,13 @@ program.configureHelp({
 });
 
 program.configureOutput({
+  // Commander writes this to stderr. Colour is gated on the STDERR stream (plus
+  // NO_COLOR / TERM=dumb): a redirected or piped diagnostic must be plain text,
+  // never `\x1b[31m` smuggled into a log file. See src/lib/term-color.ts.
   outputError: (str, write) => {
     const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
     const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
-    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m\n`);
+    write(`${colorizeFor('stderr', '\x1b[31m', `Error (${prefix}): ${str}`)}\n`);
   },
 });
 
