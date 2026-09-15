@@ -42,6 +42,35 @@ order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
 as `hashVersion`, and a marker without one is compared with the pre-sorting hash
 so upgrading genie never by itself reads as divergence.
 
+
+
+### Two databases, never one file
+
+There are two `genie.db` files and they are wholly separate databases:
+
+| File | Module | Holds | `user_version` |
+|------|--------|-------|----------------|
+| `<repo>/.genie/genie.db` | `genie-db.ts` | boards, tasks, dependencies, events, stage log, wish groups, hire roster | its own |
+| `<GENIE_HOME>/genie.db` | `global-db.ts` | Omni approval queue, inbound message inbox, agent sessions, service leases | its own, independent |
+
+The two schemas must never meet in one file. They are stamped with independent
+`PRAGMA user_version` values, so a merged file makes a future per-repo migration
+run against — or silently skip — the approval queue.
+
+The default `GENIE_HOME` is `$HOME/.genie`, which is *also* a valid spelling of
+a per-repo `.genie/` directory: a per-repo verb invoked with `cwd = $HOME`
+(outside any git repo, so path resolution falls back to `cwd`) resolves
+`$HOME/.genie/genie.db` — the global file — and would initialize the per-repo
+schema inside it. `openDb` therefore **refuses** any path that resolves (through
+symlinks) to `resolveGlobalDbPath()`, with a typed `GlobalDbPathError` naming
+the collision, whether the path came from `cwd` resolution or an explicit
+`{ path }`. The remedy is to run the command inside a repository, or to point
+`GENIE_HOME` somewhere that is not that repo's `.genie/`.
+
+The guard is the only link between the modules and it points one way:
+`genie-db.ts` imports `resolveGlobalDbPath` so the two path rules cannot drift;
+`global-db.ts` still imports nothing from `genie-db.ts`.
+
 ### Worktree sharing
 
 All linked worktrees of a repository share **one** `genie.db`. The path is
