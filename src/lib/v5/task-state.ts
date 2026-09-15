@@ -771,10 +771,13 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
     for (const depId of deps) {
       addDependencyInTx(db, id, depId);
     }
+    // Read back INSIDE the transaction: a concurrent delete between commit and a
+    // separate read would otherwise return null through a `as TaskRow` cast and
+    // surface as `null is not an object` instead of a typed result.
+    return getTask(db, id) as TaskRow;
   });
-  insert();
 
-  return getTask(db, id) as TaskRow;
+  return insert() as TaskRow;
 }
 
 export function getTask(db: Database, id: string): TaskRow | null {
@@ -1049,8 +1052,11 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
   const now = opts.now ?? Date.now();
   const staleBefore = now - (opts.staleMs ?? DEFAULT_STALE_MS);
 
-  const claim = db.transaction(() => {
-    const res = db
+  // RETURNING captures the claimed row inside the winning UPDATE itself, so a
+  // racing delete cannot empty a separate post-commit read (the `as TaskRow`
+  // cast would have turned that into `null is not an object`).
+  const claim = db.transaction((): RawTask | null => {
+    const claimed = db
       .query(
         `UPDATE tasks
          SET claimed_by = ?, claimed_at = ?, status = 'in_progress', updated_at = ?
@@ -1059,10 +1065,11 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
            AND (
              status = 'ready'
              OR (status = 'in_progress' AND claimed_at IS NOT NULL AND claimed_at <= ?)
-           )`,
+           )
+         RETURNING *`,
       )
-      .run(worker, now, now, taskId, staleBefore);
-    if (res.changes === 1) {
+      .get(worker, now, now, taskId, staleBefore) as RawTask | null;
+    if (claimed) {
       appendTaskEvent(db, taskId, {
         kind: 'claim',
         note: `claimed by ${worker}`,
@@ -1070,11 +1077,11 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
         author: opts.author?.author ?? undefined,
       });
     }
-    return res.changes;
+    return claimed;
   });
-  let changes: number;
+  let claimed: RawTask | null;
   try {
-    changes = claim.immediate();
+    claimed = claim.immediate() as RawTask | null;
   } catch (err) {
     // Under heavy cross-process contention a straggler can exhaust
     // busy_timeout and surface SQLITE_BUSY instead of a clean 0-change
@@ -1090,8 +1097,8 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
     throw err;
   }
 
-  if (changes !== 1) claimFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  if (!claimed) claimFailure(db, taskId);
+  return mapTask(claimed);
 }
 
 /**
@@ -1117,16 +1124,17 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   // `checkout --worker w`, the orchestrator completes after review. The author
   // param attributes the timeline event; it does not gate the write. The
   // `release` event + recompute run ONLY inside the winning transaction.
-  const complete = db.transaction(() => {
-    const res = db
+  const complete = db.transaction((): RawTask | null => {
+    const completed = db
       .query(
         `UPDATE tasks
          SET status = 'done', updated_at = ?
          WHERE id = ?
-           AND status IN ('ready', 'in_progress')`,
+           AND status IN ('ready', 'in_progress')
+         RETURNING *`,
       )
-      .run(now, taskId);
-    if (res.changes === 1) {
+      .get(now, taskId) as RawTask | null;
+    if (completed) {
       appendTaskEvent(db, taskId, {
         kind: 'release',
         note: 'completed',
@@ -1135,10 +1143,11 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
       });
       recomputeReady(db);
     }
-    return res.changes;
+    return completed;
   });
-  if (complete.immediate() !== 1) completeFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  const completed = complete.immediate() as RawTask | null;
+  if (!completed) completeFailure(db, taskId);
+  return mapTask(completed);
 }
 
 /** Translate a refused completion (status CAS matched no completable row) into a typed error. */
@@ -1173,15 +1182,16 @@ function releaseFailure(db: Database, taskId: string): never {
  */
 export function releaseTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   const now = Date.now();
-  const release = db.transaction(() => {
-    const res = db
+  const release = db.transaction((): RawTask | null => {
+    const released = db
       .query(
         `UPDATE tasks
          SET status = 'ready', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL, updated_at = ?
-         WHERE id = ? AND status = 'in_progress'`,
+         WHERE id = ? AND status = 'in_progress'
+         RETURNING *`,
       )
-      .run(now, taskId);
-    if (res.changes === 1) {
+      .get(now, taskId) as RawTask | null;
+    if (released) {
       appendTaskEvent(db, taskId, {
         kind: 'release',
         note: 'released',
@@ -1189,10 +1199,11 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
         author: author.author ?? undefined,
       });
     }
-    return res.changes;
+    return released;
   });
-  if (release.immediate() !== 1) releaseFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  const released = release.immediate() as RawTask | null;
+  if (!released) releaseFailure(db, taskId);
+  return mapTask(released);
 }
 
 /**
@@ -1213,41 +1224,45 @@ export function blockTask(
   requireTask(db, taskId);
   const blockedBy = author.author ?? author.authorKind ?? 'unknown';
   const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ? WHERE id = ?').run(
-      blockedBy,
-      reason,
-      kind,
-      now,
-      taskId,
-    );
+  const tx = db.transaction((): RawTask | null => {
+    const blocked = db
+      .query(
+        `UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ?
+         WHERE id = ? RETURNING *`,
+      )
+      .get(blockedBy, reason, kind, now, taskId) as RawTask | null;
+    if (!blocked) throw new UnknownTaskError(taskId);
     appendTaskEvent(db, taskId, {
       kind: 'block',
       note: reason,
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return blocked;
   });
-  tx();
-  return getTask(db, taskId) as TaskRow;
+  return mapTask(tx() as RawTask);
 }
 
 /** Clear an enforced block — provenance, reason, and kind together — and append an `unblock` event. */
 export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   requireTask(db, taskId);
   const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query(
-      'UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ? WHERE id = ?',
-    ).run(now, taskId);
+  const tx = db.transaction((): RawTask | null => {
+    const unblocked = db
+      .query(
+        `UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ?
+         WHERE id = ? RETURNING *`,
+      )
+      .get(now, taskId) as RawTask | null;
+    if (!unblocked) throw new UnknownTaskError(taskId);
     appendTaskEvent(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return unblocked;
   });
-  tx();
-  return getTask(db, taskId) as TaskRow;
+  return mapTask(tx() as RawTask);
 }
 
 // ============================================================================
@@ -1702,17 +1717,20 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
   const from = getTaskLane(db, taskId);
   const note = `${from ?? '(none)'}→${toLane}`;
   const now = Date.now();
-  const move = db.transaction(() => {
-    db.query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ?').run(toLane, now, taskId);
+  const move = db.transaction((): RawTask | null => {
+    const moved = db
+      .query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ? RETURNING *')
+      .get(toLane, now, taskId) as RawTask | null;
+    if (!moved) throw new UnknownTaskError(taskId);
     appendTaskEvent(db, taskId, {
       kind: 'move',
       note,
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return moved;
   });
-  move();
-  return { task: getTask(db, taskId) as TaskRow, from, to: toLane };
+  return { task: mapTask(move() as RawTask), from, to: toLane };
 }
 
 // ============================================================================
