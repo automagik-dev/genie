@@ -364,7 +364,8 @@ lane definition that was stored alongside them.
   this aggregate itself emits — reads as absent, so a round-trip of emitted
   output parses back to the lanes it came from. Anything unusable (not an array,
   an entry that is not an object, a missing/blank/non-string `name`, a non-string
-  `label`/`action`) makes the board **laneless**: both paths print the same
+  `label`/`action`, or an EMPTY array — a stored `[]` is a lane definition that
+  yields no lane, not the absence of one) makes the board **laneless**: both paths print the same
   one-line `Note: board "…" has no usable lane metadata; …` on stderr, exit 0,
   and render the laneless board — `--json` falls through to the frozen
   `{ scope, columns }` status payload. A laneless board is never a

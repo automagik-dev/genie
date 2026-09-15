@@ -772,6 +772,12 @@ describe('scoped board JSON aggregate v1', () => {
   // path that refuses the board. ONE validator decides for both paths.
   const unusableLanes = [
     ['invalid JSON', '{'],
+    // m9: a stored `[]` is a lane definition that yields no lane. It used to
+    // fall through to the frozen laneless payload with EMPTY stderr, so a
+    // caller could not tell "this board has no lanes" from "I could not read
+    // this board's lanes". Same note, same exit code, same shape as every
+    // other unusable blob.
+    ['empty array', '[]'],
     ['non-array JSON', '{}'],
     ['non-object entry', '[null]'],
     ['nested-array entry', '[[]]'],

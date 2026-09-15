@@ -184,6 +184,23 @@ describe('boards with lifecycle lanes', () => {
   test('an empty lane list normalizes to a laneless board', () => {
     const board = createBoard(db, 'empty-lanes', []);
     expect(board.lanes).toBeNull();
+    // Stored as NULL, not "[]": a board created without lanes is the quiet
+    // laneless board and must NOT carry the unusable-metadata note.
+    const stored = db.query('SELECT lanes FROM boards WHERE id = ?').get(board.id) as { lanes: string | null };
+    expect(stored.lanes).toBeNull();
+    expect(getBoardByName(db, 'empty-lanes')?.laneMetadataMalformed).toBe(false);
+  });
+
+  // m9: `[]` only reaches boards.lanes through import or a hand-merged
+  // roadmap.json. It is a lane definition that yields no lane, so it reads as
+  // unusable metadata and earns the same laneless note as `{` or `[{}]` —
+  // rather than the frozen all-tasks shape with empty stderr.
+  test('a stored empty lane ARRAY is unusable metadata, not a quiet laneless board', () => {
+    const board = createBoard(db, 'imported', DEFAULT_LIFECYCLE_LANES);
+    db.query('UPDATE boards SET lanes = ? WHERE id = ?').run('[]', board.id);
+    const fetched = getBoardByName(db, 'imported');
+    expect(fetched?.lanes).toBeNull();
+    expect(fetched?.laneMetadataMalformed).toBe(true);
   });
 
   test('a duplicate board name throws DuplicateBoardError (UNIQUE surfaced cleanly)', () => {

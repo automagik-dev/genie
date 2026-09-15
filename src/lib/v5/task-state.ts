@@ -102,7 +102,12 @@ export interface BoardRow {
   name: string;
   /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
   lanes: Lane[] | null;
-  /** True only when a non-null stored lane definition is not JSON-array data. */
+  /**
+   * True when a non-null stored lane definition yields no usable lanes —
+   * unparseable, not an array, an entry that is not a lane, OR an empty array.
+   * A NULL definition (a board created without lanes) is a quiet laneless board
+   * and leaves this false.
+   */
   laneMetadataMalformed: boolean;
   createdAt: number;
 }
@@ -679,7 +684,14 @@ export function normalizeLanes(raw: unknown): Lane[] | null {
 
 /**
  * Parse stored lane JSON while retaining whether non-null metadata was unusable.
- * An empty array is a legitimately laneless board, not malformed metadata.
+ *
+ * A stored `[]` is unusable lane metadata, exactly like `{` or `[{}]`: the board
+ * carries a lane definition that yields no lane to render. It gets the same
+ * laneless note, because the alternative — silently handing back the frozen
+ * all-tasks shape with empty stderr — leaves the caller unable to tell a board
+ * that has no lanes from one whose lanes it simply could not read. A board with
+ * genuinely no lane metadata stores NULL (what `createBoard` writes for an empty
+ * lane list), and that stays the quiet, note-free laneless board.
  */
 function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: boolean } {
   if (raw == null) return { lanes: null, malformed: false };
@@ -689,7 +701,6 @@ function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: bool
   } catch {
     return { lanes: null, malformed: true };
   }
-  if (Array.isArray(parsed) && parsed.length === 0) return { lanes: null, malformed: false };
   const lanes = normalizeLanes(parsed);
   return lanes ? { lanes, malformed: false } : { lanes: null, malformed: true };
 }
