@@ -80,6 +80,8 @@ v5 is zero-daemon: documents live in git, per-group execution state lives in `.g
 | "list all wishes" | `genie board`, or `ls .genie/wishes/` |
 | "show my tasks" / "backlog" | `genie task list` (`--status`, `--wish`, `--board`, `--json`) |
 | "claim a task" / "start on <id>" | `genie task checkout <id> --worker <name>` — atomic; a racing claimant gets a conflict error and stands down |
+| "report on <id>" / "hand off <id>" | `genie task report <id> --worker <name> -- '<outcome>: <what/where>; <validation → result>'` — the engineer's one message per claim |
+| "comment on <id>" / "note on the card" | `genie task comment <id> --worker <name> -- '<text>'` — orchestrator gate pointer (review verdict, done, blocked); ≤4000 bytes |
 | "stop agent X" / "kill X" | Native team: stop the background subagent in-session — no CLI verb |
 | "message agent X" | The runtime's native follow-up surface |
 | "create a team for X" | `work` on the wish — native role agents, one per execution group |

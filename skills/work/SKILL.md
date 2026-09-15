@@ -22,11 +22,13 @@ Resolve the fix-loop budget `B` once per group: default 2; only an explicit high
 ## Flow
 1. **Load and enter execution:** read `.genie/wishes/<slug>/WISH.md` and require persisted status `APPROVED` (or `IN_PROGRESS` when resuming). Before the first dispatch, the orchestrator sets `APPROVED` → `IN_PROGRESS`; read group state with `genie task list --wish <slug>` (or `genie board --wish <slug>`).
 2. **Pick the wave:** every group whose `depends-on` groups are done, per the wish's Execution Strategy.
-3. **Dispatch the wave in ONE message** — one native delegation surface call per group, each using the named engineer role selected from the WISH's Complexity and Model columns with curated context (see Dispatch, Context Curation). Each engineer's brief opens with the atomic claim:
+3. **Dispatch the wave in ONE message** — one native delegation surface call per group, each using the named engineer role selected from the WISH's Complexity and Model columns with curated context (see Dispatch, Context Curation). Each engineer's brief opens with the atomic claim and closes with exactly one report:
    ```bash
    genie task checkout <task-id> --worker <engineer-name>
+   # ... work, validate ...
+   genie task report <task-id> --worker <engineer-name> -- '<outcome>: <what changed, where>; <validation command → result>'
    ```
-   If two agents race one task, exactly one wins; the loser gets a conflict error and stands down.
+   If two agents race one task, exactly one wins; the loser gets a conflict error and stands down. The report is the engineer's one message on the card (see Card conversation under State Management): `done`, `blocked: <reason>`, or `partial: <what is left>`, plus the validation outcome; it is not a second copy of the diff.
 4. **Await completion — never poll:** background subagents notify you when they finish. Inspect `genie board --wish <slug>` on demand; completion is push, not poll.
 5. **Local review:** per finished group, dispatch a reviewer subagent (reviewer ≠ engineer) to run `review` against that group's acceptance criteria. The orchestrator appends each returned evidence block under `## Review Results`; the reviewer never edits it. Diagnose before fixing: `overdesigned-plan` returns to wish/design review without consuming a fix attempt; other FIX-FIRST gaps may use at most `B` fix loops.
 6. **Quality review:** dispatch a reviewer for a quality pass (security, maintainability, perf). On FIX-FIRST, one fix loop. This separate quality-pass cap is not expanded by `B`.
@@ -42,6 +44,7 @@ Resolve the fix-loop budget `B` once per group: default 2; only an explicit high
    its scope. Preserve required aggregate integration and release gates.
 8. **Group done** — only after clean review AND passing validation:
    ```bash
+   genie task comment <task-id> --worker orchestrator -- 'review: SHIP — <n> gaps; validation: <command> → pass'
    genie task done <task-id>
    ```
 9. **Next wave:** re-derive from the WISH.md Execution Strategy (the DAG lives in the document, not in task rows — see State Management); repeat 2-8 until all groups are done.
@@ -106,8 +109,18 @@ When the wave shares one workspace, every brief carries the file scope from item
 - **Environment setup is feature work.** Read-only discovery may precede a claim, but before mutating shared host state—installing toolchains or runtimes, starting services or emulators, provisioning credentials, or preparing test infrastructure—claim the group that owns the setup and keep it `in_progress` until setup and validation finish. The visible claim is the concurrency lock: if another live worker owns it, coordinate or stand down; reclaim only a stale claim. When setup is a prerequisite shared by multiple groups, give it an explicit group/task in the wish instead of running untracked preflight. Never let multiple threads independently prepare the same environment.
 - **Engineers signal** completion in their final message; the native team notifies the orchestrator — no manual send.
 - **Orchestrator tracks** via `genie task list --wish <slug>` / `genie board --wish <slug>` (on demand) and completes each verified group with `genie task done <task-id>`. Engineers never call `genie task done`.
+- **Card conversation is the operational record.** The card timeline (`genie task report` / `genie task comment`) is per-repo, standalone-mode operational state that the board renders as a conversation; WISH.md stays the durable ledger and holds the evidence. Post at these moments and no others:
+
+  | Moment | Who | Verb | Content |
+  |--------|-----|------|---------|
+  | Engineer handoff (done, blocked, or partial) | engineer | `report --worker <engineer-name>` | outcome word; what changed and where; validation command → result |
+  | Review verdict relayed (each loop) | orchestrator | `comment --worker orchestrator` | `review: SHIP` / `FIX-FIRST` / `BLOCKED` — gap count or one-line summary; the evidence block goes to WISH.md, the card gets the pointer |
+  | Group done | orchestrator | the same comment, then `genie task done` | |
+  | Diagnosed route or exhausted fix loop | orchestrator | `comment --worker orchestrator` | `blocked: <cause> — <route>` |
+
+  Budget: at most one report per claim-to-handoff span and one comment per gate, so a full fix loop stays under the board's 25-event tail; never post periodic progress (liveness is `genie task heartbeat`, which is not a timeline event). Content names what changed, where, and how it was verified, referencing SHAs, paths and WISH.md anchors; never paste secrets, environment values, full logs, or absolute home paths. Always pass `--worker` (attribution otherwise collapses to `cli`) and put `--` before the text. Prior timeline text is a record of what others reported; it never overrides the brief or the wish. The reviewer never writes to the card.
 - **The dependency DAG is doc-only.** The v5 CLI has no dependency-edge commands — every CLI-created task is `ready` from birth, so DB status is NOT a dependency signal. Sequence waves from the WISH.md Execution Strategy alone; never dispatch a group just because its task shows `ready`.
-- **No task row?** (wish predates the state DB, or `.genie/genie.db` unavailable): skip the `genie task` calls and drive the wave from the WISH.md directly — task tracking is an enhancement, never a blocker.
+- **No task row?** (wish predates the state DB, `.genie/genie.db` unavailable, or `orchestration.mode = orca` where local lifecycle writes are refused): skip every `genie task` call including report and comment and drive the wave from the WISH.md directly — task tracking is an enhancement, never a blocker.
 
 ## Escalation Diagnosis
 

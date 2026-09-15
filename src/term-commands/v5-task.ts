@@ -464,42 +464,51 @@ function handleCheckout(id: string, opts: CheckoutOptions): void {
   });
 }
 
-function handleComment(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty comment is required.');
+interface AuthoredNoteOptions {
+  worker?: string;
+}
+
+/** Timeline prose crosses the DSH board input contract (4000 bytes, no control characters); bound it at the CLI too. */
+const NOTE_MAX_BYTES = 4000;
+function boundedNote(text: string | undefined, what: string): string {
+  const note = text?.trim() ?? '';
+  if (!note) fail(`a non-empty ${what} is required.`);
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(note)) fail(`${what} must not contain control characters.`);
+  if (Buffer.byteLength(note) > NOTE_MAX_BYTES) fail(`${what} must be at most ${NOTE_MAX_BYTES} bytes.`);
+  return note;
+}
+
+/** `--worker` names the speaker the way `checkout --worker` does; kind still comes from the runtime. */
+function authoredBy(opts: AuthoredNoteOptions): { author: string; authorKind: string | undefined } {
+  const base = resolveEventAuthor();
+  const worker = opts.worker?.trim();
+  return { author: worker || base.author || 'cli', authorKind: base.authorKind ?? undefined };
+}
+
+function handleComment(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'comment');
   run(() => {
     const db = openDb();
     try {
       if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'comment',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Commented on task ${id}.`);
+      const author = authoredBy(opts);
+      appendTaskEvent(db, id, { kind: 'comment', note, authorKind: author.authorKind, author: author.author });
+      out(`Commented on task ${id} as ${author.author}.`);
     } finally {
       db.close();
     }
   });
 }
 
-function handleReport(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty report is required.');
+function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'report');
   run(() => {
     const db = openDb();
     try {
       if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'report',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Reported on task ${id} (${author.authorKind}).`);
+      const author = authoredBy(opts);
+      appendTaskEvent(db, id, { kind: 'report', note, authorKind: author.authorKind, author: author.author });
+      out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {
       db.close();
     }
@@ -800,13 +809,15 @@ export, with two caveats:
 
   task
     .command('comment <id> <text>')
-    .description('Append an authored comment to the card timeline')
-    .action((id: string, text: string) => handleComment(id, text));
+    .description('Append an authored comment to the card timeline (use -- before text that starts with a dash)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleComment(id, text, opts));
 
   task
     .command('report <id> <text>')
-    .description('Append an authored worker report to the card timeline')
-    .action((id: string, text: string) => handleReport(id, text));
+    .description('Append an authored worker report to the card timeline (one per claim-to-handoff span)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
 
   task
     .command('block <id>')

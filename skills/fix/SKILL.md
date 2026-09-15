@@ -56,7 +56,7 @@ If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wi
 
 ## Task State
 
-The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
+The fix loop never mutates task state or status. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. Each re-review verdict is relayed to the card by the orchestrator as one `genie task comment <task-id> --worker orchestrator -- 'review: … — …'`; an exhausted loop or diagnosed route gets one `blocked: <cause> — <route>` comment. The fixer posts nothing. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
 
 ## Diagnosis / Appeal Format
 

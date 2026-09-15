@@ -98,6 +98,9 @@ genie task checkout <id> --worker w   # Atomically claim a ready task for a work
 genie task status <id>                # Task detail, dependencies, stage log (shows the declared assignment)
 genie task set-wish <id> --wish w     # Attach/re-point wish identity on an existing card (--clear removes)
 genie task assign <id> --agent <name> --why <reason>  # Declare/reassign which roster agent works a card (--clear removes)
+genie task adopt <id> --board <ref> --lane <name>  # One-time placement of a laneless (pre-board) card onto a board lane
+genie task report <id> --worker <name> -- '<text>'  # Engineer's one handoff message per claim (outcome; what/where; validation)
+genie task comment <id> --worker <name> -- '<text>' # Orchestrator gate pointer (review verdict, done, blocked); bounded to 4000 bytes, no control chars
 genie task delete <id>                # Hard-delete a card (refused while other cards depend on it)
 genie task done <id>                  # Orchestrator only: mark reviewed work done + recompute ready set
 genie task export                     # Emit the complete DB state as JSON

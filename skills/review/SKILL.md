@@ -127,6 +127,12 @@ execution, and PR review, the orchestrator appends the block under the wish's
 - execution and PR verdicts are appended while the wish remains `IN_PROGRESS`;
 - only an authorized merge plus required QA changes the wish to `SHIPPED`.
 
+At the same moment it appends the block, the orchestrator relays a one-line
+pointer to the group's card:
+`genie task comment <task-id> --worker orchestrator -- 'review: SHIP|FIX-FIRST|BLOCKED — <gap count or summary>'`.
+The card comment is the pointer; WISH.md keeps the evidence. The reviewer
+posts nothing to the card.
+
 Do not claim the next stage is active until the orchestrator confirms the
 write. Never edit WISH.md, the brainstorm jar, or task state as the reviewer.
 

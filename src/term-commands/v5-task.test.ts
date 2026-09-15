@@ -1443,6 +1443,37 @@ describe('timeline verbs', () => {
     expect(r.stderr).toContain('Task not found: t_nope');
   });
 
+  test('comment and report take --worker so each speaker is attributed, never collapsed to cli', async () => {
+    const id = await seed('attributed');
+    expect((await cli(repo, 'comment', id, '--worker', 'orchestrator', 'dispatching G1')).code).toBe(0);
+    expect(
+      (await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-A', CLAUDECODE: '1' }, 'report', id, 'done: 12 tests pass')).code,
+    ).toBe(0);
+    expect((await cli(repo, 'comment', id, '--', 'review: SHIP — 0 gaps')).code).toBe(0);
+    const db = openDb({ cwd: repo });
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events.map((e) => [e.kind, e.author])).toEqual([
+      ['comment', 'orchestrator'],
+      ['report', 'eng-A'],
+      ['comment', 'cli'],
+    ]);
+    expect(events[2].note).toBe('review: SHIP — 0 gaps');
+  });
+
+  test('comment and report reject control characters and notes over 4000 bytes', async () => {
+    const id = await seed('bounded');
+    const control = await cli(repo, 'comment', id, 'bad\u2028line');
+    expect(control.code).toBe(1);
+    expect(control.stderr).toContain('control characters');
+    const long = await cli(repo, 'report', id, 'x'.repeat(4001));
+    expect(long.code).toBe(1);
+    expect(long.stderr).toContain('at most 4000 bytes');
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id)).toHaveLength(0);
+    db.close();
+  });
+
   test('report appends a report event tagged with the runtime kind', async () => {
     const id = await seed('meeseeks');
     const r = await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-B', CLAUDECODE: '1' }, 'report', id, 'implemented + tested');

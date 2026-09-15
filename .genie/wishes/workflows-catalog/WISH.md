@@ -177,6 +177,13 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Deferred with triggers (unchanged):** install channel and tarball packaging; `genie doctor` warning for the orphan; retirement-surface routing for `~/.claude/workflows/council.js`.
 - **Group 1 and Group 2 state:** deliverables landed on branch `wish/workflows-catalog`; Group 2 validation `bun run check` ran with the only failures being 19 pre-existing tests in `plugins/dsh-genie-board/src/board.test.ts` and `src/lib/orca-orchestration-adapter.test.ts`, reproduced identically on untouched dev HEAD `67a8d08b1`.
 
+### Execution — second council run — 2026-09-15 — `revise`, applied
+
+- **Decision assessed:** make the card timeline the global task state, with work and review commenting at every handoff. Run id `wf_49f82a43-616` via the saved `council` workflow; six agents, none null; four lenses `support-with-conditions`, dissent `oppose`; synthesis `revise` because every supporter's conditions rewrote the two load-bearing phrases. Report: [council-2026-09-15-task-comments.md](council-2026-09-15-task-comments.md).
+- **Findings that changed the work:** attribution collapses to `cli` (7 of 9 authored rows) because `comment`/`report` lacked `--worker`; the `report` tag is not a trust signal (no `claimed_by` gate); notes were unbounded at the CLI while the DSH contract caps them at 4000 bytes; "global" is false under `orchestration.mode = orca` and across machines; the reviewer must stay read-only; cadence must fit the 25-event board tail.
+- **Applied:** `genie task comment|report --worker <name>` with a 4000-byte, control-character-free bound and CLI tests proving distinct speakers; a moment table in `skills/work/SKILL.md` (engineer: one `report` per claim-to-handoff span; orchestrator: one `comment` per gate for review verdict, done, and blocked route; no periodic progress; orca / no-row skip; content policy; `--worker` and `--` in every example); the relay rule in `skills/review/SKILL.md` and `skills/fix/SKILL.md`; the verbs in `skills/genie/SKILL.md`'s routing table and CLAUDE.md; `scripts/task-conversation-contract.test.ts` pinning all of it. Timeline reframed as per-repo standalone-mode operational state, not global.
+- **Deferred with the council's own triggers:** the roadmap.json churn decision (task events are exported into the git-tracked snapshot; measure `diverged` verdicts over one dogfood wish before excluding events); a `claimed_by` gate on `report`; bounding `printTimelineBriefing`. Dogfood evidence (a wish whose every group card shows ≥1 report and ≥1 verdict comment) lands with the next executed wish.
+
 ---
 
 ## Files to Create/Modify
