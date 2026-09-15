@@ -40,6 +40,7 @@ import {
 } from '../lib/skills-installer.js';
 import {
   type ProvenV4Rules,
+  UNINSTALL_NON_INTERACTIVE_MESSAGE,
   type UninstallBatchScope,
   type UninstallResult,
   clearUninstallBatchDecision,
@@ -1371,11 +1372,48 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     }
   }
 
+  test('a non-interactive run never reaches the prompt: one stderr line, exit 2, nothing removed', async () => {
+    // Dogfood B1: `genie uninstall --no-interactive` rendered the confirm prompt
+    // anyway and then busy-looped at 100% CPU forever (10m52s, no exit code), so
+    // every scripted or CI uninstall wedged. The gate must be decided BEFORE a
+    // prompt object exists — an inquirer prompt on a non-TTY stdin never
+    // resolves, so "ask and time out" is not an available fix.
+    let confirmInvoked = false;
+    const { err, exitCode } = await capture(() =>
+      uninstallCommand(
+        {},
+        {
+          canPrompt: () => false,
+          // A confirm that never settles: if the gate ever calls it, this test
+          // hangs instead of quietly passing on a resolved stub.
+          confirm: (() => {
+            confirmInvoked = true;
+            return new Promise<boolean>(() => undefined);
+          }) as unknown as UninstallDeps['confirm'],
+        },
+      ),
+    );
+
+    expect(confirmInvoked).toBe(false);
+    expect(exitCode).toBe(2);
+    expect(err.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    // Zero mutation: the preview is read-only, so exiting there removed nothing.
+    expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('the non-interactive refusal still prints the plan and the breakage warning first', async () => {
+    const { out } = await capture(() => uninstallCommand({}, { canPrompt: () => false }));
+    expect(out).toContain('This will remove:');
+    expect(out).toContain('can break current or resumable tasks');
+    expect(out).not.toContain('Uninstall cancelled.');
+  });
+
   test('prints the task-breakage warning BEFORE confirmation; a decline mutates nothing', async () => {
     const { out } = await capture(() =>
       uninstallCommand(
         {},
         {
+          canPrompt: () => true,
           // A sentinel emitted at prompt time proves the warning already printed.
           confirm: (async () => {
             process.stdout.write('<<CONFIRM-INVOKED>>\n');
@@ -1413,6 +1451,7 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
       uninstallCommand(
         {},
         {
+          canPrompt: () => true,
           confirm: (async () => true) as unknown as UninstallDeps['confirm'],
           acquireLease: () => ({ path: join(root, 'test-lifecycle.lock'), release: () => undefined }),
         },
@@ -1447,6 +1486,7 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
         await uninstallCommand(
           {},
           {
+            canPrompt: () => true,
             confirm: (async () => true) as unknown as UninstallDeps['confirm'],
             acquireLease: () => {
               attempts += 1;
@@ -1517,5 +1557,91 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
         expect(source.includes(forbidden)).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * Dogfood B1, as an operator hits it: a real `genie uninstall` process with
+ * stdin closed. The in-process tests above pin the gate; these pin the whole
+ * argv → exit-code path, including Commander's `--no-interactive` plumbing both
+ * before and after the subcommand, and the plain non-TTY stdin case with no
+ * flag at all. Each spawn is capped so a regression fails the suite in seconds
+ * instead of wedging it the way the shipped 5.260915.6 binary wedged the host.
+ */
+describe('genie uninstall — non-interactive CLI contract (B1)', () => {
+  const CLI_PATH = join(import.meta.dir, '..', 'genie.ts');
+  const spawnRoots: string[] = [];
+
+  afterEach(() => {
+    for (const dir of spawnRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runUninstall(args: string[]): { code: number | null; stdout: string; stderr: string; ms: number } {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-uninstall-cli-'));
+    spawnRoots.push(dir);
+    const genieHome = join(dir, '.genie');
+    mkdirSync(genieHome, { recursive: true });
+    // Removable state, so the plan reaches the confirmation step rather than
+    // short-circuiting on "Nothing to uninstall."
+    writeFileSync(join(genieHome, 'config.json'), '{}\n', 'utf8');
+
+    const started = Date.now();
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, ...args], {
+      cwd: dir,
+      stdin: 'ignore', // stdin closed — exactly the dogfood repro's `< /dev/null`
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 10_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome, CLAUDE_CONFIG_DIR: join(dir, '.claude') },
+    });
+    return {
+      code: res.exitCode,
+      stdout: res.stdout.toString(),
+      stderr: res.stderr.toString(),
+      ms: Date.now() - started,
+    };
+  }
+
+  test('--no-interactive AFTER the subcommand exits 2 in milliseconds without prompting', () => {
+    const res = runUninstall(['uninstall', '--no-interactive']);
+    expect(res.code).toBe(2);
+    expect(res.ms).toBeLessThan(10_000);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('--no-interactive BEFORE the subcommand behaves identically', () => {
+    const res = runUninstall(['--no-interactive', 'uninstall']);
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('a closed stdin with no flag at all also exits 2 rather than spinning', () => {
+    const res = runUninstall(['uninstall']);
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('the refusal removes nothing — GENIE_HOME survives byte-for-byte', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-uninstall-cli-keep-'));
+    spawnRoots.push(dir);
+    const genieHome = join(dir, '.genie');
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'config.json'), '{"keep":true}\n', 'utf8');
+
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, 'uninstall', '--no-interactive'], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 10_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome, CLAUDE_CONFIG_DIR: join(dir, '.claude') },
+    });
+
+    expect(res.exitCode).toBe(2);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(readFileSync(join(genieHome, 'config.json'), 'utf8')).toBe('{"keep":true}\n');
   });
 });

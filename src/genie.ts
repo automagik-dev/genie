@@ -12,7 +12,12 @@
 import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallPromoteCommandOptions, installPromoteCommand } from './genie-commands/install-promote.js';
-import { type InstallOptions, installCommand } from './genie-commands/install.js';
+import {
+  INTEGRATION_SELECTIONS,
+  type InstallOptions,
+  InvalidIntegrationSelectionError,
+  installCommand,
+} from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -22,6 +27,7 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
+import { colorizeFor } from './lib/term-color.js';
 import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
@@ -66,10 +72,13 @@ program.configureHelp({
 });
 
 program.configureOutput({
+  // Commander writes this to stderr. Colour is gated on the STDERR stream (plus
+  // NO_COLOR / TERM=dumb): a redirected or piped diagnostic must be plain text,
+  // never `\x1b[31m` smuggled into a log file. See src/lib/term-color.ts.
   outputError: (str, write) => {
     const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
     const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
-    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m\n`);
+    write(`${colorizeFor('stderr', '\x1b[31m', `Error (${prefix}): ${str}`)}\n`);
   },
 });
 
@@ -168,9 +177,29 @@ program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
-  .option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none', 'auto')
+  // `.choices()` (not a bare `.option()`) so an unknown mode is refused at parse
+  // time with a one-line Commander error that NAMES the allowed values and exits
+  // 1 — never the Bun stack trace `resolveIntegrationSelection` used to produce.
+  .addOption(
+    new Option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none')
+      .choices([...INTEGRATION_SELECTIONS])
+      .default('auto'),
+  )
   .option('--skip-integrations', 'Alias for --integrations none')
-  .action((options: InstallOptions) => installCommand(options));
+  .action(async (options: InstallOptions) => {
+    // Second gate: `--skip-integrations` and programmatic callers bypass
+    // `.choices()`. Operator input still gets one line and exit 1, no stack.
+    try {
+      await installCommand(options);
+    } catch (error) {
+      if (error instanceof InvalidIntegrationSelectionError) {
+        console.error(colorizeFor('stderr', '\x1b[31m', `Error (genie install): ${error.message}`));
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  });
 
 program
   .command('uninstall')
@@ -184,8 +213,13 @@ shortcuts.command('show').description('Show available shortcuts and installation
 shortcuts
   .command('install')
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
   .action(shortcutsInstallCommand);
-shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
+shortcuts
+  .command('uninstall')
+  .description('Remove shortcuts from config files')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
+  .action(shortcutsUninstallCommand);
 
 // ============================================================================
 // Bare task/board — thin commands over the zero-daemon SQLite state engine.

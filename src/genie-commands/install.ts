@@ -230,11 +230,32 @@ export async function installCommand(
   }
 }
 
+/**
+ * Every value `--integrations` accepts, in the order the help text lists them.
+ * `genie.ts` feeds this to Commander's `.choices()` so a bad value is refused
+ * at parse time; `resolveIntegrationSelection` is the second gate for callers
+ * that build `InstallOptions` programmatically.
+ */
+export const INTEGRATION_SELECTIONS: readonly IntegrationSelection[] = ['auto', 'codex', 'claude', 'all', 'none'];
+
+/**
+ * A bad `--integrations` value is operator input, not a defect: it gets one
+ * line naming the allowed values and exit 1. Before 2026-09-15 it was a bare
+ * `Error`, so `genie install --integrations bogus` printed a Bun stack trace
+ * through minified bundle source and never listed a single valid value.
+ */
+export class InvalidIntegrationSelectionError extends Error {
+  constructor(readonly value: string) {
+    super(`invalid --integrations value '${value}' (allowed: ${INTEGRATION_SELECTIONS.join(', ')})`);
+    this.name = 'InvalidIntegrationSelectionError';
+  }
+}
+
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */
 export function resolveIntegrationSelection(options: InstallOptions): IntegrationSelection {
   const selection = options.skipIntegrations ? 'none' : (options.integrations ?? 'auto');
-  if (!['auto', 'codex', 'claude', 'all', 'none'].includes(selection)) {
-    throw new Error(`Invalid --integrations value: ${selection}`);
+  if (!INTEGRATION_SELECTIONS.includes(selection)) {
+    throw new InvalidIntegrationSelectionError(String(selection));
   }
   return selection;
 }

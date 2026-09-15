@@ -99,11 +99,20 @@ Commands:
 // One readline interface per process with a persistent `line` listener.
 // Piped answers must never be lost (a one-shot question listener drops lines
 // that arrive before the next prompt is asked) and a closed stdin must not
-// hang the installer: EOF declines any pending prompt.
+// hang the installer: EOF resolves any pending prompt with NO_ANSWER.
+//
+// NO_ANSWER is deliberately distinct from the answer `n`. Before 2026-09-15 a
+// closed stdin was read as "the user declined every target", so a scripted
+// `genie shortcuts install` skipped both files, printed "Installation
+// complete!" and exited 0 — a silent success no-op (dogfood M5/c2). A decline
+// is a decision and still exits 0; an unanswered prompt is a failure.
+const NO_ANSWER = Symbol('no-answer');
+type PromptAnswer = string | typeof NO_ANSWER;
+
 let promptRl: readline.Interface | null = null;
 let promptEof = false;
 const queuedAnswers: string[] = [];
-let pendingPrompt: ((answer: string) => void) | null = null;
+let pendingPrompt: ((answer: PromptAnswer) => void) | null = null;
 
 function ensurePromptRl(): readline.Interface {
   if (promptRl) return promptRl;
@@ -123,7 +132,7 @@ function ensurePromptRl(): readline.Interface {
     if (pendingPrompt) {
       const resolve = pendingPrompt;
       pendingPrompt = null;
-      resolve('n');
+      resolve(NO_ANSWER);
     }
   });
   return promptRl;
@@ -144,13 +153,17 @@ function closePromptRl(): void {
   promptRl = null;
 }
 
-// Helper to prompt user.
-async function prompt(question: string): Promise<string> {
+// Helper to prompt user. Resolves to NO_ANSWER when stdin is already at EOF
+// (or reaches it while the question is pending) with nothing queued.
+async function prompt(question: string): Promise<PromptAnswer> {
   ensurePromptRl();
-  process.stdout.write(question);
-  if (promptEof) return 'n';
   const queued = queuedAnswers.shift();
-  if (queued !== undefined) return queued;
+  if (queued !== undefined) {
+    process.stdout.write(question);
+    return queued;
+  }
+  if (promptEof) return NO_ANSWER;
+  process.stdout.write(question);
   return new Promise((resolve) => {
     pendingPrompt = resolve;
   });
@@ -177,6 +190,14 @@ function contentExists(filePath: string, marker: string): boolean {
 }
 
 /**
+ * What happened to one target.
+ *  - `applied`     — written (or already present, which is the same end state)
+ *  - `declined`    — the user answered `n`; a decision, not a failure
+ *  - `unanswered`  — stdin had no answer to give (EOF / closed / exhausted)
+ */
+type TargetOutcome = 'applied' | 'declined' | 'unanswered';
+
+/**
  * Prompt to install config content to a file. Skips if marker already present.
  */
 async function promptInstallTo(
@@ -184,62 +205,128 @@ async function promptInstallTo(
   marker: string,
   label: string,
   contentFn: () => string,
-  ensureDir?: string,
-): Promise<void> {
+  options: { autoYes: boolean; ensureDir?: string },
+): Promise<TargetOutcome> {
   if (contentExists(filePath, marker)) {
     console.log(`✓ ${label} already has genie shortcuts`);
-    return;
+    return 'applied';
   }
-  const answer = await prompt(`Add shortcuts to ${filePath}? [Y/n] `);
-  if (answer === 'n') {
-    console.log(`⏭️ Skipped ${label}`);
-    return;
+  if (!options.autoYes) {
+    const answer = await prompt(`Add shortcuts to ${filePath}? [Y/n] `);
+    if (answer === NO_ANSWER) {
+      console.log(`⏭️ Skipped ${label} — no answer on stdin`);
+      return 'unanswered';
+    }
+    if (answer === 'n') {
+      console.log(`⏭️ Skipped ${label}`);
+      return 'declined';
+    }
   }
-  if (ensureDir && !existsSync(ensureDir)) {
-    mkdirSync(ensureDir, { recursive: true });
+  if (options.ensureDir && !existsSync(options.ensureDir)) {
+    mkdirSync(options.ensureDir, { recursive: true });
   }
   appendFileSync(filePath, `\n${FENCE_BEGIN}\n${contentFn()}${FENCE_END}\n`);
   console.log(`✅ Added to ${filePath}`);
+  return 'applied';
+}
+
+/**
+ * How a `shortcuts` run ended. `unanswered` is the non-zero case: prompts were
+ * asked and stdin had nothing to answer them with, so nothing was written and
+ * the success banner would be a lie.
+ */
+export type ShortcutsOutcome = 'applied' | 'declined' | 'unanswered' | 'refused';
+
+export interface ShortcutsRunOptions {
+  /**
+   * Apply the documented default — accept every target — without prompting.
+   * This is the non-interactive route (`genie shortcuts install --yes`).
+   */
+  yes?: boolean;
+  /**
+   * Whether this process may render a prompt at all. `false` (global
+   * `--no-interactive`, `CI`, or a non-TTY) without `yes` is `refused`: one
+   * line, exit 2, nothing written.
+   */
+  canPrompt?: boolean;
+}
+
+/** The one line a prompt-less run with no `--yes` gets, on stderr, before exit 2. */
+export const SHORTCUTS_NON_INTERACTIVE_MESSAGE =
+  'genie shortcuts needs an answer for each target. Re-run with --yes to accept the defaults, or drop --no-interactive.';
+
+/** The one line a run whose prompts outran stdin gets, on stderr, before exit 2. */
+export const SHORTCUTS_UNANSWERED_MESSAGE =
+  'genie shortcuts: stdin ended before every target was answered — nothing was written. Re-run with --yes to accept the defaults.';
+
+/**
+ * Collapse per-target outcomes into the run's outcome. `unanswered` dominates
+ * (a partially-answered run is a failed run); otherwise a run in which the user
+ * declined everything is `declined` — deliberate, and still exit 0.
+ */
+function summarize(outcomes: TargetOutcome[]): ShortcutsOutcome {
+  if (outcomes.includes('unanswered')) return 'unanswered';
+  if (outcomes.length > 0 && outcomes.every((outcome) => outcome === 'declined')) return 'declined';
+  return 'applied';
 }
 
 // Install shortcuts to config files
-export async function installShortcuts(): Promise<void> {
+export async function installShortcuts(options: ShortcutsRunOptions = {}): Promise<ShortcutsOutcome> {
+  if (!options.yes && options.canPrompt === false) {
+    console.error(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    return 'refused';
+  }
   try {
-    await runInstallShortcuts();
+    return await runInstallShortcuts(options.yes === true);
   } finally {
     closePromptRl();
   }
 }
 
-async function runInstallShortcuts(): Promise<void> {
+async function runInstallShortcuts(autoYes: boolean): Promise<ShortcutsOutcome> {
   const home = homedir();
   const marker = 'generated by genie-cli';
 
   console.log('Installing Warp-like shortcuts...\n');
 
-  await promptInstallTo(join(home, '.tmux.conf'), marker, 'tmux.conf', generateTmuxConfig);
+  const outcomes: TargetOutcome[] = [];
+  outcomes.push(await promptInstallTo(join(home, '.tmux.conf'), marker, 'tmux.conf', generateTmuxConfig, { autoYes }));
 
   const shellRc = existsSync(join(home, '.zshrc')) ? join(home, '.zshrc') : join(home, '.bashrc');
-  await promptInstallTo(shellRc, marker, shellRc, generateShellFunctions);
+  outcomes.push(await promptInstallTo(shellRc, marker, shellRc, generateShellFunctions, { autoYes }));
 
   const termuxDir = join(home, '.termux');
   const termuxProps = join(termuxDir, 'termux.properties');
   const isTermux = existsSync(termuxDir) || process.env.TERMUX_VERSION;
 
   if (isTermux) {
-    await promptInstallTo(termuxProps, marker, 'termux.properties', generateTermuxConfig, termuxDir);
+    outcomes.push(
+      await promptInstallTo(termuxProps, marker, 'termux.properties', generateTermuxConfig, {
+        autoYes,
+        ensureDir: termuxDir,
+      }),
+    );
     if (contentExists(termuxProps, marker)) {
       console.log('   Run: termux-reload-settings');
     }
   }
 
-  console.log('\n✅ Installation complete!');
+  const outcome = summarize(outcomes);
+  if (outcome === 'unanswered') {
+    console.error(SHORTCUTS_UNANSWERED_MESSAGE);
+    return outcome;
+  }
+  console.log(
+    outcome === 'declined' ? '\n⏭️ Nothing installed — every target was declined.' : '\n✅ Installation complete!',
+  );
+  if (outcome === 'declined') return outcome;
   console.log('\nNext steps:');
   console.log('  1. Reload tmux: tmux source ~/.tmux.conf');
   console.log('  2. Restart your shell or run: source ~/.bashrc');
   if (isTermux) {
     console.log('  3. Reload Termux: termux-reload-settings');
   }
+  return outcome;
 }
 
 // Check if shortcuts are installed in a file
@@ -327,53 +414,77 @@ function spliceOutBlock(filePath: string, lines: string[], blockStart: number, b
   return 'removed';
 }
 
-/**
- * Prompt to uninstall config content from a file. Returns true when a block
- * was found but left in place (edited since install).
- */
-async function promptUninstallFrom(filePath: string, marker: string, label: string): Promise<boolean> {
-  if (!existsSync(filePath)) return false;
+interface UninstallTargetResult {
+  outcome: TargetOutcome;
+  /** A managed block was found but left in place (edited since install). */
+  leftUntouched: boolean;
+}
+
+/** Prompt to uninstall config content from a file. */
+async function promptUninstallFrom(
+  filePath: string,
+  marker: string,
+  label: string,
+  autoYes: boolean,
+): Promise<UninstallTargetResult> {
+  if (!existsSync(filePath)) return { outcome: 'applied', leftUntouched: false };
   if (!contentExists(filePath, marker)) {
     console.log(`✓ ${label} has no genie shortcuts`);
-    return false;
+    return { outcome: 'applied', leftUntouched: false };
   }
-  const answer = await prompt(`Remove shortcuts from ${filePath}? [Y/n] `);
-  if (answer === 'n') {
-    console.log(`⏭️ Skipped ${label}`);
-    return false;
+  if (!autoYes) {
+    const answer = await prompt(`Remove shortcuts from ${filePath}? [Y/n] `);
+    if (answer === NO_ANSWER) {
+      console.log(`⏭️ Skipped ${label} — no answer on stdin`);
+      return { outcome: 'unanswered', leftUntouched: false };
+    }
+    if (answer === 'n') {
+      console.log(`⏭️ Skipped ${label}`);
+      return { outcome: 'declined', leftUntouched: false };
+    }
   }
   const result = removeMarkedContent(filePath, marker);
   if (result === 'removed') {
     console.log(`✅ Removed from ${filePath}`);
-    return false;
+    return { outcome: 'applied', leftUntouched: false };
   }
   if (result === 'modified') {
     console.log(`⚠️ ${label} block was edited after install — left untouched, remove it manually`);
-    return true;
+    return { outcome: 'applied', leftUntouched: true };
   }
-  return false;
+  return { outcome: 'applied', leftUntouched: false };
 }
 
 // Uninstall shortcuts from config files
-export async function uninstallShortcuts(): Promise<void> {
+export async function uninstallShortcuts(options: ShortcutsRunOptions = {}): Promise<ShortcutsOutcome> {
+  if (!options.yes && options.canPrompt === false) {
+    console.error(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    return 'refused';
+  }
   try {
-    await runUninstallShortcuts();
+    return await runUninstallShortcuts(options.yes === true);
   } finally {
     closePromptRl();
   }
 }
 
-async function runUninstallShortcuts(): Promise<void> {
+async function runUninstallShortcuts(autoYes: boolean): Promise<ShortcutsOutcome> {
   const home = homedir();
   const marker = 'generated by genie-cli';
 
   console.log('Uninstalling Warp-like shortcuts...\n');
 
+  const outcomes: TargetOutcome[] = [];
   let leftUntouched = false;
-  leftUntouched = (await promptUninstallFrom(join(home, '.tmux.conf'), marker, 'tmux.conf')) || leftUntouched;
+  const record = (result: UninstallTargetResult): void => {
+    outcomes.push(result.outcome);
+    leftUntouched = result.leftUntouched || leftUntouched;
+  };
+
+  record(await promptUninstallFrom(join(home, '.tmux.conf'), marker, 'tmux.conf', autoYes));
 
   for (const shellRc of [join(home, '.zshrc'), join(home, '.bashrc')]) {
-    leftUntouched = (await promptUninstallFrom(shellRc, marker, shellRc)) || leftUntouched;
+    record(await promptUninstallFrom(shellRc, marker, shellRc, autoYes));
   }
 
   const termuxDir = join(home, '.termux');
@@ -381,12 +492,17 @@ async function runUninstallShortcuts(): Promise<void> {
 
   if (isTermux) {
     const termuxProps = join(termuxDir, 'termux.properties');
-    leftUntouched = (await promptUninstallFrom(termuxProps, marker, 'termux.properties')) || leftUntouched;
+    record(await promptUninstallFrom(termuxProps, marker, 'termux.properties', autoYes));
     if (!contentExists(termuxProps, marker)) {
       console.log('   Run: termux-reload-settings');
     }
   }
 
+  const outcome = summarize(outcomes);
+  if (outcome === 'unanswered') {
+    console.error(SHORTCUTS_UNANSWERED_MESSAGE);
+    return outcome;
+  }
   console.log(
     leftUntouched
       ? '\n⚠️ Uninstallation incomplete — edited blocks were left in place.'
@@ -398,4 +514,5 @@ async function runUninstallShortcuts(): Promise<void> {
   if (isTermux) {
     console.log('  3. Reload Termux: termux-reload-settings');
   }
+  return outcome;
 }

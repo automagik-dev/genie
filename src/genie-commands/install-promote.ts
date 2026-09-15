@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
   type CanonicalInstallLinkGuard,
   preflightCanonicalInstallLink,
@@ -170,6 +170,18 @@ function assertRunningVerifiedStage(stagingBinary: string, runtimeExecutable: st
 
 function ensurePhysicalInstallDirectory(path: string, label: string): void {
   try {
+    // The PARENT chain is created recursively: a fresh relocated GENIE_HOME
+    // (`GENIE_HOME=$H/.genie` with `$H` itself absent) has no ancestor for
+    // `bin/` yet, and the old non-recursive call turned that first install into
+    // `could not create GENIE_HOME/bin` (2026-09-15 dogfood m14).
+    //
+    // The LEAF stays non-recursive on purpose: `recursive: true` succeeds
+    // silently on an existing path of any kind, which would hand the
+    // `isDirectory() && !isSymbolicLink()` check below a symlink it can no
+    // longer distinguish from a directory genie just made. EEXIST here still
+    // means "already there", and the lstat below still decides whether it is a
+    // physical directory.
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     mkdirSync(path, { mode: 0o700 });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
