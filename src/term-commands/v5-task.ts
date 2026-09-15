@@ -505,8 +505,17 @@ function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void
   run(() => {
     const db = openDb();
     try {
-      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const task = getTask(db, id);
+      if (!task) throw new UnknownTaskError(id);
       const author = authoredBy(opts);
+      // The report tag is a trust signal: only the card's current claimant may post one.
+      if (task.claimedBy !== author.author) {
+        fail(
+          task.claimedBy
+            ? `report refused: task ${id} is claimed by ${task.claimedBy}, not ${author.author}. Use comment, or checkout first.`
+            : `report refused: task ${id} is not claimed. Checkout as ${author.author} first, or use comment.`,
+        );
+      }
       appendTaskEvent(db, id, { kind: 'report', note, authorKind: author.authorKind, author: author.author });
       out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {

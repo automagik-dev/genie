@@ -76,7 +76,7 @@ v5 is zero-daemon: documents live in git, per-group execution state lives in `.g
 | "list agents" / "who's working" | Team roster is in-session (native); active claims: `genie task list --status in_progress` |
 | "status of [slug]" / "wish progress" | `genie board --wish <slug>` or `genie task list --wish <slug>` |
 | "mark task done" / "mark group done" | `genie task done <id>` (per-group state is a task row; recomputes the ready set) |
-| "reset a stuck group" | Stale claims (in_progress > 15 min) are re-claimable: `genie task checkout <id> --worker <name>` |
+| "reset a stuck group" | Stale claims (in_progress > 15 min) are re-claimable: `genie task comment <id> --worker <name> -- 'reclaim: from <previous>, idle <duration> — <reason>'` then `genie task checkout <id> --worker <name>` |
 | "list all wishes" | `genie board`, or `ls .genie/wishes/` |
 | "show my tasks" / "backlog" | `genie task list` (`--status`, `--wish`, `--board`, `--json`) |
 | "claim a task" / "start on <id>" | `genie task checkout <id> --worker <name>` — atomic; a racing claimant gets a conflict error and stands down |
