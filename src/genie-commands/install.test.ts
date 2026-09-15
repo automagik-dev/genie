@@ -538,8 +538,11 @@ describe('installCommand', () => {
       ['all', ['codex: client plugin integration is retired', 'claude: client plugin integration is retired']],
     ] as const) {
       const lines: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      const originalWrite = process.stdout.write;
+      process.stdout.write = ((chunk: unknown) => {
+        lines.push(String(chunk).replace(/\n$/, ''));
+        return true;
+      }) as typeof process.stdout.write;
       try {
         await expect(
           installCommand(
@@ -552,7 +555,7 @@ describe('installCommand', () => {
           ),
         ).resolves.toBeUndefined();
       } finally {
-        console.log = originalLog;
+        process.stdout.write = originalWrite;
       }
       const reported = lines.filter((line) => line.includes('client plugin integration is retired'));
       expect(reported).toHaveLength(expected.length);
@@ -566,8 +569,11 @@ describe('installCommand', () => {
   test('auto and none report no runtime at all', async () => {
     for (const integrations of ['auto', 'none'] as const) {
       const lines: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      const originalWrite = process.stdout.write;
+      process.stdout.write = ((chunk: unknown) => {
+        lines.push(String(chunk).replace(/\n$/, ''));
+        return true;
+      }) as typeof process.stdout.write;
       try {
         await installCommand(
           { integrations },
@@ -578,7 +584,7 @@ describe('installCommand', () => {
           () => null,
         );
       } finally {
-        console.log = originalLog;
+        process.stdout.write = originalWrite;
       }
       expect(lines.join('\n')).not.toContain('client plugin integration is retired');
       expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
@@ -1086,12 +1092,14 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
     process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '500';
     logs = [];
     errors = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map(String).join(' '));
-    });
-    errorSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
-      errors.push(a.map(String).join(' '));
-    });
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      logs.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      errors.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
   afterEach(() => {
     logSpy.mockRestore();
@@ -1157,11 +1165,12 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
 describe('installCommand — skills.sh channel seam (wish skills-everywhere, group 1)', () => {
   test('runs the skills install after the retirement notice is reported', async () => {
     const calls: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      const line = args.map(String).join(' ');
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: unknown) => {
+      const line = String(chunk);
       if (line.includes('client plugin integration is retired')) calls.push('retirement-notice');
-    };
+      return true;
+    }) as typeof process.stdout.write;
     try {
       await installCommand(
         { integrations: 'claude' },
@@ -1176,7 +1185,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         },
       );
     } finally {
-      console.log = originalLog;
+      process.stdout.write = originalWrite;
     }
     expect(calls).toEqual(['retirement-notice', 'skills:claude']);
   });
@@ -1237,9 +1246,10 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
   beforeEach(() => {
     process.exitCode = 0;
     logs = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map(String).join(' '));
-    });
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      logs.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
 
   afterEach(() => {

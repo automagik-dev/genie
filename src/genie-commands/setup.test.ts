@@ -35,17 +35,25 @@ describe('genie setup', () => {
   function capture(): { restore: () => { out: string; err: string; exitCode: number } } {
     const out: string[] = [];
     const err: string[] = [];
-    const originalLog = console.log;
-    const originalError = console.error;
-    console.log = (...args: unknown[]) => out.push(args.map(String).join(' '));
-    console.error = (...args: unknown[]) => err.push(args.map(String).join(' '));
+    // The command writes through the one colour-gated sink (src/lib/term-output.ts),
+    // so the capture has to sit on the streams, not on console.
+    const originalOut = process.stdout.write;
+    const originalErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown) => {
+      out.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown) => {
+      err.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
     return {
       restore: () => {
-        console.log = originalLog;
-        console.error = originalError;
+        process.stdout.write = originalOut;
+        process.stderr.write = originalErr;
         return {
-          out: out.join('\n'),
-          err: err.join('\n'),
+          out: out.join(''),
+          err: err.join(''),
           exitCode: typeof process.exitCode === 'number' ? process.exitCode : 0,
         };
       },

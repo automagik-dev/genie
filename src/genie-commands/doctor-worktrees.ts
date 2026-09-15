@@ -36,6 +36,7 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
+import { writeOut } from '../lib/term-output.js';
 import { type IntegrationBranch, resolveIntegration } from '../lib/v5/base-state.js';
 import { resolveWorktreesBase } from '../lib/v5/launch-worktrees.js';
 import type { CheckResult } from './doctor.js';
@@ -527,7 +528,7 @@ export function cleanupLaunchWorktrees(root: string | null, deps: LaunchWorktree
   // re-resolve rather than thread it through, and refuse everything if it
   // vanished mid-run (fail-closed, same posture as the scan).
   const integration = resolveIntegration(root);
-  const emit = deps.logSink ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const emit = deps.logSink ?? ((line: string) => writeOut(`${line}\n`));
   if (integration === null) {
     emit(`  \x1b[33m!\x1b[0m kept all ${removable.length}: integration branch no longer resolvable`);
     return;

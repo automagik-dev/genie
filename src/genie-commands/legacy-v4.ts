@@ -43,6 +43,7 @@ import { cpSync, lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { contractPath } from '../lib/genie-config.js';
+import { printErr, printOut } from '../lib/term-output.js';
 
 // ============================================================================
 // Manifest — the shared source of truth for every v4 legacy path
@@ -518,7 +519,7 @@ export function cleanupV4(options: V4CleanupOptions = {}): V4CleanupResult {
     backupDirUsed: false,
     actions: [],
     logLines: [],
-    emit: options.logSink ?? ((line: string) => console.log(line)),
+    emit: options.logSink ?? ((line: string) => printOut(line)),
   };
 
   ctx.emit('\x1b[2mCleaning up v4 leftovers...\x1b[0m');
@@ -533,7 +534,7 @@ export function cleanupV4(options: V4CleanupOptions = {}): V4CleanupResult {
     logFile = writeCleanupLog(genieHome, ctx.logLines);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`  \x1b[33m!\x1b[0m Could not write v4-cleanup log under ${contractPath(genieHome)}: ${message}`);
+    printErr(`  \x1b[33m!\x1b[0m Could not write v4-cleanup log under ${contractPath(genieHome)}: ${message}`);
   }
   if (ctx.backupDirUsed) {
     ctx.emit(`  \x1b[2mBackups: ${contractPath(ctx.backupRoot)}\x1b[0m`);

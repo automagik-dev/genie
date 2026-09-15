@@ -428,9 +428,12 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     mkdirSync(claudeSkills, { recursive: true });
     output = [];
     process.exitCode = 0;
-    logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      output.push(args.map(String).join(' '));
-    });
+    // Output leaves through the colour-gated sink (src/lib/term-output.ts), so the
+    // capture sits on the stream rather than on console.
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      output.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
 
   afterEach(() => {
@@ -513,7 +516,9 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
 
     expect(outcome.result.failures).toEqual([]);
     expect(existsSync(retired)).toBe(false);
-    expect(output).toContain(`  \x1b[32m+\x1b[0m skills.sh channel: removed preserved retired skill dir ${retired}`);
+    // Colour is not part of the contract: a non-TTY stdout gets the same line in
+    // plain text (m15), so the assertion is on the words, not the escapes.
+    expect(output).toContain(`  + skills.sh channel: removed preserved retired skill dir ${retired}`);
     expect(output.some((line) => line.includes('removed 2 recorded skill dir(s)'))).toBe(true);
   });
 });
@@ -1396,26 +1401,24 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     process.exitCode = 0;
     let out = '';
     let err = '';
-    // The source mixes console.log/console.error (Bun binds these to the original
-    // writer) with direct process.stdout.write (the machine trailer). Spy on both.
+    // Every human line and the machine trailer alike leave through the one
+    // colour-gated sink (src/lib/term-output.ts), which writes to the streams.
     const realWrite = process.stdout.write.bind(process.stdout);
-    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      out += `${a.join(' ')}\n`;
-    });
-    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
-      err += `${a.join(' ')}\n`;
-    });
-    process.stdout.write = ((c: string) => {
-      out += c;
+    const realErrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: unknown) => {
+      out += String(c);
       return true;
     }) as typeof process.stdout.write;
+    process.stderr.write = ((c: unknown) => {
+      err += String(c);
+      return true;
+    }) as typeof process.stderr.write;
     try {
       await fn();
       return { out, err, exitCode: process.exitCode ?? 0 };
     } finally {
       process.stdout.write = realWrite;
-      logSpy.mockRestore();
-      errSpy.mockRestore();
+      process.stderr.write = realErrWrite;
       process.exitCode = priorExit ?? 0;
     }
   }
