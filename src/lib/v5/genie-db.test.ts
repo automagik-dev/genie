@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,6 +9,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   ForeignDbError,
   GenieDbError,
+  GlobalDbPathError,
   MalformedDbError,
   STAGE_LOG_BACKFILL_KEY,
   isBusyError,
@@ -18,6 +19,7 @@ import {
   resolveDbPath,
   resolveRepoRoot,
 } from './genie-db.js';
+import { resolveGlobalDbPath } from './global-db.js';
 import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 
 let dir: string;
@@ -566,5 +568,82 @@ describe('resolveDbPath fallback', () => {
     } finally {
       rmSync(nonRepo, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * M7 — the default `GENIE_HOME` is `$HOME/.genie`, which is also a valid
+ * spelling of a per-repo `.genie/`. A per-repo verb invoked with cwd = that home
+ * (outside any git repo, so resolution falls back to cwd) resolved the GLOBAL
+ * database and initialized the 9-table per-repo schema inside the Omni approval
+ * queue — two schemas, two independent `PRAGMA user_version`, one file.
+ */
+describe('global-database separation guard', () => {
+  let home: string;
+  let previousGenieHome: string | undefined;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'genie-home-'));
+    previousGenieHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = join(home, '.genie');
+  });
+
+  afterEach(() => {
+    if (previousGenieHome === undefined) {
+      // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
+      delete process.env.GENIE_HOME;
+    } else process.env.GENIE_HOME = previousGenieHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('refuses a cwd whose .genie IS GENIE_HOME, and creates nothing', () => {
+    const collision = resolveDbPath(home);
+    expect(collision).toBe(resolveGlobalDbPath());
+    expect(() => openDb({ cwd: home })).toThrow(GlobalDbPathError);
+    expect(existsSync(collision)).toBe(false);
+  });
+
+  test('refuses an explicit path spelling of the global database too', () => {
+    expect(() => openDb({ path: resolveGlobalDbPath() })).toThrow(GlobalDbPathError);
+  });
+
+  test('sees through a symlinked GENIE_HOME', () => {
+    const real = join(home, 'real-genie-home');
+    mkdirSync(real, { recursive: true });
+    const link = join(home, 'linked');
+    symlinkSync(real, link);
+    process.env.GENIE_HOME = link;
+    expect(() => openDb({ path: join(real, 'genie.db') })).toThrow(GlobalDbPathError);
+  });
+
+  test('the refusal names the collision and how to get out of it', () => {
+    let message = '';
+    try {
+      openDb({ cwd: home });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toContain(resolveGlobalDbPath());
+    expect(message).toContain('GENIE_HOME/genie.db');
+    expect(message).toContain('from inside a repository');
+  });
+
+  test('a real repo under that home is unaffected', () => {
+    const repo = join(home, 'repo');
+    mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
+    const db = openDb({ cwd: repo });
+    try {
+      expect(db.query('PRAGMA user_version').get()).toEqual({ user_version: CURRENT_SCHEMA_VERSION });
+    } finally {
+      db.close();
+    }
+    // The global file was never touched.
+    expect(existsSync(resolveGlobalDbPath())).toBe(false);
+  });
+
+  test(':memory: is never mistaken for the global database', () => {
+    const db = openDb({ path: ':memory:' });
+    db.close();
   });
 });

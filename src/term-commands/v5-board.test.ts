@@ -21,6 +21,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
+  BOARD_JSON_EVENT_LIMIT,
+  BOARD_JSON_EVENT_LIMIT_STEPS,
+  BOARD_JSON_MAX_BYTES,
   DEFAULT_LIFECYCLE_LANES,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
@@ -34,6 +37,7 @@ import {
   getTaskEvents,
   getTaskLane,
   moveTask,
+  readBoardAggregate,
   readBoardTaskSnapshot,
   recordHeartbeat,
 } from '../lib/v5/task-state.js';
@@ -461,10 +465,13 @@ describe('lane-grouped render', () => {
       'boardId',
       'claimedAt',
       'claimedBy',
+      'commentCount',
       'comments',
       'createdAt',
       'dependencies',
       'enforcedBlock',
+      'eventCount',
+      'eventsTruncated',
       'group',
       'heartbeatAt',
       'id',
@@ -491,8 +498,12 @@ describe('scoped board JSON aggregate v1', () => {
     const payload = JSON.parse(result.stdout) as Record<string, unknown> & {
       lanes: Array<{ name: string; label: string | null; action: string | null; cards: unknown[] }>;
     };
-    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'lanes']);
+    // `eventLimit` is the per-card history cap this response actually applied:
+    // additive under schemaVersion 1, and always present so a client never has
+    // to guess whether a missing key means "undegraded" or "old genie".
+    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'eventLimit', 'lanes']);
     expect(payload.schemaVersion).toBe(1);
+    expect(payload.eventLimit).toBe(BOARD_JSON_EVENT_LIMIT);
     expect(payload.scope).toBe('board "empty"');
     expect(payload.lanes.map((lane) => lane.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
     for (const lane of payload.lanes) {
@@ -592,6 +603,11 @@ describe('scoped board JSON aggregate v1', () => {
     const missing = createTask(db, { title: 'missing heartbeat', boardId: roadmap.id, lane: 'Work' });
     const open = createTask(db, { title: 'open with heartbeat', boardId: roadmap.id, lane: 'Work' });
     for (const task of [running, idle, stale, missing]) claimTask(db, task.id, 'worker');
+    // `task checkout` seeds heartbeat_at = claimed_at (m8), so a NULL heartbeat
+    // on a claimed card now only reaches the db through an imported legacy
+    // snapshot or a card claimed by an older build. Recreate that state
+    // explicitly — it must still classify as `stale`.
+    db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(missing.id);
     recordHeartbeat(db, running.id, now);
     recordHeartbeat(db, idle.id, now - LIVENESS_RUNNING_MS - 60_000);
     recordHeartbeat(db, stale.id, now - LIVENESS_STALE_MS - 60_000);
@@ -706,28 +722,268 @@ describe('scoped board JSON aggregate v1', () => {
     });
   }
 
-  const malformedLanes = [
-    ['invalid JSON', '{'],
-    ['non-array JSON', '{}'],
-    ['non-object entry', '[null]'],
-    ['missing name', '[{}]'],
-    ['wrong name', '[{"name":7}]'],
-    ['wrong label', '[{"name":"Idea","label":7}]'],
-    ['null label', '[{"name":"Idea","label":null}]'],
-    ['wrong action', '[{"name":"Idea","action":7}]'],
-    ['null action', '[{"name":"Idea","action":null}]'],
-  ] as const;
-
-  for (const [name, lanes] of malformedLanes) {
-    test(`fails closed for ${name} lane metadata`, async () => {
+  // `block_kind` is unconstrained TEXT that `task import` stores verbatim, so an
+  // unrecognized kind is importable data — it may never make `--json` exit 1
+  // while the human render shows the block.
+  for (const kind of ['paused', '', 'HOLD', 'work ']) {
+    test(`coerces the unknown block kind ${JSON.stringify(kind)} on BOTH paths`, async () => {
       const db = openDb({ cwd: repo });
       const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, { title: 'oddly blocked', boardId: roadmap.id, lane: 'Idea' });
+      blockTask(db, task.id, 'awaiting a decision', { author: 'felipe', authorKind: 'human' });
+      db.query('UPDATE tasks SET block_kind = ? WHERE id = ?').run(kind, task.id);
+      db.close();
+
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      const human = await board(repo, '--board', 'roadmap');
+      expect(json).toMatchObject({ code: 0, stderr: '' });
+      expect(human).toMatchObject({ code: 0, stderr: '' });
+      expect(json.stderr).not.toContain('invalid block kind');
+      const payload = JSON.parse(json.stdout) as {
+        lanes: Array<{ name: string; cards: Array<{ id: string; enforcedBlock: { reason: string; kind: string } }> }>;
+      };
+      const card = payload.lanes.find((l) => l.name === 'Idea')?.cards.find((c) => c.id === task.id);
+      // The one coercion both paths share: anything but exactly `hold` is `work`.
+      expect(card?.enforcedBlock).toEqual({ reason: 'awaiting a decision', kind: 'work' });
+      expect(human.stdout).toContain('oddly blocked');
+    });
+  }
+
+  test('serializes a stored hold kind unchanged', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'parked', boardId: roadmap.id, lane: 'Idea' });
+    blockTask(db, task.id, 'parked until Q3', { author: 'felipe', authorKind: 'human' }, 'hold');
+    db.close();
+
+    const json = await board(repo, '--board', 'roadmap', '--json');
+    expect(json).toMatchObject({ code: 0, stderr: '' });
+    const payload = JSON.parse(json.stdout) as {
+      lanes: Array<{ name: string; cards: Array<{ id: string; enforcedBlock: { reason: string; kind: string } }> }>;
+    };
+    expect(payload.lanes.find((l) => l.name === 'Idea')?.cards.find((c) => c.id === task.id)?.enforcedBlock).toEqual({
+      reason: 'parked until Q3',
+      kind: 'hold',
+    });
+  });
+
+  // Unusable lane metadata is importable (`task import` validates table shape
+  // only) and no board verb repairs it, so it may never make `--json` the one
+  // path that refuses the board. ONE validator decides for both paths.
+  const unusableLanes = [
+    ['invalid JSON', '{'],
+    // m9: a stored `[]` is a lane definition that yields no lane. It used to
+    // fall through to the frozen laneless payload with EMPTY stderr, so a
+    // caller could not tell "this board has no lanes" from "I could not read
+    // this board's lanes". Same note, same exit code, same shape as every
+    // other unusable blob.
+    ['empty array', '[]'],
+    ['non-array JSON', '{}'],
+    ['non-object entry', '[null]'],
+    ['nested-array entry', '[[]]'],
+    ['missing name', '[{}]'],
+    ['empty name', '[{"name":""}]'],
+    ['wrong name', '[{"name":7}]'],
+    ['wrong label', '[{"name":"Idea","label":7}]'],
+    ['wrong action', '[{"name":"Idea","action":7}]'],
+  ] as const;
+
+  const LANELESS_NOTICE = 'Note: board "roadmap" has no usable lane metadata; rendering it as a laneless board.\n';
+
+  for (const [name, lanes] of unusableLanes) {
+    test(`renders laneless — never a malformed-board exit — for ${name} lane metadata`, async () => {
+      const db = openDb({ cwd: repo });
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      createTask(db, { title: 'stranded card', boardId: roadmap.id, lane: 'Idea' });
       db.query('UPDATE boards SET lanes = ? WHERE id = ?').run(lanes, roadmap.id);
       db.close();
 
-      expectMalformedBoard(await board(repo, '--board', 'roadmap', '--json'));
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      const human = await board(repo, '--board', 'roadmap');
+      // Same decision, same message, same exit code on both paths.
+      expect(json.code).toBe(0);
+      expect(human.code).toBe(json.code);
+      expect(json.stderr).toBe(LANELESS_NOTICE);
+      expect(human.stderr).toBe(LANELESS_NOTICE);
+      expect(json.stderr).not.toContain('Malformed board detail');
+      // The laneless board falls through to the FROZEN status payload.
+      const payload = JSON.parse(json.stdout) as { scope: string; columns: Record<string, unknown[]> };
+      expect(Object.keys(payload)).toEqual(['scope', 'columns']);
+      expect(payload.columns.ready).toHaveLength(1);
+      expect(human.stdout).toContain('stranded card');
     });
   }
+
+  // `label: null` / `action: null` is the exact shape the lane emitter itself
+  // writes, so a round-trip of emitted output must parse back to lanes.
+  for (const [name, lanes] of [
+    ['null label', '[{"name":"Idea","label":null},{"name":"Done"}]'],
+    ['null action', '[{"name":"Idea","action":null},{"name":"Done"}]'],
+    ['both null', '[{"name":"Idea","label":null,"action":null},{"name":"Done"}]'],
+  ] as const) {
+    test(`accepts round-tripped ${name} lane metadata on both paths`, async () => {
+      const db = openDb({ cwd: repo });
+      const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      createTask(db, { title: 'idea card', boardId: roadmap.id, lane: 'Idea' });
+      db.query('UPDATE boards SET lanes = ? WHERE id = ?').run(lanes, roadmap.id);
+      db.close();
+
+      const json = await board(repo, '--board', 'roadmap', '--json');
+      expect(json).toMatchObject({ code: 0, stderr: '' });
+      const payload = JSON.parse(json.stdout) as {
+        schemaVersion: number;
+        lanes: Array<{ name: string; label: string | null; action: string | null; cards: Array<{ title: string }> }>;
+      };
+      expect(payload.schemaVersion).toBe(1);
+      expect(payload.lanes.map((lane) => lane.name)).toEqual(['Idea', 'Done']);
+      expect(payload.lanes[0].label).toBeNull();
+      expect(payload.lanes[0].action).toBeNull();
+      expect(payload.lanes[0].cards.map((card) => card.title)).toEqual(['idea card']);
+
+      const human = await board(repo, '--board', 'roadmap');
+      expect(human).toMatchObject({ code: 0, stderr: '' });
+      expect(human.stdout).toContain('Idea');
+      expect(human.stdout).toContain('idea card');
+    });
+  }
+
+  test('caps the embedded timeline and comments while reporting the true totals', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const busy = createTask(db, { title: 'busy card', boardId: roadmap.id, lane: 'Idea' });
+    const quiet = createTask(db, { title: 'quiet card', boardId: roadmap.id, lane: 'Idea' });
+    const insert = db.query('INSERT INTO task_events (task_id, kind, note, created_at) VALUES (?, ?, ?, ?)');
+    // 60 events, 30 of them comments, interleaved and strictly ordered.
+    for (let index = 0; index < 60; index += 1) {
+      const comment = index % 2 === 0;
+      insert.run(busy.id, comment ? 'comment' : 'move', `event ${index}`, 1000 + index);
+    }
+    insert.run(quiet.id, 'comment', 'only comment', 1);
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result).toMatchObject({ code: 0, stderr: '' });
+    const payload = JSON.parse(result.stdout) as {
+      eventLimit: number;
+      lanes: Array<{
+        name: string;
+        cards: Array<{
+          title: string;
+          timeline: Array<{ note: string }>;
+          eventCount: number;
+          eventsTruncated: boolean;
+          comments: Array<{ note: string }>;
+          commentCount: number;
+        }>;
+      }>;
+    };
+    // A board this small never degrades: the widest cap is the applied one.
+    expect(payload.eventLimit).toBe(BOARD_JSON_EVENT_LIMIT);
+    const cards = new Map((payload.lanes.find((l) => l.name === 'Idea')?.cards ?? []).map((c) => [c.title, c]));
+    const capped = cards.get('busy card');
+    expect(capped).toBeDefined();
+    if (!capped) throw new Error('expected the busy card');
+    expect(BOARD_JSON_EVENT_LIMIT).toBe(25);
+    expect(capped.eventCount).toBe(60);
+    expect(capped.eventsTruncated).toBe(true);
+    // The newest window, still chronological — never the oldest, never reordered.
+    expect(capped.timeline).toHaveLength(BOARD_JSON_EVENT_LIMIT);
+    expect(capped.timeline.map((event) => event.note)).toEqual(
+      Array.from({ length: 25 }, (_, offset) => `event ${35 + offset}`),
+    );
+    expect(capped.commentCount).toBe(30);
+    expect(capped.comments).toHaveLength(BOARD_JSON_EVENT_LIMIT);
+    expect(capped.comments[0].note).toBe('event 10');
+    expect(capped.comments[24].note).toBe('event 58');
+    // A short card is not truncated and carries its whole history.
+    const short = cards.get('quiet card');
+    expect(short).toMatchObject({ eventCount: 1, eventsTruncated: false, commentCount: 1 });
+    expect(short?.timeline).toHaveLength(1);
+    // The 4 MiB budget the plugin reads this under is what the cap protects.
+    expect(result.stdout.length).toBeLessThan(4 * 1024 * 1024);
+  });
+
+  /**
+   * Bulk-seed a board straight through SQL: the response-budget tests need a
+   * thousand cards, which is a shape a human board reaches over months and no
+   * per-verb API is fast enough to build in a test.
+   */
+  function seedBulk(db: Database, boardId: string, cards: number, eventsPerCard: number, title = 'card'): void {
+    const lanes = DEFAULT_LIFECYCLE_LANES.map((lane) => lane.name);
+    const insertTask = db.query(
+      `INSERT INTO tasks (id, board_id, title, status, lane, created_at, updated_at)
+         VALUES (?, ?, ?, 'ready', ?, ?, ?)`,
+    );
+    const insertEvent = db.query(
+      'INSERT INTO task_events (task_id, kind, note, author, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    const note =
+      'Reviewed the diff: the retry path still double-counts the budget on the second hop; rebase onto dev and re-run.';
+    db.transaction(() => {
+      for (let index = 0; index < cards; index += 1) {
+        const id = `t_bulk${index}`;
+        insertTask.run(id, boardId, `${title} ${index}`, lanes[index % lanes.length], 1000 + index, 1000 + index);
+        for (let event = 0; event < eventsPerCard; event += 1) {
+          const kind = event % 2 === 0 ? 'comment' : 'move';
+          insertEvent.run(id, kind, note, 'dsh:felipe@workstation-01', 2000 + event);
+        }
+      }
+    })();
+  }
+
+  test('bounds the WHOLE response, not just one card timeline, on a thousand-card board', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    // Every card sits UNDER the per-card cap, so only a whole-response budget
+    // can keep this board loadable: 1000 x 10 serialized 4.53 MiB with the
+    // per-card cap alone, past the 4 MiB a DSH read is allowed.
+    seedBulk(db, roadmap.id, 1000, 10);
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThan(4 * 1024 * 1024);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(BOARD_JSON_MAX_BYTES);
+    // The degradation is announced, never silent — and it is not a failure.
+    expect(result.stderr).toContain('was capped at');
+
+    const payload = JSON.parse(result.stdout) as {
+      schemaVersion: number;
+      eventLimit: number;
+      lanes: Array<{ cards: Array<{ eventCount: number; eventsTruncated: boolean; timeline: unknown[] }> }>;
+    };
+    expect(payload.schemaVersion).toBe(1);
+    // A narrower cap than the per-card one, chosen from the declared ladder.
+    expect(BOARD_JSON_EVENT_LIMIT_STEPS).toContain(payload.eventLimit);
+    expect(payload.eventLimit).toBeLessThan(BOARD_JSON_EVENT_LIMIT);
+    const all = payload.lanes.flatMap((lane) => lane.cards);
+    // Cards are never dropped; only their history depth is.
+    expect(all).toHaveLength(1000);
+    for (const card of all) {
+      expect(card.eventCount).toBe(10);
+      expect(card.timeline.length).toBeLessThanOrEqual(payload.eventLimit);
+      expect(card.eventsTruncated).toBe(card.eventCount > card.timeline.length);
+    }
+  }, 120_000);
+
+  test('refuses a board that cannot fit at any cap with a named, actionable error', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    // No history at all: the card set alone is past the budget, which is the
+    // one case no cap can rescue.
+    seedBulk(db, roadmap.id, 40, 0, 'x'.repeat(100_000));
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toStartWith('Error: Board "roadmap" is too large to emit as one JSON response: 40 cards');
+    expect(result.stderr).toContain('--wish <slug>');
+    // The human render of the same board still works — the budget is the
+    // machine payload's, not the board's.
+    const human = await board(repo, '--board', 'roadmap');
+    expect(human.code).toBe(0);
+  }, 120_000);
 
   test('an unknown board JSON read fails with exit 1, empty stdout, and clear stderr', async () => {
     const result = await board(repo, '--board', 'ghost', '--json');
@@ -904,6 +1160,53 @@ describe('board aggregate repository snapshot', () => {
         .flatMap((read) => read.plan)
         .join('\n'),
     ).not.toMatch(/SCAN (td|e)(?: |$)/);
+    reader.close();
+  });
+
+  test('reads the board lanes inside the same deferred snapshot as its cards', () => {
+    const writer = openDb({ cwd: repo });
+    const roadmap = createBoard(writer, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    createTask(writer, { title: 'idea card', boardId: roadmap.id, lane: 'Idea' });
+    writer.close();
+
+    const reader = openDb({ cwd: repo });
+    const reads: Array<{ sql: string; inTransaction: boolean }> = [];
+    const originalQuery = reader.query.bind(reader);
+    Object.defineProperty(reader, 'query', {
+      configurable: true,
+      value: (sql: string) => {
+        const statement = originalQuery(sql);
+        return new Proxy(statement, {
+          get(target, property) {
+            const value = Reflect.get(target, property, target);
+            if (property !== 'all' && property !== 'get') {
+              return typeof value === 'function' ? value.bind(target) : value;
+            }
+            return (...args: unknown[]) => {
+              reads.push({ sql, inTransaction: reader.inTransaction });
+              return Reflect.apply(value as (...values: unknown[]) => unknown, target, args);
+            };
+          },
+        });
+      },
+    });
+
+    const snapshot = readBoardAggregate(reader, roadmap.id);
+    reader.close();
+
+    expect(snapshot.board.lanes?.map((lane) => lane.name)).toEqual(DEFAULT_LIFECYCLE_LANES.map((lane) => lane.name));
+    expect(snapshot.cards.map((card) => card.title)).toEqual(['idea card']);
+    // The lane definition the cards are grouped into comes from the SAME
+    // snapshot as the cards — never from a read taken before the transaction.
+    const laneRead = reads.find((read) => read.sql.includes('FROM boards'));
+    expect(laneRead).toBeDefined();
+    expect(laneRead?.inTransaction).toBe(true);
+    expect(reads.every((read) => read.inTransaction)).toBe(true);
+  });
+
+  test('an unknown board id fails the aggregate with the typed board error', () => {
+    const reader = openDb({ cwd: repo });
+    expect(() => readBoardAggregate(reader, 'b_missing')).toThrow('Board not found: b_missing');
     reader.close();
   });
 
@@ -1462,12 +1765,18 @@ describe('laneless board render is unchanged', () => {
 // board computes `now` at render time; seeded ages use minute-scale margins so
 // the ~100ms subprocess delay never flips a threshold (deterministic, no sleep).
 describe('deterministic runtime badges (laneless render)', () => {
-  /** Claim a fresh card and seed its heartbeat to an absolute timestamp. */
+  /**
+   * Claim a fresh card and seed its heartbeat to an absolute timestamp. A null
+   * heartbeat is written explicitly: the claim itself now seeds
+   * `heartbeat_at = claimed_at` (m8), and the never-pulsed row survives only as
+   * imported/legacy state.
+   */
   function seedClaimed(title: string, heartbeatAt: number | null): string {
     const db = openDb({ cwd: repo });
     const t = createTask(db, { title });
     claimTask(db, t.id, 'w1');
-    if (heartbeatAt != null) recordHeartbeat(db, t.id, heartbeatAt);
+    if (heartbeatAt == null) db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(t.id);
+    else recordHeartbeat(db, t.id, heartbeatAt);
     db.close();
     return t.id;
   }
@@ -1496,6 +1805,20 @@ describe('deterministic runtime badges (laneless render)', () => {
     seedClaimed('never pulsed', null);
     const r = await board(repo);
     expect(r.stdout).toContain('☠');
+  });
+
+  // m8: liveness is derived only from heartbeat_at, so before the claim seeded
+  // one, `task checkout` produced a card that rendered ☠ dead on arrival and
+  // was reclaimable by the staleness rule before its worker could beat once.
+  test('a card claimed through checkout reads live immediately', async () => {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title: 'just claimed' });
+    claimTask(db, t.id, 'w1');
+    db.close();
+    const r = await board(repo);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('▶');
+    expect(r.stdout).not.toContain('☠');
   });
 
   test('an unclaimed card carries no liveness glyph', async () => {

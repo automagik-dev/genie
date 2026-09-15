@@ -147,6 +147,16 @@ describe('doctorCommand', () => {
     expect(names).toMatch(/bun/);
   });
 
+  // m16: check NAMES are the cross-release diff key, so none of them may carry
+  // the running version — a naive name-set diff would report a false
+  // removal + addition pair on every release.
+  test('no check name embeds the running version; the version check carries it as detail', () => {
+    const checks = json.checks as Array<{ name: string; status: string; detail?: string }>;
+    const embedding = checks.map((c) => c.name).filter((name) => name.includes(VERSION));
+    expect(embedding).toEqual([]);
+    expect(checks.find((c) => c.name === 'genie version')).toMatchObject({ status: 'pass', detail: VERSION });
+  });
+
   test('healthy checkout has no failing checks', () => {
     const failed = json.checks.filter((c) => c.status === 'fail');
     expect(failed).toEqual([]);
@@ -1091,6 +1101,112 @@ describe('doctor: skills.sh channel', () => {
     });
   });
 
+  test('preserved retired skill dirs warn with their path and reason', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta', 'trace']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta', 'perf']);
+    // Retired dirs the last update could not archive. They are not in
+    // `inventory`, so every per-home line still reads 2/2: without this check
+    // the host reports clean while the directories sit there forever.
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      preserved: [
+        { agentDir: join(isolatedHome, '.claude', 'skills'), skill: 'trace', reason: 'no recorded content digest' },
+        {
+          agentDir: join(isolatedHome, '.agents', 'skills'),
+          skill: 'perf',
+          reason: 'content changed since the recorded install',
+        },
+      ],
+    });
+
+    const results = skillsChannelResults();
+    expect(byName(results, 'skills: claude').status).toBe('pass');
+    const retirement = byName(results, 'skills: retirement');
+    expect(retirement.status).toBe('warn');
+    expect(retirement.detail).toBe(
+      `2 preserved retired skill dir(s): ${join(isolatedHome, '.claude', 'skills', 'trace')} (no recorded content digest); ${join(isolatedHome, '.agents', 'skills', 'perf')} (content changed since the recorded install)`,
+    );
+    expect(retirement.suggestion).toBe('Review them, remove them, then run `genie update` to retry retirement');
+  });
+
+  /**
+   * m4: the check reproduced the record verbatim, so a preserved directory the
+   * operator had already deleted was still named — byte-identically, count and
+   * all — until the next `genie update` rewrote the record. A path that is gone
+   * is resolved work, not outstanding work.
+   */
+  test('a preserved entry whose path is gone is reported resolved, not outstanding', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta', 'trace']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    const gone = join(isolatedHome, '.agents', 'skills', 'perf');
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      preserved: [
+        { agentDir: join(isolatedHome, '.claude', 'skills'), skill: 'trace', reason: 'no recorded content digest' },
+        { agentDir: join(isolatedHome, '.agents', 'skills'), skill: 'perf', reason: 'no recorded content digest' },
+      ],
+    });
+
+    const retirement = byName(skillsChannelResults(), 'skills: retirement');
+    expect(retirement.status).toBe('warn');
+    expect(retirement.detail).toBe(
+      `1 preserved retired skill dir(s): ${join(isolatedHome, '.claude', 'skills', 'trace')} (no recorded content digest); 1 already resolved (gone from disk, dropped from the record by the next \`genie update\`): ${gone}`,
+    );
+  });
+
+  test('every preserved entry gone from disk passes instead of warning', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      preserved: [
+        { agentDir: join(isolatedHome, '.claude', 'skills'), skill: 'trace', reason: 'no recorded content digest' },
+      ],
+    });
+
+    const retirement = byName(skillsChannelResults(), 'skills: retirement');
+    expect(retirement.status).toBe('pass');
+    expect(retirement.detail).toContain('are gone from disk');
+    expect(retirement.suggestion).toBeUndefined();
+  });
+
+  /**
+   * m2: `agentDirs` is `genie uninstall`'s removal authority and held 57
+   * entries on the 2026-09-15 dogfood host, while doctor could only see the
+   * four rows of `KNOWN_AGENT_SKILL_HOMES` — so a home that lost content, or
+   * vanished entirely, still read `ok: true`.
+   */
+  test('recorded agent dirs are compared against the record inventory', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    const extra = join(isolatedHome, '.openclaw', 'skills');
+    seedAgentSkills(isolatedHome, ['.openclaw', 'skills'], ['alpha']);
+    const missing = join(isolatedHome, '.ghosthome', 'skills');
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      agentDirs: [join(isolatedHome, '.claude', 'skills'), join(isolatedHome, '.agents', 'skills'), extra, missing],
+    });
+
+    const agentDirs = byName(skillsChannelResults(), 'skills: agent dirs');
+    expect(agentDirs.status).toBe('warn');
+    expect(agentDirs.detail).toBe(
+      `2/4 recorded homes complete @ ${releaseTag(VERSION)}; incomplete: ${extra} (1/2); ${missing} (not on disk)`,
+    );
+    expect(agentDirs.suggestion).toBe('Run `genie update` to reinstall the skills channel into every recorded home');
+  });
+
+  test('recorded agent dirs pass when every recorded home carries the full inventory', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const agentDirs = byName(skillsChannelResults(), 'skills: agent dirs');
+    expect(agentDirs.status).toBe('pass');
+    expect(agentDirs.detail).toBe(`2/2 recorded homes complete @ ${releaseTag(VERSION)}`);
+  });
+
+  test('a record with nothing preserved emits no retirement check', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(skillsChannelResults().map((result) => result.name)).not.toContain('skills: retirement');
+  });
+
   test('a Codex host reports `skills: agents`, never a false `skills: codex` warning', () => {
     // skills.sh 1.5.23 `--all --copy -g` creates no `~/.codex/skills`; Codex
     // reads `~/.agents/skills`. A bare `~/.codex` must not produce a check.
@@ -1105,7 +1221,9 @@ describe('doctor: skills.sh channel', () => {
       status: 'pass',
       detail: `2/2 @ ${releaseTag(VERSION)}`,
     });
-    expect(results.filter((r) => r.status === 'warn')).toEqual([]);
+    // Per-agent rows only: the record names a `.claude` home this host does not
+    // have, which is the `skills: agent dirs` line's business, not this one's.
+    expect(results.filter((r) => r.status === 'warn' && r.skillsChannel !== undefined)).toEqual([]);
   });
 
   test('a file (not a directory) at an agent config home is `not detected`', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "5.260909.1",
+  "version": "5.260915.7",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 \u2014 install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",
@@ -23,7 +23,6 @@
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
-    "skills:audit": "bun run scripts/skills-audit.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
     "lint:orca-bundle": "bun scripts/orca-bundle-parity.ts --check",
     "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:orca-bundle && bun test",
@@ -38,7 +37,6 @@
     "@sigstore/protobuf-specs": "0.5.0",
     "@sigstore/verify": "4.1.0",
     "commander": "12.1.0",
-    "uuid": "^14.0.2",
     "zod": "3.25.76"
   },
   "devDependencies": {

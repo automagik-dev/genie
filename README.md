@@ -192,10 +192,12 @@ Skills are the product. Invoke them as `/name` in Claude Code, or by name or pla
 | `brainstorm` | Explore a vague idea until it's a concrete DESIGN.md |
 | `wish` | Turn a design into a scoped WISH.md with execution groups |
 | `work` | Dispatch native role subagents wave by wave |
-| `review` | Severity-gated verdict — SHIP, FIX-FIRST, or BLOCKED |
-| `council` | Runs the saved `council` workflow (`.claude/workflows/council.js`): five independent lenses plus a synthesis, assess-only |
+| `review` | Independent design, plan, implementation, PR, or focused repository audit |
+| `council` | Runs the saved `council` workflow (`.claude/workflows/council.js`): independent architecture, delivery, product, security, and dissent lenses plus a synthesis, assess-only |
 
 Shared skill bodies use a runtime-neutral delegation contract: they name portable roles and let each runtime map them onto its own native subagents. Genie installs no custom agent profiles. Subagents share a workspace, so task claims own scope; worktree isolation, when required, is orchestrator-arranged per the dispatch contract. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
+
+The [skill catalog](skills/README.md) lists all fourteen workflows and replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
 
 ### Where the skills land
 
@@ -203,6 +205,26 @@ Shared skill bodies use a runtime-neutral delegation contract: they name portabl
 never over a GitHub ref — the signed tarball's own bytes are the only source genuinely pinned to your binary. The
 public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be
 ahead of or behind any release.
+
+Retirement runs **before** the install pass, so a home the skills CLI replaces has already been backed up. Removed
+skills whose content still matches the previous install record are archived under
+`~/.genie/state-backups/skills-retirement-<timestamp>/`, mirroring their path relative to `$HOME`. Modified or
+unverified copies remain for manual review; a recorded agent home that no longer exists is reported and kept in the
+record. If retirement fails, `genie update` retains the previous record and reports a retry.
+
+#### Restoring from a retirement backup
+
+Restore with `--no-preserve=mode` (or `rsync -a --no-perms`). A plain `cp -a` copies the backup's own directory
+metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently becomes `drwx------`:
+
+```bash
+BK=~/.genie/state-backups/skills-retirement-<timestamp>
+cp -a --no-preserve=mode "$BK/." "$HOME/"
+# or, equivalently:
+rsync -a --no-perms "$BK/" "$HOME/"
+```
+
+Both forms restore the removed trees and leave the modes of pre-existing directories alone.
 
 Every known agent skill home gets a copy:
 

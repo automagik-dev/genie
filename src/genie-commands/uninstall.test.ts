@@ -32,12 +32,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, win32 } from 'node:path';
 import {
   SKILLS_CLI_VERSION,
+  type SkillsInstallRecord,
   computeSkillDirDigest,
+  readSkillsInstallRecord,
   skillsInstallRecordPath,
   writeSkillsInstallRecord,
 } from '../lib/skills-installer.js';
 import {
   type ProvenV4Rules,
+  UNINSTALL_NON_INTERACTIVE_MESSAGE,
   type UninstallBatchScope,
   type UninstallResult,
   clearUninstallBatchDecision,
@@ -131,6 +134,58 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     expect(existsSync(codexSkills)).toBe(true);
   });
 
+  test('retired dirs preserved in the record are removed when proven and reported when not', () => {
+    const live = seedSkillDir(claudeSkills, 'wish');
+    // Two retirements the last `genie update` could not archive. They are NOT
+    // in `inventory` (this release no longer delivers them), so before the
+    // record carried them `genie uninstall` left both behind with no receipt.
+    const provable = seedSkillDir(claudeSkills, 'trace');
+    const unprovable = seedSkillDir(codexSkills, 'perf');
+    seedRecord(['wish'], [claudeSkills, codexSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    writeSkillsInstallRecord(genieHome, {
+      ...record,
+      preserved: [
+        {
+          agentDir: claudeSkills,
+          skill: 'trace',
+          reason: 'replacement set unverified in this home',
+          digest: computeSkillDirDigest(provable) as string,
+        },
+        { agentDir: codexSkills, skill: 'perf', reason: 'no recorded content digest' },
+      ],
+    });
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed.sort()).toEqual([live, provable].sort());
+    expect(removal.preserved).toEqual([unprovable]);
+    expect(existsSync(provable)).toBe(false);
+    expect(existsSync(unprovable)).toBe(true);
+    // Something was left behind, so the receipt is kept for the retry.
+    expect(removal.recordRemoved).toBe(false);
+  });
+
+  test('a preserved retirement whose content changed again is never deleted', () => {
+    const drifted = seedSkillDir(claudeSkills, 'trace');
+    seedRecord([], [claudeSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    const digest = computeSkillDirDigest(drifted) as string;
+    writeFileSync(join(drifted, 'SKILL.md'), '# edited again\n', 'utf8');
+    writeSkillsInstallRecord(genieHome, {
+      ...record,
+      preserved: [
+        { agentDir: claudeSkills, skill: 'trace', reason: 'content changed since the recorded install', digest },
+      ],
+    });
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved).toEqual([drifted]);
+    expect(readFileSync(join(drifted, 'SKILL.md'), 'utf8')).toBe('# edited again\n');
+  });
+
   test('deletes the record so a second run is a clean no-op', () => {
     seedSkillDir(claudeSkills, 'work');
     seedRecord(['work'], [claudeSkills]);
@@ -140,7 +195,14 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
 
     const second = removeSkillsChannelInstall(genieHome);
-    expect(second).toEqual({ record: null, removed: [], failures: [], preserved: [], recordRemoved: false });
+    expect(second).toEqual({
+      record: null,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    });
   });
 
   test('no record is nothing to do', () => {
@@ -150,6 +212,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
       removed: [],
       failures: [],
       preserved: [],
+      removedRetired: [],
       recordRemoved: false,
     });
     expect(existsSync(foreign)).toBe(true);
@@ -365,9 +428,12 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     mkdirSync(claudeSkills, { recursive: true });
     output = [];
     process.exitCode = 0;
-    logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      output.push(args.map(String).join(' '));
-    });
+    // Output leaves through the colour-gated sink (src/lib/term-output.ts), so the
+    // capture sits on the stream rather than on console.
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      output.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
 
   afterEach(() => {
@@ -412,6 +478,48 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     // still authorize a clean wholesale removal of GENIE_HOME's contents.
     expect(existsSync(join(genieHome, 'plugins'))).toBe(false);
     expect(readdirSync(genieHome)).toEqual([]);
+  });
+
+  /**
+   * m5: the sweep that finally deletes a retired directory a previous update
+   * could not archive reported nothing but a count — `removed 804 recorded
+   * skill dir(s)` on the dogfood host — so no line ever said WHICH of the
+   * directories the operator had been told to review were now gone.
+   */
+  test('the preserved-retirement sweep names every retired dir it removed', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    const retired = join(claudeSkills, 'trace');
+    mkdirSync(retired, { recursive: true });
+    writeFileSync(join(retired, 'SKILL.md'), '# trace\n', 'utf8');
+    const retiredDigest = computeSkillDirDigest(retired);
+    if (digest === null || retiredDigest === null) throw new Error('fixture skill dir was not digestable');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+      preserved: [
+        {
+          agentDir: claudeSkills,
+          skill: 'trace',
+          reason: 'content changed since the recorded install',
+          digest: retiredDigest,
+        },
+      ],
+      installedAt: '2026-08-30T12:00:00.000Z',
+    });
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(retired)).toBe(false);
+    // Colour is not part of the contract: a non-TTY stdout gets the same line in
+    // plain text (m15), so the assertion is on the words, not the escapes.
+    expect(output).toContain(`  + skills.sh channel: removed preserved retired skill dir ${retired}`);
+    expect(output.some((line) => line.includes('removed 2 recorded skill dir(s)'))).toBe(true);
   });
 });
 
@@ -1293,35 +1401,70 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     process.exitCode = 0;
     let out = '';
     let err = '';
-    // The source mixes console.log/console.error (Bun binds these to the original
-    // writer) with direct process.stdout.write (the machine trailer). Spy on both.
+    // Every human line and the machine trailer alike leave through the one
+    // colour-gated sink (src/lib/term-output.ts), which writes to the streams.
     const realWrite = process.stdout.write.bind(process.stdout);
-    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      out += `${a.join(' ')}\n`;
-    });
-    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
-      err += `${a.join(' ')}\n`;
-    });
-    process.stdout.write = ((c: string) => {
-      out += c;
+    const realErrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: unknown) => {
+      out += String(c);
       return true;
     }) as typeof process.stdout.write;
+    process.stderr.write = ((c: unknown) => {
+      err += String(c);
+      return true;
+    }) as typeof process.stderr.write;
     try {
       await fn();
       return { out, err, exitCode: process.exitCode ?? 0 };
     } finally {
       process.stdout.write = realWrite;
-      logSpy.mockRestore();
-      errSpy.mockRestore();
+      process.stderr.write = realErrWrite;
       process.exitCode = priorExit ?? 0;
     }
   }
+
+  test('a non-interactive run never reaches the prompt: one stderr line, exit 2, nothing removed', async () => {
+    // Dogfood B1: `genie uninstall --no-interactive` rendered the confirm prompt
+    // anyway and then busy-looped at 100% CPU forever (10m52s, no exit code), so
+    // every scripted or CI uninstall wedged. The gate must be decided BEFORE a
+    // prompt object exists — an inquirer prompt on a non-TTY stdin never
+    // resolves, so "ask and time out" is not an available fix.
+    let confirmInvoked = false;
+    const { err, exitCode } = await capture(() =>
+      uninstallCommand(
+        {},
+        {
+          canPrompt: () => false,
+          // A confirm that never settles: if the gate ever calls it, this test
+          // hangs instead of quietly passing on a resolved stub.
+          confirm: (() => {
+            confirmInvoked = true;
+            return new Promise<boolean>(() => undefined);
+          }) as unknown as UninstallDeps['confirm'],
+        },
+      ),
+    );
+
+    expect(confirmInvoked).toBe(false);
+    expect(exitCode).toBe(2);
+    expect(err.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    // Zero mutation: the preview is read-only, so exiting there removed nothing.
+    expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('the non-interactive refusal still prints the plan and the breakage warning first', async () => {
+    const { out } = await capture(() => uninstallCommand({}, { canPrompt: () => false }));
+    expect(out).toContain('This will remove:');
+    expect(out).toContain('can break current or resumable tasks');
+    expect(out).not.toContain('Uninstall cancelled.');
+  });
 
   test('prints the task-breakage warning BEFORE confirmation; a decline mutates nothing', async () => {
     const { out } = await capture(() =>
       uninstallCommand(
         {},
         {
+          canPrompt: () => true,
           // A sentinel emitted at prompt time proves the warning already printed.
           confirm: (async () => {
             process.stdout.write('<<CONFIRM-INVOKED>>\n');
@@ -1359,6 +1502,7 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
       uninstallCommand(
         {},
         {
+          canPrompt: () => true,
           confirm: (async () => true) as unknown as UninstallDeps['confirm'],
           acquireLease: () => ({ path: join(root, 'test-lifecycle.lock'), release: () => undefined }),
         },
@@ -1393,6 +1537,7 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
         await uninstallCommand(
           {},
           {
+            canPrompt: () => true,
             confirm: (async () => true) as unknown as UninstallDeps['confirm'],
             acquireLease: () => {
               attempts += 1;
@@ -1463,5 +1608,91 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
         expect(source.includes(forbidden)).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * Dogfood B1, as an operator hits it: a real `genie uninstall` process with
+ * stdin closed. The in-process tests above pin the gate; these pin the whole
+ * argv → exit-code path, including Commander's `--no-interactive` plumbing both
+ * before and after the subcommand, and the plain non-TTY stdin case with no
+ * flag at all. Each spawn is capped so a regression fails the suite in seconds
+ * instead of wedging it the way the shipped 5.260915.6 binary wedged the host.
+ */
+describe('genie uninstall — non-interactive CLI contract (B1)', () => {
+  const CLI_PATH = join(import.meta.dir, '..', 'genie.ts');
+  const spawnRoots: string[] = [];
+
+  afterEach(() => {
+    for (const dir of spawnRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runUninstall(args: string[]): { code: number | null; stdout: string; stderr: string; ms: number } {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-uninstall-cli-'));
+    spawnRoots.push(dir);
+    const genieHome = join(dir, '.genie');
+    mkdirSync(genieHome, { recursive: true });
+    // Removable state, so the plan reaches the confirmation step rather than
+    // short-circuiting on "Nothing to uninstall."
+    writeFileSync(join(genieHome, 'config.json'), '{}\n', 'utf8');
+
+    const started = Date.now();
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, ...args], {
+      cwd: dir,
+      stdin: 'ignore', // stdin closed — exactly the dogfood repro's `< /dev/null`
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 10_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome, CLAUDE_CONFIG_DIR: join(dir, '.claude') },
+    });
+    return {
+      code: res.exitCode,
+      stdout: res.stdout.toString(),
+      stderr: res.stderr.toString(),
+      ms: Date.now() - started,
+    };
+  }
+
+  test('--no-interactive AFTER the subcommand exits 2 in milliseconds without prompting', () => {
+    const res = runUninstall(['uninstall', '--no-interactive']);
+    expect(res.code).toBe(2);
+    expect(res.ms).toBeLessThan(10_000);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('--no-interactive BEFORE the subcommand behaves identically', () => {
+    const res = runUninstall(['--no-interactive', 'uninstall']);
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('a closed stdin with no flag at all also exits 2 rather than spinning', () => {
+    const res = runUninstall(['uninstall']);
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(res.stdout).not.toContain('Are you sure');
+  });
+
+  test('the refusal removes nothing — GENIE_HOME survives byte-for-byte', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-uninstall-cli-keep-'));
+    spawnRoots.push(dir);
+    const genieHome = join(dir, '.genie');
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'config.json'), '{"keep":true}\n', 'utf8');
+
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, 'uninstall', '--no-interactive'], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 10_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome, CLAUDE_CONFIG_DIR: join(dir, '.claude') },
+    });
+
+    expect(res.exitCode).toBe(2);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(readFileSync(join(genieHome, 'config.json'), 'utf8')).toBe('{"keep":true}\n');
   });
 });

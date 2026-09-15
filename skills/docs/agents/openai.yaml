@@ -1,4 +1,4 @@
 interface:
   display_name: "Documentation"
-  short_description: "Audit and update documentation against code"
-  default_prompt: "Audit and align the documentation with the implemented behavior."
+  short_description: "Audit docs and DX against the live product; write on request"
+  default_prompt: "Audit the documentation and contributor experience against the implemented behavior and report drift."

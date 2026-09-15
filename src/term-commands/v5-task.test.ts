@@ -11,6 +11,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
+import { serializeSnapshot } from '../lib/v5/roadmap-sync.js';
 import {
   DEFAULT_LIFECYCLE_LANES,
   type StateExport,
@@ -915,6 +916,8 @@ describe('task move', () => {
     expect(getTaskLane(db, id)).toBe('Idea');
     expect(getTaskEvents(db, id)).toHaveLength(0);
     db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
   });
 
   test('moving a card that is not on a board fails with exit 1', async () => {
@@ -1180,18 +1183,31 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
+  test('explicit relative canonical path behaves like the default; no export path leaks hires', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
     hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
     db.close();
 
-    // Custom-file --write carries the COMPLETE state (hire_roster included), so
-    // a backup.json → import --replace round-trip cannot silently drop hires.
+    // m10: a snapshot is publishable wherever it is written, so the
+    // machine-local hire_roster never travels — not on a custom --write path
+    // either. The rows stay in the db, and the backup still round-trips because
+    // an import that brings no hires leaves the local roster alone.
     const backup = await cli(repo, 'export', '--write', 'backup.json');
     expect(backup.code).toBe(0);
     const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
-    expect(backupState.hire_roster).toHaveLength(1);
+    expect(backupState.hire_roster).toEqual([]);
+    expect(backupState.tasks).toHaveLength(1);
+
+    const restored = await cli(repo, 'import', 'backup.json', '--replace');
+    expect(restored.code).toBe(0);
+    const afterBackupImport = openDb({ cwd: repo });
+    const survivingHires = afterBackupImport.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    afterBackupImport.close();
+    expect(survivingHires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
 
     // The canonical path spelled explicitly (relative) still emits the roadmap
     // slice and still counts as canonical on import: local hires preserved.
@@ -1243,8 +1259,12 @@ describe('roadmap.json canonical sync', () => {
     expect(imported.stderr).toBe('');
     const settled = await cli(repo, 'sync');
     expect(settled.code).toBe(0);
-    expect(settled.stdout).toContain('in sync (none)');
+    // Still `none` — the reordering is not a change. Sync does normalize the
+    // bytes on its way past, which is why the line is not the bare default.
+    expect(settled.stdout).toContain('in sync');
     expect(settled.stderr).toBe('');
+    const settledBytes = readFileSync(snapshotPath, 'utf-8');
+    expect(settledBytes).toBe(serializeSnapshot(JSON.parse(settledBytes)));
   });
 
   test.each(['content', 'array order'])('sync detects changed %s after a canonical baseline', async (change) => {
@@ -1380,7 +1400,13 @@ describe('roadmap.json canonical sync', () => {
       writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
       const diverged = await cli(clone, 'sync');
       expect(diverged.code).toBe(1);
-      expect(diverged.stdout).toContain('Nothing was overwritten');
+      // The refusal is a warning on stderr (the git hooks run `task sync
+      // || true`, so the exit code alone reaches nobody) and names both
+      // resolving commands.
+      expect(diverged.stderr).toContain('Nothing was overwritten');
+      expect(diverged.stderr).toContain('genie task import --replace');
+      expect(diverged.stderr).toContain('genie task export --write');
+      expect(diverged.stdout).not.toContain('Nothing was overwritten');
       expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
       const listed = await cli(clone, 'list');
       expect(listed.stdout).toContain('b-diverging card'); // local state kept
@@ -1480,15 +1506,19 @@ describe('timeline verbs', () => {
 
   test('comment and report reject control characters and notes over 4000 bytes', async () => {
     const id = await seed('bounded');
-    const control = await cli(repo, 'comment', id, 'bad\u2028line');
+    // ESC survives argv (NUL cannot); it is a C0 control the note bound refuses.
+    const control = await cli(repo, 'comment', id, 'bad\u001bline');
     expect(control.code).toBe(1);
     expect(control.stderr).toContain('control characters');
+    expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
     const long = await cli(repo, 'report', id, 'x'.repeat(4001));
     expect(long.code).toBe(1);
     expect(long.stderr).toContain('at most 4000 bytes');
     const db = openDb({ cwd: repo });
-    expect(getTaskEvents(db, id)).toHaveLength(0);
+    expect(getTaskEvents(db, id).filter((e) => e.kind !== 'claim')).toHaveLength(0);
     db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
   });
 
   test('report appends a report event tagged with the runtime kind', async () => {
@@ -1689,5 +1719,224 @@ describe('checkout reassignment briefing + status timeline', () => {
     expect(r.stdout).toContain('Timeline:');
     expect(r.stdout).toContain('comment by felipe');
     expect(r.stdout).toContain('a note');
+  });
+});
+
+/**
+ * M6 — a card deleted by a concurrent worktree while a timeline verb is
+ * appending must fail with the typed, attributable not-found error, never with
+ * the raw `FOREIGN KEY constraint failed` the unprotected insert produced
+ * (13/20 iterations on the dogfood host). Real subprocesses, real SQLite
+ * contention, `Promise.allSettled` — no mocked race.
+ */
+describe('timeline verbs under a concurrent delete', () => {
+  const ITERATIONS = 12;
+
+  async function raceVerb(verb: 'comment' | 'report'): Promise<void> {
+    const db = openDb({ cwd: repo });
+    const ids = Array.from({ length: ITERATIONS }, (_, i) => createTask(db, { title: `race ${i}` }).id);
+    db.close();
+
+    // `report` is gated on the current claimant, so each card is claimed as the
+    // default worker first; the race then pits the report against the delete.
+    if (verb === 'report')
+      for (const id of ids) expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
+    const rounds = ids.map((id) => Promise.allSettled([cli(repo, verb, id, 'note'), cli(repo, 'delete', id)]));
+    const settled = await Promise.all(rounds);
+
+    for (const [appended] of settled) {
+      expect(appended.status).toBe('fulfilled');
+      const result = (appended as PromiseFulfilledResult<CliResult>).value;
+      expect(result.stderr).not.toContain('FOREIGN KEY');
+      if (result.code === 0) continue;
+      // The only legitimate loss is "the card is gone", and it must say so.
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/Task not found: t_\w+/);
+    }
+  }
+
+  test('comment never leaks a raw FOREIGN KEY failure', async () => {
+    await raceVerb('comment');
+  });
+
+  test('report never leaks a raw FOREIGN KEY failure', async () => {
+    await raceVerb('report');
+  });
+});
+
+/**
+ * m8 — liveness is derived purely from `heartbeat_at`, and a null heartbeat
+ * classifies as `stale`. A claim that seeds no heartbeat therefore renders the
+ * card dead the instant a worker picks it up.
+ */
+describe('task checkout liveness seeding', () => {
+  test('a freshly claimed card carries heartbeat_at = claimed_at and reads live', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'claim me' });
+    db.close();
+
+    const r = await cli(repo, 'checkout', task.id, '--worker', 'zz');
+    expect(r.code).toBe(0);
+
+    const after = openDb({ cwd: repo });
+    const row = after.query('SELECT claimed_at, heartbeat_at FROM tasks WHERE id = ?').get(task.id) as {
+      claimed_at: number | null;
+      heartbeat_at: number | null;
+    };
+    after.close();
+    expect(row.heartbeat_at).not.toBeNull();
+    expect(row.heartbeat_at).toBe(row.claimed_at as number);
+  });
+});
+
+/**
+ * m10 — `hire_roster` rows carry machine-local worktree paths. A snapshot is a
+ * publishable artifact wherever it is written, so NO export path may emit them.
+ */
+describe('task export never publishes hire_roster', () => {
+  test('stdout and an off-canonical --write both emit an empty roster', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/home/someone/private/wt' });
+    db.close();
+
+    const dumped = await cli(repo, 'export');
+    expect(dumped.code).toBe(0);
+    expect(dumped.stdout).not.toContain('/home/someone/private/wt');
+    expect((JSON.parse(dumped.stdout) as StateExport).hire_roster).toEqual([]);
+
+    const offPath = join(repo, 'off.json');
+    const written = await cli(repo, 'export', '--write', offPath);
+    expect(written.code).toBe(0);
+    const offText = readFileSync(offPath, 'utf-8');
+    expect(offText).not.toContain('/home/someone/private/wt');
+    expect((JSON.parse(offText) as StateExport).hire_roster).toEqual([]);
+
+    // One database is one byte sequence on every export path.
+    expect(offText).toBe(dumped.stdout);
+
+    // The rows are sliced from the snapshot, never deleted from the database.
+    const after = openDb({ cwd: repo });
+    const hires = after.query('SELECT worktree FROM hire_roster').all() as Array<{ worktree: string }>;
+    after.close();
+    expect(hires).toEqual([{ worktree: '/home/someone/private/wt' }]);
+  });
+});
+
+/**
+ * m11 — the committed `.genie/roadmap.json` is the canonical board, so an
+ * import → export round-trip of it must reproduce it byte for byte and a
+ * one-card change must diff as one card. Otherwise every clone's first sync
+ * rewrites the whole 2k-line file (1922 insertions / 1902 deletions on the
+ * dogfood host, whose committed file predated the canonical serializer).
+ */
+/** Does every line of `before` still appear in `after`, in order? A pure insertion. */
+function isSubsequence(before: string[], after: string[]): boolean {
+  let cursor = 0;
+  for (const line of before) {
+    cursor = after.indexOf(line, cursor);
+    if (cursor === -1) return false;
+    cursor += 1;
+  }
+  return true;
+}
+
+/** Re-emit a parsed snapshot with every object's keys reversed: same content, non-canonical bytes. */
+function reverseKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseKeyOrder);
+  if (value === null || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>).reverse();
+  return Object.fromEntries(entries.map(([key, inner]) => [key, reverseKeyOrder(inner)]));
+}
+
+describe('committed roadmap.json round-trip', () => {
+  const COMMITTED = join(import.meta.dir, '..', '..', '.genie', 'roadmap.json');
+
+  test('this repo’s own snapshot is already canonical bytes', () => {
+    const text = readFileSync(COMMITTED, 'utf-8');
+    expect(serializeSnapshot(JSON.parse(text))).toBe(text);
+  });
+
+  test('import then export reproduces it byte for byte, and one card diffs as one card', async () => {
+    const text = readFileSync(COMMITTED, 'utf-8');
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), text);
+
+    const imported = await cli(repo, 'import');
+    expect(imported.code).toBe(0);
+    const exported = await cli(repo, 'export', '--write');
+    expect(exported.code).toBe(0);
+    expect(readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8')).toBe(text);
+
+    const created = await cli(repo, 'create', '--title', 'one more card');
+    expect(created.code).toBe(0);
+    const republished = await cli(repo, 'export', '--write');
+    expect(republished.code).toBe(0);
+
+    const before = text.split('\n');
+    const after = readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8').split('\n');
+    // A pure insertion: every original line survives, in order.
+    expect(isSubsequence(before, after)).toBe(true);
+    expect(after.length - before.length).toBeLessThan(40);
+  });
+
+  /**
+   * The residual half of m11, at the CLI boundary the git hooks actually use.
+   * `import → export` being byte-stable only helps a snapshot that is ALREADY
+   * canonical; a branch whose roadmap.json predates the canonical serializer
+   * (origin/main's own file, top-level `schemaVersion, meta, boards, tasks, …`
+   * and every row in physical column order) still had its reordering ride along
+   * with the next content change — the 1922/1902 diff the dogfood hop reported.
+   * `task sync` now lands the reordering alone, and says so.
+   */
+  test('a legacy-ordered snapshot is reordered by its own sync, not by the next card', async () => {
+    const canonical = readFileSync(COMMITTED, 'utf-8');
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    const roadmap = join(repo, '.genie', 'roadmap.json');
+    // The same content an older genie would have committed: reversed key order.
+    writeFileSync(roadmap, `${JSON.stringify(reverseKeyOrder(JSON.parse(canonical)), null, 2)}\n`);
+    expect(readFileSync(roadmap, 'utf-8')).not.toBe(canonical);
+
+    // Sync #1: the reordering, alone. It carries no board change and says so.
+    const first = await cli(repo, 'sync');
+    expect(first.code).toBe(0);
+    expect(first.stdout).toContain('canonical key order');
+    expect(first.stdout).toContain('no board content changed');
+    expect(readFileSync(roadmap, 'utf-8')).toBe(canonical);
+
+    // Sync #2: one new card, and the file diffs by that card alone.
+    expect((await cli(repo, 'create', '--title', 'one more card')).code).toBe(0);
+    const second = await cli(repo, 'sync');
+    expect(second.code).toBe(0);
+    const before = canonical.split('\n');
+    const after = readFileSync(roadmap, 'utf-8').split('\n');
+    expect(isSubsequence(before, after)).toBe(true);
+    expect(after.length - before.length).toBeLessThan(40);
+  });
+});
+
+/**
+ * M7 — `GENIE_HOME` defaults to `$HOME/.genie`, which is also a valid spelling
+ * of a per-repo `.genie/`. A per-repo verb run with cwd = that home resolved the
+ * GLOBAL database and initialized the per-repo schema inside the Omni approval
+ * queue. The two databases have independent `PRAGMA user_version`; they must
+ * never merge.
+ */
+describe('per-repo verbs refuse the global database', () => {
+  test('a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-home-collision-'));
+    try {
+      const genieHome = join(home, '.genie');
+      // Seed the global database through its own command, exactly as a host does.
+      const seeded = await cliEnv(home, { GENIE_HOME: genieHome }, 'list');
+      expect(seeded.code).toBe(1);
+      expect(seeded.stderr).toContain('Refusing to open the machine-scope database');
+      expect(seeded.stderr).toContain('GENIE_HOME/genie.db');
+      expect(seeded.stderr).not.toContain('at <anonymous>');
+      // Nothing was created where the global database lives.
+      expect(existsSync(join(genieHome, 'genie.db'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

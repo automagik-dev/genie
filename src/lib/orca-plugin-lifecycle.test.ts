@@ -215,11 +215,19 @@ describe('Orca plugin lifecycle transitions', () => {
     writePayload();
     const output: string[] = [];
     const errors: string[] = [];
-    const priorLog = console.log;
-    const priorError = console.error;
+    // setup writes through the colour-gated sink (src/lib/term-output.ts), so the
+    // capture sits on the streams rather than on console.
+    const priorLog = process.stdout.write;
+    const priorError = process.stderr.write;
     const priorExit = process.exitCode;
-    console.log = (...args) => output.push(args.join(' '));
-    console.error = (...args) => errors.push(args.join(' '));
+    process.stdout.write = ((chunk: unknown) => {
+      output.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown) => {
+      errors.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as typeof process.stderr.write;
     process.exitCode = 0;
     try {
       const probe = async () => ({
@@ -237,9 +245,11 @@ describe('Orca plugin lifecycle transitions', () => {
       expect(process.exitCode).toBe(1);
       expect(errors.join('\n')).toContain('orchestration mode must be either');
     } finally {
-      console.log = priorLog;
-      console.error = priorError;
-      process.exitCode = priorExit;
+      process.stdout.write = priorLog;
+      process.stderr.write = priorError;
+      // Bun keeps the last numeric code when assigned undefined, so an unset
+      // prior code restores as 0 rather than leaking this test's exit 1.
+      process.exitCode = priorExit ?? 0;
     }
   });
 

@@ -1,16 +1,58 @@
 import { spawn } from 'node:child_process';
 import { constants, accessSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 export const MAX_OUTPUT = 4 * 1024 * 1024;
 export const DEADLINE_MS = 10_000;
+/** How much of a failing command's stderr the Host keeps for its message. */
+export const MAX_STDERR_KEPT = 8 * 1024;
+/**
+ * What a human sees when a command outruns {@link MAX_OUTPUT}. Genie bounds the
+ * board aggregate below this budget itself (it degrades each card's embedded
+ * history, and refuses an unfittable board with its own named `Error:` line), so
+ * reaching this limit means the workspace is emitting more than this Host can
+ * read — which is a board size problem, not an opaque overflow.
+ */
+export const OUTPUT_LIMIT_MESSAGE =
+  'This board is too large for one response (over 4 MiB). Scope it to a wish, or split the board.';
 export interface Budget {
   expires: number;
   bytes: number;
 }
+/**
+ * A Genie command that ran and refused: it exited non-zero on its own, so it
+ * changed nothing. The Host distinguishes this from a killed or unstartable
+ * child (deadline, output overflow, spawn error), whose effect is unknown.
+ */
+export class GenieCommandError extends Error {
+  constructor(
+    message: string,
+    readonly code: number | null,
+  ) {
+    super(message);
+    this.name = 'GenieCommandError';
+  }
+}
+/** Every directory the Host will look in, in order: PATH, then the installers'. */
+function candidateDirectories(): string[] {
+  const path = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+  const home = process.env.HOME ?? homedir();
+  const fallbacks = [
+    process.env.GENIE_HOME ? join(process.env.GENIE_HOME, 'bin') : undefined,
+    home ? join(home, '.genie', 'bin') : undefined,
+    home ? join(home, '.local', 'bin') : undefined,
+  ].filter((directory): directory is string => directory !== undefined);
+  return [...path, ...fallbacks];
+}
+/**
+ * Resolve the one Genie executable this Host will run, once at startup. PATH
+ * comes first; when DSH is launched from a desktop session that never sourced a
+ * shell profile, PATH can miss the installer's directory, so the documented
+ * install locations are tried next (P3). `/health` names the winner.
+ */
 export function resolveExecutable(): string {
-  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
-    if (!directory) continue;
+  for (const directory of candidateDirectories()) {
     try {
       const path = realpathSync(join(directory, 'genie'));
       if (!statSync(path).isFile()) continue;
@@ -26,6 +68,20 @@ export function hostEnvironment(identity: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { NO_COLOR: '1', GENIE_AGENT_NAME: identity, GENIE_AGENT_KIND: 'dsh' };
   for (const key of ['PATH', 'HOME', 'GENIE_HOME']) if (process.env[key] !== undefined) env[key] = process.env[key];
   return env;
+}
+/**
+ * The message for a non-zero exit. Genie prints every typed refusal as a single
+ * `Error: <reason>` line, so that line is the message a human needs; anything
+ * else falls back to the last stderr line, and only a silent failure keeps the
+ * bare exit code (F7).
+ */
+export function describeExit(stderr: string, code: number | null): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const detail = lines.find((line) => line.startsWith('Error:')) ?? lines.at(-1);
+  return detail ? detail.slice(0, 500) : `Genie exited with code ${code}`;
 }
 export function execute(
   binary: string,
@@ -44,6 +100,9 @@ export function execute(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const chunks: Buffer[] = [];
+    // Bounded stderr tail: it still counts against the shared byte budget, and
+    // only the most recent MAX_STDERR_KEPT bytes are retained for the message.
+    let errors = '';
     let failure: Error | undefined;
     const fail = (error: Error) => {
       failure ??= error;
@@ -52,8 +111,9 @@ export function execute(
     const timer = setTimeout(() => fail(new Error('Genie deadline exceeded')), remaining);
     const read = (chunk: Buffer, stdout: boolean) => {
       budget.bytes += chunk.length;
-      if (budget.bytes > MAX_OUTPUT) return fail(new Error('Genie output limit exceeded'));
+      if (budget.bytes > MAX_OUTPUT) return fail(new Error(OUTPUT_LIMIT_MESSAGE));
       if (stdout) chunks.push(chunk);
+      else errors = (errors + chunk.toString('utf8')).slice(-MAX_STDERR_KEPT);
     };
     child.stdout.on('data', (chunk: Buffer) => read(chunk, true));
     child.stderr.on('data', (chunk: Buffer) => read(chunk, false));
@@ -61,7 +121,7 @@ export function execute(
     child.on('close', (code) => {
       clearTimeout(timer);
       if (failure) reject(failure);
-      else if (code !== 0) reject(new Error(`Genie exited with code ${code}`));
+      else if (code !== 0) reject(new GenieCommandError(describeExit(errors, code), code));
       else resolve(Buffer.concat(chunks).toString('utf8'));
     });
   });

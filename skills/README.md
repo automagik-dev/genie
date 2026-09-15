@@ -1,6 +1,6 @@
 # Genie Skills
 
-`skills/` is the canonical, runtime-neutral source for Genie's 25 product skills. Each directory contains a
+`skills/` is the canonical, runtime-neutral source for Genie's product skills. Each directory contains a
 `SKILL.md`, optional bundled resources, and `agents/openai.yaml` for Codex UI metadata.
 
 Shared skill bodies name semantic routes without a host-specific prefix. Skills are installed into each agent's own global skills home by skills.sh (`npx skills add automagik-dev/genie`, or `genie update`), and every runtime discovers them from there. Invoke them the way the active runtime surfaces a discovered skill:
@@ -24,13 +24,7 @@ review step.
 
 The design gate is durable: DESIGN.md carries reviewer identity, UTC timestamp, verdict, and the SHA-256 of its exact reviewed content (excluding only the bounded evidence block). Editing the design invalidates that evidence; `wish` and lint require a current SHIP digest for linked designs.
 
-All runtimes share the same durable contracts:
-
-- plans and evidence are documents under `.genie/`;
-- operational task state is in the per-repository `.genie/genie.db`;
-- implementation is delegated through the runtime's native named roles;
-- the engineer and reviewer are always different agents;
-- the orchestrator alone marks a task done after review and validation.
+The caller owns documents and completion evidence; author and reviewer are different agents. Standalone mode uses the per-repository task DB. Explicit Orca mode uses Orca lifecycle state through the conditional instructions in `wish` and `work`; it never falls back to the local DB on an authority refusal.
 
 ## Distribution contract
 
@@ -54,14 +48,32 @@ release. Genie writes skills nowhere else, and skills a user installed themselve
 records what it wrote so `genie uninstall` removes only that set. A separately installed personal copy of a skill is
 never adopted, refreshed, or removed by Genie.
 
-## Shipped inventory
+## Shipped workflows
 
 | Area | Skills |
 |------|--------|
-| Lifecycle | `brainstorm`, `quick`, `wish`, `review`, `work`, `fix`, `trace` |
-| Orchestration | `genie`, `dream`, `council`, `omni` |
-| Quality lanes | `architecture`, `code-quality`, `dx-docs`, `perf`, `qa`, `repo-hygiene`, `supply-chain` |
-| Orca lane | `genie-orca-wish`, `genie-orca-work`, `genie-orca-review` |
-| Supporting workflows | `docs`, `refine`, `report`, `genie-hacks` |
+| Planning and execution | `brainstorm`, `wish`, `work`, `review`, `fix` |
+| Routing and coordination | `genie`, `council`, `dream`, `quick` |
+| Supporting workflows | `docs`, `refine`, `report`, `omni`, `genie-hacks` |
 
-Personal specialist-panel/persona skills are intentionally not part of this product payload.
+The fourteen entrypoints keep distinct workflows. Audits use `review` plus a natural-language focus, such as “review performance”; the relevant lens is loaded only when needed. `refine` has exactly two guidance switches, `--for openai` and `--for claude`, using GPT-6 Astra and Claude Fable 5.1 as documented baselines. These switches do not change the runtime model.
+
+## Consolidated names
+
+| Previous skill | Current route |
+|---|---|
+| `architecture` | `review` architecture lens |
+| `code-quality` | `review` code-quality lens |
+| `dx-docs` | `review` DX lens; `docs` for documentation work |
+| `perf` | `review` performance lens |
+| `qa` | `review` test-quality lens |
+| `repo-hygiene` | `review` repository-hygiene lens |
+| `supply-chain` | `review` security/supply-chain lens |
+| `trace` | `report` investigation; issue creation remains explicit |
+| `genie-orca-wish` | `wish`, Orca mode |
+| `genie-orca-work` | `work`, Orca mode |
+| `genie-orca-review` | `review`, Orca mode |
+
+On a successful `genie update`, removed skills still matching the prior install record are moved to `~/.genie/state-backups/skills-retirement-*` before the new record is published. User-modified, unverified, or redirected copies remain with a notice for manual review, as do retired copies in a home whose replacement set could not be verified. No verified replacements anywhere, or a backup failure, preserves the previous record for retry; a backup on a different filesystem can require manual relocation. A manual skills.sh install has no Genie retirement record and needs manual review of old names.
+
+Skill and resource instructions are shortened together: no generic vendor blocks outside `refine`, fixed persona panels, numerical readiness rituals, or duplicate escalation tables. Templates, digest verification, ownership boundaries, independent review, and required validation remain. The removed prototype migration/retro scripts are not supported workflows; current Orca guides supply its command interface.

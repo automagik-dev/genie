@@ -20,6 +20,17 @@
  * The diverged branch is the whole point: a stale local db can never silently
  * overwrite the committed roadmap, and a pull can never silently destroy
  * unpublished local board state.
+ *
+ * The marker records the hash algorithm that produced its pair (`hashVersion`).
+ * A marker without one predates the key-sorted hash and is compared with the
+ * legacy algorithm, so upgrading genie never by itself reads as "both sides
+ * changed"; the next successful sync rewrites it in the current version.
+ *
+ * Sync also owns the snapshot's BYTE form, not just its content: whenever the
+ * file's content is the agreed content it is rewritten in canonical key order
+ * (see normalizeSnapshotFile) so a legacy-ordered snapshot is normalized once,
+ * on its own, instead of turning the next one-card change into a whole-file
+ * rewrite nobody can review.
  */
 
 import type { Database } from 'bun:sqlite';
@@ -43,17 +54,66 @@ export function resolveSyncMarkerPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'roadmap-sync');
 }
 
+/**
+ * Markers written before the key-sorted hash landed carry no `hashVersion`;
+ * their hashes are {@link legacyHash} values. Version 2 is the current
+ * {@link canonicalHash}. Every marker this build writes is version 2, so a
+ * legacy marker migrates on the first successful sync, import, or export.
+ */
+const LEGACY_HASH_VERSION = 1;
+const CURRENT_HASH_VERSION = 2;
+type MarkerHashVersion = typeof LEGACY_HASH_VERSION | typeof CURRENT_HASH_VERSION;
+
+/**
+ * Canonical JSON: every object's keys are emitted in sorted order, recursively.
+ * ONE rule for both the sync hashes and the bytes written to roadmap.json, so a
+ * snapshot's text is a function of its content alone — never of the db's
+ * physical column order, which differs between a fresh database and one grown
+ * by `ALTER TABLE ADD COLUMN` and would otherwise churn the canonical file on
+ * every machine that exports it.
+ */
+function canonicalJson(value: unknown, indent?: number): string {
+  return JSON.stringify(
+    value,
+    (_key, current: unknown) => {
+      if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+      return Object.fromEntries(
+        Object.keys(current)
+          .sort()
+          .map((key) => [key, (current as Record<string, unknown>)[key]]),
+      );
+    },
+    indent,
+  );
+}
+
 /** Content hash over the canonical JSON form, independent of whitespace and object-key order. */
 function canonicalHash(value: unknown): string {
-  const canonical = JSON.stringify(value, (_key, current: unknown) => {
-    if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
-    return Object.fromEntries(
-      Object.keys(current)
-        .sort()
-        .map((key) => [key, (current as Record<string, unknown>)[key]]),
-    );
-  });
-  return createHash('sha256').update(canonical).digest('hex');
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+/**
+ * The pre-`hashVersion` hash: sha256 over plain `JSON.stringify`, so it depends
+ * on each object's physical key order. Markers written by those builds are only
+ * comparable against hashes computed this same way — see {@link readMarker}.
+ */
+function legacyHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/**
+ * Is `value` still the content this baseline recorded? A version-2 baseline is
+ * a {@link canonicalHash}, so the canonical hash settles it. A version-1
+ * baseline may have been written either by a build that hashed physical key
+ * order ({@link legacyHash}) or by the intermediate build that had already
+ * switched algorithms but did not yet stamp a version — so EITHER hash
+ * matching is a sha256 statement that the content is the baseline content.
+ * Accepting both is what keeps an upgrade from reading as a change on its own;
+ * it can never invent a false "unchanged" without a sha256 collision.
+ */
+function baselineHolds(version: MarkerHashVersion, recorded: string, canonical: string, value: unknown): boolean {
+  if (recorded === canonical) return true;
+  return version === LEGACY_HASH_VERSION && recorded === legacyHash(value);
 }
 
 /**
@@ -69,14 +129,23 @@ export function roadmapSnapshot(db: Database): StateExport {
 interface SyncMarker {
   fileHash: string;
   dbHash: string;
+  /** Which hash algorithm produced the two hashes above. */
+  hashVersion: MarkerHashVersion;
 }
 
 function readMarker(path: string): SyncMarker | null {
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<SyncMarker>;
-    if (typeof parsed.fileHash === 'string' && typeof parsed.dbHash === 'string') {
-      return { fileHash: parsed.fileHash, dbHash: parsed.dbHash };
+    if (typeof parsed.fileHash !== 'string' || typeof parsed.dbHash !== 'string') return null;
+    // No `hashVersion` → written before the algorithm changed. A version this
+    // build cannot reproduce (a newer genie wrote it) is unusable as a baseline
+    // and is treated as absent, exactly like a corrupt marker.
+    if (parsed.hashVersion === undefined) {
+      return { fileHash: parsed.fileHash, dbHash: parsed.dbHash, hashVersion: LEGACY_HASH_VERSION };
+    }
+    if (parsed.hashVersion === CURRENT_HASH_VERSION) {
+      return { fileHash: parsed.fileHash, dbHash: parsed.dbHash, hashVersion: CURRENT_HASH_VERSION };
     }
   } catch {
     // Corrupt marker — treat as absent; sync falls back to its safe defaults.
@@ -84,13 +153,20 @@ function readMarker(path: string): SyncMarker | null {
   return null;
 }
 
-function writeMarker(path: string, marker: SyncMarker): void {
+/** Stamp a baseline. Always current-version: writing IS the migration. */
+function writeMarker(path: string, hashes: { fileHash: string; dbHash: string }): void {
   assertLocalLifecycleEnabled();
+  const marker: SyncMarker = { ...hashes, hashVersion: CURRENT_HASH_VERSION };
   writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`);
 }
 
-function serializeSnapshot(state: unknown): string {
-  return `${JSON.stringify(state, null, 2)}\n`;
+/**
+ * The exact bytes a snapshot takes on disk (and on stdout): canonical JSON, two
+ * space indent, trailing newline. Key order is the snapshot's content, not the
+ * exporting database's column layout — see {@link canonicalJson}.
+ */
+export function serializeSnapshot(state: unknown): string {
+  return `${canonicalJson(state, 2)}\n`;
 }
 
 /**
@@ -104,6 +180,34 @@ export function writeSnapshotFile(target: string, state: unknown): void {
   writeFileSync(tmp, serializeSnapshot(state));
   renameSync(tmp, target);
 }
+
+/**
+ * Rewrite a non-canonical snapshot file into canonical bytes WITHOUT changing
+ * its content, and report whether it had to. A snapshot committed before the
+ * canonical serializer — or reflowed by a hand edit — holds the same content in
+ * a different byte form, so EVERY line of it moves the first time genie writes
+ * that file.
+ *
+ * The whole point is separating two things a reviewer cannot separate once they
+ * land together. A legacy-ordered `roadmap.json` still reads and hashes fine
+ * (both are content-addressed, not byte-addressed), so nothing forces it to be
+ * rewritten — until the first real board change does, and then the one-card
+ * diff the reviewer needs is buried in a whole-file rewrite (the dogfood hop saw
+ * 1922 insertions / 1902 deletions for a single new task). Normalizing as its
+ * own no-content-change write makes that rewrite a single legible event, named
+ * in the sync message, after which every diff is the size of its change.
+ *
+ * Only ever called where the file's content is the agreed content (in sync with
+ * the db, or just imported into it). A `diverged` verdict touches nothing.
+ */
+function normalizeSnapshotFile(filePath: string, parsed: unknown): boolean {
+  if (readFileSync(filePath, 'utf-8') === serializeSnapshot(parsed)) return false;
+  writeSnapshotFile(filePath, parsed);
+  return true;
+}
+
+/** The one clause that explains a whole-file diff carrying no content change. */
+const NORMALIZED_NOTE = 'was rewritten in canonical key order (no board content changed).';
 
 /**
  * Baseline the pair an explicit `task export --write` just published, where
@@ -183,13 +287,22 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const fileHash = canonicalHash(parsed);
 
   if (fileHash === dbHash) {
+    const normalized = normalizeSnapshotFile(filePath, parsed);
     writeMarker(markerPath, { fileHash, dbHash });
-    return { action: 'none' };
+    return normalized
+      ? { action: 'none', message: `Board and snapshot are in sync; ${filePath} ${NORMALIZED_NOTE}` }
+      : { action: 'none' };
   }
 
+  // Compare each side against the baseline in the algorithm that baseline was
+  // written with (see baselineHolds): a pre-`hashVersion` marker holds hashes
+  // of the physical key order, so measuring today's file and db with
+  // canonicalHash alone would report BOTH sides changed on the first sync after
+  // an upgrade — a false `diverged` that the git hooks swallow via `|| true`,
+  // leaving genie.db silently stale on every already-initialized clone.
   const marker = readMarker(markerPath);
-  const fileChanged = marker === null || fileHash !== marker.fileHash;
-  const dbChanged = marker === null || dbHash !== marker.dbHash;
+  const fileChanged = marker === null || !baselineHolds(marker.hashVersion, marker.fileHash, fileHash, parsed);
+  const dbChanged = marker === null || !baselineHolds(marker.hashVersion, marker.dbHash, dbHash, dbState);
   const resolution =
     'Resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board).';
 
@@ -211,8 +324,14 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
         message: `${filePath} could not be imported: ${err.message} ${resolution}`,
       };
     }
+    const normalized = normalizeSnapshotFile(filePath, parsed);
     writeMarker(markerPath, { fileHash, dbHash: canonicalHash(roadmapSnapshot(db)) });
-    return { action: 'imported', message: `Board refreshed from ${filePath}.` };
+    return {
+      action: 'imported',
+      message: normalized
+        ? `Board refreshed from ${filePath}, which ${NORMALIZED_NOTE}`
+        : `Board refreshed from ${filePath}.`,
+    };
   }
   if (dbChanged && !fileChanged) {
     writeSnapshotFile(filePath, dbState);

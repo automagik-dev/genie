@@ -37,11 +37,13 @@ import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
+  type SkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
   readSkillsInstallRecord,
   releaseTag,
 } from '../lib/skills-installer.js';
+import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
@@ -116,7 +118,7 @@ export interface CheckResult {
 // ============================================================================
 
 function out(line = ''): void {
-  process.stdout.write(`${line}\n`);
+  writeOut(`${line}\n`);
 }
 
 const GLYPH: Record<CheckStatus, string> = {
@@ -170,7 +172,10 @@ function whichBinary(name: string): string | null {
 // ============================================================================
 
 function checkGenieBinary(): CheckResult[] {
-  const results: CheckResult[] = [{ name: `genie version ${VERSION}`, status: 'pass' }];
+  // The NAME is version-free on purpose: a cross-release diff of the sorted
+  // check names must show only additions and removals, never a false pair from
+  // the running version moving. The version rides in the detail (m16).
+  const results: CheckResult[] = [{ name: 'genie version', status: 'pass', detail: VERSION }];
   const onPath = whichBinary('genie');
   if (onPath) {
     results.push({ name: 'genie on PATH', status: 'pass', detail: onPath });
@@ -385,9 +390,100 @@ function evaluateAgentSkillHome(spec: AgentSkillHomeSpec, context: SkillsChannel
   return { name, status: 'warn', detail, suggestion: SKILLS_CHANNEL_SUGGESTION, skillsChannel: rider };
 }
 
+/** How many paths the preserved-retirement and agent-dir checks name before summarizing. */
+const MAX_PRESERVED_SKILL_PATHS = 5;
+
+const SKILLS_RETIREMENT_SUGGESTION = 'Review them, remove them, then run `genie update` to retry retirement';
+
+/** `a; b; c; +N more` — the shared rendering of a bounded path list. */
+function namedWithRemainder(paths: readonly string[]): string {
+  const named = paths.slice(0, MAX_PRESERVED_SKILL_PATHS);
+  const rest = paths.length - named.length;
+  return `${named.join('; ')}${rest > 0 ? `; +${rest} more` : ''}`;
+}
+
+/**
+ * Retired skill directories genie could not archive.
+ *
+ * They ride the install record on purpose: an entry dropped from the record is
+ * never retried by `genie update`, never removed by `genie uninstall`, and
+ * invisible here — the host reads `skills: claude 14/14` while a retired skill
+ * sits in the home forever. Doctor stays a read-only observer; it names them.
+ *
+ * An entry whose path is no longer on disk is RESOLVED, not outstanding: the
+ * check used to reproduce the record verbatim, so a directory the operator had
+ * already deleted was still named — byte-identically — until the next
+ * `genie update` dropped it from the record.
+ */
+function evaluatePreservedRetirements(record: SkillsInstallRecord | null): CheckResult | null {
+  const preserved = record?.preserved ?? [];
+  if (preserved.length === 0) return null;
+  const outstanding: string[] = [];
+  const resolved: string[] = [];
+  for (const entry of preserved) {
+    const target = join(entry.agentDir, entry.skill);
+    if (isDirectory(target)) outstanding.push(`${target} (${entry.reason})`);
+    else resolved.push(target);
+  }
+  const resolvedSuffix =
+    resolved.length === 0
+      ? ''
+      : `; ${resolved.length} already resolved (gone from disk, dropped from the record by the next \`genie update\`): ${namedWithRemainder(resolved)}`;
+  if (outstanding.length === 0) {
+    return {
+      name: 'skills: retirement',
+      status: 'pass',
+      detail: `all ${preserved.length} preserved retired skill dir(s) are gone from disk; the next \`genie update\` drops them from the record: ${namedWithRemainder(resolved)}`,
+    };
+  }
+  return {
+    name: 'skills: retirement',
+    status: 'warn',
+    detail: `${outstanding.length} preserved retired skill dir(s): ${namedWithRemainder(outstanding)}${resolvedSuffix}`,
+    suggestion: SKILLS_RETIREMENT_SUGGESTION,
+  };
+}
+
+const SKILLS_AGENT_DIRS_SUGGESTION = 'Run `genie update` to reinstall the skills channel into every recorded home';
+
+/**
+ * Per-recorded-agent-dir inventory drift.
+ *
+ * The four `KNOWN_AGENT_SKILL_HOMES` rows above are not the removal authority:
+ * `agentDirs` is, and it held 57 entries on the 2026-09-15 dogfood host. A home
+ * that lost content — or vanished entirely — read `ok: true` there because
+ * doctor could only see four of the 57. This line closes that gap: it compares
+ * the record's own inventory against each recorded home and says how many are
+ * complete, naming up to five that are not. Warn-level and read-only.
+ */
+function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckResult | null {
+  if (record === null || record.inventory.length === 0) return null;
+  const dirs = [...new Set(record.agentDirs)];
+  if (dirs.length === 0) return null;
+  const incomplete: string[] = [];
+  for (const dir of dirs) {
+    if (!isDirectory(dir)) {
+      incomplete.push(`${dir} (not on disk)`);
+      continue;
+    }
+    const present = countInstalledSkills(dir, record.inventory);
+    if (present < record.inventory.length) incomplete.push(`${dir} (${present}/${record.inventory.length})`);
+  }
+  const complete = dirs.length - incomplete.length;
+  const detail = `${complete}/${dirs.length} recorded homes complete @ ${record.ref}`;
+  if (incomplete.length === 0) return { name: 'skills: agent dirs', status: 'pass', detail };
+  return {
+    name: 'skills: agent dirs',
+    status: 'warn',
+    detail: `${detail}; incomplete: ${namedWithRemainder(incomplete)}`,
+    suggestion: SKILLS_AGENT_DIRS_SUGGESTION,
+  };
+}
+
 /**
  * One line per known agent skill home, plus a `skills: channel` warning when no
- * install record exists at all.
+ * install record exists at all, plus a `skills: retirement` warning naming
+ * every directory the last install preserved instead of archiving.
  *
  * The comparison inventory is the record's when there is one; without a record
  * the delivered tree under `<GENIE_HOME>/skills` is the only remaining truth
@@ -422,6 +518,10 @@ export function checkSkillsChannel(options: { home?: string; genieHome?: string 
     binaryTag,
   };
   for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
+  const agentDirs = evaluateRecordedAgentDirs(record);
+  if (agentDirs !== null) results.push(agentDirs);
+  const retirement = evaluatePreservedRetirements(record);
+  if (retirement !== null) results.push(retirement);
   return results;
 }
 
@@ -1328,7 +1428,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   // cleanup is scoped to the resolved repo root. Without --fix, detection only —
   // both residue checks are pure reads and nothing on disk changes. In --json
   // mode stdout belongs to the JSON document, so cleanup chatter goes to stderr.
-  const cleanupOptions = options?.json ? { logSink: (line: string) => process.stderr.write(`${line}\n`) } : {};
+  const cleanupOptions = options?.json ? { logSink: (line: string) => writeErr(`${line}\n`) } : {};
   if (options?.fix) {
     cleanupV4(cleanupOptions);
     cleanupLaunchWorktrees(root, cleanupOptions);

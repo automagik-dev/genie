@@ -20,6 +20,14 @@ interface Context {
 export const inject = ['workspaceRegistry', 'webServer', 'connection'];
 export const minimumGenieVersion =
   typeof __GENIE_BUILD_VERSION__ === 'undefined' ? sourcePackage.version : __GENIE_BUILD_VERSION__;
+/**
+ * The socket idle deadline MUST outlive the Genie budget the handler itself
+ * enforces. Armed at or below it, Node's socket timer destroys the connection
+ * before the handler can answer, so the deadline 400 is written to a dead
+ * socket and the browser sees a network error instead of the message (F6).
+ */
+export const SOCKET_MARGIN_MS = 5_000;
+export const SOCKET_DEADLINE_MS = DEADLINE_MS + SOCKET_MARGIN_MS;
 export function trusted(req: IncomingMessage): boolean {
   const address = req.socket.remoteAddress;
   if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address ?? '')) return false;
@@ -28,9 +36,11 @@ export function trusted(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (origin !== undefined && origin !== `http://${host}`) return false;
   if (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') return false;
-  return req.method === 'POST'
-    ? origin === `http://${host}`
-    : origin === `http://${host}` || req.headers['sec-fetch-site'] === 'same-origin';
+  // A mutation still demands an exact Origin. A read does not: a same-origin
+  // `fetch` sends no Origin at all, and older Safari/Firefox and embedded
+  // WebViews send no Sec-Fetch-Site either, so requiring one of them here
+  // would be a stricter floor than DSH's own fence applies (P1).
+  return req.method !== 'POST' || origin === `http://${host}`;
 }
 async function body(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -44,6 +54,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 function json(res: ServerResponse, code: number, value: unknown) {
+  if (res.headersSent || res.writableEnded) return;
   res.writeHead(code, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
@@ -51,100 +62,111 @@ function json(res: ServerResponse, code: number, value: unknown) {
   });
   res.end(JSON.stringify(value));
 }
+/**
+ * Answer, then abandon the socket — never the other way round.
+ *
+ * The deadline is the handler's own timer, not the socket's: once the request
+ * body has been consumed Node's `socketOnTimeout` emits nothing (the request is
+ * `complete`) and destroys the connection silently, so a handler that waits on
+ * a hung Genie child would lose its answer to a dead socket. The socket's idle
+ * timer is still armed, strictly later, as a last-resort backstop.
+ */
+export function armSocketDeadline(req: IncomingMessage, res: ServerResponse, ms: number): void {
+  const timer = setTimeout(() => {
+    if (!res.headersSent && !res.writableEnded) {
+      res.once('finish', () => req.destroy());
+      json(res, 504, { error: 'Genie board request timed out' });
+      return;
+    }
+    req.destroy();
+  }, ms);
+  timer.unref?.();
+  res.once('close', () => clearTimeout(timer));
+  req.setTimeout(ms + SOCKET_MARGIN_MS);
+}
 export async function apply(ctx: Context): Promise<void> {
   let service: BoardService | undefined;
   let version = '';
+  let executable = '';
   let error = '';
   try {
-    const binary = resolveExecutable();
+    executable = resolveExecutable();
     version = (
-      await execute(binary, ['--version'], process.cwd(), hostEnvironment('dsh-host'), {
+      await execute(executable, ['--version'], process.cwd(), hostEnvironment('dsh-host'), {
         expires: Date.now() + DEADLINE_MS,
         bytes: 0,
       })
     ).trim();
     if (!compatible(version, minimumGenieVersion)) throw new Error(`Genie ${minimumGenieVersion} or newer is required`);
-    service = new BoardService(ctx.workspaceRegistry, binary);
+    service = new BoardService(ctx.workspaceRegistry, executable);
   } catch (failure) {
     error = failure instanceof Error ? failure.message : 'Genie unavailable';
   }
   ctx.effect(() => {
     const disposers: (() => void)[] = [];
-    const route = (path: string, method: string, handler: () => unknown) => {
+    // One fence, one error boundary, one shape of answer for every route: a
+    // handler that throws must still answer, or the browser hangs (C1).
+    const route = (path: string, method: string, handler: (req: IncomingMessage) => unknown, mutation = false) => {
       disposers.push(
         ctx.webServer.register({
           kind: 'exact',
           path,
           handler: async (req, res) => {
-            if (req.method !== method) return json(res, 405, { error: 'Method not allowed' });
-            const rejection = ctx.connection.requestRejection(req);
-            if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
-            if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
-            json(res, 200, handler());
-          },
-        }),
-      );
-    };
-    route('/api/genie-board/health', 'GET', () => ({ compatible: !!service, version, minimumGenieVersion, error }));
-    const catalog = new CatalogService(ctx.workspaceRegistry);
-    const query = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').searchParams;
-    const catalogRoute = (path: string, handler: (params: URLSearchParams) => Promise<unknown>) =>
-      disposers.push(
-        ctx.webServer.register({
-          kind: 'exact',
-          path,
-          handler: async (req, res) => {
-            if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
-            const rejection = ctx.connection.requestRejection(req);
-            if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
-            if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
             try {
-              json(res, 200, await handler(query(req)));
+              if (req.method !== method) return json(res, 405, { error: 'Method not allowed' });
+              const rejection = ctx.connection.requestRejection(req);
+              if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
+              if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
+              if (mutation) {
+                if (req.headers['content-type'] !== 'application/json')
+                  return json(res, 415, { error: 'application/json required' });
+                armSocketDeadline(req, res, SOCKET_DEADLINE_MS);
+              }
+              json(res, 200, await handler(req));
             } catch (failure) {
-              json(res, 400, { error: failure instanceof Error ? failure.message : 'Catalog request failed' });
+              const message = failure instanceof Error ? failure.message : 'Board request failed';
+              // A route failure is the plugin's own fault and its message is not
+              // a user-facing one, so only the vetted board path reports detail.
+              json(res, mutation ? 400 : 500, { error: mutation ? message : 'Genie board route failed' });
             }
           },
         }),
       );
-    const workspaceOf = (params: URLSearchParams) => {
-      const id = params.get('workspaceId') ?? '';
+    };
+    route('/api/genie-board/health', 'GET', () => ({
+      compatible: !!service,
+      version,
+      executable,
+      minimumGenieVersion,
+      error,
+    }));
+    // The Skills and Workflows panels read git-tracked documents and need no
+    // Genie binary, so the workspace list and catalog routes exist even when the
+    // board service could not start.
+    route('/api/genie-board/workspaces', 'GET', () =>
+      service ? service.workspaces() : ctx.workspaceRegistry.list().map(({ id, title }) => ({ id, title })),
+    );
+    const catalog = new CatalogService(ctx.workspaceRegistry);
+    const query = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').searchParams;
+    const workspaceOf = (req: IncomingMessage) => {
+      const id = query(req).get('workspaceId') ?? '';
       if (!id || id.length > 200) throw new Error('workspaceId required');
       return id;
     };
-    catalogRoute('/api/genie-board/skills', (params) => catalog.skills(workspaceOf(params)));
-    catalogRoute('/api/genie-board/workflows', (params) => catalog.workflows(workspaceOf(params)));
-    catalogRoute('/api/genie-board/document', async (params) => {
-      const kind = params.get('kind');
+    route('/api/genie-board/skills', 'GET', (req) => catalog.skills(workspaceOf(req)));
+    route('/api/genie-board/workflows', 'GET', (req) => catalog.workflows(workspaceOf(req)));
+    route('/api/genie-board/document', 'GET', async (req) => {
+      const kind = query(req).get('kind');
       if (kind !== 'skill' && kind !== 'workflow') throw new Error('kind must be skill or workflow');
-      return { text: await catalog.document(workspaceOf(params), kind, params.get('name') ?? '') };
+      return { text: await catalog.document(workspaceOf(req), kind, query(req).get('name') ?? '') };
     });
-    route('/api/genie-board/workspaces', 'GET', () =>
-      ctx.workspaceRegistry.list().map(({ id, title }) => ({ id, title })),
-    );
     if (service) {
-      disposers.push(
-        ctx.webServer.register({
-          kind: 'exact',
-          path: '/api/genie-board/action',
-          handler: async (req, res) => {
-            if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
-            const rejection = ctx.connection.requestRejection(req);
-            if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
-            if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
-            if (req.headers['content-type'] !== 'application/json')
-              return json(res, 415, { error: 'application/json required' });
-            req.setTimeout(DEADLINE_MS, () => req.destroy());
-            try {
-              json(res, 200, await service?.request(await body(req)));
-            } catch (failure) {
-              json(res, 400, { error: failure instanceof Error ? failure.message : 'Board request failed' });
-            }
-          },
-        }),
-      );
+      const board = service;
+      route('/api/genie-board/action', 'POST', async (req) => board.request(await body(req)), true);
     }
     return () => {
       for (const dispose of disposers) dispose();
+      service?.dispose();
     };
   }, 'Genie board routes');
 }

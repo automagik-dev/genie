@@ -32,6 +32,7 @@ import {
   recordExportBaseline,
   recordImportBaseline,
   roadmapSnapshot,
+  serializeSnapshot,
   syncRoadmap,
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
@@ -52,7 +53,6 @@ import {
   completeTask,
   createTask,
   deleteTask,
-  exportState,
   formatWishRef,
   getDependencies,
   getStageLog,
@@ -473,7 +473,13 @@ const NOTE_MAX_BYTES = 4000;
 function boundedNote(text: string | undefined, what: string): string {
   const note = text?.trim() ?? '';
   if (!note) fail(`a non-empty ${what} is required.`);
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(note)) fail(`${what} must not contain control characters.`);
+  // Tab, line feed and carriage return are text (the board's own contract keeps
+  // newlines verbatim); every other C0 control and DEL is refused.
+  for (const character of note) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d))
+      fail(`${what} must not contain control characters.`);
+  }
   if (Buffer.byteLength(note) > NOTE_MAX_BYTES) fail(`${what} must be at most ${NOTE_MAX_BYTES} bytes.`);
   return note;
 }
@@ -607,34 +613,48 @@ function samePath(a: string, b: string): boolean {
 /**
  * True for ANY target spelled `<dir>/.genie/roadmap.json`, not just this repo's
  * canonical file — a subdirectory or linked-worktree spelling resolves elsewhere
- * yet is still a git-trackable file under the canonical name. Such a file gets
- * the roadmap slice so full-state `hire_roster` rows (machine-local worktree
- * paths) can never travel in it. Custom-file writes and the plain stdout dump
- * stay the complete database, so a backup file round-trips lossless.
+ * yet is still a git-trackable file under the canonical name.
+ *
+ * It no longer decides what the snapshot CONTAINS (every export is the roadmap
+ * slice — see {@link handleExport}); it decides only that an import of such a
+ * file must leave local hires alone, the same way the canonical one does.
  */
 function isRoadmapSlicePath(path: string): boolean {
   const normalized = normalizedPath(path);
   return basename(normalized) === 'roadmap.json' && basename(dirname(normalized)) === '.genie';
 }
 
+/**
+ * Emit the database as a snapshot — to stdout, or atomically to a file.
+ *
+ * EVERY export is {@link roadmapSnapshot}: the whole database except
+ * `hire_roster`, whose rows carry machine-local worktree paths. A snapshot is a
+ * publishable artifact wherever it is written — stdout gets piped into a gist, a
+ * `--write /tmp/backup.json` gets attached to an issue — so the machine-local
+ * slice must not depend on the caller having spelled the canonical path. The
+ * rows stay in the db; `task import` never destroys local hires with a snapshot
+ * that carries none.
+ */
 function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
       const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
       if (target === null) {
-        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
+        // Same serializer AND same slice as `--write`: one export of one
+        // database is one byte sequence, whatever each machine's physical
+        // column order or local hires happen to be.
+        process.stdout.write(serializeSnapshot(roadmapSnapshot(db)));
         return;
       }
-      const sliced = isRoadmapSlicePath(target);
-      const canonical = sliced && samePath(target, resolveRoadmapPath());
+      const canonical = samePath(target, resolveRoadmapPath());
       // ONE immediate transaction over snapshot → file write → baseline. genie.db
       // is shared across worktrees, so a writer landing mid-sequence would
       // otherwise yield a torn snapshot (dependency rows whose tasks were missed)
       // or a baseline dbHash describing a NEWER db than the published file — the
       // next `task sync` then reads as in-sync and silently drops that change.
       const publish = db.transaction(() => {
-        const state = sliced ? roadmapSnapshot(db) : exportState(db);
+        const state = roadmapSnapshot(db);
         // Atomic (temp + rename) so a torn write can never leave the canonical
         // board — or a custom backup — truncated mid-command.
         writeSnapshotFile(target, state);
@@ -655,13 +675,26 @@ interface ImportOptions {
   replace?: boolean;
 }
 
+/** Does this parsed snapshot bring hire rows of its own? */
+function snapshotCarriesHires(snapshot: unknown): boolean {
+  const rows = (snapshot as { hire_roster?: unknown } | null)?.hire_roster;
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 function handleSync(): void {
   run(() => {
     const db = openDb();
     try {
       const result = syncRoadmap(db);
+      // The git hooks run this as `task sync || true`, so the exit code alone
+      // reaches nobody: a refusal has to be readable in the hook output, on the
+      // stream reserved for it, and has to name the two resolving commands.
+      if (result.action === 'diverged') {
+        const detail = result.message ?? 'The local board and .genie/roadmap.json both changed since the last sync.';
+        process.stderr.write(`warn: ${detail}\n`);
+        process.exit(1);
+      }
       out(result.message ?? `Board and snapshot are in sync (${result.action}).`);
-      if (result.action === 'diverged') process.exit(1);
     } finally {
       db.close();
     }
@@ -684,17 +717,21 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     }
     const db = openDb();
     try {
-      // A roadmap-sliced snapshot carries no hires, so local hires stay untouched;
-      // only the true canonical file may stamp the sync baseline.
+      // Local hires survive any import that does not bring replacements: every
+      // snapshot this build writes is the roadmap slice (`hire_roster: []`), so
+      // a `--replace` from a backup file must not wipe the machine-local roster
+      // it was never able to capture. A snapshot that DOES carry hires (a legacy
+      // full-state export, a hand-written file) still replaces them.
       const sliced = isRoadmapSlicePath(source);
       const canonical = sliced && samePath(source, resolveRoadmapPath());
+      const preserveHireRoster = sliced || !snapshotCarriesHires(snapshot);
       // ONE immediate transaction over import → baseline (importState's own
       // transaction nests as a savepoint): the baseline's post-import db
       // re-snapshot must not see another worktree's write, or the marker would
       // claim a db state the file never described and the next `task sync` would
       // report in-sync while that change stayed unpublished.
       const apply = db.transaction(() => {
-        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: sliced });
+        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster });
         if (canonical) recordImportBaseline(db, snapshot);
         return result;
       });

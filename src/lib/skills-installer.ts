@@ -33,7 +33,8 @@
  * would have orphaned the other 53 homes. `agentDirs` is therefore a bounded
  * post-install discovery scan of `$HOME` unioned with that table (decision 3),
  * and a pre-install collision snapshot backs up every foreign same-named skill
- * directory `--copy` is about to overwrite (decision 5).
+ * directory `--copy` is about to overwrite, in every home genie can name before
+ * the spawn (decision 5).
  *
  * Failure policy: a failed skills install NEVER rolls back the promoted binary.
  * The convergence helper prints the exact remedy command, sets `exitCode = 1`,
@@ -51,7 +52,9 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -59,7 +62,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { fsyncPath } from './atomic-fs.js';
+import { atomicRenameDirectoryNoClobber, fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
 import {
   type CommandResult,
@@ -184,6 +187,36 @@ const skillsCollisionSchema = z.object({
   skill: z.string().regex(SKILL_NAME_PATTERN),
 });
 
+/**
+ * One retired skill directory this run could NOT archive, carried in the record
+ * so the receipt never loses it: doctor names it, the next `genie update`
+ * retries it, and `genie uninstall` either removes it (when `digest` still
+ * proves it is genie's byte-identical install) or reports it. Dropping these
+ * entries — the pre-fix behaviour — made a preserved directory invisible to all
+ * three consumers forever.
+ */
+const skillsPreservedSchema = z.object({
+  agentDir: z
+    .string()
+    .refine(isTraversalFreeAbsolutePath, 'preserved agent dir must be a traversal-free absolute path'),
+  skill: z.string().regex(SKILL_NAME_PATTERN),
+  /** Operator-facing reason, reproduced verbatim by doctor. */
+  reason: z.string().min(1),
+  /**
+   * The digest genie proved BEFORE it declined to move the directory. Absent
+   * whenever the directory was never proven genie's (a legacy record, a user
+   * edit, a redirected agent home) — and an absent digest can never authorize a
+   * deletion, so uninstall reports those instead.
+   */
+  digest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'digest must be a lowercase sha256 hex string')
+    .optional(),
+});
+
+/** One preserved retired skill directory; see {@link skillsPreservedSchema}. */
+export type SkillsPreservedEntry = z.infer<typeof skillsPreservedSchema>;
+
 const skillsInstallRecordSchema = z.object({
   /** Release tag actually installed, e.g. `v5.260830.16`. */
   ref: z.string().min(1),
@@ -232,6 +265,12 @@ const skillsInstallRecordSchema = z.object({
    * and backed up first. Optional for the same decision-2 reason as `source`.
    */
   collisions: z.array(skillsCollisionSchema).optional(),
+  /**
+   * Retired skill directories left on disk for a human. Optional for the same
+   * decision-2 reason as `source`: a required field would invalidate every
+   * record already written and silently turn `genie uninstall` into a no-op.
+   */
+  preserved: z.array(skillsPreservedSchema).optional(),
   installedAt: z.string().min(1),
 });
 
@@ -692,9 +731,23 @@ export interface SkillsCollision {
   skill: string;
 }
 
+/**
+ * One candidate as the PRE-install snapshot found it.
+ *
+ * `digest` is the foreign directory's content digest at that moment: the
+ * evidence `finalizeCollisionSnapshot` uses afterwards to decide whether the
+ * install actually replaced it, instead of guessing from a discovery heuristic.
+ * `backedUp` says whether its bytes were copied under the backup root — only
+ * homes genie can name in advance are copied (see `collisionBackupHomes`).
+ */
+export interface StagedSkillsCollision extends SkillsCollision {
+  digest: string | null;
+  backedUp: boolean;
+}
+
 export interface SkillsCollisionSnapshot {
-  collisions: SkillsCollision[];
-  /** Allocated lazily: `null` when nothing collided. */
+  collisions: StagedSkillsCollision[];
+  /** Allocated lazily: `null` when nothing was copied. */
   backupRoot: string | null;
   /** Directories that could not be backed up, and were therefore NOT recorded. */
   failures: string[];
@@ -703,6 +756,12 @@ export interface SkillsCollisionSnapshot {
 export interface SkillsCollisionSnapshotOptions {
   /** Candidate skill homes that already exist, absolute. */
   homes: readonly string[];
+  /**
+   * The subset of `homes` whose collisions are COPIED into the backup root.
+   * Everything else is fingerprinted only — detected, digested and reported,
+   * never duplicated into GENIE_HOME. Defaults to every home.
+   */
+  backupHomes?: readonly string[];
   inventory: readonly string[];
   /** The delivered source tree the install is about to copy from. */
   sourceRoot: string;
@@ -747,7 +806,7 @@ function isForeignSkillDir(
 
 /**
  * Copy every foreign same-named skill directory out of harm's way BEFORE the
- * install overwrites it.
+ * install overwrites it — but only in the homes `backupHomes` names.
  *
  * `--all` gives no per-home veto, so "refuse for that home" is unimplementable
  * without abandoning the `--all` contract (decisions 4/5): collisions are
@@ -756,18 +815,30 @@ function isForeignSkillDir(
  * backed up is NOT recorded as handled; it is reported as a failure instead, so
  * the operator line can never claim a backup that does not exist.
  *
+ * A candidate outside `backupHomes` is still DETECTED — its digest is taken —
+ * but none of its bytes are read into the backup. That is M4: on the 2026-09-15
+ * dogfood host 152 directories under `~/.Trash`, `~/backups`, `~/workspace` and
+ * another product'"'"'s tree were copied into GENIE_HOME by a snapshot that swept
+ * the whole `$HOME` walk, and the installer wrote none of them.
+ *
  * Never throws.
  */
 export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions): SkillsCollisionSnapshot {
   const now = options.now ?? (() => new Date());
   const previous = options.previous ?? null;
-  const collisions: SkillsCollision[] = [];
+  const collisions: StagedSkillsCollision[] = [];
   const failures: string[] = [];
+  const backupHomes = options.backupHomes === undefined ? null : new Set(options.backupHomes);
   let backupRoot: string | null = null;
   for (const home of options.homes) {
     for (const skill of options.inventory) {
       const target = join(home, skill);
       if (!isForeignSkillDir(target, { sourceRoot: options.sourceRoot, skill, previous })) continue;
+      const digest = computeSkillDirDigest(target);
+      if (backupHomes !== null && !backupHomes.has(home)) {
+        collisions.push({ dir: target, skill, digest, backedUp: false });
+        continue;
+      }
       const mirrored = relative(options.home, target);
       if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) {
         failures.push(`${target}: outside ${options.home}; not backed up`);
@@ -788,7 +859,7 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
         failures.push(`${target}: ${errorMessage(error)}`);
         continue;
       }
-      collisions.push({ dir: target, skill });
+      collisions.push({ dir: target, skill, digest, backedUp: true });
     }
   }
   return { collisions, backupRoot, failures };
@@ -852,6 +923,8 @@ export interface SkillsInstallOptions {
   nowMs?: () => number;
   /** Scan bounds, for tests that need a small fixture budget. */
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
+  /** Injectable archival move for deterministic concurrent-edit tests. */
+  renameRetiredSkill?: (source: string, destination: string) => void;
 }
 
 /**
@@ -878,7 +951,7 @@ function resolveAgentDirs(options: {
   since: number;
   nowMs: () => number;
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
-}): { dirs: string[]; warnings: string[] } {
+}): { dirs: string[]; warnings: string[]; scanOk: boolean } {
   const floor = existingAgentSkillHomes(options.home).map((entry) => entry.dir);
   const warnings: string[] = [];
   const scan = scanSkillsHomes({
@@ -905,12 +978,363 @@ function resolveAgentDirs(options: {
     if (!isTraversalFreeAbsolutePath(dir)) continue;
     if (!dirs.includes(dir)) dirs.push(dir);
   }
-  return { dirs, warnings };
+  return { dirs, warnings, scanOk: scan.status === 'ok' };
+}
+
+/** What happened to one retired skill directory. */
+type RetirementDisposition =
+  | { kind: 'absent' }
+  | { kind: 'archived' }
+  | { kind: 'preserved'; reason: string; digest?: string };
+
+interface SkillsRetirementContext {
+  home: string;
+  genieHome: string;
+  previous: SkillsInstallRecord;
+  /** The inventory the delivered tree is about to install. */
+  inventory: readonly string[];
+  /** Every digest the PREVIOUS record vouches for, keyed by absolute path. */
+  expectedDigests: ReadonlyMap<string, string>;
+  rename: (source: string, destination: string) => void;
+  now: () => Date;
+  backupRoot?: string;
+}
+
+interface RetiredSkillPlan {
+  target: string;
+  /** `target` relative to `home` — the path mirrored inside the backup root. */
+  mirrored: string;
+  expected: string;
+  expectedParent: string;
+  original: Stats;
 }
 
 /**
- * Preflight → collision snapshot → spawn the pinned CLI → (only on a zero exit)
- * discovery scan and record.
+ * Digests the previous record vouches for: its ordinary `dirDigests`, plus the
+ * digests carried on `preserved` entries — which is what lets a retirement that
+ * was deferred one release still be proven genie's on the next attempt.
+ */
+function previousDigests(previous: SkillsInstallRecord): Map<string, string> {
+  const digests = new Map(Object.entries(previous.dirDigests ?? {}));
+  for (const entry of previous.preserved ?? []) {
+    if (entry.digest === undefined) continue;
+    const target = join(entry.agentDir, entry.skill);
+    if (!digests.has(target)) digests.set(target, entry.digest);
+  }
+  return digests;
+}
+
+/**
+ * Directories this install must try to retire: every recorded agent dir crossed
+ * with the skills this release no longer delivers, PLUS every directory the
+ * previous run preserved. That second source is the retry channel — without it
+ * a preserved directory drops out of the record and is never looked at again.
+ */
+function retirementTargets(
+  previous: SkillsInstallRecord,
+  inventory: readonly string[],
+): { agentDir: string; skill: string }[] {
+  const removed = previous.inventory.filter((name) => !inventory.includes(name));
+  const targets: { agentDir: string; skill: string }[] = [];
+  const seen = new Set<string>();
+  const add = (agentDir: string, skill: string): void => {
+    const key = join(agentDir, skill);
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push({ agentDir, skill });
+  };
+  for (const agentDir of new Set(previous.agentDirs)) {
+    for (const skill of removed) add(agentDir, skill);
+  }
+  // A preserved skill this release delivers again is no longer retired.
+  for (const entry of previous.preserved ?? []) {
+    if (!inventory.includes(entry.skill)) add(entry.agentDir, entry.skill);
+  }
+  return targets;
+}
+
+/**
+ * Prove the directory is the recorded, unchanged genie install before anything
+ * moves. Returns the disposition to report instead when it cannot.
+ *
+ * Each refusal is named separately, because each is a different operator
+ * action, and only a refusal that is purely about CONTENT carries the recorded
+ * digest forward. A digest on a preserved entry is what lets the next
+ * `genie update` notice the user reverted their edit and finally retire the
+ * directory — and what lets `genie uninstall` delete it once it matches again.
+ * The path-level refusals carry none: an absent digest can never authorize a
+ * deletion, which is exactly the refusal that branch just made.
+ */
+function planRetiredSkillArchival(
+  agentDir: string,
+  skill: string,
+  context: SkillsRetirementContext,
+): RetiredSkillPlan | RetirementDisposition {
+  const target = join(agentDir, skill);
+  if (!existsSync(target)) return { kind: 'absent' };
+  const mirrored = relative(context.home, target);
+  const expected = context.expectedDigests.get(target);
+  const contained = mirrored !== '' && !mirrored.startsWith('..') && !isAbsolute(mirrored);
+  // Allow a symlinked HOME, but never follow a redirected agent home below it.
+  const expectedParent = join(realpathSync(context.home), dirname(mirrored));
+  const parentMatches = contained && realpathSync(dirname(target)) === expectedParent;
+  const original = parentMatches ? lstatSync(target) : null;
+  if (original === null) return { kind: 'preserved', reason: 'outside the recorded agent home' };
+  if (expected === undefined) return { kind: 'preserved', reason: 'no recorded content digest' };
+  if (computeSkillDirDigest(target) !== expected) {
+    return { kind: 'preserved', reason: 'content changed since the recorded install', digest: expected };
+  }
+  return { target, mirrored, expected, expectedParent, original };
+}
+
+/** `EXDEV` is the one rename failure a verified copy can legitimately stand in for. */
+function isCrossDeviceError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EXDEV';
+}
+
+/**
+ * Rename when both paths share a filesystem; copy when they do not.
+ *
+ * `GENIE_HOME` on another mount is ordinary (`/data/genie`, a bind-mounted
+ * agent home, a container volume) and a bare `renameSync` turned that into
+ * `EXDEV: cross-device link not permitted` — aborting before the record was
+ * written, so `genie update` failed identically forever. The copy keeps the
+ * backup-first guarantee: bytes land in the backup root and are verified there
+ * BEFORE the original is removed.
+ *
+ * Returns `true` when the bytes were RENAMED (inode identity preserved, so the
+ * caller can compare it) and `false` when they were copied.
+ */
+function moveRetiredSkillDir(target: string, destination: string, context: SkillsRetirementContext): boolean {
+  try {
+    context.rename(target, destination);
+    return true;
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
+  }
+  try {
+    // `verbatimSymlinks` keeps link targets byte-identical to what the digest
+    // hashes; rewriting them would fail the post-copy verification below.
+    cpSync(target, destination, { recursive: true, verbatimSymlinks: true });
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
+  return false;
+}
+
+/** Restore a changed directory without overwriting a newly created live path. */
+function restoreChangedRetiredSkill(plan: RetiredSkillPlan, destination: string): string {
+  try {
+    if (realpathSync(dirname(plan.target)) !== plan.expectedParent) {
+      throw new Error('agent home changed during retirement');
+    }
+    atomicRenameDirectoryNoClobber(destination, plan.target);
+  } catch (error) {
+    throw new Error(`retired skill changed during archival; recover ${destination} manually: ${errorMessage(error)}`);
+  }
+  fsyncParentDir(destination);
+  fsyncParentDir(plan.target);
+  return 'changed during archival; restored';
+}
+
+/**
+ * `state-backups/skills-retirement-<compact ISO 8601>/` — the same sortable
+ * family as `integration-retirement-<timestamp>` and the collision snapshot.
+ * `mkdtemp` was a third naming scheme whose random suffix does not sort.
+ */
+function ensureRetirementBackupRoot(context: SkillsRetirementContext): string {
+  if (context.backupRoot === undefined) {
+    const stamp = context.now().toISOString().replace(/[:.]/g, '-');
+    const root = join(context.genieHome, 'state-backups', `skills-retirement-${stamp}`);
+    // Owner-only: the tree holds whatever the retired skill directories held.
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    context.backupRoot = root;
+  }
+  return context.backupRoot;
+}
+
+/** Move the proven directory into the backup root, verifying it on arrival. */
+function commitRetiredSkillArchive(plan: RetiredSkillPlan, context: SkillsRetirementContext): RetirementDisposition {
+  const destination = join(ensureRetirementBackupRoot(context), plan.mirrored);
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  const renamed = moveRetiredSkillDir(plan.target, destination, context);
+  fsyncParentDir(destination);
+  fsyncParentDir(plan.target);
+  // The TOCTOU guard: the bytes that arrived must still be the bytes the plan
+  // proved. A rename can also be compared by inode identity; a copy cannot.
+  const archived = computeSkillDirDigest(destination) === plan.expected;
+  if (!renamed) {
+    if (!archived) {
+      rmSync(destination, { recursive: true, force: true });
+      return { kind: 'preserved', reason: 'changed during archival; kept in place', digest: plan.expected };
+    }
+    // Only now, with a verified copy in the backup root, does the original go.
+    rmSync(plan.target, { recursive: true, force: true });
+    fsyncParentDir(plan.target);
+    return { kind: 'archived' };
+  }
+  const moved = lstatSync(destination);
+  if (!archived || moved.dev !== plan.original.dev || moved.ino !== plan.original.ino) {
+    return { kind: 'preserved', reason: restoreChangedRetiredSkill(plan, destination), digest: plan.expected };
+  }
+  return { kind: 'archived' };
+}
+
+/** True unless everything under `dir` is an empty directory tree. */
+function holdsNoFiles(dir: string): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return entries.every((entry) => entry.isDirectory() && holdsNoFiles(join(dir, entry.name)));
+}
+
+/**
+ * A backup root that never received a single byte — every failure path before
+ * the first successful move — is removed rather than left behind. Each retry of
+ * a failing `genie update` used to leak one empty tree under `state-backups/`.
+ */
+function discardEmptyRetirementBackupRoot(context: SkillsRetirementContext): void {
+  const root = context.backupRoot;
+  if (root === undefined || !holdsNoFiles(root)) return;
+  try {
+    rmSync(root, { recursive: true, force: true });
+    context.backupRoot = undefined;
+  } catch {
+    // Best effort: an unremovable empty backup root never fails an install.
+  }
+}
+
+/** How many already-gone retirement targets are named before the rest are counted. */
+const MAX_REPORTED_ABSENT_TARGETS = 5;
+
+/** Running tally of one retirement pass, rendered by {@link reportRetirement}. */
+interface RetirementTally {
+  archivedBySkill: Map<string, number>;
+  preserved: SkillsPreservedEntry[];
+  /** `<agentDir>/<skill>` paths the record named that were not on disk. */
+  absent: string[];
+  attention: string[];
+  targets: number;
+}
+
+/**
+ * The operator-facing rendering of one retirement pass.
+ *
+ * An ABSENT target used to produce no output at all, which is what made the
+ * 2026-09-15 loss invisible: a whole recorded agent home had been replaced
+ * mid-run, and the transcript read `retired <skill> from 56 agent dir(s)`
+ * against a 57-home record with nothing explaining the gap. Every disposition
+ * is now named or counted, and the summary reconciles against the target count.
+ */
+function reportRetirement(tally: RetirementTally, backupRoot: string | undefined, warnings: string[]): void {
+  let archived = 0;
+  for (const skill of [...tally.archivedBySkill.keys()].sort()) {
+    const count = tally.archivedBySkill.get(skill) as number;
+    archived += count;
+    warnings.push(`skills: retired ${skill} from ${count} agent dir(s)`);
+  }
+  if (backupRoot !== undefined) warnings.push(`skills: retirement backups under ${backupRoot}`);
+  warnings.push(...tally.attention);
+  for (const target of tally.absent.slice(0, MAX_REPORTED_ABSENT_TARGETS)) {
+    warnings.push(`skills: retirement: ${target} was already gone — nothing to archive`);
+  }
+  const unnamed = tally.absent.length - Math.min(tally.absent.length, MAX_REPORTED_ABSENT_TARGETS);
+  if (unnamed > 0) warnings.push(`skills: retirement: +${unnamed} more recorded target(s) were already gone`);
+  if (tally.targets === 0) return;
+  warnings.push(
+    `skills: retirement: ${archived} archived, ${tally.preserved.length} preserved, ${tally.absent.length} already absent of ${tally.targets} recorded target(s)`,
+  );
+}
+
+/**
+ * Archive every directory this release retires, and report it in a form a human
+ * can read: ONE line per removed skill (not per agent dir x skill — 11 removed
+ * skills over the 57 homes the dogfood host records is 627 identical lines),
+ * ONE line naming the backup root, one line per preserved directory, up to five
+ * already-gone targets plus a remainder count, and one reconciling summary.
+ *
+ * Returns the preserved entries for the record; warnings are pushed as they are
+ * produced so a throw still reports what already happened.
+ */
+function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[]): SkillsPreservedEntry[] {
+  const tally: RetirementTally = {
+    archivedBySkill: new Map(),
+    preserved: [],
+    absent: [],
+    attention: [],
+    targets: 0,
+  };
+  try {
+    for (const { agentDir, skill } of retirementTargets(context.previous, context.inventory)) {
+      tally.targets += 1;
+      const planned = planRetiredSkillArchival(agentDir, skill, context);
+      const disposition = 'kind' in planned ? planned : commitRetiredSkillArchive(planned, context);
+      if (disposition.kind === 'archived') {
+        tally.archivedBySkill.set(skill, (tally.archivedBySkill.get(skill) ?? 0) + 1);
+      } else if (disposition.kind === 'preserved') {
+        const { reason, digest } = disposition;
+        tally.preserved.push({ agentDir, skill, reason, ...(digest === undefined ? {} : { digest }) });
+        tally.attention.push(
+          `skills: preserved retired skill ${join(agentDir, skill)} (${reason}); review it manually`,
+        );
+      } else {
+        tally.absent.push(join(agentDir, skill));
+      }
+    }
+  } finally {
+    discardEmptyRetirementBackupRoot(context);
+    reportRetirement(tally, context.backupRoot, warnings);
+  }
+  return tally.preserved;
+}
+
+/**
+ * Digest every directory the CLI actually wrote, so `genie uninstall` can later
+ * prove a directory is still genie's byte-identical install before it deletes
+ * it. A combination that did not land (or cannot be read) records no digest:
+ * uninstall then preserves that directory instead of deleting it.
+ */
+function digestInstalledSkillDirs(agentDirs: readonly string[], inventory: readonly string[]): Record<string, string> {
+  const dirDigests: Record<string, string> = {};
+  for (const agentDir of agentDirs) {
+    for (const name of inventory) {
+      const target = join(agentDir, name);
+      const digest = computeSkillDirDigest(target);
+      if (digest !== null) dirDigests[target] = digest;
+    }
+  }
+  return dirDigests;
+}
+
+/**
+ * Every recorded agent home that is no longer a directory on disk.
+ *
+ * Reported and KEPT in the new record. Silently dropping one erased the only
+ * evidence it was ever recorded: on the 2026-09-15 dogfood host a home was
+ * replaced mid-update and the record self-healed from 57 entries to 57
+ * different ones, so neither the transcript nor `genie doctor` could show that
+ * eleven recorded directories had gone missing without a backup.
+ */
+function reportVanishedAgentDirs(previous: SkillsInstallRecord | null, warnings: string[]): string[] {
+  if (previous === null) return [];
+  const vanished = [...new Set(previous.agentDirs)].filter(
+    (dir) => isTraversalFreeAbsolutePath(dir) && !isDirectory(dir),
+  );
+  for (const dir of vanished) {
+    warnings.push(
+      `skills: recorded agent dir ${dir} no longer exists; kept in the record so the next run still names it`,
+    );
+  }
+  return vanished;
+}
+
+/**
+ * Preflight → archive the skills this release retires → collision snapshot →
+ * spawn the pinned CLI → discovery scan → record.
  * Never throws: every failure is a returned reason plus the remedy command.
  */
 export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOutcome {
@@ -924,13 +1348,55 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
 
   const home = options.home ?? homedir();
   const nowMs = options.nowMs ?? (() => Date.now());
+  const now = options.now ?? (() => new Date());
   const warnings: string[] = [];
   // The inventory is read BEFORE the spawn because the collision snapshot needs
   // the names the install is about to write. The delivered tree is genie's own
   // and the CLI only reads it, so the value is still the one recorded below.
   const inventory = inventoryFromSkillsDir(skillsRoot);
+  const previous = readSkillsInstallRecord(options.genieHome);
+  const vanished = reportVanishedAgentDirs(previous, warnings);
 
-  const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, warnings });
+  // RETIREMENT RUNS BEFORE THE INSTALL PASS. `--all` rewrites every supported
+  // agent home wholesale, so a home skills.sh replaces takes the previous
+  // release's retired directories with it — on 2026-09-15 eleven recorded
+  // directories and a user's own symlink were destroyed that way, minutes
+  // before a retirement pass that then found nothing to back up. Archiving
+  // first is what puts those bytes in `state-backups/` no matter what the
+  // install does to the home afterwards.
+  // An empty delivered tree never retires anything: every recorded skill would
+  // read as removed. It fails below, after the spawn, where it always has.
+  let preserved: SkillsPreservedEntry[] = [];
+  if (previous !== null && inventory.length > 0) {
+    try {
+      preserved = retireRemovedSkills(
+        {
+          home,
+          genieHome: options.genieHome,
+          previous,
+          inventory,
+          expectedDigests: previousDigests(previous),
+          rename: options.renameRetiredSkill ?? renameSync,
+          now,
+        },
+        warnings,
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `could not retire the skills this release drops: ${errorMessage(error)}`,
+        remedy: 'Run: genie update (retries retirement using the previous install record)',
+        warnings,
+      };
+    }
+  }
+
+  const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
+  // What the snapshot staged is judged — kept and reported, or discarded — by
+  // re-digesting the originals after the spawn. It is therefore correct on
+  // every exit path below, including the ones where the install never ran.
+  const finalizeCollisions = (): SkillsCollision[] =>
+    finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
   const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot });
   const run = options.spawn ?? runBoundedIntegrationCommand;
@@ -943,15 +1409,22 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       maxOutputBytes: SKILLS_INSTALL_OUTPUT_LIMIT_BYTES,
     });
   } catch (error) {
+    finalizeCollisions();
     return { ok: false, reason: error instanceof Error ? error.message : String(error), remedy, warnings };
   }
-  if (result.exitCode !== 0) return { ok: false, reason: describeFailure(result), remedy, warnings };
+  if (result.exitCode !== 0) {
+    finalizeCollisions();
+    return { ok: false, reason: describeFailure(result), remedy, warnings };
+  }
 
   // A zero exit with nothing to record is not a success: the delivered tree is
-  // what doctor's freshness check and
-  // uninstall's removal all read back. Recording an empty inventory would make
-  // uninstall a silent no-op over skills that are actually on disk.
-  if (inventory.length === 0) return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy, warnings };
+  // what doctor's freshness check and uninstall's removal both read back.
+  // Recording an empty inventory would make uninstall a silent no-op over
+  // skills that are actually on disk.
+  if (inventory.length === 0) {
+    finalizeCollisions();
+    return { ok: false, reason: `no skills found under ${skillsRoot}`, remedy, warnings };
+  }
 
   const agents = resolveAgentDirs({
     home,
@@ -963,83 +1436,328 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     scan: options.scan,
   });
   warnings.push(...agents.warnings);
-  // Digest every directory the CLI actually wrote, so `genie uninstall` can
-  // later prove a directory is still genie's byte-identical install before it
-  // deletes it. A combination that did not land (or cannot be read) records no
-  // digest: uninstall then preserves that directory instead of deleting it.
-  const dirDigests: Record<string, string> = {};
-  for (const agentDir of agents.dirs) {
-    for (const name of inventory) {
-      const target = join(agentDir, name);
-      const digest = computeSkillDirDigest(target);
-      if (digest !== null) dirDigests[target] = digest;
+  const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory);
+  // A zero exit that wrote no verifiable skill directory anywhere is not a
+  // success. It is the one replacement check retirement can no longer make for
+  // itself now that it runs first: the retired bytes are already archived and
+  // reported, and refusing the record keeps `genie update` retrying.
+  if (Object.keys(dirDigests).length === 0) {
+    finalizeCollisions();
+    return { ok: false, reason: 'the skills CLI wrote no verifiable skill directory', remedy, warnings };
+  }
+  const collisions = finalizeCollisions();
+  try {
+    const record: SkillsInstallRecord = {
+      ref: releaseTag(options.version),
+      source: `local:${skillsRoot}`,
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory,
+      // Recorded homes are never dropped, only added to: `agentDirs` is
+      // `genie uninstall`'s removal authority, and a vanished entry that fell
+      // out of the record took the proof it ever existed with it.
+      agentDirs: [...agents.dirs, ...vanished.filter((dir) => !agents.dirs.includes(dir))],
+      dirDigests,
+      ...(collisions.length > 0 ? { collisions } : {}),
+      ...(preserved.length > 0 ? { preserved } : {}),
+      installedAt: now().toISOString(),
+    };
+    writeSkillsInstallRecord(options.genieHome, record);
+    return { ok: true, record, warnings };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `could not finalize the skills install: ${errorMessage(error)}`,
+      remedy: 'Run: genie update (retries retirement using the previous install record)',
+      warnings,
+    };
+  }
+}
+
+/**
+ * Every directory the install could conceivably overwrite: the agent homes
+ * `--all` writes (the known table, whether or not they exist yet), the homes
+ * the previous record proves the CLI wrote last time, and — because neither
+ * list can track a self-discovering CLI whose registry names 77 agents — every
+ * `skills` directory the bounded `$HOME` walk finds.
+ *
+ * The walk is deliberately UNFILTERED here — but DETECTION is all it feeds.
+ * Narrowing detection to the known table would lose the signal for any of the
+ * 53 homes on the 2026-09-15 dogfood host that the four-row table does not
+ * name. What gets COPIED is the far narrower `collisionBackupHomes` set, and
+ * what is finally kept and reported is decided by digest evidence in
+ * `finalizeCollisionSnapshot`.
+ */
+function collisionCandidateHomes(context: {
+  home: string;
+  genieHome: string;
+  skillsRoot: string;
+  previous: SkillsInstallRecord | null;
+  nowMs?: () => number;
+  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
+}): string[] {
+  const scan = scanSkillsHomes({
+    home: context.home,
+    sourceRoot: context.skillsRoot,
+    genieHome: context.genieHome,
+    nowMs: context.nowMs,
+    ...context.scan,
+  });
+  const homes: string[] = [];
+  const candidates = [
+    ...agentSkillHomes(context.home).map((entry) => entry.dir),
+    ...(context.previous?.agentDirs ?? []),
+    ...scan.dirs,
+  ];
+  for (const dir of candidates) {
+    if (!isTraversalFreeAbsolutePath(dir)) continue;
+    if (!homes.includes(dir)) homes.push(dir);
+  }
+  return homes;
+}
+
+/** True when at least one delivered skill name under `home` is provably genie's own. */
+function hasGenieOwnedSkill(
+  home: string,
+  context: { skillsRoot: string; inventory: readonly string[]; previous: SkillsInstallRecord | null },
+): boolean {
+  for (const skill of context.inventory) {
+    if (!isSafeSkillName(skill)) continue;
+    const target = join(home, skill);
+    if (!isDirectory(target)) continue;
+    if (isGenieOwned(target, readProbeFile(join(context.skillsRoot, skill, 'SKILL.md')), context.previous)) return true;
+  }
+  return false;
+}
+
+/**
+ * The homes whose collisions are COPIED before the spawn — genie's answer to
+ * "which directories is the installer about to write?", answered with evidence
+ * rather than with a `$HOME` sweep:
+ *
+ *  - the known table, which `--all` writes by construction;
+ *  - every dir the previous record proves the CLI wrote last time (57 of them
+ *    on the dogfood host, 53 outside the table — this is what keeps M1's
+ *    `~/.openclaw` case backed up);
+ *  - any other discovered home that ALREADY carries a genie-owned skill dir, so
+ *    a home genie delivered to before a record existed is covered too.
+ *
+ * Everything else the walk finds — `~/.Trash/skills`, `~/backups/skills`, a
+ * checkout under `~/workspace` — is detected and digested but never duplicated
+ * into GENIE_HOME. If such a directory nevertheless changes across the install,
+ * `finalizeCollisionSnapshot` says so in plain words instead of pretending a
+ * backup exists.
+ */
+function collisionBackupHomes(context: {
+  home: string;
+  skillsRoot: string;
+  inventory: readonly string[];
+  previous: SkillsInstallRecord | null;
+  candidates: readonly string[];
+}): string[] {
+  const homes = new Set<string>([
+    ...agentSkillHomes(context.home).map((entry) => entry.dir),
+    ...(context.previous?.agentDirs ?? []),
+  ]);
+  for (const dir of context.candidates) {
+    if (homes.has(dir)) continue;
+    if (hasGenieOwnedSkill(dir, context)) homes.add(dir);
+  }
+  return [...homes];
+}
+
+/** Remove now-empty ancestors of `path`, stopping below (and excluding) `stopAt`. */
+function removeEmptyAncestors(path: string, stopAt: string): void {
+  let current = dirname(path);
+  while (current.startsWith(`${stopAt}${sep}`)) {
+    try {
+      if (readdirSync(current).length > 0) return;
+      // Verified empty one line above; `recursive` is what makes `rm` accept a
+      // directory at all (a bare `rmSync` on one throws `ERR_FS_EISDIR`).
+      rmSync(current, { recursive: true, force: true });
+    } catch {
+      return;
+    }
+    current = dirname(current);
+  }
+}
+
+/** Drop one staged copy, and the mirrored directories it leaves behind. */
+function discardStagedCollision(collision: SkillsCollision, context: { backupRoot: string; home: string }): void {
+  const mirrored = relative(context.home, collision.dir);
+  if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) return;
+  const staged = join(context.backupRoot, mirrored);
+  try {
+    rmSync(staged, { recursive: true, force: true });
+  } catch {
+    return;
+  }
+  removeEmptyAncestors(staged, context.backupRoot);
+}
+
+/** The snapshot found this directory, and it is byte-for-byte what it was then. */
+function collisionIsUntouched(collision: StagedSkillsCollision): boolean {
+  if (collision.digest === null) return false;
+  return computeSkillDirDigest(collision.dir) === collision.digest;
+}
+
+/**
+ * Decide which staged collision copies survive, and report them honestly.
+ *
+ * Retention is decided by EVIDENCE, never by a verdict about which homes the
+ * install "probably" wrote: a staged copy is discarded only when the original
+ * is still exactly what the snapshot copied. Anything else — replaced, removed,
+ * or unreadable — keeps its copy and is reported. That is what makes the
+ * failure paths safe too: a spawn that never ran leaves every original intact,
+ * so its staging cleans itself up, while a spawn that died halfway keeps
+ * precisely the copies whose originals it had already overwritten.
+ *
+ * Never throws; returns the collisions that belong in the record.
+ */
+function finalizeCollisionSnapshot(context: {
+  snapshot: SkillsCollisionSnapshot;
+  home: string;
+  genieHome: string;
+  warnings: string[];
+}): SkillsCollision[] {
+  const { snapshot, warnings } = context;
+  for (const failure of snapshot.failures) {
+    warnings.push(`skills: collision not backed up: ${failure}`);
+  }
+  const backupRoot = snapshot.backupRoot;
+  const kept: SkillsCollision[] = [];
+  for (const collision of snapshot.collisions) {
+    if (collisionIsUntouched(collision)) {
+      if (collision.backedUp && backupRoot !== null) {
+        discardStagedCollision(collision, { backupRoot, home: context.home });
+      }
+      continue;
+    }
+    kept.push({ dir: collision.dir, skill: collision.skill });
+    warnings.push(
+      collision.backedUp && backupRoot !== null
+        ? `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`
+        : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
+    );
+  }
+  pruneCollisionBackups({ genieHome: context.genieHome, home: context.home });
+  return kept;
+}
+
+const COLLISION_PRUNE_MAX_ROOTS = 32;
+const COLLISION_PRUNE_MAX_FILES = 4000;
+const COLLISION_PRUNE_MAX_FILE_BYTES = 4 * 1024 * 1024;
+
+/** Byte-equal regular files at both paths, within the compare budget. */
+function sameFileContents(left: string, right: string): boolean {
+  try {
+    const leftStat = lstatSync(left);
+    const rightStat = lstatSync(right);
+    if (!leftStat.isFile() || !rightStat.isFile()) return false;
+    if (leftStat.size !== rightStat.size) return false;
+    if (leftStat.size > COLLISION_PRUNE_MAX_FILE_BYTES) return false;
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when every file under `root` still has a byte-identical live original,
+ * i.e. the copy protects nothing. Anything unreadable, unexpected or over
+ * budget answers `false`, so a doubtful backup is always kept.
+ */
+function collisionBackupIsRedundant(root: string, home: string, budget: { files: number }): boolean {
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop() as string;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!entry.isFile()) return false;
+      if (--budget.files < 0) return false;
+      const rel = relative(root, path);
+      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
+      if (!sameFileContents(path, join(home, rel))) return false;
     }
   }
-  const record: SkillsInstallRecord = {
-    ref: releaseTag(options.version),
-    source: `local:${skillsRoot}`,
-    cliVersion: SKILLS_CLI_VERSION,
-    inventory,
-    agentDirs: agents.dirs,
-    dirDigests,
-    ...(snapshot.collisions.length > 0 ? { collisions: snapshot.collisions } : {}),
-    installedAt: (options.now ?? (() => new Date()))().toISOString(),
-  };
+  return true;
+}
+
+/**
+ * Drop the `skills-collision-*` roots that no longer protect anything —
+ * including the ones an EARLIER run left behind when it could not prove what
+ * the install had written. A root is removed only when every file in it still
+ * matches its live original, so a root holding the user's replaced bytes is
+ * never touched; an empty root trivially qualifies. Never throws.
+ */
+function pruneCollisionBackups(context: { genieHome: string; home: string }): void {
+  const base = join(context.genieHome, 'state-backups');
+  let entries: Dirent[];
   try {
-    writeSkillsInstallRecord(options.genieHome, record);
-  } catch (error) {
-    return { ok: false, reason: `could not record the install: ${errorMessage(error)}`, remedy, warnings };
+    entries = readdirSync(base, { withFileTypes: true });
+  } catch {
+    return;
   }
-  return { ok: true, record, warnings };
+  const budget = { files: COLLISION_PRUNE_MAX_FILES };
+  let roots = 0;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('skills-collision-')) continue;
+    if (++roots > COLLISION_PRUNE_MAX_ROOTS) return;
+    const root = join(base, entry.name);
+    if (!collisionBackupIsRedundant(root, context.home, budget)) continue;
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {
+      // A root that cannot be removed is harmless: it is a redundant copy.
+    }
+  }
 }
 
 /**
  * The pre-install snapshot, wrapped so no filesystem surprise inside it can
  * fail an install (decision 5: detect, back up, record, report — never refuse).
+ *
+ * Reporting is NOT done here: the snapshot runs before the spawn, and what it
+ * staged is only judged once discovery knows which homes the install wrote.
  */
 function snapshotCollisionsSafely(context: {
   home: string;
   genieHome: string;
   skillsRoot: string;
   inventory: string[];
+  previous: SkillsInstallRecord | null;
   warnings: string[];
   now?: () => Date;
+  nowMs?: () => number;
+  scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
 }): SkillsCollisionSnapshot {
   const empty: SkillsCollisionSnapshot = { collisions: [], backupRoot: null, failures: [] };
   if (context.inventory.length === 0) return empty;
-  let snapshot: SkillsCollisionSnapshot;
   try {
-    const preScan = scanSkillsHomes({
-      home: context.home,
-      sourceRoot: context.skillsRoot,
-      genieHome: context.genieHome,
-    });
-    const homes: string[] = [];
-    for (const dir of [...existingAgentSkillHomes(context.home).map((entry) => entry.dir), ...preScan.dirs]) {
-      if (!homes.includes(dir)) homes.push(dir);
-    }
-    snapshot = snapshotSkillsCollisions({
-      homes,
+    const candidates = collisionCandidateHomes(context);
+    return snapshotSkillsCollisions({
+      homes: candidates,
+      backupHomes: collisionBackupHomes({ ...context, candidates }),
       inventory: context.inventory,
       sourceRoot: context.skillsRoot,
       genieHome: context.genieHome,
       home: context.home,
-      previous: readSkillsInstallRecord(context.genieHome),
+      previous: context.previous,
       now: context.now,
     });
   } catch (error) {
     context.warnings.push(`skills: collision snapshot failed (${errorMessage(error)}); no foreign skill was backed up`);
     return empty;
   }
-  for (const collision of snapshot.collisions) {
-    context.warnings.push(
-      `skills: collision: ${collision.dir} (${collision.skill}) — backed up to ${snapshot.backupRoot ?? '(none)'}`,
-    );
-  }
-  for (const failure of snapshot.failures) {
-    context.warnings.push(`skills: collision not backed up: ${failure}`);
-  }
-  return snapshot;
 }
 
 /**

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Orca Work Coordinator"
-  short_description: "Coordinate an approved wish as Orca run and tasks"
-  default_prompt: "Coordinate the active approved Genie wish on Orca: one run, one task per group."

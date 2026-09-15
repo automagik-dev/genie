@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
-import { roadmapSnapshot, syncRoadmap } from './roadmap-sync.js';
+import { roadmapSnapshot, serializeSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
   AssignmentReasonRequiredError,
   CheckoutConflictError,
@@ -187,6 +187,23 @@ describe('boards with lifecycle lanes', () => {
   test('an empty lane list normalizes to a laneless board', () => {
     const board = createBoard(db, 'empty-lanes', []);
     expect(board.lanes).toBeNull();
+    // Stored as NULL, not "[]": a board created without lanes is the quiet
+    // laneless board and must NOT carry the unusable-metadata note.
+    const stored = db.query('SELECT lanes FROM boards WHERE id = ?').get(board.id) as { lanes: string | null };
+    expect(stored.lanes).toBeNull();
+    expect(getBoardByName(db, 'empty-lanes')?.laneMetadataMalformed).toBe(false);
+  });
+
+  // m9: `[]` only reaches boards.lanes through import or a hand-merged
+  // roadmap.json. It is a lane definition that yields no lane, so it reads as
+  // unusable metadata and earns the same laneless note as `{` or `[{}]` —
+  // rather than the frozen all-tasks shape with empty stderr.
+  test('a stored empty lane ARRAY is unusable metadata, not a quiet laneless board', () => {
+    const board = createBoard(db, 'imported', DEFAULT_LIFECYCLE_LANES);
+    db.query('UPDATE boards SET lanes = ? WHERE id = ?').run('[]', board.id);
+    const fetched = getBoardByName(db, 'imported');
+    expect(fetched?.lanes).toBeNull();
+    expect(fetched?.laneMetadataMalformed).toBe(true);
   });
 
   test('a duplicate board name throws DuplicateBoardError (UNIQUE surfaced cleanly)', () => {
@@ -307,6 +324,45 @@ describe('lane moves + task_events timeline', () => {
 
   test('appendTaskEvent rejects an unknown task', () => {
     expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
+  });
+
+  // M6: the append is check-then-insert. Under a concurrent delete the insert
+  // used to violate the task_events foreign key and surface the raw
+  // `FOREIGN KEY constraint failed`. The immediate transaction closes the
+  // window; this asserts the translation that backstops a lost write lock.
+  test('appendTaskEvent raises the typed not-found error, never a raw FOREIGN KEY failure', () => {
+    const task = createTask(db, { title: 'doomed' });
+    db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+    let caught: unknown;
+    try {
+      appendTaskEvent(db, task.id, { kind: 'comment', note: 'too late' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownTaskError);
+    expect((caught as Error).message).toBe(`Task not found: ${task.id}`);
+    expect((caught as Error).message).not.toContain('FOREIGN KEY');
+  });
+});
+
+// m8 — liveness is derived purely from heartbeat_at and a null heartbeat reads
+// `stale`, so a claim that seeds none renders the card dead on arrival.
+describe('claim seeds liveness', () => {
+  test('claimTask stamps heartbeat_at equal to claimed_at', () => {
+    const task = createTask(db, { title: 'claim me' });
+    const claimed = claimTask(db, task.id, 'w1');
+    expect(claimed.claimedAt).not.toBeNull();
+    const card = getTaskCard(db, task.id);
+    expect(card?.heartbeatAt).toBe(claimed.claimedAt as number);
+    expect(livenessFromHeartbeat(card?.heartbeatAt ?? null, claimed.claimedAt as number)).toBe('running');
+  });
+
+  test('releaseTask clears the seeded heartbeat with the claim', () => {
+    const task = createTask(db, { title: 'claim me' });
+    claimTask(db, task.id, 'w1');
+    const released = releaseTask(db, task.id, HUMAN);
+    expect(released.claimedAt).toBeNull();
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
   });
 });
 
@@ -913,12 +969,14 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(10_000_000);
 
     releaseTask(db, a.id, HUMAN);
-    // The card is back to ready with no lingering pulse; a fresh checkout by
-    // worker B must read stale (never running) until B itself heartbeats.
+    // The card is back to ready with no lingering pulse: the released card must
+    // never carry worker A's timestamp into the ready queue.
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
 
-    claimTask(db, a.id, 'w2');
-    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    // Worker B's own claim seeds a FRESH pulse of its own (m8) — never A's.
+    const reclaimed = claimTask(db, a.id, 'w2');
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(reclaimed.claimedAt as number);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).not.toBe(10_000_000);
   });
 
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
@@ -1101,7 +1159,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     return createHash('sha256').update(canonical).digest('hex');
   }
 
-  test('an equal file/db pair refreshes an old order-sensitive marker without rewriting the snapshot', () => {
+  test('an equal file/db pair refreshes an old order-sensitive marker without changing the board', () => {
     const repo = join(dir, 'hash-upgrade');
     mkdirSync(join(repo, '.genie'), { recursive: true });
     createTask(db, { title: 'existing card' });
@@ -1114,7 +1172,11 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     writeFileSync(markerPath, JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash }));
 
     expect(syncRoadmap(db, repo).action).toBe('none');
-    expect(readFileSync(filePath, 'utf-8')).toBe(content);
+    // The marker migration publishes NO board change. The bytes are normalized
+    // on the way past (see roadmap-sync's legacy-ordered snapshot contract), so
+    // the invariant here is the content, not the byte form the file arrived in.
+    expect(JSON.parse(readFileSync(filePath, 'utf-8'))).toEqual(JSON.parse(content));
+    expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(snapshot));
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
     expect(marker.fileHash).not.toBe(legacyHash);
     expect(marker.fileHash).toBe(marker.dbHash);
@@ -1163,7 +1225,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     rmSync(repo, { recursive: true, force: true });
   });
 
-  test('an old order-sensitive marker with pending edits refuses to overwrite either side', () => {
+  test('an old order-sensitive marker with pending edits publishes them (db-only change)', () => {
     const repo = join(dir, 'hash-upgrade-pending');
     mkdirSync(join(repo, '.genie'), { recursive: true });
     createTask(db, { title: 'existing card' });
@@ -1177,13 +1239,17 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     writeFileSync(markerPath, marker);
     const pending = createTask(db, { title: 'unpublished card' });
 
+    // The pre-`hashVersion` marker is still a usable baseline (it is compared
+    // with the algorithm that wrote it), so this reads as what it is: the file
+    // sits exactly where the baseline left it and only the db moved. Publishing
+    // can lose nothing — an upgrade alone must not manufacture a divergence.
     const result = syncRoadmap(db, repo);
-    expect(result.action).toBe('diverged');
-    expect(result.message).toContain('genie task import --replace');
-    expect(result.message).toContain('genie task export --write');
-    expect(readFileSync(filePath, 'utf-8')).toBe(content);
-    expect(readFileSync(markerPath, 'utf-8')).toBe(marker);
+    expect(result.action).toBe('exported');
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as ReturnType<typeof roadmapSnapshot>;
+    expect(published.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
     expect(getTask(db, pending.id)?.title).toBe('unpublished card');
+    // And the baseline is migrated on the way out.
+    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(2);
   });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
@@ -2051,4 +2117,98 @@ try {
     expect(releaseEvents.length).toBe(1);
     expect(releaseEvents[0].note).toBe('completed');
   }, 30_000);
+});
+
+describe('mutating verbs return the row their own write captured', () => {
+  /**
+   * Make a concurrent hard-delete land in the window a post-commit re-read would
+   * have used: the row is gone the instant the verb's transaction commits. A
+   * verb that read the card back AFTER its commit returns `null` through an
+   * unchecked `as TaskRow` cast, which the CLI surfaces as the raw
+   * `null is not an object` TypeError; a verb whose write captured the row
+   * (RETURNING, or a read inside the transaction) is unaffected.
+   */
+  function deleteOnCommit(connection: Database, taskId: string): void {
+    const originalTransaction = connection.transaction.bind(connection);
+    Object.defineProperty(connection, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as {
+          (...args: unknown[]): unknown;
+          immediate: (...args: unknown[]) => unknown;
+          deferred: (...args: unknown[]) => unknown;
+        };
+        const purge = <T>(result: T): T => {
+          connection.query('DELETE FROM task_events WHERE task_id = ?').run(taskId);
+          connection.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+          return result;
+        };
+        const wrapped = (...args: unknown[]) => purge(transaction(...args));
+        wrapped.immediate = (...args: unknown[]) => purge(transaction.immediate(...args));
+        wrapped.deferred = (...args: unknown[]) => purge(transaction.deferred(...args));
+        return wrapped;
+      },
+    });
+  }
+
+  const verbs: Array<{ name: string; prepare?: (taskId: string) => void; run: (taskId: string) => TaskRow }> = [
+    { name: 'claimTask', run: (id) => claimTask(db, id, 'worker') },
+    { name: 'completeTask', run: (id) => completeTask(db, id) },
+    {
+      name: 'releaseTask',
+      prepare: (id) => {
+        claimTask(db, id, 'worker');
+      },
+      run: (id) => releaseTask(db, id, HUMAN),
+    },
+    { name: 'blockTask', run: (id) => blockTask(db, id, 'why', HUMAN) },
+    {
+      name: 'unblockTask',
+      prepare: (id) => {
+        blockTask(db, id, 'why', HUMAN);
+      },
+      run: (id) => unblockTask(db, id, HUMAN),
+    },
+    { name: 'moveTask', run: (id) => moveTask(db, id, 'Work', HUMAN).task },
+  ];
+
+  for (const verb of verbs) {
+    test(`${verb.name} survives a delete racing its commit`, () => {
+      const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, { title: 'raced card', boardId: board.id, lane: 'Idea' });
+      verb.prepare?.(task.id);
+      deleteOnCommit(db, task.id);
+
+      const returned = verb.run(task.id);
+      expect(returned.id).toBe(task.id);
+      expect(returned.title).toBe('raced card');
+      // The card really is gone — the verb reported its OWN write, not a re-read.
+      expect(getTask(db, task.id)).toBeNull();
+    });
+  }
+
+  test('createTask survives a delete racing its commit', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const probe = createTask(db, { title: 'probe', boardId: board.id });
+    db.query('DELETE FROM tasks WHERE id = ?').run(probe.id);
+    // The next generated id is unknown up front, so purge every task instead.
+    const originalTransaction = db.transaction.bind(db);
+    Object.defineProperty(db, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => {
+          const result = transaction(...args);
+          db.query('DELETE FROM task_events').run();
+          db.query('DELETE FROM tasks').run();
+          return result;
+        };
+      },
+    });
+
+    const created = createTask(db, { title: 'raced creation', boardId: board.id });
+    expect(created.title).toBe('raced creation');
+    expect(created.status).toBe('ready');
+    expect(getTask(db, created.id)).toBeNull();
+  });
 });

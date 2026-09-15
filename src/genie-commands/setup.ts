@@ -10,10 +10,12 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveGenieHome } from '../lib/genie-home.js';
+import { isInteractive } from '../lib/interactivity.js';
 import { acquireLifecycleLease } from '../lib/lifecycle-lease.js';
 import { type OrcaPluginCompatibilityResult, switchOrchestrationMode } from '../lib/orca-plugin-lifecycle.js';
 import type { readIntegrationConsent } from '../lib/runtime-integrations.js';
 import type { checkCommand } from '../lib/system-detect.js';
+import { printErr, printOut } from '../lib/term-output.js';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
@@ -32,6 +34,13 @@ export interface SetupDeps {
   readIntegrationConsent?: typeof readIntegrationConsent;
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
+  /**
+   * Whether this process may render a prompt at all; production uses
+   * {@link isInteractive}. Same gate, same reason as `genie uninstall`: an
+   * @inquirer/prompts question on a non-TTY stdin never resolves, so a wizard
+   * section must refuse BEFORE it builds one (2026-09-15 dogfood B1).
+   */
+  canPrompt?: () => boolean;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
   /** Test seam for the once-bound absolute executable path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
@@ -39,6 +48,10 @@ export interface SetupDeps {
   /** A3 public compatibility probe seam for isolated Orca mode-switch tests. */
   orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
 }
+
+/** The one stderr line a wizard section that cannot prompt gets, before exit 2. */
+export const SETUP_NON_INTERACTIVE_MESSAGE =
+  'genie setup needs an interactive terminal for this section. Nothing was changed. Use `genie setup --quick` to accept the defaults, or re-run from a terminal without --no-interactive.';
 
 export class SetupIntegrationError extends Error {
   constructor(message: string) {
@@ -51,23 +64,23 @@ export class SetupIntegrationError extends Error {
  * Print the header banner
  */
 function printHeader(): void {
-  console.log();
-  console.log(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
-  console.log('\x1b[1m\x1b[36m  Genie Setup Wizard\x1b[0m');
-  console.log(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
-  console.log();
+  printOut();
+  printOut(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
+  printOut('\x1b[1m\x1b[36m  Genie Setup Wizard\x1b[0m');
+  printOut(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
+  printOut();
 }
 
 /**
  * Print a section header
  */
 function printSection(title: string, description?: string): void {
-  console.log();
-  console.log(`\x1b[1m${title}\x1b[0m`);
+  printOut();
+  printOut(`\x1b[1m${title}\x1b[0m`);
   if (description) {
-    console.log(`\x1b[2m${description}\x1b[0m`);
+    printOut(`\x1b[2m${description}\x1b[0m`);
   }
-  console.log();
+  printOut();
 }
 
 // ============================================================================
@@ -78,7 +91,7 @@ async function configureSession(config: GenieConfig, quick: boolean): Promise<Ge
   printSection('2. Session Configuration', 'Configure tmux session settings');
 
   if (quick) {
-    console.log(`  Using defaults: session="${config.session.name}", window="${config.session.defaultWindow}"`);
+    printOut(`  Using defaults: session="${config.session.name}", window="${config.session.defaultWindow}"`);
     return config;
   }
 
@@ -114,7 +127,7 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   printSection('3. Terminal Defaults', 'Configure default values for term commands');
 
   if (quick) {
-    console.log(`  Using defaults: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
+    printOut(`  Using defaults: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
     return config;
   }
 
@@ -162,19 +175,19 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
   const tmuxInstalled = isShortcutsInstalled(tmuxConf);
 
   if (tmuxInstalled) {
-    console.log('  \x1b[32m\u2713\x1b[0m Tmux shortcuts already installed');
+    printOut('  \x1b[32m\u2713\x1b[0m Tmux shortcuts already installed');
     config.shortcuts.tmuxInstalled = true;
     return config;
   }
 
-  console.log('  Available shortcuts:');
-  console.log('    \x1b[36mCtrl+T\x1b[0m \u2192 New tab (window)');
-  console.log('    \x1b[36mCtrl+S\x1b[0m \u2192 Vertical split');
-  console.log('    \x1b[36mCtrl+H\x1b[0m \u2192 Horizontal split');
-  console.log();
+  printOut('  Available shortcuts:');
+  printOut('    \x1b[36mCtrl+T\x1b[0m \u2192 New tab (window)');
+  printOut('    \x1b[36mCtrl+S\x1b[0m \u2192 Vertical split');
+  printOut('    \x1b[36mCtrl+H\x1b[0m \u2192 Horizontal split');
+  printOut();
 
   if (quick) {
-    console.log('  Skipped in quick mode. Run \x1b[36mgenie setup --shortcuts\x1b[0m to install.');
+    printOut('  Skipped in quick mode. Run \x1b[36mgenie setup --shortcuts\x1b[0m to install.');
     return config;
   }
 
@@ -184,7 +197,7 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
   });
 
   if (installChoice) {
-    console.log();
+    printOut();
     await withSetupLease(deps, async () => {
       // The prompt was answered without a lease. Re-read the target immediately
       // after acquisition so a concurrent setup cannot cause duplicate writes.
@@ -192,7 +205,7 @@ async function configureShortcuts(config: GenieConfig, quick: boolean, deps: Set
       config.shortcuts.tmuxInstalled = true;
     });
   } else {
-    console.log('  Skipped. Run \x1b[36mgenie shortcuts install\x1b[0m later.');
+    printOut('  Skipped. Run \x1b[36mgenie shortcuts install\x1b[0m later.');
   }
 
   return config;
@@ -206,7 +219,7 @@ async function configureDebug(config: GenieConfig, quick: boolean): Promise<Geni
   printSection('6. Debug Options', 'Logging and debugging settings');
 
   if (quick) {
-    console.log('  Using defaults: tmuxDebug=false, verbose=false');
+    printOut('  Using defaults: tmuxDebug=false, verbose=false');
     return config;
   }
 
@@ -236,13 +249,13 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
   printSection('7. Prompt Mode', 'Controls how genie injects system prompts into Claude Code');
 
   if (quick) {
-    console.log(`  Using default: promptMode="${config.promptMode}"`);
+    printOut(`  Using default: promptMode="${config.promptMode}"`);
     return config;
   }
 
-  console.log('  append  — Uses --append-system-prompt-file (preserves Claude Code default system prompt)');
-  console.log('  system  — Uses --system-prompt-file (replaces Claude Code default system prompt)');
-  console.log();
+  printOut('  append  — Uses --append-system-prompt-file (preserves Claude Code default system prompt)');
+  printOut('  system  — Uses --system-prompt-file (replaces Claude Code default system prompt)');
+  printOut();
 
   const promptMode = await select({
     message: 'Prompt mode:',
@@ -264,14 +277,14 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
 function showSummary(config: GenieConfig): void {
   printSection('Summary', `Configuration saved to ${contractPath(getGenieConfigPath())}`);
 
-  console.log(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
-  console.log(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
-  console.log(
+  printOut(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
+  printOut(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
+  printOut(
     `  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`,
   );
-  console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
-  console.log(`  Prompt mode: \x1b[36m${config.promptMode}\x1b[0m`);
-  console.log();
+  printOut(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
+  printOut(`  Prompt mode: \x1b[36m${config.promptMode}\x1b[0m`);
+  printOut();
 }
 
 async function showSummaryAndSave(config: GenieConfig, baseline: GenieConfig, deps: SetupDeps): Promise<void> {
@@ -280,7 +293,7 @@ async function showSummaryAndSave(config: GenieConfig, baseline: GenieConfig, de
   await saveSetupConfig(config, baseline, deps);
 
   showSummary(config);
-  console.log('\x1b[32m\u2713 Configuration saved!\x1b[0m');
+  printOut('\x1b[32m\u2713 Configuration saved!\x1b[0m');
 }
 
 // ============================================================================
@@ -290,12 +303,12 @@ async function showSummaryAndSave(config: GenieConfig, baseline: GenieConfig, de
 async function showCurrentConfig(): Promise<void> {
   const config = await loadGenieConfig();
 
-  console.log();
-  console.log('\x1b[1mCurrent Genie Configuration\x1b[0m');
-  console.log(`\x1b[2m${contractPath(getGenieConfigPath())}\x1b[0m`);
-  console.log();
-  console.log(JSON.stringify(config, null, 2));
-  console.log();
+  printOut();
+  printOut('\x1b[1mCurrent Genie Configuration\x1b[0m');
+  printOut(`\x1b[2m${contractPath(getGenieConfigPath())}\x1b[0m`);
+  printOut();
+  printOut(JSON.stringify(config, null, 2));
+  printOut();
 }
 
 // ============================================================================
@@ -303,13 +316,13 @@ async function showCurrentConfig(): Promise<void> {
 // ============================================================================
 
 function printNextSteps(): void {
-  console.log();
-  console.log('\x1b[1mNext Steps:\x1b[0m');
-  console.log();
-  console.log('  Start a session:  \x1b[36mgenie\x1b[0m');
-  console.log('  Watch AI work:    \x1b[36mtmux attach -t genie\x1b[0m');
-  console.log('  Check health:     \x1b[36mgenie doctor\x1b[0m');
-  console.log();
+  printOut();
+  printOut('\x1b[1mNext Steps:\x1b[0m');
+  printOut();
+  printOut('  Start a session:  \x1b[36mgenie\x1b[0m');
+  printOut('  Watch AI work:    \x1b[36mtmux attach -t genie\x1b[0m');
+  printOut('  Check health:     \x1b[36mgenie doctor\x1b[0m');
+  printOut();
 }
 
 // ============================================================================
@@ -326,8 +339,8 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
   // Handle --reset flag
   if (options.reset) {
     await withSetupLease(deps, () => resetConfig());
-    console.log('\x1b[32m\u2713 Configuration reset to defaults.\x1b[0m');
-    console.log();
+    printOut('\x1b[32m\u2713 Configuration reset to defaults.\x1b[0m');
+    printOut();
     return;
   }
 
@@ -337,8 +350,20 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     }
     const result = await switchOrchestrationMode(options.orchestrationMode, { probe: deps.orcaCompatibilityProbe });
     const detail = result.changed ? 'changed' : 'already selected';
-    console.log(`\x1b[32m\u2713\x1b[0m Orchestration mode ${detail}: ${result.mode}`);
-    if (result.backupPath !== null) console.log(`  Previous config backed up at ${contractPath(result.backupPath)}`);
+    printOut(`\x1b[32m\u2713\x1b[0m Orchestration mode ${detail}: ${result.mode}`);
+    if (result.backupPath !== null) printOut(`  Previous config backed up at ${contractPath(result.backupPath)}`);
+    return;
+  }
+
+  // Every path below this line renders prompts, except `--quick`, which answers
+  // every section from the defaults and is therefore the scripted route. Decide
+  // BEFORE the first prompt object exists: an @inquirer prompt on a non-TTY
+  // stdin renders its question and then never resolves.
+  const quick = options.quick ?? false;
+  const willPrompt = !quick || options.shortcuts === true || options.terminal === true || options.session === true;
+  if (willPrompt && !(deps.canPrompt ?? isInteractive)()) {
+    printErr(SETUP_NON_INTERACTIVE_MESSAGE);
+    process.exitCode = 2;
     return;
   }
 
@@ -358,7 +383,7 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     printHeader();
     config = await configureTerminal(config, false);
     await saveSetupConfig(config, baseline, deps);
-    console.log('\x1b[32m\u2713 Terminal configuration saved.\x1b[0m');
+    printOut('\x1b[32m\u2713 Terminal configuration saved.\x1b[0m');
     return;
   }
 
@@ -366,17 +391,15 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     printHeader();
     config = await configureSession(config, false);
     await saveSetupConfig(config, baseline, deps);
-    console.log('\x1b[32m\u2713 Session configuration saved.\x1b[0m');
+    printOut('\x1b[32m\u2713 Session configuration saved.\x1b[0m');
     return;
   }
 
   // Full wizard
-  const quick = options.quick ?? false;
-
   printHeader();
 
   if (quick) {
-    console.log('\x1b[2mQuick mode: accepting all defaults\x1b[0m');
+    printOut('\x1b[2mQuick mode: accepting all defaults\x1b[0m');
   }
 
   // Run all sections
@@ -402,7 +425,7 @@ export async function setupCommand(options: SetupOptions = {}, deps: SetupDeps =
     await runSetupCommand(options, deps);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    console.error(`Error: Genie setup failed: ${detail}`);
+    printErr(`Error: Genie setup failed: ${detail}`);
     process.exitCode = 1;
   }
 }
@@ -451,7 +474,7 @@ function installGenieTmuxConf(): void {
   try {
     mkdirSync(genieHome, { recursive: true, mode: 0o700 });
     copyFileSync(src, dest);
-    console.log(`\x1b[32m\u2713\x1b[0m Installed genie tmux config to ${dest}`);
+    printOut(`\x1b[32m\u2713\x1b[0m Installed genie tmux config to ${dest}`);
   } catch {
     // non-fatal
   }

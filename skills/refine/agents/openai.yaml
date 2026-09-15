@@ -1,4 +1,4 @@
 interface:
-  display_name: "Prompt Refiner"
-  short_description: "Rewrite any prompt to the Claude Fable 5.1 guidelines"
-  default_prompt: "Rewrite this prompt so it follows the Claude Fable 5.1 prompting guidelines while keeping its intent."
+  display_name: "Refine"
+  short_description: "Improve prompts for OpenAI or Claude"
+  default_prompt: "Refine this prompt using the selected OpenAI or Claude guidance, preserving its task and boundaries. Write the validated prompt and report its path and provider."
