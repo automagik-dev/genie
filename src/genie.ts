@@ -28,7 +28,7 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { colorizeFor } from './lib/term-color.js';
-import { printErr, writeErr } from './lib/term-output.js';
+import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
 import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
@@ -190,6 +190,27 @@ program
       .default('auto'),
   )
   .option('--skip-integrations', 'Alias for --integrations none')
+  // The consent contract in the operator's own words. `--all` used to hand the
+  // skills CLI `--agent '*'`, which CREATED ~53 product homes that had never
+  // existed on the 2026-09-01 dogfood host; nothing in `--help` said so.
+  .addHelpText(
+    'after',
+    [
+      '',
+      'Skills channel:',
+      '  Any --integrations mode but `none` installs skills to every agent DETECTED on',
+      '  this host — one whose product home (~/.claude, ~/.codex, ~/.cursor, …) already',
+      '  exists, or whose skills home the previous install record names.',
+      '  Genie NEVER creates a product home: the agents are named explicitly on the',
+      '  skills CLI command line.',
+      '  ONE-SHOT hand-back: a home recorded by a pre-5.260915 install (the `--all`',
+      '  era, which did create product homes) that now holds nothing but genie-written',
+      '  skills is moved, backup-first, under',
+      '  <GENIE_HOME>/state-backups/skills-prune-<timestamp>/, dropped from the record',
+      '  and named on stdout. A home recorded by this release is never handed back —',
+      '  genie did not create it, so an install followed by an update is idempotent.',
+    ].join('\n'),
+  )
   .action(async (options: InstallOptions) => {
     // Second gate: `--skip-integrations` and programmatic callers bypass
     // `.choices()`. Operator input still gets one line and exit 1, no stack.
@@ -245,4 +266,8 @@ registerOmniCommands(program);
 
 installWorkspaceCheck(program);
 
-await program.parseAsync(process.argv);
+// One process-level broken-pipe guard for the whole CLI. `genie task status
+// <id> | head -1` closes the reader before the producer is done; without this
+// the EPIPE surfaced as an uncaught Bun stack trace and exit 1, so a claim that
+// had already been committed read as a failure (2026-09-15 dogfood r2 §3.2 C).
+await runUnderBrokenPipeGuard(() => program.parseAsync(process.argv).then(() => undefined));

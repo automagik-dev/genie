@@ -401,6 +401,18 @@ export class UnknownTaskError extends Error {
   }
 }
 
+/**
+ * A board reference was supplied but empty (`--board ""`). Distinct from
+ * omitting the flag: an empty ref is an unset variable, never a request for the
+ * unscoped board.
+ */
+export class EmptyBoardRefError extends Error {
+  constructor() {
+    super('board id must not be empty');
+    this.name = 'EmptyBoardRefError';
+  }
+}
+
 /** A referenced board does not exist. */
 export class UnknownBoardError extends Error {
   readonly ref: string;
@@ -512,6 +524,23 @@ export class TaskReleaseError extends Error {
     this.name = 'TaskReleaseError';
     this.taskId = taskId;
     this.status = status;
+  }
+}
+
+/**
+ * A heartbeat was refused because the card carries no live claim. Liveness is
+ * derived from `heartbeat_at` on a CLAIMED card, so writing the timestamp onto
+ * an unclaimed card records a worker that does not exist — the card still reads
+ * `ready`/`claimed_by NULL` while its timeline says something is running.
+ */
+export class TaskNotClaimedError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super(
+      `Cannot heartbeat task ${taskId}: it is not claimed — run \`genie task checkout ${taskId} --worker <name>\` first`,
+    );
+    this.name = 'TaskNotClaimedError';
+    this.taskId = taskId;
   }
 }
 
@@ -760,6 +789,9 @@ export function countBoardTasks(db: Database, boardId: string): number {
  * if neither matches — lets the CLI accept `--board <id-or-name>` uniformly.
  */
 export function resolveBoard(db: Database, ref: string): BoardRow {
+  // `--board ""` (an unset shell variable) used to fall through every caller's
+  // truthiness check and silently widen the read to every task on the repo.
+  if (ref.trim() === '') throw new EmptyBoardRefError();
   const board = getBoard(db, ref) ?? getBoardByName(db, ref);
   if (!board) throw new UnknownBoardError(ref);
   return board;
@@ -1418,7 +1450,12 @@ export function clearTaskAssignment(
  * self-reported). Returns the timestamp written. Injectable clock for tests.
  */
 export function recordHeartbeat(db: Database, taskId: string, now: number = Date.now()): number {
-  requireTask(db, taskId);
+  const row = db.query('SELECT claimed_by FROM tasks WHERE id = ?').get(taskId) as { claimed_by: string | null } | null;
+  if (!row) throw new UnknownTaskError(taskId);
+  // An unclaimed card has no worker to be alive: refuse instead of stamping a
+  // liveness timestamp nothing owns (`genie task heartbeat` used to exit 0 on a
+  // `ready` card with `claimed_by` NULL).
+  if (row.claimed_by === null) throw new TaskNotClaimedError(taskId);
   db.query('UPDATE tasks SET heartbeat_at = ?, updated_at = ? WHERE id = ?').run(now, now, taskId);
   return now;
 }
@@ -2129,7 +2166,123 @@ const SNAPSHOT_TABLE_KEYS = [
   'hire_roster',
 ] as const;
 
-/** Shape-validate an untrusted parsed snapshot; returns it typed or throws. */
+/**
+ * Tables whose rows the import never writes. `wish_groups` is
+ * tolerated-and-dropped (see {@link insertSnapshotRows}), so its rows are NOT
+ * column-validated — a legacy snapshot must keep importing even when the dead
+ * machinery wrote rows this build would reject.
+ */
+const UNWRITTEN_SNAPSHOT_TABLES = new Set<string>(['wish_groups']);
+
+/** The scalar JSON type a column's declared SQLite affinity accepts. */
+type ColumnKind = 'integer' | 'text';
+
+interface ColumnSpec {
+  kind: ColumnKind;
+  /** False for NOT NULL and PRIMARY KEY columns — the value must be present. */
+  nullable: boolean;
+}
+
+/**
+ * The declared column model of one table, read from the live schema so an
+ * ALTER-TABLE-backfilled column (lane, heartbeat_at, assigned_agent, …) is
+ * covered without a second hand-maintained table. `PRIMARY KEY` counts as NOT
+ * NULL: SQLite's legacy nullable-TEXT-PK quirk must never let a null id in.
+ */
+function columnSpecs(db: Database, table: string): Map<string, ColumnSpec> {
+  const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    type: string;
+    notnull: number;
+    pk: number;
+  }>;
+  const specs = new Map<string, ColumnSpec>();
+  for (const row of rows) {
+    const kind: ColumnKind = row.type.toUpperCase().includes('INT') ? 'integer' : 'text';
+    specs.set(row.name, { kind, nullable: row.notnull === 0 && row.pk === 0 });
+  }
+  return specs;
+}
+
+/** Human phrase for an offending snapshot value — never the raw JSON blob. */
+function describeSnapshotValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'object') return 'an object';
+  if (typeof value === 'string') {
+    const shown = value.length > 40 ? `${value.slice(0, 40)}…` : value;
+    return `the string "${shown}"`;
+  }
+  if (typeof value === 'number') return `the number ${value}`;
+  if (typeof value === 'boolean') return `the boolean ${value}`;
+  return `a ${typeof value}`;
+}
+
+/** `tasks" row 3 (id "t_ab12")` — the locator every column error carries. */
+function snapshotRowLabel(table: string, index: number, row: Record<string, unknown>): string {
+  const identity = row.id ?? row.key ?? row.task_id;
+  const suffix = typeof identity === 'string' || typeof identity === 'number' ? ` (id "${identity}")` : '';
+  return `Snapshot table "${table}" row ${index}${suffix}`;
+}
+
+function snapshotColumnError(
+  table: string,
+  index: number,
+  row: Record<string, unknown>,
+  column: string,
+  problem: string,
+): SnapshotFormatError {
+  return new SnapshotFormatError(
+    `${snapshotRowLabel(table, index, row)}: column "${column}" ${problem}. The database was left unchanged; repair the snapshot and re-import.`,
+  );
+}
+
+/**
+ * Type-check one row against the declared column model. Columns the schema does
+ * not declare are ignored (the inserts drop them); every declared column must be
+ * present-and-scalar unless it is nullable. Runs BEFORE any write, so a rejected
+ * snapshot can never land a partial import.
+ */
+function validateSnapshotRow(table: string, index: number, candidate: unknown, specs: Map<string, ColumnSpec>): void {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    throw new SnapshotFormatError(
+      `Snapshot table "${table}" row ${index} is not a JSON object (got ${describeSnapshotValue(candidate)}). The database was left unchanged; repair the snapshot and re-import.`,
+    );
+  }
+  const row = candidate as Record<string, unknown>;
+  for (const [column, spec] of specs) {
+    const value = row[column];
+    if (value === undefined || value === null) {
+      if (spec.nullable) continue;
+      const problem = value === undefined ? 'is missing and has no default' : 'must not be null';
+      throw snapshotColumnError(table, index, row, column, problem);
+    }
+    if (spec.kind === 'integer' && (typeof value !== 'number' || !Number.isInteger(value))) {
+      throw snapshotColumnError(table, index, row, column, `expects an integer, got ${describeSnapshotValue(value)}`);
+    }
+    if (spec.kind === 'text' && typeof value !== 'string') {
+      throw snapshotColumnError(table, index, row, column, `expects a string, got ${describeSnapshotValue(value)}`);
+    }
+  }
+}
+
+/**
+ * Column-validate every row of every table the import writes. Without this a
+ * non-scalar reached bun:sqlite as a raw `Binding expected string, TypedArray,
+ * boolean, number, bigint or null` with no locator, and a string in an INTEGER
+ * column was silently stored by type affinity — a corrupt `created_at` landing
+ * on the board with no signal.
+ */
+function validateSnapshotRows(db: Database, candidate: Record<string, unknown>): void {
+  for (const table of SNAPSHOT_TABLE_KEYS) {
+    if (UNWRITTEN_SNAPSHOT_TABLES.has(table)) continue;
+    const specs = columnSpecs(db, table);
+    const rows = candidate[table] as unknown[];
+    for (const [index, row] of rows.entries()) validateSnapshotRow(table, index, row, specs);
+  }
+}
+
+/** Shape- AND column-validate an untrusted parsed snapshot; returns it typed or throws. */
 function validateSnapshot(db: Database, snapshot: unknown): StateExport {
   if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
     throw new SnapshotFormatError('Snapshot is not a JSON object.');
@@ -2149,6 +2302,7 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
       `Snapshot schemaVersion ${candidate.schemaVersion} does not match this database (${current}). Re-export the snapshot with a matching genie version.`,
     );
   }
+  validateSnapshotRows(db, candidate);
   return candidate as unknown as StateExport;
 }
 

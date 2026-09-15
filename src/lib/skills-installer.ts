@@ -70,6 +70,7 @@ import {
   type IntegrationSelection,
   runBoundedIntegrationCommand,
 } from './runtime-integrations.js';
+import { type SkillsAgentSelection, agentHomeIsIndependentlyDetected, selectSkillsCliAgents } from './skills-agents.js';
 
 /**
  * Pinned skills CLI. Bumping it is an ordinary dependency PR (wish decision 1),
@@ -271,6 +272,28 @@ const skillsInstallRecordSchema = z.object({
    * record already written and silently turn `genie uninstall` into a no-op.
    */
   preserved: z.array(skillsPreservedSchema).optional(),
+  /**
+   * How this record's `agentDirs` were chosen — the ONLY durable proof of who
+   * created the product homes they sit in.
+   *
+   * `'explicit'` means the run that wrote this record named its agents with an
+   * explicit `--agent <name>` list drawn from products already installed, so it
+   * created NO product home. A record without the field predates that change
+   * and was therefore written by an `--all` run, which materialized every
+   * product home in the pinned CLI's 77-agent registry.
+   *
+   * That distinction is what makes the genie-created-home prune honest. Content
+   * alone cannot make it: after a correct install an operator's own `~/.claude`
+   * holding only `skills/` is byte-for-byte what a genie-materialized home
+   * looks like, so a content-only proof hands back the operator's real home on
+   * the second run (r2 verify §6/§7). Gated on this field the prune is what it
+   * always claimed to be — a ONE-SHOT migration off the `--all` era.
+   *
+   * Optional for the same decision-2 reason as `source`: a required field would
+   * invalidate every record already on disk and turn `genie uninstall` into a
+   * silent no-op over the directories those records still authorize.
+   */
+  agentSelection: z.literal('explicit').optional(),
   installedAt: z.string().min(1),
 });
 
@@ -281,29 +304,82 @@ export function skillsInstallRecordPath(genieHome: string = resolveGenieHome()):
 }
 
 /**
- * `null` for absent, unreadable, non-JSON, or schema-invalid records — and for
- * anything at that path that is not a PHYSICAL regular file. A symlink there is
- * an attacker-supplied redirect into a file genie would then treat as an
- * uninstall manifest, so it is rejected the same way
- * `readIntegrationConsentState` rejects one (rejected as absent rather than
- * thrown: this reader's whole contract is "never throw").
+ * A record file that exists but cannot be trusted. Thrown by
+ * {@link readSkillsInstallRecord} so every consumer FAILS CLOSED: before this
+ * existed, one schema-invalid `preserved[]` entry made the whole record read as
+ * "no install record", and `genie uninstall` then printed
+ * `no install record; nothing to remove.`, exited 0, deleted `~/.genie` and
+ * left every recorded skill directory orphaned (r2 §3.3 #14).
  */
-export function readSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecord | null {
+export class SkillsInstallRecordError extends Error {
+  /** The offending field path, e.g. `preserved.0.skill`, or `<document>`. */
+  readonly field: string;
+  /** The record file the error is about. */
+  readonly path: string;
+
+  constructor(options: { path: string; field: string; detail: string }) {
+    super(`skills install record at ${options.path} is malformed: ${options.field} — ${options.detail}`);
+    this.name = 'SkillsInstallRecordError';
+    this.field = options.field;
+    this.path = options.path;
+  }
+}
+
+/** The three honest answers about a record file. Never throws. */
+export type SkillsInstallRecordRead =
+  | { status: 'ok'; record: SkillsInstallRecord }
+  | { status: 'absent' }
+  | { status: 'invalid'; error: SkillsInstallRecordError };
+
+/**
+ * The full-fidelity reader: `absent` for a missing/unreadable record and for
+ * anything at that path that is not a PHYSICAL regular file (a symlink there is
+ * an attacker-supplied redirect into a file genie would otherwise treat as an
+ * uninstall manifest, rejected the same way `readIntegrationConsentState`
+ * rejects one), `invalid` for a record that IS there but is not JSON or does
+ * not satisfy the schema.
+ */
+export function inspectSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecordRead {
   const path = skillsInstallRecordPath(genieHome);
   let raw: string;
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    if (!stat.isFile() || stat.isSymbolicLink()) return { status: 'absent' };
     raw = readFileSync(path, 'utf8');
   } catch {
-    return null;
+    return { status: 'absent' };
   }
+  let document: unknown;
   try {
-    const parsed = skillsInstallRecordSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
+    document = JSON.parse(raw);
+  } catch (error) {
+    return {
+      status: 'invalid',
+      error: new SkillsInstallRecordError({ path, field: '<document>', detail: errorMessage(error) }),
+    };
   }
+  const parsed = skillsInstallRecordSchema.safeParse(document);
+  if (parsed.success) return { status: 'ok', record: parsed.data };
+  const issue = parsed.error.issues[0];
+  return {
+    status: 'invalid',
+    error: new SkillsInstallRecordError({
+      path,
+      field: issue === undefined || issue.path.length === 0 ? '<document>' : issue.path.join('.'),
+      detail: issue?.message ?? 'does not satisfy the install-record schema',
+    }),
+  };
+}
+
+/**
+ * `null` when there is no record. THROWS {@link SkillsInstallRecordError} when
+ * a record is present but malformed — the fail-closed half of the contract.
+ * Callers that must not throw use {@link inspectSkillsInstallRecord}.
+ */
+export function readSkillsInstallRecord(genieHome: string = resolveGenieHome()): SkillsInstallRecord | null {
+  const read = inspectSkillsInstallRecord(genieHome);
+  if (read.status === 'invalid') throw read.error;
+  return read.status === 'ok' ? read.record : null;
 }
 
 /**
@@ -872,20 +948,50 @@ export function releaseTag(version: string): string {
 }
 
 /**
- * The production argv, verbatim. No extra `-y`: `--all` already expands to
- * `--skill '*' --agent '*' -y` inside the pinned CLI.
+ * The production argv. `--all` is deliberately NOT used: it expands to
+ * `--skill '*' --agent '*' -y` inside the pinned CLI, and `--agent '*'` writes
+ * (and therefore CREATES) every product home in the CLI's 77-agent registry —
+ * ~53 of them on the 2026-09-01 dogfood host. Genie names the agents instead,
+ * so `--skill '*'` and `-y` are spelled out here; the CLI's variadic parser
+ * ends each list at the next `-`-prefixed token.
  *
  * `sourceRoot` is an absolute LOCAL path — never a `<repo>@<ref>` GitHub
  * source, which the pinned CLI silently resolves to the default branch (see the
  * module header).
  */
-export function buildSkillsAddArgv(options: { sourceRoot: string }): string[] {
-  return ['npx', '-y', `skills@${SKILLS_CLI_VERSION}`, 'add', options.sourceRoot, '--all', '--copy', '-g'];
+export function buildSkillsAddArgv(options: { sourceRoot: string; agents: readonly string[] }): string[] {
+  return [
+    'npx',
+    '-y',
+    `skills@${SKILLS_CLI_VERSION}`,
+    'add',
+    options.sourceRoot,
+    '--skill',
+    '*',
+    '--agent',
+    ...options.agents,
+    '-y',
+    '--copy',
+    '-g',
+  ];
+}
+
+/**
+ * One argv token, rendered so a shell reproduces it verbatim.
+ *
+ * The remedy line is COPY-PASTED into a shell, and `--skill *` is not the argv
+ * genie spawns: an unquoted `*` expands against the operator's cwd, so the
+ * pasted command installs whatever files happen to sit there. Quoting restores
+ * the documented `--skill '*'`.
+ */
+function shellQuoteArgvToken(token: string): string {
+  if (token !== '' && /^[A-Za-z0-9_@%+=:,./-]+$/.test(token)) return token;
+  return `'${token.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 /** The operator-facing remedy line for any skills-channel failure. */
-export function skillsInstallRemedy(sourceRoot: string): string {
-  return `Run: ${buildSkillsAddArgv({ sourceRoot }).join(' ')}`;
+export function skillsInstallRemedy(sourceRoot: string, agents: readonly string[]): string {
+  return `Run: ${buildSkillsAddArgv({ sourceRoot, agents }).map(shellQuoteArgvToken).join(' ')}`;
 }
 
 export type ExecutableProbe = (name: string) => string | null;
@@ -936,12 +1042,24 @@ export interface SkillsInstallOptions {
  */
 export type SkillsInstallOutcome =
   | { ok: true; record: SkillsInstallRecord; warnings?: string[] }
-  | { ok: false; reason: string; remedy: string; warnings?: string[] };
+  | {
+      ok: false;
+      reason: string;
+      remedy: string;
+      warnings?: string[];
+      /**
+       * Set when the host simply has no agent installed. Not a failure of the
+       * channel: genie creates no product home, so there is nothing to write
+       * to and the convergence reports `skipped` rather than exit 1.
+       */
+      noAgents?: true;
+    };
 
 /**
  * Every agent skill home this install can prove it wrote, unioned with the
- * known-home floor so the record can never shrink below the previous
- * behaviour (decision 3). Sorted floor-first, then the scanned remainder.
+ * homes the argv pointed the CLI at, so the record names exactly what this run
+ * targeted plus whatever the discovery scan proves it also wrote. Sorted
+ * floor-first, then the scanned remainder.
  */
 function resolveAgentDirs(options: {
   home: string;
@@ -951,8 +1069,13 @@ function resolveAgentDirs(options: {
   since: number;
   nowMs: () => number;
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
+  /** The homes this run's `--agent` list actually pointed the CLI at. */
+  targetHomes: readonly string[];
 }): { dirs: string[]; warnings: string[]; scanOk: boolean } {
-  const floor = existingAgentSkillHomes(options.home).map((entry) => entry.dir);
+  // The floor is the set of homes this run WROTE that are on disk afterwards —
+  // no longer every existing known home, which could record a home nothing in
+  // this run ever touched now that the argv names its agents.
+  const floor = options.targetHomes.filter((dir) => isDirectory(dir));
   const warnings: string[] = [];
   const scan = scanSkillsHomes({
     home: options.home,
@@ -1333,20 +1456,273 @@ function reportVanishedAgentDirs(previous: SkillsInstallRecord | null, warnings:
 }
 
 /**
+ * One recorded agent home genie created itself and can now hand back.
+ */
+export interface PrunedAgentHome {
+  /** The recorded `<product root>/skills` directory. */
+  agentDir: string;
+  /** The product root that was moved (e.g. `~/.openclaw`). */
+  productRoot: string;
+  /** Where its bytes went. */
+  backedUpTo: string;
+}
+
+export interface AgentHomePruneResult {
+  pruned: PrunedAgentHome[];
+  /** `state-backups/skills-prune-<compact ISO>/`, created only if used. */
+  backupRoot?: string;
+}
+
+interface AgentHomePruneContext {
+  home: string;
+  genieHome: string;
+  previous: SkillsInstallRecord;
+  now: () => Date;
+  rename: (source: string, destination: string) => void;
+}
+
+/**
+ * The product root a recorded skills home belongs to — its parent, unless that
+ * parent is HOME itself or the shared XDG `~/.config` root, neither of which is
+ * ever a product home. Deliberately conservative: for `~/.pi/agent/skills` it
+ * answers `~/.pi/agent` rather than `~/.pi`, so the prune moves LESS than the
+ * product owns, never more.
+ */
+export function productRootForAgentDir(home: string, agentDir: string): string | null {
+  const parent = dirname(agentDir);
+  const mirrored = relative(home, parent);
+  if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) return null;
+  if (parent === join(home, '.config')) return null;
+  return parent;
+}
+
+/**
+ * True when `productRoot` holds NOTHING except the skills directory genie
+ * wrote: one entry, a real directory, and every entry inside it is a recorded
+ * inventory skill whose content still matches the recorded digest. Any foreign
+ * file anywhere — a config, a dotfile, a skill genie never recorded, an edited
+ * one — answers `false` and the home is left alone.
+ */
+function holdsOnlyRecordedSkills(context: {
+  productRoot: string;
+  agentDir: string;
+  previous: SkillsInstallRecord;
+}): boolean {
+  let roots: Dirent[];
+  try {
+    roots = readdirSync(context.productRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const only = roots.length === 1 ? roots[0] : undefined;
+  if (only === undefined || !only.isDirectory() || join(context.productRoot, only.name) !== context.agentDir) {
+    return false;
+  }
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(context.agentDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  const digests = context.previous.dirDigests ?? {};
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) return false;
+    if (!context.previous.inventory.includes(entry.name)) return false;
+    const path = join(context.agentDir, entry.name);
+    const expected = digests[path];
+    if (expected === undefined || computeSkillDirDigest(path) !== expected) return false;
+  }
+  return true;
+}
+
+/** `state-backups/skills-prune-<compact ISO 8601>/` — the retirement family. */
+function ensurePruneBackupRoot(context: AgentHomePruneContext, result: AgentHomePruneResult): string {
+  if (result.backupRoot === undefined) {
+    const stamp = context.now().toISOString().replace(/[:.]/g, '-');
+    const root = join(context.genieHome, 'state-backups', `skills-prune-${stamp}`);
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    result.backupRoot = root;
+  }
+  return result.backupRoot;
+}
+
+/** Rename when both paths share a filesystem, copy-then-remove when they do not. */
+function moveProductRoot(source: string, destination: string, rename: (a: string, b: string) => void): void {
+  try {
+    rename(source, destination);
+    return;
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
+  }
+  try {
+    cpSync(source, destination, { recursive: true, verbatimSymlinks: true });
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
+  rmSync(source, { recursive: true, force: true });
+}
+
+/**
+ * True when the previous record proves genie created no product home writing
+ * it — i.e. it carries `agentSelection: 'explicit'`.
+ *
+ * This is the prune's ownership proof, and it must be a RECORD fact rather than
+ * a content fact. A product root holding only `skills/` is exactly what a
+ * correct install leaves behind in an operator's OWN `~/.claude`, so a
+ * content-only proof pruned the operator's real home on the second run of the
+ * identical command (r2 verify §6), and on a two-product host it pruned both
+ * and then reported `no agent skill home detected` (§7) — install → update →
+ * the agent's skills are gone. Genie no longer creates product homes, so the
+ * only homes it may ever hand back are the ones an `--all` era record names.
+ */
+export function recordCreatedNoProductHomes(previous: SkillsInstallRecord): boolean {
+  return previous.agentSelection === 'explicit';
+}
+
+/**
+ * Hand back the product homes genie itself created (r2 §3.2 B).
+ *
+ * Until this release the argv was `--all`, so every `genie install` materialized
+ * ~53 product homes the operator had never installed — `~/.openclaw`,
+ * `~/.adal`, `~/.qwen`, … — each holding nothing but genie-written skills.
+ * Those homes are recorded by an `--all` era record, so genie can prove
+ * ownership and give them back: ONE-SHOT (never for a record genie wrote with
+ * an explicit agent list), backup-first (never a bare delete), only when the
+ * ENTIRE product root holds nothing but recorded, digest-matching skills, and
+ * one reported line each.
+ *
+ * Never throws: a home that cannot be moved is simply kept.
+ */
+export function pruneGenieCreatedAgentHomes(context: AgentHomePruneContext, warnings: string[]): AgentHomePruneResult {
+  const result: AgentHomePruneResult = { pruned: [] };
+  // A record this release wrote names only detected products, so every home it
+  // lists sits in a product root the OPERATOR created. Nothing to hand back.
+  if (recordCreatedNoProductHomes(context.previous)) return result;
+  for (const agentDir of new Set(context.previous.agentDirs)) {
+    const productRoot = productRootForAgentDir(context.home, agentDir);
+    if (productRoot === null) continue;
+    // A home an agent installed ELSEWHERE reads is that agent's, not genie's to
+    // hand back — `~/.agents/skills` is shared by every universal agent.
+    if (agentHomeIsIndependentlyDetected(context.home, agentDir, productRoot)) continue;
+    if (!holdsOnlyRecordedSkills({ productRoot, agentDir, previous: context.previous })) continue;
+    const mirrored = relative(context.home, productRoot);
+    try {
+      const destination = join(ensurePruneBackupRoot(context, result), mirrored);
+      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+      moveProductRoot(productRoot, destination, context.rename);
+      result.pruned.push({ agentDir, productRoot, backedUpTo: destination });
+      warnings.push(`skills: pruned genie-created agent home ${productRoot} — backed up to ${destination}`);
+    } catch (error) {
+      warnings.push(`skills: could not prune genie-created agent home ${productRoot}: ${errorMessage(error)}`);
+    }
+  }
+  if (result.pruned.length > 0 && result.backupRoot !== undefined) {
+    warnings.push(
+      `skills: pruned ${result.pruned.length} genie-created agent home(s) (backed up to ${result.backupRoot}); genie installs to detected agents only`,
+    );
+  }
+  return result;
+}
+
+/**
+ * Which agents this run writes, and which recorded homes it hands back first.
+ *
+ * The prune runs BEFORE the selection so a home genie created can never be
+ * re-created by the same run, and AFTER retirement (its caller's order) because
+ * a home whose only remaining content is the current inventory is exactly what
+ * retirement leaves behind — only then can it be proven genie-only.
+ */
+function resolveInstallTargets(
+  context: {
+    home: string;
+    genieHome: string;
+    previous: SkillsInstallRecord | null;
+    now: () => Date;
+    rename: (source: string, destination: string) => void;
+  },
+  warnings: string[],
+): { selection: SkillsAgentSelection; prunedDirs: Set<string> } {
+  const prune =
+    context.previous === null
+      ? { pruned: [] }
+      : pruneGenieCreatedAgentHomes({ ...context, previous: context.previous }, warnings);
+  const prunedDirs = new Set(prune.pruned.map((entry) => entry.agentDir));
+  if (context.previous !== null && prunedDirs.size > 0) {
+    dropPrunedHomesFromRecord(context.genieHome, context.previous, prunedDirs, warnings);
+  }
+  const selection = selectSkillsCliAgents({
+    home: context.home,
+    recordedDirs: (context.previous?.agentDirs ?? []).filter((dir) => !prunedDirs.has(dir)),
+  });
+  return { selection, prunedDirs };
+}
+
+/**
+ * Persist the prune immediately, so a home handed back is dropped from the
+ * record on EVERY exit path — not only the one that reaches the record write.
+ *
+ * On the no-agent path the early return used to fire before the record write,
+ * so a run that pruned every recorded home left the record still naming them
+ * (r2 verify §7): doctor then warned `0/2 recorded homes complete … (not on
+ * disk)` and prescribed `genie update`, which now permanently reports
+ * `skipped` — a terminal state. The same held for a spawn failure. Writing here
+ * also stamps `agentSelection`, which makes the prune one-shot even when the
+ * run that performed it never got as far as installing.
+ */
+function dropPrunedHomesFromRecord(
+  genieHome: string,
+  previous: SkillsInstallRecord,
+  prunedDirs: ReadonlySet<string>,
+  warnings: string[],
+): void {
+  const keptDigests = Object.fromEntries(
+    Object.entries(previous.dirDigests ?? {}).filter(([path]) => !isUnderAnyPrunedDir(path, prunedDirs)),
+  );
+  const record: SkillsInstallRecord = {
+    ...previous,
+    agentDirs: previous.agentDirs.filter((dir) => !prunedDirs.has(dir)),
+    ...(previous.dirDigests === undefined ? {} : { dirDigests: keptDigests }),
+    ...(previous.preserved === undefined
+      ? {}
+      : { preserved: previous.preserved.filter((entry) => !prunedDirs.has(entry.agentDir)) }),
+    agentSelection: 'explicit',
+  };
+  try {
+    writeSkillsInstallRecord(genieHome, record);
+  } catch (error) {
+    warnings.push(
+      `skills: pruned agent home(s) could not be dropped from ${skillsInstallRecordPath(genieHome)}: ${errorMessage(error)}`,
+    );
+  }
+}
+
+/** True when a recorded digest key lives inside one of the pruned agent dirs. */
+function isUnderAnyPrunedDir(path: string, prunedDirs: ReadonlySet<string>): boolean {
+  for (const dir of prunedDirs) {
+    if (path === dir || path.startsWith(`${dir}${sep}`)) return true;
+  }
+  return false;
+}
+
+/**
  * Preflight → archive the skills this release retires → collision snapshot →
  * spawn the pinned CLI → discovery scan → record.
  * Never throws: every failure is a returned reason plus the remedy command.
  */
 export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOutcome {
   const skillsRoot = options.skillsRoot ?? skillsSourceRoot(options.genieHome);
-  const remedy = skillsInstallRemedy(skillsRoot);
+  const home = options.home ?? homedir();
+  // The agent list is data, so the remedy line a failure prints is the argv the
+  // run would have used. Recomputed once the previous record is known.
+  let remedy = skillsInstallRemedy(skillsRoot, selectSkillsCliAgents({ home }).agents);
   if (options.version.trim() === '') {
     return { ok: false, reason: 'running binary version is unknown', remedy };
   }
   const preflight = preflightNode({ which: options.which });
   if (!preflight.ok) return { ok: false, reason: preflight.reason, remedy };
 
-  const home = options.home ?? homedir();
   const nowMs = options.nowMs ?? (() => Date.now());
   const now = options.now ?? (() => new Date());
   const warnings: string[] = [];
@@ -1354,7 +1730,18 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // the names the install is about to write. The delivered tree is genie's own
   // and the CLI only reads it, so the value is still the one recorded below.
   const inventory = inventoryFromSkillsDir(skillsRoot);
-  const previous = readSkillsInstallRecord(options.genieHome);
+  // Fail closed on a malformed record: it is the retirement plan, the collision
+  // baseline and uninstall's removal authority all at once, so installing over
+  // one genie cannot read would silently widen what a later uninstall misses.
+  const read = inspectSkillsInstallRecord(options.genieHome);
+  if (read.status === 'invalid') {
+    return {
+      ok: false,
+      reason: read.error.message,
+      remedy: `Repair or remove ${skillsInstallRecordPath(options.genieHome)}, then run: genie update`,
+    };
+  }
+  const previous = read.status === 'ok' ? read.record : null;
   const vanished = reportVanishedAgentDirs(previous, warnings);
 
   // RETIREMENT RUNS BEFORE THE INSTALL PASS. `--all` rewrites every supported
@@ -1391,6 +1778,22 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     }
   }
 
+  const { selection, prunedDirs } = resolveInstallTargets(
+    { home, genieHome: options.genieHome, previous, now, rename: options.renameRetiredSkill ?? renameSync },
+    warnings,
+  );
+  remedy = skillsInstallRemedy(skillsRoot, selection.agents);
+  // Never invent a home: with no agent installed there is nothing to write to.
+  if (selection.agents.length === 0) {
+    return {
+      ok: false,
+      noAgents: true,
+      reason: 'no agent skill home detected (genie installs to detected agents only, and creates none)',
+      remedy: `Install an agent (or create its home, e.g. ${join(home, '.claude')}), then run: genie update`,
+      warnings,
+    };
+  }
+
   const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
   // What the snapshot staged is judged — kept and reported, or discarded — by
   // re-digesting the originals after the spawn. It is therefore correct on
@@ -1398,7 +1801,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const finalizeCollisions = (): SkillsCollision[] =>
     finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
-  const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot });
+  const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot, agents: selection.agents });
   const run = options.spawn ?? runBoundedIntegrationCommand;
   // Captured immediately before the spawn: the discovery window opens here.
   const startedAtMs = nowMs();
@@ -1434,6 +1837,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     since: startedAtMs,
     nowMs,
     scan: options.scan,
+    targetHomes: selection.homes,
   });
   warnings.push(...agents.warnings);
   const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory);
@@ -1455,10 +1859,17 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       // Recorded homes are never dropped, only added to: `agentDirs` is
       // `genie uninstall`'s removal authority, and a vanished entry that fell
       // out of the record took the proof it ever existed with it.
-      agentDirs: [...agents.dirs, ...vanished.filter((dir) => !agents.dirs.includes(dir))],
+      agentDirs: [
+        ...agents.dirs.filter((dir) => !prunedDirs.has(dir)),
+        ...vanished.filter((dir) => !agents.dirs.includes(dir) && !prunedDirs.has(dir)),
+      ],
       dirDigests,
       ...(collisions.length > 0 ? { collisions } : {}),
       ...(preserved.length > 0 ? { preserved } : {}),
+      // This run named its agents explicitly from products already installed,
+      // so it created no product home — the durable fact that stops the next
+      // run's prune from handing back the operator's own `~/.claude`.
+      agentSelection: 'explicit',
       installedAt: now().toISOString(),
     };
     writeSkillsInstallRecord(options.genieHome, record);
@@ -1625,6 +2036,8 @@ function finalizeCollisionSnapshot(context: {
   }
   const backupRoot = snapshot.backupRoot;
   const kept: SkillsCollision[] = [];
+  /** The dirs whose previous bytes really are in `backupRoot`. */
+  const stagedDirs = new Set(snapshot.collisions.filter((entry) => entry.backedUp).map((entry) => entry.dir));
   for (const collision of snapshot.collisions) {
     if (collisionIsUntouched(collision)) {
       if (collision.backedUp && backupRoot !== null) {
@@ -1639,86 +2052,33 @@ function finalizeCollisionSnapshot(context: {
         : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
     );
   }
-  pruneCollisionBackups({ genieHome: context.genieHome, home: context.home });
+  // X1: a state-backups root is an ARCHIVE. Nothing here removes, moves or
+  // rewrites a root a previous run wrote — the deleted `pruneCollisionBackups`
+  // did exactly that, silently, even on runs that installed nothing, and it
+  // destroyed the dogfood host's hop-1 root. Only the CURRENT run's staging is
+  // ever discarded, above, and only while the live original still proves the
+  // copy protects nothing. What survives is named on stdout.
+  const backedUp = kept.filter((collision) => stagedDirs.has(collision.dir)).length;
+  if (backupRoot !== null && backedUp > 0) {
+    warnings.push(`skills: collision backup kept at ${backupRoot} (${backedUp} replaced dir(s))`);
+  } else if (backupRoot !== null) {
+    discardEmptyCollisionBackupRoot(backupRoot);
+  }
   return kept;
 }
 
-const COLLISION_PRUNE_MAX_ROOTS = 32;
-const COLLISION_PRUNE_MAX_FILES = 4000;
-const COLLISION_PRUNE_MAX_FILE_BYTES = 4 * 1024 * 1024;
-
-/** Byte-equal regular files at both paths, within the compare budget. */
-function sameFileContents(left: string, right: string): boolean {
-  try {
-    const leftStat = lstatSync(left);
-    const rightStat = lstatSync(right);
-    if (!leftStat.isFile() || !rightStat.isFile()) return false;
-    if (leftStat.size !== rightStat.size) return false;
-    if (leftStat.size > COLLISION_PRUNE_MAX_FILE_BYTES) return false;
-    return readFileSync(left).equals(readFileSync(right));
-  } catch {
-    return false;
-  }
-}
-
 /**
- * True when every file under `root` still has a byte-identical live original,
- * i.e. the copy protects nothing. Anything unreadable, unexpected or over
- * budget answers `false`, so a doubtful backup is always kept.
+ * The CURRENT run's staging root, removed only while it still holds nothing —
+ * i.e. before it is promoted to a named, reported archive root. This is the ONE
+ * removal under `state-backups/` the installer performs, and it can only ever
+ * touch the root this run just created.
  */
-function collisionBackupIsRedundant(root: string, home: string, budget: { files: number }): boolean {
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const current = stack.pop() as string;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const entry of entries) {
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(path);
-        continue;
-      }
-      if (!entry.isFile()) return false;
-      if (--budget.files < 0) return false;
-      const rel = relative(root, path);
-      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-      if (!sameFileContents(path, join(home, rel))) return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Drop the `skills-collision-*` roots that no longer protect anything —
- * including the ones an EARLIER run left behind when it could not prove what
- * the install had written. A root is removed only when every file in it still
- * matches its live original, so a root holding the user's replaced bytes is
- * never touched; an empty root trivially qualifies. Never throws.
- */
-function pruneCollisionBackups(context: { genieHome: string; home: string }): void {
-  const base = join(context.genieHome, 'state-backups');
-  let entries: Dirent[];
+function discardEmptyCollisionBackupRoot(backupRoot: string): void {
+  if (!holdsNoFiles(backupRoot)) return;
   try {
-    entries = readdirSync(base, { withFileTypes: true });
+    rmSync(backupRoot, { recursive: true, force: true });
   } catch {
-    return;
-  }
-  const budget = { files: COLLISION_PRUNE_MAX_FILES };
-  let roots = 0;
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('skills-collision-')) continue;
-    if (++roots > COLLISION_PRUNE_MAX_ROOTS) return;
-    const root = join(base, entry.name);
-    if (!collisionBackupIsRedundant(root, context.home, budget)) continue;
-    try {
-      rmSync(root, { recursive: true, force: true });
-    } catch {
-      // A root that cannot be removed is harmless: it is a redundant copy.
-    }
+    // Best effort: an unremovable empty staging root never fails an install.
   }
 }
 
@@ -1761,23 +2121,46 @@ function snapshotCollisionsSafely(context: {
 }
 
 /**
+ * npx's own progress chatter, which it writes to STDERR. On a cold npm cache
+ * `npm notice`/`npm warn` lines are the LAST thing on stderr while the skills
+ * CLI's real error went to stdout, so the unfiltered "last stderr line" rule
+ * diagnosed every fresh machine and CI runner with `npm notice.` (r2 #5).
+ */
+const NPM_CHATTER_PATTERN = /^npm (notice|warn|WARN|http|info|verbose|sill)\b/;
+
+/** `true` for a line that is npm/npx progress rather than a real failure. */
+export function isNpmChatterLine(line: string): boolean {
+  return NPM_CHATTER_PATTERN.test(line.trim());
+}
+
+/**
  * The diagnosis line. stderr is where the CLI puts its failure, so its last
- * non-empty line wins whenever stderr has one; stdout is only consulted when
- * stderr is silent. Concatenating the two (the previous behaviour) let a
- * trailing progress line on stdout mask the actual error.
+ * non-empty NON-CHATTER line wins whenever stderr has one; stdout is consulted
+ * when stderr carries nothing but npm chatter. Concatenating the two (the
+ * original behaviour) let a trailing progress line on stdout mask the error.
  */
 function describeFailure(result: CommandResult): string {
   if (result.timedOut) return `skills CLI timed out after ${SKILLS_INSTALL_TIMEOUT_MS} ms`;
-  const tail = lastNonEmptyLine(result.stderr) ?? lastNonEmptyLine(result.stdout);
+  const tail = lastRealLine(result.stderr) ?? lastRealLine(result.stdout) ?? lastNonEmptyLine(result.stderr);
   return tail === undefined ? `skills CLI exited ${result.exitCode}` : `skills CLI exited ${result.exitCode}: ${tail}`;
 }
 
+/** The last non-empty line that is not npm/npx chatter. */
+function lastRealLine(stream: string): string | undefined {
+  return nonEmptyLines(stream)
+    .filter((line) => !isNpmChatterLine(line))
+    .at(-1);
+}
+
 function lastNonEmptyLine(stream: string): string | undefined {
-  const lines = stream
+  return nonEmptyLines(stream).at(-1);
+}
+
+function nonEmptyLines(stream: string): string[] {
+  return stream
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '');
-  return lines.at(-1);
 }
 
 function errorMessage(error: unknown): string {
@@ -1814,6 +2197,11 @@ export function runSkillsChannelConvergence(options: SkillsChannelConvergenceOpt
     return { status: 'skipped', reason: 'consent: none' };
   }
   const outcome = (options.install ?? runSkillsInstall)(options);
+  if (!outcome.ok && outcome.noAgents === true) {
+    emit(`skills: skipped (${outcome.reason})`);
+    for (const warning of outcome.warnings ?? []) emit(warning);
+    return { status: 'skipped', reason: outcome.reason };
+  }
   if (!outcome.ok) {
     emit(`Skills install failed: ${outcome.reason}. ${outcome.remedy}`);
     // The pre-spawn collision snapshot may already have backed a foreign skill

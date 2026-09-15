@@ -42,3 +42,61 @@ export function printOut(line = ''): void {
 export function printErr(line = ''): void {
   writeErr(`${line}\n`);
 }
+
+// ─── Broken-pipe guard ───────────────────────────────────────────────────────
+
+/**
+ * Whether `error` is the failure a downstream reader causes by closing the pipe
+ * early (`genie task status <id> | head -1`).
+ *
+ * Bun surfaces it as an `EPIPE` error object carrying `errno: -32`; Node's
+ * stream layer can also raise `ERR_STREAM_DESTROYED` for a write that lands
+ * after the descriptor is gone. Both mean the same thing: nobody is reading any
+ * more. Neither is a failure of the work the command already committed.
+ */
+export function isBrokenPipeError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return true;
+  return (error as { errno?: unknown }).errno === -32 && (error as { syscall?: unknown }).syscall === 'write';
+}
+
+/**
+ * End the process the way every well-behaved Unix producer ends when its reader
+ * goes away: silently, with a success status. The work the command committed
+ * (a task claim, a state write) happened before the line that could not be
+ * delivered; reporting a non-zero exit would make `genie task checkout <id> |
+ * head -1` read as a failed claim on a card that is genuinely in progress.
+ *
+ * Any still-pending output is dropped on purpose — the destination is gone.
+ */
+function exitOnBrokenPipe(): never {
+  process.exit(0);
+}
+
+/**
+ * Install the one process-level broken-pipe guard, and return a wrapper that
+ * runs the CLI under it.
+ *
+ * Two delivery routes have to be covered, because Bun uses both:
+ *   - the stream `'error'` event (an async write failure; with no listener it
+ *     becomes an uncaught exception plus a Bun stack trace and exit 1), and
+ *   - a rejection/throw that escapes the command action (a synchronous write).
+ *
+ * Every other error is re-thrown untouched, so the default diagnostic and exit
+ * code of a genuine failure are unchanged.
+ */
+export async function runUnderBrokenPipeGuard(run: () => Promise<void>): Promise<void> {
+  const onStreamError = (error: unknown): void => {
+    if (isBrokenPipeError(error)) exitOnBrokenPipe();
+    throw error;
+  };
+  process.stdout.on('error', onStreamError);
+  process.stderr.on('error', onStreamError);
+  try {
+    await run();
+  } catch (error) {
+    if (!isBrokenPipeError(error)) throw error;
+    exitOnBrokenPipe();
+  }
+}

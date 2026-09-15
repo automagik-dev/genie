@@ -38,9 +38,9 @@ import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
-  readSkillsInstallRecord,
   releaseTag,
 } from '../lib/skills-installer.js';
 import { writeErr, writeOut } from '../lib/term-output.js';
@@ -252,6 +252,82 @@ function checkDatabase(root: string | null): CheckResult[] {
   } catch (err) {
     const detail = err instanceof GenieDbError ? err.message : err instanceof Error ? err.message : String(err);
     return [{ name: 'genie.db', status: 'fail', detail }];
+  }
+}
+
+/**
+ * Tables that belong ONLY to a per-repo `.genie/genie.db`. The global
+ * `<GENIE_HOME>/genie.db` carries the omni approval queue and inbox and nothing
+ * else; a per-repo table sitting next to `approvals` is proof that some binary
+ * once opened the global path with the per-repo opener (M7). Prevention landed
+ * (the per-repo opener refuses the global path), but a host contaminated before
+ * that fix stays contaminated forever, and both databases still report
+ * `user_version = 1` — so a future numbered migration cannot tell them apart.
+ */
+const PER_REPO_ONLY_TABLES = [
+  'boards',
+  'tasks',
+  'task_dependencies',
+  'task_events',
+  'stage_log',
+  'wish_groups',
+  'hire_roster',
+] as const;
+
+/** The check name, exported so the remedy and the test never drift apart. */
+export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';
+
+/** The exact manual remedy: back the file up first, then drop ONLY those tables. */
+export function globalDbContaminationRemedy(dbPath: string, tables: readonly string[]): string {
+  const drops = tables.map((name) => `DROP TABLE IF EXISTS ${name};`).join(' ');
+  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && sqlite3 ${dbPath} "${drops}"`;
+}
+
+/**
+ * Read-only detection of a contaminated global database. Doctor NEVER repairs
+ * this, not even under `--fix`: dropping a table is a destructive act on a file
+ * that also holds the operator's approval history, so the remedy is printed and
+ * the human runs it.
+ */
+export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]): CheckResult {
+  const strays = PER_REPO_ONLY_TABLES.filter((name) => tables.includes(name));
+  if (strays.length === 0) {
+    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
+  }
+  const remedy = globalDbContaminationRemedy(dbPath, strays);
+  return {
+    name: GLOBAL_DB_CONTAMINATION_CHECK,
+    status: 'warn',
+    detail: `${dbPath}: per-repo tables present (${strays.join(', ')}); back up, then drop only those tables: ${remedy}`,
+    suggestion: remedy,
+  };
+}
+
+/** Never opens (or creates) anything: an absent global DB is simply not a finding. */
+export function checkGlobalDbContamination(options: { genieHome?: string } = {}): CheckResult[] {
+  const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
+  if (!existsSync(dbPath)) return [];
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const rows = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
+    return [
+      evaluateGlobalDbTables(
+        dbPath,
+        rows.map((row) => row.name),
+      ),
+    ];
+  } catch (error) {
+    return [
+      {
+        name: GLOBAL_DB_CONTAMINATION_CHECK,
+        status: 'warn',
+        detail: `${dbPath} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        suggestion: 'Inspect the global database by hand; genie never repairs it.',
+      },
+    ];
+  } finally {
+    db?.close();
   }
 }
 
@@ -493,7 +569,20 @@ function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckRes
 export function checkSkillsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
   const home = resolveHostHome(options.home);
   const genieHome = options.genieHome ?? resolveGlobalGenieHome();
-  const record = readSkillsInstallRecord(genieHome);
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is NOT "no record": it is a receipt genie can no longer
+  // act on, and every consumer now refuses on it, so doctor names the field.
+  if (read.status === 'invalid') {
+    return [
+      {
+        name: 'skills: channel',
+        status: 'warn',
+        detail: read.error.message,
+        suggestion: `Repair or remove ${read.error.path}, then run \`genie update\` — until then \`genie uninstall\` refuses to touch the recorded skill dirs.`,
+      },
+    ];
+  }
+  const record = read.status === 'ok' ? read.record : null;
   const binaryTag = releaseTag(VERSION);
   const inventory =
     record !== null && record.inventory.length > 0
@@ -698,23 +787,29 @@ function versionAtLeast(actual: string, minimum: string): boolean {
   return compareSemVer(left, right) >= 0;
 }
 
+/**
+ * m16 / r2 #7: the check NAME is the cross-release diff key, so it carries no
+ * version string — `bun 1.3.11` made every bun upgrade read as one removed and
+ * one added check. The running version lives in `detail`, exactly as the
+ * `genie version` check already does.
+ */
 export function evaluateBunVersion(bunVersion: string | null, onPath: string | null): CheckResult[] {
   if (bunVersion) {
     if (!versionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
       return [
         {
-          name: `bun ${bunVersion}`,
+          name: 'bun present',
           status: 'fail',
-          detail: `unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
+          detail: `${bunVersion} unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
           suggestion: `Run \`bun upgrade\`, then confirm \`bun --version\` is at least ${MINIMUM_BUN_VERSION}.`,
         },
       ];
     }
     return [
       {
-        name: `bun ${bunVersion}`,
+        name: 'bun present',
         status: 'pass',
-        detail: onPath ?? 'running under bun',
+        detail: `${bunVersion} (${onPath ?? 'running under bun'})`,
       },
     ];
   }
@@ -1023,19 +1118,31 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
       detail: 'kept (user-modified) — not counted as reclaimable; --fix will not touch it',
     });
   }
-  for (const dir of orphanedCaches) {
+  // ONE row for every orphaned cache dir, never one row per version: a check
+  // NAME is the cross-release diff key, so `v4 residue: plugin cache 4.260421.17`
+  // reproduced exactly the removed/added pair m16 eliminated — the name
+  // appeared and disappeared with the cache, and differed host to host. The
+  // versions ride the detail instead (r2 #7).
+  if (orphanedCaches.length > 0) {
+    const bytes = orphanedCaches.reduce((sum, d) => sum + safeSizeOf(d.path), 0);
     results.push({
-      name: `v4 residue: plugin cache ${dir.version}`,
+      name: 'v4 residue: plugin cache',
       status: 'warn',
-      detail: `orphaned, ${prettyBytes(safeSizeOf(dir.path))}`,
+      detail: `${orphanedCaches.length} orphaned version dir(s), ${prettyBytes(bytes)}: ${orphanedCaches
+        .map((d) => d.version)
+        .sort()
+        .join(', ')}`,
     });
   }
   // Report-only (Decision 2): uncertain names we deliberately never touch.
-  for (const name of uncertainKeeps) {
+  // Summarized for the same reason as the cache row — these names come from
+  // whatever the genie home happens to hold, so any of them could carry a
+  // version and none of them is a stable diff key.
+  if (uncertainKeeps.length > 0) {
     results.push({
-      name: `kept (uncertain): ${name}`,
+      name: 'kept (uncertain)',
       status: 'pass',
-      detail: 'not provably v4 — never touched by --fix',
+      detail: `not provably v4 — never touched by --fix: ${[...uncertainKeeps].sort().join(', ')}`,
     });
   }
   return results;
@@ -1458,6 +1565,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOrcaLifecycle(deps, !injectedRoot || deps.orcaCompatibilityProbe !== undefined)),
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
+    ...checkGlobalDbContamination(),
     ...checkSkills(root),
     ...checkSkillsChannel(),
     ...(await checkLegacyIntegrations(deps)),

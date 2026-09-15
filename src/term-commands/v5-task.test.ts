@@ -148,7 +148,7 @@ describe('task create', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to:claude — owns the parser');
+    expect(status.stdout).toContain('Assigned to: claude — owns the parser');
   });
 
   test('rejects a non-roster agent, naming the allowed roster in stderr', async () => {
@@ -610,7 +610,7 @@ describe('task assign', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to:codex — dissent on the parser');
+    expect(status.stdout).toContain('Assigned to: codex — dissent on the parser');
     expect(status.stdout).toContain('Timeline:');
     expect(status.stdout).toContain('assign by');
     expect(status.stdout).toContain('assigned to codex: dissent on the parser');
@@ -1081,6 +1081,76 @@ describe('task import', () => {
     const mismatch = await cli(repo, 'import');
     expect(mismatch.code).toBe(1);
     expect(mismatch.stderr).toContain('schemaVersion 999');
+  });
+
+  /**
+   * Regression (dogfood r2 minors 12/13): a non-scalar used to reach bun:sqlite
+   * as `Binding expected string, TypedArray, boolean, number, bigint or null`
+   * with no locator, and a string in an INTEGER column imported with exit 0.
+   */
+  describe('malformed column values', () => {
+    /** Export the seeded state, mutate one cell, and re-import with --replace. */
+    async function importWithMutation(mutate: (snapshot: StateExport) => void): Promise<CliResult> {
+      const snapshotPath = join(repo, '.genie', 'roadmap.json');
+      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as StateExport;
+      mutate(snapshot);
+      writeFileSync(snapshotPath, JSON.stringify(snapshot));
+      return cli(repo, 'import', '--replace');
+    }
+
+    beforeEach(async () => {
+      seedState();
+      expect((await cli(repo, 'export', '--write')).code).toBe(0);
+    });
+
+    test('a non-scalar in a TEXT column names the file, table, row and column', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).title = { x: 1 };
+      });
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain(join(repo, '.genie', 'roadmap.json'));
+      expect(r.stderr).toContain('Snapshot table "tasks" row 0');
+      expect(r.stderr).toContain('column "title" expects a string, got an object');
+      expect(r.stderr).toContain('database was left unchanged');
+      expect(r.stderr).not.toContain('Binding expected');
+    });
+
+    test('a non-numeric value in an INTEGER column is refused, not silently stored', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).created_at = 'abc';
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "created_at" expects an integer, got the string "abc"');
+
+      // Nothing partial landed: the pre-import rows are untouched.
+      const db = openDb({ cwd: repo });
+      const rows = db.query('SELECT title, typeof(created_at) AS t FROM tasks ORDER BY title').all() as Array<{
+        title: string;
+        t: string;
+      }>;
+      db.close();
+      expect(rows.map((row) => row.title)).toEqual(['dependent', 'root']);
+      expect(rows.every((row) => row.t === 'integer')).toBe(true);
+    });
+
+    test('an array in boards.lanes is refused and no partial import lands', async () => {
+      const r = await importWithMutation((s) => {
+        (s.boards[0] as unknown as Record<string, unknown>).lanes = ['Idea', 'Done'];
+        s.tasks = [];
+        s.task_dependencies = [];
+        s.stage_log = [];
+        s.task_events = [];
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "lanes" expects a string, got an array');
+      // --replace wipes inside the transaction: a rejected snapshot must leave
+      // every pre-import row in place.
+      const db = openDb({ cwd: repo });
+      const counts = db.query('SELECT COUNT(*) AS n FROM tasks').get() as { n: number };
+      db.close();
+      expect(counts.n).toBe(2);
+    });
   });
 });
 
@@ -1564,15 +1634,48 @@ describe('timeline verbs', () => {
     expect(ev.authorKind).toBe('hermes');
   });
 
-  test('heartbeat records a liveness pulse', async () => {
+  test('heartbeat records a liveness pulse on a claimed card', async () => {
     const id = await seed('pulse');
+    const claim = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(claim.code).toBe(0);
     const before = Date.now();
     const r = await cli(repo, 'heartbeat', id);
     expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
     const db = openDb({ cwd: repo });
     const card = getTaskCard(db, id);
     db.close();
     expect(card?.heartbeatAt).toBeGreaterThanOrEqual(before);
+  });
+
+  /**
+   * Regression (dogfood r2 minor 15): `heartbeat` on a never-claimed card
+   * exited 0 and stamped `heartbeat_at` on a `ready` card with `claimed_by`
+   * NULL — liveness for a worker that does not exist.
+   */
+  test('heartbeat on an unclaimed card is refused with a typed error and exit 1', async () => {
+    const id = await seed('never claimed');
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('not claimed');
+    expect(r.stderr).toContain(`genie task checkout ${id} --worker`);
+    expect(r.stderr).not.toContain('at <anonymous>');
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.heartbeatAt).toBeNull();
+    expect(card?.claimedBy).toBeNull();
+  });
+
+  test('heartbeat on a released card is refused again', async () => {
+    const id = await seed('released');
+    expect((await cli(repo, 'checkout', id, '--worker', 'w1')).code).toBe(0);
+    expect((await cli(repo, 'heartbeat', id)).code).toBe(0);
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('not claimed');
   });
 });
 

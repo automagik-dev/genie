@@ -39,6 +39,7 @@ import {
 import {
   type BlockKind,
   type ImportSummary,
+  SnapshotFormatError,
   type TaskCardRow,
   type TaskFilter,
   type TaskRow,
@@ -145,7 +146,7 @@ function printDetailHeader(task: TaskCardRow): void {
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.assignedAgent) {
     const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
-    out(`  Assigned to:${task.assignedAgent}${why}`);
+    out(`  Assigned to: ${task.assignedAgent}${why}`);
   }
   if (task.claimedBy) {
     const badge = livenessBadge(task, Date.now());
@@ -214,7 +215,9 @@ function handleCreate(opts: CreateOptions): void {
   run(() => {
     const db = openDb();
     try {
-      const boardId = opts.board ? resolveBoard(db, opts.board).id : undefined;
+      // `!== undefined`, not truthiness: an explicit `--board ""` must reach the
+      // resolver and be refused, never widen to "no board".
+      const boardId = opts.board !== undefined ? resolveBoard(db, opts.board).id : undefined;
       // The assignment pair invariant (both halves or neither) and the roster
       // allowlist are enforced by the state API — the typed errors surface here
       // through run() with the roster named verbatim.
@@ -271,7 +274,7 @@ function handleList(opts: ListOptions): void {
     try {
       const filter: TaskFilter = {};
       if (opts.status) filter.status = opts.status as TaskStatus;
-      if (opts.board) filter.boardId = resolveBoard(db, opts.board).id;
+      if (opts.board !== undefined) filter.boardId = resolveBoard(db, opts.board).id;
       if (opts.wish) filter.wish = opts.wish;
       const tasks = listTasks(db, filter);
       if (opts.json) {
@@ -701,6 +704,19 @@ function handleSync(): void {
   });
 }
 
+/**
+ * Run the import transaction, re-labelling a snapshot-format refusal with the
+ * source path. Every other failure (lock contention, IO) propagates untouched.
+ */
+function runImport(apply: { immediate: () => unknown }, source: string): ImportSummary {
+  try {
+    return apply.immediate() as ImportSummary;
+  } catch (err) {
+    if (err instanceof SnapshotFormatError) throw new SnapshotFormatError(`${source}: ${err.message}`);
+    throw err;
+  }
+}
+
 function handleImport(file: string | undefined, opts: ImportOptions): void {
   run(() => {
     // Normalize before the canonical comparison: an explicit relative spelling
@@ -735,7 +751,9 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
         if (canonical) recordImportBaseline(db, snapshot);
         return result;
       });
-      const summary = apply.immediate() as ImportSummary;
+      // A malformed snapshot names the file it came from: `validateSnapshot`
+      // knows the table/row/column, only this frame knows the path.
+      const summary = runImport(apply, source);
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );

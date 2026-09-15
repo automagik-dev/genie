@@ -51,6 +51,7 @@ import {
   isGenieSymlink,
   isSameOrContainedPath,
   performFreshUninstallPlan,
+  preservedSkillDirDetail,
   readUninstallBatchDecision,
   recordUninstallBatchDecision,
   removeProvenV4Rules,
@@ -197,6 +198,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     const second = removeSkillsChannelInstall(genieHome);
     expect(second).toEqual({
       record: null,
+      malformed: null,
       removed: [],
       failures: [],
       preserved: [],
@@ -205,10 +207,45 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     });
   });
 
+  /**
+   * X3 (r2 §3.3 #14). A record that IS there but does not satisfy the schema is
+   * not "no record": the sweep refuses, removes nothing, and keeps the receipt.
+   * The shipped behaviour printed `no install record; nothing to remove.`,
+   * exited 0, deleted `~/.genie`, and orphaned every recorded skill dir.
+   */
+  test('a schema-invalid record refuses the sweep and removes nothing', () => {
+    const live = seedSkillDir(claudeSkills, 'work');
+    seedRecord(['work'], [claudeSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    // One valid preserved entry beside one whose skill name the schema rejects.
+    writeFileSync(
+      skillsInstallRecordPath(genieHome),
+      JSON.stringify({
+        ...record,
+        preserved: [
+          { agentDir: claudeSkills, skill: 'trace', reason: 'user-edited' },
+          { agentDir: claudeSkills, skill: '../../../etc', reason: 'traversal' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.malformed).toContain('preserved.1.skill');
+    expect(removal.record).toBeNull();
+    expect(removal.removed).toEqual([]);
+    expect(removal.recordRemoved).toBe(false);
+    // Nothing on disk moved, and the receipt survives for the retry.
+    expect(existsSync(live)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+  });
+
   test('no record is nothing to do', () => {
     const foreign = seedSkillDir(claudeSkills, 'wish');
     expect(removeSkillsChannelInstall(genieHome)).toEqual({
       record: null,
+      malformed: null,
       removed: [],
       failures: [],
       preserved: [],
@@ -459,6 +496,68 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     expect(existsSync(genieHome)).toBe(true);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(wish)).toBe(true);
+    expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
+  });
+
+  /**
+   * X7 (r2 c2): the inline report and the failure list an operator ACTS on used
+   * to carry two different sentences for the same preserved directory, and the
+   * actionable one dropped the retirement cause. Nothing locked them together —
+   * both surfaces merely had to contain the path and the word `preserved`, so a
+   * future edit could re-diverge them silently. This pins BOTH to the single
+   * exported helper, byte for byte.
+   */
+  test('the preserved-dir line is byte-identical on stdout and in the failure list', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    seedChannelRecord(wish, 'deadbeef'.repeat(8)); // never matches the live content
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    const expected = preservedSkillDirDetail(wish);
+    // The cause an operator needs and the remedy they act on, in one sentence.
+    expect(expected).toContain('retirement could not prove it');
+    expect(expected).toContain('remove it manually, then rerun `genie uninstall`');
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.detail).toBe(expected);
+
+    const prefix = 'skills.sh channel: preserved ';
+    const printed = output
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping the SGR colour codes the sink emits
+      .map((line) => line.replace(/\u001B\[[0-9;]*m/g, '').trim())
+      .filter((line) => line.includes(prefix))
+      // Drop only the `~` status marker and the channel prefix; the rest is the
+      // sentence itself and must survive byte for byte.
+      .map((line) => line.slice(line.indexOf(prefix) + 'skills.sh channel: '.length));
+    expect(printed).toEqual([expected]);
+  });
+
+  /**
+   * X3, at the command seam: a malformed record makes the whole plan refuse —
+   * one message, GENIE_HOME kept, nothing on disk touched. The shipped
+   * behaviour reported success and deleted `~/.genie`.
+   */
+  test('a malformed record refuses the plan, keeps GENIE_HOME and removes nothing', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    if (digest === null) throw new Error('fixture skill dir was not digestable');
+    seedChannelRecord(wish, digest);
+    const record = JSON.parse(readFileSync(skillsInstallRecordPath(genieHome), 'utf8')) as Record<string, unknown>;
+    record.preserved = [{ agentDir: claudeSkills, skill: '../../../etc', reason: 'traversal' }];
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(record), 'utf8');
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.step).toBe('skills.sh channel');
+    expect(outcome.result.failures[0]?.detail).toContain('preserved.0.skill');
+    expect(outcome.result.failures[0]?.detail).toContain('nothing was removed');
+    expect(output.some((line) => line.includes('no install record; nothing to remove.'))).toBe(false);
+    expect(existsSync(wish)).toBe(true);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(join(genieHome, 'plugins', 'genie', 'payload.txt'))).toBe(true);
   });
 

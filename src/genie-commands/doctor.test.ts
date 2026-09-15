@@ -22,6 +22,7 @@ import {
   MINIMUM_BUN_VERSION,
   checkBudgets,
   checkCodexProjectContext,
+  checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkLegacyIntegrations,
   checkOmniBridgeHealth,
@@ -33,6 +34,7 @@ import {
   evaluateBunVersion,
   evaluateIndexLaneDrift,
   evaluateOmniBridgeHealth,
+  globalDbContaminationRemedy,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -156,6 +158,17 @@ describe('doctorCommand', () => {
     const embedding = checks.map((c) => c.name).filter((name) => name.includes(VERSION));
     expect(embedding).toEqual([]);
     expect(checks.find((c) => c.name === 'genie version')).toMatchObject({ status: 'pass', detail: VERSION });
+  });
+
+  // r2 #7 (m16 class): no check NAME may carry ANY version string — `bun
+  // 1.3.11` reproduced exactly the removed/added diff pair m16 eliminated, and
+  // it was invisible to a guard that only looked for the genie version.
+  test('no check name embeds any version number', () => {
+    const versioned = json.checks.map((c) => c.name).filter((name) => /\d+\.\d+/.test(name));
+    expect(versioned).toEqual([]);
+    const bun = (json.checks as Array<{ name: string; detail?: string }>).find((c) => c.name === 'bun present');
+    expect(bun?.name).toBe('bun present');
+    expect(bun?.detail).toContain('1.3.10');
   });
 
   test('healthy checkout has no failing checks', () => {
@@ -571,14 +584,48 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
 
     const results = checkV4Residue(fxHome, fxGenieHome);
-    const keptNames = results.filter((r) => r.name.startsWith('kept (uncertain):')).map((r) => r.name);
-    expect(keptNames.sort()).toEqual(['kept (uncertain): .genie', 'kept (uncertain): tmux.conf.bak']);
-    for (const r of results.filter((x) => x.name.startsWith('kept (uncertain):'))) expect(r.status).toBe('pass');
+    // ONE summarized row: the entry names ride the detail, because a name built
+    // from whatever the genie home holds is not a stable cross-release diff key
+    // (r2 #7 — same class as `v4 residue: plugin cache <version>`).
+    const kept = results.filter((r) => r.name === 'kept (uncertain)');
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.status).toBe('pass');
+    expect(kept[0]?.detail).toContain('.genie, tmux.conf.bak');
+    expect(results.filter((r) => r.name.startsWith('kept (uncertain):'))).toEqual([]);
 
     cleanupV4({ home: fxHome, genieHome: fxGenieHome });
     expect(existsSync(join(fxGenieHome, 'tmux.conf.bak'))).toBe(true);
     expect(existsSync(join(fxGenieHome, '.genie'))).toBe(true);
     expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
+  });
+
+  // r2 #7 residual: the healthy-checkout scan in `doctorCommand` only sees the
+  // names ONE residue-free run happened to emit, so every failure-branch and
+  // every dynamically built name was structurally outside its reach — and
+  // `v4 residue: plugin cache 4.260421.17` lived there. This scans the
+  // name-producing function itself, with every dynamic branch seeded at once.
+  test('no check name embeds a version, on the fully seeded v4-residue path', () => {
+    mkdirSync(join(fxGenieHome, 'state'), { recursive: true });
+    writeFileSync(join(fxGenieHome, 'serve.pid'), '1\n', 'utf-8');
+    writeFileSync(join(fxGenieHome, 'tmux.conf.bak'), 'old tmux\n', 'utf-8');
+    mkdirSync(join(fxHome, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(fxHome, '.claude', 'rules', 'genie-orchestration.md'), 'genie spawn everything\n', 'utf-8');
+    for (const version of ['4.260421.17', '4.250101.1']) {
+      const dir = join(fxHome, '.claude', 'plugins', 'cache', 'automagik', 'genie', version);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, '.orphaned_at'), '2026-01-01\n', 'utf-8');
+      writeFileSync(join(dir, 'plugin.json'), '{}\n', 'utf-8');
+    }
+
+    const results = checkV4Residue(fxHome, fxGenieHome);
+
+    expect(results.map((r) => r.name).filter((name) => /\d+\.\d+/.test(name))).toEqual([]);
+    const cache = results.find((r) => r.name === 'v4 residue: plugin cache');
+    expect(cache?.status).toBe('warn');
+    expect(cache?.detail).toContain('2 orphaned version dir(s)');
+    expect(cache?.detail).toContain('4.250101.1, 4.260421.17');
+    // One row per cache dir would also reintroduce duplicate names.
+    expect(new Set(results.map((r) => r.name)).size).toBe(results.length);
   });
 
   test('doctor --fix --json: stdout is valid JSON, relic removed (chatter on stderr)', () => {
@@ -1124,6 +1171,24 @@ describe('doctor: skills.sh channel', () => {
     });
   });
 
+  /** X3: a malformed record is a finding of its own, never "no install record". */
+  test('a schema-invalid record warns with the offending field and the repair remedy', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(genieHome);
+    const recordPath = join(genieHome, 'skills-install.json');
+    const record = JSON.parse(readFileSync(recordPath, 'utf8')) as Record<string, unknown>;
+    record.preserved = [{ agentDir: join(isolatedHome, '.claude', 'skills'), skill: '../etc', reason: 'x' }];
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    const results = skillsChannelResults();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'skills: channel', status: 'warn' });
+    expect(results[0]?.detail).toContain('preserved.0.skill');
+    expect(results[0]?.detail).not.toContain('no install record');
+    expect(results[0]?.suggestion).toContain(recordPath);
+  });
+
   test('preserved retired skill dirs warn with their path and reason', () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta', 'trace']);
     seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta', 'perf']);
@@ -1475,5 +1540,63 @@ describe('doctor --json: skills channel + legacy integration riders', () => {
     expect(json.checks.find((c) => c.name === 'legacy integrations')?.status).toBe('warn');
     expect(existsSync(join(legacyAsset, 'SKILL.md'))).toBe(true);
     expect(existsSync(join(isolatedHome, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+  });
+});
+
+describe('global db contamination (r2 #6 / M7 operator half)', () => {
+  test('a clean global db passes and names the file', () => {
+    const genieHome = join(isolatedHome, 'globaldb-clean');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const db = new Database(dbPath);
+    db.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE inbound_messages (id TEXT PRIMARY KEY)');
+    db.close();
+
+    const results = checkGlobalDbContamination({ genieHome });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'global db', status: 'pass' });
+    expect(results[0]?.detail).toContain(dbPath);
+  });
+
+  test('per-repo tables next to the approval queue warn and name the exact remedy', () => {
+    const genieHome = join(isolatedHome, 'globaldb-dirty');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const db = new Database(dbPath);
+    db.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE inbound_messages (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE task_events (id TEXT PRIMARY KEY)');
+    db.close();
+
+    const results = checkGlobalDbContamination({ genieHome });
+    expect(results).toHaveLength(1);
+    const check = results[0] as CheckResult;
+    expect(check).toMatchObject({ name: 'global db', status: 'warn' });
+    expect(check.detail).toContain('per-repo tables present (boards, tasks, task_events)');
+    expect(check.detail).toContain(dbPath);
+    // The remedy backs the file up first and drops ONLY the stray tables.
+    const remedy = globalDbContaminationRemedy(dbPath, ['boards', 'tasks', 'task_events']);
+    expect(check.suggestion).toBe(remedy);
+    expect(check.detail).toContain(remedy);
+    expect(remedy).toContain(`cp ${dbPath} ${dbPath}.backup-`);
+    expect(remedy).toContain('DROP TABLE IF EXISTS boards;');
+    expect(remedy).not.toContain('approvals');
+    expect(remedy).not.toContain('inbound_messages');
+    // Read-only: the check never repairs, so the tables are still there.
+    const after = new Database(dbPath, { readonly: true });
+    const names = (
+      after.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name);
+    after.close();
+    expect(names).toContain('boards');
+  });
+
+  test('an absent global db is not a finding', () => {
+    expect(checkGlobalDbContamination({ genieHome: join(isolatedHome, 'globaldb-missing') })).toEqual([]);
   });
 });

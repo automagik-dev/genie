@@ -43,6 +43,32 @@ export async function buildPluginDist(repoRoot: string, run: Runner): Promise<st
 }
 
 /**
+ * Every writable location a child of the smoke may touch lives under the run's
+ * own temp tree, which the `finally` block removes — including the child temp
+ * directory. Without `TMPDIR`, `dsh` spilled a `dsh-spill-*` directory straight
+ * into the host's `TMPDIR`, where nothing the smoke owns could clean it up
+ * (r2 c5). `TMP`/`TEMP` ride along for portability.
+ */
+export function sandboxEnvironment(temporary: string, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const temp = join(temporary, 'tmp');
+  return {
+    ...(base as Record<string, string>),
+    DSH_HOME: join(temporary, 'dsh'),
+    GENIE_HOME: join(temporary, 'genie-home'),
+    HOME: join(temporary, 'home'),
+    TMPDIR: temp,
+    TMP: temp,
+    TEMP: temp,
+    PATH: `${join(temporary, 'bin')}${delimiter}${base.PATH}`,
+  };
+}
+
+/** The directories `sandboxEnvironment` promises exist before any child runs. */
+export function sandboxDirectories(temporary: string): string[] {
+  return [join(temporary, 'repo'), join(temporary, 'bin'), join(temporary, 'home'), join(temporary, 'tmp')];
+}
+
+/**
  * Acceptance proof for disable-by-id, against the REAL four-row patch.
  *
  * The profile turns `genie-dsh-board-skills` off by its id; the row must then
@@ -85,15 +111,8 @@ const root = resolve(import.meta.dir, '..');
 async function main(): Promise<void> {
   const temporary = await mkdtemp(join(tmpdir(), 'genie-dsh-smoke-'));
   const repo = join(temporary, 'repo');
-  const home = join(temporary, 'dsh');
   const bin = join(temporary, 'bin');
-  const env = {
-    ...process.env,
-    DSH_HOME: home,
-    GENIE_HOME: join(temporary, 'genie-home'),
-    HOME: join(temporary, 'home'),
-    PATH: `${bin}${delimiter}${process.env.PATH}`,
-  };
+  const env = sandboxEnvironment(temporary);
   let server: ChildProcess | undefined;
   let installed = false;
   async function command(binary: string, args: string[], cwd = root): Promise<string> {
@@ -158,7 +177,7 @@ async function main(): Promise<void> {
     });
   }
   try {
-    for (const directory of [repo, bin, env.HOME]) await mkdir(directory, { recursive: true });
+    for (const directory of sandboxDirectories(temporary)) await mkdir(directory, { recursive: true });
     await command('git', ['init', '--quiet'], repo);
     await command('bun', ['run', 'build']);
     // Smoke the bundle this checkout produces, never one left over from before.
