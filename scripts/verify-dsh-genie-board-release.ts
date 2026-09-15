@@ -101,9 +101,18 @@ export function runNetwork(argv: string[], step: string, options: NetworkStepOpt
   throw new Error(failure);
 }
 
-function nonempty(path: string): void {
-  const stat = statSync(path);
-  if (!stat.isFile() || !stat.size) throw new Error(`missing/empty regular file: ${path}`);
+/**
+ * `statSync` used to throw its own `ENOENT: … statx '<path>'` before this check
+ * could speak: an ABSENT member reported raw libuv text while a zero-byte one
+ * got the crafted message, and neither named the archive the member came from.
+ * `throwIfNoEntry: false` turns absence into the same one-line refusal, and
+ * `context` names the offending tarball (the extracted copy lives in a temp
+ * directory this function's caller deletes).
+ */
+function nonempty(path: string, context?: string): void {
+  const stat = statSync(path, { throwIfNoEntry: false });
+  if (!stat?.isFile() || !stat.size)
+    throw new Error(`missing/empty regular file: ${path}${context ? ` (${context})` : ''}`);
 }
 
 function verifyTarball(path: string, version: string): void {
@@ -113,7 +122,11 @@ function verifyTarball(path: string, version: string): void {
     // names and every non-regular member before extraction, extract without
     // inheriting archived ownership or modes, then rescan the extracted tree.
     extractTarball(path, root);
-    for (const member of DSH_PLUGIN_MEMBERS) nonempty(join(root, 'plugins/dsh-genie-board', member));
+    for (const member of DSH_PLUGIN_MEMBERS)
+      nonempty(
+        join(root, 'plugins/dsh-genie-board', member),
+        `payload member plugins/dsh-genie-board/${member} of ${path}`,
+      );
     verifyReleasePayloadVersion(root, version);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -121,8 +134,8 @@ function verifyTarball(path: string, version: string): void {
 }
 
 function verifyDescriptor(path: string, name: string, version: string, channel: 'stable' | 'dev'): string {
-  nonempty(`${path}.bundle`);
-  nonempty(`${path}.intoto.jsonl`);
+  nonempty(`${path}.bundle`, `signature sidecar of ${name}`);
+  nonempty(`${path}.intoto.jsonl`, `provenance sidecar of ${name}`);
   const descriptorPath = `${path}.${channel}.delivery.json`;
   const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'));
   const platform = platforms.find((value) => name === `genie-${version}-${value}.tar.gz`);
@@ -139,7 +152,7 @@ function verifyDescriptor(path: string, name: string, version: string, channel: 
   )
     throw new Error(`descriptor binding mismatch: ${name}`);
   runNetwork(['bash', join(import.meta.dir, 'verify-release.sh'), '--local', path], `signature verification (${name})`);
-  nonempty(`${descriptorPath}.sigstore.json`);
+  nonempty(`${descriptorPath}.sigstore.json`, `delivery-evidence attestation of ${name}`);
   const verified = JSON.parse(
     runNetwork(
       [
@@ -184,7 +197,7 @@ export function verifyArtifacts(directory: string, version: string, channel?: 's
   let sourceSha: string | undefined;
   for (const [index, name] of expected.entries()) {
     const path = resolve(directory, name);
-    nonempty(path);
+    nonempty(path, `candidate tarball ${name}`);
     if (channel) {
       const observed = verifyDescriptor(path, name, version, channel);
       if (index && sourceSha !== observed) throw new Error('candidate source mismatch');

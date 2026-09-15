@@ -1,8 +1,14 @@
 import { afterEach, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PLUGIN_BUNDLES, type Runner, buildPluginDist } from './dsh-genie-board-smoke';
+import {
+  PLUGIN_BUNDLES,
+  type Runner,
+  buildPluginDist,
+  sandboxDirectories,
+  sandboxEnvironment,
+} from './dsh-genie-board-smoke';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -76,4 +82,41 @@ test('the smoke builds before it installs the plugin, and build:plugin builds th
 
   const scripts = JSON.parse(readFileSync(join(import.meta.dir, '../package.json'), 'utf8')).scripts;
   expect(scripts['build:plugin']).toContain('plugins/dsh-genie-board');
+});
+
+/**
+ * r2 c5: the smoke removed its own tree and its plugin registration, but `dsh`
+ * spilled a `dsh-spill-*` directory into the host's TMPDIR, outside everything
+ * the smoke owned. Children now get a TMPDIR inside the run's own tree.
+ */
+test('every child of the smoke writes inside the run tree, temp files included', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'dsh-smoke-sandbox-'));
+  roots.push(temporary);
+  const env = sandboxEnvironment(temporary, { PATH: '/usr/bin', TMPDIR: tmpdir() });
+  for (const key of ['DSH_HOME', 'GENIE_HOME', 'HOME', 'TMPDIR', 'TMP', 'TEMP']) {
+    expect(env[key].startsWith(`${temporary}/`)).toBe(true);
+  }
+  expect(env.TMPDIR).not.toBe(tmpdir());
+  expect(env.PATH).toBe(`${join(temporary, 'bin')}:/usr/bin`);
+  // The sandbox TMPDIR must exist before a child spills into it.
+  expect(sandboxDirectories(temporary)).toContain(env.TMPDIR);
+});
+
+test('a spilling child leaves nothing behind once the run tree is removed', () => {
+  const temporary = mkdtempSync(join(tmpdir(), 'dsh-smoke-sandbox-'));
+  roots.push(temporary);
+  const env = sandboxEnvironment(temporary, process.env);
+  for (const directory of sandboxDirectories(temporary)) mkdirSync(directory, { recursive: true });
+  // Exactly what the dsh CLI does with TMPDIR while the smoke drives it.
+  const spill = Bun.spawnSync(['sh', '-c', 'mkdir "$TMPDIR/dsh-spill-smoketest"'], { env, stdout: 'pipe' });
+  expect(spill.exitCode).toBe(0);
+  expect(existsSync(join(env.TMPDIR, 'dsh-spill-smoketest'))).toBe(true);
+  rmSync(temporary, { recursive: true, force: true });
+  expect(readdirSync(tmpdir()).filter((name) => name === 'dsh-spill-smoketest')).toEqual([]);
+});
+
+test('the smoke sandboxes its children rather than building an env inline', () => {
+  const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
+  expect(source).toContain('const env = sandboxEnvironment(temporary)');
+  expect(source).toContain('for (const directory of sandboxDirectories(temporary))');
 });
