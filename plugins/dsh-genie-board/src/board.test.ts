@@ -410,8 +410,10 @@ test('aggregate deadline and output budgets kill child or reject before spawn', 
   const { writeFile } = await import('node:fs/promises');
   const file = join(path, 'genie');
   await writeFile(file, '#!/bin/sh\nprintf 1234567890\n', { mode: 0o755 });
+  // Overrunning the budget names the cause a human can act on — the board is
+  // bigger than one response — instead of an opaque 'output limit exceeded'.
   await expect(execute(file, [], path, {}, { expires: Date.now() + 1000, bytes: MAX_OUTPUT - 5 })).rejects.toThrow(
-    'output limit',
+    'too large for one response',
   );
   await writeFile(file, '#!/bin/sh\nexec sleep 5\n', { mode: 0o755 });
   await expect(
@@ -484,7 +486,7 @@ test('stdout plus stderr share one budget across sequential processes', async ()
   const budget = { expires: Date.now() + 1000, bytes: MAX_OUTPUT - 15 };
   expect(await execute(binary, [], path, {}, budget)).toBe('12345');
   expect(budget.bytes).toBe(MAX_OUTPUT - 5);
-  await expect(execute(binary, [], path, {}, budget)).rejects.toThrow('output limit');
+  await expect(execute(binary, [], path, {}, budget)).rejects.toThrow('too large for one response');
 });
 test('Host routes apply DSH authentication and Origin/content-type fences before reading workspaces or spawning', async () => {
   const { apply } = await import('./index');
