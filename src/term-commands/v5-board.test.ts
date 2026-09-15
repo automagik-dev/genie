@@ -603,6 +603,11 @@ describe('scoped board JSON aggregate v1', () => {
     const missing = createTask(db, { title: 'missing heartbeat', boardId: roadmap.id, lane: 'Work' });
     const open = createTask(db, { title: 'open with heartbeat', boardId: roadmap.id, lane: 'Work' });
     for (const task of [running, idle, stale, missing]) claimTask(db, task.id, 'worker');
+    // `task checkout` seeds heartbeat_at = claimed_at (m8), so a NULL heartbeat
+    // on a claimed card now only reaches the db through an imported legacy
+    // snapshot or a card claimed by an older build. Recreate that state
+    // explicitly — it must still classify as `stale`.
+    db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(missing.id);
     recordHeartbeat(db, running.id, now);
     recordHeartbeat(db, idle.id, now - LIVENESS_RUNNING_MS - 60_000);
     recordHeartbeat(db, stale.id, now - LIVENESS_STALE_MS - 60_000);
@@ -1754,12 +1759,18 @@ describe('laneless board render is unchanged', () => {
 // board computes `now` at render time; seeded ages use minute-scale margins so
 // the ~100ms subprocess delay never flips a threshold (deterministic, no sleep).
 describe('deterministic runtime badges (laneless render)', () => {
-  /** Claim a fresh card and seed its heartbeat to an absolute timestamp. */
+  /**
+   * Claim a fresh card and seed its heartbeat to an absolute timestamp. A null
+   * heartbeat is written explicitly: the claim itself now seeds
+   * `heartbeat_at = claimed_at` (m8), and the never-pulsed row survives only as
+   * imported/legacy state.
+   */
   function seedClaimed(title: string, heartbeatAt: number | null): string {
     const db = openDb({ cwd: repo });
     const t = createTask(db, { title });
     claimTask(db, t.id, 'w1');
-    if (heartbeatAt != null) recordHeartbeat(db, t.id, heartbeatAt);
+    if (heartbeatAt == null) db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(t.id);
+    else recordHeartbeat(db, t.id, heartbeatAt);
     db.close();
     return t.id;
   }
@@ -1788,6 +1799,20 @@ describe('deterministic runtime badges (laneless render)', () => {
     seedClaimed('never pulsed', null);
     const r = await board(repo);
     expect(r.stdout).toContain('☠');
+  });
+
+  // m8: liveness is derived only from heartbeat_at, so before the claim seeded
+  // one, `task checkout` produced a card that rendered ☠ dead on arrival and
+  // was reclaimable by the staleness rule before its worker could beat once.
+  test('a card claimed through checkout reads live immediately', async () => {
+    const db = openDb({ cwd: repo });
+    const t = createTask(db, { title: 'just claimed' });
+    claimTask(db, t.id, 'w1');
+    db.close();
+    const r = await board(repo);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('▶');
+    expect(r.stdout).not.toContain('☠');
   });
 
   test('an unclaimed card carries no liveness glyph', async () => {

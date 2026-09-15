@@ -1072,6 +1072,11 @@ function claimFailure(db: Database, taskId: string): never {
  * losers get `CheckoutConflictError`, or `TaskBlockedError` when an enforced
  * block is what stopped them. A winning claim appends a `claim` timeline event
  * inside the same transaction so the card can never show a claim without it.
+ *
+ * The claim also seeds `heartbeat_at = claimed_at`. Liveness is derived purely
+ * from that timestamp, and a null heartbeat classifies as `stale` — so without
+ * the seed a card read `stale` the instant it was claimed and was reclaimable
+ * by the staleness rule before its worker could beat once.
  */
 export function claimTask(db: Database, taskId: string, worker: string, opts: ClaimOptions = {}): TaskRow {
   const now = opts.now ?? Date.now();
@@ -1084,7 +1089,7 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
     const claimed = db
       .query(
         `UPDATE tasks
-         SET claimed_by = ?, claimed_at = ?, status = 'in_progress', updated_at = ?
+         SET claimed_by = ?, claimed_at = ?, heartbeat_at = ?, status = 'in_progress', updated_at = ?
          WHERE id = ?
            AND blocked_by IS NULL
            AND (
@@ -1093,9 +1098,9 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
            )
          RETURNING *`,
       )
-      .get(worker, now, now, taskId, staleBefore) as RawTask | null;
+      .get(worker, now, now, now, taskId, staleBefore) as RawTask | null;
     if (claimed) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'claim',
         note: `claimed by ${worker}`,
         authorKind: opts.author?.authorKind ?? undefined,

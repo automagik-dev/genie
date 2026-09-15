@@ -300,6 +300,26 @@ describe('lane moves + task_events timeline', () => {
     expect((caught as Error).message).not.toContain('FOREIGN KEY');
   });
 });
+
+// m8 — liveness is derived purely from heartbeat_at and a null heartbeat reads
+// `stale`, so a claim that seeds none renders the card dead on arrival.
+describe('claim seeds liveness', () => {
+  test('claimTask stamps heartbeat_at equal to claimed_at', () => {
+    const task = createTask(db, { title: 'claim me' });
+    const claimed = claimTask(db, task.id, 'w1');
+    expect(claimed.claimedAt).not.toBeNull();
+    const card = getTaskCard(db, task.id);
+    expect(card?.heartbeatAt).toBe(claimed.claimedAt as number);
+    expect(livenessFromHeartbeat(card?.heartbeatAt ?? null, claimed.claimedAt as number)).toBe('running');
+  });
+
+  test('releaseTask clears the seeded heartbeat with the claim', () => {
+    const task = createTask(db, { title: 'claim me' });
+    claimTask(db, task.id, 'w1');
+    const released = releaseTask(db, task.id, HUMAN);
+    expect(released.claimedAt).toBeNull();
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
+  });
 });
 
 describe('setTaskWish — card identity without delete-and-recreate', () => {
@@ -905,12 +925,14 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(10_000_000);
 
     releaseTask(db, a.id, HUMAN);
-    // The card is back to ready with no lingering pulse; a fresh checkout by
-    // worker B must read stale (never running) until B itself heartbeats.
+    // The card is back to ready with no lingering pulse: the released card must
+    // never carry worker A's timestamp into the ready queue.
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
 
-    claimTask(db, a.id, 'w2');
-    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    // Worker B's own claim seeds a FRESH pulse of its own (m8) — never A's.
+    const reclaimed = claimTask(db, a.id, 'w2');
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(reclaimed.claimedAt as number);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).not.toBe(10_000_000);
   });
 
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {

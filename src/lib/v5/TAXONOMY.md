@@ -139,7 +139,7 @@ Plus the **runtime layer** — additive, all nullable, backfilled in place by
 |--------|------|-------|
 | `lane` | TEXT | lifecycle lane on a lane-defining board, or NULL |
 | `agent_kind` | TEXT | authored runtime identity, or NULL |
-| `heartbeat_at` | INTEGER | last liveness pulse, or NULL |
+| `heartbeat_at` | INTEGER | last liveness pulse, or NULL; `task checkout` seeds it to `claimed_at` |
 | `blocked_by` | TEXT | who placed the enforced block — NULL means unblocked |
 | `blocked_reason` | TEXT | why, free prose |
 | `block_kind` | TEXT | `work` \| `hold`; NULL/absent/unrecognized ⇒ `work` |
