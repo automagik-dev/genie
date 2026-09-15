@@ -386,10 +386,17 @@ function evaluateAgentSkillHome(spec: AgentSkillHomeSpec, context: SkillsChannel
   return { name, status: 'warn', detail, suggestion: SKILLS_CHANNEL_SUGGESTION, skillsChannel: rider };
 }
 
-/** How many preserved retirement paths the check names before summarizing. */
+/** How many paths the preserved-retirement and agent-dir checks name before summarizing. */
 const MAX_PRESERVED_SKILL_PATHS = 5;
 
 const SKILLS_RETIREMENT_SUGGESTION = 'Review them, remove them, then run `genie update` to retry retirement';
+
+/** `a; b; c; +N more` — the shared rendering of a bounded path list. */
+function namedWithRemainder(paths: readonly string[]): string {
+  const named = paths.slice(0, MAX_PRESERVED_SKILL_PATHS);
+  const rest = paths.length - named.length;
+  return `${named.join('; ')}${rest > 0 ? `; +${rest} more` : ''}`;
+}
 
 /**
  * Retired skill directories genie could not archive.
@@ -398,18 +405,74 @@ const SKILLS_RETIREMENT_SUGGESTION = 'Review them, remove them, then run `genie 
  * never retried by `genie update`, never removed by `genie uninstall`, and
  * invisible here — the host reads `skills: claude 14/14` while a retired skill
  * sits in the home forever. Doctor stays a read-only observer; it names them.
+ *
+ * An entry whose path is no longer on disk is RESOLVED, not outstanding: the
+ * check used to reproduce the record verbatim, so a directory the operator had
+ * already deleted was still named — byte-identically — until the next
+ * `genie update` dropped it from the record.
  */
 function evaluatePreservedRetirements(record: SkillsInstallRecord | null): CheckResult | null {
   const preserved = record?.preserved ?? [];
   if (preserved.length === 0) return null;
-  const paths = preserved.map((entry) => `${join(entry.agentDir, entry.skill)} (${entry.reason})`);
-  const named = paths.slice(0, MAX_PRESERVED_SKILL_PATHS);
-  const rest = paths.length - named.length;
+  const outstanding: string[] = [];
+  const resolved: string[] = [];
+  for (const entry of preserved) {
+    const target = join(entry.agentDir, entry.skill);
+    if (isDirectory(target)) outstanding.push(`${target} (${entry.reason})`);
+    else resolved.push(target);
+  }
+  const resolvedSuffix =
+    resolved.length === 0
+      ? ''
+      : `; ${resolved.length} already resolved (gone from disk, dropped from the record by the next \`genie update\`): ${namedWithRemainder(resolved)}`;
+  if (outstanding.length === 0) {
+    return {
+      name: 'skills: retirement',
+      status: 'pass',
+      detail: `all ${preserved.length} preserved retired skill dir(s) are gone from disk; the next \`genie update\` drops them from the record: ${namedWithRemainder(resolved)}`,
+    };
+  }
   return {
     name: 'skills: retirement',
     status: 'warn',
-    detail: `${preserved.length} preserved retired skill dir(s): ${named.join('; ')}${rest > 0 ? `; +${rest} more` : ''}`,
+    detail: `${outstanding.length} preserved retired skill dir(s): ${namedWithRemainder(outstanding)}${resolvedSuffix}`,
     suggestion: SKILLS_RETIREMENT_SUGGESTION,
+  };
+}
+
+const SKILLS_AGENT_DIRS_SUGGESTION = 'Run `genie update` to reinstall the skills channel into every recorded home';
+
+/**
+ * Per-recorded-agent-dir inventory drift.
+ *
+ * The four `KNOWN_AGENT_SKILL_HOMES` rows above are not the removal authority:
+ * `agentDirs` is, and it held 57 entries on the 2026-09-15 dogfood host. A home
+ * that lost content — or vanished entirely — read `ok: true` there because
+ * doctor could only see four of the 57. This line closes that gap: it compares
+ * the record's own inventory against each recorded home and says how many are
+ * complete, naming up to five that are not. Warn-level and read-only.
+ */
+function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckResult | null {
+  if (record === null || record.inventory.length === 0) return null;
+  const dirs = [...new Set(record.agentDirs)];
+  if (dirs.length === 0) return null;
+  const incomplete: string[] = [];
+  for (const dir of dirs) {
+    if (!isDirectory(dir)) {
+      incomplete.push(`${dir} (not on disk)`);
+      continue;
+    }
+    const present = countInstalledSkills(dir, record.inventory);
+    if (present < record.inventory.length) incomplete.push(`${dir} (${present}/${record.inventory.length})`);
+  }
+  const complete = dirs.length - incomplete.length;
+  const detail = `${complete}/${dirs.length} recorded homes complete @ ${record.ref}`;
+  if (incomplete.length === 0) return { name: 'skills: agent dirs', status: 'pass', detail };
+  return {
+    name: 'skills: agent dirs',
+    status: 'warn',
+    detail: `${detail}; incomplete: ${namedWithRemainder(incomplete)}`,
+    suggestion: SKILLS_AGENT_DIRS_SUGGESTION,
   };
 }
 
@@ -451,6 +514,8 @@ export function checkSkillsChannel(options: { home?: string; genieHome?: string 
     binaryTag,
   };
   for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
+  const agentDirs = evaluateRecordedAgentDirs(record);
+  if (agentDirs !== null) results.push(agentDirs);
   const retirement = evaluatePreservedRetirements(record);
   if (retirement !== null) results.push(retirement);
   return results;

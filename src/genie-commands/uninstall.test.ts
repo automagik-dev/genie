@@ -194,7 +194,14 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
 
     const second = removeSkillsChannelInstall(genieHome);
-    expect(second).toEqual({ record: null, removed: [], failures: [], preserved: [], recordRemoved: false });
+    expect(second).toEqual({
+      record: null,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    });
   });
 
   test('no record is nothing to do', () => {
@@ -204,6 +211,7 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
       removed: [],
       failures: [],
       preserved: [],
+      removedRetired: [],
       recordRemoved: false,
     });
     expect(existsSync(foreign)).toBe(true);
@@ -466,6 +474,46 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     // still authorize a clean wholesale removal of GENIE_HOME's contents.
     expect(existsSync(join(genieHome, 'plugins'))).toBe(false);
     expect(readdirSync(genieHome)).toEqual([]);
+  });
+
+  /**
+   * m5: the sweep that finally deletes a retired directory a previous update
+   * could not archive reported nothing but a count — `removed 804 recorded
+   * skill dir(s)` on the dogfood host — so no line ever said WHICH of the
+   * directories the operator had been told to review were now gone.
+   */
+  test('the preserved-retirement sweep names every retired dir it removed', () => {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    const retired = join(claudeSkills, 'trace');
+    mkdirSync(retired, { recursive: true });
+    writeFileSync(join(retired, 'SKILL.md'), '# trace\n', 'utf8');
+    const retiredDigest = computeSkillDirDigest(retired);
+    if (digest === null || retiredDigest === null) throw new Error('fixture skill dir was not digestable');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+      preserved: [
+        {
+          agentDir: claudeSkills,
+          skill: 'trace',
+          reason: 'content changed since the recorded install',
+          digest: retiredDigest,
+        },
+      ],
+      installedAt: '2026-08-30T12:00:00.000Z',
+    });
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(retired)).toBe(false);
+    expect(output).toContain(`  \x1b[32m+\x1b[0m skills.sh channel: removed preserved retired skill dir ${retired}`);
+    expect(output.some((line) => line.includes('removed 2 recorded skill dir(s)'))).toBe(true);
   });
 });
 
