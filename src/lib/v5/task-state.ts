@@ -102,7 +102,12 @@ export interface BoardRow {
   name: string;
   /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
   lanes: Lane[] | null;
-  /** True only when a non-null stored lane definition is not JSON-array data. */
+  /**
+   * True when a non-null stored lane definition yields no usable lanes —
+   * unparseable, not an array, an entry that is not a lane, OR an empty array.
+   * A NULL definition (a board created without lanes) is a quiet laneless board
+   * and leaves this false.
+   */
   laneMetadataMalformed: boolean;
   createdAt: number;
 }
@@ -679,7 +684,14 @@ export function normalizeLanes(raw: unknown): Lane[] | null {
 
 /**
  * Parse stored lane JSON while retaining whether non-null metadata was unusable.
- * An empty array is a legitimately laneless board, not malformed metadata.
+ *
+ * A stored `[]` is unusable lane metadata, exactly like `{` or `[{}]`: the board
+ * carries a lane definition that yields no lane to render. It gets the same
+ * laneless note, because the alternative — silently handing back the frozen
+ * all-tasks shape with empty stderr — leaves the caller unable to tell a board
+ * that has no lanes from one whose lanes it simply could not read. A board with
+ * genuinely no lane metadata stores NULL (what `createBoard` writes for an empty
+ * lane list), and that stays the quiet, note-free laneless board.
  */
 function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: boolean } {
   if (raw == null) return { lanes: null, malformed: false };
@@ -689,7 +701,6 @@ function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: bool
   } catch {
     return { lanes: null, malformed: true };
   }
-  if (Array.isArray(parsed) && parsed.length === 0) return { lanes: null, malformed: false };
   const lanes = normalizeLanes(parsed);
   return lanes ? { lanes, malformed: false } : { lanes: null, malformed: true };
 }
@@ -1072,6 +1083,11 @@ function claimFailure(db: Database, taskId: string): never {
  * losers get `CheckoutConflictError`, or `TaskBlockedError` when an enforced
  * block is what stopped them. A winning claim appends a `claim` timeline event
  * inside the same transaction so the card can never show a claim without it.
+ *
+ * The claim also seeds `heartbeat_at = claimed_at`. Liveness is derived purely
+ * from that timestamp, and a null heartbeat classifies as `stale` — so without
+ * the seed a card read `stale` the instant it was claimed and was reclaimable
+ * by the staleness rule before its worker could beat once.
  */
 export function claimTask(db: Database, taskId: string, worker: string, opts: ClaimOptions = {}): TaskRow {
   const now = opts.now ?? Date.now();
@@ -1084,7 +1100,7 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
     const claimed = db
       .query(
         `UPDATE tasks
-         SET claimed_by = ?, claimed_at = ?, status = 'in_progress', updated_at = ?
+         SET claimed_by = ?, claimed_at = ?, heartbeat_at = ?, status = 'in_progress', updated_at = ?
          WHERE id = ?
            AND blocked_by IS NULL
            AND (
@@ -1093,9 +1109,9 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
            )
          RETURNING *`,
       )
-      .get(worker, now, now, taskId, staleBefore) as RawTask | null;
+      .get(worker, now, now, now, taskId, staleBefore) as RawTask | null;
     if (claimed) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'claim',
         note: `claimed by ${worker}`,
         authorKind: opts.author?.authorKind ?? undefined,
@@ -1160,7 +1176,7 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
       )
       .get(now, taskId) as RawTask | null;
     if (completed) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'completed',
         authorKind: author?.authorKind ?? undefined,
@@ -1217,7 +1233,7 @@ export function releaseTask(db: Database, taskId: string, author: EventAuthor): 
       )
       .get(now, taskId) as RawTask | null;
     if (released) {
-      appendTaskEvent(db, taskId, {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'released',
         authorKind: author.authorKind ?? undefined,
@@ -1257,7 +1273,7 @@ export function blockTask(
       )
       .get(blockedBy, reason, kind, now, taskId) as RawTask | null;
     if (!blocked) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'block',
       note: reason,
       authorKind: author.authorKind ?? undefined,
@@ -1280,7 +1296,7 @@ export function unblockTask(db: Database, taskId: string, author: EventAuthor): 
       )
       .get(now, taskId) as RawTask | null;
     if (!unblocked) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
@@ -1350,7 +1366,7 @@ export function assignTask(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'assign',
       note: `assigned to ${pair.agent}: ${pair.reason}`,
       authorKind: author.authorKind ?? undefined,
@@ -1385,7 +1401,7 @@ export function clearTaskAssignment(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'clear',
       note: `assignment cleared (was ${current.assignedAgent}: ${current.assignedReason})`,
       authorKind: author.authorKind ?? undefined,
@@ -1459,11 +1475,12 @@ function mapTaskEvent(row: RawTaskEvent): TaskEvent {
 }
 
 /**
- * Append one authored event to a card's timeline. This is the MINIMAL API the
- * move verb needs; the full verb surface (comment/block/release/report) lands in
- * a later group on top of this table.
+ * Append one authored event to a card's timeline. Caller owns the transaction —
+ * every in-module caller already holds an immediate one, so the existence check
+ * and the insert are atomic against a concurrent delete. The exported
+ * {@link appendTaskEvent} is the standalone entry point.
  */
-export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
   requireTask(db, taskId);
   const createdAt = Date.now();
   const res = db
@@ -1478,6 +1495,30 @@ export function appendTaskEvent(db: Database, taskId: string, event: AppendEvent
     author: event.author ?? null,
     createdAt,
   };
+}
+
+/**
+ * Append one authored event to a card's timeline (`task comment` / `task report`
+ * and every other standalone append).
+ *
+ * BEGIN IMMEDIATE around the existence check AND the insert: without it a
+ * concurrent `task delete` in another worktree lands between the two and the
+ * insert fails the `task_events.task_id` foreign key, surfacing the raw
+ * `FOREIGN KEY constraint failed` — no verb, no card id, no remedy. Under the
+ * write lock the delete is serialized, so the check decides the insert.
+ *
+ * The FK translation below is the belt to that braces: a straggler that
+ * exhausts busy_timeout can still lose the lock and see the constraint fire.
+ * The card is then genuinely gone, which is exactly {@link UnknownTaskError}.
+ */
+export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+  const append = db.transaction((): TaskEvent => appendTaskEventInTx(db, taskId, event));
+  try {
+    return append.immediate() as TaskEvent;
+  } catch (err) {
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) throw new UnknownTaskError(taskId);
+    throw err;
+  }
 }
 
 /** A card's timeline events in append order. */
@@ -1747,7 +1788,7 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
       .query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ? RETURNING *')
       .get(toLane, now, taskId) as RawTask | null;
     if (!moved) throw new UnknownTaskError(taskId);
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'move',
       note,
       authorKind: author.authorKind ?? undefined,
@@ -1819,7 +1860,7 @@ export function setTaskWish(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'wish',
       note,
       authorKind: author.authorKind ?? undefined,

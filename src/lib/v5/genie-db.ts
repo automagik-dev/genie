@@ -16,9 +16,14 @@
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, normalize } from 'node:path';
+import { basename, dirname, join, normalize, resolve } from 'node:path';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
-import { openSqlite } from './sqlite-open.js';
+// One-way, deliberate: the per-repo database asks the global module where the
+// machine-scope file lives so it can REFUSE to be that file. global-db.ts still
+// imports nothing from here, so the "never cross-import" rule keeps its
+// direction and the two path rules can never drift apart.
+import { resolveGlobalDbPath } from './global-db.js';
+import { GenieDbError, openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
 // the global DB). Re-exported here so existing importers of ./genie-db keep
@@ -387,6 +392,58 @@ export function resolveProjectContext(cwd: string = process.cwd()): ProjectConte
 }
 
 // ============================================================================
+// Separation guard: the per-repo schema never lands in the global database
+// ============================================================================
+
+const GLOBAL_DB_REFUSAL = [
+  'that file is GENIE_HOME/genie.db (the Omni approval queue and inbox), and the per-repo',
+  'task/board schema must never be written into it. Run the command from inside a repository,',
+  "or point GENIE_HOME at a directory that is not this repo's .genie/.",
+].join(' ');
+
+/**
+ * The resolved path names the machine-scope `<GENIE_HOME>/genie.db`, so opening
+ * it here would write the 9-table per-repo schema into the Omni approval-queue
+ * database. The two databases are separate files with independent
+ * `PRAGMA user_version`; merging them means a future per-repo migration runs
+ * against — or silently skips — the approval queue.
+ */
+export class GlobalDbPathError extends GenieDbError {
+  readonly path: string;
+  constructor(path: string) {
+    super(`Refusing to open the machine-scope database at ${path} as a per-repo genie.db: ${GLOBAL_DB_REFUSAL}`);
+    this.name = 'GlobalDbPathError';
+    this.path = path;
+  }
+}
+
+/**
+ * Absolute, symlink-resolved spelling of a database path. The directory is
+ * realpath'd (the file itself may not exist yet), so `GENIE_HOME` pointing at a
+ * symlink of `$HOME/.genie` still compares equal to the literal spelling.
+ */
+function canonicalDbPath(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return join(realpathSync(dirname(absolute)), basename(absolute));
+  } catch {
+    return absolute;
+  }
+}
+
+/**
+ * Refuse the global database path. This fires on the real collision the dogfood
+ * host hit: `GENIE_HOME` is `$HOME/.genie`, and a per-repo verb invoked with
+ * `cwd` = `$HOME` (outside any git repo) resolves `$HOME/.genie/genie.db` — the
+ * global file — and initializes the per-repo schema in it.
+ */
+function assertNotGlobalDbPath(path: string): void {
+  if (path === ':memory:') return;
+  if (canonicalDbPath(path) !== canonicalDbPath(resolveGlobalDbPath())) return;
+  throw new GlobalDbPathError(path);
+}
+
+// ============================================================================
 // Open / init
 // ============================================================================
 
@@ -404,8 +461,10 @@ export interface OpenOptions {
  */
 export function openDb(opts: OpenOptions = {}): Database {
   assertLocalLifecycleEnabled();
+  const path = opts.path ?? resolveDbPath(opts.cwd);
+  assertNotGlobalDbPath(path);
   return openSqlite({
-    path: opts.path ?? resolveDbPath(opts.cwd),
+    path,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     ensureSchema,
     schemaIsCurrent,

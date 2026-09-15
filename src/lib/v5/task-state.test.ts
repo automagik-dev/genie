@@ -184,6 +184,23 @@ describe('boards with lifecycle lanes', () => {
   test('an empty lane list normalizes to a laneless board', () => {
     const board = createBoard(db, 'empty-lanes', []);
     expect(board.lanes).toBeNull();
+    // Stored as NULL, not "[]": a board created without lanes is the quiet
+    // laneless board and must NOT carry the unusable-metadata note.
+    const stored = db.query('SELECT lanes FROM boards WHERE id = ?').get(board.id) as { lanes: string | null };
+    expect(stored.lanes).toBeNull();
+    expect(getBoardByName(db, 'empty-lanes')?.laneMetadataMalformed).toBe(false);
+  });
+
+  // m9: `[]` only reaches boards.lanes through import or a hand-merged
+  // roadmap.json. It is a lane definition that yields no lane, so it reads as
+  // unusable metadata and earns the same laneless note as `{` or `[{}]` —
+  // rather than the frozen all-tasks shape with empty stderr.
+  test('a stored empty lane ARRAY is unusable metadata, not a quiet laneless board', () => {
+    const board = createBoard(db, 'imported', DEFAULT_LIFECYCLE_LANES);
+    db.query('UPDATE boards SET lanes = ? WHERE id = ?').run('[]', board.id);
+    const fetched = getBoardByName(db, 'imported');
+    expect(fetched?.lanes).toBeNull();
+    expect(fetched?.laneMetadataMalformed).toBe(true);
   });
 
   test('a duplicate board name throws DuplicateBoardError (UNIQUE surfaced cleanly)', () => {
@@ -280,6 +297,45 @@ describe('lane moves + task_events timeline', () => {
 
   test('appendTaskEvent rejects an unknown task', () => {
     expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
+  });
+
+  // M6: the append is check-then-insert. Under a concurrent delete the insert
+  // used to violate the task_events foreign key and surface the raw
+  // `FOREIGN KEY constraint failed`. The immediate transaction closes the
+  // window; this asserts the translation that backstops a lost write lock.
+  test('appendTaskEvent raises the typed not-found error, never a raw FOREIGN KEY failure', () => {
+    const task = createTask(db, { title: 'doomed' });
+    db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+    let caught: unknown;
+    try {
+      appendTaskEvent(db, task.id, { kind: 'comment', note: 'too late' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownTaskError);
+    expect((caught as Error).message).toBe(`Task not found: ${task.id}`);
+    expect((caught as Error).message).not.toContain('FOREIGN KEY');
+  });
+});
+
+// m8 — liveness is derived purely from heartbeat_at and a null heartbeat reads
+// `stale`, so a claim that seeds none renders the card dead on arrival.
+describe('claim seeds liveness', () => {
+  test('claimTask stamps heartbeat_at equal to claimed_at', () => {
+    const task = createTask(db, { title: 'claim me' });
+    const claimed = claimTask(db, task.id, 'w1');
+    expect(claimed.claimedAt).not.toBeNull();
+    const card = getTaskCard(db, task.id);
+    expect(card?.heartbeatAt).toBe(claimed.claimedAt as number);
+    expect(livenessFromHeartbeat(card?.heartbeatAt ?? null, claimed.claimedAt as number)).toBe('running');
+  });
+
+  test('releaseTask clears the seeded heartbeat with the claim', () => {
+    const task = createTask(db, { title: 'claim me' });
+    claimTask(db, task.id, 'w1');
+    const released = releaseTask(db, task.id, HUMAN);
+    expect(released.claimedAt).toBeNull();
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
   });
 });
 
@@ -886,12 +942,14 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(10_000_000);
 
     releaseTask(db, a.id, HUMAN);
-    // The card is back to ready with no lingering pulse; a fresh checkout by
-    // worker B must read stale (never running) until B itself heartbeats.
+    // The card is back to ready with no lingering pulse: the released card must
+    // never carry worker A's timestamp into the ready queue.
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
 
-    claimTask(db, a.id, 'w2');
-    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    // Worker B's own claim seeds a FRESH pulse of its own (m8) — never A's.
+    const reclaimed = claimTask(db, a.id, 'w2');
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(reclaimed.claimedAt as number);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).not.toBe(10_000_000);
   });
 
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {

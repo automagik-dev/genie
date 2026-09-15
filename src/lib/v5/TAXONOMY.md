@@ -42,6 +42,44 @@ order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
 as `hashVersion`, and a marker without one is compared with the pre-sorting hash
 so upgrading genie never by itself reads as divergence.
 
+Because the bytes are a function of the content alone, **importing a committed
+`roadmap.json` and exporting it again reproduces it byte for byte**, and a
+one-card change diffs as that one card rather than as a whole-file rewrite.
+
+**Every snapshot genie emits carries `hire_roster: []`** — stdout, the canonical
+`--write`, and any other `--write` path alike. Hire rows hold machine-local
+worktree paths, and a snapshot is a publishable artifact wherever it is written;
+the rows stay in the database. The symmetric rule on the way back in: an import
+never destroys local hires unless the snapshot it is applying brings hire rows
+of its own.
+
+### Two databases, never one file
+
+There are two `genie.db` files and they are wholly separate databases:
+
+| File | Module | Holds | `user_version` |
+|------|--------|-------|----------------|
+| `<repo>/.genie/genie.db` | `genie-db.ts` | boards, tasks, dependencies, events, stage log, wish groups, hire roster | its own |
+| `<GENIE_HOME>/genie.db` | `global-db.ts` | Omni approval queue, inbound message inbox, agent sessions, service leases | its own, independent |
+
+The two schemas must never meet in one file. They are stamped with independent
+`PRAGMA user_version` values, so a merged file makes a future per-repo migration
+run against — or silently skip — the approval queue.
+
+The default `GENIE_HOME` is `$HOME/.genie`, which is *also* a valid spelling of
+a per-repo `.genie/` directory: a per-repo verb invoked with `cwd = $HOME`
+(outside any git repo, so path resolution falls back to `cwd`) resolves
+`$HOME/.genie/genie.db` — the global file — and would initialize the per-repo
+schema inside it. `openDb` therefore **refuses** any path that resolves (through
+symlinks) to `resolveGlobalDbPath()`, with a typed `GlobalDbPathError` naming
+the collision, whether the path came from `cwd` resolution or an explicit
+`{ path }`. The remedy is to run the command inside a repository, or to point
+`GENIE_HOME` somewhere that is not that repo's `.genie/`.
+
+The guard is the only link between the modules and it points one way:
+`genie-db.ts` imports `resolveGlobalDbPath` so the two path rules cannot drift;
+`global-db.ts` still imports nothing from `genie-db.ts`.
+
 ### Worktree sharing
 
 All linked worktrees of a repository share **one** `genie.db`. The path is
@@ -139,7 +177,7 @@ Plus the **runtime layer** — additive, all nullable, backfilled in place by
 |--------|------|-------|
 | `lane` | TEXT | lifecycle lane on a lane-defining board, or NULL |
 | `agent_kind` | TEXT | authored runtime identity, or NULL |
-| `heartbeat_at` | INTEGER | last liveness pulse, or NULL |
+| `heartbeat_at` | INTEGER | last liveness pulse, or NULL; `task checkout` seeds it to `claimed_at` |
 | `blocked_by` | TEXT | who placed the enforced block — NULL means unblocked |
 | `blocked_reason` | TEXT | why, free prose |
 | `block_kind` | TEXT | `work` \| `hold`; NULL/absent/unrecognized ⇒ `work` |
@@ -364,7 +402,8 @@ lane definition that was stored alongside them.
   this aggregate itself emits — reads as absent, so a round-trip of emitted
   output parses back to the lanes it came from. Anything unusable (not an array,
   an entry that is not an object, a missing/blank/non-string `name`, a non-string
-  `label`/`action`) makes the board **laneless**: both paths print the same
+  `label`/`action`, or an EMPTY array — a stored `[]` is a lane definition that
+  yields no lane, not the absence of one) makes the board **laneless**: both paths print the same
   one-line `Note: board "…" has no usable lane metadata; …` on stderr, exit 0,
   and render the laneless board — `--json` falls through to the frozen
   `{ scope, columns }` status payload. A laneless board is never a
