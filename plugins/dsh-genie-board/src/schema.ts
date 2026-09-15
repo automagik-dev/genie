@@ -32,6 +32,9 @@ export const cardSchema = z
     blockedBy: nullable,
     blockedReason: nullable,
     liveness: z.enum(['running', 'idle', 'stale']).nullable(),
+    eventCount: time.int(),
+    eventsTruncated: z.boolean(),
+    commentCount: time.int(),
     dependencies: z.array(z.object({ id, title: text, status }).strict()),
     timeline: z.array(event),
     comments: z.array(
@@ -46,6 +49,7 @@ export const aggregateSchema = z
   .object({
     schemaVersion: z.literal(1),
     scope: text,
+    eventLimit: time.int(),
     lanes: z
       .array(z.object({ name: text.min(1), label: nullable, action: nullable, cards: z.array(cardSchema) }).strict())
       .min(1),

@@ -1,10 +1,25 @@
 # Genie board for DSH Web
 
-Open **Genie board** from the button in DSH Web. Choose a registered repository
-workspace and board to view its lanes, cards, owners, activity, blocks, dependencies,
-comments, and history. Select a card to move, comment, block/hold, unblock, claim,
-release, or complete it. Create adds a task to the selected board. Refresh and
-returning to the visible tab read a complete board again; there is no polling.
+The plugin adds three entries to the DSH Web sidebar, each a global panel in the
+main column: **Genie board**, **Skills** and **Workflows**. Every panel starts with
+a registered repository workspace picker.
+
+- **Genie board** shows a board's lanes, cards, owners, liveness, blocks,
+  dependencies, comments and history. Select a card to move, comment, block/hold,
+  unblock, claim, release or complete it; Add creates a task on the selected board.
+  Refresh and returning to the visible tab read a complete board again; there is no
+  polling.
+- **Skills** lists the repository's `skills/<name>/SKILL.md` catalog with a filter,
+  the shipped resources of each skill, and the document body.
+- **Workflows** lists the repository's `.claude/workflows/<name>.js` catalog (the
+  canonical saved-workflow format), each script's phases and when-to-use guidance,
+  and the script body. Both catalogs are read-only: nothing is executed from the
+  panel.
+
+The panels are React components rendered through DSH's own slot system
+(`sidebar.panellist` + `main`), styled with DSH alias tokens so they follow the
+active theme, and built against the frozen browser module table (React and
+`@deepseek-ai/dsh-client-ui-primitives`).
 
 ## Build and install
 

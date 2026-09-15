@@ -37,12 +37,24 @@ test('valid repeated builds regenerate identical Host and lazy browser bundles',
         },
       });
       expect(registration?.id).toBe('@automagik/genie-dsh-board');
-      // No DOM is needed until Cordis activates the factory's apply method.
-      expect(
-        typeof registration?.factory(() => {
-          throw new Error('Unexpected browser dependency');
-        }).apply,
-      ).toBe('function');
+      // The browser bundle resolves only DSH's frozen platform module table
+      // (React and the UI primitives); anything else is a packaging error.
+      const platform = new Set([
+        'react',
+        'react/jsx-runtime',
+        'react-dom',
+        'react-dom/client',
+        '@deepseek-ai/dsh-client-ui-primitives',
+      ]);
+      const requested = new Set<string>();
+      const stub = new Proxy({}, { get: () => stub });
+      const exportsOf = registration?.factory((id: string) => {
+        if (!platform.has(id)) throw new Error(`Unexpected browser dependency: ${id}`);
+        requested.add(id);
+        return stub;
+      });
+      expect(typeof exportsOf?.apply).toBe('function');
+      expect([...requested].sort()).toEqual(['@deepseek-ai/dsh-client-ui-primitives', 'react', 'react/jsx-runtime']);
     }
   } finally {
     await rm(output, { recursive: true, force: true });

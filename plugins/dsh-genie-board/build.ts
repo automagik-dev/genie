@@ -14,10 +14,22 @@ await build({
   define: { __GENIE_BUILD_VERSION__: JSON.stringify(version) },
 });
 await build({
-  entryPoints: ['src/client.ts'],
+  entryPoints: ['src/client/index.ts'],
   bundle: true,
   platform: 'browser',
   format: 'cjs',
+  jsx: 'automatic',
+  // Resolved from DSH's frozen browser module table (PLATFORM_MODULES) via the injected require.
+  external: [
+    'react',
+    'react/jsx-runtime',
+    'react-dom',
+    'react-dom/client',
+    '@deepseek-ai/cordis',
+    '@deepseek-ai/dsh-client-ui-primitives',
+    '@deepseek-ai/dsh-client-store',
+    '@deepseek-ai/dsh-client-ui-slots',
+  ],
   banner: {
     js: 'window.__ModuleLoader__.load({ id: "@automagik/genie-dsh-board", factory: (require) => { const module = { exports: {} }; const exports = module.exports;',
   },

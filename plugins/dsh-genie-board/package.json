@@ -11,6 +11,13 @@
   "dsh": {
     "engines": { "dsh": ">=0.1.2-rc.1" },
     "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web" }
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
   }
 }

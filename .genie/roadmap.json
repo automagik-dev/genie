@@ -30,7 +30,14 @@
       "value": "{\"branch\":\"wish/workflows-multibody\",\"base\":\"67a8d08b14d0d628c92cd6bffb19b8b4dab0381d\",\"recordedAt\":1789496254369}"
     }
   ],
-  "boards": [],
+  "boards": [
+    {
+      "id": "b_mu33ztqda7291be0",
+      "name": "roadmap",
+      "created_at": 1789503189061,
+      "lanes": "[{\"name\":\"Idea\",\"action\":\"/brainstorm\"},{\"name\":\"Brainstorm\",\"action\":\"/wish\"},{\"name\":\"Wish\",\"action\":\"/work\"},{\"name\":\"Work\",\"action\":\"/review\"},{\"name\":\"Review\"},{\"name\":\"Done\"}]"
+    }
+  ],
   "tasks": [
     {
       "id": "t_mrubw9a5949903cf",

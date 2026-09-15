@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import sourcePackage from '../../../package.json';
 declare const __GENIE_BUILD_VERSION__: string;
+import { CatalogService } from './catalog';
 import { DEADLINE_MS, compatible, execute, hostEnvironment, resolveExecutable } from './process';
 import { BoardService, type Registry } from './service';
 
@@ -85,8 +86,42 @@ export async function apply(ctx: Context): Promise<void> {
       );
     };
     route('/api/genie-board/health', 'GET', () => ({ compatible: !!service, version, minimumGenieVersion, error }));
+    const catalog = new CatalogService(ctx.workspaceRegistry);
+    const query = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').searchParams;
+    const catalogRoute = (path: string, handler: (params: URLSearchParams) => Promise<unknown>) =>
+      disposers.push(
+        ctx.webServer.register({
+          kind: 'exact',
+          path,
+          handler: async (req, res) => {
+            if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
+            const rejection = ctx.connection.requestRejection(req);
+            if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
+            if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
+            try {
+              json(res, 200, await handler(query(req)));
+            } catch (failure) {
+              json(res, 400, { error: failure instanceof Error ? failure.message : 'Catalog request failed' });
+            }
+          },
+        }),
+      );
+    const workspaceOf = (params: URLSearchParams) => {
+      const id = params.get('workspaceId') ?? '';
+      if (!id || id.length > 200) throw new Error('workspaceId required');
+      return id;
+    };
+    catalogRoute('/api/genie-board/skills', (params) => catalog.skills(workspaceOf(params)));
+    catalogRoute('/api/genie-board/workflows', (params) => catalog.workflows(workspaceOf(params)));
+    catalogRoute('/api/genie-board/document', async (params) => {
+      const kind = params.get('kind');
+      if (kind !== 'skill' && kind !== 'workflow') throw new Error('kind must be skill or workflow');
+      return { text: await catalog.document(workspaceOf(params), kind, params.get('name') ?? '') };
+    });
+    route('/api/genie-board/workspaces', 'GET', () =>
+      ctx.workspaceRegistry.list().map(({ id, title }) => ({ id, title })),
+    );
     if (service) {
-      route('/api/genie-board/workspaces', 'GET', () => service?.workspaces());
       disposers.push(
         ctx.webServer.register({
           kind: 'exact',

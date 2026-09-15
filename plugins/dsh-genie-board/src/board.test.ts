@@ -35,10 +35,14 @@ const card = {
   dependencies: [],
   timeline: [],
   comments: [],
+  eventCount: 0,
+  eventsTruncated: false,
+  commentCount: 0,
 };
 const aggregate = {
   schemaVersion: 1,
   scope: 'Board',
+  eventLimit: 25,
   lanes: [
     { name: 'Ready', label: null, action: null, cards: [card] },
     { name: 'Done', label: null, action: null, cards: [] },
