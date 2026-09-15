@@ -17,6 +17,7 @@ import {
   LIVENESS_STALE_MS,
   LaneError,
   ROSTER,
+  type StateExport,
   TaskBlockedError,
   TaskCompleteError,
   TaskHasDependentsError,
@@ -1118,6 +1119,48 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     expect(marker.fileHash).not.toBe(legacyHash);
     expect(marker.fileHash).toBe(marker.dbHash);
     expect(syncRoadmap(db, repo).action).toBe('none');
+  });
+
+  test('diverged only in the card timeline merges both sides and republishes (the conversation is global)', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'genie-merge-'));
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const task = createTask(db, { title: 'shared card' });
+    // Baseline: both sides in sync.
+    expect(syncRoadmap(db, repo).action).toBe('exported');
+    // The other clone commented and published; this clone reported locally.
+    const theirs = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    theirs.task_events.push({
+      id: 999,
+      task_id: task.id,
+      kind: 'comment',
+      note: 'dispatch: eng-A — G1',
+      author_kind: 'claude-code',
+      author: 'orchestrator',
+      created_at: 1_700_000_000_000,
+    });
+    writeFileSync(filePath, `${JSON.stringify(theirs, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'report', note: 'done: verified', author: 'eng-A', authorKind: 'codex' });
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('merged');
+    const kinds = getTaskEvents(db, task.id).map((e) => [e.kind, e.author]);
+    expect(kinds).toEqual([
+      ['report', 'eng-A'],
+      ['comment', 'orchestrator'],
+    ]);
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    expect(published.task_events.map((e) => e.kind).sort()).toEqual(['comment', 'report']);
+    // Idempotent: the same file event is never inserted twice, and the sides now agree.
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    expect(getTaskEvents(db, task.id)).toHaveLength(2);
+    // A real card conflict still stops: a title edit on the file side is not mergeable.
+    const conflict = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    conflict.tasks[0].title = 'renamed on the other clone';
+    writeFileSync(filePath, `${JSON.stringify(conflict, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'local only', author: 'x', authorKind: 'human' });
+    expect(syncRoadmap(db, repo).action).toBe('diverged');
+    rmSync(repo, { recursive: true, force: true });
   });
 
   test('an old order-sensitive marker with pending edits refuses to overwrite either side', () => {

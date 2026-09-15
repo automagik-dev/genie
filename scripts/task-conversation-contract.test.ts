@@ -17,7 +17,8 @@ describe('card conversation contract in the skills', () => {
     expect(work).toContain('at most one report per claim-to-handoff span and one comment per gate');
     expect(work).toContain('never post periodic progress');
     expect(work).toContain('The reviewer never writes to the card.');
-    expect(work).toMatch(/orchestration\.mode = orca[^\n]*skip every `genie task` call including report and comment/);
+    expect(work).toContain('Card conversation is the global task state.');
+    expect(work).toMatch(/orchestration\.mode = orca[^\n]*Orca is the lifecycle authority/);
   });
 
   test('the orchestrator relays every gate as a comment before task done', () => {
