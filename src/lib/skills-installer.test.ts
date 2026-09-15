@@ -35,6 +35,7 @@ import {
   computeSkillDirDigest,
   existingAgentSkillHomes,
   inventoryFromSkillsDir,
+  isNpmChatterLine,
   isSafeSkillName,
   preflightNode,
   readSkillsInstallRecord,
@@ -579,23 +580,28 @@ describe('runSkillsInstall', () => {
   });
 
   /**
-   * M4 / GAP 1 — a `skills-collision-*` root an earlier run left behind is
-   * pruned by a later one, but only once every file in it still matches its
-   * live original. A root holding replaced bytes is never touched.
+   * X1 (r2 §3.2 A). `state-backups/` is an ARCHIVE: a root written by a
+   * previous run is never deleted, moved or rewritten by a later one — not even
+   * one a redundancy test judges "protects nothing", and least of all by a run
+   * that installed nothing. The deleted `pruneCollisionBackups` did exactly
+   * that, silently, and destroyed the dogfood host's hop-1 root.
    */
-  test('a later run prunes a stale collision root that protects nothing, and keeps one that does', () => {
+  test('a later run never deletes a pre-existing collision backup root, redundant or not', () => {
     fixtureSkillsTree(['wish']);
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
     const backups = join(genieHome, 'state-backups');
-    const redundant = join(backups, 'skills-collision-2026-09-01T00-00-00-000Z');
-    const precious = join(backups, 'skills-collision-2026-09-02T00-00-00-000Z');
+    // Root 1: byte-identical to the live original — the shape the old prune
+    // judged redundant and removed.
+    const redundant = join(backups, 'skills-collision-2020-01-01T00-00-00-000Z');
+    // Root 2: bytes nothing else on disk has.
+    const divergent = join(backups, 'skills-collision-2020-01-02T00-00-00-000Z');
     const strayLive = join(home, 'workspace', 'skills', 'wish');
     mkdirSync(strayLive, { recursive: true });
     writeFileSync(join(strayLive, 'SKILL.md'), '# someone else\n', 'utf8');
     mkdirSync(join(redundant, 'workspace', 'skills', 'wish'), { recursive: true });
     writeFileSync(join(redundant, 'workspace', 'skills', 'wish', 'SKILL.md'), '# someone else\n', 'utf8');
-    mkdirSync(join(precious, '.claude', 'skills', 'wish'), { recursive: true });
-    writeFileSync(join(precious, '.claude', 'skills', 'wish', 'SKILL.md'), '# bytes nothing else has\n', 'utf8');
+    mkdirSync(join(divergent, '.claude', 'skills', 'wish'), { recursive: true });
+    writeFileSync(join(divergent, '.claude', 'skills', 'wish', 'SKILL.md'), '# bytes nothing else has\n', 'utf8');
 
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
@@ -606,11 +612,49 @@ describe('runSkillsInstall', () => {
     });
 
     expect(outcome.ok).toBe(true);
-    expect(existsSync(redundant)).toBe(false);
-    expect(readFileSync(join(precious, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+    expect(readFileSync(join(redundant, 'workspace', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('# someone else\n');
+    expect(readFileSync(join(divergent, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       '# bytes nothing else has\n',
     );
-    expect(readFileSync(join(strayLive, 'SKILL.md'), 'utf8')).toBe('# someone else\n');
+
+    // …and a FAILING run destroys nothing either: the sandbox reproduction of
+    // the host incident had the skills install exit 1 while the root vanished.
+    const failed = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 1, stdout: '', stderr: 'Local path does not exist\n' }),
+    });
+    expect(failed.ok).toBe(false);
+    expect(existsSync(redundant)).toBe(true);
+    expect(existsSync(divergent)).toBe(true);
+    expect(readFileSync(join(redundant, 'workspace', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('# someone else\n');
+  });
+
+  /** X1: anything the CURRENT run keeps is named on stdout, with a count. */
+  test('a kept collision backup root is named on stdout with the number of replaced dirs', () => {
+    const source = fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), "# the user's OWN wish skill\n", 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: (command, args, options) => {
+        cpSync(source, claudeSkills, { recursive: true });
+        return deliveringOkRunner({ argv: [] })(command, args, options);
+      },
+    });
+
+    expect(outcome.ok).toBe(true);
+    const kept = (outcome.warnings ?? []).find((line) => line.startsWith('skills: collision backup kept at '));
+    expect(kept).toBeDefined();
+    const root = collisionBackupRoots()[0] as string;
+    expect(kept).toBe(`skills: collision backup kept at ${root} (1 replaced dir(s))`);
   });
 
   test("stderr's last line wins over stdout when both streams are populated", () => {
@@ -627,6 +671,63 @@ describe('runSkillsInstall', () => {
       }),
     });
     expect(outcome.ok === false && outcome.reason).toBe('skills CLI exited 9: npm ERR! 404 Not Found - GET .../skills');
+  });
+
+  /**
+   * X4 (r2 §3.3 #5). On a cold npx cache npm writes `npm notice`/`npm warn` to
+   * STDERR while the skills CLI writes its real error to STDOUT, so the
+   * unfiltered "last stderr line" rule diagnosed every fresh machine with
+   * `skills CLI exited 1: npm notice.` — a different message for the very same
+   * failure once the cache was warm.
+   */
+  test('npm progress chatter never becomes the diagnosis; the real error does', () => {
+    fixtureSkillsTree(['wish']);
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({
+        exitCode: 1,
+        stdout: `Local path does not exist: ${join(genieHome, 'skills')}\n`,
+        stderr: 'npm warn exec The following package was not found\nnpm notice\nnpm notice New minor version\n',
+      }),
+    });
+    expect(outcome.ok === false && outcome.reason).toBe(
+      `skills CLI exited 1: Local path does not exist: ${join(genieHome, 'skills')}`,
+    );
+  });
+
+  test('a real stderr error still wins even when npm chatter follows it', () => {
+    fixtureSkillsTree(['wish']);
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({
+        exitCode: 1,
+        stdout: 'resolving\n',
+        stderr: 'npm notice\nError: EACCES permission denied\nnpm notice New minor version\n',
+      }),
+    });
+    expect(outcome.ok === false && outcome.reason).toBe('skills CLI exited 1: Error: EACCES permission denied');
+    // `npm ERR!` is a REAL failure line, never chatter.
+    expect(isNpmChatterLine('npm ERR! code E404')).toBe(false);
+    expect(isNpmChatterLine('  npm notice ')).toBe(true);
+    expect(isNpmChatterLine('npm warn exec')).toBe(true);
+  });
+
+  test('chatter-only output on both streams still names the last line it has', () => {
+    fixtureSkillsTree(['wish']);
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 1, stdout: '', stderr: 'npm notice\nnpm notice cached\n' }),
+    });
+    expect(outcome.ok === false && outcome.reason).toBe('skills CLI exited 1: npm notice cached');
   });
 
   test('stdout is the fallback only when stderr is silent', () => {

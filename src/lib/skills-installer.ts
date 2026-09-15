@@ -1625,6 +1625,8 @@ function finalizeCollisionSnapshot(context: {
   }
   const backupRoot = snapshot.backupRoot;
   const kept: SkillsCollision[] = [];
+  /** The dirs whose previous bytes really are in `backupRoot`. */
+  const stagedDirs = new Set(snapshot.collisions.filter((entry) => entry.backedUp).map((entry) => entry.dir));
   for (const collision of snapshot.collisions) {
     if (collisionIsUntouched(collision)) {
       if (collision.backedUp && backupRoot !== null) {
@@ -1639,86 +1641,33 @@ function finalizeCollisionSnapshot(context: {
         : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
     );
   }
-  pruneCollisionBackups({ genieHome: context.genieHome, home: context.home });
+  // X1: a state-backups root is an ARCHIVE. Nothing here removes, moves or
+  // rewrites a root a previous run wrote — the deleted `pruneCollisionBackups`
+  // did exactly that, silently, even on runs that installed nothing, and it
+  // destroyed the dogfood host's hop-1 root. Only the CURRENT run's staging is
+  // ever discarded, above, and only while the live original still proves the
+  // copy protects nothing. What survives is named on stdout.
+  const backedUp = kept.filter((collision) => stagedDirs.has(collision.dir)).length;
+  if (backupRoot !== null && backedUp > 0) {
+    warnings.push(`skills: collision backup kept at ${backupRoot} (${backedUp} replaced dir(s))`);
+  } else if (backupRoot !== null) {
+    discardEmptyCollisionBackupRoot(backupRoot);
+  }
   return kept;
 }
 
-const COLLISION_PRUNE_MAX_ROOTS = 32;
-const COLLISION_PRUNE_MAX_FILES = 4000;
-const COLLISION_PRUNE_MAX_FILE_BYTES = 4 * 1024 * 1024;
-
-/** Byte-equal regular files at both paths, within the compare budget. */
-function sameFileContents(left: string, right: string): boolean {
-  try {
-    const leftStat = lstatSync(left);
-    const rightStat = lstatSync(right);
-    if (!leftStat.isFile() || !rightStat.isFile()) return false;
-    if (leftStat.size !== rightStat.size) return false;
-    if (leftStat.size > COLLISION_PRUNE_MAX_FILE_BYTES) return false;
-    return readFileSync(left).equals(readFileSync(right));
-  } catch {
-    return false;
-  }
-}
-
 /**
- * True when every file under `root` still has a byte-identical live original,
- * i.e. the copy protects nothing. Anything unreadable, unexpected or over
- * budget answers `false`, so a doubtful backup is always kept.
+ * The CURRENT run's staging root, removed only while it still holds nothing —
+ * i.e. before it is promoted to a named, reported archive root. This is the ONE
+ * removal under `state-backups/` the installer performs, and it can only ever
+ * touch the root this run just created.
  */
-function collisionBackupIsRedundant(root: string, home: string, budget: { files: number }): boolean {
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const current = stack.pop() as string;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (const entry of entries) {
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(path);
-        continue;
-      }
-      if (!entry.isFile()) return false;
-      if (--budget.files < 0) return false;
-      const rel = relative(root, path);
-      if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-      if (!sameFileContents(path, join(home, rel))) return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Drop the `skills-collision-*` roots that no longer protect anything —
- * including the ones an EARLIER run left behind when it could not prove what
- * the install had written. A root is removed only when every file in it still
- * matches its live original, so a root holding the user's replaced bytes is
- * never touched; an empty root trivially qualifies. Never throws.
- */
-function pruneCollisionBackups(context: { genieHome: string; home: string }): void {
-  const base = join(context.genieHome, 'state-backups');
-  let entries: Dirent[];
+function discardEmptyCollisionBackupRoot(backupRoot: string): void {
+  if (!holdsNoFiles(backupRoot)) return;
   try {
-    entries = readdirSync(base, { withFileTypes: true });
+    rmSync(backupRoot, { recursive: true, force: true });
   } catch {
-    return;
-  }
-  const budget = { files: COLLISION_PRUNE_MAX_FILES };
-  let roots = 0;
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('skills-collision-')) continue;
-    if (++roots > COLLISION_PRUNE_MAX_ROOTS) return;
-    const root = join(base, entry.name);
-    if (!collisionBackupIsRedundant(root, context.home, budget)) continue;
-    try {
-      rmSync(root, { recursive: true, force: true });
-    } catch {
-      // A root that cannot be removed is harmless: it is a redundant copy.
-    }
+    // Best effort: an unremovable empty staging root never fails an install.
   }
 }
 
@@ -1761,23 +1710,46 @@ function snapshotCollisionsSafely(context: {
 }
 
 /**
+ * npx's own progress chatter, which it writes to STDERR. On a cold npm cache
+ * `npm notice`/`npm warn` lines are the LAST thing on stderr while the skills
+ * CLI's real error went to stdout, so the unfiltered "last stderr line" rule
+ * diagnosed every fresh machine and CI runner with `npm notice.` (r2 #5).
+ */
+const NPM_CHATTER_PATTERN = /^npm (notice|warn|WARN|http|info|verbose|sill)\b/;
+
+/** `true` for a line that is npm/npx progress rather than a real failure. */
+export function isNpmChatterLine(line: string): boolean {
+  return NPM_CHATTER_PATTERN.test(line.trim());
+}
+
+/**
  * The diagnosis line. stderr is where the CLI puts its failure, so its last
- * non-empty line wins whenever stderr has one; stdout is only consulted when
- * stderr is silent. Concatenating the two (the previous behaviour) let a
- * trailing progress line on stdout mask the actual error.
+ * non-empty NON-CHATTER line wins whenever stderr has one; stdout is consulted
+ * when stderr carries nothing but npm chatter. Concatenating the two (the
+ * original behaviour) let a trailing progress line on stdout mask the error.
  */
 function describeFailure(result: CommandResult): string {
   if (result.timedOut) return `skills CLI timed out after ${SKILLS_INSTALL_TIMEOUT_MS} ms`;
-  const tail = lastNonEmptyLine(result.stderr) ?? lastNonEmptyLine(result.stdout);
+  const tail = lastRealLine(result.stderr) ?? lastRealLine(result.stdout) ?? lastNonEmptyLine(result.stderr);
   return tail === undefined ? `skills CLI exited ${result.exitCode}` : `skills CLI exited ${result.exitCode}: ${tail}`;
 }
 
+/** The last non-empty line that is not npm/npx chatter. */
+function lastRealLine(stream: string): string | undefined {
+  return nonEmptyLines(stream)
+    .filter((line) => !isNpmChatterLine(line))
+    .at(-1);
+}
+
 function lastNonEmptyLine(stream: string): string | undefined {
-  const lines = stream
+  return nonEmptyLines(stream).at(-1);
+}
+
+function nonEmptyLines(stream: string): string[] {
+  return stream
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '');
-  return lines.at(-1);
 }
 
 function errorMessage(error: unknown): string {

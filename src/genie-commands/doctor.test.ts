@@ -21,6 +21,7 @@ import {
   type LegacyClassifier,
   MINIMUM_BUN_VERSION,
   checkCodexProjectContext,
+  checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkLegacyIntegrations,
   checkOmniBridgeHealth,
@@ -32,6 +33,7 @@ import {
   evaluateBunVersion,
   evaluateIndexLaneDrift,
   evaluateOmniBridgeHealth,
+  globalDbContaminationRemedy,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -155,6 +157,17 @@ describe('doctorCommand', () => {
     const embedding = checks.map((c) => c.name).filter((name) => name.includes(VERSION));
     expect(embedding).toEqual([]);
     expect(checks.find((c) => c.name === 'genie version')).toMatchObject({ status: 'pass', detail: VERSION });
+  });
+
+  // r2 #7 (m16 class): no check NAME may carry ANY version string — `bun
+  // 1.3.11` reproduced exactly the removed/added diff pair m16 eliminated, and
+  // it was invisible to a guard that only looked for the genie version.
+  test('no check name embeds any version number', () => {
+    const versioned = json.checks.map((c) => c.name).filter((name) => /\d+\.\d+/.test(name));
+    expect(versioned).toEqual([]);
+    const bun = (json.checks as Array<{ name: string; detail?: string }>).find((c) => c.name === 'bun present');
+    expect(bun?.name).toBe('bun present');
+    expect(bun?.detail).toContain('1.3.10');
   });
 
   test('healthy checkout has no failing checks', () => {
@@ -1452,5 +1465,63 @@ describe('doctor --json: skills channel + legacy integration riders', () => {
     expect(json.checks.find((c) => c.name === 'legacy integrations')?.status).toBe('warn');
     expect(existsSync(join(legacyAsset, 'SKILL.md'))).toBe(true);
     expect(existsSync(join(isolatedHome, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+  });
+});
+
+describe('global db contamination (r2 #6 / M7 operator half)', () => {
+  test('a clean global db passes and names the file', () => {
+    const genieHome = join(isolatedHome, 'globaldb-clean');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const db = new Database(dbPath);
+    db.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE inbound_messages (id TEXT PRIMARY KEY)');
+    db.close();
+
+    const results = checkGlobalDbContamination({ genieHome });
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'global db', status: 'pass' });
+    expect(results[0]?.detail).toContain(dbPath);
+  });
+
+  test('per-repo tables next to the approval queue warn and name the exact remedy', () => {
+    const genieHome = join(isolatedHome, 'globaldb-dirty');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const db = new Database(dbPath);
+    db.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE inbound_messages (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE task_events (id TEXT PRIMARY KEY)');
+    db.close();
+
+    const results = checkGlobalDbContamination({ genieHome });
+    expect(results).toHaveLength(1);
+    const check = results[0] as CheckResult;
+    expect(check).toMatchObject({ name: 'global db', status: 'warn' });
+    expect(check.detail).toContain('per-repo tables present (boards, tasks, task_events)');
+    expect(check.detail).toContain(dbPath);
+    // The remedy backs the file up first and drops ONLY the stray tables.
+    const remedy = globalDbContaminationRemedy(dbPath, ['boards', 'tasks', 'task_events']);
+    expect(check.suggestion).toBe(remedy);
+    expect(check.detail).toContain(remedy);
+    expect(remedy).toContain(`cp ${dbPath} ${dbPath}.backup-`);
+    expect(remedy).toContain('DROP TABLE IF EXISTS boards;');
+    expect(remedy).not.toContain('approvals');
+    expect(remedy).not.toContain('inbound_messages');
+    // Read-only: the check never repairs, so the tables are still there.
+    const after = new Database(dbPath, { readonly: true });
+    const names = (
+      after.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{
+        name: string;
+      }>
+    ).map((row) => row.name);
+    after.close();
+    expect(names).toContain('boards');
+  });
+
+  test('an absent global db is not a finding', () => {
+    expect(checkGlobalDbContamination({ genieHome: join(isolatedHome, 'globaldb-missing') })).toEqual([]);
   });
 });
