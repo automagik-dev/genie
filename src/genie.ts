@@ -201,9 +201,13 @@ program
       '  this host — one whose product home (~/.claude, ~/.codex, ~/.cursor, …) already',
       '  exists, or whose skills home the previous install record names.',
       '  Genie NEVER creates a product home: the agents are named explicitly on the',
-      '  skills CLI command line. A recorded home that now holds nothing but',
-      '  genie-written skills is handed back — moved, backup-first, under',
-      '  <GENIE_HOME>/state-backups/skills-prune-<timestamp>/ and named on stdout.',
+      '  skills CLI command line.',
+      '  ONE-SHOT hand-back: a home recorded by a pre-5.260915 install (the `--all`',
+      '  era, which did create product homes) that now holds nothing but genie-written',
+      '  skills is moved, backup-first, under',
+      '  <GENIE_HOME>/state-backups/skills-prune-<timestamp>/, dropped from the record',
+      '  and named on stdout. A home recorded by this release is never handed back —',
+      '  genie did not create it, so an install followed by an update is idempotent.',
     ].join('\n'),
   )
   .action(async (options: InstallOptions) => {

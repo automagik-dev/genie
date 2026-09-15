@@ -1105,19 +1105,31 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
       detail: 'kept (user-modified) — not counted as reclaimable; --fix will not touch it',
     });
   }
-  for (const dir of orphanedCaches) {
+  // ONE row for every orphaned cache dir, never one row per version: a check
+  // NAME is the cross-release diff key, so `v4 residue: plugin cache 4.260421.17`
+  // reproduced exactly the removed/added pair m16 eliminated — the name
+  // appeared and disappeared with the cache, and differed host to host. The
+  // versions ride the detail instead (r2 #7).
+  if (orphanedCaches.length > 0) {
+    const bytes = orphanedCaches.reduce((sum, d) => sum + safeSizeOf(d.path), 0);
     results.push({
-      name: `v4 residue: plugin cache ${dir.version}`,
+      name: 'v4 residue: plugin cache',
       status: 'warn',
-      detail: `orphaned, ${prettyBytes(safeSizeOf(dir.path))}`,
+      detail: `${orphanedCaches.length} orphaned version dir(s), ${prettyBytes(bytes)}: ${orphanedCaches
+        .map((d) => d.version)
+        .sort()
+        .join(', ')}`,
     });
   }
   // Report-only (Decision 2): uncertain names we deliberately never touch.
-  for (const name of uncertainKeeps) {
+  // Summarized for the same reason as the cache row — these names come from
+  // whatever the genie home happens to hold, so any of them could carry a
+  // version and none of them is a stable diff key.
+  if (uncertainKeeps.length > 0) {
     results.push({
-      name: `kept (uncertain): ${name}`,
+      name: 'kept (uncertain)',
       status: 'pass',
-      detail: 'not provably v4 — never touched by --fix',
+      detail: `not provably v4 — never touched by --fix: ${[...uncertainKeeps].sort().join(', ')}`,
     });
   }
   return results;

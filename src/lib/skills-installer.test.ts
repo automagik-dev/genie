@@ -168,10 +168,21 @@ describe('pinned argv', () => {
     expect(releaseTag('5.260830.16')).toBe('v5.260830.16');
   });
 
-  test('the remedy line is the argv verbatim', () => {
+  /**
+   * The remedy is COPY-PASTED into a shell. An unquoted `*` expands against the
+   * operator's cwd, so the pasted command installs whatever files happen to sit
+   * there instead of the `--skill '*'` CLAUDE.md documents (r2 X2 secondary).
+   */
+  test('the remedy line is the argv verbatim, shell-quoted so a paste reproduces it', () => {
     expect(skillsInstallRemedy('/home/u/.genie/skills', ['claude-code'])).toBe(
-      'Run: npx -y skills@1.5.23 add /home/u/.genie/skills --skill * --agent claude-code -y --copy -g',
+      "Run: npx -y skills@1.5.23 add /home/u/.genie/skills --skill '*' --agent claude-code -y --copy -g",
     );
+    // Quoting is by shape, not by position: an ordinary path stays bare.
+    expect(skillsInstallRemedy('/home/u/.genie/skills', ['claude-code'])).toContain(
+      'add /home/u/.genie/skills --skill',
+    );
+    // A home with a space is quoted too, so the paste still names one path.
+    expect(skillsInstallRemedy('/home/my genie/skills', ['codex'])).toContain("add '/home/my genie/skills'");
   });
 });
 
@@ -288,6 +299,9 @@ describe('runSkillsInstall', () => {
       inventory: ['wish', 'work'],
       agentDirs: [claudeSkills, agentsSkills],
       dirDigests: expectedDigests,
+      // The durable proof that this run named its agents explicitly and created
+      // no product home — what keeps the next run's prune off `~/.claude`.
+      agentSelection: 'explicit',
       installedAt: '2026-08-30T12:00:00.000Z',
     });
 
@@ -342,7 +356,7 @@ describe('runSkillsInstall', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.reason).toBe('skills CLI exited 7: ENOTFOUND registry.npmjs.org');
     expect(outcome.ok === false && outcome.remedy).toBe(
-      `Run: npx -y skills@1.5.23 add ${join(genieHome, 'skills')} --skill * --agent claude-code codex -y --copy -g`,
+      `Run: npx -y skills@1.5.23 add ${join(genieHome, 'skills')} --skill '*' --agent claude-code codex -y --copy -g`,
     );
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
   });
@@ -2019,7 +2033,7 @@ describe('runSkillsChannelConvergence', () => {
 
     expect(result).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
     expect(lines).toEqual([
-      `Skills install failed: skills CLI exited 1: boom. Run: npx -y skills@1.5.23 add ${join(genieHome, 'skills')} --skill * --agent claude-code codex -y --copy -g`,
+      `Skills install failed: skills CLI exited 1: boom. Run: npx -y skills@1.5.23 add ${join(genieHome, 'skills')} --skill '*' --agent claude-code codex -y --copy -g`,
     ]);
     expect(process.exitCode).toBe(1);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
@@ -2380,6 +2394,177 @@ describe('agent selection never creates a product home', () => {
     expect(existsSync(join(home, '.openclaw'))).toBe(true);
     expect((outcome.warnings ?? []).filter((line) => line.includes('pruned'))).toEqual([]);
     expect(outcome.ok === true && outcome.record.agentDirs).toContain(openclaw);
+  });
+
+  /**
+   * r2 verify §6 — the prune's second-run destruction.
+   *
+   * After a correct install an operator's own `~/.claude` holds nothing but the
+   * `skills/` dir genie wrote, which is byte-for-byte what a genie-MATERIALIZED
+   * home looks like. A content-only ownership proof therefore handed the
+   * operator's real home back on the second run of the identical command:
+   * install → update → the agent's skills are gone. The record's
+   * `agentSelection` is the fact that tells the two apart.
+   */
+  test('a second run never hands back a product home this release installed into', () => {
+    fixtureSkillsTree(['wish']);
+    // The sb1 fixture: `~/.claude` with nothing of the product's own in it, so
+    // only the record can say who created it.
+    rmSync(join(home, '.claude', 'settings.json'));
+
+    const first = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+    });
+    expect(first.ok).toBe(true);
+    expect(first.ok === true && first.record.agentSelection).toBe('explicit');
+    expect(first.ok === true && first.record.agentDirs).toContain(join(home, '.claude', 'skills'));
+
+    const second = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+    });
+
+    expect(second.ok).toBe(true);
+    expect((second.warnings ?? []).filter((line) => line.includes('pruned'))).toEqual([]);
+    expect(existsSync(join(home, '.claude', 'skills', 'wish', 'SKILL.md'))).toBe(true);
+    expect(second.ok === true && second.record.agentDirs).toContain(join(home, '.claude', 'skills'));
+    expect(existsSync(join(genieHome, 'state-backups'))).toBe(false);
+  });
+
+  /**
+   * r2 verify §7 — the same defect on a two-product host, where run 2 pruned
+   * BOTH roots and then reported `no agent skill home detected`, leaving the
+   * record pointing at two archived homes and `genie update` a permanent no-op.
+   */
+  test('a second run on a two-product host keeps both homes and stays installable', () => {
+    fixtureSkillsTree(['wish']);
+    rmSync(join(home, '.claude', 'settings.json'));
+    rmSync(join(home, '.codex'), { recursive: true });
+    mkdirSync(join(home, '.qwen'), { recursive: true });
+
+    const runner = agentAwareRunner({ argv: [] });
+    const first = runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn: runner });
+    expect(first.ok === true && first.record.agentDirs.sort()).toEqual(
+      [join(home, '.claude', 'skills'), join(home, '.qwen', 'skills')].sort(),
+    );
+
+    const second = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: runner,
+    });
+
+    expect(second.ok).toBe(true);
+    expect(existsSync(join(home, '.claude', 'skills', 'wish'))).toBe(true);
+    expect(existsSync(join(home, '.qwen', 'skills', 'wish'))).toBe(true);
+    expect(second.ok === true && second.record.agentDirs.sort()).toEqual(
+      [join(home, '.claude', 'skills'), join(home, '.qwen', 'skills')].sort(),
+    );
+  });
+
+  /**
+   * The prune is a ONE-SHOT migration off the `--all` era, so it reads an
+   * `--all` era record (one without `agentSelection`) and never a record this
+   * release wrote.
+   */
+  test('a record this release wrote is never eligible for the prune', () => {
+    fixtureSkillsTree(['wish']);
+    const openclaw = join(home, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wish'), { recursive: true });
+    writeFileSync(join(openclaw, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    const base = {
+      ref: 'v5.260915.1',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [openclaw],
+      dirDigests: { [join(openclaw, 'wish')]: computeSkillDirDigest(join(openclaw, 'wish')) as string },
+      installedAt: '2026-09-15T00:00:00.000Z',
+    } satisfies SkillsInstallRecord;
+    writeSkillsInstallRecord(genieHome, { ...base, agentSelection: 'explicit' });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(home, '.openclaw'))).toBe(true);
+    expect((outcome.warnings ?? []).filter((line) => line.includes('pruned'))).toEqual([]);
+    // The identical record WITHOUT the field is `--all` era, and IS pruned.
+    writeSkillsInstallRecord(genieHome, base);
+    const legacy = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+    });
+    expect(legacy.ok).toBe(true);
+    expect(existsSync(join(home, '.openclaw'))).toBe(false);
+  });
+
+  /**
+   * r2 verify §7, second half: the no-agent early return fires BEFORE the record
+   * write, so a run that pruned every recorded home left the record naming them
+   * all. Doctor then warned `0/n recorded homes complete … (not on disk)` and
+   * prescribed `genie update`, which now reports `skipped` forever.
+   */
+  test('a prune that leaves no agent still drops the pruned homes from the record', () => {
+    const bareHome = join(root, 'legacy-home');
+    const bareGenieHome = join(bareHome, '.genie');
+    mkdirSync(join(bareGenieHome, 'skills', 'wish'), { recursive: true });
+    writeFileSync(join(bareGenieHome, 'skills', 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    const openclaw = join(bareHome, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wish'), { recursive: true });
+    writeFileSync(join(openclaw, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    // An `--all` era record: no `agentSelection`, so the prune is eligible.
+    writeSkillsInstallRecord(bareGenieHome, {
+      ref: 'v5.260915.1',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [openclaw],
+      dirDigests: { [join(openclaw, 'wish')]: computeSkillDirDigest(join(openclaw, 'wish')) as string },
+      installedAt: '2026-09-15T00:00:00.000Z',
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome: bareGenieHome,
+      home: bareHome,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok === false && outcome.noAgents).toBe(true);
+    expect(existsSync(join(bareHome, '.openclaw'))).toBe(false);
+    const record = readSkillsInstallRecord(bareGenieHome) as SkillsInstallRecord;
+    expect(record.agentDirs).toEqual([]);
+    expect(record.dirDigests).toEqual({});
+    // Stamped, so the prune never runs a second time against this record.
+    expect(record.agentSelection).toBe('explicit');
+
+    const again = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome: bareGenieHome,
+      home: bareHome,
+      which: alwaysFound,
+      spawn: agentAwareRunner({ argv: [] }),
+    });
+    expect((again.warnings ?? []).filter((line) => line.includes('pruned'))).toEqual([]);
   });
 
   test('a host with no agent installed skips the channel instead of inventing a home', () => {

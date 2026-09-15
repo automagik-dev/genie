@@ -22,7 +22,7 @@
  *     Codex reads; it is not a product home.
  *
  * Agents with no global skills home (`eve`), no home-relative detection
- * (`replit`, `promptscript`, `zed`) or no detection at all (`universal`) are
+ * (`replit`, `promptscript`) or no detection at all (`universal`) are
  * deliberately absent: genie can never prove those are installed, so it never
  * names them.
  *
@@ -116,6 +116,9 @@ export const SKILLS_CLI_AGENTS: readonly SkillsCliAgentSpec[] = [
   { agent: 'trae-cn', roots: [['.trae-cn']], skills: ['.trae-cn', 'skills'] },
   { agent: 'warp', roots: [['.warp']], skills: ['.agents', 'skills'] },
   { agent: 'windsurf', roots: [['.codeium', 'windsurf']], skills: ['.codeium', 'windsurf', 'skills'] },
+  // `detectInstalled` probes `$XDG_CONFIG_HOME/zed` (default `~/.config/zed`)
+  // plus two platform app-data roots; only the home-relative clause is mirrored.
+  { agent: 'zed', roots: [['.config', 'zed']], skills: ['.agents', 'skills'] },
   { agent: 'zcode', roots: [['.zcode']], skills: ['.zcode', 'skills'] },
   { agent: 'zencoder', roots: [['.zencoder']], skills: ['.zencoder', 'skills'] },
   { agent: 'zenflow', roots: [['.zencoder']], skills: ['.zencoder', 'skills'] },
