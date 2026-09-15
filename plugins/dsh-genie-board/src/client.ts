@@ -12,6 +12,14 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): 
   if (text !== undefined) node.textContent = text;
   return node;
 }
+/**
+ * A card's timeline and comments are the newest window of a longer history, so
+ * the heading says which window is on screen rather than implying it is all of
+ * it (F11).
+ */
+function sectionTitle(label: string, shown: number, total: number, truncated = shown < total): string {
+  return truncated ? `${label} \u2014 showing last ${shown} of ${total}` : label;
+}
 async function api(path: string, body?: unknown): Promise<unknown> {
   const response = await fetch(
     `/api/genie-board/${path}`,
@@ -77,7 +85,10 @@ export function apply(ctx: ClientContext): void {
       status.textContent = message;
       status.setAttribute('role', error ? 'alert' : 'status');
     };
-    const run = async (operation: () => Promise<void>) => {
+    // `keep` marks an operation whose failure leaves the board it was launched
+    // from untouched — a refused action. Wiping the lanes and the open card
+    // there throws away the context the message is about (F7).
+    const run = async (operation: () => Promise<void>, keep = false) => {
       if (busy) return;
       busy = true;
       for (const control of dialog.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('button,select'))
@@ -87,9 +98,11 @@ export function apply(ctx: ClientContext): void {
         await operation();
         showStatus('Board confirmed by Genie');
       } catch (error) {
-        snapshot = undefined;
-        lanes.replaceChildren();
-        detail.replaceChildren();
+        if (!keep) {
+          snapshot = undefined;
+          lanes.replaceChildren();
+          detail.replaceChildren();
+        }
         showStatus(error instanceof Error ? error.message : 'Request failed', true);
       } finally {
         busy = false;
@@ -108,7 +121,7 @@ export function apply(ctx: ClientContext): void {
       run(async () => {
         snapshot = (await request(action, extra)) as Aggregate;
         render();
-      });
+      }, true);
     const render = () => {
       lanes.replaceChildren();
       detail.replaceChildren();
@@ -204,10 +217,12 @@ export function apply(ctx: ClientContext): void {
       for (const dependency of card.dependencies)
         detail.append(element('p', `${dependency.title} · ${dependency.status}`));
       if (!card.dependencies.length) detail.append(element('p', 'No dependencies'));
-      detail.append(element('h3', 'Comments'));
+      detail.append(element('h3', sectionTitle('Comments', card.comments.length, card.commentCount)));
       for (const comment of card.comments)
         detail.append(element('p', `${comment.author ?? 'Unknown'}: ${comment.note}`));
-      detail.append(element('h3', 'History'));
+      detail.append(
+        element('h3', sectionTitle('History', card.timeline.length, card.eventCount, card.eventsTruncated)),
+      );
       const history = element('ol');
       for (const event of card.timeline)
         history.append(
@@ -229,10 +244,13 @@ export function apply(ctx: ClientContext): void {
     };
     const list = async () => {
       const previous = board.value;
-      const entries = (await request('list')) as { id: string; name: string }[];
+      const entries = (await request('list')) as { id: string; name: string; laneCount: number }[];
       board.replaceChildren();
       for (const entry of entries) {
-        const option = element('option', entry.name);
+        // A laneless board stays selectable — loading it explains itself — but
+        // the picker says so first, instead of letting it look like any other
+        // board that then fails to open (F13).
+        const option = element('option', entry.laneCount ? entry.name : `${entry.name} (no lanes)`);
         option.value = entry.id;
         board.append(option);
       }
