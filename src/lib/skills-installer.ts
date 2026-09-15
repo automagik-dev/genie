@@ -70,6 +70,7 @@ import {
   type IntegrationSelection,
   runBoundedIntegrationCommand,
 } from './runtime-integrations.js';
+import { type SkillsAgentSelection, agentHomeIsIndependentlyDetected, selectSkillsCliAgents } from './skills-agents.js';
 
 /**
  * Pinned skills CLI. Bumping it is an ordinary dependency PR (wish decision 1),
@@ -925,20 +926,37 @@ export function releaseTag(version: string): string {
 }
 
 /**
- * The production argv, verbatim. No extra `-y`: `--all` already expands to
- * `--skill '*' --agent '*' -y` inside the pinned CLI.
+ * The production argv. `--all` is deliberately NOT used: it expands to
+ * `--skill '*' --agent '*' -y` inside the pinned CLI, and `--agent '*'` writes
+ * (and therefore CREATES) every product home in the CLI's 77-agent registry —
+ * ~53 of them on the 2026-09-01 dogfood host. Genie names the agents instead,
+ * so `--skill '*'` and `-y` are spelled out here; the CLI's variadic parser
+ * ends each list at the next `-`-prefixed token.
  *
  * `sourceRoot` is an absolute LOCAL path — never a `<repo>@<ref>` GitHub
  * source, which the pinned CLI silently resolves to the default branch (see the
  * module header).
  */
-export function buildSkillsAddArgv(options: { sourceRoot: string }): string[] {
-  return ['npx', '-y', `skills@${SKILLS_CLI_VERSION}`, 'add', options.sourceRoot, '--all', '--copy', '-g'];
+export function buildSkillsAddArgv(options: { sourceRoot: string; agents: readonly string[] }): string[] {
+  return [
+    'npx',
+    '-y',
+    `skills@${SKILLS_CLI_VERSION}`,
+    'add',
+    options.sourceRoot,
+    '--skill',
+    '*',
+    '--agent',
+    ...options.agents,
+    '-y',
+    '--copy',
+    '-g',
+  ];
 }
 
 /** The operator-facing remedy line for any skills-channel failure. */
-export function skillsInstallRemedy(sourceRoot: string): string {
-  return `Run: ${buildSkillsAddArgv({ sourceRoot }).join(' ')}`;
+export function skillsInstallRemedy(sourceRoot: string, agents: readonly string[]): string {
+  return `Run: ${buildSkillsAddArgv({ sourceRoot, agents }).join(' ')}`;
 }
 
 export type ExecutableProbe = (name: string) => string | null;
@@ -989,12 +1007,24 @@ export interface SkillsInstallOptions {
  */
 export type SkillsInstallOutcome =
   | { ok: true; record: SkillsInstallRecord; warnings?: string[] }
-  | { ok: false; reason: string; remedy: string; warnings?: string[] };
+  | {
+      ok: false;
+      reason: string;
+      remedy: string;
+      warnings?: string[];
+      /**
+       * Set when the host simply has no agent installed. Not a failure of the
+       * channel: genie creates no product home, so there is nothing to write
+       * to and the convergence reports `skipped` rather than exit 1.
+       */
+      noAgents?: true;
+    };
 
 /**
  * Every agent skill home this install can prove it wrote, unioned with the
- * known-home floor so the record can never shrink below the previous
- * behaviour (decision 3). Sorted floor-first, then the scanned remainder.
+ * homes the argv pointed the CLI at, so the record names exactly what this run
+ * targeted plus whatever the discovery scan proves it also wrote. Sorted
+ * floor-first, then the scanned remainder.
  */
 function resolveAgentDirs(options: {
   home: string;
@@ -1004,8 +1034,13 @@ function resolveAgentDirs(options: {
   since: number;
   nowMs: () => number;
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
+  /** The homes this run's `--agent` list actually pointed the CLI at. */
+  targetHomes: readonly string[];
 }): { dirs: string[]; warnings: string[]; scanOk: boolean } {
-  const floor = existingAgentSkillHomes(options.home).map((entry) => entry.dir);
+  // The floor is the set of homes this run WROTE that are on disk afterwards —
+  // no longer every existing known home, which could record a home nothing in
+  // this run ever touched now that the argv names its agents.
+  const floor = options.targetHomes.filter((dir) => isDirectory(dir));
   const warnings: string[] = [];
   const scan = scanSkillsHomes({
     home: options.home,
@@ -1386,20 +1421,201 @@ function reportVanishedAgentDirs(previous: SkillsInstallRecord | null, warnings:
 }
 
 /**
+ * One recorded agent home genie created itself and can now hand back.
+ */
+export interface PrunedAgentHome {
+  /** The recorded `<product root>/skills` directory. */
+  agentDir: string;
+  /** The product root that was moved (e.g. `~/.openclaw`). */
+  productRoot: string;
+  /** Where its bytes went. */
+  backedUpTo: string;
+}
+
+export interface AgentHomePruneResult {
+  pruned: PrunedAgentHome[];
+  /** `state-backups/skills-prune-<compact ISO>/`, created only if used. */
+  backupRoot?: string;
+}
+
+interface AgentHomePruneContext {
+  home: string;
+  genieHome: string;
+  previous: SkillsInstallRecord;
+  now: () => Date;
+  rename: (source: string, destination: string) => void;
+}
+
+/**
+ * The product root a recorded skills home belongs to — its parent, unless that
+ * parent is HOME itself or the shared XDG `~/.config` root, neither of which is
+ * ever a product home. Deliberately conservative: for `~/.pi/agent/skills` it
+ * answers `~/.pi/agent` rather than `~/.pi`, so the prune moves LESS than the
+ * product owns, never more.
+ */
+export function productRootForAgentDir(home: string, agentDir: string): string | null {
+  const parent = dirname(agentDir);
+  const mirrored = relative(home, parent);
+  if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) return null;
+  if (parent === join(home, '.config')) return null;
+  return parent;
+}
+
+/**
+ * True when `productRoot` holds NOTHING except the skills directory genie
+ * wrote: one entry, a real directory, and every entry inside it is a recorded
+ * inventory skill whose content still matches the recorded digest. Any foreign
+ * file anywhere — a config, a dotfile, a skill genie never recorded, an edited
+ * one — answers `false` and the home is left alone.
+ */
+function holdsOnlyRecordedSkills(context: {
+  productRoot: string;
+  agentDir: string;
+  previous: SkillsInstallRecord;
+}): boolean {
+  let roots: Dirent[];
+  try {
+    roots = readdirSync(context.productRoot, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const only = roots.length === 1 ? roots[0] : undefined;
+  if (only === undefined || !only.isDirectory() || join(context.productRoot, only.name) !== context.agentDir) {
+    return false;
+  }
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(context.agentDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  if (entries.length === 0) return false;
+  const digests = context.previous.dirDigests ?? {};
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) return false;
+    if (!context.previous.inventory.includes(entry.name)) return false;
+    const path = join(context.agentDir, entry.name);
+    const expected = digests[path];
+    if (expected === undefined || computeSkillDirDigest(path) !== expected) return false;
+  }
+  return true;
+}
+
+/** `state-backups/skills-prune-<compact ISO 8601>/` — the retirement family. */
+function ensurePruneBackupRoot(context: AgentHomePruneContext, result: AgentHomePruneResult): string {
+  if (result.backupRoot === undefined) {
+    const stamp = context.now().toISOString().replace(/[:.]/g, '-');
+    const root = join(context.genieHome, 'state-backups', `skills-prune-${stamp}`);
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    result.backupRoot = root;
+  }
+  return result.backupRoot;
+}
+
+/** Rename when both paths share a filesystem, copy-then-remove when they do not. */
+function moveProductRoot(source: string, destination: string, rename: (a: string, b: string) => void): void {
+  try {
+    rename(source, destination);
+    return;
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
+  }
+  try {
+    cpSync(source, destination, { recursive: true, verbatimSymlinks: true });
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
+  rmSync(source, { recursive: true, force: true });
+}
+
+/**
+ * Hand back the product homes genie itself created (r2 §3.2 B).
+ *
+ * Until this release the argv was `--all`, so every `genie install` materialized
+ * ~53 product homes the operator had never installed — `~/.openclaw`,
+ * `~/.adal`, `~/.qwen`, … — each holding nothing but genie-written skills.
+ * Those homes are recorded, so genie can prove ownership and give them back:
+ * backup-first (never a bare delete), only when the ENTIRE product root holds
+ * nothing but recorded, digest-matching skills, and one reported line each.
+ *
+ * Never throws: a home that cannot be moved is simply kept.
+ */
+export function pruneGenieCreatedAgentHomes(context: AgentHomePruneContext, warnings: string[]): AgentHomePruneResult {
+  const result: AgentHomePruneResult = { pruned: [] };
+  for (const agentDir of new Set(context.previous.agentDirs)) {
+    const productRoot = productRootForAgentDir(context.home, agentDir);
+    if (productRoot === null) continue;
+    // A home an agent installed ELSEWHERE reads is that agent's, not genie's to
+    // hand back — `~/.agents/skills` is shared by every universal agent.
+    if (agentHomeIsIndependentlyDetected(context.home, agentDir, productRoot)) continue;
+    if (!holdsOnlyRecordedSkills({ productRoot, agentDir, previous: context.previous })) continue;
+    const mirrored = relative(context.home, productRoot);
+    try {
+      const destination = join(ensurePruneBackupRoot(context, result), mirrored);
+      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+      moveProductRoot(productRoot, destination, context.rename);
+      result.pruned.push({ agentDir, productRoot, backedUpTo: destination });
+      warnings.push(`skills: pruned genie-created agent home ${productRoot} — backed up to ${destination}`);
+    } catch (error) {
+      warnings.push(`skills: could not prune genie-created agent home ${productRoot}: ${errorMessage(error)}`);
+    }
+  }
+  if (result.pruned.length > 0 && result.backupRoot !== undefined) {
+    warnings.push(
+      `skills: pruned ${result.pruned.length} genie-created agent home(s) (backed up to ${result.backupRoot}); genie installs to detected agents only`,
+    );
+  }
+  return result;
+}
+
+/**
+ * Which agents this run writes, and which recorded homes it hands back first.
+ *
+ * The prune runs BEFORE the selection so a home genie created can never be
+ * re-created by the same run, and AFTER retirement (its caller's order) because
+ * a home whose only remaining content is the current inventory is exactly what
+ * retirement leaves behind — only then can it be proven genie-only.
+ */
+function resolveInstallTargets(
+  context: {
+    home: string;
+    genieHome: string;
+    previous: SkillsInstallRecord | null;
+    now: () => Date;
+    rename: (source: string, destination: string) => void;
+  },
+  warnings: string[],
+): { selection: SkillsAgentSelection; prunedDirs: Set<string> } {
+  const prune =
+    context.previous === null
+      ? { pruned: [] }
+      : pruneGenieCreatedAgentHomes({ ...context, previous: context.previous }, warnings);
+  const prunedDirs = new Set(prune.pruned.map((entry) => entry.agentDir));
+  const selection = selectSkillsCliAgents({
+    home: context.home,
+    recordedDirs: (context.previous?.agentDirs ?? []).filter((dir) => !prunedDirs.has(dir)),
+  });
+  return { selection, prunedDirs };
+}
+
+/**
  * Preflight → archive the skills this release retires → collision snapshot →
  * spawn the pinned CLI → discovery scan → record.
  * Never throws: every failure is a returned reason plus the remedy command.
  */
 export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOutcome {
   const skillsRoot = options.skillsRoot ?? skillsSourceRoot(options.genieHome);
-  const remedy = skillsInstallRemedy(skillsRoot);
+  const home = options.home ?? homedir();
+  // The agent list is data, so the remedy line a failure prints is the argv the
+  // run would have used. Recomputed once the previous record is known.
+  let remedy = skillsInstallRemedy(skillsRoot, selectSkillsCliAgents({ home }).agents);
   if (options.version.trim() === '') {
     return { ok: false, reason: 'running binary version is unknown', remedy };
   }
   const preflight = preflightNode({ which: options.which });
   if (!preflight.ok) return { ok: false, reason: preflight.reason, remedy };
 
-  const home = options.home ?? homedir();
   const nowMs = options.nowMs ?? (() => Date.now());
   const now = options.now ?? (() => new Date());
   const warnings: string[] = [];
@@ -1455,6 +1671,22 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     }
   }
 
+  const { selection, prunedDirs } = resolveInstallTargets(
+    { home, genieHome: options.genieHome, previous, now, rename: options.renameRetiredSkill ?? renameSync },
+    warnings,
+  );
+  remedy = skillsInstallRemedy(skillsRoot, selection.agents);
+  // Never invent a home: with no agent installed there is nothing to write to.
+  if (selection.agents.length === 0) {
+    return {
+      ok: false,
+      noAgents: true,
+      reason: 'no agent skill home detected (genie installs to detected agents only, and creates none)',
+      remedy: `Install an agent (or create its home, e.g. ${join(home, '.claude')}), then run: genie update`,
+      warnings,
+    };
+  }
+
   const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
   // What the snapshot staged is judged — kept and reported, or discarded — by
   // re-digesting the originals after the spawn. It is therefore correct on
@@ -1462,7 +1694,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const finalizeCollisions = (): SkillsCollision[] =>
     finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
-  const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot });
+  const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot, agents: selection.agents });
   const run = options.spawn ?? runBoundedIntegrationCommand;
   // Captured immediately before the spawn: the discovery window opens here.
   const startedAtMs = nowMs();
@@ -1498,6 +1730,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     since: startedAtMs,
     nowMs,
     scan: options.scan,
+    targetHomes: selection.homes,
   });
   warnings.push(...agents.warnings);
   const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory);
@@ -1519,7 +1752,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       // Recorded homes are never dropped, only added to: `agentDirs` is
       // `genie uninstall`'s removal authority, and a vanished entry that fell
       // out of the record took the proof it ever existed with it.
-      agentDirs: [...agents.dirs, ...vanished.filter((dir) => !agents.dirs.includes(dir))],
+      agentDirs: [
+        ...agents.dirs.filter((dir) => !prunedDirs.has(dir)),
+        ...vanished.filter((dir) => !agents.dirs.includes(dir) && !prunedDirs.has(dir)),
+      ],
       dirDigests,
       ...(collisions.length > 0 ? { collisions } : {}),
       ...(preserved.length > 0 ? { preserved } : {}),
@@ -1850,6 +2086,11 @@ export function runSkillsChannelConvergence(options: SkillsChannelConvergenceOpt
     return { status: 'skipped', reason: 'consent: none' };
   }
   const outcome = (options.install ?? runSkillsInstall)(options);
+  if (!outcome.ok && outcome.noAgents === true) {
+    emit(`skills: skipped (${outcome.reason})`);
+    for (const warning of outcome.warnings ?? []) emit(warning);
+    return { status: 'skipped', reason: outcome.reason };
+  }
   if (!outcome.ok) {
     emit(`Skills install failed: ${outcome.reason}. ${outcome.remedy}`);
     // The pre-spawn collision snapshot may already have backed a foreign skill
