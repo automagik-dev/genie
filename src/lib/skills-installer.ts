@@ -61,7 +61,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { fsyncParentDir, fsyncPath } from './atomic-fs.js';
+import { atomicRenameDirectoryNoClobber, fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
 import {
   type CommandResult,
@@ -854,6 +854,8 @@ export interface SkillsInstallOptions {
   nowMs?: () => number;
   /** Scan bounds, for tests that need a small fixture budget. */
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
+  /** Injectable archival move for deterministic concurrent-edit tests. */
+  renameRetiredSkill?: (source: string, destination: string) => void;
 }
 
 /**
@@ -916,7 +918,21 @@ interface SkillsRetirementContext {
   previous: SkillsInstallRecord;
   deliveredDigests: ReadonlyMap<string, string | null>;
   installedDigests: Readonly<Record<string, string>>;
+  rename: (source: string, destination: string) => void;
   backupRoot?: string;
+}
+
+/** Restore a changed directory without overwriting a newly created live path. */
+function restoreChangedRetiredSkill(target: string, destination: string, expectedParent: string): string {
+  try {
+    if (realpathSync(dirname(target)) !== expectedParent) throw new Error('agent home changed during retirement');
+    atomicRenameDirectoryNoClobber(destination, target);
+  } catch (error) {
+    throw new Error(`retired skill changed during archival; recover ${destination} manually: ${errorMessage(error)}`);
+  }
+  fsyncParentDir(destination);
+  fsyncParentDir(target);
+  return `skills: preserved retired skill ${target} (changed during archival; restored); review it manually`;
 }
 
 /** Move only a recorded, unchanged directory into an owner-only recovery tree. */
@@ -926,9 +942,10 @@ function archiveRetiredSkill(target: string, context: SkillsRetirementContext): 
   const expected = context.previous.dirDigests?.[target];
   const contained = mirrored !== '' && !mirrored.startsWith('..') && !isAbsolute(mirrored);
   // Allow a symlinked HOME, but never follow a redirected agent home below it.
-  const parentMatches =
-    contained && realpathSync(dirname(target)) === join(realpathSync(context.home), dirname(mirrored));
-  if (!parentMatches || expected === undefined || computeSkillDirDigest(target) !== expected) {
+  const expectedParent = join(realpathSync(context.home), dirname(mirrored));
+  const parentMatches = contained && realpathSync(dirname(target)) === expectedParent;
+  const original = parentMatches ? lstatSync(target) : null;
+  if (original === null || expected === undefined || computeSkillDirDigest(target) !== expected) {
     return `skills: preserved retired skill ${target} (unverified or user-modified); review it manually`;
   }
   const replacementReady = [...context.deliveredDigests].every(
@@ -950,9 +967,17 @@ function archiveRetiredSkill(target: string, context: SkillsRetirementContext): 
   mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
   // Rename preserves all bytes atomically. Across filesystems it fails with the
   // original intact; never fall back to deleting an unverified copied tree.
-  renameSync(target, destination);
+  context.rename(target, destination);
   fsyncParentDir(destination);
   fsyncParentDir(target);
+  const archived = lstatSync(destination);
+  if (
+    archived.dev !== original.dev ||
+    archived.ino !== original.ino ||
+    computeSkillDirDigest(destination) !== expected
+  ) {
+    return restoreChangedRetiredSkill(target, destination, expectedParent);
+  }
   return `skills: retired ${target} — backed up to ${destination}`;
 }
 
@@ -1053,6 +1078,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
           previous,
           deliveredDigests: new Map(inventory.map((name) => [name, computeSkillDirDigest(join(skillsRoot, name))])),
           installedDigests: dirDigests,
+          rename: options.renameRetiredSkill ?? renameSync,
         },
         inventory,
         warnings,

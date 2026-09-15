@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -583,6 +584,71 @@ describe('retiring removed skills during an upgrade', () => {
     rmSync(backups);
     expect(install().ok).toBe(true);
     for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(false);
+  });
+
+  test.each(['edited', 'replaced'])('restores a skill %s between verification and archival', (change) => {
+    const { dirs, spawn } = previousInstall();
+    const target = join(dirs[0] as string, 'trace');
+    let parked = '';
+    let expectedInode = 0;
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn,
+      renameRetiredSkill: (source, destination) => {
+        if (source === target) {
+          if (change === 'replaced') {
+            renameSync(source, join(root, 'original-trace'));
+            mkdirSync(source);
+          }
+          writeFileSync(join(source, 'SKILL.md'), change === 'edited' ? '# concurrent edit\n' : '# previous trace\n');
+          expectedInode = statSync(source).ino;
+          parked = destination;
+        }
+        renameSync(source, destination);
+      },
+    });
+    expect(outcome.ok).toBe(true);
+    expect(statSync(target).ino).toBe(expectedInode);
+    expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toBe(
+      change === 'edited' ? '# concurrent edit\n' : '# previous trace\n',
+    );
+    expect(existsSync(parked)).toBe(false);
+    expect(outcome.warnings).toContain(
+      `skills: preserved retired skill ${target} (changed during archival; restored); review it manually`,
+    );
+    expect(existsSync(join(dirs[1] as string, 'trace'))).toBe(false);
+  });
+
+  test.each(['empty', 'populated'])('a restore collision preserves a %s live directory and the backup', (live) => {
+    const { dirs, record, spawn } = previousInstall();
+    const target = join(dirs[0] as string, 'trace');
+    let parked = '';
+    let liveInode = 0;
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn,
+      renameRetiredSkill: (source, destination) => {
+        writeFileSync(join(source, 'SKILL.md'), '# concurrent edit\n');
+        renameSync(source, destination);
+        mkdirSync(source);
+        liveInode = statSync(source).ino;
+        if (live === 'populated') writeFileSync(join(source, 'SKILL.md'), '# new live skill\n');
+        parked = destination;
+      },
+    });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.reason).toContain(`recover ${parked} manually`);
+    expect(statSync(target).ino).toBe(liveInode);
+    if (live === 'populated') expect(readFileSync(join(target, 'SKILL.md'), 'utf8')).toBe('# new live skill\n');
+    else expect(readdirSync(target)).toEqual([]);
+    expect(readFileSync(join(parked, 'SKILL.md'), 'utf8')).toBe('# concurrent edit\n');
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
   });
 });
 
