@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
-import { roadmapSnapshot, syncRoadmap } from './roadmap-sync.js';
+import { roadmapSnapshot, serializeSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
   AssignmentReasonRequiredError,
   CheckoutConflictError,
@@ -1132,7 +1132,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     return createHash('sha256').update(canonical).digest('hex');
   }
 
-  test('an equal file/db pair refreshes an old order-sensitive marker without rewriting the snapshot', () => {
+  test('an equal file/db pair refreshes an old order-sensitive marker without changing the board', () => {
     const repo = join(dir, 'hash-upgrade');
     mkdirSync(join(repo, '.genie'), { recursive: true });
     createTask(db, { title: 'existing card' });
@@ -1145,7 +1145,11 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     writeFileSync(markerPath, JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash }));
 
     expect(syncRoadmap(db, repo).action).toBe('none');
-    expect(readFileSync(filePath, 'utf-8')).toBe(content);
+    // The marker migration publishes NO board change. The bytes are normalized
+    // on the way past (see roadmap-sync's legacy-ordered snapshot contract), so
+    // the invariant here is the content, not the byte form the file arrived in.
+    expect(JSON.parse(readFileSync(filePath, 'utf-8'))).toEqual(JSON.parse(content));
+    expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(snapshot));
     const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
     expect(marker.fileHash).not.toBe(legacyHash);
     expect(marker.fileHash).toBe(marker.dbHash);

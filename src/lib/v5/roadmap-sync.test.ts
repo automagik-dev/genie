@@ -31,7 +31,7 @@ import {
   serializeSnapshot,
   syncRoadmap,
 } from './roadmap-sync.js';
-import { type StateExport, createTask, getTask, importState } from './task-state.js';
+import { type StateExport, createBoard, createTask, getTask, importState } from './task-state.js';
 
 let dir: string;
 
@@ -299,5 +299,124 @@ describe('canonical snapshot bytes', () => {
     expect(serializeSnapshot({ tasks: [rowB], schemaVersion: 1 })).toBe(bytes);
     expect(bytes.endsWith('}\n')).toBe(true);
     expect(JSON.parse(bytes)).toEqual({ schemaVersion: 1, tasks: [rowA] });
+  });
+});
+
+/**
+ * m11 — a snapshot committed before the canonical serializer holds the same
+ * content in a different byte order (`origin/main`'s own roadmap.json is one:
+ * top-level `schemaVersion, meta, boards, tasks, …` and every row in physical
+ * column order). Nothing forces such a file to be rewritten, because both the
+ * sync hashes and the import are content-addressed — until the first real board
+ * change writes canonical bytes and moves every line at once. The dogfood hop
+ * saw exactly that: 1922 insertions / 1902 deletions for ONE new task.
+ *
+ * Sync therefore owns the file's byte form wherever its content is the agreed
+ * content: the reordering lands once, alone, and says so, after which every
+ * diff is the size of its change.
+ */
+describe('legacy-ordered snapshot bytes', () => {
+  /** How an older genie (or a hand edit) wrote the same content: physical key order. */
+  function legacyBytes(state: unknown): string {
+    return `${JSON.stringify(state, null, 2)}\n`;
+  }
+
+  /** Does every line of `before` still appear in `after`, in order? A pure insertion. */
+  function isSubsequence(before: string[], after: string[]): boolean {
+    let cursor = 0;
+    for (const line of before) {
+      cursor = after.indexOf(line, cursor);
+      if (cursor === -1) return false;
+      cursor += 1;
+    }
+    return true;
+  }
+
+  /** A board with enough shape that a key reordering really does move every line. */
+  function seedBoard(db: Database): void {
+    const board = createBoard(db, 'roadmap', [{ name: 'Idea' }, { name: 'Work' }, { name: 'Done' }]);
+    for (const title of ['first card', 'second card', 'third card']) {
+      createTask(db, { title, boardId: board.id, assignedAgent: 'codex', assignedReason: 'm11 fixture' });
+    }
+  }
+
+  test('a legacy-ordered file matching the board is normalized in place, and the sync says so', () => {
+    const { repo, db, filePath, markerPath } = fixture('legacy-bytes-insync');
+    seedBoard(db);
+    const state = roadmapSnapshot(db);
+    const legacy = legacyBytes(state);
+    writeFileSync(filePath, legacy);
+    // The premise: same content, different bytes.
+    expect(legacy).not.toBe(serializeSnapshot(state));
+    expect(JSON.parse(legacy)).toEqual(JSON.parse(serializeSnapshot(state)));
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('none');
+    expect(result.message).toContain('in sync');
+    expect(result.message).toContain('canonical key order');
+    expect(result.message).toContain('no board content changed');
+    // Content is untouched; only the bytes moved.
+    expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(state));
+    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    // Idempotent: a second sync has nothing left to normalize and says nothing.
+    const again = syncRoadmap(db, repo);
+    expect(again.action).toBe('none');
+    expect(again.message).toBeUndefined();
+    db.close();
+  });
+
+  test('an imported legacy-ordered snapshot is normalized in the same run', () => {
+    const { repo, db, filePath } = fixture('legacy-bytes-import');
+    seedBoard(db);
+    const published = roadmapSnapshot(db);
+    writeFileSync(filePath, serializeSnapshot(published));
+    expect(syncRoadmap(db, repo).action).toBe('none');
+
+    // A pull lands a newer board — written by a machine still on the old bytes.
+    const { snapshot: pulled, id } = snapshotWithExtraCard(published, join(dir, 'legacy-teammate.db'), 'pulled card');
+    writeFileSync(filePath, legacyBytes(pulled));
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('imported');
+    expect(result.message).toContain('canonical key order');
+    expect(getTask(db, id)?.title).toBe('pulled card');
+    expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(pulled));
+    db.close();
+  });
+
+  test('a diverged verdict never normalizes: the legacy file stays byte-for-byte', () => {
+    const { repo, db, filePath, markerPath } = fixture('legacy-bytes-diverged');
+    seedBoard(db);
+    const published = roadmapSnapshot(db);
+    const baseline = canonicalHash(published);
+    const markerBytes = `${JSON.stringify({ fileHash: baseline, dbHash: baseline, hashVersion: 2 }, null, 2)}\n`;
+    writeFileSync(markerPath, markerBytes);
+    const { snapshot: foreign } = snapshotWithExtraCard(published, join(dir, 'legacy-teammate2.db'), 'their card');
+    const fileBytes = legacyBytes(foreign);
+    writeFileSync(filePath, fileBytes);
+    createTask(db, { title: 'my card' });
+
+    expect(syncRoadmap(db, repo).action).toBe('diverged');
+    expect(readFileSync(filePath, 'utf-8')).toBe(fileBytes);
+    expect(readFileSync(markerPath, 'utf-8')).toBe(markerBytes);
+    db.close();
+  });
+
+  test('after the one-off reordering, a one-task change diffs as one task', () => {
+    const { repo, db, filePath } = fixture('legacy-bytes-onecard');
+    seedBoard(db);
+    writeFileSync(filePath, legacyBytes(roadmapSnapshot(db)));
+    // The reordering lands here, alone, carrying no content change.
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    const beforeCard = readFileSync(filePath, 'utf-8').split('\n');
+
+    createTask(db, { title: 'one more card' });
+    expect(syncRoadmap(db, repo).action).toBe('exported');
+    const afterCard = readFileSync(filePath, 'utf-8').split('\n');
+
+    // A pure insertion: every line that was there is still there, in order.
+    expect(isSubsequence(beforeCard, afterCard)).toBe(true);
+    expect(afterCard.length - beforeCard.length).toBeLessThan(40);
+    db.close();
   });
 });
