@@ -24,7 +24,6 @@ import {
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
-  boardDetailIdentifier,
   commentCounts,
   countBoardTasks,
   createBoard,
@@ -33,7 +32,7 @@ import {
   listTasks,
   listTasksWithLane,
   moveTask,
-  readBoardTaskSnapshot,
+  readBoardAggregate,
   resolveBoard,
 } from '../lib/v5/task-state.js';
 import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../lib/wish-status.js';
@@ -44,6 +43,11 @@ import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../li
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
+}
+
+/** A note on stderr that is NOT a failure — stdout and the exit code are untouched. */
+function note(line: string): void {
+  process.stderr.write(`${line}\n`);
 }
 
 function fail(message: string): never {
@@ -284,25 +288,31 @@ function handleBoardWithDb(opts: BoardOptions): void {
       scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
 
-    if (opts.json && board?.laneMetadataMalformed) {
-      throw new Error(
-        `Malformed board detail: board ${boardDetailIdentifier(board.id)} lanes must be an array or null.`,
-      );
-    }
-    if (opts.json && board?.lanes) requireAggregateLanes(board.lanes);
+    // Unusable stored lane metadata is NOT a read failure. `boards.lanes` is
+    // untrusted TEXT that `task import`/`sync` accepts unvalidated, and no board
+    // verb repairs it, so both paths say so once on stderr and then render the
+    // board laneless — same message, same exit code, on `--json` and the human
+    // render alike (never a `Malformed board detail` exit on one path only).
+    if (board?.laneMetadataMalformed) note(lanelessNotice(board));
 
     // A scoped board that defines lanes renders on the lifecycle axis. Every
     // other scope (no board, or a laneless board) falls through to the frozen
     // status render below — kept byte-identical (Group B owns any rework).
-    if (board?.lanes && board.lanes.length > 0) {
+    if (board?.lanes) {
       // The only write a board read may perform, and only when this read's own
       // output renders lanes: `--json` on a lane-defining board. Deliberately
       // CLI-only — MCP queries call their shared read projection and never
       // enter this verb handler. The human lane render and every laneless read
       // (including unscoped `--json`) stay pure reads.
-      if (opts.json) reconcileWishLanes(db, filter, board, repoRoot);
-      renderLaneBoard(db, board.lanes, filter, scopeLabel, opts.json ?? false);
-      return;
+      if (!opts.json) {
+        renderLaneBoard(db, board.lanes, filter, scopeLabel);
+        return;
+      }
+      reconcileWishLanes(db, filter, board, repoRoot);
+      if (renderLaneAggregate(db, board.id, filter, scopeLabel)) return;
+      // The board lost its lanes between the scope read and the snapshot; the
+      // frozen laneless payload below is the honest answer for that snapshot.
+      note(lanelessNotice(board));
     }
 
     // `--json` FROZEN path: pre-assignment TaskRows grouped by the four raw
@@ -360,41 +370,42 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
   return byLane;
 }
 
-/** Validate persisted lane metadata at the scoped aggregate serialization boundary. */
-function requireAggregateLanes(lanes: Lane[]): void {
-  for (const [index, lane] of lanes.entries()) {
-    if (lane === null || typeof lane !== 'object' || Array.isArray(lane)) {
-      throw new Error(`Malformed board detail: lane ${index} must be an object.`);
-    }
-    if (typeof lane.name !== 'string') {
-      throw new Error(`Malformed board detail: lane ${index} name must be a string.`);
-    }
-    if (lane.label !== undefined && typeof lane.label !== 'string') {
-      throw new Error(`Malformed board detail: lane ${index} label must be a string when present.`);
-    }
-    if (lane.action !== undefined && typeof lane.action !== 'string') {
-      throw new Error(`Malformed board detail: lane ${index} action must be a string when present.`);
-    }
-  }
+/**
+ * The one explicit message for a board that cannot render lanes. Both paths
+ * emit it; neither fails. Lane metadata is validated in exactly one place —
+ * `normalizeLanes` in the state engine — so `--json` and the human render can
+ * never disagree about whether a board has lanes.
+ */
+function lanelessNotice(board: BoardRow): string {
+  return `Note: board "${board.name}" has no usable lane metadata; rendering it as a laneless board.`;
 }
 
-function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // A scoped lane board is the complete v1 aggregate contract. The repository
-  // reader returns all cards, dependencies, and events from one SQLite read
-  // transaction; grouping here only preserves the board's declared lane order.
-  if (json) {
-    if (!filter.boardId) throw new Error('A board id is required for aggregate JSON output.');
-    const byLane = groupByLane<BoardTaskAggregate>(lanes, readBoardTaskSnapshot(db, filter.boardId, filter));
-    const laneGroups = lanes.map((l) => ({
-      name: l.name,
-      label: l.label ?? null,
-      action: l.action ?? null,
-      cards: byLane.get(l.name) ?? [],
-    }));
-    out(JSON.stringify({ schemaVersion: 1, scope: scopeLabel, lanes: laneGroups }, null, 2));
-    return;
-  }
+/**
+ * Emit the scoped board aggregate (schemaVersion 1). Returns false — emitting
+ * nothing — when the transactional snapshot finds the board laneless, so the
+ * caller can fall through to the frozen laneless payload.
+ *
+ * The aggregate is the complete v1 contract: lanes AND every card, dependency,
+ * and event come from ONE SQLite read transaction, so the lane definition the
+ * cards are grouped into is the one that was stored alongside them. Grouping
+ * here only preserves the board's declared lane order.
+ */
+function renderLaneAggregate(db: Database, boardId: string, filter: TaskFilter, scopeLabel: string): boolean {
+  const snapshot = readBoardAggregate(db, boardId, filter);
+  const lanes = snapshot.board.lanes;
+  if (!lanes) return false;
+  const byLane = groupByLane<BoardTaskAggregate>(lanes, snapshot.cards);
+  const laneGroups = lanes.map((l) => ({
+    name: l.name,
+    label: l.label ?? null,
+    action: l.action ?? null,
+    cards: byLane.get(l.name) ?? [],
+  }));
+  out(JSON.stringify({ schemaVersion: 1, scope: scopeLabel, lanes: laneGroups }, null, 2));
+  return true;
+}
 
+function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string): void {
   const byLane = groupByLane(lanes, listTaskCards(db, filter));
   const comments = commentCounts(db);
   const now = Date.now();
