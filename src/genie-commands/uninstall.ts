@@ -34,6 +34,7 @@ import { z } from 'zod';
 import { hookScriptExists } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from '../lib/genie-home.js';
+import { isInteractive } from '../lib/interactivity.js';
 import { runLegacyIntegrationRetirement } from '../lib/legacy-integration-retirement.js';
 import {
   type LifecycleLease,
@@ -2246,10 +2247,28 @@ function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean)
   }
 }
 
+/**
+ * The one stderr line a non-interactive `genie uninstall` gets. `--help` says
+ * `--no-interactive` means "exit 2 instead of prompting", so this is the whole
+ * contract: nothing was removed, and the operator is told how to proceed.
+ */
+export const UNINSTALL_NON_INTERACTIVE_MESSAGE =
+  'genie uninstall needs an interactive confirmation. Nothing was removed. Re-run it from a terminal without --no-interactive.';
+
 /** Deterministic seams for the destructive uninstall path; production uses the real dependencies. */
 export interface UninstallDeps {
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
+  /**
+   * Whether this process may render a prompt at all; production uses
+   * {@link isInteractive} (TTY + no `CI` + no `--no-interactive`).
+   *
+   * Uninstall MUST decide this before touching `confirm`: @inquirer/prompts
+   * against a closed or non-TTY stdin renders the question and then busy-loops
+   * at 100% CPU forever (2026-09-15 dogfood B1 — 10m52s, no exit code), so any
+   * scripted or CI uninstall wedged indefinitely instead of failing fast.
+   */
+  canPrompt?: () => boolean;
   /**
    * Lifecycle-lease seam, mirroring install's `acquireLease`.
    * Tests can drive a busy/held holder without a real lock file, and the bounded
@@ -2337,6 +2356,16 @@ export async function uninstallCommand(
     '\x1b[33m  active plugin generation may fail to resume after uninstall; retire such tasks first if they matter.\x1b[0m',
   );
   console.log();
+
+  // Gate BEFORE the prompt exists, not inside it: an inquirer prompt on a
+  // non-TTY stdin never returns. Preview above is read-only, so exiting here
+  // has removed nothing.
+  const canPrompt = deps.canPrompt ?? isInteractive;
+  if (!canPrompt()) {
+    console.error(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    process.exitCode = 2;
+    return;
+  }
 
   const askConfirm = deps.confirm ?? confirm;
   const proceed = await askConfirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });

@@ -10,6 +10,7 @@ import {
   saveGenieConfig,
 } from '../lib/genie-config.js';
 import { resolveGenieHome } from '../lib/genie-home.js';
+import { isInteractive } from '../lib/interactivity.js';
 import { acquireLifecycleLease } from '../lib/lifecycle-lease.js';
 import { type OrcaPluginCompatibilityResult, switchOrchestrationMode } from '../lib/orca-plugin-lifecycle.js';
 import type { readIntegrationConsent } from '../lib/runtime-integrations.js';
@@ -32,6 +33,13 @@ export interface SetupDeps {
   readIntegrationConsent?: typeof readIntegrationConsent;
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
+  /**
+   * Whether this process may render a prompt at all; production uses
+   * {@link isInteractive}. Same gate, same reason as `genie uninstall`: an
+   * @inquirer/prompts question on a non-TTY stdin never resolves, so a wizard
+   * section must refuse BEFORE it builds one (2026-09-15 dogfood B1).
+   */
+  canPrompt?: () => boolean;
   acquireLifecycleLease?: typeof acquireLifecycleLease;
   /** Test seam for the once-bound absolute executable path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
@@ -39,6 +47,10 @@ export interface SetupDeps {
   /** A3 public compatibility probe seam for isolated Orca mode-switch tests. */
   orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
 }
+
+/** The one stderr line a wizard section that cannot prompt gets, before exit 2. */
+export const SETUP_NON_INTERACTIVE_MESSAGE =
+  'genie setup needs an interactive terminal for this section. Nothing was changed. Use `genie setup --quick` to accept the defaults, or re-run from a terminal without --no-interactive.';
 
 export class SetupIntegrationError extends Error {
   constructor(message: string) {
@@ -342,6 +354,18 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
     return;
   }
 
+  // Every path below this line renders prompts, except `--quick`, which answers
+  // every section from the defaults and is therefore the scripted route. Decide
+  // BEFORE the first prompt object exists: an @inquirer prompt on a non-TTY
+  // stdin renders its question and then never resolves.
+  const quick = options.quick ?? false;
+  const willPrompt = !quick || options.shortcuts === true || options.terminal === true || options.session === true;
+  if (willPrompt && !(deps.canPrompt ?? isInteractive)()) {
+    console.error(SETUP_NON_INTERACTIVE_MESSAGE);
+    process.exitCode = 2;
+    return;
+  }
+
   // Load existing config
   let config = await loadGenieConfig();
   const baseline = structuredClone(config);
@@ -371,8 +395,6 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
   }
 
   // Full wizard
-  const quick = options.quick ?? false;
-
   printHeader();
 
   if (quick) {

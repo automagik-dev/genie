@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
-import { setupCommand } from './setup.js';
+import { SETUP_NON_INTERACTIVE_MESSAGE, setupCommand } from './setup.js';
 
 /**
  * `setup --codex` and the whole Codex activation path left with the Codex
@@ -134,5 +134,54 @@ describe('genie setup', () => {
     ]) {
       expect(source.includes(forbidden)).toBe(false);
     }
+  });
+});
+
+/**
+ * Dogfood B1, same defect family as `genie uninstall`: every prompting section
+ * of the wizard used to render an @inquirer question against a closed stdin and
+ * then hang forever. `--quick` and `--show` answer from defaults and must stay
+ * scriptable; everything else refuses on one line with exit 2.
+ */
+describe('genie setup — non-interactive contract', () => {
+  const CLI_PATH = join(import.meta.dir, '..', 'genie.ts');
+  const spawnRoots: string[] = [];
+
+  afterEach(() => {
+    for (const dir of spawnRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runSetup(args: string[]): { code: number | null; stdout: string; stderr: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-setup-noninteractive-'));
+    spawnRoots.push(dir);
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, '--no-interactive', 'setup', ...args], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 15_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie'), NO_COLOR: '1' },
+    });
+    return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
+  }
+
+  for (const section of [[], ['--shortcuts'], ['--terminal'], ['--session']]) {
+    test(`\`setup ${section.join(' ') || '(wizard)'}\` exits 2 instead of hanging on a prompt`, () => {
+      const res = runSetup(section);
+      expect(res.code).toBe(2);
+      expect(res.stderr).toContain(SETUP_NON_INTERACTIVE_MESSAGE);
+      // No question was drawn, so no half-rendered prompt is left on the terminal.
+      expect(res.stdout).not.toContain('(y/N)');
+    });
+  }
+
+  test('--quick stays the scripted route: it answers from defaults and exits 0', () => {
+    const res = runSetup(['--quick']);
+    expect(res.code).toBe(0);
+    expect(res.stderr).not.toContain(SETUP_NON_INTERACTIVE_MESSAGE);
+  });
+
+  test('--show is read-only and never gated', () => {
+    expect(runSetup(['--show']).code).toBe(0);
   });
 });
