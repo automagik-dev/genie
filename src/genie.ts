@@ -12,7 +12,12 @@
 import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallPromoteCommandOptions, installPromoteCommand } from './genie-commands/install-promote.js';
-import { type InstallOptions, installCommand } from './genie-commands/install.js';
+import {
+  INTEGRATION_SELECTIONS,
+  type InstallOptions,
+  InvalidIntegrationSelectionError,
+  installCommand,
+} from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -172,9 +177,29 @@ program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
-  .option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none', 'auto')
+  // `.choices()` (not a bare `.option()`) so an unknown mode is refused at parse
+  // time with a one-line Commander error that NAMES the allowed values and exits
+  // 1 — never the Bun stack trace `resolveIntegrationSelection` used to produce.
+  .addOption(
+    new Option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none')
+      .choices([...INTEGRATION_SELECTIONS])
+      .default('auto'),
+  )
   .option('--skip-integrations', 'Alias for --integrations none')
-  .action((options: InstallOptions) => installCommand(options));
+  .action(async (options: InstallOptions) => {
+    // Second gate: `--skip-integrations` and programmatic callers bypass
+    // `.choices()`. Operator input still gets one line and exit 1, no stack.
+    try {
+      await installCommand(options);
+    } catch (error) {
+      if (error instanceof InvalidIntegrationSelectionError) {
+        console.error(colorizeFor('stderr', '\x1b[31m', `Error (genie install): ${error.message}`));
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  });
 
 program
   .command('uninstall')
