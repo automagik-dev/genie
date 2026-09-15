@@ -28,16 +28,26 @@ versions expose health only, with no board operation routes.
 
 ## Trust and consistency
 
-The Host resolves Genie once from its installation PATH, canonicalizes the
-executable, and runs only fixed argv with `shell: false`. Its environment is limited
-to PATH, HOME, GENIE_HOME, NO_COLOR, GENIE_AGENT_NAME and GENIE_AGENT_KIND. The Host
-identity is derived from its OS user and hostname. Browser requests contain only
-registry IDs, selected board/task IDs and validated action fields. They never
-supply paths, worker identity, executables, environment or commands. Positional
-comment arguments use the standard `--` boundary so option-shaped text is literal. All routes
-first apply DSH connection authentication (its signed browser-session cookie), then
-require loopback and same-origin browser signals; mutations require exact Origin
-and application/json. Remote/reverse-proxy operation is intentionally unsupported.
+The Host resolves Genie once at startup: every PATH entry first, then
+`$GENIE_HOME/bin`, `~/.genie/bin` and `~/.local/bin`, so a DSH launched from a
+desktop session that never sourced a shell profile still finds an installed
+Genie. `/api/genie-board/health` reports the executable it picked. The Host
+canonicalizes it and runs only fixed argv with `shell: false`. Its environment is
+limited to PATH, HOME, GENIE_HOME, NO_COLOR, GENIE_AGENT_NAME and
+GENIE_AGENT_KIND. The Host identity is derived from its OS user and hostname.
+Browser requests contain only registry IDs, selected board/task IDs and validated
+action fields. They never supply paths, worker identity, executables, environment
+or commands. Positional comment arguments use the standard `--` boundary so
+option-shaped text is literal. All routes first apply DSH connection
+authentication (its signed browser-session cookie), then require a loopback
+address and a loopback Host header, and reject any cross-origin Origin or
+Sec-Fetch-Site. A mutation additionally requires an exact Origin and
+application/json; a read does not, because a same-origin `fetch` sends no Origin
+and older Safari/Firefox and embedded WebViews send no Sec-Fetch-Site either.
+Every route answers exactly once, including when its handler throws: an
+unexpected failure is a 500 with a generic message, never an unanswered request
+and never a Host path. Remote/reverse-proxy operation is intentionally
+unsupported.
 
 The Host retains bounded **selection evidence**, not board content: registry ID,
 canonical repository path, listed board IDs, and the selected board's task IDs and
@@ -45,18 +55,48 @@ lane names. Explicit list then load establishes this evidence. One request per
 workspace may run at a time; concurrent selection/mutation requests reject. Every
 list/load still invokes Genie once, and mutations invoke the fixed action then one
 complete aggregate read. No previous aggregate is served or optimistic change
-rendered. Selection errors, failed operations, workspace removal and path changes
-invalidate evidence. A mutation followed by a failed refresh reports that the
-operation may have completed and requires reload; never automatically retry it.
+rendered. Workspace removal, path changes, a killed child (deadline or output overflow)
+and a failed refresh invalidate evidence. A command that ran and refused does
+not: Genie applies a verb in one transaction, so a non-zero exit changed
+nothing, the selection stands and the browser keeps the board and the open card
+it acted on while showing the refusal. That refusal is Genie's own first
+`Error:` line, or the tail of its stderr — never a bare exit code. A mutation
+followed by a failed refresh reports that the operation may have completed and
+requires reload; never automatically retry it.
 The selection authorizes the last confirmed board; direct external database edits
 or task imports racing a request are outside this snapshot guarantee.
 
 CLI work has a shared 10-second deadline and 4 MiB combined stdout/stderr budget.
-The active child is killed on timeout/output overflow/error. Closed schemas reject
-incomplete or foreign aggregates. Request bodies are limited to 16 KiB. Laneless
-legacy boards do not expose the required complete aggregate and fail explicitly.
-The plugin has no database access, persistence, filesystem watcher, task poller,
-or autonomous agent runner.
+The active child is killed on timeout/output overflow/error. The request's own
+answer deadline is strictly longer than that budget (10 s + 5 s), so a hung child
+produces a 504 JSON body rather than a destroyed socket, and the socket's idle
+timer is armed later still. Request bodies are limited to 16 KiB.
+
+The aggregate schemas accept everything the CLI can emit and nothing more
+convenient: duplicate lane names (`board create X --lanes A,A` makes them), empty
+comment notes, and any bounded identifier `task import` can store, including ids
+that match no generated pattern. Unknown keys pass through, because the emitter's
+contract is additive under `schemaVersion` 1; a different `schemaVersion` is
+reported as an incompatible-genie message naming both versions. Typed text keeps
+newlines, tabs and format characters (ZWJ, soft hyphen) exactly as the CLI stores
+them; only C0 controls and DEL are refused, and a rejected request answers with
+one sentence, never a Zod issues array. A card's timeline and comments are the
+newest 25 entries of a longer history, and the view says "showing last N of M"
+using the `eventCount`, `eventsTruncated` and `commentCount` the aggregate
+carries.
+
+Laneless legacy boards (a `boards.lanes` that migration or an import left NULL or
+unparsable) do not expose the lane aggregate. The picker marks them `(no lanes)`
+and loading one says so explicitly instead of surfacing a schema failure.
+
+A card claimed from this board is claimed by the Host identity, so the Host keeps
+it alive: the claim heartbeats immediately (it renders `running`, not `stale`)
+and again every 4 minutes for as long as the plugin process lives — Genie renders
+a claim `running` for 5 minutes after its last heartbeat, `idle` up to 2 hours,
+and any worker may reclaim a card whose claim is older than 15 minutes. Releasing
+or completing the card, or seeing it claimed by someone else, stops the pulse;
+so does unloading the plugin. The plugin has no database access, persistence,
+filesystem watcher, task poller, or autonomous agent runner.
 
 DSH's installed sidebar package exposes no extension slot. The original client
 uses its public apply/effect lifecycle to mount an accessible modal board button
@@ -70,6 +110,12 @@ bun run build:plugin
 bun test plugins/dsh-genie-board
 bun scripts/dsh-genie-board-smoke.ts
 ```
+
+`src/contract.test.ts` runs the REAL CLI (`bun <repo>/src/genie.ts`) against a
+seeded temporary repository through this plugin's own process layer and parses
+its output with these schemas, so a producer change that the two hand-written key
+lists would both miss fails here. `src/client.test.ts` mounts the browser half on
+a minimal DOM stand-in and drives it end to end.
 
 The smoke rebuilds `dist/` itself before installing, so it can never pass
 against a bundle left over from an earlier build; a failing plugin build fails
