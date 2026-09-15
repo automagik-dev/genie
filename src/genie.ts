@@ -213,8 +213,13 @@ shortcuts.command('show').description('Show available shortcuts and installation
 shortcuts
   .command('install')
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
   .action(shortcutsInstallCommand);
-shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
+shortcuts
+  .command('uninstall')
+  .description('Remove shortcuts from config files')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
+  .action(shortcutsUninstallCommand);
 
 // ============================================================================
 // Bare task/board — thin commands over the zero-daemon SQLite state engine.
