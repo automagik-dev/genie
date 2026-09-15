@@ -32,6 +32,7 @@ import {
   recordExportBaseline,
   recordImportBaseline,
   roadmapSnapshot,
+  serializeSnapshot,
   syncRoadmap,
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
@@ -583,7 +584,9 @@ function handleExport(opts: ExportOptions): void {
     try {
       const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
       if (target === null) {
-        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
+        // Same serializer as `--write`: one export of one database is one byte
+        // sequence, whatever each machine's physical column order happens to be.
+        process.stdout.write(serializeSnapshot(exportState(db)));
         return;
       }
       const sliced = isRoadmapSlicePath(target);

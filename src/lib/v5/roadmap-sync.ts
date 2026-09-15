@@ -40,17 +40,32 @@ export function resolveSyncMarkerPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'roadmap-sync');
 }
 
+/**
+ * Canonical JSON: every object's keys are emitted in sorted order, recursively.
+ * ONE rule for both the sync hashes and the bytes written to roadmap.json, so a
+ * snapshot's text is a function of its content alone — never of the db's
+ * physical column order, which differs between a fresh database and one grown
+ * by `ALTER TABLE ADD COLUMN` and would otherwise churn the canonical file on
+ * every machine that exports it.
+ */
+function canonicalJson(value: unknown, indent?: number): string {
+  return JSON.stringify(
+    value,
+    (_key, current: unknown) => {
+      if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+      return Object.fromEntries(
+        Object.keys(current)
+          .sort()
+          .map((key) => [key, (current as Record<string, unknown>)[key]]),
+      );
+    },
+    indent,
+  );
+}
+
 /** Content hash over the canonical JSON form, independent of whitespace and object-key order. */
 function canonicalHash(value: unknown): string {
-  const canonical = JSON.stringify(value, (_key, current: unknown) => {
-    if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
-    return Object.fromEntries(
-      Object.keys(current)
-        .sort()
-        .map((key) => [key, (current as Record<string, unknown>)[key]]),
-    );
-  });
-  return createHash('sha256').update(canonical).digest('hex');
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
 /**
@@ -86,8 +101,13 @@ function writeMarker(path: string, marker: SyncMarker): void {
   writeFileSync(path, `${JSON.stringify(marker, null, 2)}\n`);
 }
 
-function serializeSnapshot(state: unknown): string {
-  return `${JSON.stringify(state, null, 2)}\n`;
+/**
+ * The exact bytes a snapshot takes on disk (and on stdout): canonical JSON, two
+ * space indent, trailing newline. Key order is the snapshot's content, not the
+ * exporting database's column layout — see {@link canonicalJson}.
+ */
+export function serializeSnapshot(state: unknown): string {
+  return `${canonicalJson(state, 2)}\n`;
 }
 
 /**
