@@ -32,7 +32,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, win32 } from 'node:path';
 import {
   SKILLS_CLI_VERSION,
+  type SkillsInstallRecord,
   computeSkillDirDigest,
+  readSkillsInstallRecord,
   skillsInstallRecordPath,
   writeSkillsInstallRecord,
 } from '../lib/skills-installer.js';
@@ -129,6 +131,58 @@ describe('skills.sh channel removal (wish skills-everywhere, group 1)', () => {
     // The agent dirs themselves survive; only genie's own skill dirs go.
     expect(existsSync(claudeSkills)).toBe(true);
     expect(existsSync(codexSkills)).toBe(true);
+  });
+
+  test('retired dirs preserved in the record are removed when proven and reported when not', () => {
+    const live = seedSkillDir(claudeSkills, 'wish');
+    // Two retirements the last `genie update` could not archive. They are NOT
+    // in `inventory` (this release no longer delivers them), so before the
+    // record carried them `genie uninstall` left both behind with no receipt.
+    const provable = seedSkillDir(claudeSkills, 'trace');
+    const unprovable = seedSkillDir(codexSkills, 'perf');
+    seedRecord(['wish'], [claudeSkills, codexSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    writeSkillsInstallRecord(genieHome, {
+      ...record,
+      preserved: [
+        {
+          agentDir: claudeSkills,
+          skill: 'trace',
+          reason: 'replacement set unverified in this home',
+          digest: computeSkillDirDigest(provable) as string,
+        },
+        { agentDir: codexSkills, skill: 'perf', reason: 'no recorded content digest' },
+      ],
+    });
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed.sort()).toEqual([live, provable].sort());
+    expect(removal.preserved).toEqual([unprovable]);
+    expect(existsSync(provable)).toBe(false);
+    expect(existsSync(unprovable)).toBe(true);
+    // Something was left behind, so the receipt is kept for the retry.
+    expect(removal.recordRemoved).toBe(false);
+  });
+
+  test('a preserved retirement whose content changed again is never deleted', () => {
+    const drifted = seedSkillDir(claudeSkills, 'trace');
+    seedRecord([], [claudeSkills]);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    const digest = computeSkillDirDigest(drifted) as string;
+    writeFileSync(join(drifted, 'SKILL.md'), '# edited again\n', 'utf8');
+    writeSkillsInstallRecord(genieHome, {
+      ...record,
+      preserved: [
+        { agentDir: claudeSkills, skill: 'trace', reason: 'content changed since the recorded install', digest },
+      ],
+    });
+
+    const removal = removeSkillsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved).toEqual([drifted]);
+    expect(readFileSync(join(drifted, 'SKILL.md'), 'utf8')).toBe('# edited again\n');
   });
 
   test('deletes the record so a second run is a clean no-op', () => {
