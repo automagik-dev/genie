@@ -58,7 +58,7 @@ Resolve the fix-loop budget `B` once per group: default 2; only an explicit high
 | `work` | Execute an approved wish — dispatch native subagents per group in waves, fix loops, validation | Wish is SHIP-approved |
 | `fix` | Resolve FIX-FIRST gaps, re-review, diagnose unresolved gaps after `B` loops (default 2) | Review returned FIX-FIRST |
 | `council` | Multi-perspective deliberation with specialist viewpoints | Major design decisions, tradeoffs |
-| `refine` | Rewrite a brief, draft, or system prompt to the Claude Fable 5.1 prompting guidelines, keeping its intent | A prompt needs sharpening, or a brief precedes dispatch |
+| `refine` | Rewrite a brief, draft, or system prompt to the official prompting guidelines of the model that will run it (`--for <target>`), keeping its intent | A prompt needs sharpening, or a brief precedes dispatch |
 | `report` | Investigate bugs — trace, capture evidence, open a GitHub issue with confirmation | Bug reports |
 | `trace` | Reproduce and isolate root cause without patching | Unknown issues needing investigation |
 | `docs` | Audit, generate, and validate documentation against code | Docs stale or missing |
