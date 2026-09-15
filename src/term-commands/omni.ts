@@ -501,9 +501,16 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 // Registration
 // ============================================================================
 
+/**
+ * The group summary names every subcommand registered below. Listing four of
+ * the five was the CLI-side half of the CLAUDE.md drift the 2026-09-15 dogfood
+ * run found; `claude-md-drift.test.ts` now compares both against the registry.
+ */
+const OMNI_GROUP_DESCRIPTION = 'Omni integration (serve, status, inbox, test-approval, handshake)';
+
 export function registerOmniCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'omni');
-  const omni = existing ?? program.command('omni').description('Omni integration (serve, status, inbox, handshake)');
+  const omni = existing ?? program.command('omni').description(OMNI_GROUP_DESCRIPTION);
 
   omni
     .command('serve')
