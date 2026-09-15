@@ -90,6 +90,34 @@ test('a card claimed through the plugin renders fresh, and claiming it twice rep
   // The refusal changed nothing, so the board is still selected.
   await load();
 }, 120_000);
+test('the CLI refuses an empty comment note, so only imported data carries one', async () => {
+  const child = Bun.spawn([binary, 'task', 'comment', '--', task, ''], {
+    cwd: workspace,
+    env: { ...process.env },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  expect(code).toBe(1);
+  expect(stderr).toContain('a non-empty comment is required.');
+
+  // The schema still has to accept an empty note, because an imported snapshot
+  // can carry one and the aggregate emits it verbatim (m13).
+  const file = join(workspace, '.genie', 'roadmap.json');
+  await genie('task', 'export', '--write');
+  const snapshot = JSON.parse(await readFile(file, 'utf8')) as {
+    task_events: { kind: string; note: string | null }[];
+  };
+  const comment = snapshot.task_events.find((event) => event.kind === 'comment');
+  expect(comment).toBeDefined();
+  if (comment) comment.note = '';
+  await writeFile(file, JSON.stringify(snapshot));
+  await genie('task', 'import', '--replace');
+  await list();
+  const aggregate = (await load()) as { lanes: { cards: { comments: { note: string }[] }[] }[] };
+  const card = aggregate.lanes.flatMap((lane) => lane.cards)[0];
+  expect(card.comments.map((entry) => entry.note)).toEqual(['']);
+}, 120_000);
 test('a laneless board is listed with no lanes and explains itself on load', async () => {
   const file = join(workspace, '.genie', 'roadmap.json');
   await genie('task', 'export', '--write');
