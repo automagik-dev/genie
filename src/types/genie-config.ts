@@ -27,10 +27,18 @@ const LoggingConfigSchema = z.object({
   verbose: z.boolean().default(false),
 });
 
-// Routing-matrix budget configuration
+// Routing-matrix budget configuration.
+//
+// Every key is a CONSERVATIVE default with a schema ceiling. A budget bounds how
+// much extra work a gate may authorize before a human is asked, so configuration
+// may only tighten it: `.max()` is what keeps an edited config.json from
+// relaxing a gate past what the release was reviewed for. Raising a ceiling is a
+// code change, reviewed with the gate it bounds — never a config edit.
 const BudgetsConfigSchema = z.object({
-  maxFableCallsPerWish: z.number().int().nonnegative().default(3),
-  maxEscalationsPerGroup: z.number().int().nonnegative().default(2),
+  /** Fable escalations a single wish may spend. Ceiling 10: past that the wish needs re-scoping, not more calls. */
+  maxFableCallsPerWish: z.number().int().nonnegative().max(10).default(3),
+  /** Bounded repair rounds a single execution group may spend. Ceiling 5: the repair loop is not a substitute for review. */
+  maxEscalationsPerGroup: z.number().int().nonnegative().max(5).default(2),
 });
 
 // Routing-matrix effort configuration
