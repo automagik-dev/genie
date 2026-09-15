@@ -189,6 +189,23 @@ program
       .default('auto'),
   )
   .option('--skip-integrations', 'Alias for --integrations none')
+  // The consent contract in the operator's own words. `--all` used to hand the
+  // skills CLI `--agent '*'`, which CREATED ~53 product homes that had never
+  // existed on the 2026-09-01 dogfood host; nothing in `--help` said so.
+  .addHelpText(
+    'after',
+    [
+      '',
+      'Skills channel:',
+      '  Any --integrations mode but `none` installs skills to every agent DETECTED on',
+      '  this host — one whose product home (~/.claude, ~/.codex, ~/.cursor, …) already',
+      '  exists, or whose skills home the previous install record names.',
+      '  Genie NEVER creates a product home: the agents are named explicitly on the',
+      '  skills CLI command line. A recorded home that now holds nothing but',
+      '  genie-written skills is handed back — moved, backup-first, under',
+      '  <GENIE_HOME>/state-backups/skills-prune-<timestamp>/ and named on stdout.',
+    ].join('\n'),
+  )
   .action(async (options: InstallOptions) => {
     // Second gate: `--skip-integrations` and programmatic callers bypass
     // `.choices()`. Operator input still gets one line and exit 1, no stack.
