@@ -1,4 +1,4 @@
 interface:
   display_name: "Prompt Refiner"
-  short_description: "Rewrite any prompt to its target model's prompting guide"
-  default_prompt: "Rewrite this prompt so it follows the official prompting guidelines of the model that will run it, keeping its intent."
+  short_description: "Refine prompts with OpenAI or Claude guidance"
+  default_prompt: "Rewrite this prompt using official OpenAI or Claude prompting guidance while preserving its intent and constraints."
