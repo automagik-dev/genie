@@ -3,10 +3,13 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
+  DesignEvidenceError,
   designReviewDigest,
   designReviewViolations,
   parseDesignReviewEvidence,
+  readDesign,
   stampDesignReview,
+  writeDesign,
 } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 const TEMPLATE = readFileSync(
@@ -126,6 +129,83 @@ describe('digest-bound design review evidence', () => {
       expect(readFileSync(designPath, 'utf8')).toBe(changed);
     } finally {
       rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * r2 #16: the helper surfaced raw libuv text — `ENOENT: no such file or
+ * directory, open '<path>'`, and an `EISDIR: illegal operation on a directory,
+ * read` that named no path at all. A design gate speaks skill vocabulary: one
+ * line naming the path and what was expected, exit 1 (a refusal), with exit 2
+ * left for a helper that could not run at all (usage/internal).
+ */
+describe('file-access failures are skill-level diagnostics', () => {
+  function run(args: string[]): { exitCode: number | null; stdout: string; stderr: string } {
+    const result = Bun.spawnSync(['node', EVIDENCE_SCRIPT, ...args], { stdout: 'pipe', stderr: 'pipe' });
+    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+  }
+
+  function onlyLine(stderr: string): string {
+    const lines = stderr.split('\n').filter((line) => line !== '');
+    expect(lines).toHaveLength(1);
+    return lines[0];
+  }
+
+  test('an absent DESIGN.md names the path for every verb, never libuv text', () => {
+    const missing = join(mkdtempSync(join(tmpdir(), 'genie-design-review-')), 'DESIGN.md');
+    try {
+      for (const args of [
+        ['verify', missing],
+        ['digest', missing],
+        ['stamp', missing, '--verdict', 'SHIP', '--reviewer', 'reviewer/thread-42'],
+      ]) {
+        const result = run(args);
+        const line = onlyLine(result.stderr);
+        expect(line).toContain('DESIGN.md not found at');
+        expect(line).toContain(missing);
+        expect(line).not.toContain('ENOENT');
+        expect(line).not.toContain('no such file or directory');
+        expect(result.stdout).toBe('');
+        expect(result.exitCode).toBe(1);
+      }
+    } finally {
+      rmSync(dirname(missing), { recursive: true, force: true });
+    }
+  });
+
+  test('a directory passed as DESIGN.md is named, where libuv named nothing', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'genie-design-review-'));
+    try {
+      const result = run(['verify', directory]);
+      const line = onlyLine(result.stderr);
+      expect(line).toContain('DESIGN.md path is a directory, not a file');
+      expect(line).toContain(directory);
+      expect(line).not.toContain('EISDIR');
+      expect(line).not.toContain('illegal operation');
+      expect(result.exitCode).toBe(1);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('a usage error still exits 2: a refusal and an unrunnable helper stay distinguishable', () => {
+    const result = run(['bogus', 'DESIGN.md']);
+    expect(onlyLine(result.stderr)).toContain('usage: design-review-evidence.mjs');
+    expect(result.exitCode).toBe(2);
+  });
+
+  test('the read/write helpers throw typed refusals rather than raw errors', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'genie-design-review-'));
+    try {
+      expect(() => readDesign(directory)).toThrow(DesignEvidenceError);
+      expect(() => readDesign(join(directory, 'DESIGN.md'))).toThrow(
+        `DESIGN.md not found at ${join(directory, 'DESIGN.md')}`,
+      );
+      expect(() => writeDesign(directory, 'stamped')).toThrow(DesignEvidenceError);
+      expect(() => writeDesign(directory, 'stamped')).toThrow('stamped DESIGN.md cannot be written');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });
