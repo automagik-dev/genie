@@ -1,6 +1,7 @@
 import { IconSearchOutline16, IconSkillOutline16, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { SKILL_CATEGORIES } from '../taxonomy';
 import { type SkillEntry, type WorkflowEntry, api } from './api';
 import { IconWorkflows16 } from './icons';
 import { Empty, PanelShell, useWorkspaces } from './shell';
@@ -10,6 +11,30 @@ type Entry = SkillEntry | WorkflowEntry;
 
 function isWorkflow(entry: Entry): entry is WorkflowEntry {
   return 'phases' in entry;
+}
+
+/** The label shown above an uncategorized group; always last. */
+const UNCATEGORIZED = 'Other';
+
+/**
+ * Group the visible entries by their declared `category`, in taxonomy order,
+ * with everything uncategorized last. A workflow list has no categories, so it
+ * comes back as one unlabelled group and renders exactly as it did before.
+ */
+export function groupByCategory(entries: Entry[], grouped: boolean): { label?: string; entries: Entry[] }[] {
+  if (!grouped) return [{ entries }];
+  const buckets = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const category = (entry as SkillEntry).category;
+    const key: string = category ?? UNCATEGORIZED;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(entry);
+    else buckets.set(key, [entry]);
+  }
+  const order = [...SKILL_CATEGORIES, UNCATEGORIZED] as readonly string[];
+  return order
+    .filter((label) => buckets.has(label))
+    .map((label) => ({ label, entries: buckets.get(label) as Entry[] }));
 }
 
 function Document({ kind, entry, text }: { kind: Kind; entry: Entry; text: string | undefined }) {
@@ -74,12 +99,14 @@ function CatalogPanel({
   title,
   fetchEntries,
   emptyHint,
+  grouped = false,
 }: {
   kind: Kind;
   icon: ReactNode;
   title: string;
   fetchEntries: (workspaceId: string) => Promise<Entry[]>;
   emptyHint: string;
+  grouped?: boolean;
 }) {
   const ws = useWorkspaces();
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -132,6 +159,7 @@ function CatalogPanel({
     if (!needle) return entries;
     return entries.filter((entry) => `${entry.name} ${entry.description}`.toLowerCase().includes(needle));
   }, [entries, query]);
+  const groups = useMemo(() => groupByCategory(visible, grouped), [visible, grouped]);
   const current = entries.find((entry) => entry.name === selected);
 
   return (
@@ -164,20 +192,30 @@ function CatalogPanel({
                 onChange={(event) => setQuery(event.currentTarget.value)}
               />
             </div>
-            {visible.map((entry) => (
-              <button
-                key={entry.name}
-                type="button"
-                className="gb-item"
-                aria-current={entry.name === selected}
-                onClick={() => setSelected(entry.name)}
-              >
-                <span className="gb-item-name">
-                  {entry.name}
-                  {isWorkflow(entry) && entry.phases.length > 0 && <Tag tone="quiet">{entry.phases.length} phases</Tag>}
-                </span>
-                <span className="gb-item-desc">{entry.description}</span>
-              </button>
+            {groups.map((group) => (
+              <div key={group.label ?? 'all'} className="gb-group">
+                {group.label && <div className="gb-group-head">{group.label}</div>}
+                {group.entries.map((entry) => (
+                  <button
+                    key={entry.name}
+                    type="button"
+                    className="gb-item"
+                    aria-current={entry.name === selected}
+                    onClick={() => setSelected(entry.name)}
+                  >
+                    <span className="gb-item-name">
+                      {entry.name}
+                      {isWorkflow(entry) && entry.phases.length > 0 && (
+                        <Tag tone="quiet">{entry.phases.length} phases</Tag>
+                      )}
+                      {!isWorkflow(entry) && entry.mutates !== undefined && (
+                        <Tag tone="quiet">{entry.mutates ? 'mutates' : 'read-only'}</Tag>
+                      )}
+                    </span>
+                    <span className="gb-item-desc">{entry.description}</span>
+                  </button>
+                ))}
+              </div>
             ))}
             {!visible.length && (
               <div className="gb-empty">
@@ -201,6 +239,7 @@ export function SkillsPanel() {
       title="Skills"
       fetchEntries={api.skills}
       emptyHint="Skills live under skills/<name>/SKILL.md in the repository."
+      grouped
     />
   );
 }

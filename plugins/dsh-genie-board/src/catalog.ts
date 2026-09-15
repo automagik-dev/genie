@@ -1,6 +1,7 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Registry } from './service';
+import { SKILL_CATEGORIES, type SkillCategory } from './taxonomy';
 
 /**
  * Read-only catalog of a workspace's Genie skills and saved workflows.
@@ -17,6 +18,10 @@ export interface SkillEntry {
   path: string;
   /** Sibling files shipped with the skill (references, templates, agents). */
   resources: string[];
+  /** Optional flat `category:` frontmatter key, when it names a known category. */
+  category?: SkillCategory;
+  /** Optional flat `mutates:` frontmatter key: whether the skill changes repository state. */
+  mutates?: boolean;
 }
 
 export interface WorkflowEntry {
@@ -55,6 +60,10 @@ export function parseMetaLiteral(literal: string): Record<string, unknown> | und
   }
 }
 
+function isCategory(value: string | undefined): value is SkillCategory {
+  return value !== undefined && (SKILL_CATEGORIES as readonly string[]).includes(value);
+}
+
 async function bounded(path: string): Promise<string | undefined> {
   const info = await stat(path).catch(() => undefined);
   if (!info?.isFile() || info.size > MAX_FILE) return undefined;
@@ -73,11 +82,15 @@ export async function readSkills(root: string): Promise<SkillEntry[]> {
     const name = frontmatterField(block, 'name') ?? entry.name;
     if (name !== entry.name) continue;
     const siblings = await readdir(join(dir, entry.name)).catch(() => []);
+    const category = frontmatterField(block, 'category');
+    const mutates = frontmatterField(block, 'mutates');
     entries.push({
       name,
       description: frontmatterField(block, 'description') ?? '',
       path: `skills/${entry.name}/SKILL.md`,
       resources: siblings.filter((file) => file !== 'SKILL.md').sort(),
+      ...(isCategory(category) ? { category } : {}),
+      ...(mutates === 'true' || mutates === 'false' ? { mutates: mutates === 'true' } : {}),
     });
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name));

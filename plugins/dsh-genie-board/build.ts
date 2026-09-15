@@ -4,15 +4,19 @@ import sourcePackage from '../../package.json';
 const [version = sourcePackage.version, output = 'dist', ...extra] = process.argv.slice(2);
 if (extra.length || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/.test(version)) throw new Error('invalid build version');
 const outdir = resolve(output);
-await build({
-  entryPoints: ['src/index.ts'],
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node22',
-  outfile: resolve(outdir, 'index.js'),
-  define: { __GENIE_BUILD_VERSION__: JSON.stringify(version) },
-});
+/** One host bundle per cordis row: the manager plus its three sub-rows. */
+export const HOST_ROWS = ['index', 'board', 'skills', 'workflows'] as const;
+for (const row of HOST_ROWS) {
+  await build({
+    entryPoints: [`src/${row}.ts`],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    outfile: resolve(outdir, `${row}.js`),
+    define: { __GENIE_BUILD_VERSION__: JSON.stringify(version) },
+  });
+}
 await build({
   entryPoints: ['src/client/index.ts'],
   bundle: true,

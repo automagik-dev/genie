@@ -1,172 +1,78 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import sourcePackage from '../../../package.json';
 declare const __GENIE_BUILD_VERSION__: string;
-import { CatalogService } from './catalog';
-import { DEADLINE_MS, compatible, execute, hostEnvironment, resolveExecutable } from './process';
-import { BoardService, type Registry } from './service';
+import { type ManagerConfig, resolveManagerConfig, schemaOf, socketDeadlineOf } from './config';
+import { compatible, execute, hostEnvironment, resolveExecutable } from './process';
+import { type HostContext, type RuntimeVerdict, createRuntime, requireService } from './runtime';
+import type { Registry } from './service';
 
-interface Context {
-  workspaceRegistry: Registry;
-  connection: { requestRejection(req: IncomingMessage): 401 | 403 | undefined };
-  webServer: {
-    register(route: {
-      kind: 'exact';
-      path: string;
-      handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-    }): () => void;
-  };
-  effect(effect: () => () => void, label?: string): void;
-}
+/**
+ * The MANAGER row: the bare package `@automagik/genie-dsh-board`.
+ *
+ * It owns everything the three sub-rows must not each own a copy of — the one
+ * resolved Genie executable and its compatibility verdict, the one trust fence,
+ * and workspace resolution — and publishes them as the cordis service
+ * `genieRuntime`. It registers exactly one route of its own, `/health`, which
+ * reports the verdict, the resolved config, and which sub-rows are mounted.
+ * The browser gates its panels on that last field.
+ */
+
+export { SOCKET_MARGIN_MS } from './config';
+export const name = 'genie-dsh-board';
 export const inject = ['workspaceRegistry', 'webServer', 'connection'];
 export const minimumGenieVersion =
   typeof __GENIE_BUILD_VERSION__ === 'undefined' ? sourcePackage.version : __GENIE_BUILD_VERSION__;
-/**
- * The socket idle deadline MUST outlive the Genie budget the handler itself
- * enforces. Armed at or below it, Node's socket timer destroys the connection
- * before the handler can answer, so the deadline 400 is written to a dead
- * socket and the browser sees a network error instead of the message (F6).
- */
-export const SOCKET_MARGIN_MS = 5_000;
-export const SOCKET_DEADLINE_MS = DEADLINE_MS + SOCKET_MARGIN_MS;
-export function trusted(req: IncomingMessage): boolean {
-  const address = req.socket.remoteAddress;
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address ?? '')) return false;
-  const host = req.headers.host;
-  if (!host || !/^(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/.test(host)) return false;
-  const origin = req.headers.origin;
-  if (origin !== undefined && origin !== `http://${host}`) return false;
-  if (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') return false;
-  // A mutation still demands an exact Origin. A read does not: a same-origin
-  // `fetch` sends no Origin at all, and older Safari/Firefox and embedded
-  // WebViews send no Sec-Fetch-Site either, so requiring one of them here
-  // would be a stricter floor than DSH's own fence applies (P1).
-  return req.method !== 'POST' || origin === `http://${host}`;
-}
-async function body(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const data of req) {
-    const chunk = Buffer.from(data);
-    size += chunk.length;
-    if (size > 16_384) throw new Error('Request body too large');
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
-function json(res: ServerResponse, code: number, value: unknown) {
-  if (res.headersSent || res.writableEnded) return;
-  res.writeHead(code, {
-    'content-type': 'application/json',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
-  res.end(JSON.stringify(value));
-}
-/**
- * Answer, then abandon the socket — never the other way round.
- *
- * The deadline is the handler's own timer, not the socket's: once the request
- * body has been consumed Node's `socketOnTimeout` emits nothing (the request is
- * `complete`) and destroys the connection silently, so a handler that waits on
- * a hung Genie child would lose its answer to a dead socket. The socket's idle
- * timer is still armed, strictly later, as a last-resort backstop.
- */
-export function armSocketDeadline(req: IncomingMessage, res: ServerResponse, ms: number): void {
-  const timer = setTimeout(() => {
-    if (!res.headersSent && !res.writableEnded) {
-      res.once('finish', () => req.destroy());
-      json(res, 504, { error: 'Genie board request timed out' });
-      return;
-    }
-    req.destroy();
-  }, ms);
-  timer.unref?.();
-  res.once('close', () => clearTimeout(timer));
-  req.setTimeout(ms + SOCKET_MARGIN_MS);
-}
-export async function apply(ctx: Context): Promise<void> {
-  let service: BoardService | undefined;
-  let version = '';
-  let executable = '';
-  let error = '';
+/** The socket deadline for the DEFAULT handler budget; a configured row derives its own. */
+export const SOCKET_DEADLINE_MS = socketDeadlineOf(resolveManagerConfig());
+export const Config = schemaOf(resolveManagerConfig);
+
+/** Run the executable once and decide whether mutating routes may exist at all. */
+async function verdictOf(config: ManagerConfig): Promise<RuntimeVerdict> {
   try {
-    executable = resolveExecutable();
-    version = (
+    const executable = resolveExecutable();
+    const version = (
       await execute(executable, ['--version'], process.cwd(), hostEnvironment('dsh-host'), {
-        expires: Date.now() + DEADLINE_MS,
+        expires: Date.now() + config.deadlineMs,
         bytes: 0,
+        limit: config.outputBudgetBytes,
       })
     ).trim();
     if (!compatible(version, minimumGenieVersion)) throw new Error(`Genie ${minimumGenieVersion} or newer is required`);
-    service = new BoardService(ctx.workspaceRegistry, executable);
+    return { executable, version, compatible: true, error: '' };
   } catch (failure) {
-    error = failure instanceof Error ? failure.message : 'Genie unavailable';
+    // Degraded mode: the error is recorded, health stays up, and only the
+    // mutating routes are withheld. The read-only catalogs need no binary.
+    return {
+      executable: '',
+      version: '',
+      compatible: false,
+      error: failure instanceof Error ? failure.message : 'Genie unavailable',
+    };
   }
+}
+
+export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void> {
+  const config = resolveManagerConfig(rawConfig);
+  // Validate every required host service once, here, with a named error.
+  requireService<Registry>(ctx, 'workspaceRegistry', 'list');
+  requireService<HostContext['webServer']>(ctx, 'webServer', 'register');
+  requireService<HostContext['connection']>(ctx, 'connection', 'requestRejection');
+  const verdict = await verdictOf(config);
+  const runtime = createRuntime(ctx, config, verdict);
   ctx.effect(() => {
-    const disposers: (() => void)[] = [];
-    // One fence, one error boundary, one shape of answer for every route: a
-    // handler that throws must still answer, or the browser hangs (C1).
-    const route = (path: string, method: string, handler: (req: IncomingMessage) => unknown, mutation = false) => {
-      disposers.push(
-        ctx.webServer.register({
-          kind: 'exact',
-          path,
-          handler: async (req, res) => {
-            try {
-              if (req.method !== method) return json(res, 405, { error: 'Method not allowed' });
-              const rejection = ctx.connection.requestRejection(req);
-              if (rejection) return json(res, rejection, { error: 'DSH browser authentication required' });
-              if (!trusted(req)) return json(res, 403, { error: 'Same-origin loopback request required' });
-              if (mutation) {
-                if (req.headers['content-type'] !== 'application/json')
-                  return json(res, 415, { error: 'application/json required' });
-                armSocketDeadline(req, res, SOCKET_DEADLINE_MS);
-              }
-              json(res, 200, await handler(req));
-            } catch (failure) {
-              const message = failure instanceof Error ? failure.message : 'Board request failed';
-              // A route failure is the plugin's own fault and its message is not
-              // a user-facing one, so only the vetted board path reports detail.
-              json(res, mutation ? 400 : 500, { error: mutation ? message : 'Genie board route failed' });
-            }
-          },
-        }),
-      );
-    };
-    route('/api/genie-board/health', 'GET', () => ({
-      compatible: !!service,
-      version,
-      executable,
-      minimumGenieVersion,
-      error,
-    }));
-    // The Skills and Workflows panels read git-tracked documents and need no
-    // Genie binary, so the workspace list and catalog routes exist even when the
-    // board service could not start.
-    route('/api/genie-board/workspaces', 'GET', () =>
-      service ? service.workspaces() : ctx.workspaceRegistry.list().map(({ id, title }) => ({ id, title })),
-    );
-    const catalog = new CatalogService(ctx.workspaceRegistry);
-    const query = (req: IncomingMessage) => new URL(req.url ?? '/', 'http://localhost').searchParams;
-    const workspaceOf = (req: IncomingMessage) => {
-      const id = query(req).get('workspaceId') ?? '';
-      if (!id || id.length > 200) throw new Error('workspaceId required');
-      return id;
-    };
-    route('/api/genie-board/skills', 'GET', (req) => catalog.skills(workspaceOf(req)));
-    route('/api/genie-board/workflows', 'GET', (req) => catalog.workflows(workspaceOf(req)));
-    route('/api/genie-board/document', 'GET', async (req) => {
-      const kind = query(req).get('kind');
-      if (kind !== 'skill' && kind !== 'workflow') throw new Error('kind must be skill or workflow');
-      return { text: await catalog.document(workspaceOf(req), kind, query(req).get('name') ?? '') };
-    });
-    if (service) {
-      const board = service;
-      route('/api/genie-board/action', 'POST', async (req) => board.request(await body(req)), true);
-    }
+    const disposers = [
+      ctx.provide('genieRuntime', runtime),
+      runtime.route('/api/genie-board/health', 'GET', () => ({
+        compatible: runtime.compatible,
+        version: runtime.version,
+        executable: runtime.executable,
+        minimumGenieVersion,
+        error: runtime.error,
+        mounted: runtime.mounted(),
+        config: { manager: runtime.config, ...runtime.rows() },
+      })),
+    ];
     return () => {
       for (const dispose of disposers) dispose();
-      service?.dispose();
     };
-  }, 'Genie board routes');
+  }, 'genie: runtime service and health route');
 }

@@ -223,8 +223,16 @@ test('the staged release payload and the verifier share one plugin member list',
   for (const member of DSH_PLUGIN_MEMBERS) {
     expect(buildScript).toContain(`"plugins/dsh-genie-board/${member}"`);
   }
-  // Seven members, pinned in exactly one place.
-  expect(DSH_PLUGIN_MEMBERS).toHaveLength(7);
+  // Ten members, enumerated explicitly (never a glob) in exactly one place:
+  // five metadata files, four host row bundles and the one client bundle.
+  expect(DSH_PLUGIN_MEMBERS).toHaveLength(10);
+  expect(DSH_PLUGIN_MEMBERS.filter((member) => member.startsWith('dist/'))).toEqual([
+    'dist/index.js',
+    'dist/board.js',
+    'dist/skills.js',
+    'dist/workflows.js',
+    'dist/client.js',
+  ]);
 });
 
 describe('network steps', () => {

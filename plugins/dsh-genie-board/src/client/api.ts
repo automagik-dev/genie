@@ -18,6 +18,10 @@ export interface Health {
   version: string;
   minimumGenieVersion: string;
   error: string;
+  /** Which sub-rows the manager row has mounted; absent on a pre-split Host. */
+  mounted?: { board?: boolean; skills?: boolean; workflows?: boolean };
+  /** The resolved per-row config, manager first. */
+  config?: Record<string, Record<string, unknown>>;
 }
 
 async function get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
@@ -50,8 +54,11 @@ export const api = {
     post<Aggregate>('action', { action, workspaceId, boardRef, ...extra }),
   skills: (workspaceId: string) => get<SkillEntry[]>('skills', { workspaceId }),
   workflows: (workspaceId: string) => get<WorkflowEntry[]>('workflows', { workspaceId }),
+  // Each catalog row owns its own document path: two cordis rows cannot share
+  // one exact route, and the split is what makes disable-by-id remove exactly
+  // that row's surface.
   document: (workspaceId: string, kind: 'skill' | 'workflow', name: string) =>
-    get<{ text: string }>('document', { workspaceId, kind, name }),
+    get<{ text: string }>(`${kind === 'skill' ? 'skills' : 'workflows'}/document`, { workspaceId, name }),
 };
 
 /** Remembered per browser: the last workspace and board the person looked at. */

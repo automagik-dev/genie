@@ -6,8 +6,12 @@ import { delimiter, join, resolve } from 'node:path';
 /** How the smoke runs a child process; injected so the build step is testable. */
 export type Runner = (binary: string, args: string[], cwd?: string) => Promise<string>;
 
-/** The bundles `dsh plugin add link:` loads out of the plugin directory. */
-export const PLUGIN_BUNDLES = ['index.js', 'client.js'] as const;
+/**
+ * The bundles `dsh plugin add link:` loads out of the plugin directory: one
+ * host bundle per cordis row (manager, board, skills, workflows) plus the one
+ * client bundle the whole suite shares.
+ */
+export const PLUGIN_BUNDLES = ['index.js', 'board.js', 'skills.js', 'workflows.js', 'client.js'] as const;
 
 /**
  * Build the plugin the smoke is about to install.
@@ -36,6 +40,45 @@ export async function buildPluginDist(repoRoot: string, run: Runner): Promise<st
     built.push(path);
   }
   return built;
+}
+
+/**
+ * Acceptance proof for disable-by-id, against the REAL four-row patch.
+ *
+ * The profile turns `genie-dsh-board-skills` off by its id; the row must then
+ * register no route at all, and the manager's health must report it unmounted
+ * — that flag is exactly what the browser gates its Skills panel on, so an
+ * operator can never be left with a panel whose first request 404s.
+ */
+async function assertDisabledRow(launchUrl: string): Promise<Record<string, boolean>> {
+  const origin = new URL(launchUrl).origin;
+  const exchange = await fetch(launchUrl, { redirect: 'manual' });
+  const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
+  if (!cookie) throw new Error('DSH token exchange did not set a cookie on the disabled-row launch');
+  const read = (path: string) =>
+    fetch(`${origin}/api/genie-board/${path}`, {
+      headers: { origin, cookie, 'sec-fetch-site': 'same-origin' },
+    });
+  let mounted: Record<string, boolean> | undefined;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await read('health');
+    if (response.ok) {
+      mounted = ((await response.json()) as { mounted?: Record<string, boolean> }).mounted;
+      break;
+    }
+    await Bun.sleep(100);
+  }
+  if (!mounted) throw new Error('Disabled-row launch never answered health');
+  if (mounted.skills !== false) throw new Error(`Disabled row still reports mounted: ${JSON.stringify(mounted)}`);
+  if (mounted.board !== true || mounted.workflows !== true)
+    throw new Error(`Disabling one row unmounted another: ${JSON.stringify(mounted)}`);
+  for (const path of ['skills?workspaceId=x', 'skills/document?workspaceId=x&name=wish']) {
+    const response = await read(path);
+    if (response.status !== 404) throw new Error(`Disabled row still serves /${path} (${response.status})`);
+  }
+  // The rows that stayed enabled still answer through the one fence.
+  if ((await read('workspaces')).status !== 200) throw new Error('Disabling one row broke the board row');
+  return mounted;
 }
 
 const root = resolve(import.meta.dir, '..');
@@ -84,11 +127,15 @@ async function main(): Promise<void> {
       child.kill('SIGTERM');
     });
   }
-  async function start(): Promise<string> {
+  async function start(patch = 'fixture.patch.yml'): Promise<string> {
     server = spawn(
       'dsh',
-      ['web', '--patch', join(temporary, 'fixture.patch.yml'), '--no-open', '--host', '127.0.0.1', '--port', '0'],
-      { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] },
+      ['web', '--patch', join(temporary, patch), '--no-open', '--host', '127.0.0.1', '--port', '0'],
+      {
+        cwd: repo,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
     );
     const child = server;
     return new Promise((resolveStart, reject) => {
@@ -128,9 +175,13 @@ async function main(): Promise<void> {
       fixture,
       `export const inject=['workspaceRegistry']; export async function apply(ctx){await ctx.workspaceRegistry.create(${JSON.stringify(repo)},'Smoke workspace');}`,
     );
+    const workspaceRow = `- insert:\n    - id: smoke-workspace\n      name: ${JSON.stringify(fixture)}\n`;
+    await writeFile(join(temporary, 'fixture.patch.yml'), workspaceRow);
+    // The acceptance proof for disable-by-id: the same profile with one of the
+    // four rows turned off by its id, exactly as an operator would write it.
     await writeFile(
-      join(temporary, 'fixture.patch.yml'),
-      `- insert:\n    - id: smoke-workspace\n      name: ${JSON.stringify(fixture)}\n`,
+      join(temporary, 'fixture-disabled.patch.yml'),
+      `${workspaceRow}- id: genie-dsh-board-skills\n  disabled: true\n`,
     );
     await command('dsh', ['plugin', '--profile', 'web', 'add', `link:${join(root, 'plugins/dsh-genie-board')}`]);
     installed = true;
@@ -194,6 +245,9 @@ async function main(): Promise<void> {
       .find((entry: { id: string }) => entry.id === id);
     if (!commentCard?.comments.some((entry: { note: string }) => entry.note === '--help'))
       throw new Error('Option-shaped comment was not stored literally');
+    // Phase two: the same four-row patch with one row disabled by its id.
+    await stop();
+    const mounted = await assertDisabledRow(await start('fixture-disabled.patch.yml'));
     console.log(
       JSON.stringify({
         dsh: await command('dsh', ['--version']),
@@ -203,7 +257,8 @@ async function main(): Promise<void> {
         boardRef,
         id,
         lane,
-        result: 'PASS: install/list/restart/health/load/create/move',
+        mountedWithSkillsDisabled: mounted,
+        result: 'PASS: install/list/restart/health/load/create/move/disable-by-id',
       }),
     );
   } finally {

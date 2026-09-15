@@ -71,6 +71,8 @@ export const css = `
 .gb-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .gb-list{display:flex;flex-direction:column;width:340px;flex:none;min-height:0;border-right:1px solid var(--dsw-alias-border-l2);overflow:auto}
 .gb-list-search{position:sticky;top:0;z-index:1;padding:12px 12px 8px;background:var(--dsw-alias-bg-base)}
+.gb-group{display:flex;flex-direction:column}
+.gb-group-head{position:sticky;top:44px;padding:8px 16px 4px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .gb-item{display:flex;flex-direction:column;gap:3px;width:100%;padding:10px 16px;border:0;border-bottom:1px solid var(--dsw-alias-border-l1);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .gb-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .gb-item[aria-current=true]{background:var(--dsw-alias-interactive-bg-active)}

@@ -1,2 +1,8 @@
 - id: genie-dsh-board
   name: '@automagik/genie-dsh-board'
+- id: genie-dsh-board-board
+  name: '@automagik/genie-dsh-board/board'
+- id: genie-dsh-board-skills
+  name: '@automagik/genie-dsh-board/skills'
+- id: genie-dsh-board-workflows
+  name: '@automagik/genie-dsh-board/workflows'
