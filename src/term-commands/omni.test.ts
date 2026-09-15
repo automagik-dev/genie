@@ -283,6 +283,48 @@ describe('omni status credential redaction', () => {
   });
 });
 
+describe('omni serve — unreachable NATS', () => {
+  const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
+
+  /** A port nothing is listening on: bind an ephemeral one, then release it. */
+  function closedPort(): number {
+    const server = Bun.serve({ port: 0, fetch: () => new Response('') });
+    const port = server.port ?? 0;
+    server.stop(true);
+    if (port === 0) throw new Error('could not reserve an ephemeral port');
+    return port;
+  }
+
+  test('prints one operator diagnostic and exits 1, never a stack trace', () => {
+    const home = mkdtempSync(join(tmpdir(), 'omni-serve-refused-'));
+    try {
+      const result = Bun.spawnSync(['bun', GENIE_CLI, 'omni', 'serve'], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          GENIE_HOME: home,
+          OMNI_APPROVALS_ENABLED: '1',
+          OMNI_INSTANCE: 'inst-A',
+          OMNI_APPROVAL_CHAT: 'chat-42',
+          OMNI_NATS_URL: `nats://127.0.0.1:${closedPort()}`,
+        },
+      });
+
+      const stderr = result.stderr.toString();
+      expect(result.exitCode).toBe(1);
+      expect(stderr.trimEnd().split('\n')).toHaveLength(1);
+      expect(stderr).toMatch(/^Error: omni serve failed: .+ \(NATS nats:\/\/127\.0\.0\.1:\d+\)\n$/);
+      // No Bun stack frames, no bundle line numbers, no version banner.
+      expect(stderr).not.toContain('    at ');
+      expect(stderr).not.toContain('Bun v');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
 describe('omni test-approval — fake round-trip (no network)', () => {
   /** Capture stdout during `fn`, restoring the real writer afterwards. */
   async function captureStdout(fn: () => Promise<void>): Promise<string> {
