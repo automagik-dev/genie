@@ -401,6 +401,18 @@ export class UnknownTaskError extends Error {
   }
 }
 
+/**
+ * A board reference was supplied but empty (`--board ""`). Distinct from
+ * omitting the flag: an empty ref is an unset variable, never a request for the
+ * unscoped board.
+ */
+export class EmptyBoardRefError extends Error {
+  constructor() {
+    super('board id must not be empty');
+    this.name = 'EmptyBoardRefError';
+  }
+}
+
 /** A referenced board does not exist. */
 export class UnknownBoardError extends Error {
   readonly ref: string;
@@ -777,6 +789,9 @@ export function countBoardTasks(db: Database, boardId: string): number {
  * if neither matches — lets the CLI accept `--board <id-or-name>` uniformly.
  */
 export function resolveBoard(db: Database, ref: string): BoardRow {
+  // `--board ""` (an unset shell variable) used to fall through every caller's
+  // truthiness check and silently widen the read to every task on the repo.
+  if (ref.trim() === '') throw new EmptyBoardRefError();
   const board = getBoard(db, ref) ?? getBoardByName(db, ref);
   if (!board) throw new UnknownBoardError(ref);
   return board;

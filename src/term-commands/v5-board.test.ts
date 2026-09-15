@@ -228,6 +228,30 @@ describe('board scoping', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('Board not found: ghost');
   });
+
+  /**
+   * Regression (dogfood r2 cosmetic c3): `--board ""` — an unset shell variable
+   * — used to fall through the truthiness check and silently render EVERY task
+   * in the repo as the unscoped board, exit 0.
+   */
+  test('--board "" is refused instead of widening to the unscoped board', async () => {
+    const db = openDb({ cwd: repo });
+    const b1 = createBoard(db, 'alpha');
+    createTask(db, { title: 'alpha-task', boardId: b1.id });
+    createTask(db, { title: 'loose-task' });
+    db.close();
+
+    const r = await board(repo, '--board', '');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('board id must not be empty');
+    expect(r.stderr).not.toContain('all tasks');
+
+    const asJson = await board(repo, '--board', '', '--json');
+    expect(asJson.code).toBe(1);
+    expect(asJson.stdout).toBe('');
+    expect(asJson.stderr).toContain('board id must not be empty');
+  });
 });
 
 describe('board create', () => {

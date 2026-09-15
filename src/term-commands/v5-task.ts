@@ -144,7 +144,7 @@ function printDetailHeader(task: TaskCardRow): void {
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.assignedAgent) {
     const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
-    out(`  Assigned to:${task.assignedAgent}${why}`);
+    out(`  Assigned to: ${task.assignedAgent}${why}`);
   }
   if (task.claimedBy) {
     const badge = livenessBadge(task, Date.now());
@@ -213,7 +213,9 @@ function handleCreate(opts: CreateOptions): void {
   run(() => {
     const db = openDb();
     try {
-      const boardId = opts.board ? resolveBoard(db, opts.board).id : undefined;
+      // `!== undefined`, not truthiness: an explicit `--board ""` must reach the
+      // resolver and be refused, never widen to "no board".
+      const boardId = opts.board !== undefined ? resolveBoard(db, opts.board).id : undefined;
       // The assignment pair invariant (both halves or neither) and the roster
       // allowlist are enforced by the state API — the typed errors surface here
       // through run() with the roster named verbatim.
@@ -270,7 +272,7 @@ function handleList(opts: ListOptions): void {
     try {
       const filter: TaskFilter = {};
       if (opts.status) filter.status = opts.status as TaskStatus;
-      if (opts.board) filter.boardId = resolveBoard(db, opts.board).id;
+      if (opts.board !== undefined) filter.boardId = resolveBoard(db, opts.board).id;
       if (opts.wish) filter.wish = opts.wish;
       const tasks = listTasks(db, filter);
       if (opts.json) {
