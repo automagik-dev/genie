@@ -48,12 +48,12 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -186,6 +186,36 @@ const skillsCollisionSchema = z.object({
   skill: z.string().regex(SKILL_NAME_PATTERN),
 });
 
+/**
+ * One retired skill directory this run could NOT archive, carried in the record
+ * so the receipt never loses it: doctor names it, the next `genie update`
+ * retries it, and `genie uninstall` either removes it (when `digest` still
+ * proves it is genie's byte-identical install) or reports it. Dropping these
+ * entries — the pre-fix behaviour — made a preserved directory invisible to all
+ * three consumers forever.
+ */
+const skillsPreservedSchema = z.object({
+  agentDir: z
+    .string()
+    .refine(isTraversalFreeAbsolutePath, 'preserved agent dir must be a traversal-free absolute path'),
+  skill: z.string().regex(SKILL_NAME_PATTERN),
+  /** Operator-facing reason, reproduced verbatim by doctor. */
+  reason: z.string().min(1),
+  /**
+   * The digest genie proved BEFORE it declined to move the directory. Absent
+   * whenever the directory was never proven genie's (a legacy record, a user
+   * edit, a redirected agent home) — and an absent digest can never authorize a
+   * deletion, so uninstall reports those instead.
+   */
+  digest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, 'digest must be a lowercase sha256 hex string')
+    .optional(),
+});
+
+/** One preserved retired skill directory; see {@link skillsPreservedSchema}. */
+export type SkillsPreservedEntry = z.infer<typeof skillsPreservedSchema>;
+
 const skillsInstallRecordSchema = z.object({
   /** Release tag actually installed, e.g. `v5.260830.16`. */
   ref: z.string().min(1),
@@ -234,6 +264,12 @@ const skillsInstallRecordSchema = z.object({
    * and backed up first. Optional for the same decision-2 reason as `source`.
    */
   collisions: z.array(skillsCollisionSchema).optional(),
+  /**
+   * Retired skill directories left on disk for a human. Optional for the same
+   * decision-2 reason as `source`: a required field would invalidate every
+   * record already written and silently turn `genie uninstall` into a no-op.
+   */
+  preserved: z.array(skillsPreservedSchema).optional(),
   installedAt: z.string().min(1),
 });
 
@@ -912,83 +948,320 @@ function resolveAgentDirs(options: {
   return { dirs, warnings };
 }
 
+/** What happened to one retired skill directory. */
+type RetirementDisposition =
+  | { kind: 'absent' }
+  | { kind: 'archived' }
+  | { kind: 'preserved'; reason: string; digest?: string };
+
 interface SkillsRetirementContext {
   home: string;
   genieHome: string;
   previous: SkillsInstallRecord;
-  deliveredDigests: ReadonlyMap<string, string | null>;
+  /** The delivered inventory this install just wrote. */
+  inventory: readonly string[];
+  /** Memoized digest of `<skillsRoot>/<name>`. */
+  deliveredDigest: (name: string) => string | null;
   installedDigests: Readonly<Record<string, string>>;
+  /** Every digest the PREVIOUS record vouches for, keyed by absolute path. */
+  expectedDigests: ReadonlyMap<string, string>;
   rename: (source: string, destination: string) => void;
+  now: () => Date;
   backupRoot?: string;
+  /** Per-agent-dir memo for the replacement-set check. */
+  replacementReady: Map<string, boolean>;
+  /** Lazily computed once: did ANY home receive verified replacement bytes? */
+  anyReplacement?: boolean;
 }
 
-/** Restore a changed directory without overwriting a newly created live path. */
-function restoreChangedRetiredSkill(target: string, destination: string, expectedParent: string): string {
-  try {
-    if (realpathSync(dirname(target)) !== expectedParent) throw new Error('agent home changed during retirement');
-    atomicRenameDirectoryNoClobber(destination, target);
-  } catch (error) {
-    throw new Error(`retired skill changed during archival; recover ${destination} manually: ${errorMessage(error)}`);
+interface RetiredSkillPlan {
+  target: string;
+  /** `target` relative to `home` — the path mirrored inside the backup root. */
+  mirrored: string;
+  expected: string;
+  expectedParent: string;
+  original: Stats;
+}
+
+/** Memoized content digest of each delivered skill directory. */
+function deliveredDigestReader(skillsRoot: string): (name: string) => string | null {
+  const cache = new Map<string, string | null>();
+  return (name) => {
+    const cached = cache.get(name);
+    if (cached !== undefined) return cached;
+    const digest = computeSkillDirDigest(join(skillsRoot, name));
+    cache.set(name, digest);
+    return digest;
+  };
+}
+
+/**
+ * Digests the previous record vouches for: its ordinary `dirDigests`, plus the
+ * digests carried on `preserved` entries — which is what lets a retirement that
+ * was deferred one release still be proven genie's on the next attempt.
+ */
+function previousDigests(previous: SkillsInstallRecord): Map<string, string> {
+  const digests = new Map(Object.entries(previous.dirDigests ?? {}));
+  for (const entry of previous.preserved ?? []) {
+    if (entry.digest === undefined) continue;
+    const target = join(entry.agentDir, entry.skill);
+    if (!digests.has(target)) digests.set(target, entry.digest);
   }
-  fsyncParentDir(destination);
-  fsyncParentDir(target);
-  return `skills: preserved retired skill ${target} (changed during archival; restored); review it manually`;
+  return digests;
 }
 
-/** Move only a recorded, unchanged directory into an owner-only recovery tree. */
-function archiveRetiredSkill(target: string, context: SkillsRetirementContext): string | null {
-  if (!existsSync(target)) return null;
+/**
+ * Directories this install must try to retire: every recorded agent dir crossed
+ * with the skills this release no longer delivers, PLUS every directory the
+ * previous run preserved. That second source is the retry channel — without it
+ * a preserved directory drops out of the record and is never looked at again.
+ */
+function retirementTargets(
+  previous: SkillsInstallRecord,
+  inventory: readonly string[],
+): { agentDir: string; skill: string }[] {
+  const removed = previous.inventory.filter((name) => !inventory.includes(name));
+  const targets: { agentDir: string; skill: string }[] = [];
+  const seen = new Set<string>();
+  const add = (agentDir: string, skill: string): void => {
+    const key = join(agentDir, skill);
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push({ agentDir, skill });
+  };
+  for (const agentDir of new Set(previous.agentDirs)) {
+    for (const skill of removed) add(agentDir, skill);
+  }
+  // A preserved skill this release delivers again is no longer retired.
+  for (const entry of previous.preserved ?? []) {
+    if (!inventory.includes(entry.skill)) add(entry.agentDir, entry.skill);
+  }
+  return targets;
+}
+
+type ReplacementState = 'ready' | 'partial' | 'none';
+
+/**
+ * Whether this agent dir received the whole delivered set byte-for-byte.
+ *
+ * Memoized per dir and computed once globally for the `partial` fallback: the
+ * answer depends only on the dir, while the pre-fix code recomputed it — and
+ * rescanned every installed digest — once per retired skill, i.e. 627 times on
+ * the dogfood host.
+ */
+function replacementStateFor(agentDir: string, context: SkillsRetirementContext): ReplacementState {
+  let ready = context.replacementReady.get(agentDir);
+  if (ready === undefined) {
+    ready = context.inventory.every((name) => {
+      const delivered = context.deliveredDigest(name);
+      return delivered !== null && context.installedDigests[join(agentDir, name)] === delivered;
+    });
+    context.replacementReady.set(agentDir, ready);
+  }
+  if (ready) return 'ready';
+  if (context.anyReplacement === undefined) {
+    context.anyReplacement = Object.entries(context.installedDigests).some(
+      ([path, digest]) => context.deliveredDigest(basename(path)) === digest,
+    );
+  }
+  return context.anyReplacement ? 'partial' : 'none';
+}
+
+/**
+ * Prove the directory is the recorded, unchanged genie install before anything
+ * moves. Returns the disposition to report instead when it cannot.
+ *
+ * Each refusal is named separately, because each is a different operator
+ * action, and only a refusal that is purely about CONTENT carries the recorded
+ * digest forward. A digest on a preserved entry is what lets the next
+ * `genie update` notice the user reverted their edit and finally retire the
+ * directory — and what lets `genie uninstall` delete it once it matches again.
+ * The path-level refusals carry none: an absent digest can never authorize a
+ * deletion, which is exactly the refusal that branch just made.
+ */
+function planRetiredSkillArchival(
+  agentDir: string,
+  skill: string,
+  context: SkillsRetirementContext,
+): RetiredSkillPlan | RetirementDisposition {
+  const target = join(agentDir, skill);
+  if (!existsSync(target)) return { kind: 'absent' };
   const mirrored = relative(context.home, target);
-  const expected = context.previous.dirDigests?.[target];
+  const expected = context.expectedDigests.get(target);
   const contained = mirrored !== '' && !mirrored.startsWith('..') && !isAbsolute(mirrored);
   // Allow a symlinked HOME, but never follow a redirected agent home below it.
   const expectedParent = join(realpathSync(context.home), dirname(mirrored));
   const parentMatches = contained && realpathSync(dirname(target)) === expectedParent;
   const original = parentMatches ? lstatSync(target) : null;
-  if (original === null || expected === undefined || computeSkillDirDigest(target) !== expected) {
-    return `skills: preserved retired skill ${target} (unverified or user-modified); review it manually`;
+  if (original === null) return { kind: 'preserved', reason: 'outside the recorded agent home' };
+  if (expected === undefined) return { kind: 'preserved', reason: 'no recorded content digest' };
+  if (computeSkillDirDigest(target) !== expected) {
+    return { kind: 'preserved', reason: 'content changed since the recorded install', digest: expected };
   }
-  const replacementReady = [...context.deliveredDigests].every(
-    ([name, digest]) => digest !== null && context.installedDigests[join(dirname(target), name)] === digest,
-  );
-  if (!replacementReady) {
-    const anyReplacementVerified = Object.entries(context.installedDigests).some(
-      ([path, digest]) => context.deliveredDigests.get(basename(path)) === digest,
-    );
-    if (!anyReplacementVerified) throw new Error(`replacement skills were not verified; kept ${target}`);
-    return `skills: preserved retired skill ${target} (replacement set unverified in this home); review it manually`;
+  const replacement = replacementStateFor(agentDir, context);
+  if (replacement === 'none') throw new Error(`replacement skills were not verified; kept ${target}`);
+  if (replacement === 'partial') {
+    return { kind: 'preserved', reason: 'replacement set unverified in this home', digest: expected };
   }
-  if (context.backupRoot === undefined) {
-    const parent = join(context.genieHome, 'state-backups');
-    mkdirSync(parent, { recursive: true, mode: 0o700 });
-    context.backupRoot = mkdtempSync(join(parent, 'skills-retirement-'));
-  }
-  const destination = join(context.backupRoot, mirrored);
-  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-  // Rename preserves all bytes atomically. Across filesystems it fails with the
-  // original intact; never fall back to deleting an unverified copied tree.
-  context.rename(target, destination);
-  fsyncParentDir(destination);
-  fsyncParentDir(target);
-  const archived = lstatSync(destination);
-  if (
-    archived.dev !== original.dev ||
-    archived.ino !== original.ino ||
-    computeSkillDirDigest(destination) !== expected
-  ) {
-    return restoreChangedRetiredSkill(target, destination, expectedParent);
-  }
-  return `skills: retired ${target} — backed up to ${destination}`;
+  return { target, mirrored, expected, expectedParent, original };
 }
 
-function retireRemovedSkills(context: SkillsRetirementContext, inventory: readonly string[], warnings: string[]): void {
-  const removed = context.previous.inventory.filter((name) => !inventory.includes(name));
-  for (const agentDir of new Set(context.previous.agentDirs)) {
-    for (const name of removed) {
-      const message = archiveRetiredSkill(join(agentDir, name), context);
-      if (message !== null) warnings.push(message);
-    }
+/** `EXDEV` is the one rename failure a verified copy can legitimately stand in for. */
+function isCrossDeviceError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'EXDEV';
+}
+
+/**
+ * Rename when both paths share a filesystem; copy when they do not.
+ *
+ * `GENIE_HOME` on another mount is ordinary (`/data/genie`, a bind-mounted
+ * agent home, a container volume) and a bare `renameSync` turned that into
+ * `EXDEV: cross-device link not permitted` — aborting before the record was
+ * written, so `genie update` failed identically forever. The copy keeps the
+ * backup-first guarantee: bytes land in the backup root and are verified there
+ * BEFORE the original is removed.
+ *
+ * Returns `true` when the bytes were RENAMED (inode identity preserved, so the
+ * caller can compare it) and `false` when they were copied.
+ */
+function moveRetiredSkillDir(target: string, destination: string, context: SkillsRetirementContext): boolean {
+  try {
+    context.rename(target, destination);
+    return true;
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
   }
+  try {
+    // `verbatimSymlinks` keeps link targets byte-identical to what the digest
+    // hashes; rewriting them would fail the post-copy verification below.
+    cpSync(target, destination, { recursive: true, verbatimSymlinks: true });
+  } catch (error) {
+    rmSync(destination, { recursive: true, force: true });
+    throw error;
+  }
+  return false;
+}
+
+/** Restore a changed directory without overwriting a newly created live path. */
+function restoreChangedRetiredSkill(plan: RetiredSkillPlan, destination: string): string {
+  try {
+    if (realpathSync(dirname(plan.target)) !== plan.expectedParent) {
+      throw new Error('agent home changed during retirement');
+    }
+    atomicRenameDirectoryNoClobber(destination, plan.target);
+  } catch (error) {
+    throw new Error(`retired skill changed during archival; recover ${destination} manually: ${errorMessage(error)}`);
+  }
+  fsyncParentDir(destination);
+  fsyncParentDir(plan.target);
+  return 'changed during archival; restored';
+}
+
+/**
+ * `state-backups/skills-retirement-<compact ISO 8601>/` — the same sortable
+ * family as `integration-retirement-<timestamp>` and the collision snapshot.
+ * `mkdtemp` was a third naming scheme whose random suffix does not sort.
+ */
+function ensureRetirementBackupRoot(context: SkillsRetirementContext): string {
+  if (context.backupRoot === undefined) {
+    const stamp = context.now().toISOString().replace(/[:.]/g, '-');
+    const root = join(context.genieHome, 'state-backups', `skills-retirement-${stamp}`);
+    // Owner-only: the tree holds whatever the retired skill directories held.
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    context.backupRoot = root;
+  }
+  return context.backupRoot;
+}
+
+/** Move the proven directory into the backup root, verifying it on arrival. */
+function commitRetiredSkillArchive(plan: RetiredSkillPlan, context: SkillsRetirementContext): RetirementDisposition {
+  const destination = join(ensureRetirementBackupRoot(context), plan.mirrored);
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  const renamed = moveRetiredSkillDir(plan.target, destination, context);
+  fsyncParentDir(destination);
+  fsyncParentDir(plan.target);
+  // The TOCTOU guard: the bytes that arrived must still be the bytes the plan
+  // proved. A rename can also be compared by inode identity; a copy cannot.
+  const archived = computeSkillDirDigest(destination) === plan.expected;
+  if (!renamed) {
+    if (!archived) {
+      rmSync(destination, { recursive: true, force: true });
+      return { kind: 'preserved', reason: 'changed during archival; kept in place', digest: plan.expected };
+    }
+    // Only now, with a verified copy in the backup root, does the original go.
+    rmSync(plan.target, { recursive: true, force: true });
+    fsyncParentDir(plan.target);
+    return { kind: 'archived' };
+  }
+  const moved = lstatSync(destination);
+  if (!archived || moved.dev !== plan.original.dev || moved.ino !== plan.original.ino) {
+    return { kind: 'preserved', reason: restoreChangedRetiredSkill(plan, destination), digest: plan.expected };
+  }
+  return { kind: 'archived' };
+}
+
+/** True unless everything under `dir` is an empty directory tree. */
+function holdsNoFiles(dir: string): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return entries.every((entry) => entry.isDirectory() && holdsNoFiles(join(dir, entry.name)));
+}
+
+/**
+ * A backup root that never received a single byte — every failure path before
+ * the first successful move — is removed rather than left behind. Each retry of
+ * a failing `genie update` used to leak one empty tree under `state-backups/`.
+ */
+function discardEmptyRetirementBackupRoot(context: SkillsRetirementContext): void {
+  const root = context.backupRoot;
+  if (root === undefined || !holdsNoFiles(root)) return;
+  try {
+    rmSync(root, { recursive: true, force: true });
+    context.backupRoot = undefined;
+  } catch {
+    // Best effort: an unremovable empty backup root never fails an install.
+  }
+}
+
+/**
+ * Archive every directory this release retires, and report it in a form a human
+ * can read: ONE line per removed skill (not per agent dir x skill — 11 removed
+ * skills over the 57 homes the dogfood host records is 627 identical lines),
+ * ONE line naming the backup root, and one line per preserved directory, which
+ * are the only ones anybody has to act on.
+ *
+ * Returns the preserved entries for the record; warnings are pushed as they are
+ * produced so a throw still reports what already happened.
+ */
+function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[]): SkillsPreservedEntry[] {
+  const preserved: SkillsPreservedEntry[] = [];
+  const archivedBySkill = new Map<string, number>();
+  const attention: string[] = [];
+  try {
+    for (const { agentDir, skill } of retirementTargets(context.previous, context.inventory)) {
+      const planned = planRetiredSkillArchival(agentDir, skill, context);
+      const disposition = 'kind' in planned ? planned : commitRetiredSkillArchive(planned, context);
+      if (disposition.kind === 'archived') {
+        archivedBySkill.set(skill, (archivedBySkill.get(skill) ?? 0) + 1);
+      } else if (disposition.kind === 'preserved') {
+        const { reason, digest } = disposition;
+        preserved.push({ agentDir, skill, reason, ...(digest === undefined ? {} : { digest }) });
+        attention.push(`skills: preserved retired skill ${join(agentDir, skill)} (${reason}); review it manually`);
+      }
+    }
+  } finally {
+    discardEmptyRetirementBackupRoot(context);
+    for (const skill of [...archivedBySkill.keys()].sort()) {
+      warnings.push(`skills: retired ${skill} from ${archivedBySkill.get(skill) as number} agent dir(s)`);
+    }
+    if (context.backupRoot !== undefined) warnings.push(`skills: retirement backups under ${context.backupRoot}`);
+    warnings.push(...attention);
+  }
+  return preserved;
 }
 
 /**
@@ -1059,32 +1332,42 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       if (digest !== null) dirDigests[target] = digest;
     }
   }
-  const record: SkillsInstallRecord = {
-    ref: releaseTag(options.version),
-    source: `local:${skillsRoot}`,
-    cliVersion: SKILLS_CLI_VERSION,
-    inventory,
-    agentDirs: agents.dirs,
-    dirDigests,
-    ...(snapshot.collisions.length > 0 ? { collisions: snapshot.collisions } : {}),
-    installedAt: (options.now ?? (() => new Date()))().toISOString(),
-  };
+  const now = options.now ?? (() => new Date());
   try {
-    if (previous !== null) {
-      retireRemovedSkills(
-        {
-          home,
-          genieHome: options.genieHome,
-          previous,
-          deliveredDigests: new Map(inventory.map((name) => [name, computeSkillDirDigest(join(skillsRoot, name))])),
-          installedDigests: dirDigests,
-          rename: options.renameRetiredSkill ?? renameSync,
-        },
-        inventory,
-        warnings,
-      );
-    }
+    // Retirement runs BEFORE the record is built: whatever it could not archive
+    // rides the record as `preserved`, which is the only thing that keeps
+    // doctor, `genie update` and `genie uninstall` aware of those directories.
+    const preserved =
+      previous === null
+        ? []
+        : retireRemovedSkills(
+            {
+              home,
+              genieHome: options.genieHome,
+              previous,
+              inventory,
+              deliveredDigest: deliveredDigestReader(skillsRoot),
+              installedDigests: dirDigests,
+              expectedDigests: previousDigests(previous),
+              rename: options.renameRetiredSkill ?? renameSync,
+              now,
+              replacementReady: new Map(),
+            },
+            warnings,
+          );
+    const record: SkillsInstallRecord = {
+      ref: releaseTag(options.version),
+      source: `local:${skillsRoot}`,
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory,
+      agentDirs: agents.dirs,
+      dirDigests,
+      ...(snapshot.collisions.length > 0 ? { collisions: snapshot.collisions } : {}),
+      ...(preserved.length > 0 ? { preserved } : {}),
+      installedAt: now().toISOString(),
+    };
     writeSkillsInstallRecord(options.genieHome, record);
+    return { ok: true, record, warnings };
   } catch (error) {
     return {
       ok: false,
@@ -1093,7 +1376,6 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       warnings,
     };
   }
-  return { ok: true, record, warnings };
 }
 
 /**
