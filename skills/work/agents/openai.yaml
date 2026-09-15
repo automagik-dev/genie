@@ -1,4 +1,4 @@
 interface:
-  display_name: "Wish Execution"
-  short_description: "Execute approved wish groups through native roles"
-  default_prompt: "Execute the approved groups in this Genie wish with independent review."
+  display_name: "Work"
+  short_description: "Execute approved wishes with evidence"
+  default_prompt: "Execute this approved wish in dependency order with scoped workers, the selected standalone or Orca authority, independent review, and verified completion."

@@ -1,103 +1,37 @@
 ---
 name: fix
-description: "Dispatch fix subagent for FIX-FIRST gaps from review, re-review, then diagnose unresolved failures at the resolved budget (default 2)."
+description: "Resolve blocking review gaps through bounded repairs and independent re-review; diagnose stalled attempts without expanding scope."
 ---
 
-# fix — Fix-Review Loop
+# Fix
 
-**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+Given a FIX-FIRST review, the original criteria, and validation commands, dispatch a fixer for the blocking gaps and a different reviewer for the result. The fixer changes only the assigned scope. Reuse the existing worker context when appropriate; a reviewer never reviews its own edits.
 
-Resolve FIX-FIRST gaps from `review`: dispatch a fix subagent, re-review, repeat up to `B` loops, then diagnose and route any unresolved failure.
+## Repair budget
 
-Resolve the fix-loop budget `B` once per group: default 2; only an explicit higher-priority user/workspace instruction may set another positive integer. Carry `B` and the attempts already used across handoffs; do not reset the budget when switching skills. Overrides never expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
+Resolve `B` once per group: default 2, or another positive integer explicitly supplied by a higher-priority user/workspace instruction. Carry `B`, attempts used, and effort-escalation counters across handoffs. Switching skills or correcting a diagnosis never resets them. An override does not expand scope, permit unchanged retries, or skip diagnosis or independent re-review.
 
-## When to Use
-- `review` returned a **FIX-FIRST** verdict with CRITICAL or HIGH gaps
-- Orchestrator hands off unresolved gaps after execution review
-
-## Flow
-1. **Parse and diagnose gaps:** severity, files, failing checks from the FIX-FIRST verdict. If the evidence is `overdesigned-plan`, stop and return to `brainstorm`/`wish`; removing optional machinery is a plan correction, not a code-fix attempt.
-2. **Dispatch fixer:** native delegation surface → fix subagent, briefed with the gap list, the original wish criteria, and any `trace` diagnosis.
-3. **Re-review:** native delegation surface → a separate reviewer subagent (never the fixer) running `review` on the same pipeline.
-4. **Evaluate verdict:**
-
-| Verdict | Condition | Action |
-|---------|-----------|--------|
-| SHIP | — | Done. Return to orchestrator. |
-| FIX-FIRST | loop < B | Increment loop, go to step 2. |
-| FIX-FIRST | loop = B | Stop fixing and run Escalation Diagnosis; max loops reached. |
-| BLOCKED | — | Run Escalation Diagnosis and take the cause-specific route. |
-
-5. **Route the diagnosis:** report the remaining gaps with exact files, failing checks, cause class, and corrective route; the group's task stays `in_progress`.
-
-## Dispatch
-
-Fix and re-review are **separate native-dispatch dispatches** — never combined in one subagent, and the re-reviewer is never the fixer. Subagents notify on completion — no polling. Follow-ups to a running fixer go through native follow-up messaging.
-
-The fixer's brief must carry: the severity-tagged gaps (file:line), the original wish acceptance criteria, the validation command(s) to re-run, and stop conditions — fix only the listed gaps; report blocked rather than expand scope.
+1. Diagnose the failure before choosing a repair. An `overdesigned-plan` returns to planning without consuming a fix attempt.
+2. Dispatch the fixer with the gap evidence, criteria, owned files, validation, and remaining budget.
+3. Run the relevant checks and independent `review` after each repair; record the evidence and attempt count.
+4. SHIP returns to the caller. FIX-FIRST may repeat up to `B` loops only with a changed approach or new evidence. At the cap, on unchanged failure, or on BLOCKED, take the diagnostic route below.
 
 ## Escalation Diagnosis
 
-Use this policy before any model or effort change; keep this contract identical in `fix`, `review`, and `work`.
+| Cause | Required response |
+|---|---|
+| `missing-context` | Obtain the absent files, logs, history, or criteria; keep model/effort unchanged. |
+| `ambiguous-spec` | Resolve the competing interpretations with the user or plan owner. |
+| `env-tool-failure` | Repair the demonstrated environment/tool problem or report its exact blocker. |
+| `overdesigned-plan` | Remove or defer machinery lacking a present requirement or measurement; return to design/plan review. Do not spend retries defending it. |
+| `model-capacity` | Only after ruling out the other causes with new evidence may model/effort increase one step in runtime configuration. Inherit the active model otherwise. |
 
-| Cause | Diagnostic evidence | Corrective route |
-|-------|---------------------|------------------|
-| `model-capacity` | The supplied context is complete, the spec is decidable, the environment works, and attempt output shows the assigned model or effort still cannot perform the reasoning. | May raise model or effort one step, but only with new evidence and available caps. |
-| `missing-context` | The attempt identifies absent files, history, criteria, logs, or other inputs needed to decide. | Supply the missing context and retry at the same model and effort; MUST NOT escalate model or effort. |
-| `ambiguous-spec` | Two or more materially different behaviors remain consistent with the stated criteria. | Request a human decision or wish clarification; MUST NOT escalate model or effort. |
-| `env-tool-failure` | A reproducible environment, dependency, permission, timeout, or tool error prevents valid execution. | Repair or retry the environment/tool, or report blocked with the error; MUST NOT escalate model or effort. |
-| `overdesigned-plan` | Gaps cluster in optional machinery that lacks a current criterion or measurement, while a simpler design satisfies the user stories with fewer durable states or recovery paths. | Stop the fix loop and return to `brainstorm`/`wish` to remove or defer the mechanism. Re-review the amended design/plan; MUST NOT spend retries or model escalation defending it. |
+Allow at most two escalation attempts per group. More requires an explicit human decision recorded with group, old/new settings, evidence, approver, and timestamp. Repeated verdicts are not new evidence and do not grant more repairs. A user-approved simplification invalidates superseded design/plan evidence and requires fresh review.
 
-Escalation eligibility requires **new evidence** produced since the previous attempt: attach the new failing output or diagnostic result, the correction already tried, and why it rules out the other four causes. A repeated verdict or unchanged failure is not new evidence and cannot authorize a model or effort change.
+If reviewers disagree, record both verdicts, the contested criterion, evidence, and human resolution. Do not silently override either verdict.
 
-Model and reasoning effort belong in the active runtime's session or named-agent configuration, never in skill frontmatter. Inherit the active model by default. Only an evidenced `model-capacity` diagnosis may justify one higher-effort fresh agent, with at most two escalation attempts per group. The runtime's highest supported effort is appropriate only for a final gate or similarly demanding review when the user requested it or the evidence warrants it. Further escalation requires an explicit human decision recorded with the wish/group, old and new settings, reason, approver, and timestamp.
+## Handoff
 
-If an ordinary reviewer and the `final-gate` disagree, log an appeal with the wish/group, both verdicts and evidence, the contested criterion, and the human resolution. Neither verdict silently overrides the other, and the group remains `in_progress` until the appeal is resolved.
+Return resolved and remaining gaps with file locations, checks and results, cause and next route, `attempts=<used>/B`, and `effort_escalations=<used>/2`. Report any unresolved review disagreement.
 
-## Task State
-
-The fix loop never mutates task state. The group's task stays `in_progress` through every loop; the orchestrator calls `genie task done <task-id>` only after a clean re-review. During any diagnosed route or appeal, the task remains `in_progress` with the remaining gaps recorded in the wish notes/handoff. If no task row exists for the work, proceed — the loop runs off the review verdict alone.
-
-## Diagnosis / Appeal Format
-
-```
-Fix loop exhausted (<used>/B). Group remains in progress.
-Remaining gaps:
-- [CRITICAL] <gap description> — <file>
-- [HIGH] <gap description> — <file>
-Cause: <model-capacity|missing-context|ambiguous-spec|env-tool-failure|overdesigned-plan>
-New evidence: <new output/diagnosis, or "none — model/effort escalation prohibited">
-Corrective route: <one cause-specific next step>
-Budget: attempts=<used>/B; effort_escalations=<used>/2
-Appeal: <reviewer/final-gate disagreement record, or "none">
-```
-
-## Example
-
-`review` returned FIX-FIRST with:
-
-```
-- [CRITICAL] workDispatchCommand missing initialPrompt — dispatch.ts:532
-- [HIGH] sendMessage result not checked — dispatch.ts:541
-```
-
-With the default `B = 2`, loop 1: native delegation surface → fixer briefed with both gaps, the wish criteria, and `bun test` as validation. The fixer edits, runs the validation, reports its changes with outcomes, and ends `done`. Then native delegation surface → a fresh reviewer briefed to re-run `review` against the same criteria. SHIP → report success to the orchestrator. FIX-FIRST again → loop 2; after that, classify the cause and take its corrective route. A model or effort raise is permitted only for evidenced `model-capacity` within both caps. An `overdesigned-plan` diagnosis stops immediately and returns to planning instead.
-
-## Rules
-- Tight scope: fix exactly the tagged gaps — no unrequested refactors, features, or drive-by cleanups.
-- Never fix and review in the same session — always separate subagents.
-- Never exceed `B` fix loops — stop, diagnose, and take the cause-specific route.
-- Never use a fix loop to preserve optional machinery when a simpler plan satisfies the user stories.
-- Include the original wish criteria in every fix dispatch.
-- Identical gaps across loops = no progress; classify the cause. Repetition is not new evidence and never authorizes a model or effort raise.
-- Grounded progress: report only what tool output from this session verifies — state what was fixed, what failed, what was skipped. Never report an attempted fix as complete.
-
-## Session close (required)
-
-When spawned as a native subagent, your final message IS the completion signal — the orchestrator is notified when you finish; do not poll or emit a separate contract call. End with exactly one terminal outcome as the last word:
-
-- **done** — gaps resolved and re-review returned SHIP. Report evidence (validation output, loop count).
-- **blocked** — needs human input or an unblocking signal (including max loops exceeded). State exactly what.
-- **failed** — aborted or irrecoverable. State why.
-
-`blocked` / `failed` must include a one-line reason.
+The fixer never changes task status. The group stays `in_progress` through repair and review; only its coordinator marks it done after SHIP and passing validation. Without a task row, use the review evidence directly. Continue independent groups while one group is blocked.

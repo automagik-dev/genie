@@ -1,4 +1,4 @@
 interface:
-  display_name: "Prompt Refiner"
-  short_description: "Refine prompts with OpenAI or Claude guidance"
-  default_prompt: "Rewrite this prompt using official OpenAI or Claude prompting guidance while preserving its intent and constraints."
+  display_name: "Refine"
+  short_description: "Improve prompts for OpenAI or Claude"
+  default_prompt: "Refine this prompt using the selected OpenAI or Claude guidance, preserving its task and boundaries. Write the validated prompt and report its path and provider."
