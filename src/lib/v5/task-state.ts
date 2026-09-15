@@ -235,23 +235,48 @@ export interface BoardTaskComment {
 export const BOARD_JSON_EVENT_LIMIT = 25;
 
 /**
+ * Whole-response byte budget for one scoped board `--json` aggregate.
+ *
+ * {@link BOARD_JSON_EVENT_LIMIT} bounds a card's DEPTH; this bounds the whole
+ * response, because a board is unbounded in card COUNT too. A board of a
+ * thousand short-lived cards overflows a fixed read budget with every card well
+ * under the event cap, so the emitter degrades the per-card cap
+ * ({@link BOARD_JSON_EVENT_LIMIT_STEPS}) until the serialized response fits, and
+ * refuses with a named, actionable error when even a history-free response does
+ * not. The DSH plugin caps ONE request — a mutation's output plus the refresh
+ * that follows it — at 4 MiB; 512 KiB of that is reserved for the mutation
+ * output and stderr, leaving this ceiling for the aggregate itself.
+ */
+export const BOARD_JSON_MAX_BYTES = 4 * 1024 * 1024 - 512 * 1024;
+
+/**
+ * The per-card timeline caps `board --json` tries, widest first, until the whole
+ * response fits {@link BOARD_JSON_MAX_BYTES}. History depth is what degrades:
+ * the card set is never truncated, and `eventCount`/`commentCount` stay the true
+ * totals at every step, so a client can always say how much it is not showing.
+ */
+export const BOARD_JSON_EVENT_LIMIT_STEPS: readonly number[] = [BOARD_JSON_EVENT_LIMIT, 10, 5, 2, 0];
+
+/**
  * Complete, closed card contract for one scoped board JSON snapshot. Unlike
  * TaskRow and the human projections, this type deliberately includes every
  * detail needed by an external board client.
  *
- * `timeline` and `comments` are the most recent {@link BOARD_JSON_EVENT_LIMIT}
- * entries in chronological order, NOT the whole history.
+ * `timeline` and `comments` are the most recent entries in chronological order,
+ * NOT the whole history: at most {@link BOARD_JSON_EVENT_LIMIT}, and fewer when
+ * the emitter had to degrade the cap to fit {@link BOARD_JSON_MAX_BYTES} (the
+ * payload's root `eventLimit` names the cap that was applied).
  */
 export interface BoardTaskAggregate extends TaskCardRow {
   liveness: Liveness | null;
   dependencies: BoardTaskDependency[];
-  /** Most recent {@link BOARD_JSON_EVENT_LIMIT} events, oldest first. */
+  /** Most recent events, oldest first; at most the applied `eventLimit`. */
   timeline: Array<Omit<TaskEvent, 'taskId'>>;
   /** Total events on the card, including those the cap dropped. */
   eventCount: number;
   /** True when `timeline` is a suffix of a longer history. */
   eventsTruncated: boolean;
-  /** Most recent {@link BOARD_JSON_EVENT_LIMIT} comments, oldest first. */
+  /** Most recent comments, oldest first; at most the applied `eventLimit`. */
   comments: BoardTaskComment[];
   /** Total comment events on the card, including those the cap dropped. */
   commentCount: number;

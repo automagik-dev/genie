@@ -22,6 +22,8 @@ import { join } from 'node:path';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
   BOARD_JSON_EVENT_LIMIT,
+  BOARD_JSON_EVENT_LIMIT_STEPS,
+  BOARD_JSON_MAX_BYTES,
   DEFAULT_LIFECYCLE_LANES,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
@@ -496,8 +498,12 @@ describe('scoped board JSON aggregate v1', () => {
     const payload = JSON.parse(result.stdout) as Record<string, unknown> & {
       lanes: Array<{ name: string; label: string | null; action: string | null; cards: unknown[] }>;
     };
-    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'lanes']);
+    // `eventLimit` is the per-card history cap this response actually applied:
+    // additive under schemaVersion 1, and always present so a client never has
+    // to guess whether a missing key means "undegraded" or "old genie".
+    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'eventLimit', 'lanes']);
     expect(payload.schemaVersion).toBe(1);
+    expect(payload.eventLimit).toBe(BOARD_JSON_EVENT_LIMIT);
     expect(payload.scope).toBe('board "empty"');
     expect(payload.lanes.map((lane) => lane.name)).toEqual(['Idea', 'Brainstorm', 'Wish', 'Work', 'Review', 'Done']);
     for (const lane of payload.lanes) {
@@ -847,6 +853,7 @@ describe('scoped board JSON aggregate v1', () => {
     const result = await board(repo, '--board', 'roadmap', '--json');
     expect(result).toMatchObject({ code: 0, stderr: '' });
     const payload = JSON.parse(result.stdout) as {
+      eventLimit: number;
       lanes: Array<{
         name: string;
         cards: Array<{
@@ -859,6 +866,8 @@ describe('scoped board JSON aggregate v1', () => {
         }>;
       }>;
     };
+    // A board this small never degrades: the widest cap is the applied one.
+    expect(payload.eventLimit).toBe(BOARD_JSON_EVENT_LIMIT);
     const cards = new Map((payload.lanes.find((l) => l.name === 'Idea')?.cards ?? []).map((c) => [c.title, c]));
     const capped = cards.get('busy card');
     expect(capped).toBeDefined();
@@ -882,6 +891,88 @@ describe('scoped board JSON aggregate v1', () => {
     // The 4 MiB budget the plugin reads this under is what the cap protects.
     expect(result.stdout.length).toBeLessThan(4 * 1024 * 1024);
   });
+
+  /**
+   * Bulk-seed a board straight through SQL: the response-budget tests need a
+   * thousand cards, which is a shape a human board reaches over months and no
+   * per-verb API is fast enough to build in a test.
+   */
+  function seedBulk(db: Database, boardId: string, cards: number, eventsPerCard: number, title = 'card'): void {
+    const lanes = DEFAULT_LIFECYCLE_LANES.map((lane) => lane.name);
+    const insertTask = db.query(
+      `INSERT INTO tasks (id, board_id, title, status, lane, created_at, updated_at)
+         VALUES (?, ?, ?, 'ready', ?, ?, ?)`,
+    );
+    const insertEvent = db.query(
+      'INSERT INTO task_events (task_id, kind, note, author, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    const note =
+      'Reviewed the diff: the retry path still double-counts the budget on the second hop; rebase onto dev and re-run.';
+    db.transaction(() => {
+      for (let index = 0; index < cards; index += 1) {
+        const id = `t_bulk${index}`;
+        insertTask.run(id, boardId, `${title} ${index}`, lanes[index % lanes.length], 1000 + index, 1000 + index);
+        for (let event = 0; event < eventsPerCard; event += 1) {
+          const kind = event % 2 === 0 ? 'comment' : 'move';
+          insertEvent.run(id, kind, note, 'dsh:felipe@workstation-01', 2000 + event);
+        }
+      }
+    })();
+  }
+
+  test('bounds the WHOLE response, not just one card timeline, on a thousand-card board', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    // Every card sits UNDER the per-card cap, so only a whole-response budget
+    // can keep this board loadable: 1000 x 10 serialized 4.53 MiB with the
+    // per-card cap alone, past the 4 MiB a DSH read is allowed.
+    seedBulk(db, roadmap.id, 1000, 10);
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(0);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThan(4 * 1024 * 1024);
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(BOARD_JSON_MAX_BYTES);
+    // The degradation is announced, never silent — and it is not a failure.
+    expect(result.stderr).toContain('was capped at');
+
+    const payload = JSON.parse(result.stdout) as {
+      schemaVersion: number;
+      eventLimit: number;
+      lanes: Array<{ cards: Array<{ eventCount: number; eventsTruncated: boolean; timeline: unknown[] }> }>;
+    };
+    expect(payload.schemaVersion).toBe(1);
+    // A narrower cap than the per-card one, chosen from the declared ladder.
+    expect(BOARD_JSON_EVENT_LIMIT_STEPS).toContain(payload.eventLimit);
+    expect(payload.eventLimit).toBeLessThan(BOARD_JSON_EVENT_LIMIT);
+    const all = payload.lanes.flatMap((lane) => lane.cards);
+    // Cards are never dropped; only their history depth is.
+    expect(all).toHaveLength(1000);
+    for (const card of all) {
+      expect(card.eventCount).toBe(10);
+      expect(card.timeline.length).toBeLessThanOrEqual(payload.eventLimit);
+      expect(card.eventsTruncated).toBe(card.eventCount > card.timeline.length);
+    }
+  }, 120_000);
+
+  test('refuses a board that cannot fit at any cap with a named, actionable error', async () => {
+    const db = openDb({ cwd: repo });
+    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    // No history at all: the card set alone is past the budget, which is the
+    // one case no cap can rescue.
+    seedBulk(db, roadmap.id, 40, 0, 'x'.repeat(100_000));
+    db.close();
+
+    const result = await board(repo, '--board', 'roadmap', '--json');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toStartWith('Error: Board "roadmap" is too large to emit as one JSON response: 40 cards');
+    expect(result.stderr).toContain('--wish <slug>');
+    // The human render of the same board still works — the budget is the
+    // machine payload's, not the board's.
+    const human = await board(repo, '--board', 'roadmap');
+    expect(human.code).toBe(0);
+  }, 120_000);
 
   test('an unknown board JSON read fails with exit 1, empty stdout, and clear stderr', async () => {
     const result = await board(repo, '--board', 'ghost', '--json');
