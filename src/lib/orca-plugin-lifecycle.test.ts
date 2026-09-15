@@ -247,7 +247,9 @@ describe('Orca plugin lifecycle transitions', () => {
     } finally {
       process.stdout.write = priorLog;
       process.stderr.write = priorError;
-      process.exitCode = priorExit;
+      // Bun keeps the last numeric code when assigned undefined, so an unset
+      // prior code restores as 0 rather than leaking this test's exit 1.
+      process.exitCode = priorExit ?? 0;
     }
   });
 
