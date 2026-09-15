@@ -1758,7 +1758,11 @@ export function createOmniRunner(deps: OmniRunnerDeps): OmniRunner {
     (() => {
       const ownerId = `embedded:${process.pid}`;
       const epoch = acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, ownerId, now(), 5 * 60_000);
-      if (epoch === undefined) throw new Error('another Omni resident owns the machine-wide service lease');
+      if (epoch === undefined) {
+        throw new Error(
+          `another Omni resident owns the machine-wide service lease (${OMNI_SERVICE_LEASE_NAME}); stop the running \`genie omni serve\` or wait for its lease to expire`,
+        );
+      }
       return { ownerId, epoch };
     })();
   const claimIdentity = () => ({ ...claimOwner, now: now() });

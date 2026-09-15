@@ -31,6 +31,7 @@ import { resolveOmniApiKey, resolveOmniApiUrl } from '../lib/omni-registration.j
 import {
   type NatsFactory,
   type OmniSend,
+  type OmniSendResult,
   type OmniSetReaction,
   createOmniRedactor,
   createOmniRunner,
@@ -50,6 +51,27 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/**
+ * The halves of the approval gate this host is missing, each named in BOTH
+ * forms it can be supplied in.
+ *
+ * The refusal used to name only the config keys, while CLAUDE.md documents the
+ * `OMNI_*` environment path — so an operator following the docs was told to fix
+ * something they had never set (dogfood r2 §3.3 #11).
+ */
+function missingApprovalSettings(rt: OmniRuntimeConfig): string[] {
+  const missing: string[] = [];
+  if (!rt.approvals.enabled) missing.push('omni.approvals.enabled=true (OMNI_APPROVALS_ENABLED=1)');
+  if (!rt.instance) missing.push('omni.instance (OMNI_INSTANCE)');
+  if (!rt.approvalChat) missing.push('omni.approvalChat (OMNI_APPROVAL_CHAT)');
+  return missing;
+}
+
+/** The one line every not-enabled refusal prints, whichever verb asked. */
+function approvalsNotEnabledMessage(rt: OmniRuntimeConfig, verb: string): string {
+  return `Omni approvals are not enabled, so ${verb} has nothing to talk to. Missing: ${missingApprovalSettings(rt).join(', ')}.`;
+}
+
 // ============================================================================
 // omni serve
 // ============================================================================
@@ -57,12 +79,7 @@ function fail(message: string): never {
 async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
   const redact = createOmniRedactor(rt);
-  if (!isOmniApprovalEnabled(rt)) {
-    fail(
-      'Omni approvals are not enabled. Set omni.approvals.enabled=true and omni.instance + omni.approvalChat ' +
-        '(or OMNI_APPROVALS_ENABLED=1 + OMNI_INSTANCE + OMNI_APPROVAL_CHAT).',
-    );
-  }
+  if (!isOmniApprovalEnabled(rt)) fail(approvalsNotEnabledMessage(rt, '`omni serve`'));
 
   const db = openGlobalDb();
   const controller = new AbortController();
@@ -312,15 +329,28 @@ async function testApprovalCommand(opts: { live?: boolean }): Promise<void> {
  */
 async function runLiveTestApproval(): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
-  if (!isOmniApprovalEnabled(rt)) {
-    fail(
-      'Omni approvals are not enabled. `--live` needs omni.approvals.enabled=true + omni.instance + omni.approvalChat.',
-    );
-  }
+  const redact = createOmniRedactor(rt);
+  if (!isOmniApprovalEnabled(rt)) fail(approvalsNotEnabledMessage(rt, '`omni test-approval --live`'));
   out('genie omni test-approval --live — sending ONE real WhatsApp approval message.');
   const db = openGlobalDb();
   try {
-    const row = await driveApprovalRoundTrip(db, rt, makeDefaultOmniSend(rt), makeDefaultOmniSetReaction(rt));
+    // The runner treats a failed send as an un-announced approval and leaves the
+    // row pending, which made an unreachable Omni indistinguishable from a real
+    // WhatsApp prompt nobody answered (dogfood r2 §3.3 #9). Watch the send
+    // outcome so the diagnostic can name the endpoint instead.
+    const send = makeDefaultOmniSend(rt);
+    let lastSend: OmniSendResult | undefined;
+    const watchedSend: OmniSend = async (opts) => {
+      lastSend = await send(opts);
+      return lastSend;
+    };
+    const row = await driveApprovalRoundTrip(db, rt, watchedSend, makeDefaultOmniSetReaction(rt));
+    if (lastSend && lastSend.outcome !== 'accepted') {
+      fail(
+        `live round-trip could not deliver the approval message to ${rt.apiUrl ?? '(no OMNI_API_URL / omni.apiUrl configured)'}: ` +
+          `${redact(lastSend.error)} (send outcome=${lastSend.outcome})`,
+      );
+    }
     if (row?.status !== 'approved') {
       fail(
         `live round-trip did not resolve to approved (status=${row?.status ?? 'none'}, omniId=${row?.omniMessageId ?? 'none'})`,
@@ -414,6 +444,9 @@ function writeHostJson(paths: KeyPaths, record: HostRecord): void {
   writeFileSync(paths.hostJson, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644 });
 }
 
+/** Wall-clock budget for one trust call; named so the timeout diagnostic can quote it. */
+const TRUST_TIMEOUT_MS = 10_000;
+
 async function callTrustEndpoint<T>(
   apiUrl: string,
   apiKey: string | undefined,
@@ -423,12 +456,31 @@ async function callTrustEndpoint<T>(
 ): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(`${apiUrl.replace(/\/+$/, '')}/api/v2/trust${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const url = `${apiUrl.replace(/\/+$/, '')}/api/v2/trust${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(TRUST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // `fetch` reports a refused connection as a bare "Unable to connect. Is the
+    // computer able to access the url?" — with several OMNI_* sources able to
+    // supply the endpoint, an operator had nothing to check (dogfood r2 §3.3
+    // #8). Name the URL that failed, and where it came from.
+    const name = error instanceof Error ? error.name : '';
+    const reason =
+      name === 'TimeoutError' || name === 'AbortError'
+        ? `no response within ${TRUST_TIMEOUT_MS / 1000}s`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(
+      `omni trust ${method} ${path}: could not reach ${url} — ${reason}. Check OMNI_API_URL (or omni.apiUrl in your genie config).`,
+    );
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`omni trust ${method} ${path}: HTTP ${res.status}${text ? ` — ${text}` : ''}`);
@@ -567,7 +619,15 @@ export function registerOmniCommands(program: Command): void {
     .description('Drive one approval round-trip (enqueue → ⏳ → approve → ✅). Fake transport by default.')
     .option('--live', 'Send ONE real WhatsApp approval to the configured instance/approvalChat (deliberate)')
     .action(async (opts: { live?: boolean }) => {
-      await testApprovalCommand(opts);
+      try {
+        await testApprovalCommand(opts);
+      } catch (err) {
+        // A held machine-wide service lease (a resident `omni serve`, or a
+        // second `--live` inside the 300 s TTL) used to escape as an uncaught
+        // exception with six bundle frames (dogfood r2 §3.3 #10). Every
+        // guardrail on this command is one line.
+        fail(err instanceof Error ? err.message : String(err));
+      }
     });
 
   omni
