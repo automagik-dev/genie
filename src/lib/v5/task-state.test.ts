@@ -1094,7 +1094,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     expect(syncRoadmap(db, repo).action).toBe('none');
   });
 
-  test('an old order-sensitive marker with pending edits refuses to overwrite either side', () => {
+  test('an old order-sensitive marker with pending edits publishes them (db-only change)', () => {
     const repo = join(dir, 'hash-upgrade-pending');
     mkdirSync(join(repo, '.genie'), { recursive: true });
     createTask(db, { title: 'existing card' });
@@ -1108,13 +1108,17 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     writeFileSync(markerPath, marker);
     const pending = createTask(db, { title: 'unpublished card' });
 
+    // The pre-`hashVersion` marker is still a usable baseline (it is compared
+    // with the algorithm that wrote it), so this reads as what it is: the file
+    // sits exactly where the baseline left it and only the db moved. Publishing
+    // can lose nothing — an upgrade alone must not manufacture a divergence.
     const result = syncRoadmap(db, repo);
-    expect(result.action).toBe('diverged');
-    expect(result.message).toContain('genie task import --replace');
-    expect(result.message).toContain('genie task export --write');
-    expect(readFileSync(filePath, 'utf-8')).toBe(content);
-    expect(readFileSync(markerPath, 'utf-8')).toBe(marker);
+    expect(result.action).toBe('exported');
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as ReturnType<typeof roadmapSnapshot>;
+    expect(published.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
     expect(getTask(db, pending.id)?.title).toBe('unpublished card');
+    // And the baseline is migrated on the way out.
+    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(2);
   });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
