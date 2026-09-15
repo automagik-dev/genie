@@ -85,6 +85,17 @@ newest 25 entries of a longer history, and the view says "showing last N of M"
 using the `eventCount`, `eventsTruncated` and `commentCount` the aggregate
 carries.
 
+Genie bounds the whole aggregate, not just each card: past a few hundred busy
+cards (or roughly 750 quiet ones) it narrows every card's embedded history
+(25 → 10 → 5 → 2 → 0 entries, reported as the payload's `eventLimit`) so the
+response stays inside this Host's budget, and the counts stay exact at every
+step. Cards are never dropped. A board too large to serialize even with no
+history at all — around 4,000 cards — is refused by Genie itself with a sentence
+naming the board and telling you to scope the read to a wish or split the board;
+the view shows that sentence and keeps the board it already had. Overrunning this
+Host's 4 MiB budget is reported the same way, as a board-size message rather than
+a bare overflow.
+
 Laneless legacy boards (a `boards.lanes` that migration or an import left NULL or
 unparsable) do not expose the lane aggregate. The picker marks them `(no lanes)`
 and loading one says so explicitly instead of surfacing a schema failure.
