@@ -3,7 +3,6 @@ import type { Aggregate } from '../schema';
 
 export type { Aggregate, SkillEntry, WorkflowEntry };
 export type Card = Aggregate['lanes'][number]['cards'][number];
-export type Lane = Aggregate['lanes'][number];
 export interface Workspace {
   id: string;
   title: string;

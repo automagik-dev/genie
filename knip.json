@@ -3,12 +3,12 @@
   "entry": [
     "skills/genie-orca-work/scripts/*.ts",
     "plugins/dsh-genie-board/src/index.ts",
-    "plugins/dsh-genie-board/src/client.ts",
+    "plugins/dsh-genie-board/src/client/index.ts",
     "plugins/dsh-genie-board/build.ts",
     "plugins/dsh-genie-board/src/*.test.ts",
     "plugins/dsh-genie-board/build.test.ts"
   ],
-  "project": ["skills/genie-orca-work/scripts/**/*.ts", "src/**/*.ts", "plugins/dsh-genie-board/src/**/*.ts"],
+  "project": ["skills/genie-orca-work/scripts/**/*.ts", "src/**/*.ts", "plugins/dsh-genie-board/src/**/*.{ts,tsx}"],
   "ignoreBinaries": ["ldd", "omni"],
   "ignoreExportsUsedInFile": true
 }

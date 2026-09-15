@@ -23,9 +23,11 @@ import {
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
+  UnknownBoardError,
   UnknownRosterAgentError,
   UnknownTaskError,
   addDependency,
+  adoptTask,
   appendStage,
   appendTaskEvent,
   assignTask,
@@ -235,6 +237,30 @@ describe('lane moves + task_events timeline', () => {
     const result = moveTask(db, task.id, 'Wish', HUMAN);
     expect(result.from).toBeNull();
     expect(getTaskEvents(db, task.id)[0].note).toBe('(none)→Wish');
+  });
+
+  test('adoptTask places a laneless card on a board lane and records the (none) origin', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'pre-board card' });
+    expect(task.boardId).toBeNull();
+    expect(() => moveTask(db, task.id, 'Wish', HUMAN)).toThrow(LaneError);
+    const result = adoptTask(db, task.id, 'roadmap', 'Wish', HUMAN);
+    expect(result.task.boardId).toBe(board.id);
+    expect(getTaskLane(db, task.id)).toBe('Wish');
+    const last = getTaskEvents(db, task.id).at(-1);
+    expect(last?.kind).toBe('move');
+    expect(last?.note).toBe('(none)→Wish');
+    expect(moveTask(db, task.id, 'Work', HUMAN).from).toBe('Wish');
+  });
+
+  test('adoptTask refuses a card already on a board, an unknown board, and an unknown lane', () => {
+    createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const placed = createTask(db, { title: 'placed', boardId: getBoardByName(db, 'roadmap')?.id, lane: 'Idea' });
+    expect(() => adoptTask(db, placed.id, 'roadmap', 'Wish', HUMAN)).toThrow(/already on board "roadmap"/);
+    const loose = createTask(db, { title: 'loose' });
+    expect(() => adoptTask(db, loose.id, 'nope', 'Wish', HUMAN)).toThrow(UnknownBoardError);
+    expect(() => adoptTask(db, loose.id, 'roadmap', 'Nope', HUMAN)).toThrow(LaneError);
+    expect(getTask(db, loose.id)?.boardId).toBeNull();
   });
 
   test('rejects an undefined lane, listing the valid lanes', () => {

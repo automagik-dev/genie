@@ -43,6 +43,7 @@ import {
   type TaskRow,
   type TaskStatus,
   UnknownTaskError,
+  adoptTask,
   appendTaskEvent,
   assignTask,
   blockTask,
@@ -415,6 +416,27 @@ function handleMove(id: string, opts: MoveOptions): void {
   });
 }
 
+interface AdoptOptions {
+  board?: string;
+  lane?: string;
+}
+
+function handleAdopt(id: string, opts: AdoptOptions): void {
+  const boardRef = opts.board?.trim();
+  const lane = opts.lane?.trim();
+  if (!boardRef) fail('--board <ref> is required.');
+  if (!lane) fail('--lane <name> is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      const result = adoptTask(db, id, boardRef, lane, resolveEventAuthor());
+      out(`Adopted task ${result.task.id} onto board "${result.board.name}" in lane ${result.lane}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 interface CheckoutOptions {
   worker?: string;
 }
@@ -762,6 +784,13 @@ export, with two caveats:
     .description('Move a card to a lane defined by its board (appends a move event)')
     .requiredOption('--to <lane>', 'Target lane name')
     .action((id: string, opts: MoveOptions) => handleMove(id, opts));
+
+  task
+    .command('adopt <id>')
+    .description('Place a laneless card onto a board lane (one-time; appends a move event from (none))')
+    .requiredOption('--board <ref>', 'Board id or name')
+    .requiredOption('--lane <name>', 'Lane on that board')
+    .action((id: string, opts: AdoptOptions) => handleAdopt(id, opts));
 
   task
     .command('checkout <id>')
