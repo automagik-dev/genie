@@ -1804,6 +1804,58 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
 // Wish identity
 // ============================================================================
 
+export interface AdoptResult {
+  task: TaskRow;
+  board: BoardRow;
+  lane: string;
+}
+
+/**
+ * Place a laneless card onto a lane-defining board. Cards created before boards
+ * existed (or with `create` and no `--board`) carry `board_id = NULL` forever;
+ * `moveTask` refuses them by design because a lane needs a board to define it.
+ * Adoption is that one-time placement: it sets both `board_id` and `lane` and
+ * records a `move` event with the `(none)→lane` origin, exactly what a later
+ * `moveTask` would read as the card's history. A card already on a board is
+ * refused; re-homing between boards is not a supported operation.
+ */
+export function adoptTask(
+  db: Database,
+  taskId: string,
+  boardRef: string,
+  lane: string,
+  author: EventAuthor,
+): AdoptResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  const board = resolveBoard(db, boardRef);
+  if (task.boardId) {
+    const current = getBoard(db, task.boardId);
+    throw new LaneError(
+      `Task ${taskId} is already on board "${current?.name ?? task.boardId}" — adopt places laneless cards only; use move to change its lane.`,
+    );
+  }
+  if (!board.lanes || board.lanes.length === 0) {
+    throw new LaneError(`Board "${board.name}" defines no lanes — nothing to adopt into.`);
+  }
+  const laneNames = board.lanes.map((l) => l.name);
+  if (!laneNames.includes(lane)) {
+    throw new LaneError(`Unknown lane "${lane}". Valid lanes: ${laneNames.join(', ')}.`);
+  }
+  const now = Date.now();
+  const adopt = db.transaction(() => {
+    db.query('UPDATE tasks SET board_id = ?, lane = ?, updated_at = ? WHERE id = ?').run(board.id, lane, now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'move',
+      note: `(none)→${lane}`,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  adopt();
+  return { task: getTask(db, taskId) as TaskRow, board, lane };
+}
+
 /** The lifecycle slug + wish-group a card carries. Both null ⇒ the card is wishless. */
 export interface WishIdentity {
   wish: string | null;

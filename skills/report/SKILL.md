@@ -1,6 +1,8 @@
 ---
 name: report
 description: "Investigate a failure to its root cause with grounded evidence, hand the diagnosis to fix, and create a GitHub issue only when asked."
+category: investigation
+mutates: documents
 ---
 
 # Report
@@ -17,9 +19,10 @@ Investigate; never fix. The deliverable is a diagnosis another agent can act on 
 ## Investigate
 
 1. **Collect symptoms:** the description (required), plus error text, stack traces, logs, URL, and expected versus actual behavior when offered. Ask only for what the investigation needs.
-2. **Trace:** reproduce, hypothesize, and isolate the root cause with read-only tools: search and non-mutating commands only, no edits, staging, commits, or publication. Investigate directly when one bounded investigation suffices; delegate a read-only `scout` through the runtime's native delegation surface when independent searches can run in parallel or the investigation needs isolated context, giving it the symptoms, relevant files, and the report format below, and steering it with follow-up messaging rather than starting a duplicate. If the failure cannot be reproduced, the report says so.
-3. **Capture evidence that exists:** a screenshot or console/network capture when a browser tool is available and a URL or dev server is present; recent related errors from monitoring the project actually configures. Each source is independent: skip what is unavailable and say so.
-4. **Compile:** every statement traces to tool output from this investigation. Include only evidence that applies; where expected evidence could not be captured, say so with the reason. Never present a planned capture as evidence.
+2. **Build a red loop before forming a theory:** name one command that fails right now for the reason under investigation, run it at least once, and keep its output. The loop must be red-capable (it drives the failing path and asserts the reported symptom, not merely "something errored"), deterministic, fast, and runnable unattended. Build it from whatever is cheapest that still reaches the failure: a failing test at any seam, a request script against a running service, a CLI invocation diffed against known-good output, a headless browser script, or a replay of a captured trace. Tighten it before trusting it — sharper assertion, pinned time and seed, fewer seconds. If you catch yourself reading code to build a theory before this command exists, stop; jumping to a hypothesis is the failure this gate prevents. When no loop can be built at all, say so, list what was tried, and name what would unblock it (access to an environment that reproduces, a redacted capture, permission to instrument) rather than hypothesizing without one.
+3. **Trace:** reproduce, hypothesize, and isolate the root cause with read-only tools: search and non-mutating commands only, no edits, staging, commits, or publication. Investigate directly when one bounded investigation suffices; delegate a read-only `scout` through the runtime's native delegation surface when independent searches can run in parallel or the investigation needs isolated context, giving it the symptoms, relevant files, and the report format below, and steering it with follow-up messaging rather than starting a duplicate. If the failure cannot be reproduced, the report says so. Show 3-5 ranked falsifiable hypotheses before testing any of them — each stating what change would make the failure disappear or worsen — and then test one variable at a time against the loop.
+4. **Instrument without mutating what you are investigating:** keep probes in scratch files outside the working tree. When a temporary in-tree probe is genuinely unavoidable, tag every added line with one unique marker such as `[DEBUG-a4f2]`, remove them all before handing off, and prove the tree is clean with `git status --porcelain`. Instrumentation is never a fix, and an untagged probe is a leak.
+5. **Compile:** every statement traces to tool output from this investigation. Include the supporting evidence the project already offers — a browser, console or network capture where a URL or dev server exists, recent related errors from monitoring the project actually configures — and where expected evidence could not be captured, say so with the reason. Never present a planned capture as evidence.
 
 ## Diagnosis format
 
@@ -33,6 +36,8 @@ Confidence: <high / medium / low>
 ```
 
 Give file paths and line numbers for every claim. Verify every symbol named in the correction against the real file with `rg -n '<symbol>' <path>` and cite the matching line; a wrong name sends `fix` into a failing type-check. When more than one system is at fault, report each with its own confidence. An inconclusive trace is reported as "investigation incomplete" with the evidence gathered so far.
+
+Two further outcomes are first-class, not failures to hide. **No correct seam:** when no seam exercises the real failure pattern as it occurs at the call site, a regression test placed there would give false confidence — report that as the finding and route it to `wish`, because the architecture, not the bug, is what blocks the lock-down. **Architecture, not hypothesis:** when three repair attempts have each surfaced a new problem somewhere else, stop counting failed hypotheses and report a wrong architecture; a fourth attempt is not authorized.
 
 ## GitHub issue (only when asked)
 

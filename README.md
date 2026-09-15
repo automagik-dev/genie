@@ -155,7 +155,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 15 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 16 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -176,6 +176,7 @@ genie --help
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
 | `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
+| `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
 | `genie doctor` | Run diagnostic checks on the installation |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
@@ -193,11 +194,11 @@ Skills are the product. Invoke them as `/name` in Claude Code, or by name or pla
 | `wish` | Turn a design into a scoped WISH.md with execution groups |
 | `work` | Dispatch native role subagents wave by wave |
 | `review` | Independent design, plan, implementation, PR, or focused repository audit |
-| `council` | Independent architecture, delivery, product, security, and dissent assessment |
+| `council` | Runs the saved `council` workflow (`.claude/workflows/council.js`): independent architecture, delivery, product, security, and dissent lenses plus a synthesis, assess-only |
 
 Shared skill bodies use a runtime-neutral delegation contract: they name portable roles and let each runtime map them onto its own native subagents. Genie installs no custom agent profiles. Subagents share a workspace, so task claims own scope; worktree isolation, when required, is orchestrator-arranged per the dispatch contract. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
 
-The [skill catalog](skills/README.md) lists all fourteen workflows and replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
+The [skill catalog](skills/README.md) lists all nineteen skills by category (lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops) with an advisory `mutates` axis, plus replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
 
 ### Where the skills land
 

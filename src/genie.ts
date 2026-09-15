@@ -30,6 +30,7 @@ import { installWorkspaceCheck } from './lib/interactivity.js';
 import { colorizeFor } from './lib/term-color.js';
 import { printErr, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
+import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
@@ -234,6 +235,7 @@ registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerContextCommand(program);
+registerConfigCommand(program);
 registerIdeaCommand(program);
 registerOmniCommands(program);
 

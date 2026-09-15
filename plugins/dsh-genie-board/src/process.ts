@@ -19,6 +19,8 @@ export const OUTPUT_LIMIT_MESSAGE =
 export interface Budget {
   expires: number;
   bytes: number;
+  /** Shared output ceiling for this request; {@link MAX_OUTPUT} when unset. */
+  limit?: number;
 }
 /**
  * A Genie command that ran and refused: it exited non-zero on its own, so it
@@ -111,7 +113,7 @@ export function execute(
     const timer = setTimeout(() => fail(new Error('Genie deadline exceeded')), remaining);
     const read = (chunk: Buffer, stdout: boolean) => {
       budget.bytes += chunk.length;
-      if (budget.bytes > MAX_OUTPUT) return fail(new Error(OUTPUT_LIMIT_MESSAGE));
+      if (budget.bytes > (budget.limit ?? MAX_OUTPUT)) return fail(new Error(OUTPUT_LIMIT_MESSAGE));
       if (stdout) chunks.push(chunk);
       else errors = (errors + chunk.toString('utf8')).slice(-MAX_STDERR_KEPT);
     };

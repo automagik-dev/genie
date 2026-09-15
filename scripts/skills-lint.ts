@@ -5,6 +5,13 @@
  * skill-relative resources, real `genie` / `omni` commands, the retired-role
  * vocabulary ban, and the skills.sh directory shape.
  *
+ * Frontmatter carries two OPTIONAL closed-enum keys beyond name/description:
+ * `category` (the catalog taxonomy) and `mutates`. `mutates` is ADVISORY
+ * metadata — it states the widest blast radius a skill's body claims, and NO
+ * code path anywhere gates on it. Its one enforcement is below: a
+ * `mutates: none` skill whose ``` fences carry repo-write commands fails, so
+ * the label is earned rather than asserted.
+ *
  * Exit non-zero if any skill has missing commands.
  * Honors a `<!-- skills-lint:ignore -->` bailout marker to skip a file's
  * command/resource checks — the vocabulary scan below is deliberately NOT
@@ -14,7 +21,13 @@
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
-import { scanRepoSkills } from './skills-inventory-parity.ts';
+import {
+  SKILL_CATEGORIES,
+  SKILL_MUTATES_LEVELS,
+  checkSkillCatalogDrift,
+  parseSkillFrontmatter,
+  scanRepoSkills,
+} from './skills-inventory-parity.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 // SKILLS_LINT_DIR lets tests point the scanner at a fixture tree; defaults to
@@ -273,39 +286,120 @@ export interface ResourceViolation {
 
 export interface SkillMetadataValidation {
   name: string | null;
+  /** The declared `category`, or null when the optional key is absent. */
+  category: string | null;
+  /** The declared `mutates`, or null when the optional key is absent. */
+  mutates: string | null;
   violations: string[];
 }
 
-const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description']);
+const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'category', 'mutates']);
+
+/**
+ * Repo-write commands, as they appear inside a ``` fence. A `mutates: none`
+ * skill that shows one of these is claiming a blast radius its own body
+ * contradicts.
+ *
+ * Fences only: inline code is prose-adjacent (`review` names the coordinator's
+ * `genie task comment` relay in a sentence, and that sentence is documentation
+ * of somebody else's write, not an instruction this skill executes). A fence is
+ * a runnable recipe, so a fence is where the label has to hold.
+ */
+const REPO_WRITE_PATTERNS: ReadonlyArray<readonly [label: string, pattern: RegExp]> = [
+  ['git commit', /\bgit\s+commit\b/],
+  ['git push', /\bgit\s+push\b/],
+  ['git merge', /\bgit\s+merge\b/],
+  ['git rebase', /\bgit\s+rebase\b/],
+  ['gh pr create', /\bgh\s+pr\s+create\b/],
+  ['gh pr merge', /\bgh\s+pr\s+merge\b/],
+  ['genie task export --write', /\bgenie\s+task\s+export\b[^\n]*--write\b/],
+  [
+    'genie task <mutating verb>',
+    /\bgenie\s+task\s+(?:create|move|done|delete|checkout|report|comment|adopt|assign|set-wish|import|sync)\b/,
+  ],
+  ['rm -rf', /\brm\s+-[A-Za-z]*(?:rf|fr)[A-Za-z]*\b/],
+  ['cp -r', /\bcp\s+-[A-Za-z]*[rR][A-Za-z]*\b/],
+  ['mkdir -p', /\bmkdir\s+-[A-Za-z]*p[A-Za-z]*\b/],
+];
+
+/**
+ * `>` / `>>` redirection into a path. Checked against a line whose `<...>`
+ * placeholders have been stripped first — `omni connect <instance-id> <name>`
+ * ends a placeholder with `> ` and is not a redirect. `2>&1` does not match
+ * either: the target class holds no `&`.
+ */
+const REDIRECT_PATTERN = /(?:^|\s)\d?>>?\s*["']?[A-Za-z0-9_.$~/-]/;
+const PLACEHOLDER_PATTERN = /<[^<>\n]*>/g;
+
+export interface MutationViolation {
+  /** The repo-write command class, named as the operator would fix it. */
+  command: string;
+  /** 1-indexed line within the scanned file. */
+  line: number;
+  snippet: string;
+}
+
+/**
+ * Every repo-write command inside a ``` fence, with its 1-indexed line. Fence
+ * language is irrelevant: a `text` fence showing `git push` is still a recipe.
+ */
+export function collectMutationViolations(text: string): MutationViolation[] {
+  const violations: MutationViolation[] = [];
+  const lines = text.split(/\r?\n/);
+  let fence: string | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index] as string;
+    const opener = /^\s*(`{3,}|~{3,})/.exec(raw);
+    if (opener !== null) {
+      const marker = opener[1] as string;
+      if (fence === null) fence = marker[0] as string;
+      else if (marker[0] === fence) fence = null;
+      continue;
+    }
+    if (fence === null) continue;
+    violations.push(...checkMutationLine(raw, index + 1));
+  }
+  return violations;
+}
+
+/** Every repo-write hit on one fence line. Exported so the rule is unit-testable without a fence. */
+export function checkMutationLine(line: string, lineNumber = 1): MutationViolation[] {
+  const snippet = line.trim();
+  const hits: MutationViolation[] = [];
+  for (const [command, pattern] of REPO_WRITE_PATTERNS) {
+    if (pattern.test(line)) hits.push({ command, line: lineNumber, snippet });
+  }
+  if (REDIRECT_PATTERN.test(line.replace(PLACEHOLDER_PATTERN, ' '))) {
+    hits.push({ command: '> redirection into a path', line: lineNumber, snippet });
+  }
+  return hits;
+}
 
 /** Validate the portable SKILL.md + Codex UI metadata contract for one skill. */
 export function validateSkillMetadata(skillDir: string): SkillMetadataValidation {
   const skillPath = join(skillDir, 'SKILL.md');
-  const violations: string[] = [];
-  if (!existsSync(skillPath)) return { name: null, violations: ['missing SKILL.md'] };
+  if (!existsSync(skillPath)) return { name: null, category: null, mutates: null, violations: ['missing SKILL.md'] };
 
   const text = readFileSync(skillPath, 'utf8');
-  const lines = text.split(/\r?\n/);
-  if (lines[0] !== '---') return { name: null, violations: ['SKILL.md must start with YAML frontmatter'] };
-  const end = lines.indexOf('---', 1);
-  if (end < 0) return { name: null, violations: ['SKILL.md frontmatter is not closed'] };
-
-  const fields = new Map<string, string>();
-  for (const line of lines.slice(1, end)) {
-    if (line.trim() === '') continue;
-    const match = /^([a-z][a-z0-9_-]*):\s*(.+)$/.exec(line);
-    if (!match) {
-      violations.push(`unsupported frontmatter syntax: ${line.trim()}`);
-      continue;
-    }
-    const [, key, value] = match;
+  const parsed = parseSkillFrontmatter(text);
+  const violations = [...parsed.violations];
+  if (parsed.fields === null) return { name: null, category: null, mutates: null, violations };
+  const fields = parsed.fields;
+  for (const key of fields.keys()) {
     if (!ALLOWED_FRONTMATTER_KEYS.has(key)) violations.push(`unsupported frontmatter field: ${key}`);
-    if (fields.has(key)) violations.push(`duplicate frontmatter field: ${key}`);
-    fields.set(key, value.trim());
   }
 
-  const name = fields.get('name')?.replace(/^['"]|['"]$/g, '') ?? null;
-  const description = fields.get('description')?.replace(/^['"]|['"]$/g, '') ?? '';
+  const name = fields.get('name') ?? null;
+  const description = fields.get('description') ?? '';
+  // Both optional: absent is legal, a value outside the closed enum is not.
+  const category = fields.get('category') ?? null;
+  const mutates = fields.get('mutates') ?? null;
+  if (category !== null && !(SKILL_CATEGORIES as readonly string[]).includes(category)) {
+    violations.push(`unsupported category: ${category} (one of ${SKILL_CATEGORIES.join(', ')})`);
+  }
+  if (mutates !== null && !(SKILL_MUTATES_LEVELS as readonly string[]).includes(mutates)) {
+    violations.push(`unsupported mutates: ${mutates} (one of ${SKILL_MUTATES_LEVELS.join(', ')})`);
+  }
   if (!name) violations.push('missing frontmatter field: name');
   if (!description) violations.push('missing frontmatter field: description');
   if (name && name !== basename(skillDir)) {
@@ -323,7 +417,7 @@ export function validateSkillMetadata(skillDir: string): SkillMetadataValidation
   const openaiPath = join(skillDir, 'agents', 'openai.yaml');
   if (!existsSync(openaiPath)) {
     violations.push('missing agents/openai.yaml');
-    return { name, violations };
+    return { name, category, mutates, violations };
   }
 
   try {
@@ -361,7 +455,7 @@ export function validateSkillMetadata(skillDir: string): SkillMetadataValidation
     violations.push(`agents/openai.yaml is invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  return { name, violations };
+  return { name, category, mutates, violations };
 }
 
 /**
@@ -435,19 +529,27 @@ interface Report {
   resourceViolations: ResourceViolation[];
   metadataViolations: string[];
   bannedTokens: BannedTokenViolation[];
+  mutationViolations: MutationViolation[];
 }
 
 /** Emit every failing category. Returns true when the gate must exit non-zero. */
-function reportFailures(reports: Report[], structureViolations: StructureViolation[]): boolean {
+function reportFailures(
+  reports: Report[],
+  structureViolations: StructureViolation[],
+  catalogViolations: string[],
+): boolean {
   const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
   const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
   const metadataFailed = reports.filter((r) => r.metadataViolations.length > 0);
   const tokenFailed = reports.filter((r) => r.bannedTokens.length > 0);
+  const mutationFailed = reports.filter((r) => r.mutationViolations.length > 0);
   if (
     missingFailed.length === 0 &&
     resourceFailed.length === 0 &&
     metadataFailed.length === 0 &&
     tokenFailed.length === 0 &&
+    mutationFailed.length === 0 &&
+    catalogViolations.length === 0 &&
     structureViolations.length === 0
   ) {
     return false;
@@ -477,6 +579,19 @@ function reportFailures(reports: Report[], structureViolations: StructureViolati
       }
     }
   }
+  if (mutationFailed.length > 0) {
+    console.error(`\nskills-lint: ${mutationFailed.length} file(s) claim \`mutates: none\` but fence a repo write`);
+    console.error('skills-lint: declare the real blast radius, or move the write out of the fence');
+    for (const r of mutationFailed) {
+      for (const v of r.mutationViolations) {
+        console.error(`  ${r.skill}:${v.line}: [mutates-none] ${v.command} — ${v.snippet}`);
+      }
+    }
+  }
+  if (catalogViolations.length > 0) {
+    console.error(`\nskills-lint: ${catalogViolations.length} skills/README.md catalog violation(s)`);
+    for (const violation of catalogViolations) console.error(`  ${violation}`);
+  }
   if (structureViolations.length > 0) {
     console.error(`\nskills-lint: ${structureViolations.length} skills/ directory shape violation(s)`);
     for (const v of structureViolations) console.error(`  [${v.rule}] ${v.detail}`);
@@ -494,11 +609,15 @@ function main() {
 
   const files = walk(SKILLS_DIR);
   const structureViolations = collectStructureViolations(SKILLS_DIR);
+  const catalogViolations = checkSkillCatalogDrift(SKILLS_DIR);
   const reports: Report[] = [];
   const metadataBySkill = new Map<string, string[]>();
+  const mutatesBySkill = new Map<string, string | null>();
   for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || !existsSync(join(SKILLS_DIR, entry.name, 'SKILL.md'))) continue;
-    metadataBySkill.set(entry.name, validateSkillMetadata(join(SKILLS_DIR, entry.name)).violations);
+    const metadata = validateSkillMetadata(join(SKILLS_DIR, entry.name));
+    metadataBySkill.set(entry.name, metadata.violations);
+    mutatesBySkill.set(entry.name, metadata.mutates);
   }
 
   // First pass: collect all invocations from non-ignored skills. The omni CLI
@@ -511,16 +630,23 @@ function main() {
     omni: string[];
     resource: ResourceViolation[];
     banned: BannedTokenViolation[];
+    mutation: MutationViolation[];
   }> = [];
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
+    // A `mutates: none` claim is a safety label, so — like the vocabulary scan —
+    // it is checked on every markdown file of the skill and BEFORE the ignore
+    // bailout, with no allowlist. A recipe is copied, not read.
+    const owningSkill = relative(SKILLS_DIR, file).split(sep)[0] as string;
+    const mutation =
+      file.endsWith('.md') && mutatesBySkill.get(owningSkill) === 'none' ? collectMutationViolations(text) : [];
     // Decision 9: the vocabulary scan runs on EVERY file the walk finds and
     // BEFORE the ignore bailout. The bailout below skips only the
     // command/resource checks it was introduced for.
     const banned = collectBannedTokenViolations(text);
     const commandChecksSkipped = !file.endsWith('.md') || text.includes('<!-- skills-lint:ignore -->');
     if (commandChecksSkipped) {
-      scanned.push({ file, genie: [], omni: [], resource: [], banned });
+      scanned.push({ file, genie: [], omni: [], resource: [], banned, mutation });
       continue;
     }
     const genie: string[] = [];
@@ -533,14 +659,14 @@ function main() {
     // show repo-root commands; executable skill instructions must ship their
     // own resources.
     const resource = isResourceAllowlisted(file) ? [] : collectResourceViolations(text);
-    scanned.push({ file, genie, omni, resource, banned });
+    scanned.push({ file, genie, omni, resource, banned, mutation });
   }
 
   const omniNeeded = scanned.some((s) => s.omni.length > 0);
   const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
   const omniSkipped = omniCmds === null;
 
-  for (const { file, genie, omni, resource, banned } of scanned) {
+  for (const { file, genie, omni, resource, banned, mutation } of scanned) {
     const missing: Report['missingCommands'] = [];
     for (const cmd of genie) {
       if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
@@ -558,15 +684,16 @@ function main() {
       resourceViolations: resource,
       metadataViolations,
       bannedTokens: banned,
+      mutationViolations: mutation,
     });
   }
 
   console.log(JSON.stringify(reports, null, 2));
 
-  if (reportFailures(reports, structureViolations)) process.exit(1);
+  if (reportFailures(reports, structureViolations, catalogViolations)) process.exit(1);
   const omniNote = omniSkipped ? ', omni checks skipped' : '';
   console.error(
-    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 structure violations${omniNote})`,
+    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations${omniNote})`,
   );
 }
 

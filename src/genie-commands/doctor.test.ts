@@ -20,6 +20,7 @@ import {
   type CheckResult,
   type LegacyClassifier,
   MINIMUM_BUN_VERSION,
+  checkBudgets,
   checkCodexProjectContext,
   checkIndexLaneDrift,
   checkLegacyIntegrations,
@@ -180,6 +181,28 @@ describe('doctorCommand', () => {
     expect(output).toContain('genie doctor');
     expect(output).toContain('warning(s) need attention.');
     expect(output).not.toContain('All checks passed.');
+  });
+});
+
+describe('budget echo', () => {
+  test('reports the schema default as a default on a fresh GENIE_HOME', async () => {
+    const [check] = await checkBudgets();
+    expect(check.name).toBe('budgets: maxEscalationsPerGroup=2 (default)');
+    expect(check.status).toBe('pass');
+  });
+
+  test('reports a configured budget as coming from the file', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'config.json'), JSON.stringify({ budgets: { maxEscalationsPerGroup: 4 } }), 'utf-8');
+    const [check] = await checkBudgets();
+    expect(check.name).toBe('budgets: maxEscalationsPerGroup=4 (file)');
+  });
+
+  test('is read-only — it never creates a config file', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    await checkBudgets();
+    expect(existsSync(join(genieHome, 'config.json'))).toBe(false);
   });
 });
 

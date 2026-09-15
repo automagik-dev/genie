@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
+/** The four host row bundles plus the one client bundle. */
+const HOST_BUNDLES = ['index.js', 'board.js', 'skills.js', 'workflows.js'] as const;
+
 test('valid repeated builds regenerate identical Host and lazy browser bundles', async () => {
   const root = import.meta.dir;
   const output = await mkdtemp(join(tmpdir(), 'genie-repeat-host-'));
@@ -19,15 +22,31 @@ test('valid repeated builds regenerate identical Host and lazy browser bundles',
       const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
       expect(code).toBe(0);
       expect(stderr).not.toContain('error:');
-      const host = join(output, 'index.js');
       const client = join(output, 'client.js');
-      expect((await stat(host)).size).toBeGreaterThan(1000);
-      expect((await import(`${host}?attempt=${attempt}`)).minimumGenieVersion).toBe(version);
-      const bytes = [await readFile(host, 'utf8'), await readFile(client, 'utf8')];
+      const bytes: string[] = [];
+      for (const bundle of HOST_BUNDLES) {
+        const host = join(output, bundle);
+        expect((await stat(host)).size).toBeGreaterThan(1000);
+        const module = (await import(`${host}?attempt=${attempt}`)) as {
+          apply: unknown;
+          inject: string[];
+          Config: unknown;
+        };
+        expect(typeof module.apply).toBe('function');
+        // Every sub-row declares the manager service; only the manager itself
+        // asks for the raw host services.
+        expect(module.inject).toEqual(
+          bundle === 'index.js' ? ['workspaceRegistry', 'webServer', 'connection'] : ['genieRuntime'],
+        );
+        expect(module.Config).toBeDefined();
+        bytes.push(await readFile(host, 'utf8'));
+      }
+      expect((await import(`${join(output, 'index.js')}?attempt=${attempt}`)).minimumGenieVersion).toBe(version);
+      bytes.push(await readFile(client, 'utf8'));
       if (previous) expect(bytes).toEqual(previous);
       previous = bytes;
       let registration: { id: string; factory: (require: unknown) => { apply: unknown } } | undefined;
-      runInNewContext(bytes[1], {
+      runInNewContext(bytes[bytes.length - 1], {
         window: {
           __ModuleLoader__: {
             load(value: typeof registration) {
@@ -37,12 +56,24 @@ test('valid repeated builds regenerate identical Host and lazy browser bundles',
         },
       });
       expect(registration?.id).toBe('@automagik/genie-dsh-board');
-      // No DOM is needed until Cordis activates the factory's apply method.
-      expect(
-        typeof registration?.factory(() => {
-          throw new Error('Unexpected browser dependency');
-        }).apply,
-      ).toBe('function');
+      // The browser bundle resolves only DSH's frozen platform module table
+      // (React and the UI primitives); anything else is a packaging error.
+      const platform = new Set([
+        'react',
+        'react/jsx-runtime',
+        'react-dom',
+        'react-dom/client',
+        '@deepseek-ai/dsh-client-ui-primitives',
+      ]);
+      const requested = new Set<string>();
+      const stub = new Proxy({}, { get: () => stub });
+      const exportsOf = registration?.factory((id: string) => {
+        if (!platform.has(id)) throw new Error(`Unexpected browser dependency: ${id}`);
+        requested.add(id);
+        return stub;
+      });
+      expect(typeof exportsOf?.apply).toBe('function');
+      expect([...requested].sort()).toEqual(['@deepseek-ai/dsh-client-ui-primitives', 'react', 'react/jsx-runtime']);
     }
   } finally {
     await rm(output, { recursive: true, force: true });

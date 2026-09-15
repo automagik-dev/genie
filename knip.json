@@ -2,12 +2,16 @@
   "$schema": "https://unpkg.com/knip@6.29.0/schema.json",
   "entry": [
     "plugins/dsh-genie-board/src/index.ts",
-    "plugins/dsh-genie-board/src/client.ts",
+    "plugins/dsh-genie-board/src/board.ts",
+    "plugins/dsh-genie-board/src/skills.ts",
+    "plugins/dsh-genie-board/src/workflows.ts",
+    "plugins/dsh-genie-board/src/client/index.ts",
     "plugins/dsh-genie-board/build.ts",
     "plugins/dsh-genie-board/src/*.test.ts",
     "plugins/dsh-genie-board/build.test.ts"
   ],
-  "project": ["src/**/*.ts", "plugins/dsh-genie-board/src/**/*.ts"],
+  "project": ["src/**/*.ts", "plugins/dsh-genie-board/src/**/*.{ts,tsx}"],
   "ignoreBinaries": ["ldd", "omni"],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": ["react"]
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Before Claiming"
+  short_description: "Prove completion with fresh gate, diff, and check output"
+  default_prompt: "Before claiming this work is complete, run the proving commands fresh and report the actual state with the evidence."

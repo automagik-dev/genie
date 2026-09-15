@@ -58,12 +58,20 @@ test('a build that exits zero without producing a bundle still fails', async () 
   const missing = runner(() => {});
   await expect(buildPluginDist(r.root, missing.run)).rejects.toThrow('plugin build produced no index.js');
 
+  // Every row bundle is checked, not just the first: a build that wrote the
+  // manager and three sub-rows but truncated the client half is still a
+  // stale-dist smoke waiting to happen.
   const empty = runner((dist) => {
     mkdirSync(dist, { recursive: true });
-    writeFileSync(join(dist, 'index.js'), 'bundle');
-    writeFileSync(join(dist, 'client.js'), '');
+    for (const name of PLUGIN_BUNDLES) writeFileSync(join(dist, name), name === 'client.js' ? '' : 'bundle');
   });
   await expect(buildPluginDist(r.root, empty.run)).rejects.toThrow('plugin build produced no client.js');
+
+  const partial = runner((dist) => {
+    mkdirSync(dist, { recursive: true });
+    for (const name of PLUGIN_BUNDLES) if (name !== 'workflows.js') writeFileSync(join(dist, name), 'bundle');
+  });
+  await expect(buildPluginDist(r.root, partial.run)).rejects.toThrow('plugin build produced no workflows.js');
 });
 
 test('the smoke builds before it installs the plugin, and build:plugin builds that plugin', () => {

@@ -916,6 +916,8 @@ describe('task move', () => {
     expect(getTaskLane(db, id)).toBe('Idea');
     expect(getTaskEvents(db, id)).toHaveLength(0);
     db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
   });
 
   test('moving a card that is not on a board fails with exit 1', async () => {
@@ -1467,8 +1469,61 @@ describe('timeline verbs', () => {
     expect(r.stderr).toContain('Task not found: t_nope');
   });
 
+  test('comment and report take --worker so each speaker is attributed, never collapsed to cli', async () => {
+    const id = await seed('attributed');
+    expect((await cli(repo, 'comment', id, '--worker', 'orchestrator', 'dispatching G1')).code).toBe(0);
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect(
+      (await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-A', CLAUDECODE: '1' }, 'report', id, 'done: 12 tests pass')).code,
+    ).toBe(0);
+    expect((await cli(repo, 'comment', id, '--', 'review: SHIP — 0 gaps')).code).toBe(0);
+    const db = openDb({ cwd: repo });
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events.map((e) => [e.kind, e.author])).toEqual([
+      ['comment', 'orchestrator'],
+      ['claim', 'cli'],
+      ['report', 'eng-A'],
+      ['comment', 'cli'],
+    ]);
+    expect(events[3].note).toBe('review: SHIP — 0 gaps');
+  });
+
+  test('report is a trust signal: refused unless the author is the current claimant', async () => {
+    const id = await seed('guarded');
+    const unclaimed = await cli(repo, 'report', id, '--worker', 'eng-A', 'done');
+    expect(unclaimed.code).toBe(1);
+    expect(unclaimed.stderr).toContain('is not claimed');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    const impostor = await cli(repo, 'report', id, '--worker', 'eng-B', 'done');
+    expect(impostor.code).toBe(1);
+    expect(impostor.stderr).toContain('claimed by eng-A, not eng-B');
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'done: verified')).code).toBe(0);
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id).filter((e) => e.kind === 'report')).toHaveLength(1);
+    db.close();
+  });
+
+  test('comment and report reject control characters and notes over 4000 bytes', async () => {
+    const id = await seed('bounded');
+    // ESC survives argv (NUL cannot); it is a C0 control the note bound refuses.
+    const control = await cli(repo, 'comment', id, 'bad\u001bline');
+    expect(control.code).toBe(1);
+    expect(control.stderr).toContain('control characters');
+    expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
+    const long = await cli(repo, 'report', id, 'x'.repeat(4001));
+    expect(long.code).toBe(1);
+    expect(long.stderr).toContain('at most 4000 bytes');
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id).filter((e) => e.kind !== 'claim')).toHaveLength(0);
+    db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
+  });
+
   test('report appends a report event tagged with the runtime kind', async () => {
     const id = await seed('meeseeks');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-B')).code).toBe(0);
     const r = await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-B', CLAUDECODE: '1' }, 'report', id, 'implemented + tested');
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('claude-code');
@@ -1476,10 +1531,10 @@ describe('timeline verbs', () => {
     const db = openDb({ cwd: repo });
     const events = getTaskEvents(db, id);
     db.close();
-    expect(events[0].kind).toBe('report');
-    expect(events[0].note).toBe('implemented + tested');
-    expect(events[0].author).toBe('eng-B');
-    expect(events[0].authorKind).toBe('claude-code');
+    const report = events.find((e) => e.kind === 'report');
+    expect(report?.note).toBe('implemented + tested');
+    expect(report?.author).toBe('eng-B');
+    expect(report?.authorKind).toBe('claude-code');
   });
 
   test('author + runtime kind flow from env into the stored event (CLI boundary)', async () => {
@@ -1682,6 +1737,10 @@ describe('timeline verbs under a concurrent delete', () => {
     const ids = Array.from({ length: ITERATIONS }, (_, i) => createTask(db, { title: `race ${i}` }).id);
     db.close();
 
+    // `report` is gated on the current claimant, so each card is claimed as the
+    // default worker first; the race then pits the report against the delete.
+    if (verb === 'report')
+      for (const id of ids) expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
     const rounds = ids.map((id) => Promise.allSettled([cli(repo, verb, id, 'note'), cli(repo, 'delete', id)]));
     const settled = await Promise.all(rounds);
 

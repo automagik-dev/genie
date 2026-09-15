@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SOCKET_DEADLINE_MS, armSocketDeadline, minimumGenieVersion, trusted } from './index';
+import { SOCKET_DEADLINE_MS, minimumGenieVersion } from './index';
 import {
   DEADLINE_MS,
   GenieCommandError,
@@ -13,6 +13,7 @@ import {
   hostEnvironment,
   resolveExecutable,
 } from './process';
+import { type HostContext, armSocketDeadline, trusted } from './runtime';
 import { LANELESS_MESSAGE, aggregateSchema, parseAggregate, parseRequest, requestSchema } from './schema';
 import { BoardService, type Workspace, actionArgs } from './service';
 
@@ -20,6 +21,34 @@ const directories: string[] = [];
 afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
+/**
+ * Mount the four rows the shipped `cordis.patch.yml` inserts, against one fake
+ * cordis context: the manager provides `genieRuntime`, each sub-row resolves it
+ * and registers only its own routes. `rows` turns a row off exactly the way a
+ * profile patch's `disabled: true` does.
+ */
+type RowConfigs = { manager?: unknown; board?: unknown; skills?: unknown; workflows?: unknown };
+async function mountRows(
+  host: Omit<HostContext, 'provide' | 'get'>,
+  rows: { board?: boolean; skills?: boolean; workflows?: boolean } = {},
+  configs: RowConfigs = {},
+): Promise<void> {
+  const services = new Map<string, unknown>();
+  const ctx: HostContext = {
+    ...host,
+    provide(name, value) {
+      services.set(name, value);
+      return () => services.delete(name);
+    },
+    get: (name) => services.get(name),
+  };
+  const manager = await import('./index');
+  await manager.apply(ctx, configs.manager);
+  if (rows.board !== false) (await import('./board')).apply(ctx, configs.board);
+  if (rows.skills !== false) (await import('./skills')).apply(ctx, configs.skills);
+  if (rows.workflows !== false) (await import('./workflows')).apply(ctx, configs.workflows);
+}
+
 const card = {
   id: 't_abc',
   boardId: 'b_abc',
@@ -58,7 +87,9 @@ const aggregate = {
 const boards = [{ id: 'b_abc', name: 'Board', laneCount: 2, cardCount: 1 }];
 const selection = { workspaceId: 'workspace', boardRef: 'b_abc' };
 async function fixture() {
-  const path = await mkdtemp(join(tmpdir(), 'genie-plugin-test-'));
+  // The service canonicalizes the workspace path, so the fixture must compare
+  // against the resolved form (macOS tmpdir is a symlink into /private).
+  const path = await realpath(await mkdtemp(join(tmpdir(), 'genie-plugin-test-')));
   directories.push(path);
   await mkdir(join(path, '.git'));
   await mkdir(join(path, '.genie'));
@@ -489,7 +520,6 @@ test('stdout plus stderr share one budget across sequential processes', async ()
   await expect(execute(binary, [], path, {}, budget)).rejects.toThrow('too large for one response');
 });
 test('Host routes apply DSH authentication and Origin/content-type fences before reading workspaces or spawning', async () => {
-  const { apply } = await import('./index');
   const { createServer } = await import('node:http');
   const { writeFile, readFile } = await import('node:fs/promises');
   const path = await mkdtemp(join(tmpdir(), 'genie-auth-test-'));
@@ -503,7 +533,7 @@ test('Host routes apply DSH authentication and Origin/content-type fences before
   const oldPath = process.env.PATH;
   try {
     process.env.PATH = path;
-    await apply({
+    await mountRows({
       workspaceRegistry: {
         list() {
           registryReads++;
@@ -529,7 +559,8 @@ test('Host routes apply DSH authentication and Origin/content-type fences before
     process.env.PATH = oldPath;
   }
   const server = createServer((req, res) => {
-    const handler = routes.get(req.url ?? '');
+    // Routes are registered by exact path; a browser sends the query string too.
+    const handler = routes.get((req.url ?? '').split('?')[0]);
     if (handler) void handler(req, res);
     else {
       res.writeHead(404);
@@ -690,35 +721,39 @@ test('a card claimed by someone else is never pulsed from here', async () => {
 async function hostRoutes(
   list: () => Workspace[],
   script = (version: string) => `#!/bin/sh\nprintf '${version}\\n'\n`,
+  rows: { board?: boolean; skills?: boolean; workflows?: boolean } = {},
 ) {
-  const { apply } = await import('./index');
   const { createServer } = await import('node:http');
   const { writeFile } = await import('node:fs/promises');
-  const path = await mkdtemp(join(tmpdir(), 'genie-routes-test-'));
+  const path = await realpath(await mkdtemp(join(tmpdir(), 'genie-routes-test-')));
   directories.push(path);
   await writeFile(join(path, 'genie'), script(minimumGenieVersion), { mode: 0o755 });
   const routes = new Map<string, (req: IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>>();
   const previous = process.env.PATH;
   try {
     process.env.PATH = path;
-    await apply({
-      workspaceRegistry: { list },
-      connection: { requestRejection: () => undefined },
-      webServer: {
-        register(route) {
-          routes.set(route.path, route.handler);
-          return () => routes.delete(route.path);
+    await mountRows(
+      {
+        workspaceRegistry: { list },
+        connection: { requestRejection: () => undefined },
+        webServer: {
+          register(route) {
+            routes.set(route.path, route.handler);
+            return () => routes.delete(route.path);
+          },
+        },
+        effect(effect) {
+          effect();
         },
       },
-      effect(effect) {
-        effect();
-      },
-    });
+      rows,
+    );
   } finally {
     process.env.PATH = previous;
   }
   const server = createServer((req, res) => {
-    const handler = routes.get(req.url ?? '');
+    // Routes are registered by exact path; a browser sends the query string too.
+    const handler = routes.get((req.url ?? '').split('?')[0]);
     if (handler) void handler(req, res);
     else {
       res.writeHead(404);
@@ -799,7 +834,7 @@ test('the socket deadline outlives the Genie budget and answers before destroyin
 // installer's directory; the documented install locations answer for it.
 test('the executable resolves from GENIE_HOME/bin, ~/.genie/bin and ~/.local/bin', async () => {
   const { writeFile, mkdir } = await import('node:fs/promises');
-  const root = await mkdtemp(join(tmpdir(), 'genie-resolve-test-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'genie-resolve-test-')));
   directories.push(root);
   const environment = { PATH: process.env.PATH, HOME: process.env.HOME, GENIE_HOME: process.env.GENIE_HOME };
   try {
@@ -854,3 +889,94 @@ test('a hung Genie answers the browser with the deadline error, not a dead socke
     await host.close();
   }
 }, 30_000);
+
+// ---------------------------------------------------------------------------
+// The four-row structure: one fence, disable-by-id, and a sub-row that refuses
+// to register anything without its manager.
+// ---------------------------------------------------------------------------
+test('every row registers behind one fence, and health names the mounted rows and the resolved config', async () => {
+  const host = await hostRoutes(() => []);
+  try {
+    const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
+      mounted: Record<string, boolean>;
+      config: Record<string, Record<string, unknown>>;
+    };
+    expect(health.mounted).toEqual({ board: true, skills: true, workflows: true });
+    expect(health.config.manager).toEqual({ deadlineMs: DEADLINE_MS, outputBudgetBytes: MAX_OUTPUT });
+    expect(health.config.skills).toEqual({ order: 11, groupBy: 'category' });
+    // Every route answers 403 to a cross-origin POST, so no sub-row can be
+    // holding a fence of its own.
+    for (const path of ['workspaces', 'skills', 'workflows', 'skills/document', 'workflows/document']) {
+      const response = await fetch(`${host.origin}/api/genie-board/${path}`, {
+        method: 'POST',
+        headers: { origin: 'https://evil.test', 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect([403, 405]).toContain(response.status);
+    }
+  } finally {
+    await host.close();
+  }
+});
+
+test('a row disabled by id registers no route, and health reports it unmounted', async () => {
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'genie-disabled-row-')));
+  directories.push(workspace);
+  const host = await hostRoutes(() => [{ id: 'w', path: workspace, title: 'Workspace' }], undefined, { skills: false });
+  try {
+    const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
+      mounted: Record<string, boolean>;
+      config: Record<string, unknown>;
+    };
+    // This flag is exactly what the browser gates its Skills panel on.
+    expect(health.mounted).toEqual({ board: true, skills: false, workflows: true });
+    expect(health.config.skills).toBeUndefined();
+    for (const path of ['skills', 'skills/document']) {
+      expect((await fetch(`${host.origin}/api/genie-board/${path}?workspaceId=w`)).status).toBe(404);
+    }
+    // The rows that stayed enabled are untouched.
+    expect((await fetch(`${host.origin}/api/genie-board/workflows?workspaceId=w`)).status).toBe(200);
+    expect((await fetch(`${host.origin}/api/genie-board/workspaces`)).status).toBe(200);
+  } finally {
+    await host.close();
+  }
+});
+
+test('a sub-row without the manager service registers nothing and names the missing service', async () => {
+  const { apply } = await import('./skills');
+  const registered: string[] = [];
+  expect(() =>
+    apply({
+      workspaceRegistry: { list: () => [] },
+      connection: { requestRejection: () => undefined },
+      webServer: {
+        register(route) {
+          registered.push(route.path);
+          return () => {};
+        },
+      },
+      effect(effect) {
+        effect();
+      },
+      provide: () => () => {},
+      get: () => undefined,
+    }),
+  ).toThrow('genieRuntime');
+  expect(registered).toEqual([]);
+});
+
+test('the manager names a missing host service instead of failing later as a silent 503', async () => {
+  const { apply } = await import('./index');
+  await expect(
+    apply({
+      workspaceRegistry: { list: () => [] },
+      connection: {} as never,
+      webServer: { register: () => () => {} },
+      effect: (effect) => {
+        effect();
+      },
+      provide: () => () => {},
+      get: () => undefined,
+    }),
+  ).rejects.toThrow('requires the host service "connection.requestRejection"');
+});
