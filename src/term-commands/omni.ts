@@ -79,7 +79,10 @@ async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
       log: (line) => out(line),
     });
   } catch (error) {
-    throw new Error(redact(error instanceof Error ? error.message : String(error)));
+    // One operator-readable line: what failed and which endpoint it was using,
+    // both config-redacted. The caller turns this into `Error: <line>` + exit 1.
+    const detail = redact(error instanceof Error ? error.message : String(error));
+    throw new Error(`omni serve failed: ${detail} (NATS ${redact(rt.natsUrl)})`);
   } finally {
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
@@ -506,7 +509,14 @@ export function registerOmniCommands(program: Command): void {
     .command('serve')
     .description('Run the resident Omni runner (NATS bridge → approval queue). Foreground.')
     .action(async () => {
-      await serveCommand();
+      try {
+        await serveCommand();
+      } catch (err) {
+        // An unreachable NATS endpoint is an operator-fixable environment
+        // problem: print the same one-line diagnostic every other omni failure
+        // uses, never a stack trace.
+        fail(err instanceof Error ? err.message : String(err));
+      }
     });
 
   omni
