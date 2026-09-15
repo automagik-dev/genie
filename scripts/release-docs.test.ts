@@ -4,6 +4,38 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 
+/**
+ * The skills Genie ships, pinned by name. Wish `skills-everywhere-b`
+ * consolidated the roster to these fourteen workflows; a self-referential
+ * parity check (every directory with a SKILL.md equals every directory with an
+ * openai.yaml) silently passes when a whole skill is deleted, which is exactly
+ * the drift this list exists to catch. Adding or removing a shipped skill is a
+ * deliberate edit here.
+ */
+const SHIPPED_SKILLS = [
+  'brainstorm',
+  'council',
+  'docs',
+  'dream',
+  'fix',
+  'genie',
+  'genie-hacks',
+  'omni',
+  'quick',
+  'refine',
+  'report',
+  'review',
+  'wish',
+  'work',
+] as const;
+
+function skillDirectories(marker: string): string[] {
+  return readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, marker)))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
@@ -881,16 +913,13 @@ describe('Group E release and documentation contracts', () => {
     expect(docs).not.toContain('$genie:');
     expect(docs).toContain('separately installed personal');
 
-    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'agents', 'openai.yaml')))
-      .map((entry) => entry.name)
-      .sort();
-    const shipped = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'SKILL.md')))
-      .map((entry) => entry.name)
-      .sort();
-    expect(skillNames.length).toBeGreaterThan(0);
-    expect(skillNames).toEqual(shipped);
+    // Pinned by name, not by parity with itself: comparing the openai.yaml set
+    // against the SKILL.md set passes even after a whole skill directory is
+    // deleted, because both sets shrink together.
+    const skillNames = skillDirectories(join('agents', 'openai.yaml'));
+    const shipped = skillDirectories('SKILL.md');
+    expect(shipped).toEqual([...SHIPPED_SKILLS]);
+    expect(skillNames).toEqual([...SHIPPED_SKILLS]);
     for (const name of skillNames) {
       const parsed = Bun.YAML.parse(read(`skills/${name}/agents/openai.yaml`)) as {
         interface?: { default_prompt?: unknown };
@@ -930,9 +959,7 @@ describe('Group E release and documentation contracts', () => {
     const router = read('skills/genie/SKILL.md');
     const lifecycle = read('skills/genie/reference/lifecycle.md');
     const overview = read('skills/README.md');
-    const skillNames = readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && existsSync(join(ROOT, 'skills', entry.name, 'SKILL.md')))
-      .map((entry) => entry.name);
+    const skillNames = skillDirectories('SKILL.md');
 
     expect(quick).toContain('request → deployed-dev read-back within 60 minutes');
     expect(quick).toContain('existing merge authority');

@@ -1,10 +1,15 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  DELIVERY_EVIDENCE_PREDICATE_TYPE,
+  DELIVERY_EVIDENCE_REPOSITORY,
+  DELIVERY_EVIDENCE_WORKFLOW_IDENTITY,
+} from '../src/lib/delivery-evidence-verify';
 import { stampReleasePayloadVersion } from './release-payload-version';
-import { verifyArtifacts } from './verify-dsh-genie-board-release';
+import { DSH_PLUGIN_MEMBERS, runNetwork, verifyArtifacts } from './verify-dsh-genie-board-release';
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -27,7 +32,7 @@ function fixture() {
     'plugins/dsh-genie-board/package.json',
   ])
     put(path, JSON.stringify({ version, minimumGenieVersion: version }));
-  for (const path of ['agent.cordis.yml', 'cordis.patch.yml', 'README.md', 'NOTICE', 'dist/index.js', 'dist/client.js'])
+  for (const path of DSH_PLUGIN_MEMBERS.filter((member) => member !== 'package.json'))
     put(`plugins/dsh-genie-board/${path}`, 'fixture');
   stampReleasePayloadVersion(payload, version);
   function pack() {
@@ -65,15 +70,7 @@ test('all four complete unsigned payloads pass; missing and extra platforms fail
   rmSync(join(f.artifacts, `genie-${version}-linux-arm64.tar.gz`));
   expect(() => verifyArtifacts(f.artifacts, version)).toThrow('exactly four');
 });
-for (const member of [
-  'package.json',
-  'agent.cordis.yml',
-  'cordis.patch.yml',
-  'README.md',
-  'NOTICE',
-  'dist/index.js',
-  'dist/client.js',
-])
+for (const member of DSH_PLUGIN_MEMBERS)
   test(`every platform requires ${member}`, () => {
     const f = fixture();
     rmSync(join(f.payload, 'plugins/dsh-genie-board', member));
@@ -145,6 +142,7 @@ if (args[0] === 'release' && args[1] === 'download') {
 if (args[0] === 'release' && args[1] === 'view') { console.log(JSON.stringify({ tagName: 'v${version}', isDraft: false, isPrerelease: false })); process.exit(0); }
 if (args[0] === 'api') { console.log(JSON.stringify({ sha: process.env.DSH_TEST_TAG_SHA || '${'a'.repeat(40)}' })); process.exit(0); }
 appendFileSync(${JSON.stringify(log)}, 'descriptor\\n');
+appendFileSync(${JSON.stringify(f.root)} + '/gh-argv', args.join('\\u0000') + '\\n');
 const bundle = args[args.indexOf('--bundle') + 1];
 console.log(JSON.stringify([{ verificationResult: { statement: { predicate: JSON.parse(readFileSync(bundle, 'utf8')) } } }]));
 `,
@@ -161,6 +159,16 @@ console.log(JSON.stringify([{ verificationResult: { statement: { predicate: JSON
     const calls = readFileSync(log, 'utf8').trim().split('\n');
     for (const name of ['cosign', 'slsa-verifier', 'descriptor'])
       expect(calls.filter((call) => call === name)).toHaveLength(4);
+    // The attestation gate reuses the shipped delivery-evidence constants
+    // rather than a second copy that can drift from the runtime verifier.
+    const ghArgv = readFileSync(join(f.root, 'gh-argv'), 'utf8').split('\n').filter(Boolean);
+    expect(ghArgv).toHaveLength(4);
+    for (const line of ghArgv) {
+      const argv = line.split('\u0000');
+      expect(argv).toContain(DELIVERY_EVIDENCE_PREDICATE_TYPE);
+      expect(argv).toContain(DELIVERY_EVIDENCE_WORKFLOW_IDENTITY);
+      expect(argv).toContain(DELIVERY_EVIDENCE_REPOSITORY);
+    }
     const cli = join(import.meta.dir, 'verify-dsh-genie-board-release.ts');
     const release = Bun.spawnSync(['bun', cli, '--release', `v${version}`, '--channel', 'stable'], {
       env: { ...process.env },
@@ -200,5 +208,85 @@ test('archive symlinks fail before extraction', () => {
   const f = fixture();
   symlinkSync('/tmp', join(f.payload, 'outside'));
   f.pack();
-  expect(() => verifyArtifacts(f.artifacts, version)).toThrow('unsafe archive entry type');
+  expect(() => verifyArtifacts(f.artifacts, version)).toThrow('link or unsupported member type');
+});
+
+test('a backslash-bearing member name is rejected before extraction', () => {
+  const f = fixture();
+  writeFileSync(join(f.payload, 'plugins/dsh-genie-board/back\\slash.txt'), 'bytes');
+  f.pack();
+  expect(() => verifyArtifacts(f.artifacts, version)).toThrow('unsafe archive path');
+});
+
+test('the staged release payload and the verifier share one plugin member list', () => {
+  const buildScript = readFileSync(join(import.meta.dir, 'build-binary.sh'), 'utf8');
+  for (const member of DSH_PLUGIN_MEMBERS) {
+    expect(buildScript).toContain(`"plugins/dsh-genie-board/${member}"`);
+  }
+  // Seven members, pinned in exactly one place.
+  expect(DSH_PLUGIN_MEMBERS).toHaveLength(7);
+});
+
+describe('network steps', () => {
+  function shim(body: string) {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-network-step-'));
+    roots.push(root);
+    const script = join(root, 'step.sh');
+    const log = join(root, 'calls');
+    writeFileSync(script, `#!/bin/sh\nSTATE='${join(root, 'state')}'\nprintf 'call\\n' >> '${log}'\n${body}\n`, {
+      mode: 0o755,
+    });
+    return { script, calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').length : 0) };
+  }
+
+  test('a step killed by its own timeout names the timeout instead of reporting nothing', () => {
+    const step = shim('sleep 30');
+    let message = '';
+    try {
+      runNetwork(['bash', step.script], 'release download (v1.2.3)', {
+        timeoutMs: 1_000,
+        attempts: 2,
+        sleepsMs: [10],
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('release download (v1.2.3)');
+    expect(message).toContain('exceeded its 1s timeout');
+    expect(message).toContain('[attempt 2/2]');
+    expect(step.calls()).toBe(2);
+  });
+
+  test('a failure with no stderr still reports the exit code and the budget', () => {
+    const step = shim('exit 7');
+    expect(() => runNetwork(['bash', step.script], 'tag commit (v1.2.3)', { attempts: 3, sleepsMs: [10] })).toThrow(
+      'exit 7',
+    );
+    expect(() => runNetwork(['bash', step.script], 'tag commit (v1.2.3)', { attempts: 3, sleepsMs: [10] })).toThrow(
+      '<no stderr>',
+    );
+  });
+
+  test('a transient failure is retried and a deterministic rejection is not', () => {
+    const flaky = shim(`if [ -f "$STATE" ]; then echo ok; exit 0; fi
+printf 'x\\n' > "$STATE"
+echo 'connection reset by peer' >&2
+exit 1`);
+    expect(runNetwork(['bash', flaky.script], 'release metadata (v1.2.3)', { attempts: 3, sleepsMs: [10] })).toContain(
+      'ok',
+    );
+    expect(flaky.calls()).toBe(2);
+
+    const rejected = shim("echo 'cosign signature verification failed' >&2\nexit 1");
+    expect(() =>
+      runNetwork(['bash', rejected.script], 'signature verification (x)', { attempts: 3, sleepsMs: [10] }),
+    ).toThrow('[attempt 1/3]');
+    expect(rejected.calls()).toBe(1);
+
+    const forbidden = shim("echo 'HTTP 403: forbidden' >&2\nexit 1");
+    expect(() => runNetwork(['bash', forbidden.script], 'tag commit (x)', { attempts: 3, sleepsMs: [10] })).toThrow(
+      '[attempt 1/3]',
+    );
+    expect(forbidden.calls()).toBe(1);
+  });
 });
