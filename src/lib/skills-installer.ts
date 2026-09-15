@@ -1635,8 +1635,8 @@ function finalizeCollisionSnapshot(context: {
     kept.push({ dir: collision.dir, skill: collision.skill });
     warnings.push(
       collision.backedUp && backupRoot !== null
-        ? `skills: collision: ${collision.dir} (${collision.skill}) — the install replaced a foreign skill dir; its previous contents are backed up to ${backupRoot}`
-        : `skills: collision: ${collision.dir} (${collision.skill}) — the install changed a foreign skill dir that lies outside every agent home genie could name before the install, so no copy of it was taken`,
+        ? `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`
+        : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
     );
   }
   pruneCollisionBackups({ genieHome: context.genieHome, home: context.home });

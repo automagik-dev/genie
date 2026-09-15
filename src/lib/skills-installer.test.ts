@@ -360,7 +360,7 @@ describe('runSkillsInstall', () => {
     expect(outcome.ok).toBe(false);
     const warning = (outcome.ok === false ? (outcome.warnings ?? []) : []).find((line) => line.includes('collision:'));
     expect(warning).toContain(
-      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — the install replaced a foreign skill dir; its previous contents are backed up to `,
+      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
     );
     const backupRoot = (warning as string).split('backed up to ')[1] as string;
     expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
@@ -452,7 +452,7 @@ describe('runSkillsInstall', () => {
     expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
     const lines = (outcome.ok ? (outcome.warnings ?? []) : []).filter((entry) => entry.includes('collision:'));
     expect(lines).toEqual([
-      `skills: collision: ${join(astrbot, 'wish')} (wish) — the install changed a foreign skill dir that lies outside every agent home genie could name before the install, so no copy of it was taken`,
+      `skills: collision: ${join(astrbot, 'wish')} (wish) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
     ]);
     // Nothing was copied into GENIE_HOME — not the overwritten home, and above
     // all not the tree the user deleted.
@@ -1849,7 +1849,7 @@ describe('runSkillsChannelConvergence', () => {
     expect(result.status).toBe('failed');
     expect(lines[0]).toStartWith('Skills install failed: skills CLI exited 1: boom.');
     expect(lines[1]).toContain(
-      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — the install replaced a foreign skill dir; its previous contents are backed up to `,
+      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
     );
     expect(process.exitCode).toBe(1);
   });
@@ -1999,7 +1999,7 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
     expect(record?.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish' }]);
     const collisionLine = lines.find((line) => line.includes('collision:'));
     expect(collisionLine).toContain(
-      `collision: ${join(claudeSkills, 'wish')} (wish) — the install replaced a foreign skill dir; its previous contents are backed up to `,
+      `collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
     );
     const backupRoot = (collisionLine as string).split('backed up to ')[1] as string;
     expect(backupRoot.startsWith(join(genieHome, 'state-backups', 'skills-collision-'))).toBe(true);
