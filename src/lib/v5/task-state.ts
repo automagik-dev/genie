@@ -224,15 +224,37 @@ export interface BoardTaskComment {
 }
 
 /**
+ * How many timeline events (and, separately, comments) one card carries in the
+ * scoped board `--json` aggregate. A card's timeline is append-only and
+ * unbounded, while every consumer of this payload reads it as ONE response under
+ * a fixed byte budget (the DSH plugin caps a read at 4 MiB), so an unbounded
+ * embed makes a long-lived board permanently unloadable. The cap is on the
+ * serialized slice only — `eventCount`/`commentCount` always report the true
+ * totals, and `eventsTruncated` says whether anything was dropped.
+ */
+export const BOARD_JSON_EVENT_LIMIT = 25;
+
+/**
  * Complete, closed card contract for one scoped board JSON snapshot. Unlike
  * TaskRow and the human projections, this type deliberately includes every
  * detail needed by an external board client.
+ *
+ * `timeline` and `comments` are the most recent {@link BOARD_JSON_EVENT_LIMIT}
+ * entries in chronological order, NOT the whole history.
  */
 export interface BoardTaskAggregate extends TaskCardRow {
   liveness: Liveness | null;
   dependencies: BoardTaskDependency[];
+  /** Most recent {@link BOARD_JSON_EVENT_LIMIT} events, oldest first. */
   timeline: Array<Omit<TaskEvent, 'taskId'>>;
+  /** Total events on the card, including those the cap dropped. */
+  eventCount: number;
+  /** True when `timeline` is a suffix of a longer history. */
+  eventsTruncated: boolean;
+  /** Most recent {@link BOARD_JSON_EVENT_LIMIT} comments, oldest first. */
   comments: BoardTaskComment[];
+  /** Total comment events on the card, including those the cap dropped. */
+  commentCount: number;
 }
 
 export interface AppendEventInput {
@@ -585,15 +607,66 @@ interface RawBoardRow {
   created_at: number;
 }
 
-/** Parse stored lane JSON while retaining whether non-null metadata was malformed. */
+/**
+ * One optional lane display string. `undefined` and `null` both read as absent:
+ * `null` is exactly the shape the lane `--json` emitter itself writes for an
+ * unset `label`/`action`, so a round-trip of emitted output through
+ * `task export`/`task import` must parse back to the same lanes it came from.
+ * Anything that is neither absent nor a string makes the whole lane unusable.
+ */
+function laneText(value: unknown): { ok: boolean; value?: string } {
+  if (value === undefined || value === null) return { ok: true };
+  if (typeof value === 'string') return { ok: true, value };
+  return { ok: false };
+}
+
+/** Normalize one stored lane entry, or null when it is not usable lane metadata. */
+function normalizeLane(raw: unknown): Lane | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { name, label, action } = raw as Record<string, unknown>;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const laneLabel = laneText(label);
+  const laneAction = laneText(action);
+  if (!laneLabel.ok || !laneAction.ok) return null;
+  const lane: Lane = { name };
+  if (laneLabel.value !== undefined) lane.label = laneLabel.value;
+  if (laneAction.value !== undefined) lane.action = laneAction.value;
+  return lane;
+}
+
+/**
+ * The SINGLE lane validator: stored lane metadata is untrusted TEXT (a
+ * hand-merged or round-tripped `roadmap.json` reaches it unvalidated), so every
+ * reader — human render and `--json` alike — normalizes through this one
+ * function and gets the same answer. `null` means "no usable lanes"; the caller
+ * renders the board laneless rather than failing the read.
+ */
+export function normalizeLanes(raw: unknown): Lane[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const lanes: Lane[] = [];
+  for (const entry of raw) {
+    const lane = normalizeLane(entry);
+    if (!lane) return null;
+    lanes.push(lane);
+  }
+  return lanes;
+}
+
+/**
+ * Parse stored lane JSON while retaining whether non-null metadata was unusable.
+ * An empty array is a legitimately laneless board, not malformed metadata.
+ */
 function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: boolean } {
   if (raw == null) return { lanes: null, malformed: false };
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? { lanes: parsed as Lane[], malformed: false } : { lanes: null, malformed: true };
+    parsed = JSON.parse(raw);
   } catch {
     return { lanes: null, malformed: true };
   }
+  if (Array.isArray(parsed) && parsed.length === 0) return { lanes: null, malformed: false };
+  const lanes = normalizeLanes(parsed);
+  return lanes ? { lanes, malformed: false } : { lanes: null, malformed: true };
 }
 
 function mapBoard(row: RawBoardRow): BoardRow {
@@ -1418,38 +1491,39 @@ function requireNumber(value: unknown, context: string): number {
   throw new Error(`Malformed board detail: ${context} must be a finite number.`);
 }
 
+/**
+ * Validate one raw card row at the aggregate serialization boundary, then map it
+ * through the SAME {@link mapTaskCard} projection the human render uses. Sharing
+ * the mapper is the contract: the two paths can never disagree about a card, so
+ * an unrecognized `block_kind` coerces to `work` here exactly as it does in the
+ * human render (the column is unconstrained TEXT that a hand-merged
+ * `roadmap.json` reaches unvalidated — importable data must never exit 1).
+ * Only genuinely non-scalar storage — the shapes SQLite can hold but the JSON
+ * contract cannot express — still fails the whole snapshot closed.
+ *
+ * `boardDetailIdentifier` is computed ONCE per row rather than once per field.
+ */
 function mapAggregateTask(row: RawTask): TaskCardRow {
   const id = requireString(row.id, 'task id');
-  const blockedBy = requireNullableString(row.blocked_by, `task ${boardDetailIdentifier(id)} blockedBy`);
-  const blockedReason = requireNullableString(row.blocked_reason, `task ${boardDetailIdentifier(id)} blockedReason`);
-  const blockKind = requireNullableString(row.block_kind, `task ${boardDetailIdentifier(id)} block kind`);
-  if (blockKind !== null && blockKind !== 'work' && blockKind !== 'hold') {
-    throw new Error(`Malformed board detail: task ${boardDetailIdentifier(id)} has invalid block kind.`);
-  }
-  return {
-    id,
-    boardId: requireNullableString(row.board_id, `task ${boardDetailIdentifier(id)} boardId`),
-    title: requireString(row.title, `task ${boardDetailIdentifier(id)} title`),
-    status: requireTaskStatus(row.status, `task ${boardDetailIdentifier(id)}`),
-    claimedBy: requireNullableString(row.claimed_by, `task ${boardDetailIdentifier(id)} claimedBy`),
-    claimedAt:
-      row.claimed_at === null ? null : requireNumber(row.claimed_at, `task ${boardDetailIdentifier(id)} claimedAt`),
-    wish: requireNullableString(row.wish, `task ${boardDetailIdentifier(id)} wish`),
-    group: requireNullableString(row.group_name, `task ${boardDetailIdentifier(id)} group`),
-    assignedAgent: requireNullableString(row.assigned_agent, `task ${boardDetailIdentifier(id)} assignedAgent`),
-    assignedReason: requireNullableString(row.assigned_reason, `task ${boardDetailIdentifier(id)} assignedReason`),
-    createdAt: requireNumber(row.created_at, `task ${boardDetailIdentifier(id)} createdAt`),
-    updatedAt: requireNumber(row.updated_at, `task ${boardDetailIdentifier(id)} updatedAt`),
-    lane: requireNullableString(row.lane, `task ${boardDetailIdentifier(id)} lane`),
-    agentKind: requireNullableString(row.agent_kind, `task ${boardDetailIdentifier(id)} agentKind`),
-    heartbeatAt:
-      row.heartbeat_at === null
-        ? null
-        : requireNumber(row.heartbeat_at, `task ${boardDetailIdentifier(id)} heartbeatAt`),
-    blockedBy,
-    blockedReason,
-    enforcedBlock: blockedBy === null ? null : { reason: blockedReason ?? '', kind: blockKind ?? 'work' },
-  };
+  const label = boardDetailIdentifier(id);
+  requireNullableString(row.board_id, `task ${label} boardId`);
+  requireString(row.title, `task ${label} title`);
+  requireTaskStatus(row.status, `task ${label}`);
+  requireNullableString(row.claimed_by, `task ${label} claimedBy`);
+  if (row.claimed_at !== null) requireNumber(row.claimed_at, `task ${label} claimedAt`);
+  requireNullableString(row.wish, `task ${label} wish`);
+  requireNullableString(row.group_name, `task ${label} group`);
+  requireNullableString(row.assigned_agent, `task ${label} assignedAgent`);
+  requireNullableString(row.assigned_reason, `task ${label} assignedReason`);
+  requireNumber(row.created_at, `task ${label} createdAt`);
+  requireNumber(row.updated_at, `task ${label} updatedAt`);
+  requireNullableString(row.lane, `task ${label} lane`);
+  requireNullableString(row.agent_kind, `task ${label} agentKind`);
+  if (row.heartbeat_at !== null) requireNumber(row.heartbeat_at, `task ${label} heartbeatAt`);
+  requireNullableString(row.blocked_by, `task ${label} blockedBy`);
+  requireNullableString(row.blocked_reason, `task ${label} blockedReason`);
+  requireNullableString(row.block_kind, `task ${label} block kind`);
+  return mapTaskCard(row);
 }
 
 /**
@@ -1464,80 +1538,133 @@ export function readBoardTaskSnapshot(
   filter: Pick<TaskFilter, 'wish'> = {},
   now = Date.now(),
 ): BoardTaskAggregate[] {
-  const read = db.transaction((): BoardTaskAggregate[] => {
-    const params = filter.wish ? [boardId, filter.wish] : [boardId];
-    const tasks = db
-      .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at, rowid`)
-      .all(...params) as RawTask[];
-    if (tasks.length === 0) return [];
-    // One JSON binding avoids variable limits while retaining task_id index probes.
-    const taskIds = JSON.stringify(tasks.map((row) => requireString(row.id, 'task id')));
-    const dependencies = db
-      .query(
-        `SELECT td.task_id, dep.id, dep.title, dep.status
+  const read = db.transaction((): BoardTaskAggregate[] => collectBoardTaskSnapshot(db, boardId, filter, now));
+  return read.deferred() as BoardTaskAggregate[];
+}
+
+/**
+ * The snapshot body, WITHOUT its own transaction, so {@link readBoardAggregate}
+ * can read the board's lanes and its cards inside one and the same snapshot.
+ * Never call it outside a read transaction.
+ */
+function collectBoardTaskSnapshot(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'>,
+  now: number,
+): BoardTaskAggregate[] {
+  const params = filter.wish ? [boardId, filter.wish] : [boardId];
+  const tasks = db
+    .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at, rowid`)
+    .all(...params) as RawTask[];
+  if (tasks.length === 0) return [];
+  // One JSON binding avoids variable limits while retaining task_id index probes.
+  const taskIds = JSON.stringify(tasks.map((row) => requireString(row.id, 'task id')));
+  const dependencies = db
+    .query(
+      `SELECT td.task_id, dep.id, dep.title, dep.status
          FROM task_dependencies td
          LEFT JOIN tasks dep ON dep.id = td.depends_on_id
          WHERE td.task_id IN (SELECT value FROM json_each(?))
          ORDER BY td.task_id, dep.id`,
-      )
-      .all(taskIds) as RawBoardDependency[];
-    const events = db
-      .query(
-        `SELECT e.* FROM task_events e
+    )
+    .all(taskIds) as RawBoardDependency[];
+  const events = db
+    .query(
+      `SELECT e.* FROM task_events e
          WHERE e.task_id IN (SELECT value FROM json_each(?))
          ORDER BY e.task_id, e.created_at, e.id`,
-      )
-      .all(taskIds) as RawTaskEvent[];
+    )
+    .all(taskIds) as RawTaskEvent[];
 
-    const dependenciesByTask = new Map<string, BoardTaskDependency[]>();
-    for (const dependency of dependencies) {
-      const taskId = requireString(dependency.task_id, 'dependency owner id');
-      const id = requireString(dependency.id, `task ${boardDetailIdentifier(taskId)} dependency id`);
-      const summaries = dependenciesByTask.get(taskId) ?? [];
-      summaries.push({
-        id,
-        title: requireString(dependency.title, `dependency ${boardDetailIdentifier(id)} title`),
-        status: requireTaskStatus(dependency.status, `dependency ${boardDetailIdentifier(id)}`),
-      });
-      dependenciesByTask.set(taskId, summaries);
-    }
-
-    const timelineByTask = new Map<string, Array<Omit<TaskEvent, 'taskId'>>>();
-    for (const row of events) {
-      const taskId = requireString(row.task_id, 'timeline task id');
-      const event = {
-        id: requireNumber(row.id, `task ${boardDetailIdentifier(taskId)} event id`),
-        kind: requireString(row.kind, `task ${boardDetailIdentifier(taskId)} event kind`),
-        note: requireNullableString(row.note, `task ${boardDetailIdentifier(taskId)} event note`),
-        authorKind: requireNullableString(row.author_kind, `task ${boardDetailIdentifier(taskId)} event authorKind`),
-        author: requireNullableString(row.author, `task ${boardDetailIdentifier(taskId)} event author`),
-        createdAt: requireNumber(row.created_at, `task ${boardDetailIdentifier(taskId)} event createdAt`),
-      };
-      if (event.kind === 'comment' && event.note === null) {
-        throw new Error(
-          `Malformed board detail: task ${boardDetailIdentifier(taskId)} comment ${boardDetailIdentifier(event.id)} has null text.`,
-        );
-      }
-      const timeline = timelineByTask.get(taskId) ?? [];
-      timeline.push(event);
-      timelineByTask.set(taskId, timeline);
-    }
-
-    return tasks.map((row) => {
-      const card = mapAggregateTask(row);
-      const timeline = timelineByTask.get(card.id) ?? [];
-      return {
-        ...card,
-        liveness: card.claimedBy === null ? null : livenessFromHeartbeat(card.heartbeatAt, now),
-        dependencies: dependenciesByTask.get(card.id) ?? [],
-        timeline,
-        comments: timeline
-          .filter((event): event is typeof event & { note: string } => event.kind === 'comment' && event.note !== null)
-          .map(({ id, note, authorKind, author, createdAt }) => ({ id, note, authorKind, author, createdAt })),
-      };
+  const dependenciesByTask = new Map<string, BoardTaskDependency[]>();
+  for (const dependency of dependencies) {
+    const taskId = requireString(dependency.task_id, 'dependency owner id');
+    const id = requireString(dependency.id, `task ${boardDetailIdentifier(taskId)} dependency id`);
+    const label = boardDetailIdentifier(id);
+    const summaries = dependenciesByTask.get(taskId) ?? [];
+    summaries.push({
+      id,
+      title: requireString(dependency.title, `dependency ${label} title`),
+      status: requireTaskStatus(dependency.status, `dependency ${label}`),
     });
+    dependenciesByTask.set(taskId, summaries);
+  }
+
+  const timelineByTask = new Map<string, Array<Omit<TaskEvent, 'taskId'>>>();
+  for (const row of events) {
+    const taskId = requireString(row.task_id, 'timeline task id');
+    // One sanitize pass per event, not one per field it might name.
+    const owner = boardDetailIdentifier(taskId);
+    const event = {
+      id: requireNumber(row.id, `task ${owner} event id`),
+      kind: requireString(row.kind, `task ${owner} event kind`),
+      note: requireNullableString(row.note, `task ${owner} event note`),
+      authorKind: requireNullableString(row.author_kind, `task ${owner} event authorKind`),
+      author: requireNullableString(row.author, `task ${owner} event author`),
+      createdAt: requireNumber(row.created_at, `task ${owner} event createdAt`),
+    };
+    if (event.kind === 'comment' && event.note === null) {
+      throw new Error(
+        `Malformed board detail: task ${owner} comment ${boardDetailIdentifier(event.id)} has null text.`,
+      );
+    }
+    const timeline = timelineByTask.get(taskId) ?? [];
+    timeline.push(event);
+    timelineByTask.set(taskId, timeline);
+  }
+
+  return tasks.map((row) => {
+    const card = mapAggregateTask(row);
+    const events = timelineByTask.get(card.id) ?? [];
+    const comments = events
+      .filter((event): event is typeof event & { note: string } => event.kind === 'comment' && event.note !== null)
+      .map(({ id, note, authorKind, author, createdAt }) => ({ id, note, authorKind, author, createdAt }));
+    return {
+      ...card,
+      liveness: card.claimedBy === null ? null : livenessFromHeartbeat(card.heartbeatAt, now),
+      dependencies: dependenciesByTask.get(card.id) ?? [],
+      // The cap keeps the newest window — the end a board client renders —
+      // and never reorders: the slice stays chronological.
+      timeline: lastEvents(events),
+      eventCount: events.length,
+      eventsTruncated: events.length > BOARD_JSON_EVENT_LIMIT,
+      comments: lastEvents(comments),
+      commentCount: comments.length,
+    };
   });
-  return read.deferred() as BoardTaskAggregate[];
+}
+
+/** The newest {@link BOARD_JSON_EVENT_LIMIT} entries of a chronological list, still oldest-first. */
+function lastEvents<T>(entries: T[]): T[] {
+  return entries.length <= BOARD_JSON_EVENT_LIMIT ? entries : entries.slice(-BOARD_JSON_EVENT_LIMIT);
+}
+
+/** A board's lane definition and its cards, read from ONE SQLite snapshot. */
+export interface BoardAggregateSnapshot {
+  board: BoardRow;
+  cards: BoardTaskAggregate[];
+}
+
+/**
+ * The scoped board aggregate: the board's lane metadata AND every card detail
+ * from ONE deferred read transaction. Reading lanes inside the same snapshot as
+ * the cards is the contract — a concurrent `board`/lane write between the two
+ * reads would otherwise group cards against lanes that no longer describe them
+ * (cards whose lane just moved fall into the first-lane fallback).
+ */
+export function readBoardAggregate(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'> = {},
+  now = Date.now(),
+): BoardAggregateSnapshot {
+  const read = db.transaction((): BoardAggregateSnapshot => {
+    const board = getBoard(db, boardId);
+    if (!board) throw new UnknownBoardError(boardId);
+    return { board, cards: collectBoardTaskSnapshot(db, boardId, filter, now) };
+  });
+  return read.deferred() as BoardAggregateSnapshot;
 }
 
 // ============================================================================
