@@ -501,8 +501,16 @@ describe('updateCommand wiring', () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    // Every line leaves through the colour-gated sink (src/lib/term-output.ts),
+    // so the capture sits on the streams, not on console.
+    const logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      stdout.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    const errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderr.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
     process.exitCode = undefined;
     // Millisecond-scale so the bounded poll is exercised, not endured. 500ms
     // (not 60ms) so a GC/scheduler pause cannot collapse the 25ms poll loop to
@@ -571,8 +579,16 @@ describe('updateCommand wiring', () => {
     const priorExitCode = process.exitCode;
     const stdout: string[] = [];
     const stderr: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    // Every line leaves through the colour-gated sink (src/lib/term-output.ts),
+    // so the capture sits on the streams, not on console.
+    const logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      stdout.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    const errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderr.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
     let successFinalizers = 0;
     process.exitCode = undefined;
     try {
@@ -1449,10 +1465,17 @@ describe('Diagnostics schema (G5)', () => {
     expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
   });
 
-  test('NO_COLOR honored via colorEnabled() helper', () => {
+  test('colour is delegated to the one gate — update.ts keeps no private NO_COLOR copy', () => {
+    // m15: the local gate this replaced read `process.stdout.isTTY` for every
+    // line (stderr ones included) and never honoured TERM=dumb. Every line now
+    // leaves through src/lib/term-output.ts, which asks src/lib/term-color.ts
+    // about the stream it is actually writing to.
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain('process.env.NO_COLOR');
-    expect(source).toContain('colorEnabled');
+    expect(source).toContain("from '../lib/term-output.js'");
+    expect(source).not.toContain('process.env.NO_COLOR');
+    expect(source).not.toContain('function colorEnabled');
+    expect(source).not.toContain('console.log(');
+    expect(source).not.toContain('process.stderr.write(');
   });
 });
 

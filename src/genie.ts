@@ -28,6 +28,7 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { colorizeFor } from './lib/term-color.js';
+import { printErr, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
@@ -55,7 +56,7 @@ program
       // (e.g. a group-writable ~/.local/bin); print the remedy, never a stack.
       const name = error instanceof Error ? error.name : '';
       if (name === 'CanonicalInstallLinkError' || name === 'InstallPromoteCommandError') {
-        console.error(`\u2716 ${(error as Error).message}`);
+        printErr(`\u2716 ${(error as Error).message}`);
         process.exitCode = 1;
         return;
       }
@@ -74,11 +75,13 @@ program.configureHelp({
 program.configureOutput({
   // Commander writes this to stderr. Colour is gated on the STDERR stream (plus
   // NO_COLOR / TERM=dumb): a redirected or piped diagnostic must be plain text,
-  // never `\x1b[31m` smuggled into a log file. See src/lib/term-color.ts.
-  outputError: (str, write) => {
+  // never `\x1b[31m` smuggled into a log file. Commander's own `write` callback
+  // is deliberately unused — every genie line leaves through the one sink in
+  // src/lib/term-output.ts, which is where the escapes are stripped.
+  outputError: (str) => {
     const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
     const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
-    write(`${colorizeFor('stderr', '\x1b[31m', `Error (${prefix}): ${str}`)}\n`);
+    writeErr(`${colorizeFor('stderr', '\x1b[31m', `Error (${prefix}): ${str}`)}\n`);
   },
 });
 
@@ -193,7 +196,7 @@ program
       await installCommand(options);
     } catch (error) {
       if (error instanceof InvalidIntegrationSelectionError) {
-        console.error(colorizeFor('stderr', '\x1b[31m', `Error (genie install): ${error.message}`));
+        printErr(colorizeFor('stderr', '\x1b[31m', `Error (genie install): ${error.message}`));
         process.exitCode = 1;
         return;
       }

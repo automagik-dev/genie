@@ -39,6 +39,7 @@
 import { spawnSync } from 'node:child_process';
 import { constants, type Stats, closeSync, fchmodSync, fstatSync, lstatSync, openSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { writeOut } from '../lib/term-output.js';
 import { parseWorktreePorcelain } from './doctor-worktrees.js';
 import type { CheckResult } from './doctor.js';
 
@@ -633,7 +634,7 @@ function tightenNoFollow(path: string, mode: number, entry: ModeDriftEntry): str
  */
 export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = {}): void {
   if (root === null) return;
-  const emit = deps.logSink ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const emit = deps.logSink ?? ((line: string) => writeOut(`${line}\n`));
   const scan = deps.scan ?? scanWorktreeModes(root);
   if (scan.enumerationError !== null) {
     emit(`  \x1b[33m!\x1b[0m mode repair skipped: enumeration failed (${scan.enumerationError})`);

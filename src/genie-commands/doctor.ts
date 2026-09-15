@@ -43,6 +43,7 @@ import {
   readSkillsInstallRecord,
   releaseTag,
 } from '../lib/skills-installer.js';
+import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
@@ -117,7 +118,7 @@ export interface CheckResult {
 // ============================================================================
 
 function out(line = ''): void {
-  process.stdout.write(`${line}\n`);
+  writeOut(`${line}\n`);
 }
 
 const GLYPH: Record<CheckStatus, string> = {
@@ -1427,7 +1428,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
   // cleanup is scoped to the resolved repo root. Without --fix, detection only —
   // both residue checks are pure reads and nothing on disk changes. In --json
   // mode stdout belongs to the JSON document, so cleanup chatter goes to stderr.
-  const cleanupOptions = options?.json ? { logSink: (line: string) => process.stderr.write(`${line}\n`) } : {};
+  const cleanupOptions = options?.json ? { logSink: (line: string) => writeErr(`${line}\n`) } : {};
   if (options?.fix) {
     cleanupV4(cleanupOptions);
     cleanupLaunchWorktrees(root, cleanupOptions);
