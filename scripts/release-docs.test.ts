@@ -13,6 +13,7 @@ const ROOT = join(import.meta.dir, '..');
  * deliberate edit here.
  */
 const SHIPPED_SKILLS = [
+  'authoring',
   'brainstorm',
   'council',
   'docs',
@@ -20,11 +21,15 @@ const SHIPPED_SKILLS = [
   'fix',
   'genie',
   'genie-hacks',
+  'merge',
   'omni',
   'quick',
   'refine',
   'report',
+  'research',
   'review',
+  'skill-audit',
+  'verify',
   'wish',
   'work',
 ] as const;
@@ -1022,7 +1027,9 @@ describe('Group E release and documentation contracts', () => {
     const fix = read('skills/fix/SKILL.md');
     for (const contract of [
       'default 2',
-      'positive integer explicitly supplied by a higher-priority user/workspace instruction',
+      'genie config get budgets.maxEscalationsPerGroup',
+      'A different positive integer applies only when that key or an explicit user instruction supplies it',
+      'the handoff states the active value and which of the two it came from',
       'across handoffs',
       'never resets them',
       'does not expand scope, permit unchanged retries, or skip diagnosis or independent re-review',

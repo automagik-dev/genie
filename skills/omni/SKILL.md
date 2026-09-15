@@ -1,6 +1,8 @@
 ---
 name: omni
 description: "Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip."
+category: integration
+mutates: external
 ---
 
 # Omni

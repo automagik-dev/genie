@@ -18,6 +18,7 @@ import {
   LIVENESS_STALE_MS,
   LaneError,
   ROSTER,
+  type StateExport,
   TaskBlockedError,
   TaskCompleteError,
   TaskHasDependentsError,
@@ -25,9 +26,11 @@ import {
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
+  UnknownBoardError,
   UnknownRosterAgentError,
   UnknownTaskError,
   addDependency,
+  adoptTask,
   appendStage,
   appendTaskEvent,
   assignTask,
@@ -255,6 +258,30 @@ describe('lane moves + task_events timeline', () => {
     const result = moveTask(db, task.id, 'Wish', HUMAN);
     expect(result.from).toBeNull();
     expect(getTaskEvents(db, task.id)[0].note).toBe('(none)→Wish');
+  });
+
+  test('adoptTask places a laneless card on a board lane and records the (none) origin', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'pre-board card' });
+    expect(task.boardId).toBeNull();
+    expect(() => moveTask(db, task.id, 'Wish', HUMAN)).toThrow(LaneError);
+    const result = adoptTask(db, task.id, 'roadmap', 'Wish', HUMAN);
+    expect(result.task.boardId).toBe(board.id);
+    expect(getTaskLane(db, task.id)).toBe('Wish');
+    const last = getTaskEvents(db, task.id).at(-1);
+    expect(last?.kind).toBe('move');
+    expect(last?.note).toBe('(none)→Wish');
+    expect(moveTask(db, task.id, 'Work', HUMAN).from).toBe('Wish');
+  });
+
+  test('adoptTask refuses a card already on a board, an unknown board, and an unknown lane', () => {
+    createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const placed = createTask(db, { title: 'placed', boardId: getBoardByName(db, 'roadmap')?.id, lane: 'Idea' });
+    expect(() => adoptTask(db, placed.id, 'roadmap', 'Wish', HUMAN)).toThrow(/already on board "roadmap"/);
+    const loose = createTask(db, { title: 'loose' });
+    expect(() => adoptTask(db, loose.id, 'nope', 'Wish', HUMAN)).toThrow(UnknownBoardError);
+    expect(() => adoptTask(db, loose.id, 'roadmap', 'Nope', HUMAN)).toThrow(LaneError);
+    expect(getTask(db, loose.id)?.boardId).toBeNull();
   });
 
   test('rejects an undefined lane, listing the valid lanes', () => {
@@ -1162,6 +1189,48 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     expect(marker.fileHash).not.toBe(legacyHash);
     expect(marker.fileHash).toBe(marker.dbHash);
     expect(syncRoadmap(db, repo).action).toBe('none');
+  });
+
+  test('diverged only in the card timeline merges both sides and republishes (the conversation is global)', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'genie-merge-'));
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const task = createTask(db, { title: 'shared card' });
+    // Baseline: both sides in sync.
+    expect(syncRoadmap(db, repo).action).toBe('exported');
+    // The other clone commented and published; this clone reported locally.
+    const theirs = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    theirs.task_events.push({
+      id: 999,
+      task_id: task.id,
+      kind: 'comment',
+      note: 'dispatch: eng-A — G1',
+      author_kind: 'claude-code',
+      author: 'orchestrator',
+      created_at: 1_700_000_000_000,
+    });
+    writeFileSync(filePath, `${JSON.stringify(theirs, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'report', note: 'done: verified', author: 'eng-A', authorKind: 'codex' });
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('merged');
+    const kinds = getTaskEvents(db, task.id).map((e) => [e.kind, e.author]);
+    expect(kinds).toEqual([
+      ['report', 'eng-A'],
+      ['comment', 'orchestrator'],
+    ]);
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    expect(published.task_events.map((e) => e.kind).sort()).toEqual(['comment', 'report']);
+    // Idempotent: the same file event is never inserted twice, and the sides now agree.
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    expect(getTaskEvents(db, task.id)).toHaveLength(2);
+    // A real card conflict still stops: a title edit on the file side is not mergeable.
+    const conflict = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    conflict.tasks[0].title = 'renamed on the other clone';
+    writeFileSync(filePath, `${JSON.stringify(conflict, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'local only', author: 'x', authorKind: 'human' });
+    expect(syncRoadmap(db, repo).action).toBe('diverged');
+    rmSync(repo, { recursive: true, force: true });
   });
 
   test('an old order-sensitive marker with pending edits publishes them (db-only change)', () => {

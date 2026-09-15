@@ -85,6 +85,11 @@ const WORKSPACE_EXEMPT = new Set([
   // stderr and exits 1. It touches no workspace state, so the legacy workspace
   // gate must not exit 2 and mask the diagnostic callers are told to expect.
   'ui-bridge',
+  // `config` is the read-only global-config reader. It resolves keys against
+  // `<GENIE_HOME>/config.json` and the schema, never against a repo, so the
+  // legacy per-repo workspace gate must not exit 2 on a machine that has a
+  // config but no workspace — which is every fresh install.
+  'config',
 ]);
 
 /**

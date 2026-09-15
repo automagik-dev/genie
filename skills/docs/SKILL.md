@@ -1,6 +1,8 @@
 ---
 name: docs
 description: "Audit documentation and developer experience against the live product — drift, onboarding, error messages — and write or fix docs when asked."
+category: authoring
+mutates: repo
 ---
 
 # Docs

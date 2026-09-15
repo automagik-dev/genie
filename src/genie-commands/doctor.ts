@@ -28,7 +28,7 @@ import {
   probeCodexGeniePlugin,
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
-import { loadGenieConfig } from '../lib/genie-config.js';
+import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
@@ -1022,6 +1022,19 @@ export async function checkCodexIntegration(
   return results;
 }
 
+/**
+ * Echo the repair budget the fix skill resolves against. Read-only: doctor never
+ * repairs, and never writes a config file — a budget an operator has not set is
+ * reported as the schema default, not materialized on disk.
+ *
+ * Its own function rather than a branch inside `doctorCommand`: this is a config
+ * read, a different concern from the binary/git/database probes around it.
+ */
+export async function checkBudgets(): Promise<CheckResult[]> {
+  const resolved = await resolveConfigKey('budgets.maxEscalationsPerGroup');
+  return [{ name: `budgets: maxEscalationsPerGroup=${String(resolved.value)} (${resolved.source})`, status: 'pass' }];
+}
+
 /** Warn only when Claude Code's global subagent-model override is present. */
 export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env): CheckResult[] {
   if (env.CLAUDE_CODE_SUBAGENT_MODEL === undefined) return [];
@@ -1557,6 +1570,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...checkSkillsChannel(),
     ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
+    ...(await checkBudgets()),
     ...checkSubagentModelOverride(),
     ...(await checkCodexIntegration(root, pluginProbe)),
     // Live context resolution only when the root itself was live-resolved: an

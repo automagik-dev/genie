@@ -45,6 +45,7 @@ import {
   type TaskRow,
   type TaskStatus,
   UnknownTaskError,
+  adoptTask,
   appendTaskEvent,
   assignTask,
   blockTask,
@@ -418,6 +419,27 @@ function handleMove(id: string, opts: MoveOptions): void {
   });
 }
 
+interface AdoptOptions {
+  board?: string;
+  lane?: string;
+}
+
+function handleAdopt(id: string, opts: AdoptOptions): void {
+  const boardRef = opts.board?.trim();
+  const lane = opts.lane?.trim();
+  if (!boardRef) fail('--board <ref> is required.');
+  if (!lane) fail('--lane <name> is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      const result = adoptTask(db, id, boardRef, lane, resolveEventAuthor());
+      out(`Adopted task ${result.task.id} onto board "${result.board.name}" in lane ${result.lane}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 interface CheckoutOptions {
   worker?: string;
 }
@@ -445,42 +467,66 @@ function handleCheckout(id: string, opts: CheckoutOptions): void {
   });
 }
 
-function handleComment(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty comment is required.');
+interface AuthoredNoteOptions {
+  worker?: string;
+}
+
+/** Timeline prose crosses the DSH board input contract (4000 bytes, no control characters); bound it at the CLI too. */
+const NOTE_MAX_BYTES = 4000;
+function boundedNote(text: string | undefined, what: string): string {
+  const note = text?.trim() ?? '';
+  if (!note) fail(`a non-empty ${what} is required.`);
+  // Tab, line feed and carriage return are text (the board's own contract keeps
+  // newlines verbatim); every other C0 control and DEL is refused.
+  for (const character of note) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d))
+      fail(`${what} must not contain control characters.`);
+  }
+  if (Buffer.byteLength(note) > NOTE_MAX_BYTES) fail(`${what} must be at most ${NOTE_MAX_BYTES} bytes.`);
+  return note;
+}
+
+/** `--worker` names the speaker the way `checkout --worker` does; kind still comes from the runtime. */
+function authoredBy(opts: AuthoredNoteOptions): { author: string; authorKind: string | undefined } {
+  const base = resolveEventAuthor();
+  const worker = opts.worker?.trim();
+  return { author: worker || base.author || 'cli', authorKind: base.authorKind ?? undefined };
+}
+
+function handleComment(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'comment');
   run(() => {
     const db = openDb();
     try {
       if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'comment',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Commented on task ${id}.`);
+      const author = authoredBy(opts);
+      appendTaskEvent(db, id, { kind: 'comment', note, authorKind: author.authorKind, author: author.author });
+      out(`Commented on task ${id} as ${author.author}.`);
     } finally {
       db.close();
     }
   });
 }
 
-function handleReport(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty report is required.');
+function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'report');
   run(() => {
     const db = openDb();
     try {
-      if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'report',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Reported on task ${id} (${author.authorKind}).`);
+      const task = getTask(db, id);
+      if (!task) throw new UnknownTaskError(id);
+      const author = authoredBy(opts);
+      // The report tag is a trust signal: only the card's current claimant may post one.
+      if (task.claimedBy !== author.author) {
+        fail(
+          task.claimedBy
+            ? `report refused: task ${id} is claimed by ${task.claimedBy}, not ${author.author}. Use comment, or checkout first.`
+            : `report refused: task ${id} is not claimed. Checkout as ${author.author} first, or use comment.`,
+        );
+      }
+      appendTaskEvent(db, id, { kind: 'report', note, authorKind: author.authorKind, author: author.author });
+      out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {
       db.close();
     }
@@ -813,6 +859,13 @@ export, with two caveats:
     .action((id: string, opts: MoveOptions) => handleMove(id, opts));
 
   task
+    .command('adopt <id>')
+    .description('Place a laneless card onto a board lane (one-time; appends a move event from (none))')
+    .requiredOption('--board <ref>', 'Board id or name')
+    .requiredOption('--lane <name>', 'Lane on that board')
+    .action((id: string, opts: AdoptOptions) => handleAdopt(id, opts));
+
+  task
     .command('checkout <id>')
     .description('Atomically claim a ready task for a worker')
     .option('--worker <name>', 'Worker identity (defaults to $GENIE_AGENT_NAME or "cli")')
@@ -820,13 +873,15 @@ export, with two caveats:
 
   task
     .command('comment <id> <text>')
-    .description('Append an authored comment to the card timeline')
-    .action((id: string, text: string) => handleComment(id, text));
+    .description('Append an authored comment to the card timeline (use -- before text that starts with a dash)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleComment(id, text, opts));
 
   task
     .command('report <id> <text>')
-    .description('Append an authored worker report to the card timeline')
-    .action((id: string, text: string) => handleReport(id, text));
+    .description('Append an authored worker report to the card timeline (one per claim-to-handoff span)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
 
   task
     .command('block <id>')

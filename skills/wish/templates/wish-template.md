@@ -57,6 +57,8 @@
 |-------|-------|------------|-------|-------------|
 | 1 | engineer | <TODO: risk + rationale> | inherit | <TODO: task description> |
 
+**Global constraints:** <TODO: the plan-wide requirements every group inherits — version floors, dependency limits, naming and interface rules, platform requirements — one line each, values copied verbatim from the source they come from. Use `none` only when there are genuinely none.>
+
 Describe each group’s coupling and risk in **Complexity**. In **Model**, inherit the active model unless user instructions or an evidenced capacity need justify another supported runtime configuration. Use portable role names; keep actual model/effort settings in the runtime. Order groups by dependencies and give parallel writers disjoint files or isolated worktrees.
 
 ## Execution Groups
@@ -68,6 +70,10 @@ Describe each group’s coupling and risk in **Complexity**. In **Model**, inher
 **Deliverables:**
 1. <TODO: deliverable 1>
 2. <TODO: deliverable 2>
+
+**Interfaces:**
+- Consumes: <TODO: exact signatures this group takes from earlier groups, or `none`>
+- Produces: <TODO: exact names and types later groups rely on, or `none`. A group's worker sees only its own group; this block is how it learns the neighbouring shapes.>
 
 **Acceptance Criteria:**
 - [ ] <TODO: testable acceptance criterion>

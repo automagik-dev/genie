@@ -1,6 +1,8 @@
 ---
 name: dream
 description: "Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results."
+category: delivery
+mutates: external
 ---
 
 # Dream
@@ -33,7 +35,20 @@ Dispatch one worker subagent per wish in the layer through the runtime's native 
 - Only after CI is green and PR creation is authorized: open a PR targeting `dev`, preferring the GitHub connector.
 - Final message, every claim audited against tool output: `done — PR <url>, CI green, groups N/N` or `blocked — <reason>, groups N/N`.
 
-Completion is push: wait for each worker's final message; in standalone mode inspect `genie board --wish <slug>` on demand, and drive a wish without task rows from WISH.md directly. The layer is done when every worker has reported.
+A worker's final message is a claim, never evidence. Before any wish in the layer counts as complete, fill every row of this gate from tool output taken now:
+
+| Claim | Requires | Not sufficient |
+|---|---|---|
+| The agent completed the work | A VCS diff for the named branch: commit range and changed files | The agent's success report |
+| Validation passed | The wish's own validation command, run fresh, with its exit code | A green earlier run, or "it should pass" |
+| A PR exists against `dev` | The PR state read back from the forge: base, head, required checks | The URL the worker pasted |
+| The group was reviewed | An independent `review` verdict against that group's criteria | The worker's own assessment |
+
+A row that cannot be filled makes the wish blocked, not done.
+
+Failure path per wish: a failing check is fixed and retried up to three attempts (poll CI status, never sleep-loop); a fourth failure, an authority refusal, or a gate row that stays unfillable blocks the wish. Record the reason, leave branch, commits and PR intact, and never widen scope to rescue it. A blocked wish blocks every wish that names it under `depends-on`, transitively: those are never dispatched, are recorded as blocked on the upstream slug, and the rest of their layer still runs.
+
+Completion is push: wait for each worker's final message; in standalone mode inspect `genie board --wish <slug>` on demand, and drive a wish without task rows from WISH.md directly. The layer is done when every dispatched wish has either passed the gate or been recorded blocked.
 
 ## Review and merge
 

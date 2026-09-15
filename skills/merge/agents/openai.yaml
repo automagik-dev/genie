@@ -1,0 +1,4 @@
+interface:
+  display_name: "Merge Conflicts"
+  short_description: "Resolve a merge or rebase by intent, then re-run the gate"
+  default_prompt: "Resolve this in-progress merge or rebase by the intent of both sides, re-run the full gate on the merged tree, and finish the operation."

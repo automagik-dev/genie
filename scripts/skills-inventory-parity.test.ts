@@ -1,14 +1,24 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  CATALOG_END_MARKER,
+  CATALOG_START_MARKER,
+  SKILL_CATEGORIES,
+  SKILL_MUTATES_LEVELS,
+  checkSkillCatalogDrift,
+  evaluateSkillCatalogBlock,
   evaluateSkillsInventoryParity,
   formatSkillsInventoryParityFailures,
   parseCliArgs,
+  parseSkillFrontmatter,
   parseSkillsListOutput,
+  readSkillCatalog,
+  renderSkillCatalogBlock,
   scanRepoSkills,
   stripAnsi,
+  writeSkillCatalogBlock,
 } from './skills-inventory-parity.js';
 
 // Fixtures only — this test never reaches the network. The CI job
@@ -233,15 +243,171 @@ describe('evaluateSkillsInventoryParity', () => {
 describe('parseCliArgs', () => {
   test('resolves --repo and --list-file to absolute paths', () => {
     const parsed = parseCliArgs(['--repo', '/abs/repo', '--list-file', '/abs/list.txt']);
-    expect(parsed).toEqual({ repoRoot: '/abs/repo', listFile: '/abs/list.txt' });
+    expect(parsed).toEqual({ repoRoot: '/abs/repo', listFile: '/abs/list.txt', write: false });
   });
 
   test('defaults to cwd with stdin input', () => {
-    expect(parseCliArgs([])).toEqual({ repoRoot: process.cwd(), listFile: null });
+    expect(parseCliArgs([])).toEqual({ repoRoot: process.cwd(), listFile: null, write: false });
+  });
+
+  test('--write is a valueless flag', () => {
+    expect(parseCliArgs(['--write', '--repo', '/abs/repo'])).toEqual({
+      repoRoot: '/abs/repo',
+      listFile: null,
+      write: true,
+    });
   });
 
   test('rejects an unknown flag and a valueless flag', () => {
     expect(() => parseCliArgs(['--nope'])).toThrow('unknown argument: --nope');
     expect(() => parseCliArgs(['--repo'])).toThrow('--repo requires a value');
+  });
+});
+
+describe('parseSkillFrontmatter — the one SKILL.md frontmatter reader', () => {
+  test('reads flat keys and strips surrounding quotes', () => {
+    const parsed = parseSkillFrontmatter(
+      [
+        '---',
+        'name: wish',
+        'description: "Plan a wish."',
+        'category: lifecycle',
+        'mutates: documents',
+        '---',
+        '',
+        '# Wish',
+        '',
+      ].join('\n'),
+    );
+    expect(parsed.violations).toEqual([]);
+    expect([...(parsed.fields as Map<string, string>)]).toEqual([
+      ['name', 'wish'],
+      ['description', 'Plan a wish.'],
+      ['category', 'lifecycle'],
+      ['mutates', 'documents'],
+    ]);
+  });
+
+  test('fails closed on an absent or unterminated block', () => {
+    expect(parseSkillFrontmatter('# Wish\n')).toEqual({
+      fields: null,
+      violations: ['SKILL.md must start with YAML frontmatter'],
+    });
+    expect(parseSkillFrontmatter('---\nname: wish\n')).toEqual({
+      fields: null,
+      violations: ['SKILL.md frontmatter is not closed'],
+    });
+  });
+
+  test('reports nested syntax and duplicate keys', () => {
+    const parsed = parseSkillFrontmatter(
+      ['---', 'name: wish', 'metadata:', '  verifiedAgainst: x', 'name: other', '---', ''].join('\n'),
+    );
+    expect(parsed.violations).toEqual([
+      'unsupported frontmatter syntax: metadata:',
+      'unsupported frontmatter syntax: verifiedAgainst: x',
+      'duplicate frontmatter field: name',
+    ]);
+  });
+});
+
+describe('skills/README.md catalog block', () => {
+  /** A skills root holding `<name>/SKILL.md` for each entry. */
+  function skillsRootWith(entries: ReadonlyArray<readonly [string, readonly string[]]>): string {
+    const root = mkroot();
+    const skillsRoot = join(root, 'skills');
+    for (const [name, frontmatter] of entries) {
+      mkdirSync(join(skillsRoot, name), { recursive: true });
+      writeFileSync(
+        join(skillsRoot, name, 'SKILL.md'),
+        ['---', `name: ${name}`, ...frontmatter, '---', '', `# ${name}`, ''].join('\n'),
+        'utf8',
+      );
+    }
+    return skillsRoot;
+  }
+
+  test('derives the catalog from the tree, ordered by category then name', () => {
+    const skillsRoot = skillsRootWith([
+      ['omni', ['description: "Wire a channel."', 'category: integration', 'mutates: external']],
+      ['work', ['description: "Execute a wish."', 'category: lifecycle', 'mutates: repo']],
+      ['fix', ['description: "Repair gaps."', 'category: lifecycle', 'mutates: repo']],
+      ['stray', ['description: "No taxonomy yet."']],
+    ]);
+    expect(readSkillCatalog(skillsRoot)).toEqual([
+      { name: 'fix', category: 'lifecycle', mutates: 'repo', description: 'Repair gaps.' },
+      { name: 'work', category: 'lifecycle', mutates: 'repo', description: 'Execute a wish.' },
+      { name: 'omni', category: 'integration', mutates: 'external', description: 'Wire a channel.' },
+      // Absent keys are legal and sort last, rendered as an em dash.
+      { name: 'stray', category: null, mutates: null, description: 'No taxonomy yet.' },
+    ]);
+  });
+
+  test('renders a marker-wrapped table and escapes a pipe in a description', () => {
+    const block = renderSkillCatalogBlock([
+      { name: 'refine', category: 'authoring', mutates: 'documents', description: 'Use --for openai | claude.' },
+      { name: 'stray', category: null, mutates: null, description: 'No taxonomy yet.' },
+    ]);
+    expect(block.startsWith(CATALOG_START_MARKER)).toBe(true);
+    expect(block.endsWith(CATALOG_END_MARKER)).toBe(true);
+    expect(block).toContain('| `refine` | authoring | documents | Use --for openai \\| claude. |');
+    expect(block).toContain('| `stray` | — | — | No taxonomy yet. |');
+  });
+
+  test('a new skill directory appears without being hand-listed', () => {
+    const skillsRoot = skillsRootWith([
+      ['work', ['description: "Execute a wish."', 'category: lifecycle', 'mutates: repo']],
+    ]);
+    const readme = join(skillsRoot, 'README.md');
+    writeFileSync(readme, `# Skills\n\n${renderSkillCatalogBlock(readSkillCatalog(skillsRoot))}\n\nTail.\n`, 'utf8');
+    expect(checkSkillCatalogDrift(skillsRoot)).toEqual([]);
+
+    mkdirSync(join(skillsRoot, 'verify'), { recursive: true });
+    writeFileSync(
+      join(skillsRoot, 'verify', 'SKILL.md'),
+      [
+        '---',
+        'name: verify',
+        'description: "Prove a claim."',
+        'category: verification',
+        'mutates: none',
+        '---',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    expect(checkSkillCatalogDrift(skillsRoot)).toEqual([
+      'the skills/README.md catalog block is stale — regenerate it with `bun scripts/skills-inventory-parity.ts --write`',
+    ]);
+
+    expect(writeSkillCatalogBlock(readme, readSkillCatalog(skillsRoot))).toBe(true);
+    expect(checkSkillCatalogDrift(skillsRoot)).toEqual([]);
+    // The rewrite is idempotent and preserves the surrounding prose.
+    expect(writeSkillCatalogBlock(readme, readSkillCatalog(skillsRoot))).toBe(false);
+    const text = readFileSync(readme, 'utf8');
+    expect(text.startsWith('# Skills\n')).toBe(true);
+    expect(text.endsWith('\nTail.\n')).toBe(true);
+    expect(text).toContain('| `verify` | verification | none | Prove a claim. |');
+  });
+
+  test('a missing block is a failure, not a silent pass', () => {
+    const entries = [{ name: 'work', category: 'lifecycle', mutates: 'repo', description: 'Execute a wish.' }];
+    const failures = evaluateSkillCatalogBlock('# Skills\n\nNo markers here.\n', entries).failures;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('missing the <!-- skills-catalog:start -->');
+  });
+
+  test('a tree with no README has no catalog to be stale', () => {
+    expect(checkSkillCatalogDrift(skillsRootWith([['work', ['description: "Execute a wish."']]]))).toEqual([]);
+  });
+
+  test('the live repository catalog block is current and fully labelled', () => {
+    const skillsRoot = join(import.meta.dir, '..', 'skills');
+    expect(checkSkillCatalogDrift(skillsRoot)).toEqual([]);
+    for (const entry of readSkillCatalog(skillsRoot)) {
+      expect(SKILL_CATEGORIES).toContain(entry.category as never);
+      expect(SKILL_MUTATES_LEVELS).toContain(entry.mutates as never);
+      expect(entry.description.length).toBeGreaterThan(0);
+    }
   });
 });

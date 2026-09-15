@@ -1,10 +1,145 @@
 # Genie board for DSH Web
 
-Open **Genie board** from the button in DSH Web. Choose a registered repository
-workspace and board to view its lanes, cards, owners, activity, blocks, dependencies,
-comments, and history. Select a card to move, comment, block/hold, unblock, claim,
-release, or complete it. Create adds a task to the selected board. Refresh and
-returning to the visible tab read a complete board again; there is no polling.
+The plugin adds three entries to the DSH Web sidebar, each a global panel in the
+main column: **Genie board**, **Skills** and **Workflows**. Every panel starts with
+a registered repository workspace picker.
+
+- **Genie board** shows a board's lanes, cards, owners, liveness, blocks,
+  dependencies, comments and history. Select a card to move, comment, block/hold,
+  unblock, claim, release or complete it; Add creates a task on the selected board.
+  Refresh and returning to the visible tab read a complete board again; there is no
+  polling.
+- **Skills** lists the repository's `skills/<name>/SKILL.md` catalog with a filter,
+  the shipped resources of each skill, and the document body. Entries are grouped
+  under category headers in taxonomy order (lifecycle, routing, delivery,
+  investigation, authoring, verification, integration, skill-ops, then anything
+  uncategorized), read from the optional flat `category:` frontmatter key; the
+  optional `mutates:` key shows as a quiet tag. Both keys are optional and closed:
+  an unrecognised value is dropped rather than shown, so a typo never invents a
+  category header. The panel is a
+  read-only view of the git-tracked source; it does not feed the DSH model. The
+  DSH body already reads genie's skills through the one recorded channel: `genie
+  install`/`update` copy the pinned tree into `~/.agents/skills`, which DSH's stock
+  `skill-filesystem` discoverer (mounted by the `standard` and `ptc` agent presets)
+  serves as source `user-agents`, rank 500, with each skill directory as its
+  resource base. A council on 2026-09-15 decided against a plugin `ctx.skills`
+  provider: it would duplicate delivery outside the install record, bypass the
+  `--integrations none` consent, need its own invalidation, and couple the board
+  row to the skill service. To dogfood a checkout instead of the installed copy,
+  add a profile patch row — `id: skill-filesystem`, `config.customSkillDirs:
+  ['<checkout>/skills']` (rank 300, watched) — which shadows the release copy as an
+  explicit, visible operator choice.
+- **Workflows** lists the repository's `.claude/workflows/<name>.js` catalog (the
+  canonical saved-workflow format), each script's phases and when-to-use guidance,
+  and the script body. Both catalogs are read-only: nothing is executed from the
+  panel.
+
+The panels are React components rendered through DSH's own slot system
+(`sidebar.panellist` + `main`), styled with DSH alias tokens so they follow the
+active theme, and built against the frozen browser module table (React and
+`@deepseek-ai/dsh-client-ui-primitives`).
+
+## Four rows: one manager, three sub-plugins
+
+The Host half is four cordis rows, all from this one package:
+
+| Row id | Package specifier | Registers |
+|---|---|---|
+| `genie-dsh-board` | `@automagik/genie-dsh-board` | the `genieRuntime` service and `/api/genie-board/health` |
+| `genie-dsh-board-board` | `@automagik/genie-dsh-board/board` | `/workspaces` and the one mutating `/action` |
+| `genie-dsh-board-skills` | `@automagik/genie-dsh-board/skills` | `/skills` and `/skills/document` |
+| `genie-dsh-board-workflows` | `@automagik/genie-dsh-board/workflows` | `/workflows` and `/workflows/document` |
+
+The **manager** row owns everything the sub-rows must not each own a copy of:
+the Genie executable resolved once with its compatibility verdict, workspace
+resolution, and **the whole trust fence** — loopback address, loopback `Host`,
+exact `Origin` on POST, `Sec-Fetch-Site`, the 415 content-type check, the 16 KiB
+body cap, the derived socket deadline and the single error shape. It publishes
+them as the cordis service `genieRuntime`, and a sub-row registers every route
+through `genieRuntime.route`. A sub-row that cannot resolve the service
+registers nothing at all and never resolves an executable of its own.
+
+The fence stays singular on purpose. Three copies drift, and the first row that
+forgot `Origin`-on-POST would reopen CSRF against a loopback service that can
+spawn the Genie binary.
+
+Health reports which sub-rows are mounted and the resolved config of each:
+
+```json
+{
+  "compatible": true, "version": "5.x.y", "executable": "/…/genie",
+  "mounted": { "board": true, "skills": true, "workflows": true },
+  "config": {
+    "manager": { "deadlineMs": 10000, "outputBudgetBytes": 4194304 },
+    "board": { "order": 10 },
+    "skills": { "order": 11, "groupBy": "category" },
+    "workflows": { "order": 12 }
+  }
+}
+```
+
+Degraded mode is unchanged: a missing or incompatible binary records the error,
+health stays up, the read-only catalogs still serve, and only the mutating route
+is withheld.
+
+### Per-row config, and disabling a row
+
+Every row takes a `config` block, and every key has a default, so a row inserted
+with no config behaves exactly as it did before the split. Each schema is a
+[Standard Schema](https://standardschema.dev) object the DSH loader validates
+against (`Config`), wrapping the same pure `resolveConfig` function the unit
+tests call — so a test and a live profile can never disagree about what a config
+means. The validator is hand-written rather than schemastery: the Host bundle is
+fully bundled by esbuild from a dependency-free source tree, and cordis requires
+only a Standard Schema object, not that library specifically.
+
+| Row | Key | Default | Refinement |
+|---|---|---|---|
+| manager | `deadlineMs` | `10000` | the derived socket deadline is `deadlineMs + 5000` and must stay at or under the 120 s ceiling, so the socket timer always strictly outlives the handler budget |
+| manager | `outputBudgetBytes` | `4194304` | hard maximum of 4 MiB; a larger budget cannot help, because the whole answer is buffered before the browser sees any of it |
+| board | `order` | `10` | 0–1000 |
+| skills | `order` / `groupBy` | `11` / `category` | `category` or `name` |
+| workflows | `order` | `12` | 0–1000 |
+
+Any row can be turned off from a profile patch by its id:
+
+```yaml
+- id: genie-dsh-board-skills
+  disabled: true
+```
+
+That row then registers no route, and health stops reporting it as mounted — so
+the browser drops its panel instead of leaving one that 404s on first use.
+`scripts/dsh-genie-board-smoke.ts` mounts exactly this patch as its acceptance
+proof, and `src/board.test.ts` asserts the same thing against a fake context.
+
+### Why the client half is NOT split (2026-09-15)
+
+The Host is four rows; the browser bundle is deliberately still **one**, with a
+single `exports["./client"]`. DSH's own loader makes per-sub-plugin client
+entry points impossible today:
+
+- `dsh-client-modules/lib/index.js` l.825 keys the client module table by
+  **package name**, so three rows of one package cannot own three client halves.
+- `clientExportOf` (same file, l.155-165) resolves only `exports["./client"]`
+  and nothing else.
+- `exactPackageSpecifier` (l.132-138) returns `undefined` for a three-segment
+  scoped specifier, so on the non-`internal` path a subpath-only row resolves no
+  client half at all.
+
+So `src/client/index.ts` splits its old panel loop into three labelled
+`ctx.effect` registrations inside the one bundle, and gates each on what the
+manager reports as `mounted` — never on loader row state. Each registration also
+refuses to own a panel id another plugin already holds: it checks slot occupancy
+first and warns instead of overwriting. Revisit per-row client entries only when
+the loader gains a subpath client contract; do not re-derive the idea from a
+blueprint without re-reading those three call sites.
+
+The package is **not** renamed to `@automagik/genie-dsh` either. That is a
+decision, not an omission: subpath exports deliver the whole sub-plugin
+structure at zero release cost, while a rename would have to move
+`~/.dsh/profiles/web/package.json` (both the `link:` dependency key and
+`dsh.profile.bundles`) and `DSH_PLUGIN_MEMBERS` in the same change.
 
 ## Build and install
 
@@ -19,7 +154,10 @@ dsh plugin --profile web list --depth 0
 dsh web --no-open --host 127.0.0.1 --port 0
 ```
 
-The immutable artifacts are `dist/index.js` (Host) and `dist/client.js` (browser).
+The immutable artifacts are the four Host bundles — `dist/index.js`,
+`dist/board.js`, `dist/skills.js`, `dist/workflows.js` — and `dist/client.js`
+(browser). Each is enumerated explicitly in `DSH_PLUGIN_MEMBERS`; the attested
+tarball gaining a member is a reviewed change, never a build detail.
 Source builds use the root checkout version as their compatibility floor.
 Release packaging stamps `minimumGenieVersion` and package version together and
 rebuilds the Host with that exact candidate without changing checkout metadata. Startup
@@ -134,12 +272,17 @@ the smoke. It installs into a disposable DSH_HOME, registers a disposable
 repository through the real workspace registry, starts/stops/restarts DSH, verifies plugin
 listing and compatibility, creates and moves a task through Host routes, then
 removes the plugin and temporary state in `finally`. Personal profiles are not used.
+Its second phase relaunches the same profile with `genie-dsh-board-skills`
+disabled by id and asserts both halves of the contract: the row's routes are
+absent, and health reports `mounted.skills: false` — which is what the browser
+gates its panel on.
 
 ## Release verification
 
 The release payload includes this document, NOTICE, both Cordis manifests,
-package metadata and both Host/browser bundles. The repository verifier requires
-all seven members independently on all four supported platforms:
+package metadata, the four Host row bundles and the browser bundle. The
+repository verifier requires all ten members independently on all four supported
+platforms:
 
 ```sh
 bun scripts/verify-dsh-genie-board-release.ts --unsigned-artifact-dir dist --version VERSION

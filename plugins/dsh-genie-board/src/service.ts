@@ -58,6 +58,8 @@ export class BoardService {
     private readonly registry: Registry,
     private readonly binary: string,
     private readonly run = execute,
+    /** One fresh deadline/output budget per browser request; the manager row supplies the configured one. */
+    private readonly budget: () => Budget = () => ({ expires: Date.now() + DEADLINE_MS, bytes: 0 }),
   ) {}
   workspaces() {
     const current = this.registry.list();
@@ -82,10 +84,7 @@ export class BoardService {
     for (const [key, claim] of [...this.claims]) {
       if (this.active.has(claim.workspaceId)) continue;
       try {
-        await this.run(this.binary, ['task', 'heartbeat', claim.id], claim.path, this.environment, {
-          expires: Date.now() + DEADLINE_MS,
-          bytes: 0,
-        });
+        await this.run(this.binary, ['task', 'heartbeat', claim.id], claim.path, this.environment, this.budget());
       } catch {
         this.claims.delete(key);
       }
@@ -136,7 +135,7 @@ export class BoardService {
         this.selections.delete(workspace.id);
         throw new Error('Workspace changed; list boards again');
       }
-      const budget: Budget = { expires: Date.now() + DEADLINE_MS, bytes: 0 };
+      const budget: Budget = this.budget();
       const run = (args: string[]) => {
         executed = true;
         return this.run(this.binary, args, path, this.environment, budget);

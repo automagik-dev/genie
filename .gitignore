@@ -134,3 +134,5 @@ core
 .mcp.json
 .rlmx/
 .warp/
+
+# Local type declarations for the DSH plugin typecheck (fetched, not tracked)

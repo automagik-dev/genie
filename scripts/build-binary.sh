@@ -133,6 +133,9 @@ for required in \
   "plugins/dsh-genie-board/README.md" \
   "plugins/dsh-genie-board/NOTICE" \
   "plugins/dsh-genie-board/dist/index.js" \
+  "plugins/dsh-genie-board/dist/board.js" \
+  "plugins/dsh-genie-board/dist/skills.js" \
+  "plugins/dsh-genie-board/dist/workflows.js" \
   "plugins/dsh-genie-board/dist/client.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done

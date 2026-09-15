@@ -10,7 +10,10 @@
  *
  *   file moved, db didn't  → git pull delivered a newer board → import
  *   db moved, file didn't  → local mutations → export (published at commit)
- *   both moved             → DIVERGED: warn, touch nothing; the operator picks
+ *   both moved, only the   → MERGED: timeline events are append-only facts
+ *   timeline differs         keyed by (task, kind, author, note, time), so the
+ *                            two sides are unioned and re-published
+ *   both moved otherwise   → DIVERGED: warn, touch nothing; the operator picks
  *                            `task import --replace` (take the file) or
  *                            `task export --write` (keep the db)
  *
@@ -38,7 +41,7 @@ import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
 import { SnapshotFormatError, type StateExport, exportState, hasOperationalState, importState } from './task-state.js';
 
-export type SyncAction = 'none' | 'imported' | 'exported' | 'diverged';
+export type SyncAction = 'none' | 'imported' | 'exported' | 'merged' | 'diverged';
 
 export interface SyncResult {
   action: SyncAction;
@@ -335,8 +338,67 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
     writeMarker(markerPath, { fileHash: dbHash, dbHash });
     return { action: 'exported', message: `Board snapshot ${filePath} refreshed from the local database.` };
   }
+  // Both sides moved. The card conversation is the one slice that is safe to
+  // reconcile automatically: events are append-only facts that never conflict,
+  // so when the two sides agree on everything except task_events, union them.
+  const merged = mergeTimelines(db, dbState, parsed);
+  if (merged !== null) {
+    const next = roadmapSnapshot(db);
+    writeSnapshotFile(filePath, next);
+    const nextHash = canonicalHash(next);
+    writeMarker(markerPath, { fileHash: nextHash, dbHash: nextHash });
+    return {
+      action: 'merged',
+      message: `Card timelines merged: ${merged} event(s) from ${filePath} added to the local board and the snapshot republished.`,
+    };
+  }
   return {
     action: 'diverged',
     message: `Both the local board (genie.db) and ${filePath} changed since the last sync. Nothing was overwritten. ${resolution}`,
   };
+}
+
+/** Identity of a timeline event independent of its per-database autoincrement id. */
+function eventKey(e: {
+  task_id: string;
+  kind: string;
+  note: string | null;
+  author_kind: string | null;
+  author: string | null;
+  created_at: number;
+}): string {
+  return JSON.stringify([e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at]);
+}
+
+/**
+ * When the db and the file differ only in task_events, insert every file event
+ * the db lacks (matched by identity, ids reassigned locally) and return how many
+ * were added. Returns null when anything other than the timeline differs, or the
+ * file is not a well-formed snapshot — those cases stay diverged.
+ */
+function mergeTimelines(db: Database, dbState: StateExport, parsed: unknown): number | null {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const file = parsed as Partial<StateExport>;
+  if (!Array.isArray(file.task_events)) return null;
+  const stripped = (state: Partial<StateExport>) => ({ ...state, task_events: [], hire_roster: [] });
+  if (canonicalHash(stripped(dbState)) !== canonicalHash(stripped(file))) return null;
+  const known = new Set(dbState.task_events.map(eventKey));
+  const knownTasks = new Set(dbState.tasks.map((t) => t.id));
+  const missing = file.task_events.filter((e) => {
+    if (typeof e !== 'object' || e === null) return false;
+    const row = e as StateExport['task_events'][number];
+    return (
+      typeof row.task_id === 'string' &&
+      knownTasks.has(row.task_id) &&
+      typeof row.created_at === 'number' &&
+      !known.has(eventKey(row))
+    );
+  }) as StateExport['task_events'];
+  if (missing.length === 0) return null;
+  const insert = db.query(
+    'INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const e of missing)
+    insert.run(e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at);
+  return missing.length;
 }
