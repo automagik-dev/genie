@@ -960,8 +960,6 @@ interface SkillsRetirementContext {
   previous: SkillsInstallRecord;
   /** The inventory the delivered tree is about to install. */
   inventory: readonly string[];
-  /** Memoized digest of `<skillsRoot>/<name>`. */
-  deliveredDigest: (name: string) => string | null;
   /** Every digest the PREVIOUS record vouches for, keyed by absolute path. */
   expectedDigests: ReadonlyMap<string, string>;
   rename: (source: string, destination: string) => void;
@@ -976,18 +974,6 @@ interface RetiredSkillPlan {
   expected: string;
   expectedParent: string;
   original: Stats;
-}
-
-/** Memoized content digest of each delivered skill directory. */
-function deliveredDigestReader(skillsRoot: string): (name: string) => string | null {
-  const cache = new Map<string, string | null>();
-  return (name) => {
-    const cached = cache.get(name);
-    if (cached !== undefined) return cached;
-    const digest = computeSkillDirDigest(join(skillsRoot, name));
-    cache.set(name, digest);
-    return digest;
-  };
 }
 
 /**
@@ -1356,7 +1342,6 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
           genieHome: options.genieHome,
           previous,
           inventory,
-          deliveredDigest: deliveredDigestReader(skillsRoot),
           expectedDigests: previousDigests(previous),
           rename: options.renameRetiredSkill ?? renameSync,
           now,
