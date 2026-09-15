@@ -171,7 +171,10 @@ function whichBinary(name: string): string | null {
 // ============================================================================
 
 function checkGenieBinary(): CheckResult[] {
-  const results: CheckResult[] = [{ name: `genie version ${VERSION}`, status: 'pass' }];
+  // The NAME is version-free on purpose: a cross-release diff of the sorted
+  // check names must show only additions and removals, never a false pair from
+  // the running version moving. The version rides in the detail (m16).
+  const results: CheckResult[] = [{ name: 'genie version', status: 'pass', detail: VERSION }];
   const onPath = whichBinary('genie');
   if (onPath) {
     results.push({ name: 'genie on PATH', status: 'pass', detail: onPath });

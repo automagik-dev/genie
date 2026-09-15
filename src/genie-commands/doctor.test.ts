@@ -147,6 +147,16 @@ describe('doctorCommand', () => {
     expect(names).toMatch(/bun/);
   });
 
+  // m16: check NAMES are the cross-release diff key, so none of them may carry
+  // the running version — a naive name-set diff would report a false
+  // removal + addition pair on every release.
+  test('no check name embeds the running version; the version check carries it as detail', () => {
+    const checks = json.checks as Array<{ name: string; status: string; detail?: string }>;
+    const embedding = checks.map((c) => c.name).filter((name) => name.includes(VERSION));
+    expect(embedding).toEqual([]);
+    expect(checks.find((c) => c.name === 'genie version')).toMatchObject({ status: 'pass', detail: VERSION });
+  });
+
   test('healthy checkout has no failing checks', () => {
     const failed = json.checks.filter((c) => c.status === 'fail');
     expect(failed).toEqual([]);
