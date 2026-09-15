@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -378,7 +379,7 @@ describe('runSkillsInstall', () => {
       expect(lines[0]).toStartWith(`Skills install failed: no skills found under ${join(genieHome, 'skills')}.`);
       expect(process.exitCode).toBe(1);
     } finally {
-      process.exitCode = savedExitCode;
+      process.exitCode = savedExitCode ?? 0;
     }
   });
 
@@ -398,6 +399,190 @@ describe('runSkillsInstall', () => {
     expect(spawned).toBe(0);
     expect(outcome.ok).toBe(false);
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
+  });
+});
+
+describe('retiring removed skills during an upgrade', () => {
+  function previousInstall(names = ['trace']): { dirs: string[]; record: SkillsInstallRecord; spawn: CommandRunner } {
+    const source = fixtureSkillsTree(['review']);
+    const dirs = [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')];
+    const dirDigests: Record<string, string> = {};
+    for (const dir of dirs) {
+      for (const name of names) {
+        const target = join(dir, name);
+        mkdirSync(target, { recursive: true });
+        writeFileSync(join(target, 'SKILL.md'), `# previous ${name}\n`);
+        dirDigests[target] = computeSkillDirDigest(target) as string;
+      }
+    }
+    const record: SkillsInstallRecord = {
+      ref: 'v5.260914.1',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: names,
+      agentDirs: dirs,
+      dirDigests,
+      installedAt: '2026-09-14T00:00:00.000Z',
+    };
+    writeSkillsInstallRecord(genieHome, record);
+    return {
+      dirs,
+      record,
+      spawn: () => {
+        for (const dir of dirs) cpSync(source, dir, { recursive: true });
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+    };
+  }
+
+  test('archives unchanged removed skills after install, records the new inventory, and is idempotent', () => {
+    const { dirs, spawn } = previousInstall();
+    const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+    const first = install();
+    expect(first.ok).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.inventory).toEqual(['review']);
+    const backups = join(genieHome, 'state-backups');
+    const generations = readdirSync(backups);
+    expect(generations).toHaveLength(1);
+    for (const [index, dir] of dirs.entries()) {
+      expect(existsSync(join(dir, 'trace'))).toBe(false);
+      expect(readFileSync(join(dir, 'review', 'SKILL.md'), 'utf8')).toBe('# review\n');
+      const agent = index === 0 ? '.claude' : '.agents';
+      expect(readFileSync(join(backups, generations[0] as string, agent, 'skills', 'trace', 'SKILL.md'), 'utf8')).toBe(
+        '# previous trace\n',
+      );
+    }
+    expect(first.warnings?.filter((line) => line.includes('skills: retired'))).toHaveLength(2);
+    expect(install().ok).toBe(true);
+    expect(readdirSync(backups)).toEqual(generations);
+  });
+
+  test('preserves edited, unrecorded, legacy, and symlinked skills', () => {
+    const { dirs, record, spawn } = previousInstall(['trace', 'perf', 'qa']);
+    const dir = dirs[0] as string;
+    writeFileSync(join(dir, 'trace', 'SKILL.md'), '# user edit\n');
+    delete record.dirDigests?.[join(dir, 'perf')];
+    const foreign = join(home, 'personal');
+    mkdirSync(foreign);
+    writeFileSync(join(foreign, 'SKILL.md'), '# personal\n');
+    rmSync(join(dir, 'qa'), { recursive: true });
+    symlinkSync(foreign, join(dir, 'qa'));
+    mkdirSync(join(dir, 'mine'));
+    writeFileSync(join(dir, 'mine', 'SKILL.md'), '# mine\n');
+    writeSkillsInstallRecord(genieHome, record);
+    const outcome = runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+    expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(dir, 'trace', 'SKILL.md'), 'utf8')).toBe('# user edit\n');
+    expect(readFileSync(join(dir, 'perf', 'SKILL.md'), 'utf8')).toBe('# previous perf\n');
+    expect(readFileSync(join(dir, 'qa', 'SKILL.md'), 'utf8')).toBe('# personal\n');
+    expect(readFileSync(join(dir, 'mine', 'SKILL.md'), 'utf8')).toBe('# mine\n');
+    expect(outcome.warnings?.filter((line) => line.includes('preserved retired skill'))).toHaveLength(3);
+  });
+
+  test('does not follow a redirected agent home or retire paths outside HOME', () => {
+    const { record, spawn } = previousInstall();
+    const external = join(root, 'external', 'skills');
+    mkdirSync(join(external, 'trace'), { recursive: true });
+    writeFileSync(join(external, 'trace', 'SKILL.md'), '# external\n');
+    const redirected = join(home, '.redirected');
+    symlinkSync(join(root, 'external'), redirected);
+    for (const dir of [external, join(redirected, 'skills')]) {
+      record.agentDirs.push(dir);
+      (record.dirDigests as Record<string, string>)[join(dir, 'trace')] = computeSkillDirDigest(
+        join(dir, 'trace'),
+      ) as string;
+    }
+    writeSkillsInstallRecord(genieHome, record);
+    const outcome = runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+    expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(external, 'trace', 'SKILL.md'), 'utf8')).toBe('# external\n');
+    expect(outcome.warnings?.filter((line) => line.includes('preserved retired skill'))).toHaveLength(2);
+  });
+
+  test('failed installation leaves removed skills and the old record untouched', () => {
+    const { dirs, record } = previousInstall();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 1, stdout: '', stderr: 'offline' }),
+    });
+    expect(outcome.ok).toBe(false);
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
+    expect(existsSync(join(genieHome, 'state-backups'))).toBe(false);
+  });
+
+  test('a zero exit without verified replacement bytes cannot retire old skills', () => {
+    const { dirs, record } = previousInstall();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+    expect(outcome.ok).toBe(false);
+    expect(!outcome.ok && outcome.reason).toContain('replacement skills were not verified');
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
+    expect(existsSync(join(genieHome, 'state-backups'))).toBe(false);
+  });
+
+  test.each(['missing', 'edited', 'symlinked'])(
+    'an %s replacement preserves that home without blocking retirement elsewhere',
+    (replacement) => {
+      const { dirs, spawn } = previousInstall();
+      const preserved = dirs[1] as string;
+      const outcome = runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: (...args) => {
+          const result = spawn(...args);
+          const target = join(preserved, 'review');
+          if (replacement === 'edited') writeFileSync(join(target, 'SKILL.md'), '# personal review\n');
+          else {
+            rmSync(target, { recursive: true });
+            if (replacement === 'symlinked') symlinkSync(join(genieHome, 'skills', 'review'), target);
+          }
+          return result;
+        },
+      });
+      expect(outcome.ok).toBe(true);
+      expect(existsSync(join(dirs[0] as string, 'trace'))).toBe(false);
+      expect(readFileSync(join(preserved, 'trace', 'SKILL.md'), 'utf8')).toBe('# previous trace\n');
+      expect(outcome.warnings).toContain(
+        `skills: preserved retired skill ${join(preserved, 'trace')} (replacement set unverified in this home); review it manually`,
+      );
+      expect(readSkillsInstallRecord(genieHome)?.ref).toBe(`v${VERSION_UNDER_TEST}`);
+      expect(readSkillsInstallRecord(genieHome)?.inventory).toEqual(['review']);
+      const generations = readdirSync(join(genieHome, 'state-backups'));
+      expect(generations).toHaveLength(1);
+      expect(
+        readFileSync(
+          join(genieHome, 'state-backups', generations[0] as string, '.claude', 'skills', 'trace', 'SKILL.md'),
+          'utf8',
+        ),
+      ).toBe('# previous trace\n');
+    },
+  );
+
+  test('backup failure preserves the old record and skills so update can retry', () => {
+    const { dirs, record, spawn } = previousInstall();
+    const backups = join(genieHome, 'state-backups');
+    writeFileSync(backups, 'blocked backup destination');
+    const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+    const failed = install();
+    expect(failed.ok).toBe(false);
+    expect(!failed.ok && failed.reason).toContain('could not finalize');
+    expect(!failed.ok && failed.remedy).toContain('genie update');
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(true);
+    rmSync(backups);
+    expect(install().ok).toBe(true);
+    for (const dir of dirs) expect(existsSync(join(dir, 'trace'))).toBe(false);
   });
 });
 
@@ -870,7 +1055,7 @@ describe('runSkillsChannelConvergence', () => {
   });
 
   afterEach(() => {
-    process.exitCode = previousExitCode;
+    process.exitCode = previousExitCode ?? 0;
   });
 
   test('consent none skips the channel entirely', () => {
@@ -1038,7 +1223,7 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
       });
     } finally {
       process.env.PATH = previousPath;
-      process.exitCode = savedExitCode;
+      process.exitCode = savedExitCode ?? 0;
     }
 
     expect(result.status).toBe('installed');
@@ -1087,7 +1272,7 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
       });
     } finally {
       process.env.PATH = previousPath;
-      process.exitCode = savedExitCode;
+      process.exitCode = savedExitCode ?? 0;
     }
 
     const record = readSkillsInstallRecord(genieHome);

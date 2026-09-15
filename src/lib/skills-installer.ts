@@ -48,18 +48,20 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { fsyncPath } from './atomic-fs.js';
+import { fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
 import {
   type CommandResult,
@@ -908,9 +910,65 @@ function resolveAgentDirs(options: {
   return { dirs, warnings };
 }
 
+interface SkillsRetirementContext {
+  home: string;
+  genieHome: string;
+  previous: SkillsInstallRecord;
+  deliveredDigests: ReadonlyMap<string, string | null>;
+  installedDigests: Readonly<Record<string, string>>;
+  backupRoot?: string;
+}
+
+/** Move only a recorded, unchanged directory into an owner-only recovery tree. */
+function archiveRetiredSkill(target: string, context: SkillsRetirementContext): string | null {
+  if (!existsSync(target)) return null;
+  const mirrored = relative(context.home, target);
+  const expected = context.previous.dirDigests?.[target];
+  const contained = mirrored !== '' && !mirrored.startsWith('..') && !isAbsolute(mirrored);
+  // Allow a symlinked HOME, but never follow a redirected agent home below it.
+  const parentMatches =
+    contained && realpathSync(dirname(target)) === join(realpathSync(context.home), dirname(mirrored));
+  if (!parentMatches || expected === undefined || computeSkillDirDigest(target) !== expected) {
+    return `skills: preserved retired skill ${target} (unverified or user-modified); review it manually`;
+  }
+  const replacementReady = [...context.deliveredDigests].every(
+    ([name, digest]) => digest !== null && context.installedDigests[join(dirname(target), name)] === digest,
+  );
+  if (!replacementReady) {
+    const anyReplacementVerified = Object.entries(context.installedDigests).some(
+      ([path, digest]) => context.deliveredDigests.get(basename(path)) === digest,
+    );
+    if (!anyReplacementVerified) throw new Error(`replacement skills were not verified; kept ${target}`);
+    return `skills: preserved retired skill ${target} (replacement set unverified in this home); review it manually`;
+  }
+  if (context.backupRoot === undefined) {
+    const parent = join(context.genieHome, 'state-backups');
+    mkdirSync(parent, { recursive: true, mode: 0o700 });
+    context.backupRoot = mkdtempSync(join(parent, 'skills-retirement-'));
+  }
+  const destination = join(context.backupRoot, mirrored);
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  // Rename preserves all bytes atomically. Across filesystems it fails with the
+  // original intact; never fall back to deleting an unverified copied tree.
+  renameSync(target, destination);
+  fsyncParentDir(destination);
+  fsyncParentDir(target);
+  return `skills: retired ${target} — backed up to ${destination}`;
+}
+
+function retireRemovedSkills(context: SkillsRetirementContext, inventory: readonly string[], warnings: string[]): void {
+  const removed = context.previous.inventory.filter((name) => !inventory.includes(name));
+  for (const agentDir of new Set(context.previous.agentDirs)) {
+    for (const name of removed) {
+      const message = archiveRetiredSkill(join(agentDir, name), context);
+      if (message !== null) warnings.push(message);
+    }
+  }
+}
+
 /**
  * Preflight → collision snapshot → spawn the pinned CLI → (only on a zero exit)
- * discovery scan and record.
+ * discovery scan → archive unchanged retired skills → record.
  * Never throws: every failure is a returned reason plus the remedy command.
  */
 export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOutcome {
@@ -929,6 +987,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // the names the install is about to write. The delivered tree is genie's own
   // and the CLI only reads it, so the value is still the one recorded below.
   const inventory = inventoryFromSkillsDir(skillsRoot);
+  const previous = readSkillsInstallRecord(options.genieHome);
 
   const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, warnings });
 
@@ -986,9 +1045,27 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     installedAt: (options.now ?? (() => new Date()))().toISOString(),
   };
   try {
+    if (previous !== null) {
+      retireRemovedSkills(
+        {
+          home,
+          genieHome: options.genieHome,
+          previous,
+          deliveredDigests: new Map(inventory.map((name) => [name, computeSkillDirDigest(join(skillsRoot, name))])),
+          installedDigests: dirDigests,
+        },
+        inventory,
+        warnings,
+      );
+    }
     writeSkillsInstallRecord(options.genieHome, record);
   } catch (error) {
-    return { ok: false, reason: `could not record the install: ${errorMessage(error)}`, remedy, warnings };
+    return {
+      ok: false,
+      reason: `could not finalize the skills install: ${errorMessage(error)}`,
+      remedy: 'Run: genie update (retries retirement using the previous install record)',
+      warnings,
+    };
   }
   return { ok: true, record, warnings };
 }
