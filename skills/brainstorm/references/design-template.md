@@ -4,9 +4,6 @@
 |-------|-------|
 | **Slug** | `<slug>` |
 | **Date** | YYYY-MM-DD |
-| **WRS** | 100/100 |
-
-<!-- Sections cover the five WRS dimensions plus the chosen approach. -->
 
 ## Problem
 

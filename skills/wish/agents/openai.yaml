@@ -1,4 +1,4 @@
 interface:
-  display_name: "Wish Planner"
-  short_description: "Turn an accepted design into an executable plan"
-  default_prompt: "Turn this accepted, reviewed design into an executable Genie plan."
+  display_name: "Wish"
+  short_description: "Plan scoped work with criteria and review"
+  default_prompt: "Turn this request into a wish using the bundled template, current design evidence, dependency-ordered groups, validation, and independent plan review."
