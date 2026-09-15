@@ -1,7 +1,7 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Registry } from './service';
-import { SKILL_CATEGORIES, type SkillCategory } from './taxonomy';
+import { SKILL_CATEGORIES, SKILL_MUTATES_LEVELS, type SkillCategory, type SkillMutates } from './taxonomy';
 
 /**
  * Read-only catalog of a workspace's Genie skills and saved workflows.
@@ -20,8 +20,8 @@ export interface SkillEntry {
   resources: string[];
   /** Optional flat `category:` frontmatter key, when it names a known category. */
   category?: SkillCategory;
-  /** Optional flat `mutates:` frontmatter key: whether the skill changes repository state. */
-  mutates?: boolean;
+  /** Optional flat `mutates:` frontmatter key: the widest blast radius the skill claims. */
+  mutates?: SkillMutates;
 }
 
 export interface WorkflowEntry {
@@ -64,6 +64,10 @@ function isCategory(value: string | undefined): value is SkillCategory {
   return value !== undefined && (SKILL_CATEGORIES as readonly string[]).includes(value);
 }
 
+function isMutates(value: string | undefined): value is SkillMutates {
+  return value !== undefined && (SKILL_MUTATES_LEVELS as readonly string[]).includes(value);
+}
+
 async function bounded(path: string): Promise<string | undefined> {
   const info = await stat(path).catch(() => undefined);
   if (!info?.isFile() || info.size > MAX_FILE) return undefined;
@@ -90,7 +94,7 @@ export async function readSkills(root: string): Promise<SkillEntry[]> {
       path: `skills/${entry.name}/SKILL.md`,
       resources: siblings.filter((file) => file !== 'SKILL.md').sort(),
       ...(isCategory(category) ? { category } : {}),
-      ...(mutates === 'true' || mutates === 'false' ? { mutates: mutates === 'true' } : {}),
+      ...(isMutates(mutates) ? { mutates } : {}),
     });
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name));

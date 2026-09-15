@@ -20,12 +20,12 @@ async function repo(): Promise<string> {
   await mkdir(join(root, 'skills', 'verify'), { recursive: true });
   await writeFile(
     join(root, 'skills', 'verify', 'SKILL.md'),
-    '---\nname: verify\ndescription: Check a claim\ncategory: verification\nmutates: false\n---\n',
+    '---\nname: verify\ndescription: Check a claim\ncategory: verification\nmutates: none\n---\n',
   );
   await mkdir(join(root, 'skills', 'wish'), { recursive: true });
   await writeFile(
     join(root, 'skills', 'wish', 'SKILL.md'),
-    '---\nname: wish\ndescription: Pour a wish\ncategory: nonsense\nmutates: maybe\n---\n',
+    '---\nname: wish\ndescription: Pour a wish\ncategory: nonsense\nmutates: sometimes\n---\n',
   );
   await mkdir(join(root, 'skills', 'mismatch'), { recursive: true });
   await writeFile(join(root, 'skills', 'mismatch', 'SKILL.md'), '---\nname: other\ndescription: x\n---\n');
@@ -57,7 +57,7 @@ describe('genie catalog is read-only and shape-checked', () => {
     // Absent is legal and common.
     expect(by('council')?.category).toBeUndefined();
     expect(by('council')?.mutates).toBeUndefined();
-    expect(by('verify')).toMatchObject({ category: 'verification', mutates: false });
+    expect(by('verify')).toMatchObject({ category: 'verification', mutates: 'none' });
     // A typo must never invent a category header or a mutation claim.
     expect(by('wish')?.category).toBeUndefined();
     expect(by('wish')?.mutates).toBeUndefined();

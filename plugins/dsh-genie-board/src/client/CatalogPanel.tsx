@@ -209,7 +209,7 @@ function CatalogPanel({
                         <Tag tone="quiet">{entry.phases.length} phases</Tag>
                       )}
                       {!isWorkflow(entry) && entry.mutates !== undefined && (
-                        <Tag tone="quiet">{entry.mutates ? 'mutates' : 'read-only'}</Tag>
+                        <Tag tone="quiet">{entry.mutates === 'none' ? 'read-only' : `mutates: ${entry.mutates}`}</Tag>
                       )}
                     </span>
                     <span className="gb-item-desc">{entry.description}</span>
