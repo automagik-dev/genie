@@ -46,6 +46,16 @@ Because the bytes are a function of the content alone, **importing a committed
 `roadmap.json` and exporting it again reproduces it byte for byte**, and a
 one-card change diffs as that one card rather than as a whole-file rewrite.
 
+That holds only for a snapshot already in canonical form, so **`task sync` owns
+the file's byte form too**: wherever the file's content is the agreed content —
+in sync with the db, or just imported into it — a non-canonical file is rewritten
+in canonical order and the sync line says so
+(`… was rewritten in canonical key order (no board content changed)`). A branch
+whose `roadmap.json` predates the canonical serializer therefore takes its
+reordering once, as its own content-free write, instead of having it ride along
+with the next card and bury that card in a whole-file diff. A `diverged` verdict
+normalizes nothing: it touches neither side, by contract.
+
 **Every snapshot genie emits carries `hire_roster: []`** — stdout, the canonical
 `--write`, and any other `--write` path alike. Hire rows hold machine-local
 worktree paths, and a snapshot is a publishable artifact wherever it is written;

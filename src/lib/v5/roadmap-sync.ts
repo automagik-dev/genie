@@ -22,6 +22,12 @@
  * A marker without one predates the key-sorted hash and is compared with the
  * legacy algorithm, so upgrading genie never by itself reads as "both sides
  * changed"; the next successful sync rewrites it in the current version.
+ *
+ * Sync also owns the snapshot's BYTE form, not just its content: whenever the
+ * file's content is the agreed content it is rewritten in canonical key order
+ * (see normalizeSnapshotFile) so a legacy-ordered snapshot is normalized once,
+ * on its own, instead of turning the next one-card change into a whole-file
+ * rewrite nobody can review.
  */
 
 import type { Database } from 'bun:sqlite';
@@ -173,6 +179,34 @@ export function writeSnapshotFile(target: string, state: unknown): void {
 }
 
 /**
+ * Rewrite a non-canonical snapshot file into canonical bytes WITHOUT changing
+ * its content, and report whether it had to. A snapshot committed before the
+ * canonical serializer — or reflowed by a hand edit — holds the same content in
+ * a different byte form, so EVERY line of it moves the first time genie writes
+ * that file.
+ *
+ * The whole point is separating two things a reviewer cannot separate once they
+ * land together. A legacy-ordered `roadmap.json` still reads and hashes fine
+ * (both are content-addressed, not byte-addressed), so nothing forces it to be
+ * rewritten — until the first real board change does, and then the one-card
+ * diff the reviewer needs is buried in a whole-file rewrite (the dogfood hop saw
+ * 1922 insertions / 1902 deletions for a single new task). Normalizing as its
+ * own no-content-change write makes that rewrite a single legible event, named
+ * in the sync message, after which every diff is the size of its change.
+ *
+ * Only ever called where the file's content is the agreed content (in sync with
+ * the db, or just imported into it). A `diverged` verdict touches nothing.
+ */
+function normalizeSnapshotFile(filePath: string, parsed: unknown): boolean {
+  if (readFileSync(filePath, 'utf-8') === serializeSnapshot(parsed)) return false;
+  writeSnapshotFile(filePath, parsed);
+  return true;
+}
+
+/** The one clause that explains a whole-file diff carrying no content change. */
+const NORMALIZED_NOTE = 'was rewritten in canonical key order (no board content changed).';
+
+/**
  * Baseline the pair an explicit `task export --write` just published, where
  * `state` is the snapshot whose bytes were written to roadmap.json. Both hashes
  * come from that ONE snapshot: re-snapshotting the db here (or re-reading the
@@ -250,8 +284,11 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const fileHash = canonicalHash(parsed);
 
   if (fileHash === dbHash) {
+    const normalized = normalizeSnapshotFile(filePath, parsed);
     writeMarker(markerPath, { fileHash, dbHash });
-    return { action: 'none' };
+    return normalized
+      ? { action: 'none', message: `Board and snapshot are in sync; ${filePath} ${NORMALIZED_NOTE}` }
+      : { action: 'none' };
   }
 
   // Compare each side against the baseline in the algorithm that baseline was
@@ -284,8 +321,14 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
         message: `${filePath} could not be imported: ${err.message} ${resolution}`,
       };
     }
+    const normalized = normalizeSnapshotFile(filePath, parsed);
     writeMarker(markerPath, { fileHash, dbHash: canonicalHash(roadmapSnapshot(db)) });
-    return { action: 'imported', message: `Board refreshed from ${filePath}.` };
+    return {
+      action: 'imported',
+      message: normalized
+        ? `Board refreshed from ${filePath}, which ${NORMALIZED_NOTE}`
+        : `Board refreshed from ${filePath}.`,
+    };
   }
   if (dbChanged && !fileChanged) {
     writeSnapshotFile(filePath, dbState);

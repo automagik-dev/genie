@@ -1257,8 +1257,12 @@ describe('roadmap.json canonical sync', () => {
     expect(imported.stderr).toBe('');
     const settled = await cli(repo, 'sync');
     expect(settled.code).toBe(0);
-    expect(settled.stdout).toContain('in sync (none)');
+    // Still `none` — the reordering is not a change. Sync does normalize the
+    // bytes on its way past, which is why the line is not the bare default.
+    expect(settled.stdout).toContain('in sync');
     expect(settled.stderr).toBe('');
+    const settledBytes = readFileSync(snapshotPath, 'utf-8');
+    expect(settledBytes).toBe(serializeSnapshot(JSON.parse(settledBytes)));
   });
 
   test.each(['content', 'array order'])('sync detects changed %s after a canonical baseline', async (change) => {
@@ -1767,6 +1771,25 @@ describe('task export never publishes hire_roster', () => {
  * rewrites the whole 2k-line file (1922 insertions / 1902 deletions on the
  * dogfood host, whose committed file predated the canonical serializer).
  */
+/** Does every line of `before` still appear in `after`, in order? A pure insertion. */
+function isSubsequence(before: string[], after: string[]): boolean {
+  let cursor = 0;
+  for (const line of before) {
+    cursor = after.indexOf(line, cursor);
+    if (cursor === -1) return false;
+    cursor += 1;
+  }
+  return true;
+}
+
+/** Re-emit a parsed snapshot with every object's keys reversed: same content, non-canonical bytes. */
+function reverseKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseKeyOrder);
+  if (value === null || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>).reverse();
+  return Object.fromEntries(entries.map(([key, inner]) => [key, reverseKeyOrder(inner)]));
+}
+
 describe('committed roadmap.json round-trip', () => {
   const COMMITTED = join(import.meta.dir, '..', '..', '.genie', 'roadmap.json');
 
@@ -1794,9 +1817,42 @@ describe('committed roadmap.json round-trip', () => {
     const before = text.split('\n');
     const after = readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8').split('\n');
     // A pure insertion: every original line survives, in order.
-    const kept = after.filter((line) => before.includes(line));
+    expect(isSubsequence(before, after)).toBe(true);
     expect(after.length - before.length).toBeLessThan(40);
-    expect(kept.length).toBeGreaterThanOrEqual(before.length);
+  });
+
+  /**
+   * The residual half of m11, at the CLI boundary the git hooks actually use.
+   * `import → export` being byte-stable only helps a snapshot that is ALREADY
+   * canonical; a branch whose roadmap.json predates the canonical serializer
+   * (origin/main's own file, top-level `schemaVersion, meta, boards, tasks, …`
+   * and every row in physical column order) still had its reordering ride along
+   * with the next content change — the 1922/1902 diff the dogfood hop reported.
+   * `task sync` now lands the reordering alone, and says so.
+   */
+  test('a legacy-ordered snapshot is reordered by its own sync, not by the next card', async () => {
+    const canonical = readFileSync(COMMITTED, 'utf-8');
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    const roadmap = join(repo, '.genie', 'roadmap.json');
+    // The same content an older genie would have committed: reversed key order.
+    writeFileSync(roadmap, `${JSON.stringify(reverseKeyOrder(JSON.parse(canonical)), null, 2)}\n`);
+    expect(readFileSync(roadmap, 'utf-8')).not.toBe(canonical);
+
+    // Sync #1: the reordering, alone. It carries no board change and says so.
+    const first = await cli(repo, 'sync');
+    expect(first.code).toBe(0);
+    expect(first.stdout).toContain('canonical key order');
+    expect(first.stdout).toContain('no board content changed');
+    expect(readFileSync(roadmap, 'utf-8')).toBe(canonical);
+
+    // Sync #2: one new card, and the file diffs by that card alone.
+    expect((await cli(repo, 'create', '--title', 'one more card')).code).toBe(0);
+    const second = await cli(repo, 'sync');
+    expect(second.code).toBe(0);
+    const before = canonical.split('\n');
+    const after = readFileSync(roadmap, 'utf-8').split('\n');
+    expect(isSubsequence(before, after)).toBe(true);
+    expect(after.length - before.length).toBeLessThan(40);
   });
 });
 
