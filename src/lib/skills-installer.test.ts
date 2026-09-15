@@ -78,11 +78,14 @@ function okRunner(record: { argv: string[][] }): CommandRunner {
  * its own (see "a zero exit that wrote no verifiable skill directory"), so a
  * test that wants a SUCCESSFUL install has to deliver something.
  */
-function deliveringOkRunner(record: { argv: string[][] }): CommandRunner {
+function deliveringOkRunner(record: { argv: string[][] }, extraHomes: string[] = []): CommandRunner {
   const inner = okRunner(record);
   return (command, args, options) => {
     const source = args[args.indexOf('add') + 1] as string;
-    for (const entry of existingAgentSkillHomes(home)) cpSync(source, entry.dir, { recursive: true });
+    const targets = [...existingAgentSkillHomes(home).map((entry) => entry.dir), ...extraHomes];
+    // `--all` writes every agent home it detects, which on a real host is far
+    // more than the four-row known table: `extraHomes` is how a test says so.
+    for (const dir of targets) cpSync(source, dir, { recursive: true });
     return inner(command, args, options);
   };
 }
@@ -365,6 +368,106 @@ describe('runSkillsInstall', () => {
     expect(existsSync(join(backupRoot, '.Trash'))).toBe(false);
     expect(readFileSync(join(stray, 'SKILL.md'), 'utf8')).toBe('# someone else\n');
     expect(readFileSync(join(trashed, 'SKILL.md'), 'utf8')).toBe('# deleted by the user\n');
+  });
+
+  /**
+   * The other half of M4. Narrowing the CANDIDATE set to the four-row known
+   * table plus the previous record would trade the over-collection for a
+   * silent under-collection: `--all` wrote 57 homes on the dogfood host, 53 of
+   * them outside that table. Detection therefore still runs over the whole
+   * bounded `$HOME` walk and stages a copy; only RETENTION is filtered, after
+   * discovery knows what the install wrote.
+   */
+  test('a foreign skill in an unknown home the install writes is backed up on a FIRST install', () => {
+    fixtureSkillsTree(['wish']);
+    // No previous record, and a home the known table never names.
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    mkdirSync(join(astrbot, 'wish'), { recursive: true });
+    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+    const stray = join(home, '.Trash', 'skills', 'wish');
+    mkdirSync(stray, { recursive: true });
+    writeFileSync(join(stray, 'SKILL.md'), '# deleted by the user\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [astrbot]),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok && outcome.record.agentDirs).toContain(astrbot);
+    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
+    const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
+    expect(line).toContain(join(astrbot, 'wish'));
+    const backupRoot = line.split('backed up to ')[1] as string;
+    // The user's bytes survived the overwrite, and the stray tree was dropped.
+    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+      '# a foreign wish\n',
+    );
+    expect(existsSync(join(backupRoot, '.Trash'))).toBe(false);
+    expect(readFileSync(join(stray, 'SKILL.md'), 'utf8')).toBe('# deleted by the user\n');
+  });
+
+  test('a foreign skill in an agent home that appeared SINCE the record is backed up', () => {
+    fixtureSkillsTree(['wish']);
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    mkdirSync(join(astrbot, 'wish'), { recursive: true });
+    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+    // A record that predates that home: it names only the claude home.
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(claudeSkills, { recursive: true });
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.15',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      installedAt: '2026-08-30T00:00:00.000Z',
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [astrbot]),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
+    const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
+    const backupRoot = line.split('backed up to ')[1] as string;
+    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+      '# a foreign wish\n',
+    );
+  });
+
+  test('a failed install discards nothing it staged and summarizes the unknown remainder', () => {
+    fixtureSkillsTree(['wish']);
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    mkdirSync(join(astrbot, 'wish'), { recursive: true });
+    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: () => ({ exitCode: 7, stdout: '', stderr: 'ENOTFOUND registry.npmjs.org\n' }),
+    });
+
+    expect(outcome.ok).toBe(false);
+    const summary = (outcome.ok === false ? (outcome.warnings ?? []) : []).find((entry) =>
+      entry.includes('further foreign skill dir(s)'),
+    ) as string;
+    // One line, not one per directory, and the staged copy is still there.
+    expect(summary).toContain('1 further foreign skill dir(s) were staged under ');
+    expect(summary).toContain('the written set is unknown, so none was discarded');
+    const backupRoot = summary.split('were staged under ')[1]?.split(' before the install')[0] as string;
+    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+      '# a foreign wish\n',
+    );
   });
 
   test("stderr's last line wins over stdout when both streams are populated", () => {
