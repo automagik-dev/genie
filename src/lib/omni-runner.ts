@@ -2556,7 +2556,10 @@ async function settleCleanupAction(
     ]);
     return true;
   } catch (error) {
-    errors.push(error instanceof Error ? error : new Error(`${label}: ${String(error)}`));
+    // Always carry the step's label: the operator reads these as a single
+    // shutdown line, where `nats close exploded` alone names no step.
+    const detail = error instanceof Error ? error.message : String(error);
+    errors.push(new Error(detail.startsWith(label) ? detail : `${label}: ${detail}`));
     return false;
   } finally {
     if (deadline) clearTimeout(deadline);
@@ -2716,7 +2719,7 @@ export async function runOmniServe(opts: RunOmniServeOptions): Promise<void> {
       try {
         lease.release();
       } catch (error) {
-        cleanupErrors.push(error instanceof Error ? error : new Error(`Omni lease release: ${String(error)}`));
+        cleanupErrors.push(new Error(`Omni lease release: ${error instanceof Error ? error.message : String(error)}`));
       }
     }
 
