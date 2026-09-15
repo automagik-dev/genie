@@ -34,6 +34,14 @@ the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
 its sidecars) plus legacy v4 state paths — is gitignored; the markdown
 documents are committed.
 
+`roadmap.json` (the canonical board snapshot, tracked) is written in **canonical
+JSON — every object's keys sorted, recursively** — so its bytes depend on the
+snapshot's content alone and never on the exporting database's physical column
+order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
+`.genie/roadmap-sync` marker records the hash algorithm behind its baseline pair
+as `hashVersion`, and a marker without one is compared with the pre-sorting hash
+so upgrading genie never by itself reads as divergence.
+
 ### Worktree sharing
 
 All linked worktrees of a repository share **one** `genie.db`. The path is

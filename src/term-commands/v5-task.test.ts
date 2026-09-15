@@ -1380,7 +1380,13 @@ describe('roadmap.json canonical sync', () => {
       writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
       const diverged = await cli(clone, 'sync');
       expect(diverged.code).toBe(1);
-      expect(diverged.stdout).toContain('Nothing was overwritten');
+      // The refusal is a warning on stderr (the git hooks run `task sync
+      // || true`, so the exit code alone reaches nobody) and names both
+      // resolving commands.
+      expect(diverged.stderr).toContain('Nothing was overwritten');
+      expect(diverged.stderr).toContain('genie task import --replace');
+      expect(diverged.stderr).toContain('genie task export --write');
+      expect(diverged.stdout).not.toContain('Nothing was overwritten');
       expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
       const listed = await cli(clone, 'list');
       expect(listed.stdout).toContain('b-diverging card'); // local state kept
