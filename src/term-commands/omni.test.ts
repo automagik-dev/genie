@@ -373,3 +373,229 @@ describe('omni handshake keypair provisioning', () => {
     expect(() => omniTest.assertNotInsideGitRepo(join(process.cwd(), '.genie', 'keys'))).toThrow(/git working tree/);
   });
 });
+
+/**
+ * Dogfood r2 §3.3 #4 — SIGINT/SIGTERM were ignored for the entire ~20 s NATS
+ * connect: `process.once('SIGINT', stop)` aborted a controller the connect path
+ * never observed, so Ctrl-C left the operator waiting for the transport's own
+ * timeout (measured 19 255 ms / 19 351 ms).
+ */
+describe('omni serve — a stop signal during the NATS connect', () => {
+  const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
+
+  /** A socket that accepts the connection and then never speaks NATS, so the
+   *  transport sits in its retry window instead of failing fast. */
+  function silentListener(): { port: number; stop: () => void } {
+    const server = Bun.listen({
+      hostname: '127.0.0.1',
+      port: 0,
+      socket: { data: () => {}, open: () => {}, close: () => {}, error: () => {} },
+    });
+    return { port: server.port, stop: () => server.stop(true) };
+  }
+
+  async function serveThenSignal(signal: 'SIGINT' | 'SIGTERM'): Promise<{
+    code: number | null;
+    signalled: number;
+    stdout: string;
+    stderr: string;
+  }> {
+    const listener = silentListener();
+    const home = mkdtempSync(join(tmpdir(), 'omni-serve-signal-'));
+    try {
+      const proc = Bun.spawn(['bun', GENIE_CLI, 'omni', 'serve'], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          GENIE_HOME: home,
+          OMNI_APPROVALS_ENABLED: '1',
+          OMNI_INSTANCE: 'inst-A',
+          OMNI_APPROVAL_CHAT: 'chat-42',
+          OMNI_NATS_URL: `nats://127.0.0.1:${listener.port}`,
+        },
+      });
+      // Let the process reach the connect, then ask it to stop.
+      await Bun.sleep(1_500);
+      const sentAt = Date.now();
+      proc.kill(signal === 'SIGINT' ? 2 : 15);
+      const code = await proc.exited;
+      const signalled = Date.now() - sentAt;
+      return {
+        code,
+        signalled,
+        stdout: await new Response(proc.stdout).text(),
+        stderr: await new Response(proc.stderr).text(),
+      };
+    } finally {
+      listener.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test('SIGINT aborts the in-flight connect within a second and exits 130', async () => {
+    const res = await serveThenSignal('SIGINT');
+    expect(res.signalled).toBeLessThan(1_000);
+    expect(res.code).toBe(130);
+    expect(res.stdout.trimEnd().split('\n')).toEqual(['[omni] stopped']);
+    expect(res.stderr).toBe('');
+  }, 30_000);
+
+  test('SIGTERM does the same and exits 143', async () => {
+    const res = await serveThenSignal('SIGTERM');
+    expect(res.signalled).toBeLessThan(1_000);
+    expect(res.code).toBe(143);
+    expect(res.stdout.trimEnd().split('\n')).toEqual(['[omni] stopped']);
+    expect(res.stderr).toBe('');
+  }, 30_000);
+});
+
+/**
+ * Dogfood r2 §3.3 #8–#11 — every omni failure path is ONE line that names what
+ * to check: the URL that could not be reached, the lease that is held, or the
+ * settings that are missing (in both their config and `OMNI_*` spellings).
+ */
+describe('omni failure paths are one actionable line (r2 §3.3 #8–#11)', () => {
+  const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
+  /** Port 1 is privileged and never listening: the connection is refused at once. */
+  const UNREACHABLE = 'http://127.0.0.1:1';
+
+  function runOmni(args: string[], env: Record<string, string>, home: string) {
+    const res = Bun.spawnSync(['bun', GENIE_CLI, 'omni', ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        NO_COLOR: '1',
+        GENIE_HOME: home,
+        OMNI_APPROVALS_ENABLED: '',
+        OMNI_INSTANCE: '',
+        OMNI_APPROVAL_CHAT: '',
+        OMNI_API_URL: '',
+        OMNI_API_KEY: '',
+        OMNI_NATS_URL: '',
+        ...env,
+      },
+    });
+    return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
+  }
+
+  const homes: string[] = [];
+  afterEach(() => {
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  });
+
+  function sandbox(): string {
+    const home = mkdtempSync(join(tmpdir(), 'omni-failure-'));
+    homes.push(home);
+    return home;
+  }
+
+  /** Hold the machine-wide service lease in `home` the way a resident would. */
+  function seedHeldServiceLease(home: string): void {
+    const seeded = Bun.spawnSync(
+      [
+        'bun',
+        '-e',
+        [
+          `const { OMNI_SERVICE_LEASE_NAME, acquireServiceLeaseEpoch, openGlobalDb } = await import(${JSON.stringify(join(import.meta.dir, '..', 'lib', 'v5', 'global-db.ts'))});`,
+          'const db = openGlobalDb();',
+          "acquireServiceLeaseEpoch(db, OMNI_SERVICE_LEASE_NAME, 'other-resident', Date.now(), 300000);",
+          'db.close();',
+        ].join('\n'),
+      ],
+      { env: { ...process.env, GENIE_HOME: home }, stdout: 'pipe', stderr: 'pipe' },
+    );
+    if (seeded.exitCode !== 0) throw new Error(`could not seed the lease: ${seeded.stderr.toString()}`);
+  }
+
+  /** Diagnostic lines only — the signature helper's advisory notes are not failures. */
+  function diagnostics(stderr: string): string[] {
+    return stderr
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('[omni-signature]'));
+  }
+
+  test('handshake names the URL it could not reach, and never a stack', () => {
+    const res = runOmni(['handshake'], { OMNI_API_URL: UNREACHABLE, OMNI_API_KEY: 'dummy' }, sandbox());
+
+    expect(res.code).toBe(1);
+    expect(diagnostics(res.stderr)).toHaveLength(1);
+    expect(res.stderr).toContain(`${UNREACHABLE}/api/v2/trust/handshake`);
+    expect(res.stderr).toContain('OMNI_API_URL');
+    expect(res.stderr).not.toContain('    at ');
+    expect(res.stderr).not.toContain('Bun v');
+  });
+
+  test('test-approval --live reports an unreachable endpoint, not a pending approval', () => {
+    const res = runOmni(
+      ['test-approval', '--live'],
+      {
+        OMNI_APPROVALS_ENABLED: '1',
+        OMNI_INSTANCE: 'inst-A',
+        OMNI_APPROVAL_CHAT: 'chat-42',
+        OMNI_API_URL: UNREACHABLE,
+        OMNI_API_KEY: 'dummy',
+      },
+      sandbox(),
+    );
+
+    expect(res.code).toBe(1);
+    expect(diagnostics(res.stderr)).toHaveLength(1);
+    expect(res.stderr).toContain('could not deliver the approval message');
+    expect(res.stderr).toContain(UNREACHABLE);
+    expect(res.stderr).not.toContain('status=pending');
+    expect(res.stderr).not.toContain('    at ');
+  });
+
+  test('a held service lease is a diagnostic, not an uncaught exception', () => {
+    const home = sandbox();
+    seedHeldServiceLease(home);
+
+    const res = runOmni(
+      ['test-approval', '--live'],
+      {
+        OMNI_APPROVALS_ENABLED: '1',
+        OMNI_INSTANCE: 'inst-A',
+        OMNI_APPROVAL_CHAT: 'chat-42',
+        OMNI_API_URL: UNREACHABLE,
+        OMNI_API_KEY: 'dummy',
+      },
+      home,
+    );
+
+    expect(res.code).toBe(1);
+    expect(diagnostics(res.stderr)).toHaveLength(1);
+    expect(res.stderr).toContain('owns the machine-wide service lease');
+    expect(res.stderr).toContain('genie omni serve');
+    expect(res.stderr).not.toContain('    at ');
+    expect(res.stderr).not.toContain('Bun v');
+  });
+
+  test('the not-enabled refusal names the OMNI_* env vars, not just the config keys', () => {
+    const res = runOmni(
+      ['test-approval', '--live'],
+      { OMNI_APPROVALS_ENABLED: '1', OMNI_INSTANCE: 'inst-A' },
+      sandbox(),
+    );
+
+    expect(res.code).toBe(1);
+    expect(diagnostics(res.stderr)).toHaveLength(1);
+    expect(res.stderr).toContain('OMNI_APPROVAL_CHAT');
+    expect(res.stderr).not.toContain('OMNI_INSTANCE');
+  });
+
+  test('omni serve names every missing setting in both spellings', () => {
+    const res = runOmni(['serve'], {}, sandbox());
+
+    expect(res.code).toBe(1);
+    expect(diagnostics(res.stderr)).toHaveLength(1);
+    expect(res.stderr).toContain('OMNI_APPROVALS_ENABLED=1');
+    expect(res.stderr).toContain('OMNI_INSTANCE');
+    expect(res.stderr).toContain('OMNI_APPROVAL_CHAT');
+    expect(res.stderr).toContain('omni.approvals.enabled=true');
+  });
+});

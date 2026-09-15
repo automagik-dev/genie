@@ -28,7 +28,7 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
 import { colorizeFor } from './lib/term-color.js';
-import { printErr, writeErr } from './lib/term-output.js';
+import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
@@ -260,4 +260,8 @@ registerOmniCommands(program);
 
 installWorkspaceCheck(program);
 
-await program.parseAsync(process.argv);
+// One process-level broken-pipe guard for the whole CLI. `genie task status
+// <id> | head -1` closes the reader before the producer is done; without this
+// the EPIPE surfaced as an uncaught Bun stack trace and exit 1, so a claim that
+// had already been committed read as a failure (2026-09-15 dogfood r2 §3.2 C).
+await runUnderBrokenPipeGuard(() => program.parseAsync(process.argv).then(() => undefined));

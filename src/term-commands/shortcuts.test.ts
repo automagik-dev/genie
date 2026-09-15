@@ -3,10 +3,10 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rm
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  SHORTCUTS_NON_INTERACTIVE_MESSAGE,
-  SHORTCUTS_UNANSWERED_MESSAGE,
   expectedSnippetLines,
   removeMarkedContent,
+  shortcutsNonInteractiveMessage,
+  shortcutsUnansweredMessage,
 } from './shortcuts.js';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
@@ -151,7 +151,7 @@ describe('removeMarkedContent', () => {
 describe('fenced blocks (current install format)', () => {
   /** Install via the real CLI so the file carries the current fenced format. */
   function cliInstall(): void {
-    const res = runShortcuts(['shortcuts', 'install'], 'y\ny\n');
+    const res = runShortcuts(['shortcuts', 'install', '--yes'], '');
     if (res.code !== 0) throw new Error(`install failed: ${res.stderr}`);
   }
 
@@ -183,12 +183,12 @@ describe('shortcuts CLI round-trip', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\nalias g=git\n');
     const original = readFileSync(zshrc(), 'utf-8');
 
-    const installed = runShortcuts(['shortcuts', 'install'], 'y\ny\n');
+    const installed = runShortcuts(['shortcuts', 'install', '--yes'], '');
     expect(installed.code).toBe(0);
     expect(existsSync(tmuxConf())).toBe(true);
     expect(readFileSync(zshrc(), 'utf-8')).not.toBe(original);
 
-    const uninstalled = runShortcuts(['shortcuts', 'uninstall'], 'y\ny\n');
+    const uninstalled = runShortcuts(['shortcuts', 'uninstall', '--yes'], '');
     expect(uninstalled.code).toBe(0);
     expect(uninstalled.stdout).toContain('✅ Uninstallation complete!');
     expect(readFileSync(zshrc(), 'utf-8')).toBe(original);
@@ -197,33 +197,67 @@ describe('shortcuts CLI round-trip', () => {
 
   test('a second uninstall is a no-op and says so', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\n');
-    runShortcuts(['shortcuts', 'install'], 'y\ny\n');
-    const first = runShortcuts(['shortcuts', 'uninstall'], 'y\ny\n');
+    runShortcuts(['shortcuts', 'install', '--yes'], '');
+    const first = runShortcuts(['shortcuts', 'uninstall', '--yes'], '');
     expect(first.stdout).toContain('✅ Uninstallation complete!');
     const zshAfterFirst = readFileSync(zshrc(), 'utf-8');
 
-    const second = runShortcuts(['shortcuts', 'uninstall'], 'y\ny\n');
+    const second = runShortcuts(['shortcuts', 'uninstall', '--yes'], '');
     expect(second.code).toBe(0);
     expect(second.stdout).toContain('has no genie shortcuts');
     expect(readFileSync(zshrc(), 'utf-8')).toBe(zshAfterFirst);
   });
+});
 
-  test('declining with n leaves files untouched', () => {
+/**
+ * The prompt machinery itself still has to work — it is what a real terminal
+ * run uses. The CLI can no longer reach it off a TTY (see the non-interactive
+ * contract below), so the decline path is driven through `installShortcuts`
+ * directly, with `canPrompt` forced on and answers on stdin.
+ */
+describe('prompted run (the TTY path, driven directly)', () => {
+  function runPrompted(answers: string): { code: number; stdout: string; stderr: string } {
+    const runner = join(dir, 'runner.ts');
+    writeFileSync(
+      runner,
+      [
+        `import { installShortcuts } from ${JSON.stringify(realpathSync(join(import.meta.dir, 'shortcuts.ts')))};`,
+        'const outcome = await installShortcuts({ canPrompt: true });',
+        'process.stdout.write(`outcome=${outcome}\n`);',
+        '',
+      ].join('\n'),
+    );
+    const cmd = `printf '%b' ${JSON.stringify(answers)} | ${JSON.stringify(process.execPath)} ${JSON.stringify(runner)}`;
+    const res = Bun.spawnSync(['/bin/sh', '-c', cmd], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 20_000,
+      env: { ...process.env, HOME: dir, PATH: '/usr/bin:/bin' },
+    });
+    return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
+  }
+
+  test('declining every target writes nothing and is a decision, not a failure', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\n');
     const original = readFileSync(zshrc(), 'utf-8');
 
-    runShortcuts(['shortcuts', 'install'], 'n\nn\n');
+    const res = runPrompted('n\nn\n');
+
+    expect(res.stdout).toContain('Add shortcuts to');
+    expect(res.stdout).toContain('outcome=declined');
+    expect(res.stdout).not.toContain('Installation complete!');
     expect(readFileSync(zshrc(), 'utf-8')).toBe(original);
     expect(existsSync(tmuxConf())).toBe(false);
   });
 
-  test('declining with n is a decision, not a failure — exit 0 and a truthful banner', () => {
+  test('answers that run out mid-run are unanswered, not a partial success', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\n');
-    const res = runShortcuts(['shortcuts', 'install'], 'n\nn\n');
-    expect(res.code).toBe(0);
-    // The success banner would be a lie: nothing was installed.
-    expect(res.stdout).not.toContain('Installation complete!');
-    expect(res.stdout).toContain('every target was declined');
+
+    const res = runPrompted('y\n');
+
+    expect(res.stdout).toContain('outcome=unanswered');
+    expect(res.stderr).toContain(shortcutsUnansweredMessage('install'));
+    expect(readFileSync(zshrc(), 'utf-8')).toBe('export EDITOR=vim\n');
   });
 });
 
@@ -239,7 +273,7 @@ describe('shortcuts non-interactive contract (M5)', () => {
   test('--no-interactive refuses on one stderr line, exits 2, and writes nothing', () => {
     const res = runShortcuts(['--no-interactive', 'shortcuts', 'install'], '');
     expect(res.code).toBe(2);
-    expect(res.stderr.trim()).toBe(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    expect(res.stderr.trim()).toBe(shortcutsNonInteractiveMessage('install'));
     expect(res.stdout).not.toContain('Installation complete!');
     expect(res.stdout).not.toContain('Add shortcuts to'); // no prompt was rendered
     expect(existsSync(tmuxConf())).toBe(false);
@@ -255,24 +289,59 @@ describe('shortcuts non-interactive contract (M5)', () => {
     expect(readFileSync(join(dir, '.bashrc'), 'utf-8')).toContain('>>> genie shortcuts');
   });
 
-  test('EOF on stdin exits 2 with a reason instead of reporting success', () => {
+  /**
+   * Dogfood r2 §3.3 #2: the refusal was right, but stdout first carried
+   * `Add shortcuts to …/.tmux.conf? [Y/n] ⏭️ Skipped tmux.conf — no answer on
+   * stdin`. A question nobody can answer must never be drawn.
+   */
+  test('a non-TTY stdin refuses before any question reaches stdout', () => {
     const res = runShortcuts(['shortcuts', 'install'], '');
     expect(res.code).toBe(2);
-    expect(res.stderr.trim()).toBe(SHORTCUTS_UNANSWERED_MESSAGE);
+    expect(res.stderr.trim()).toBe(shortcutsNonInteractiveMessage('install'));
+    expect(res.stdout).not.toContain('Add shortcuts to');
+    expect(res.stdout).not.toContain('[Y/n]');
+    expect(res.stdout).not.toContain('Skipped');
     expect(res.stdout).not.toContain('Installation complete!');
     expect(existsSync(tmuxConf())).toBe(false);
     expect(existsSync(zshrc())).toBe(false);
     expect(existsSync(join(dir, '.bashrc'))).toBe(false);
   });
 
-  test('stdin that runs out mid-run is a failure, not a partial success', () => {
+  test('piped answers are refused too — nothing is half-written', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\n');
-    // One answer, two targets: tmux.conf is written, the rc file never gets asked.
     const res = runShortcuts(['shortcuts', 'install'], 'y\n');
     expect(res.code).toBe(2);
-    expect(res.stderr.trim()).toBe(SHORTCUTS_UNANSWERED_MESSAGE);
-    expect(res.stdout).not.toContain('Installation complete!');
+    expect(res.stderr.trim()).toBe(shortcutsNonInteractiveMessage('install'));
+    expect(res.stdout).not.toContain('Add shortcuts to');
+    expect(existsSync(tmuxConf())).toBe(false);
     expect(readFileSync(zshrc(), 'utf-8')).toBe('export EDITOR=vim\n');
+  });
+
+  /**
+   * Dogfood r2 §3.3 #3: the old wording said "Re-run with --yes", and
+   * `genie --no-interactive --yes shortcuts install` dies at Commander's parse
+   * with `unknown option '--yes'`. The remedy must be copy-pasteable.
+   */
+  test('the refusal names an invocation that actually works', () => {
+    const refusal = runShortcuts(['shortcuts', 'install'], '');
+    const remedy = /Run: (genie shortcuts install --yes)/.exec(refusal.stderr)?.[1];
+    expect(remedy).toBe('genie shortcuts install --yes');
+
+    const applied = runShortcuts((remedy as string).split(' ').slice(1), '');
+    expect(applied.code).toBe(0);
+    expect(applied.stdout).toContain('Installation complete!');
+  });
+
+  test('the uninstall refusal names the uninstall remedy, not the install one', () => {
+    const res = runShortcuts(['shortcuts', 'uninstall'], '');
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim()).toBe(shortcutsNonInteractiveMessage('uninstall'));
+    expect(res.stderr).toContain('Run: genie shortcuts uninstall --yes');
+  });
+
+  test('the unanswered message is verb-scoped too', () => {
+    expect(shortcutsUnansweredMessage('install')).toContain('Run: genie shortcuts install --yes');
+    expect(shortcutsUnansweredMessage('uninstall')).toContain('Run: genie shortcuts uninstall --yes');
   });
 
   test('uninstall honours the same contract', () => {
@@ -280,7 +349,7 @@ describe('shortcuts non-interactive contract (M5)', () => {
 
     const refused = runShortcuts(['--no-interactive', 'shortcuts', 'uninstall'], '');
     expect(refused.code).toBe(2);
-    expect(refused.stderr.trim()).toBe(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    expect(refused.stderr.trim()).toBe(shortcutsNonInteractiveMessage('uninstall'));
     expect(readFileSync(tmuxConf(), 'utf-8')).toContain('>>> genie shortcuts');
 
     const applied = runShortcuts(['--no-interactive', 'shortcuts', 'uninstall', '--yes'], '');
