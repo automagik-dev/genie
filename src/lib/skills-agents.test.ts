@@ -52,6 +52,20 @@ describe('the mirrored skills.sh 1.5.23 agent registry', () => {
     expect(agentSkillsHome(home, spec('goose'))).toBe(join(home, '.config', 'goose', 'skills'));
   });
 
+  /**
+   * The module header used to file `zed` under "no home-relative detection",
+   * but the pinned CLI probes `$XDG_CONFIG_HOME/zed` (default `~/.config/zed`),
+   * so a Zed-only host got no install at all. Zed is universal, so it writes
+   * the shared `~/.agents/skills`, never a product home of its own.
+   */
+  test('a Zed-only host is detected and writes the shared ~/.agents/skills home', () => {
+    expect(agentSkillsHome(home, spec('zed'))).toBe(join(home, '.agents', 'skills'));
+    expect(agentProductInstalled(home, spec('zed'))).toBe(false);
+    mkdirSync(join(home, '.config', 'zed'), { recursive: true });
+    expect(agentProductInstalled(home, spec('zed'))).toBe(true);
+    expect(selectSkillsCliAgents({ home }).agents).toEqual(['zed']);
+  });
+
   test('detection is product-root existence, nothing else', () => {
     expect(agentProductInstalled(home, spec('openclaw'))).toBe(false);
     mkdirSync(join(home, '.moltbot'), { recursive: true });

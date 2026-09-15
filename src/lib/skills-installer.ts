@@ -272,6 +272,28 @@ const skillsInstallRecordSchema = z.object({
    * record already written and silently turn `genie uninstall` into a no-op.
    */
   preserved: z.array(skillsPreservedSchema).optional(),
+  /**
+   * How this record's `agentDirs` were chosen — the ONLY durable proof of who
+   * created the product homes they sit in.
+   *
+   * `'explicit'` means the run that wrote this record named its agents with an
+   * explicit `--agent <name>` list drawn from products already installed, so it
+   * created NO product home. A record without the field predates that change
+   * and was therefore written by an `--all` run, which materialized every
+   * product home in the pinned CLI's 77-agent registry.
+   *
+   * That distinction is what makes the genie-created-home prune honest. Content
+   * alone cannot make it: after a correct install an operator's own `~/.claude`
+   * holding only `skills/` is byte-for-byte what a genie-materialized home
+   * looks like, so a content-only proof hands back the operator's real home on
+   * the second run (r2 verify §6/§7). Gated on this field the prune is what it
+   * always claimed to be — a ONE-SHOT migration off the `--all` era.
+   *
+   * Optional for the same decision-2 reason as `source`: a required field would
+   * invalidate every record already on disk and turn `genie uninstall` into a
+   * silent no-op over the directories those records still authorize.
+   */
+  agentSelection: z.literal('explicit').optional(),
   installedAt: z.string().min(1),
 });
 
@@ -954,9 +976,22 @@ export function buildSkillsAddArgv(options: { sourceRoot: string; agents: readon
   ];
 }
 
+/**
+ * One argv token, rendered so a shell reproduces it verbatim.
+ *
+ * The remedy line is COPY-PASTED into a shell, and `--skill *` is not the argv
+ * genie spawns: an unquoted `*` expands against the operator's cwd, so the
+ * pasted command installs whatever files happen to sit there. Quoting restores
+ * the documented `--skill '*'`.
+ */
+function shellQuoteArgvToken(token: string): string {
+  if (token !== '' && /^[A-Za-z0-9_@%+=:,./-]+$/.test(token)) return token;
+  return `'${token.replaceAll("'", String.raw`'\''`)}'`;
+}
+
 /** The operator-facing remedy line for any skills-channel failure. */
 export function skillsInstallRemedy(sourceRoot: string, agents: readonly string[]): string {
-  return `Run: ${buildSkillsAddArgv({ sourceRoot, agents }).join(' ')}`;
+  return `Run: ${buildSkillsAddArgv({ sourceRoot, agents }).map(shellQuoteArgvToken).join(' ')}`;
 }
 
 export type ExecutableProbe = (name: string) => string | null;
@@ -1530,19 +1565,41 @@ function moveProductRoot(source: string, destination: string, rename: (a: string
 }
 
 /**
+ * True when the previous record proves genie created no product home writing
+ * it — i.e. it carries `agentSelection: 'explicit'`.
+ *
+ * This is the prune's ownership proof, and it must be a RECORD fact rather than
+ * a content fact. A product root holding only `skills/` is exactly what a
+ * correct install leaves behind in an operator's OWN `~/.claude`, so a
+ * content-only proof pruned the operator's real home on the second run of the
+ * identical command (r2 verify §6), and on a two-product host it pruned both
+ * and then reported `no agent skill home detected` (§7) — install → update →
+ * the agent's skills are gone. Genie no longer creates product homes, so the
+ * only homes it may ever hand back are the ones an `--all` era record names.
+ */
+export function recordCreatedNoProductHomes(previous: SkillsInstallRecord): boolean {
+  return previous.agentSelection === 'explicit';
+}
+
+/**
  * Hand back the product homes genie itself created (r2 §3.2 B).
  *
  * Until this release the argv was `--all`, so every `genie install` materialized
  * ~53 product homes the operator had never installed — `~/.openclaw`,
  * `~/.adal`, `~/.qwen`, … — each holding nothing but genie-written skills.
- * Those homes are recorded, so genie can prove ownership and give them back:
- * backup-first (never a bare delete), only when the ENTIRE product root holds
- * nothing but recorded, digest-matching skills, and one reported line each.
+ * Those homes are recorded by an `--all` era record, so genie can prove
+ * ownership and give them back: ONE-SHOT (never for a record genie wrote with
+ * an explicit agent list), backup-first (never a bare delete), only when the
+ * ENTIRE product root holds nothing but recorded, digest-matching skills, and
+ * one reported line each.
  *
  * Never throws: a home that cannot be moved is simply kept.
  */
 export function pruneGenieCreatedAgentHomes(context: AgentHomePruneContext, warnings: string[]): AgentHomePruneResult {
   const result: AgentHomePruneResult = { pruned: [] };
+  // A record this release wrote names only detected products, so every home it
+  // lists sits in a product root the OPERATOR created. Nothing to hand back.
+  if (recordCreatedNoProductHomes(context.previous)) return result;
   for (const agentDir of new Set(context.previous.agentDirs)) {
     const productRoot = productRootForAgentDir(context.home, agentDir);
     if (productRoot === null) continue;
@@ -1592,11 +1649,61 @@ function resolveInstallTargets(
       ? { pruned: [] }
       : pruneGenieCreatedAgentHomes({ ...context, previous: context.previous }, warnings);
   const prunedDirs = new Set(prune.pruned.map((entry) => entry.agentDir));
+  if (context.previous !== null && prunedDirs.size > 0) {
+    dropPrunedHomesFromRecord(context.genieHome, context.previous, prunedDirs, warnings);
+  }
   const selection = selectSkillsCliAgents({
     home: context.home,
     recordedDirs: (context.previous?.agentDirs ?? []).filter((dir) => !prunedDirs.has(dir)),
   });
   return { selection, prunedDirs };
+}
+
+/**
+ * Persist the prune immediately, so a home handed back is dropped from the
+ * record on EVERY exit path — not only the one that reaches the record write.
+ *
+ * On the no-agent path the early return used to fire before the record write,
+ * so a run that pruned every recorded home left the record still naming them
+ * (r2 verify §7): doctor then warned `0/2 recorded homes complete … (not on
+ * disk)` and prescribed `genie update`, which now permanently reports
+ * `skipped` — a terminal state. The same held for a spawn failure. Writing here
+ * also stamps `agentSelection`, which makes the prune one-shot even when the
+ * run that performed it never got as far as installing.
+ */
+function dropPrunedHomesFromRecord(
+  genieHome: string,
+  previous: SkillsInstallRecord,
+  prunedDirs: ReadonlySet<string>,
+  warnings: string[],
+): void {
+  const keptDigests = Object.fromEntries(
+    Object.entries(previous.dirDigests ?? {}).filter(([path]) => !isUnderAnyPrunedDir(path, prunedDirs)),
+  );
+  const record: SkillsInstallRecord = {
+    ...previous,
+    agentDirs: previous.agentDirs.filter((dir) => !prunedDirs.has(dir)),
+    ...(previous.dirDigests === undefined ? {} : { dirDigests: keptDigests }),
+    ...(previous.preserved === undefined
+      ? {}
+      : { preserved: previous.preserved.filter((entry) => !prunedDirs.has(entry.agentDir)) }),
+    agentSelection: 'explicit',
+  };
+  try {
+    writeSkillsInstallRecord(genieHome, record);
+  } catch (error) {
+    warnings.push(
+      `skills: pruned agent home(s) could not be dropped from ${skillsInstallRecordPath(genieHome)}: ${errorMessage(error)}`,
+    );
+  }
+}
+
+/** True when a recorded digest key lives inside one of the pruned agent dirs. */
+function isUnderAnyPrunedDir(path: string, prunedDirs: ReadonlySet<string>): boolean {
+  for (const dir of prunedDirs) {
+    if (path === dir || path.startsWith(`${dir}${sep}`)) return true;
+  }
+  return false;
 }
 
 /**
@@ -1759,6 +1866,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       dirDigests,
       ...(collisions.length > 0 ? { collisions } : {}),
       ...(preserved.length > 0 ? { preserved } : {}),
+      // This run named its agents explicitly from products already installed,
+      // so it created no product home — the durable fact that stops the next
+      // run's prune from handing back the operator's own `~/.claude`.
+      agentSelection: 'explicit',
       installedAt: now().toISOString(),
     };
     writeSkillsInstallRecord(options.genieHome, record);
