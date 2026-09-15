@@ -33,14 +33,22 @@ function applyShortcutsOutcome(outcome: ShortcutsOutcome): void {
 }
 
 /**
- * Whether prompting is forbidden outright. Only the explicit global
- * `--no-interactive` counts: a merely non-TTY stdin is NOT a refusal, because
- * piping answers (`printf 'y\ny\n' | genie shortcuts install`) is a supported
- * scripted workflow. A pipe that runs out of answers is caught downstream as
- * the `unanswered` outcome, which also exits 2.
+ * Whether prompting is forbidden outright.
+ *
+ * A prompt READS stdin, so a stdin that is not a terminal can never answer one.
+ * Until the 2026-09-15 r2 dogfood this was decided per-target, downstream: the
+ * question was rendered to stdout (`Add shortcuts to ~/.tmux.conf? [Y/n]`) and
+ * only then did the run discover there was no answer and refuse. The decision
+ * now happens here, before a single byte of any question is drawn.
+ *
+ * The cost is that piping answers (`printf 'y\ny\n' | genie shortcuts
+ * install`) no longer selects targets one by one; the documented scripted route
+ * is the whole-run default, `genie shortcuts install --yes`, which the refusal
+ * names verbatim.
  */
 function promptingForbidden(): boolean {
-  return process.argv.includes('--no-interactive');
+  if (process.argv.includes('--no-interactive')) return true;
+  return !process.stdin.isTTY;
 }
 
 /**

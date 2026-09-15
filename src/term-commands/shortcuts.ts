@@ -245,19 +245,38 @@ export interface ShortcutsRunOptions {
   yes?: boolean;
   /**
    * Whether this process may render a prompt at all. `false` (global
-   * `--no-interactive`, `CI`, or a non-TTY) without `yes` is `refused`: one
-   * line, exit 2, nothing written.
+   * `--no-interactive`, or a stdin that is not a terminal) without `yes` is
+   * `refused`: one line, exit 2, nothing written — and, crucially, nothing
+   * DRAWN either. The refusal is decided before the first question reaches
+   * stdout.
    */
   canPrompt?: boolean;
 }
 
+/** Which verb is running — it decides the remedy the refusal prints. */
+export type ShortcutsVerb = 'install' | 'uninstall';
+
+/**
+ * The exact working invocation for `verb`.
+ *
+ * `--yes` is declared on the SUBCOMMAND, so the remedy has to name it there:
+ * `genie --no-interactive --yes shortcuts install` dies at Commander's parse
+ * with `unknown option '--yes'`, and the old wording ("Re-run with --yes") let
+ * an operator reach for exactly that (dogfood r2 §3.3 #3).
+ */
+export function shortcutsYesInvocation(verb: ShortcutsVerb): string {
+  return `genie shortcuts ${verb} --yes`;
+}
+
 /** The one line a prompt-less run with no `--yes` gets, on stderr, before exit 2. */
-export const SHORTCUTS_NON_INTERACTIVE_MESSAGE =
-  'genie shortcuts needs an answer for each target. Re-run with --yes to accept the defaults, or drop --no-interactive.';
+export function shortcutsNonInteractiveMessage(verb: ShortcutsVerb): string {
+  return `genie shortcuts ${verb} needs an answer for each target and stdin is not a terminal — nothing was written. Run: ${shortcutsYesInvocation(verb)} (--yes belongs after the subcommand; it is not a global option).`;
+}
 
 /** The one line a run whose prompts outran stdin gets, on stderr, before exit 2. */
-export const SHORTCUTS_UNANSWERED_MESSAGE =
-  'genie shortcuts: stdin ended before every target was answered — nothing was written. Re-run with --yes to accept the defaults.';
+export function shortcutsUnansweredMessage(verb: ShortcutsVerb): string {
+  return `genie shortcuts ${verb}: stdin ended before every target was answered — nothing was written. Run: ${shortcutsYesInvocation(verb)}`;
+}
 
 /**
  * Collapse per-target outcomes into the run's outcome. `unanswered` dominates
@@ -273,7 +292,7 @@ function summarize(outcomes: TargetOutcome[]): ShortcutsOutcome {
 // Install shortcuts to config files
 export async function installShortcuts(options: ShortcutsRunOptions = {}): Promise<ShortcutsOutcome> {
   if (!options.yes && options.canPrompt === false) {
-    console.error(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    console.error(shortcutsNonInteractiveMessage('install'));
     return 'refused';
   }
   try {
@@ -313,7 +332,7 @@ async function runInstallShortcuts(autoYes: boolean): Promise<ShortcutsOutcome> 
 
   const outcome = summarize(outcomes);
   if (outcome === 'unanswered') {
-    console.error(SHORTCUTS_UNANSWERED_MESSAGE);
+    console.error(shortcutsUnansweredMessage('install'));
     return outcome;
   }
   console.log(
@@ -458,7 +477,7 @@ async function promptUninstallFrom(
 // Uninstall shortcuts from config files
 export async function uninstallShortcuts(options: ShortcutsRunOptions = {}): Promise<ShortcutsOutcome> {
   if (!options.yes && options.canPrompt === false) {
-    console.error(SHORTCUTS_NON_INTERACTIVE_MESSAGE);
+    console.error(shortcutsNonInteractiveMessage('uninstall'));
     return 'refused';
   }
   try {
@@ -500,7 +519,7 @@ async function runUninstallShortcuts(autoYes: boolean): Promise<ShortcutsOutcome
 
   const outcome = summarize(outcomes);
   if (outcome === 'unanswered') {
-    console.error(SHORTCUTS_UNANSWERED_MESSAGE);
+    console.error(shortcutsUnansweredMessage('uninstall'));
     return outcome;
   }
   console.log(
