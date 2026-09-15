@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Authoring"
+  short_description: "Write a Genie skill that passes the shipped contract"
+  default_prompt: "Write or revise this skill against the Genie skill contract: frontmatter, house size, starter card, runtime-neutral voice."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research"
+  short_description: "Investigate against primary sources and cite every claim"
+  default_prompt: "Research this question against primary sources, cite every claim, and write the findings into the repository's notes."
