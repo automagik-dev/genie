@@ -27,4 +27,13 @@ describe('council skill fronts the council workflow', () => {
     expect(skill).toContain('saved name `council`');
     expect(/^\d+\. \*\*[A-Za-z]+\*\*/m.test(skill)).toBe(false);
   });
+
+  test('the seat brief is fenced and dissent survives synthesis verbatim', () => {
+    expect(skill).toContain('and nothing else');
+    expect(skill).toContain("another lens's answer stay outside the brief");
+    expect(skill).toContain('role-separated, not independent');
+    expect(skill).toContain("preserved verbatim in the dissenting lens's own words");
+    expect(skill).toContain('writes its own reading of the decision before the consensus line');
+    expect(skill).toContain('repeated findings are counted, not compressed away');
+  });
 });

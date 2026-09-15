@@ -1,6 +1,8 @@
 ---
 name: review
 description: "Independently assess designs, plans, implementations, PRs, or repository quality; return evidence and SHIP, FIX-FIRST, or BLOCKED without applying fixes."
+category: lifecycle
+mutates: none
 ---
 
 # Review
@@ -12,6 +14,10 @@ The reviewer is different from the author and remains read-only. Return findings
 Identify the target path, diff/commit, criteria, and relevant checks. For a PR, inspect the complete diff and individual commits in chronological order. For committed work under concurrent modification, the coordinator provides an immutable snapshot at the exact SHA; it also owns setup and cleanup. Reviewers never change repo-level git state. For uncommitted work, name the snapshot reviewed and invalidate the verdict if it changes.
 
 Use current code and command output. Run relevant checks, or inspect current attributable results that cover the exact artifact; say which evidence was reused. Do not infer coverage from filenames or a worker’s claim. Preserve required full/integration/release gates. Shared runtime, schema, dependencies, executable artifacts, CI/release, broad refactors, or uncertain impact require the repository full gate plus affected builds/end-to-end checks. Zero validation is insufficient. A passing full suite is valid evidence; missing scope rationale alone is at most MEDIUM.
+
+## Blind criteria first
+
+Blindness is a mechanism, not a disposition: an evaluator that has already read the work rationalizes what it reads. Run the assessment as two calls. The first sees only the scope, the group's criteria, and the validation contract, and emits the acceptance criteria plus what would trigger each of SHIP, FIX-FIRST, and BLOCKED. The second sees the artifact and scores it against that frozen plan, declaring any criterion added after the work was read. Where a single call is unavoidable, write the criteria and triggers before opening the diff and do not revise them afterwards.
 
 ## Pipelines
 
@@ -58,7 +64,7 @@ Unjustified stateful machinery is a HIGH gap. If removing it changes the governi
 - **FIX-FIRST:** actionable blocking gaps or failed validation.
 - **BLOCKED:** missing scope, design decision, environment, or evidence prevents a valid assessment.
 
-Each finding names severity, file/line or command, concrete trigger and impact, evidence, and a correction. Distinguish confirmed findings from unresolved hypotheses. Return coverage and limitations even when there are no findings.
+Each finding names severity, file/line or command, concrete trigger and impact, evidence, and a correction. Each finding also names where its evidence came from: a command run in this assessment, a reused attributable result named with its source, or a read of the code at the stated SHA. A finding whose only provenance is a worker's claim, a filename, or a prior verdict is an unresolved hypothesis, not a confirmed finding. Distinguish confirmed findings from unresolved hypotheses. Return coverage and limitations even when there are no findings.
 
 ## Handoff
 

@@ -1,6 +1,8 @@
 ---
 name: work
 description: "Execute an approved wish in dependency order with scoped workers, independent review, bounded repairs, and verified completion."
+category: lifecycle
+mutates: repo
 ---
 
 # Work
@@ -27,10 +29,16 @@ Before dispatch the coordinator writes the handoff onto the card; before mutatio
 genie task comment <task-id> --worker orchestrator -- 'dispatch: <engineer> (<role>) — <wave>/<group>; scope: <boundary>'
 genie task checkout <task-id> --worker <name>
 # ... work, validate ...
-genie task report <task-id> --worker <name> -- '<outcome>: <what changed, where>; <validation command → result>'
+genie task report <task-id> --worker <name> -- '<outcome>: <what changed, where>; <validation command → result>; Ruling: <decision> — <why> — <cost if wrong>'
 ```
 
-A losing claimant stands down. The report is the worker's one message on the card: `done`, `blocked: <reason>`, or `partial: <what is left>`, plus the validation outcome; it is not a second copy of the diff. Reclaiming a stale claim writes `genie task comment <task-id> --worker <name> -- 'reclaim: from <previous>, idle <duration> — <reason>'` before the new checkout. Keep setup claimed until validated; shared prerequisites belong to an explicit group. Do not reclaim another live worker’s claim merely because time has passed.
+A losing claimant stands down. The report is the worker's one message on the card: `done`, `blocked: <reason>`, or `partial: <what is left>`, plus the validation outcome and every ruling taken on the user's behalf; it is not a second copy of the diff. Reclaiming a stale claim writes `genie task comment <task-id> --worker <name> -- 'reclaim: from <previous>, idle <duration> — <reason>'` before the new checkout. Keep setup claimed until validated; shared prerequisites belong to an explicit group. Do not reclaim another live worker’s claim merely because time has passed.
+
+## Rulings, not stalls
+
+Stop and ask only for an irreversible or destructive action, a security-sensitive decision, a side effect outside the worktree, or a plan so broken that every path forward is a guess. Everything else is a ruling the worker takes and records as `Ruling: <what was decided> — <why> — <cost if wrong>`. Rulings ride the handoff report next to the outcome, because the decisions taken on the user's behalf are exactly what a reviewer needs and cannot reconstruct from the diff alone.
+
+Each worker keeps a ledger of its run in its own working notes, built to survive a context reset. Its first line is the plan identity — wish slug, task id, and base SHA — so a ledger carried in from another plan is detected as foreign and discarded instead of resumed. Under it, one line per finished unit: `<group>: complete (commits <base7>..<head7>, review clean)`. Those lines are the only resumption authority; an unlogged unit is redone, never assumed.
 
 Inspect `genie task list --wish <slug>` or `genie board --wish <slug>` as needed. If the CLI/DB or legacy task rows are unavailable, say so and track groups in WISH.md; preserve dependencies, file ownership, review, and validation. This fallback never bypasses a live claim conflict or an Orca authority refusal.
 
@@ -57,7 +65,7 @@ The card timeline (`genie task report` / `genie task comment`) is the global tas
 | Moment | Who | Verb | Content |
 |--------|-----|------|---------|
 | Dispatch (coordinator → worker) | coordinator | `comment --worker orchestrator` | `dispatch: <engineer> (<role>) — <wave>/<group>; scope: <boundary>` |
-| Worker handoff (done, blocked, or partial) | worker | `report --worker <name>` | outcome word; what changed and where; validation command → result |
+| Worker handoff (done, blocked, or partial) | worker | `report --worker <name>` | outcome word; what changed and where; validation command → result; one `Ruling:` line per decision taken on the user's behalf |
 | Stale claim reclaimed | new claimant | `comment --worker <name>` before the new `checkout` | `reclaim: from <previous>, idle <duration> — <reason>` |
 | Review verdict relayed (each loop) | coordinator | `comment --worker orchestrator` | `review: SHIP` / `FIX-FIRST` / `BLOCKED` — gap count or one-line summary; the evidence block goes to WISH.md, the card gets the pointer |
 | Group done | coordinator | the same comment, then `genie task done` | |

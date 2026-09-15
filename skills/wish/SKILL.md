@@ -1,6 +1,8 @@
 ---
 name: wish
 description: "Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation."
+category: lifecycle
+mutates: documents
 ---
 
 # Wish
@@ -39,11 +41,15 @@ cp "$WISH_SKILL_DIR/templates/wish-template.md" "$WISH_DEST"
 ```
 <!-- wish-scaffold-command:end -->
 
-Fill `{{slug}}`, `{{date}}`, and every TODO. Preserve the template’s machine-consumed section names and Execution Strategy columns, including Complexity and Model. Use portable roles/reasoning effort in the plan; runtime configuration selects actual models.
+Fill `{{slug}}`, `{{date}}`, and every TODO. Preserve the template’s machine-consumed structure exactly: the `# Wish:` title, the metadata table rows, and the sections `## Summary`, `## Scope` with `### IN` and `### OUT`, `## Decisions`, `## Simplicity Case`, `## Dependencies`, `## Success Criteria`, `## Execution Strategy`, `## Execution Groups` holding at least one `### Group <n>:` heading, `## QA Criteria`, `## Assumptions / Risks`, `## Review Results`, and `## Files to Create/Modify`. Inside every group keep the `**Goal:**`, `**Deliverables:**`, `**Interfaces:**`, `**Acceptance Criteria:**`, `**Validation:**`, and `**depends-on:**` blocks, and keep the Execution Strategy columns including Complexity and Model. Use portable roles/reasoning effort in the plan; runtime configuration selects actual models.
 
 Pass the simplicity gate: state the smallest complete design, justify added machinery with present requirements or measurements, and keep deferred mechanisms out of execution. Give each group a goal, owned files, deliverables, testable criteria, dependencies, and a non-zero validation command. Explain why validation fits the risk; the repository’s required gate is sufficient rationale. Preserve aggregate integration/release checks. Use `review`’s validation policy for affected runtime, schema, dependency, build, or broad changes.
 
 Declare wish-level `**depends-on:**` and `**blocks:**` under `## Dependencies` (comma-separated slugs or `none`), plus per-group `**depends-on:**`. Keep the hyphenated keys; the DAG is in git, not inferred from task status.
+
+Fill each group's `**Interfaces:**` block with exact signatures: Consumes is what the group takes from earlier groups, Produces is what later groups rely on. A worker sees only its own group, so an unstated signature is re-invented rather than reused. Copy the plan-wide requirements into `**Global constraints:**` verbatim; every group inherits them and review reads them as the attention lens.
+
+A wide refactor is the exception to a self-contained group. When one mechanical change — a renamed field, a retyped shared symbol — breaks call sites across the repository so no single group can land green, sequence expand, migrate, contract: an expand group adds the new form beside the old so nothing breaks; one migrate group per batch sized by blast radius (per package, per directory) each declares `**depends-on:**` the expand group and stays green because the old form still exists; a contract group deletes the old form and declares `**depends-on:**` every migrate batch. When even a batch cannot stay green alone, keep that order but give the batches a shared integration branch and add a final integrate-and-verify group depending on all of them; green is promised only there, and that group carries the aggregate validation.
 
 ## Review and handoff
 

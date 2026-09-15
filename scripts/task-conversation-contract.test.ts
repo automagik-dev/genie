@@ -42,6 +42,31 @@ describe('card conversation contract in the skills', () => {
     expect(fix).toMatch(/genie task comment <task-id> --worker orchestrator -- 'review:/);
   });
 
+  test('the worker reports its rulings and keeps a plan-identified ledger', () => {
+    const work = skill('work');
+    expect(work).toContain('Ruling: <what was decided> — <why> — <cost if wrong>');
+    expect(work).toMatch(/genie task report <task-id> --worker <name> -- '[^\n]*Ruling: /);
+    expect(work).toContain('Its first line is the plan identity');
+    expect(work).toContain('the only resumption authority');
+  });
+
+  test('the reviewer pre-commits criteria and names evidence provenance', () => {
+    const review = skill('review');
+    expect(review).toContain('The first sees only the scope');
+    expect(review).toContain('scores it against that frozen plan');
+    expect(review).toContain('Each finding also names where its evidence came from');
+    expect(review).toContain('is an unresolved hypothesis, not a confirmed finding');
+  });
+
+  test('converged fix attempts never self-authorize a release-affecting repair', () => {
+    const fix = skill('fix');
+    expect(fix).toContain('Recursive confidence is not approval');
+    expect(fix).toMatch(/release machinery, retirement or backup paths, the install record/);
+    expect(fix).toContain('until an independent re-review passes and the coordinator records a human ruling');
+    expect(fix).toContain('genie config get budgets.maxEscalationsPerGroup');
+    expect(fix).toContain('budget_source=');
+  });
+
   test('every comment/report example in skills passes --worker and separates text with --', () => {
     for (const name of ['work', 'review', 'fix', 'genie']) {
       const text = skill(name);
