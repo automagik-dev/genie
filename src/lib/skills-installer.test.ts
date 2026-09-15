@@ -985,6 +985,34 @@ describe('retiring removed skills during an upgrade', () => {
     );
   });
 
+  /**
+   * m4's other half: doctor reports a preserved entry whose path is gone as
+   * RESOLVED, and this is the update that makes that true — the entry leaves
+   * the record, and the run says so instead of passing over it in silence.
+   */
+  test('a preserved dir the operator deleted is reported absent and leaves the record', () => {
+    const { dirs, record, spawn } = previousInstall(['trace']);
+    const claude = dirs[0] as string;
+    const gone = join(claude, 'trace');
+    delete record.dirDigests?.[gone];
+    writeSkillsInstallRecord(genieHome, record);
+    const install = () => runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home, which: alwaysFound, spawn });
+
+    expect(install().ok).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: claude, skill: 'trace', reason: 'no recorded content digest' },
+    ]);
+
+    rmSync(gone, { recursive: true });
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect(second.warnings).toContain(`skills: retirement: ${gone} was already gone — nothing to archive`);
+    expect(second.warnings).toContain(
+      'skills: retirement: 0 archived, 0 preserved, 1 already absent of 1 recorded target(s)',
+    );
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toBeUndefined();
+  });
+
   test('a skill this release delivers again drops out of the preserved list', () => {
     const { dirs, record, spawn } = previousInstall();
     const claude = dirs[0] as string;
