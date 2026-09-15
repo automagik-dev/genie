@@ -71,8 +71,10 @@ bun test plugins/dsh-genie-board
 bun scripts/dsh-genie-board-smoke.ts
 ```
 
-The smoke installs into a disposable DSH_HOME, registers a disposable repository
-through the real workspace registry, starts/stops/restarts DSH, verifies plugin
+The smoke rebuilds `dist/` itself before installing, so it can never pass
+against a bundle left over from an earlier build; a failing plugin build fails
+the smoke. It installs into a disposable DSH_HOME, registers a disposable
+repository through the real workspace registry, starts/stops/restarts DSH, verifies plugin
 listing and compatibility, creates and moves a task through Host routes, then
 removes the plugin and temporary state in `finally`. Personal profiles are not used.
 
