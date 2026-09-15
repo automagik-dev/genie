@@ -15,11 +15,14 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { stripAnsi } from './term-color.js';
-import { printErr, printOut, renderFor } from './term-output.js';
+import { isBrokenPipeError, printErr, printOut, renderFor, runUnderBrokenPipeGuard } from './term-output.js';
+import { openDb } from './v5/genie-db.js';
+import { appendTaskEvent, createTask, getTask } from './v5/task-state.js';
 
 const SRC = join(import.meta.dir, '..');
 const CLI = join(SRC, 'genie.ts');
@@ -177,4 +180,91 @@ describe('the real CLI never paints a piped stream (m15)', () => {
     expect(res.stdout).toContain(ESC);
     expect(stripAnsi(res.stdout)).not.toContain(ESC);
   });
+});
+
+/**
+ * Dogfood r2 §3.2 C — a reader that closes early (`| head -1`) made every
+ * `genie task` verb die with an uncaught Bun `EPIPE` stack trace and exit 1.
+ * For `task checkout` the claim was already committed, so a card genuinely in
+ * progress reported a failed claim to the caller.
+ */
+describe('broken-pipe guard (dogfood r2 §3.2 C)', () => {
+  test('isBrokenPipeError recognises the shapes Bun and Node raise, and nothing else', () => {
+    expect(isBrokenPipeError(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).toBe(true);
+    expect(isBrokenPipeError({ syscall: 'write', errno: -32 })).toBe(true);
+    expect(isBrokenPipeError(Object.assign(new Error('destroyed'), { code: 'ERR_STREAM_DESTROYED' }))).toBe(true);
+    expect(isBrokenPipeError(Object.assign(new Error('nope'), { code: 'ENOENT' }))).toBe(false);
+    expect(isBrokenPipeError(new Error('Task not found: t_ghost'))).toBe(false);
+    expect(isBrokenPipeError(undefined)).toBe(false);
+  });
+
+  test('runUnderBrokenPipeGuard re-throws everything that is not a broken pipe', async () => {
+    const boom = new Error('real failure');
+    await expect(runUnderBrokenPipeGuard(() => Promise.reject(boom))).rejects.toThrow('real failure');
+  });
+
+  /** A repo whose one card has a timeline far longer than one `head` window. */
+  function seedLongTimeline(): { repo: string; taskId: string } {
+    const repo = mkdtempSync(join(tmpdir(), 'genie-epipe-'));
+    roots.push(repo);
+    const git = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: repo,
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Test',
+          GIT_AUTHOR_EMAIL: 'test@example.com',
+          GIT_COMMITTER_NAME: 'Test',
+          GIT_COMMITTER_EMAIL: 'test@example.com',
+        },
+      });
+    git('init', '-b', 'main', repo);
+    git('-C', repo, 'commit', '--allow-empty', '-m', 'init');
+
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'pipe probe' });
+    for (let i = 0; i < 400; i += 1) {
+      appendTaskEvent(db, task.id, { kind: 'comment', note: `note ${i}`, author: 'test', authorKind: 'cli' });
+    }
+    db.close();
+    return { repo, taskId: task.id };
+  }
+
+  /** Run the real CLI with its stdout piped into a reader that quits after one line. */
+  function pipeIntoHead(repo: string, args: string[]): { code: number; stderr: string; stdout: string } {
+    const command = [
+      'set -o pipefail',
+      `${JSON.stringify(process.execPath)} ${JSON.stringify(CLI)} ${args.map((a) => JSON.stringify(a)).join(' ')} | head -1`,
+    ].join('; ');
+    const res = Bun.spawnSync(['bash', '-c', command], {
+      cwd: repo,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 60_000,
+      env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    });
+    return { code: res.exitCode, stderr: res.stderr.toString(), stdout: res.stdout.toString() };
+  }
+
+  test('task status into a reader that closes after one line exits 0 with no stack trace', () => {
+    const { repo, taskId } = seedLongTimeline();
+    const res = pipeIntoHead(repo, ['task', 'status', taskId]);
+    expect(res.stderr).toBe('');
+    expect(res.stderr).not.toContain('EPIPE');
+    expect(res.code).toBe(0);
+  }, 90_000);
+
+  test('a committed checkout is never reported as a failure because the reader left', () => {
+    const { repo, taskId } = seedLongTimeline();
+    const res = pipeIntoHead(repo, ['task', 'checkout', taskId, '--worker', 'w9']);
+    expect(res.stderr).toBe('');
+    expect(res.code).toBe(0);
+
+    // The claim really did commit — the exit code was telling the truth.
+    const db = openDb({ cwd: repo });
+    const claimed = getTask(db, taskId)?.claimedBy;
+    db.close();
+    expect(claimed).toBe('w9');
+  }, 90_000);
 });
