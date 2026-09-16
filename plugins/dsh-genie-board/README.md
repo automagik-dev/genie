@@ -224,9 +224,12 @@ reported as an incompatible-genie message naming both versions. Typed text keeps
 newlines, tabs and format characters (ZWJ, soft hyphen) exactly as the CLI stores
 them; only C0 controls and DEL are refused, and a rejected request answers with
 one sentence, never a Zod issues array. A card's timeline and comments are the
-newest 25 entries of a longer history, and the view says "showing last N of M"
-using the `eventCount`, `eventsTruncated` and `commentCount` the aggregate
-carries.
+newest 25 entries of a longer history, capped independently of each other, and
+both panes say "showing last N of M" using the `eventCount`, `eventsTruncated`
+and `commentCount` the aggregate carries. The Comments pane renders that
+`comments` window itself rather than filtering the event window, so it never
+shows fewer messages than its own count; worker reports and every other event
+are in History.
 
 Genie bounds the whole aggregate, not just each card: past a few hundred busy
 cards (or roughly 750 quiet ones) it narrows every card's embedded history
@@ -268,8 +271,11 @@ bun scripts/dsh-genie-board-smoke.ts
 `src/contract.test.ts` runs the REAL CLI (`bun <repo>/src/genie.ts`) against a
 seeded temporary repository through this plugin's own process layer and parses
 its output with these schemas, so a producer change that the two hand-written key
-lists would both miss fails here. `src/client.test.ts` mounts the browser half on
-a minimal DOM stand-in and drives it end to end.
+lists would both miss fails here. `src/client.test.ts` renders the browser half with
+real React on a DOM stand-in — DSH's frozen browser module table is stubbed to
+the plain elements it wraps — and asserts on the emitted markup: the laneless
+mark in the board picker, and the comment window with its "showing last N of M"
+label.
 
 The smoke rebuilds `dist/` itself before installing, so it can never pass
 against a bundle left over from an earlier build; a failing plugin build fails

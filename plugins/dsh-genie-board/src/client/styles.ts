@@ -41,6 +41,7 @@ export const css = `
 .gb-toolbar{padding-top:2px}
 .gb-detail-body{display:grid;grid-template-columns:minmax(0,1fr) 260px;flex:1;min-height:0}
 .gb-chat{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--dsw-alias-border-l2)}
+.gb-chat-head{margin:0;padding:14px 18px 0}
 .gb-chat-log{flex:1;min-height:0;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:10px}
 .gb-chat-empty{margin:auto;max-width:320px;text-align:center;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .gb-msg{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-base)}
