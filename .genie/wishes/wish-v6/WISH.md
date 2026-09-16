@@ -24,7 +24,7 @@ Land the saved workflow `wish` (`.claude/workflows/wish.js`) that delivers one t
 - `skills/quick/SKILL.md` reduced to the one-line deprecation stub the design names, with its frontmatter description changed to match; `skills/quick/agents/openai.yaml` description likewise (both still carry the one-hour wording today).
 - Routing and docs: `skills/genie/SKILL.md` rows, `skills/genie/reference/lifecycle.md`, `skills/README.md`, `README.md` skill table row.
 - Tests: `scripts/wish-workflow-parity.test.ts` (enums, by-hand stage list, three skill-clause pins); `scripts/release-docs.test.ts` quick test replaced by a wish-front-door test.
-- `.claude/hooks/git-safety.sh`: prefilter widened to `gh `; exit 2 on `gh pr merge`, `gh api -X PUT|POST|PATCH|DELETE`, `HUSKY=0`, `core.hooksPath`, refspecs ending `:main`/`:dev`/`:master`.
+- `.claude/hooks/git-safety.sh`: prefilter widened to `gh `; exit 2 on `gh pr merge`, `gh api -X PUT|POST|PATCH|DELETE`, `HUSKY=0`, `core.hooksPath` in override or mutation form only (`-c core.hooksPath=`, `git config … core.hooksPath <value>`; the read-only `git config --get core.hooksPath` stays allowed), refspecs ending `:main`/`:dev`/`:master`.
 - `.claude/workflows/README.md`: entry row now; measured-runs row after the first live run.
 
 ### OUT
@@ -59,7 +59,7 @@ _Ordering outside the wish graph, all run by this session in a Claude Code sessi
 - [ ] `bun test scripts/workflows-meta.test.ts scripts/wish-workflow-parity.test.ts scripts/release-docs.test.ts scripts/fresh-install-smoke.test.ts` exits 0 with `0 fail`.
 - [ ] `bun run check` is green except the six #2926 darwin names re-confirmed at the base.
 - [ ] `grep -rn '60 minutes\|within one hour' skills scripts` returns nothing; `skills/quick/SKILL.md` is the one-line stub.
-- [ ] `printf '{"tool_input":{"command":"gh pr merge 1"}}' | bash .claude/hooks/git-safety.sh; echo $?` prints 2 for every forbidden form (`gh pr merge`, `gh api -X PUT|POST|PATCH|DELETE`, `HUSKY=0`, `core.hooksPath`, a refspec ending `:dev`) and 0 for `gh pr create --base dev`.
+- [ ] `printf '{"tool_input":{"command":"gh pr merge 1"}}' | bash .claude/hooks/git-safety.sh; echo $?` prints 2 for every forbidden form (`gh pr merge`, `gh api -X PUT|POST|PATCH|DELETE`, `HUSKY=0`, `-c core.hooksPath=/dev/null`, a refspec ending `:dev`) and 0 for `gh pr create --base dev` and `git config --get core.hooksPath`.
 - [ ] Dry run A (oversized objective) returns `refused`/`plan` with `git worktree list` unchanged; dry run B (denylisted path) returns `refused` with no worktree.
 
 ## Execution Strategy
