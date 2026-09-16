@@ -1790,6 +1790,99 @@ describe('laneless board render is unchanged', () => {
   });
 });
 
+/**
+ * The laneless `--json` paths are the fallback the aggregate's own refusal
+ * recommends ("Narrow the read with --wish <slug>"), so they must obey the same
+ * whole-response budget. Before this, both exited 0 and emitted ~4.67 MiB —
+ * past the 3.5 MiB budget AND past the 4 MiB a DSH client is allowed to read —
+ * with nothing on stderr.
+ */
+describe('laneless --json shares the whole-response byte budget', () => {
+  /**
+   * Bulk-seed cards through SQL onto a LANELESS board: the budget tests need a
+   * card set no per-verb API is fast enough to build, and the frozen payload
+   * embeds no history, so card COUNT and title WIDTH are the only two dials.
+   */
+  function seedLaneless(db: Database, boardId: string, cards: number, title: string, wish: string | null): void {
+    const insert = db.query(
+      `INSERT INTO tasks (id, board_id, title, status, wish, created_at, updated_at)
+         VALUES (?, ?, ?, 'ready', ?, ?, ?)`,
+    );
+    db.transaction(() => {
+      for (let index = 0; index < cards; index += 1) {
+        insert.run(`t_flat${index}`, boardId, `${title} ${index}`, wish, 1000 + index, 1000 + index);
+      }
+    })();
+  }
+
+  function seedOversizedLanelessBoard(wish: string | null): void {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    seedLaneless(db, plain.id, 40, 'x'.repeat(100_000), wish);
+    db.close();
+  }
+
+  test('`--wish <slug> --json` refuses by name instead of emitting an oversized payload', async () => {
+    seedOversizedLanelessBoard('bulkwish');
+
+    const result = await board(repo, '--wish', 'bulkwish', '--json');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toStartWith(
+      'Error: Board read (wish "bulkwish") is too large to emit as one JSON response: 40 cards',
+    );
+    expect(result.stderr).toContain(`over the ${(BOARD_JSON_MAX_BYTES / (1024 * 1024)).toFixed(1)} MiB budget`);
+    // This read has already spent the one narrowing axis, so it is never told
+    // to narrow again — and never told to add `--board`, which re-routes a
+    // lane-defining board onto the larger aggregate.
+    expect(result.stderr).toContain('Split the wish across boards, or archive the cards this read does not need.');
+    expect(result.stderr).not.toContain('--wish <slug>');
+    expect(result.stderr).not.toContain('--board <ref>');
+  });
+
+  test('unscoped `--json` refuses too, and recommends the one narrowing that helps', async () => {
+    seedOversizedLanelessBoard(null);
+
+    const result = await board(repo, '--json');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toStartWith(
+      'Error: Board read (all tasks) is too large to emit as one JSON response: 40 cards',
+    );
+    expect(result.stderr).toContain('Narrow the read with --wish <slug>, or split the board.');
+  });
+
+  test('a laneless board scoped by --board is refused as a board read, not an aggregate one', async () => {
+    seedOversizedLanelessBoard(null);
+
+    const result = await board(repo, '--board', 'plain', '--json');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Narrow the read with --wish <slug>, or split the board.');
+    // The human render of the same board is unaffected: the budget belongs to
+    // the machine payload, never to the board.
+    expect((await board(repo, '--board', 'plain')).code).toBe(0);
+  });
+
+  test('a payload that fits stays byte-frozen: no eventLimit, no cap note, inside the budget', async () => {
+    const db = openDb({ cwd: repo });
+    const plain = createBoard(db, 'plain');
+    seedLaneless(db, plain.id, 3, 'small', 'tinywish');
+    db.close();
+
+    for (const args of [['--json'], ['--wish', 'tinywish', '--json']]) {
+      const result = await board(repo, ...args);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(Buffer.byteLength(result.stdout, 'utf8')).toBeLessThanOrEqual(BOARD_JSON_MAX_BYTES);
+      const payload = JSON.parse(result.stdout) as Record<string, unknown>;
+      // The budget gate is invisible when it is not needed — the frozen shape
+      // never gains the aggregate's `eventLimit`/`schemaVersion` keys.
+      expect(Object.keys(payload).sort()).toEqual(['columns', 'scope']);
+    }
+  });
+});
+
 // Every visual state is asserted by substring against a fixture with injected
 // heartbeat_at / blocked_by / events — no criterion is eyeball-accepted. The
 // board computes `now` at render time; seeded ages use minute-scale margins so

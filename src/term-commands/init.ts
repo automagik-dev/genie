@@ -2,8 +2,9 @@
  * genie init — idempotent per-repo scaffold.
  *
  * Bootstraps the things a fresh repo needs before the genie lifecycle can run:
- * the plans jar (`.genie/INDEX.md`), the `.gitignore` rules that keep the
- * SQLite state files out of version control, and retirement of historical
+ * the plans jar (`.genie/INDEX.md`), the `.gitignore` rules that keep every
+ * machine-local `.genie/` artifact (the SQLite state files AND the roadmap sync
+ * baseline) out of version control, and retirement of historical
  * Genie-owned MCP registrations. Every
  * step is idempotent — re-running `genie init` on an already-scaffolded repo
  * produces zero diff.
@@ -69,20 +70,47 @@ const INDEX_SKELETON = `# Plans Index
 `;
 
 /**
- * Operational artifacts that must never be committed. The `.genie/launch/`
- * rule is legacy residue protection — nothing writes there since the launch
- * command was removed, but existing kickoff prompts stay ignored.
- * `.mcp.json.genie-backup-*` is the backup-first copy `genie init` writes
- * next to a user-owned `.mcp.json` when it retires a legacy `genie mcp`
- * registration; it is an operational artifact, not project content.
+ * Machine-local `.genie/` state — the paths the v5 engine itself declares are
+ * per-machine materializations, never shared content. Committing ANY of them
+ * corrupts a teammate's checkout rather than merely adding noise:
+ *
+ * - `genie.db` (+ `-wal`/`-shm`, and the `-recovery-lock` sidecar named so the
+ *   same stanza hides it — `sqlite-open.ts`) is the local materialization of
+ *   the canonical `.genie/roadmap.json`.
+ * - `roadmap-sync` is the sync BASELINE: the (file, db) hash pair from this
+ *   machine's last synchronized state (`roadmap-sync.ts`). A committed baseline
+ *   travels to a fresh clone, where it matches that clone's freshly created
+ *   EMPTY database — so the first `genie task sync` reads "the db moved, the
+ *   file did not", exports, and overwrites the shared board with nothing. It is
+ *   the one ignored path whose absence is silently destructive, which is why
+ *   `genie doctor` warns when a repo still tracks it.
+ * - `launch/` is legacy residue protection — nothing writes there since the
+ *   launch command was removed, but existing kickoff prompts stay ignored.
+ *
+ * Exported because `genie doctor` observes the same set: the rules below keep
+ * a fresh repo clean, and the doctor check catches the repos that committed one
+ * before the rule existed (a `.gitignore` rule never untracks a tracked file).
  */
-const GITIGNORE_RULES = [
+export const MACHINE_LOCAL_GENIE_PATHS = [
   '.genie/genie.db',
   '.genie/genie.db-wal',
   '.genie/genie.db-shm',
+  '.genie/genie.db-recovery-lock',
+  '.genie/roadmap-sync',
   '.genie/launch/',
-  '.mcp.json.genie-backup-*',
-];
+] as const;
+
+/**
+ * Operational artifacts that must never be committed: every machine-local
+ * `.genie/` path above, plus `.mcp.json.genie-backup-*` — the backup-first copy
+ * `genie init` writes next to a user-owned `.mcp.json` when it retires a legacy
+ * `genie mcp` registration; it is an operational artifact, not project content.
+ *
+ * Appended idempotently: `scaffoldGitignore` writes only the rules a repo does
+ * not already carry, so an existing repo picks up a newly added rule on its
+ * next `genie init` and a second run writes nothing.
+ */
+const GITIGNORE_RULES: readonly string[] = [...MACHINE_LOCAL_GENIE_PATHS, '.mcp.json.genie-backup-*'];
 
 // ============================================================================
 // Git repo resolution
