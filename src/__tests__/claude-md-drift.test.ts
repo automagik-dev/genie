@@ -55,6 +55,7 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
 // into describing a body that no longer ships.
 const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'board',
+  'config',
   'context',
   'doctor',
   'idea',
@@ -142,6 +143,29 @@ function longOptions(helpText: string): string[] {
   return [...block.matchAll(/--[a-z][a-z-]*/g)].map((match) => match[0]);
 }
 
+/** The `## CLI Commands` prose + table, up to the first `###` subsection. */
+function commandTableSection(content: string): string {
+  return content.split('## CLI Commands')[1]?.split('\n### ')[0] ?? '';
+}
+
+/** The backticked command name that opens each table row, sorted. */
+function commandTableNames(content: string): string[] {
+  return [...commandTableSection(content).matchAll(/^\| `([a-z][a-z-]*)/gm)].map((match) => match[1] as string).sort();
+}
+
+/** Count words the command-table sentence may use, keyed by the row count. */
+const COUNT_WORDS: Readonly<Record<number, string>> = {
+  12: 'Twelve',
+  13: 'Thirteen',
+  14: 'Fourteen',
+  15: 'Fifteen',
+  16: 'Sixteen',
+  17: 'Seventeen',
+  18: 'Eighteen',
+  19: 'Nineteen',
+  20: 'Twenty',
+};
+
 /** The lines of one ```bash block under a `### <heading>` section. */
 function documentedLines(content: string, heading: string, verb: string): string[] {
   const section = content.split(`### ${heading}`)[1] ?? '';
@@ -224,6 +248,45 @@ describe('CLAUDE.md subcommand drift guard', () => {
     const row = (readme.split('\n').find((line) => line.startsWith('| `genie omni` |')) as string) ?? '';
     expect(row).not.toBe('');
     for (const name of subcommandNames(cliHelp(['omni']))) expect(row).toContain(`\`${name}\``);
+  });
+
+  /**
+   * Dogfood 7 W5: `genie config` shipped, the `fix` skill built its repair
+   * budget on `genie config get budgets.maxEscalationsPerGroup`, and the
+   * contributor contract's own table still listed only the other fifteen
+   * commands while claiming "Fifteen top-level commands". Nothing derived the
+   * table from the registry, so any future command lands the same way. This
+   * derives BOTH the inventory and the count word from `genie --help`.
+   */
+  test('the CLI command table names every registered top-level command', () => {
+    const registered = subcommandNames(cliHelp([]));
+    // `help` is registered too and carries its own row; every other row must
+    // correspond to a real command, and every command to a row.
+    expect(commandTableNames(content)).toEqual([...registered, 'help'].sort());
+  });
+
+  test('the CLI command table count word matches the number of rows', () => {
+    const section = commandTableSection(content);
+    const claimed = /^(\w+) top-level commands/m.exec(section)?.[1] as string;
+    expect(claimed).toBeDefined();
+    expect(COUNT_WORDS[commandTableNames(content).length]).toBe(claimed);
+  });
+
+  /**
+   * The `config` row is load-bearing for a SHIPPED skill: `fix` resolves its
+   * per-group repair budget from one dotted key. Pin the row to the key the
+   * skill actually reads, and the key to one the CLI actually resolves.
+   */
+  test('the config row names the budget key the shipped fix skill reads', () => {
+    const skill = readFileSync(join(ROOT, 'skills', 'fix', 'SKILL.md'), 'utf8');
+    const key = /genie config get ([a-zA-Z.]+)/.exec(skill)?.[1] as string;
+    expect(key).toBe('budgets.maxEscalationsPerGroup');
+    const row = (content.split('\n').find((line) => line.startsWith('| `config` |')) as string) ?? '';
+    expect(row).toContain(`\`${key}\``);
+    // The key resolves: a typo in either document is a failing command line.
+    const proc = Bun.spawnSync([process.execPath, join(ROOT, 'src', 'genie.ts'), 'config', 'get', key], { cwd: ROOT });
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout.toString().trim().length).toBeGreaterThan(0);
   });
 
   test('every omni flag CLAUDE.md documents exists on that subcommand', () => {
