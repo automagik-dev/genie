@@ -252,6 +252,41 @@ describe('board scoping', () => {
     expect(asJson.stdout).toBe('');
     expect(asJson.stderr).toContain('board id must not be empty');
   });
+
+  /**
+   * Regression (dogfood r5 Z6): the empty-scope guard covered `--board` only,
+   * so `--wish ""` — the same unset shell variable — fell through the
+   * truthiness check and rendered EVERY task in the repo, exit 0, byte-identical
+   * to the unscoped board. Both scoping flags must fail closed.
+   */
+  test('--wish "" is refused instead of widening to the unscoped board', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'wished-task', wish: 'alpha-wish' });
+    createTask(db, { title: 'loose-task' });
+    db.close();
+
+    const unscoped = await board(repo, '--json');
+    expect(unscoped.code).toBe(0);
+
+    for (const blank of ['', '   ']) {
+      const r = await board(repo, '--wish', blank);
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain('wish slug must not be empty');
+      expect(r.stderr).not.toContain('all tasks');
+
+      const asJson = await board(repo, '--wish', blank, '--json');
+      expect(asJson.code).toBe(1);
+      expect(asJson.stdout).toBe('');
+      expect(asJson.stdout).not.toBe(unscoped.stdout);
+      expect(asJson.stderr).toContain('wish slug must not be empty');
+    }
+
+    // A real slug still scopes, so the guard only refuses the blank case.
+    const scoped = await board(repo, '--wish', 'alpha-wish', '--json');
+    expect(scoped.code).toBe(0);
+    expect(JSON.parse(scoped.stdout).scope).toContain('alpha-wish');
+  });
 });
 
 describe('board create', () => {
