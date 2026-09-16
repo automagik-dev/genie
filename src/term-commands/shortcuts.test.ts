@@ -192,6 +192,46 @@ describe('shortcuts CLI round-trip', () => {
     expect(uninstalled.code).toBe(0);
     expect(uninstalled.stdout).toContain('✅ Uninstallation complete!');
     expect(readFileSync(zshrc(), 'utf-8')).toBe(original);
+    // The rc file the user already had is restored; the tmux.conf install
+    // invented is gone, not left as a 0-byte husk (dogfood r5 Z9).
+    expect(existsSync(tmuxConf())).toBe(false);
+  });
+
+  /**
+   * Regression (dogfood r5 Z9): install created ~/.tmux.conf in a HOME that had
+   * none, uninstall stripped the block but kept the now-empty file, so every
+   * install/uninstall cycle left a residual 0-byte config behind. The round trip
+   * must return HOME to exactly what it was.
+   */
+  test('a HOME with no config files is left with none after install + uninstall', () => {
+    expect(existsSync(tmuxConf())).toBe(false);
+    expect(existsSync(join(dir, '.bashrc'))).toBe(false);
+
+    const installed = runShortcuts(['shortcuts', 'install', '--yes'], '');
+    expect(installed.code).toBe(0);
+    expect(existsSync(tmuxConf())).toBe(true);
+    expect(existsSync(join(dir, '.bashrc'))).toBe(true);
+
+    const uninstalled = runShortcuts(['shortcuts', 'uninstall', '--yes'], '');
+    expect(uninstalled.code).toBe(0);
+    expect(uninstalled.stdout).toContain('file deleted — install created it');
+    expect(existsSync(tmuxConf())).toBe(false);
+    expect(existsSync(join(dir, '.bashrc'))).toBe(false);
+  });
+
+  /**
+   * The other half of the same contract: a file the user already had — even a
+   * deliberately empty one — is emptied, never deleted.
+   */
+  test('a pre-existing empty config survives the round trip as an empty file', () => {
+    writeFileSync(tmuxConf(), '');
+
+    expect(runShortcuts(['shortcuts', 'install', '--yes'], '').code).toBe(0);
+    const uninstalled = runShortcuts(['shortcuts', 'uninstall', '--yes'], '');
+    expect(uninstalled.code).toBe(0);
+    const tmuxLine = uninstalled.stdout.split('\n').find((line) => line.includes(`Removed from ${tmuxConf()}`));
+    expect(tmuxLine).toBe(`✅ Removed from ${tmuxConf()}`);
+    expect(existsSync(tmuxConf())).toBe(true);
     expect(readFileSync(tmuxConf(), 'utf-8')).toBe('');
   });
 
@@ -355,7 +395,8 @@ describe('shortcuts non-interactive contract (M5)', () => {
     const applied = runShortcuts(['--no-interactive', 'shortcuts', 'uninstall', '--yes'], '');
     expect(applied.code).toBe(0);
     expect(applied.stdout).toContain('Uninstallation complete!');
-    expect(readFileSync(tmuxConf(), 'utf-8')).not.toContain('>>> genie shortcuts');
+    // install created this file in an empty HOME, so uninstall removes it whole.
+    expect(existsSync(tmuxConf())).toBe(false);
   });
 
   test('--yes on a host with nothing to do is still a clean exit 0', () => {
