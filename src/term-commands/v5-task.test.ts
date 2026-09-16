@@ -364,6 +364,54 @@ describe('task status / done / checkout', () => {
     expect(bad.stderr).toContain('Task not found: t_missing');
   });
 
+  /**
+   * Regression (dogfood r5 Z7): `task status` printed Status/Board/Created/
+   * Updated and the timeline but no lane at all, so the only way to learn where
+   * a card sat was `genie board --json` or reading its move events. The lane it
+   * prints is the placement the board RENDERS: an unplaced card on a
+   * lane-defining board falls into the first lane, exactly as groupByLane does.
+   */
+  test('status shows the lane the card sits in, matching the board render', async () => {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'dogfood', DEFAULT_LIFECYCLE_LANES);
+    const placed = createTask(db, { title: 'placed card', boardId: board.id });
+    const unplaced = createTask(db, { title: 'unplaced card', boardId: board.id });
+    const loose = createTask(db, { title: 'loose card' });
+    db.close();
+
+    const moved = await cli(repo, 'move', placed.id, '--to', 'Review');
+    expect(moved.stderr).toBe('');
+    expect(moved.code).toBe(0);
+
+    const onLane = await cli(repo, 'status', placed.id);
+    expect(onLane.code).toBe(0);
+    expect(onLane.stdout).toContain('Lane:       Review');
+
+    // The board is the oracle: status must name the lane the JSON reports.
+    const boardJson = Bun.spawnSync(['bun', GENIE, 'board', '--board', 'dogfood', '--json'], {
+      cwd: repo,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    const lanes = JSON.parse(boardJson.stdout.toString()).lanes as Array<{
+      name: string;
+      cards: Array<{ id: string }>;
+    }>;
+    const renderedLane = lanes.find((lane) => lane.cards.some((card) => card.id === placed.id))?.name;
+    expect(renderedLane).toBe('Review');
+
+    // Never moved: the board renders it in the first lane, and so does status.
+    const first = DEFAULT_LIFECYCLE_LANES[0].name;
+    const neverMoved = await cli(repo, 'status', unplaced.id);
+    expect(neverMoved.code).toBe(0);
+    expect(neverMoved.stdout).toContain(`Lane:       ${first} (default`);
+    expect(lanes.find((lane) => lane.cards.some((card) => card.id === unplaced.id))?.name).toBe(first);
+
+    // A card on no board has no lane to report, and gains no empty line.
+    const noBoard = await cli(repo, 'status', loose.id);
+    expect(noBoard.code).toBe(0);
+    expect(noBoard.stdout).not.toContain('Lane:');
+  });
+
   test('checkout claims a ready task; a second claim conflicts with exit 1', async () => {
     const id = await seedTask('claim me');
     const first = await cli(repo, 'checkout', id, '--worker', 'w1');
