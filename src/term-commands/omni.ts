@@ -41,6 +41,7 @@ import {
 } from '../lib/omni-runner.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
 import { type ApprovalRow, enqueueApproval, getApproval, listInbox } from '../lib/v5/omni-queue.js';
+import { VERSION } from '../lib/version.js';
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
@@ -402,6 +403,12 @@ interface HostRecord {
   hostname: string;
   registeredAt: string;
   rotatedFrom?: string;
+  /**
+   * The old host id a `--rotate` could NOT revoke. Recorded so the residue is
+   * visible on disk (and clearable by `--revoke <host-id>`) instead of living
+   * only in a stderr line the operator has already scrolled past.
+   */
+  pendingRevocation?: string;
 }
 
 function keyPaths(): KeyPaths {
@@ -516,10 +523,12 @@ interface TrustHostResponse {
 
 interface HandshakeOptions {
   rotate?: boolean;
+  revoke?: string;
   hostname?: string;
 }
 
-async function handleHandshake(options: HandshakeOptions): Promise<void> {
+/** The two credentials every trust call needs, or the one-line refusal naming both spellings. */
+async function requireTrustCredentials(): Promise<{ apiUrl: string; apiKey: string }> {
   const apiUrl = await resolveOmniApiUrl();
   if (!apiUrl) {
     throw new Error('Omni is not configured. Set OMNI_API_URL or `omni.apiUrl` in your genie config first.');
@@ -527,6 +536,48 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
   const apiKey = await resolveOmniApiKey();
   if (!apiKey) {
     throw new Error('Omni API key not configured. Set OMNI_API_KEY or `omni.apiKey` in your genie config.');
+  }
+  return { apiUrl, apiKey };
+}
+
+/** `DELETE /api/v2/trust/hosts/<id>` — the one revocation call both modes make. */
+async function revokeTrustHost(apiUrl: string, apiKey: string, hostId: string): Promise<void> {
+  await callTrustEndpoint<{ data: unknown }>(apiUrl, apiKey, 'DELETE', `/hosts/${encodeURIComponent(hostId)}`);
+}
+
+/**
+ * `genie omni handshake --revoke <host-id>` — the remedy a failed rotation
+ * points at. It used to point at `omni trust revoke <id>`, which is not a genie
+ * command at all, so the only documented way to clear a still-live key was a
+ * command that could not be run (dogfood r5 Z2).
+ */
+async function handleRevoke(apiUrl: string, apiKey: string, options: HandshakeOptions): Promise<void> {
+  if (options.rotate) {
+    throw new Error('`--rotate` and `--revoke` are mutually exclusive: rotate issues a key, revoke retires one.');
+  }
+  const hostId = (options.revoke ?? '').trim();
+  if (!hostId) {
+    throw new Error('`--revoke` needs the omni host id to retire, e.g. `genie omni handshake --revoke host-1`.');
+  }
+  await revokeTrustHost(apiUrl, apiKey, hostId);
+  const paths = keyPaths();
+  const record = loadHostJson(paths);
+  if (record?.pendingRevocation === hostId) {
+    const { pendingRevocation: _cleared, ...rest } = record;
+    writeHostJson(paths, rest);
+  }
+  out(`Revoked omni host: ${hostId}`);
+  if (record?.hostId === hostId) {
+    out("  That was THIS host's own registration — run `genie omni handshake` to register again.");
+  }
+}
+
+async function handleHandshake(options: HandshakeOptions): Promise<void> {
+  const { apiUrl, apiKey } = await requireTrustCredentials();
+
+  if (options.revoke !== undefined) {
+    await handleRevoke(apiUrl, apiKey, options);
+    return;
   }
 
   const paths = keyPaths();
@@ -548,7 +599,7 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 
   const hostname = options.hostname ?? previousRecord?.hostname ?? osHostname() ?? 'unknown-host';
   const capabilities = {
-    genieVersion: process.env.GENIE_VERSION ?? 'unknown',
+    genieVersion: VERSION,
     platform: process.platform,
     nodeVersion: process.version,
   };
@@ -570,14 +621,15 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 
   // Revoke the OLD host AFTER the new one registers — order matters, so a
   // revoke failure never loses access.
-  if (options.rotate && previousRecord && previousRecord.hostId !== host.id) {
+  let revokeError: string | undefined;
+  const staleHostId =
+    options.rotate && previousRecord && previousRecord.hostId !== host.id ? previousRecord.hostId : undefined;
+  if (staleHostId) {
     try {
-      await callTrustEndpoint<{ data: unknown }>(apiUrl, apiKey, 'DELETE', `/hosts/${previousRecord.hostId}`);
+      await revokeTrustHost(apiUrl, apiKey, staleHostId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `Rotated key registered as ${host.id}, but revoking the old host (${previousRecord.hostId}) failed: ${message}\n  Finish manually: omni trust revoke ${previousRecord.hostId}\n`,
-      );
+      revokeError = err instanceof Error ? err.message : String(err);
+      writeHostJson(paths, { ...newRecord, pendingRevocation: staleHostId });
     }
   }
 
@@ -585,7 +637,20 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
   out(`  Hostname:     ${host.hostname}`);
   out(`  Public key:   ${host.pubkey}`);
   out(`  Private key:  ${paths.privateKey} (perms 0600)`);
-  if (options.rotate && previousRecord) out(`  Rotated from: ${previousRecord.hostId} (revoked)`);
+  if (options.rotate && previousRecord) {
+    // The summary used to say `(revoked)` unconditionally, contradicting the
+    // warning printed one line earlier (dogfood r5 Z2). The old key being live
+    // is a security-relevant residue, so it is also a non-zero exit.
+    out(
+      `  Rotated from: ${previousRecord.hostId} ${revokeError ? '(revoke FAILED — old key still live)' : '(revoked)'}`,
+    );
+  }
+  if (revokeError && staleHostId) {
+    throw new Error(
+      `the rotated key registered as ${host.id}, but revoking the old host ${staleHostId} failed: ${revokeError} ` +
+        `The old key is STILL LIVE — retire it with: genie omni handshake --revoke ${staleHostId}`,
+    );
+  }
 }
 
 // ============================================================================
@@ -656,6 +721,7 @@ export function registerOmniCommands(program: Command): void {
     .command('handshake')
     .description('Register this genie host with the omni server (ed25519 keypair, idempotent)')
     .option('--rotate', 'Issue a new keypair and revoke the existing host record')
+    .option('--revoke <host-id>', 'Revoke one omni host record server-side (the remedy for a failed --rotate)')
     .option('--hostname <name>', 'Override the hostname reported to omni (defaults to os.hostname())')
     .action(async (options: HandshakeOptions) => {
       try {

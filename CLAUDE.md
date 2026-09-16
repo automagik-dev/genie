@@ -120,7 +120,7 @@ by design.
 ### Omni subcommands
 
 ```bash
-genie omni handshake                  # Register this host with the omni server (ed25519, idempotent)
+genie omni handshake [--rotate | --revoke <host-id>]  # Register/rotate this host (ed25519, idempotent); --revoke retires one host record server-side
 genie omni serve                      # Resident runner: NATS bridge → approval queue (foreground)
 genie omni status                     # Approval-queue counts + config sanity (no network)
 genie omni inbox                      # List stored inbound Omni messages (no network)
