@@ -41,6 +41,7 @@ workflow and carries no lens roster of its own (`scripts/council-workflow-parity
 | Workflow | Purpose |
 |----------|---------|
 | `council` | Five independent lenses (architecture, delivery, product, security, dissent) plus a synthesis; assess-only. `args`: a decision string or `{decision, constraints?, evidence?, unknowns?}`. |
+| `docs-audit` | Audits every documentation surface against the live product — one docs-home reader, four read-only surface auditors, one cross-surface consolidator, and a ranked drift table; assess-only. `args`: `{focus?, surfaces?, quorum?, model?, timestamp?}`. |
 | `pm-ledger-verify` | Three adversarial lenses over uncommitted wish-ledger edits. `args`: `{wishDir, evidenceFile?, repoRoot?}`. |
 | `skill-audit-sweep` | Sweeps the shipped skill catalogue — one signals reader, three or four characterizer shards, one consolidating judge, and a rendered keep/improve/update/merge/retire table; assess-only. `args`: `{focus?, skills?, searchPass?, skillsDir?, shardCount?, quorum?, model?, timestamp?}`. |
 | `workfly` | Discovers a procedure and builds its saved workflow — three readers, one SPEC, a drafted script, then the static test plus two refuters with bounded repair. `args`: `{objective, sources?, name?, catalogDir?, model?, maxRepairs?, timestamp?}`. |
