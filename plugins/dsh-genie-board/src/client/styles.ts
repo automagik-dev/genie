@@ -61,7 +61,7 @@ export const css = `
 .gb-audit-now::before{background:var(--dsw-alias-state-business-primary)!important}
 .gb-audit-list time{color:var(--dsw-alias-label-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
 .gb-audit-list div{display:flex;flex-direction:column;gap:1px;min-width:0}
-.gb-audit-label{overflow-wrap:anywhere}
+.gb-audit-label{overflow-wrap:anywhere;white-space:pre-wrap}
 .gb-audit-by{color:var(--dsw-alias-label-tertiary);font-size:11px}
 .gb-audit-held{color:var(--dsw-alias-label-tertiary);font-size:11px;font-style:italic}
 .gb-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12px}

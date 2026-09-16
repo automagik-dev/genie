@@ -229,7 +229,8 @@ both panes say "showing last N of M" using the `eventCount`, `eventsTruncated`
 and `commentCount` the aggregate carries. The Comments pane renders that
 `comments` window itself rather than filtering the event window, so it never
 shows fewer messages than its own count; worker reports and every other event
-are in History.
+are in History, and a report's row carries the handoff text `genie task report`
+stored, not just the word "Reported".
 
 Genie bounds the whole aggregate, not just each card: past a few hundred busy
 cards (or roughly 750 quiet ones) it narrows every card's embedded history

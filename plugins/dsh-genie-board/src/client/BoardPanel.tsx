@@ -190,34 +190,51 @@ export function Conversation({
   );
 }
 
+/**
+ * The History row label for one event, body included.
+ *
+ * `report` is the one kind whose body lives nowhere else: `genie task report
+ * <id> "<text>"` is how a worker hands a card off, and the Comments pane renders
+ * `card.comments`, which the emitter builds from comment events only. History is
+ * therefore the sole surface for a report, so it interpolates the note exactly
+ * as `block` does; dropping it made the text readable only through the CLI (Z4).
+ */
+export function auditLabel(event: Card['timeline'][number]): string {
+  const note = event.note ?? '';
+  switch (event.kind) {
+    case 'move':
+      // A move with no note is not "Moved"; it falls through to the bare kind.
+      if (note) return `Moved ${note}`;
+      break;
+    case 'claim':
+      return `Claimed${note ? ` (${note.replace(/^claimed by /, '')})` : ''}`;
+    case 'release':
+      return `Released${note ? ` · ${note}` : ''}`;
+    case 'wish':
+      return `Wish ${event.note ?? ''}`;
+    case 'comment':
+      return 'Commented';
+    case 'report':
+      return `Reported${note ? `: ${note}` : ''}`;
+    case 'block':
+      return `Blocked${note ? `: ${note}` : ''}`;
+    case 'unblock':
+      return 'Unblocked';
+    case 'done':
+      return 'Completed';
+    default:
+      break;
+  }
+  return note ? `${event.kind}: ${note}` : event.kind;
+}
+
 /** Audit rail: every event since creation, with how long the card sat in the previous state. */
-function Audit({ card, now }: { card: Card; now: number }) {
+export function Audit({ card, now }: { card: Card; now: number }) {
   const rows: { key: string; at: number; label: string; by?: string; held: number }[] = [];
   let previous = card.createdAt;
   rows.push({ key: 'created', at: card.createdAt, label: 'Created', held: 0 });
   for (const event of card.timeline) {
-    const label =
-      event.kind === 'move' && event.note
-        ? `Moved ${event.note}`
-        : event.kind === 'claim'
-          ? `Claimed${event.note ? ` (${event.note.replace(/^claimed by /, '')})` : ''}`
-          : event.kind === 'release'
-            ? `Released${event.note ? ` · ${event.note}` : ''}`
-            : event.kind === 'wish'
-              ? `Wish ${event.note ?? ''}`
-              : event.kind === 'comment'
-                ? 'Commented'
-                : event.kind === 'report'
-                  ? 'Reported'
-                  : event.kind === 'block'
-                    ? `Blocked${event.note ? `: ${event.note}` : ''}`
-                    : event.kind === 'unblock'
-                      ? 'Unblocked'
-                      : event.kind === 'done'
-                        ? 'Completed'
-                        : event.note
-                          ? `${event.kind}: ${event.note}`
-                          : event.kind;
+    const label = auditLabel(event);
     rows.push({ key: String(event.id), at: event.createdAt, label, by: who(event), held: event.createdAt - previous });
     previous = event.createdAt;
   }
