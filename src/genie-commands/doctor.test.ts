@@ -39,7 +39,7 @@ import {
   globalDbContaminationBunAlternative,
   globalDbContaminationRemedy,
   globalDbContaminationSqliteAlternative,
-  listTrackedMachineState,
+  probeTrackedMachineState,
   repairGlobalDbContamination,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
@@ -1128,24 +1128,75 @@ describe('checkTrackedMachineState (committed machine-local .genie state)', () =
     commitPath('.genie/roadmap-sync');
     commitPath('.genie/genie.db', 'binary-ish\n');
     commitPath('.genie/launch/group.prompt', 'kickoff\n');
-    expect(listTrackedMachineState(repoRoot)).toEqual([
-      '.genie/genie.db',
-      '.genie/launch/group.prompt',
-      '.genie/roadmap-sync',
-    ]);
+    expect(probeTrackedMachineState(repoRoot)).toEqual({
+      observed: true,
+      paths: ['.genie/genie.db', '.genie/launch/group.prompt', '.genie/roadmap-sync'],
+    });
     const [check] = checkTrackedMachineState(repoRoot);
     expect(check.detail).toContain('3 machine-local path(s) are committed');
     expect(check.detail?.indexOf('.genie/genie.db')).toBeLessThan(check.detail?.indexOf('.genie/roadmap-sync') ?? -1);
   });
 
-  test('outside git, or where the index cannot be read, it observes nothing instead of lying', () => {
-    expect(checkTrackedMachineState(null)[0]).toMatchObject({ status: 'pass', detail: 'not inside a git repository' });
+  /**
+   * Dogfood r7: every unobservable case reported `pass`, so a consumer reading
+   * `status` alone — or a dashboard counting pass/warn — was handed a clean bill
+   * the check never earned. Unobservable is `warn` with the reason, always.
+   */
+  test('outside git, or where the index cannot be read, it warns with the reason instead of passing', () => {
+    const [outside] = checkTrackedMachineState(null);
+    expect(outside.status).toBe('warn');
+    expect(outside.detail).toContain('not inside a git repository');
+    expect(outside.detail).toContain('could not be checked');
     const notARepo = mkdtempSync(join(tmpdir(), 'genie-doctor-nogit-'));
     try {
-      expect(listTrackedMachineState(notARepo)).toBeNull();
-      expect(checkTrackedMachineState(notARepo)[0].status).toBe('pass');
+      expect(probeTrackedMachineState(notARepo)).toEqual({ observed: false, reason: 'unreadable-index' });
+      const [unreadable] = checkTrackedMachineState(notARepo);
+      expect(unreadable.status).toBe('warn');
+      expect(unreadable.detail).toContain(`could not query the git index at ${notARepo}`);
     } finally {
       rmSync(notARepo, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * A real spawn against a real PATH with no git — the only way to observe the
+   * genuine ENOENT the classifier keys on. Dogfood r7: inside a real work tree
+   * with git absent the check said "not inside a git repository", which is a
+   * false statement about the repository, not about the host.
+   */
+  test('a missing git binary is named as such, never as "not inside a git repository"', async () => {
+    const emptyBin = mkdtempSync(join(tmpdir(), 'genie-doctor-nopath-'));
+    try {
+      const module = join(import.meta.dir, 'doctor.ts');
+      const script = [
+        `const m = await import(${JSON.stringify(module)});`,
+        'process.stdout.write(JSON.stringify({',
+        `  probe: m.probeTrackedMachineState(${JSON.stringify(repoRoot)}),`,
+        `  inRepo: m.checkTrackedMachineState(${JSON.stringify(repoRoot)})[0],`,
+        '  outside: m.checkTrackedMachineState(null)[0],',
+        '}));',
+      ].join('\n');
+      const proc = Bun.spawn([process.execPath, '-e', script], {
+        env: { ...process.env, PATH: emptyBin },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const stdout = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      const seen = JSON.parse(stdout) as {
+        probe: unknown;
+        inRepo: { status: string; detail: string; suggestion?: string };
+        outside: { status: string; detail: string };
+      };
+      expect(seen.probe).toEqual({ observed: false, reason: 'no-git-binary' });
+      for (const check of [seen.inRepo, seen.outside]) {
+        expect(check.status).toBe('warn');
+        expect(check.detail).toContain('git is not installed');
+        expect(check.detail).not.toContain('not inside a git repository');
+      }
+      expect(seen.inRepo.suggestion).toContain('Install git');
+    } finally {
+      rmSync(emptyBin, { recursive: true, force: true });
     }
   });
 

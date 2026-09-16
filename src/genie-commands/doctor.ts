@@ -1658,21 +1658,76 @@ export function trackedMachineStateRemedy(paths: readonly string[]): string {
 }
 
 /**
- * Tracked machine-local `.genie/` paths, as `git ls-files` reports them.
- * Separated from the check so the classification is testable without a doctor
- * run, and so a git failure (no git, not a work tree, a bare repo) is one
- * `null` the caller renders as "could not observe", never a false clean bill.
+ * What one probe of the git index learned. `observed: false` carries WHICH
+ * failure it was, because "git is not installed" and "this is not a work tree"
+ * are different facts about the host and the check must not print one for the
+ * other.
  */
-export function listTrackedMachineState(root: string): string[] | null {
+export type TrackedMachineStateProbe =
+  | { observed: true; paths: string[] }
+  | { observed: false; reason: 'no-git-binary' | 'unreadable-index' };
+
+/**
+ * A spawn that failed because the `git` executable is not on PATH — Node/Bun
+ * report that as an ENOENT spawn error with no exit status, while a git that
+ * ran and refused (not a work tree, a bare repo, a missing directory) carries
+ * the exit status instead.
+ */
+function isMissingGitBinary(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown } | null;
+  return e?.code === 'ENOENT' && (e.status === undefined || e.status === null);
+}
+
+/** Is a `git` executable on PATH at all? Asked only to name the reason a probe observed nothing. */
+function gitBinaryPresent(): boolean {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch (err) {
+    // Anything other than "not on PATH" leaves git's presence unproven — say
+    // present, so the check never invents a missing-binary diagnosis.
+    return !isMissingGitBinary(err);
+  }
+}
+
+/**
+ * Probe the git index for tracked machine-local `.genie/` paths. Separated from
+ * the check so the classification is testable without a doctor run, and so a
+ * git failure (no git, not a work tree, a bare repo) stays an explicit
+ * "could not observe" the caller must render as such — never a false clean bill.
+ */
+export function probeTrackedMachineState(root: string): TrackedMachineStateProbe {
   try {
     const stdout = execFileSync('git', ['-C', root, 'ls-files', '--cached', '-z', '--', ...MACHINE_LOCAL_GENIE_PATHS], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    return stdout.split('\0').filter((path) => path.length > 0);
-  } catch {
-    return null;
+    return { observed: true, paths: stdout.split('\0').filter((path) => path.length > 0) };
+  } catch (err) {
+    return { observed: false, reason: isMissingGitBinary(err) ? 'no-git-binary' : 'unreadable-index' };
   }
+}
+
+/**
+ * The check result for a probe that observed nothing. Warning-level, never
+ * `pass`: a consumer reading `status` alone (a dashboard counting pass/warn, or
+ * the operator scanning glyphs) must not be handed a clean bill this check
+ * never earned. It still never flips `ok:false` — an unobservable index is not
+ * a broken installation.
+ */
+function unobservedMachineState(reason: 'no-git-binary' | 'unreadable-index', root: string | null): CheckResult {
+  const name = TRACKED_MACHINE_STATE_CHECK;
+  const unchecked = 'the machine-local .genie/ paths could not be checked';
+  if (reason === 'no-git-binary') {
+    return {
+      name,
+      status: 'warn',
+      detail: `git is not installed (no \`git\` on PATH) — ${unchecked}`,
+      suggestion: 'Install git, then rerun `genie doctor`.',
+    };
+  }
+  const where = root === null ? 'not inside a git repository' : `could not query the git index at ${root}`;
+  return { name, status: 'warn', detail: `${where} — ${unchecked}` };
 }
 
 /**
@@ -1691,17 +1746,19 @@ export function listTrackedMachineState(root: string): string[] | null {
  */
 export function checkTrackedMachineState(root: string | null): CheckResult[] {
   const name = TRACKED_MACHINE_STATE_CHECK;
+  // A null root is "no worktree to read", and the index of some OTHER directory
+  // is not a substitute — but WHY there is no worktree still has to be named:
+  // with git absent the root resolves to null for the wrong reason (dogfood r7
+  // saw a real work tree reported as "not inside a git repository").
   if (root === null) {
-    return [{ name, status: 'pass', detail: 'not inside a git repository' }];
+    return [unobservedMachineState(gitBinaryPresent() ? 'unreadable-index' : 'no-git-binary', null)];
   }
-  const tracked = listTrackedMachineState(root);
-  if (tracked === null) {
-    return [{ name, status: 'pass', detail: `could not query the git index at ${root}` }];
-  }
-  if (tracked.length === 0) {
+  const probe = probeTrackedMachineState(root);
+  if (!probe.observed) return [unobservedMachineState(probe.reason, root)];
+  if (probe.paths.length === 0) {
     return [{ name, status: 'pass', detail: 'no machine-local .genie/ paths are tracked' }];
   }
-  const sorted = [...tracked].sort();
+  const sorted = [...probe.paths].sort();
   return [
     {
       name,
