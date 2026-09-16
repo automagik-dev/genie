@@ -178,7 +178,7 @@ genie --help
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `test-approval`, `handshake`) |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
-| `genie doctor` | Run diagnostic checks on the installation |
+| `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated global database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
 | `genie uninstall` | Remove Genie, the recorded skills install, and plugin-era leftovers proven to be Genie-owned |
