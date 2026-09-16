@@ -40,10 +40,10 @@ import {
 } from '../lib/skills-installer.js';
 import {
   type ProvenV4Rules,
-  UNINSTALL_NON_INTERACTIVE_MESSAGE,
   type UninstallBatchScope,
   type UninstallResult,
   clearUninstallBatchDecision,
+  detectUninstallNonInteractiveCauses,
   discardLegacyUninstallBatchDecision,
   executeUninstallBatch,
   hasUninstallWork,
@@ -65,6 +65,7 @@ import {
   uninstallBatchMemberId,
   uninstallBatchRuntimeMemberId,
   uninstallBatchRuntimeTargets,
+  uninstallNonInteractiveMessage,
   updateUninstallBatchProgress,
 } from './uninstall.js';
 
@@ -1546,9 +1547,46 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
 
     expect(confirmInvoked).toBe(false);
     expect(exitCode).toBe(2);
-    expect(err.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    expect(err.trim()).toBe(uninstallNonInteractiveMessage(detectUninstallNonInteractiveCauses()));
     // Zero mutation: the preview is read-only, so exiting there removed nothing.
     expect(existsSync(join(process.env.GENIE_HOME as string, 'config.json'))).toBe(true);
+  });
+
+  test('the refusal names every cause that holds, and only those', () => {
+    const piped = detectUninstallNonInteractiveCauses({ argv: ['genie', 'uninstall'], env: {}, stdinIsTTY: false });
+    expect(piped).toEqual(['not-a-terminal']);
+    const pipedMessage = uninstallNonInteractiveMessage(piped);
+    expect(pipedMessage).toContain('stdin or stdout is not a terminal');
+    // Dogfood r5 Z8: the old single sentence named a flag this run never passed.
+    expect(pipedMessage).not.toContain('--no-interactive');
+    expect(pipedMessage).toContain('run `genie uninstall` directly from a terminal');
+
+    const flagged = detectUninstallNonInteractiveCauses({
+      argv: ['genie', 'uninstall', '--no-interactive'],
+      env: {},
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+    });
+    expect(flagged).toEqual(['no-interactive-flag']);
+    expect(uninstallNonInteractiveMessage(flagged)).toContain('--no-interactive was passed');
+
+    // A CI job with a closed stdin has to fix both to reach the prompt.
+    const both = detectUninstallNonInteractiveCauses({ argv: ['genie', 'uninstall'], env: { CI: '1' } });
+    expect(both).toEqual(['not-a-terminal', 'ci']);
+    const bothMessage = uninstallNonInteractiveMessage(both);
+    expect(bothMessage).toContain('stdin or stdout is not a terminal');
+    expect(bothMessage).toContain('CI is set in the environment');
+    expect(bothMessage).not.toContain('--no-interactive');
+
+    // A terminal with no CI and no flag is interactive: no cause to report.
+    expect(
+      detectUninstallNonInteractiveCauses({
+        argv: ['genie', 'uninstall'],
+        env: {},
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+      }),
+    ).toEqual([]);
   });
 
   test('the non-interactive refusal still prints the plan and the breakage warning first', async () => {
@@ -1752,26 +1790,41 @@ describe('genie uninstall — non-interactive CLI contract (B1)', () => {
     };
   }
 
+  /** Every refusal, whatever its cause, is one line that says nothing was removed. */
+  function expectRefusal(res: { code: number | null; stderr: string; stdout: string }): void {
+    expect(res.code).toBe(2);
+    expect(res.stderr.trim().split('\n')).toHaveLength(1);
+    expect(res.stderr).toContain('genie uninstall needs an interactive confirmation. Nothing was removed.');
+    // The one invocation that actually works — uninstall has no consent flag.
+    expect(res.stderr).toContain('run `genie uninstall` directly from a terminal');
+    expect(res.stdout).not.toContain('Are you sure');
+  }
+
   test('--no-interactive AFTER the subcommand exits 2 in milliseconds without prompting', () => {
     const res = runUninstall(['uninstall', '--no-interactive']);
-    expect(res.code).toBe(2);
+    expectRefusal(res);
     expect(res.ms).toBeLessThan(10_000);
-    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
-    expect(res.stdout).not.toContain('Are you sure');
+    expect(res.stderr).toContain('--no-interactive was passed');
   });
 
   test('--no-interactive BEFORE the subcommand behaves identically', () => {
     const res = runUninstall(['--no-interactive', 'uninstall']);
-    expect(res.code).toBe(2);
-    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
-    expect(res.stdout).not.toContain('Are you sure');
+    expectRefusal(res);
+    expect(res.stderr).toContain('--no-interactive was passed');
   });
 
-  test('a closed stdin with no flag at all also exits 2 rather than spinning', () => {
+  /**
+   * Regression (dogfood r5 Z8): a piped/closed-stdin uninstall was told to
+   * "Re-run it from a terminal without --no-interactive" — a flag it never
+   * passed, and the only flag the message named, while uninstall has no `--yes`
+   * to reach for either. The refusal must name THIS run's cause and an
+   * invocation that works.
+   */
+  test('a closed stdin with no flag at all names the terminal, not a flag nobody passed', () => {
     const res = runUninstall(['uninstall']);
-    expect(res.code).toBe(2);
-    expect(res.stderr.trim()).toBe(UNINSTALL_NON_INTERACTIVE_MESSAGE);
-    expect(res.stdout).not.toContain('Are you sure');
+    expectRefusal(res);
+    expect(res.stderr).toContain('stdin or stdout is not a terminal');
+    expect(res.stderr).not.toContain('--no-interactive');
   });
 
   test('the refusal removes nothing — GENIE_HOME survives byte-for-byte', () => {
