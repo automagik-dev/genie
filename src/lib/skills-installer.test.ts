@@ -2969,3 +2969,170 @@ describe('r3 rehearsal defects', () => {
     expect(summary).toBe(lines.length - 1);
   });
 });
+
+/**
+ * Issue #2927. The retirement pass could only name what the previous record
+ * named, so a plugin-era `genie-review` (2026-07-10) and a transaction dir a
+ * deleted runtime left in `~/.agents/skills` survived every `genie update` as
+ * `nothing to retire` — and `genie doctor` read the home as complete.
+ */
+describe('pre-record genie leftovers (issue #2927)', () => {
+  const PM_DESCRIPTION =
+    'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.';
+
+  function seedLeftovers(): { proven: string; marker: string; nameOnly: string } {
+    const agents = join(home, '.agents', 'skills');
+    const claude = join(home, '.claude', 'skills');
+    const proven = join(agents, 'genie-review');
+    mkdirSync(proven, { recursive: true });
+    writeFileSync(join(proven, 'SKILL.md'), `---\nname: genie-review\ndescription: "${PM_DESCRIPTION}"\n---\n# old\n`);
+    const marker = join(agents, '.genie-codex-fallback-retirement');
+    mkdirSync(join(marker, 'txn-1', 'quarantine'), { recursive: true });
+    writeFileSync(join(marker, 'txn-1', 'journal.json'), '{"version":1}\n');
+    const nameOnly = join(claude, 'brain');
+    mkdirSync(nameOnly, { recursive: true });
+    writeFileSync(join(nameOnly, 'SKILL.md'), '---\nname: brain\ndescription: Route Brain knowledge elsewhere\n---\n');
+    return { proven, marker, nameOnly };
+  }
+
+  function spawnDelivering(source: string): CommandRunner {
+    return () => {
+      for (const dir of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')]) {
+        cpSync(source, dir, { recursive: true });
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+  }
+
+  test('with NO install record, proven dirs and marker dirs are archived backup-first and a name-only match is only reported', () => {
+    const source = fixtureSkillsTree(['review']);
+    const { proven, marker, nameOnly } = seedLeftovers();
+    const markerDigest = computeSkillDirDigest(marker);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(proven)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+    // The third-party product that merely shares a retired genie NAME is untouched.
+    expect(existsSync(join(nameOnly, 'SKILL.md'))).toBe(true);
+
+    const roots = readdirSync(join(genieHome, 'state-backups')).filter((name) => name.startsWith('skills-retirement-'));
+    expect(roots).toHaveLength(1);
+    const backupRoot = join(genieHome, 'state-backups', roots[0] as string);
+    expect(readFileSync(join(backupRoot, '.agents', 'skills', 'genie-review', 'SKILL.md'), 'utf8')).toContain('# old');
+    expect(computeSkillDirDigest(join(backupRoot, '.agents', 'skills', '.genie-codex-fallback-retirement'))).toBe(
+      markerDigest,
+    );
+    expect(result.warnings).toEqual([
+      'skills: retired pre-record genie skill dir .genie-codex-fallback-retirement from 1 agent dir(s)',
+      'skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)',
+      `skills: retirement backups under ${backupRoot}`,
+      `skills: ${nameOnly} carries a retired genie skill name or description but not both; review it manually`,
+      'skills: legacy leftovers: 2 archived of 3 pre-record genie dir(s) found in agent homes',
+    ]);
+    // A marker dir has a leading dot, which the record schema rejects: it is never recorded.
+    expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
+  });
+
+  test('with a record, the pass covers recorded homes too and is silent once the leftovers are gone', () => {
+    const source = fixtureSkillsTree(['review']);
+    const extra = join(home, '.openclaw', 'skills');
+    mkdirSync(join(extra, 'pm'), { recursive: true });
+    writeFileSync(join(extra, 'pm', 'SKILL.md'), `---\nname: pm\ndescription: ${PM_DESCRIPTION}\n---\n`);
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: SKILLS_CLI_AGENTS.length > 0 ? '1.5.23' : '1.5.23',
+      inventory: ['review'],
+      agentDirs: [join(home, '.claude', 'skills'), join(home, '.agents', 'skills'), extra],
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const install = () =>
+      runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: spawnDelivering(source),
+      });
+
+    const first = install();
+    expect(first.ok).toBe(true);
+    expect(existsSync(join(extra, 'pm'))).toBe(false);
+    expect(first.warnings).toContain('skills: retired pre-record genie skill dir pm from 1 agent dir(s)');
+
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect((second.warnings ?? []).filter((line) => line.includes('pre-record') || line.includes('legacy'))).toEqual(
+      [],
+    );
+  });
+
+  /**
+   * Codex review on PR #2928: a RECORDED skill this release drops still carries
+   * a retired description, so the legacy pass would have archived a locally
+   * edited install on its own current digest — bypassing the recorded-digest
+   * comparison that preserves it. Recorded paths are the record's business.
+   */
+  test('a recorded skill this release drops is judged by the recorded path, never by the legacy pass', () => {
+    const source = fixtureSkillsTree(['review']);
+    const claude = join(home, '.claude', 'skills');
+    const recorded = join(claude, 'pm');
+    mkdirSync(recorded, { recursive: true });
+    writeFileSync(join(recorded, 'SKILL.md'), `---\nname: pm\ndescription: "${PM_DESCRIPTION}"\n---\n# shipped\n`);
+    const digest = computeSkillDirDigest(recorded) as string;
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: '1.5.23',
+      inventory: ['pm'],
+      agentDirs: [claude, join(home, '.agents', 'skills')],
+      dirDigests: { [recorded]: digest },
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    // The user edited the body and kept the shipped frontmatter.
+    writeFileSync(join(recorded, 'SKILL.md'), `---\nname: pm\ndescription: "${PM_DESCRIPTION}"\n---\n# mine\n`);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(recorded, 'SKILL.md'), 'utf8')).toContain('# mine');
+    expect(result.warnings).toContain(
+      `skills: preserved retired skill ${recorded} (content changed since the recorded install); review it manually`,
+    );
+    expect((result.warnings ?? []).filter((line) => line.includes('pre-record'))).toEqual([]);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: claude, skill: 'pm', reason: 'content changed since the recorded install', digest },
+    ]);
+  });
+
+  /** Codex review on PR #2928: the `--all` era wrote registry homes the four-row known table never lists. */
+  test('with no record, every skills.sh registry home on disk is scanned, not only the known four', () => {
+    const source = fixtureSkillsTree(['review']);
+    const openclaw = join(home, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wizard'), { recursive: true });
+    writeFileSync(
+      join(openclaw, 'wizard', 'SKILL.md'),
+      '---\nname: wizard\ndescription: "Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate."\n---\n',
+    );
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(openclaw, 'wizard'))).toBe(false);
+    expect(result.warnings).toContain('skills: retired pre-record genie skill dir wizard from 1 agent dir(s)');
+  });
+});

@@ -68,6 +68,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { atomicRenameDirectoryNoClobber, fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
+import { type LegacySkillLeftover, findLegacySkillLeftovers, legacyScanHomes } from './legacy-skills.js';
 import {
   type CommandResult,
   type CommandRunner,
@@ -1210,11 +1211,14 @@ type RetirementDisposition =
 interface SkillsRetirementContext {
   home: string;
   genieHome: string;
-  previous: SkillsInstallRecord;
+  /** `null` on a host with no install record yet — legacy leftovers are still retired. */
+  previous: SkillsInstallRecord | null;
   /** The inventory the delivered tree is about to install. */
   inventory: readonly string[];
   /** Every digest the PREVIOUS record vouches for, keyed by absolute path. */
   expectedDigests: ReadonlyMap<string, string>;
+  /** Agent homes scanned for pre-record genie leftovers: the record's dirs plus every known home on disk. */
+  legacyScanDirs: readonly string[];
   rename: (source: string, destination: string) => void;
   now: () => Date;
   backupRoot?: string;
@@ -1234,7 +1238,8 @@ interface RetiredSkillPlan {
  * digests carried on `preserved` entries — which is what lets a retirement that
  * was deferred one release still be proven genie's on the next attempt.
  */
-function previousDigests(previous: SkillsInstallRecord): Map<string, string> {
+function previousDigests(previous: SkillsInstallRecord | null): Map<string, string> {
+  if (previous === null) return new Map();
   const digests = new Map(Object.entries(previous.dirDigests ?? {}));
   for (const entry of previous.preserved ?? []) {
     if (entry.digest === undefined) continue;
@@ -1251,9 +1256,10 @@ function previousDigests(previous: SkillsInstallRecord): Map<string, string> {
  * a preserved directory drops out of the record and is never looked at again.
  */
 function retirementTargets(
-  previous: SkillsInstallRecord,
+  previous: SkillsInstallRecord | null,
   inventory: readonly string[],
 ): { agentDir: string; skill: string }[] {
+  if (previous === null) return [];
   const removed = previous.inventory.filter((name) => !inventory.includes(name));
   const targets: { agentDir: string; skill: string }[] = [];
   const seen = new Set<string>();
@@ -1289,11 +1295,13 @@ function planRetiredSkillArchival(
   agentDir: string,
   skill: string,
   context: SkillsRetirementContext,
+  /** The digest that proves the directory; the previous record's unless the caller proved it another way. */
+  expectedOverride?: string,
 ): RetiredSkillPlan | RetirementDisposition {
   const target = join(agentDir, skill);
   if (!existsSync(target)) return { kind: 'absent' };
   const mirrored = relative(context.home, target);
-  const expected = context.expectedDigests.get(target);
+  const expected = expectedOverride ?? context.expectedDigests.get(target);
   const contained = mirrored !== '' && !mirrored.startsWith('..') && !isAbsolute(mirrored);
   // Allow a symlinked HOME, but never follow a redirected agent home below it.
   const expectedParent = join(realpathSync(context.home), dirname(mirrored));
@@ -1434,11 +1442,15 @@ const MAX_REPORTED_ABSENT_TARGETS = 5;
 /** Running tally of one retirement pass, rendered by {@link reportRetirement}. */
 interface RetirementTally {
   archivedBySkill: Map<string, number>;
+  /** Pre-record genie leftovers archived, by entry name (see `legacy-skills.ts`). */
+  archivedLegacyByEntry: Map<string, number>;
   preserved: SkillsPreservedEntry[];
   /** `<agentDir>/<skill>` paths the record named that were not on disk. */
   absent: string[];
   attention: string[];
   targets: number;
+  /** Legacy leftovers found, proven or not. */
+  legacyTargets: number;
 }
 
 /**
@@ -1457,8 +1469,19 @@ function reportRetirement(tally: RetirementTally, backupRoot: string | undefined
     archived += count;
     warnings.push(`skills: retired ${skill} from ${count} agent dir(s)`);
   }
+  let legacyArchived = 0;
+  for (const entry of [...tally.archivedLegacyByEntry.keys()].sort()) {
+    const count = tally.archivedLegacyByEntry.get(entry) as number;
+    legacyArchived += count;
+    warnings.push(`skills: retired pre-record genie skill dir ${entry} from ${count} agent dir(s)`);
+  }
   if (backupRoot !== undefined) warnings.push(`skills: retirement backups under ${backupRoot}`);
   warnings.push(...tally.attention);
+  if (tally.legacyTargets > 0) {
+    warnings.push(
+      `skills: legacy leftovers: ${legacyArchived} archived of ${tally.legacyTargets} pre-record genie dir(s) found in agent homes`,
+    );
+  }
   for (const target of tally.absent.slice(0, MAX_REPORTED_ABSENT_TARGETS)) {
     warnings.push(`skills: retirement: ${target} was already gone — nothing to archive`);
   }
@@ -1468,6 +1491,75 @@ function reportRetirement(tally: RetirementTally, backupRoot: string | undefined
   warnings.push(
     `skills: retirement: ${archived} archived, ${tally.preserved.length} preserved, ${tally.absent.length} already absent of ${tally.targets} recorded target(s)`,
   );
+}
+
+/**
+ * Archive the genie skill directories that predate the install record.
+ *
+ * `retirementTargets` can only name what a record names, so a plugin-era or
+ * `--all`-era directory (`genie-review`, `pm`, `wizard` from 2026-07-10 on the
+ * dogfood host, plus the `.genie-codex-fallback-retirement/` transaction dir a
+ * deleted runtime left) survived every `genie update` and read as
+ * `nothing to retire`. Ownership is proven by the description catalog (see
+ * `legacy-skills.ts`), never by name alone: a proven dir or a genie marker dir
+ * is archived under the same backup root as any retired skill, with the digest
+ * proven at plan time standing in for the record's; an unproven match (a
+ * retired genie name or a retired genie description, not both) is reported for
+ * a human and never moved. Proven dirs genie could not move join `preserved`
+ * (their names satisfy the record schema), so the next update retries them; a
+ * marker dir (leading dot) never enters the record, because one schema-invalid
+ * entry would make the whole record read as absent.
+ *
+ * Every path the RECORD names — its `agentDirs` x its `inventory`, and its
+ * `preserved` entries — is excluded here and judged by the recorded path only:
+ * a recorded skill this release drops still carries a retired description, and
+ * archiving it on its own current digest would bypass the recorded-digest
+ * comparison that preserves a locally modified install.
+ */
+function retireLegacySkillLeftovers(context: SkillsRetirementContext, tally: RetirementTally): void {
+  const recorded = new Set<string>();
+  for (const entry of context.previous?.preserved ?? []) recorded.add(join(entry.agentDir, entry.skill));
+  for (const agentDir of context.previous?.agentDirs ?? []) {
+    for (const skill of context.previous?.inventory ?? []) recorded.add(join(agentDir, skill));
+  }
+  for (const leftover of findLegacySkillLeftovers(context.legacyScanDirs, context.inventory)) {
+    const target = join(leftover.agentDir, leftover.entry);
+    if (recorded.has(target)) continue;
+    tally.legacyTargets += 1;
+    if (leftover.kind === 'unproven') {
+      tally.attention.push(
+        `skills: ${target} carries a retired genie skill name or description but not both; review it manually`,
+      );
+      continue;
+    }
+    const disposition = archiveLegacyLeftover(leftover, target, context);
+    if (disposition.kind === 'archived') {
+      tally.archivedLegacyByEntry.set(leftover.entry, (tally.archivedLegacyByEntry.get(leftover.entry) ?? 0) + 1);
+    } else if (disposition.kind === 'preserved') {
+      const { reason, digest } = disposition;
+      if (leftover.kind === 'proven' && isSafeSkillName(leftover.entry)) {
+        tally.preserved.push({
+          agentDir: leftover.agentDir,
+          skill: leftover.entry,
+          reason,
+          ...(digest === undefined ? {} : { digest }),
+        });
+      }
+      tally.attention.push(`skills: preserved pre-record genie skill dir ${target} (${reason}); review it manually`);
+    }
+  }
+}
+
+/** Plan and commit one proven legacy dir, its own current digest standing in for a recorded one. */
+function archiveLegacyLeftover(
+  leftover: LegacySkillLeftover,
+  target: string,
+  context: SkillsRetirementContext,
+): RetirementDisposition {
+  const digest = computeSkillDirDigest(target);
+  if (digest === null) return { kind: 'preserved', reason: 'unreadable while proving its contents' };
+  const planned = planRetiredSkillArchival(leftover.agentDir, leftover.entry, context, digest);
+  return 'kind' in planned ? planned : commitRetiredSkillArchive(planned, context);
 }
 
 /**
@@ -1483,10 +1575,12 @@ function reportRetirement(tally: RetirementTally, backupRoot: string | undefined
 function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[]): SkillsPreservedEntry[] {
   const tally: RetirementTally = {
     archivedBySkill: new Map(),
+    archivedLegacyByEntry: new Map(),
     preserved: [],
     absent: [],
     attention: [],
     targets: 0,
+    legacyTargets: 0,
   };
   try {
     for (const { agentDir, skill } of retirementTargets(context.previous, context.inventory)) {
@@ -1505,6 +1599,8 @@ function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[
         tally.absent.push(join(agentDir, skill));
       }
     }
+    // Recorded retirements first, so the record's own judgement is never pre-empted.
+    retireLegacySkillLeftovers(context, tally);
   } finally {
     discardEmptyRetirementBackupRoot(context);
     reportRetirement(tally, context.backupRoot, warnings);
@@ -1982,8 +2078,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // install does to the home afterwards.
   // An empty delivered tree never retires anything: every recorded skill would
   // read as removed. It fails below, after the spawn, where it always has.
+  // Pre-record leftovers are retired on EVERY run, record or not: a host that
+  // never wrote a record is exactly the host that carries them.
   let preserved: SkillsPreservedEntry[] = [];
-  if (previous !== null && inventory.length > 0) {
+  if (inventory.length > 0) {
     try {
       preserved = retireRemovedSkills(
         {
@@ -1992,6 +2090,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
           previous,
           inventory,
           expectedDigests: previousDigests(previous),
+          legacyScanDirs: legacyScanHomes(home, previous?.agentDirs ?? []),
           rename: options.renameRetiredSkill ?? renameSync,
           now,
         },

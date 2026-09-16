@@ -2004,3 +2004,56 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     expect(checkGlobalDbContamination({ genieHome: join(isolatedHome, 'globaldb-missing') })).toEqual([]);
   });
 });
+
+/** Issue #2927: the record cannot name what predates it, so doctor scans the homes themselves. */
+describe('doctor: pre-record genie leftovers', () => {
+  const PM_DESCRIPTION =
+    'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.';
+
+  test('warns with every leftover path and its kind, in path order, and stays silent when there are none', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(skillsChannelResults().some((result) => result.name === 'skills: legacy leftovers')).toBe(false);
+
+    const agents = join(isolatedHome, '.agents', 'skills');
+    mkdirSync(join(agents, 'genie-review'), { recursive: true });
+    writeFileSync(
+      join(agents, 'genie-review', 'SKILL.md'),
+      `---\nname: genie-review\ndescription: "${PM_DESCRIPTION}"\n---\n`,
+    );
+    mkdirSync(join(agents, '.genie-codex-fallback-retirement', 'txn-1'), { recursive: true });
+    const claude = join(isolatedHome, '.claude', 'skills');
+    mkdirSync(join(claude, 'brain'), { recursive: true });
+    writeFileSync(
+      join(claude, 'brain', 'SKILL.md'),
+      '---\nname: brain\ndescription: a live third-party product\n---\n',
+    );
+
+    const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
+    expect(check.status).toBe('warn');
+    expect(check.detail).toBe(
+      `3 genie skill dir(s) predate the install record: ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'brain')} (unproven)`,
+    );
+    expect(check.suggestion).toContain('genie update');
+    // Nothing on disk moved: doctor observes, update retires.
+    expect(existsSync(join(agents, 'genie-review', 'SKILL.md'))).toBe(true);
+  });
+
+  test('covers a host with no record at all through every skills.sh registry home on disk', () => {
+    const agents = join(isolatedHome, '.agents', 'skills');
+    mkdirSync(join(agents, 'pm'), { recursive: true });
+    writeFileSync(join(agents, 'pm', 'SKILL.md'), `---\nname: pm\ndescription: ${PM_DESCRIPTION}\n---\n`);
+    // An `--all`-era home the four-row known table never lists (Codex review on PR #2928).
+    const openclaw = join(isolatedHome, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wizard'), { recursive: true });
+    writeFileSync(
+      join(openclaw, 'wizard', 'SKILL.md'),
+      '---\nname: wizard\ndescription: "Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate."\n---\n',
+    );
+    const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain(`${join(agents, 'pm')} (proven)`);
+    expect(check.detail).toContain(`${join(openclaw, 'wizard')} (proven)`);
+  });
+});
