@@ -783,6 +783,77 @@ test('a route that throws answers 500 JSON instead of leaving the browser hangin
     await host.close();
   }
 });
+/**
+ * A caller's fault on a READ route is a 4xx with the vetted sentence, not the
+ * opaque 500 a genuine server fault produces (Z5). Every one of these answers
+ * used to be `500 {"error":"Genie board route failed"}`, so the panel could not
+ * tell a bad request from a broken Host.
+ */
+describe('catalog document routes answer client faults with 400 and one vetted line', () => {
+  async function catalogHost() {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'genie-catalog-routes-')));
+    directories.push(root);
+    await mkdir(join(root, 'skills', 'alpha'), { recursive: true });
+    await writeFile(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: A skill\n---\n');
+    await mkdir(join(root, '.claude', 'workflows'), { recursive: true });
+    await writeFile(
+      join(root, '.claude', 'workflows', 'alpha.js'),
+      "export const meta = {\n  name: 'alpha',\n  description: 'A workflow',\n}\nreturn 1\n",
+    );
+    return hostRoutes(() => [{ id: 'w1', path: root, title: 'Repo' }]);
+  }
+  const cases: [string, string, string][] = [
+    ['skills', 'workspaceId=w1&name=../../etc/passwd', 'Invalid name'],
+    ['skills', 'workspaceId=w1&name=Alpha', 'Invalid name'],
+    ['skills', 'workspaceId=w1&name=', 'Invalid name'],
+    ['skills', 'workspaceId=w1&name=nosuchskill', 'Document not found'],
+    ['skills', 'workspaceId=bogus&name=alpha', 'Unknown workspace'],
+    ['skills', 'name=alpha', 'workspaceId required'],
+    ['workflows', 'workspaceId=w1&name=../../etc/passwd', 'Invalid name'],
+    ['workflows', 'workspaceId=w1&name=nope', 'Document not found'],
+    ['workflows', 'workspaceId=bogus&name=alpha', 'Unknown workspace'],
+  ];
+  test('every invalid or unknown request is a 400 naming the reason, and no host path leaks', async () => {
+    const host = await catalogHost();
+    try {
+      for (const [row, query, reason] of cases) {
+        const response = await fetch(`${host.origin}/api/genie-board/${row}/document?${query}`);
+        const body = (await response.json()) as { error?: string };
+        expect([row, query, response.status]).toEqual([row, query, 400]);
+        expect([row, query, body]).toEqual([row, query, { error: reason }]);
+        expect(body.error).not.toContain('/');
+      }
+    } finally {
+      await host.close();
+    }
+  });
+  test('a valid name still reads the document, and a real Host fault is still an opaque 500', async () => {
+    const host = await catalogHost();
+    try {
+      const skill = await fetch(`${host.origin}/api/genie-board/skills/document?workspaceId=w1&name=alpha`);
+      expect(skill.status).toBe(200);
+      expect((await skill.json()) as { text: string }).toEqual({
+        text: '---\nname: alpha\ndescription: A skill\n---\n',
+      });
+      const workflow = await fetch(`${host.origin}/api/genie-board/workflows/document?workspaceId=w1&name=alpha`);
+      expect(workflow.status).toBe(200);
+      expect(((await workflow.json()) as { text: string }).text).toContain("name: 'alpha'");
+    } finally {
+      await host.close();
+    }
+    const broken = await hostRoutes(() => {
+      throw new Error('registry exploded at /home/someone/secret');
+    });
+    try {
+      const response = await fetch(`${broken.origin}/api/genie-board/skills/document?workspaceId=w1&name=alpha`);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'Genie board route failed' });
+    } finally {
+      await broken.close();
+    }
+  });
+});
 test('a header-less same-origin read is served and names the executable it resolved', async () => {
   const host = await hostRoutes(() => []);
   try {
