@@ -22,8 +22,9 @@ if echo "$command" | grep -qE 'gh\s+pr\s+merge\b'; then
   echo "BLOCKED: gh pr merge is FORBIDDEN here. Merging is the operator's decision; report merge-ready instead." >&2
   exit 2
 fi
-if echo "$command" | grep -qE 'gh\s+api\b' && echo "$command" | grep -qE '(^|\s)(-X|--method)\s+(PUT|POST|PATCH|DELETE)\b'; then
-  echo "BLOCKED: gh api mutations (PUT/POST/PATCH/DELETE) are FORBIDDEN here. Read with gh api; change nothing through it." >&2
+# gh api mutations only where they merge or move a protected ref; review-thread replies and other POSTs stay allowed.
+if echo "$command" | grep -qE 'gh\s+api\b' && echo "$command" | grep -qE '(^|\s)(-X|--method)\s+(PUT|POST|PATCH|DELETE)\b' && echo "$command" | grep -qE '/merges?(\s|$|\?)|/git/refs/heads/(main|master|dev)(\s|$)'; then
+  echo "BLOCKED: merging or moving a protected ref through gh api is FORBIDDEN here. Merging is the operator's decision; report merge-ready instead." >&2
   exit 2
 fi
 if echo "$command" | grep -qE '(^|\s)HUSKY=0\b'; then
