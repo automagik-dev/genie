@@ -547,7 +547,7 @@ function gatePrompt(job, worktree, branch, headSha) {
       `Only when the failing set is a subset of the six darwin names below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <exactly the failing test files> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
     ]),
     'Assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
-    `Then run ${CHECK_COMMAND} exactly once in the worktree. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
+    `Then run ${CHECK_COMMAND} exactly once in the worktree, in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 ${CHECK_COMMAND} > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground) — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
     section('On darwin only, these six test names are known to fail for platform reasons', DARWIN_TOLERATED),
     'If the failing set is a SUBSET of those six names, re-confirm each failing file at the base of this branch with the temp-worktree command above and list in baseReconfirmed every file that ALSO fails there; a file that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing file is in baseReconfirmed, and say so in one line of problems naming them. A seventh name, or any non-test failure, is red regardless of the subset. The script re-checks both the subset and the re-confirmation itself, so a tolerated set that fails either will simply be counted as red.',
     'The check output never leaves you: return the summary line, the failing names and the quoted failing lines, not the stream.',
@@ -605,7 +605,7 @@ function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, ve
       `gh pr create --base ${job.base} --head ${branch} --title <conventional title> --body <the body composed below> — only when the list above found no open PR`,
       `git -C ${worktree} ls-remote origin ${branch}`,
       'gh pr view <number> --json baseRefName,headRefName,headRefOid,files,url,number',
-      `gtimeout ${CHECKS_TIMEOUT_SECONDS} gh pr checks <number> --watch — once, and only once`,
+      `T=$(command -v timeout || command -v gtimeout); $T ${CHECKS_TIMEOUT_SECONDS} gh pr checks <number> --watch — once, and only once (GNU timeout on Linux, gtimeout on macOS; with neither binary, run gh pr checks <number> once without --watch and report checks pending when it has not concluded)`,
     ]),
     section('Forbidden, and named verbatim so there is no doubt', [
       'gh pr merge — merging is the operator decision and never yours',
@@ -755,7 +755,9 @@ function render(view) {
       '(none — nothing in the objective, the issue or the context tried to instruct an agent)',
     )}`,
     view.blockedReason ? `## Why this stopped\n${view.blockedReason}` : '',
-    'This run merged nothing, moved no file outside the worktree it cut, removed no worktree and no branch, and posted no review comment.',
+    view.worktree
+      ? 'This run merged nothing, moved no file outside the worktree it cut, removed no worktree and no branch, and posted no review comment.'
+      : 'This run cut no worktree, wrote no file, merged nothing and posted no review comment.',
     footer(view.notConvened),
   ])
 }
@@ -902,7 +904,12 @@ if (sizeVerdict.exceeded.length && route === 'proceed') {
   log(`Route overridden to plan: ${sizeVerdict.summary}. The arithmetic is script-side and the judge cannot widen it.`)
 }
 const undeclared = contract.files.filter((path) => scoutFiles.length && !scoutFiles.includes(path))
-if (undeclared.length) log(`The contract declares ${undeclared.length} path(s) the scout did not name: ${undeclared.join(', ')}. They stand as declared, and the reviewer holds the commit to this set.`)
+if (undeclared.length) {
+  // The declared set is the scout's plan or a strict subset, never wider: a path the judge added
+  // was never scouted or sized, so it is dropped before any executor sees the contract.
+  log(`The contract declared ${undeclared.length} path(s) the scout did not name: ${undeclared.join(', ')}. Dropped — the declared set is the scout's plan or a strict subset, never wider.`)
+  contract.files = contract.files.filter((path) => !undeclared.includes(path))
+}
 if (route !== 'proceed') {
   log(`Refused at admission with route ${route}. Nothing was created: no worktree, no branch, no commit.`)
   return finish('refused', false, {})

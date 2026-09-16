@@ -35,8 +35,9 @@ if echo "$command" | grep -qE '(^|\s)-c\s*core\.hooksPath=' || echo "$command" |
   echo "BLOCKED: overriding core.hooksPath disables the repository hooks. Reading it is fine; changing it is not." >&2
   exit 2
 fi
-if echo "$command" | grep -qE 'git\s+push\b' && echo "$command" | grep -qE ':(main|master|dev)(\s|$)'; then
-  echo "BLOCKED: pushing a refspec straight at main, master or dev is FORBIDDEN. Open a PR against dev." >&2
+# dev is deliberately NOT here: AGENTS.md records that the integration-branch rule is operator policy with no client-side guard (#2705).
+if echo "$command" | grep -qE 'git\s+push\b' && echo "$command" | grep -qE ':(main|master)(\s|$)'; then
+  echo "BLOCKED: pushing a refspec straight at main or master is FORBIDDEN (the pre-push hook refuses those branches too). Open a PR against dev." >&2
   exit 2
 fi
 

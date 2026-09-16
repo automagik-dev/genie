@@ -147,7 +147,6 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'HUSKY=0 git push origin wish/x',
       'git -c core.hooksPath=/dev/null push origin wish/x',
       'git config core.hooksPath /dev/null',
-      'git push origin HEAD:dev',
       'git push origin wish/x:main',
       'git push --force origin wish/x',
       'git commit --no-verify -m x',
@@ -168,6 +167,7 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'git ls-remote origin wish/x',
       'git push --force-with-lease origin wish/x',
       'gh api repos/o/r/pulls/1',
+      'git push origin HEAD:dev',
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
     }
