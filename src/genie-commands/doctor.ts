@@ -520,6 +520,57 @@ function evaluatePreservedRetirements(record: SkillsInstallRecord | null): Check
   };
 }
 
+/** A backup root younger than this is news the operator has not seen yet. */
+const RECENT_COLLISION_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
+
+const SKILLS_COLLISION_BACKUP_SUGGESTION =
+  'Review the kept copies, then delete the root(s) yourself — genie never removes a state-backups root';
+
+/**
+ * Collision backup roots the record still names.
+ *
+ * `state-backups/` is an archive: nothing genie runs removes a root a previous
+ * install wrote, so the record accumulates them and doctor is where an operator
+ * learns the bytes are there. It warns only while the newest is younger than a
+ * week — fresh enough that the operator has probably not looked yet — and
+ * passes afterwards, because an old root is a fact about the host, not a
+ * finding. Read-only, like every other line here: a root that is gone from disk
+ * is reported as gone, never recreated.
+ */
+function evaluateCollisionBackups(record: SkillsInstallRecord | null, nowMs: number): CheckResult | null {
+  const backups = record?.collisionBackups ?? [];
+  if (backups.length === 0) return null;
+  const onDisk = backups.filter((entry) => isDirectory(entry.root));
+  if (onDisk.length === 0) {
+    return {
+      name: 'skills: collision backups',
+      status: 'pass',
+      detail: `${backups.length} recorded root(s), none still on disk`,
+    };
+  }
+  const latest = onDisk[onDisk.length - 1] as { root: string; entries: unknown[] };
+  const detail = `${onDisk.length} root(s), latest ${latest.root} (${latest.entries.length} replaced dir(s))`;
+  const ageMs = nowMs - backupRootAgeStampMs(latest.root);
+  if (ageMs >= RECENT_COLLISION_BACKUP_MS) {
+    return { name: 'skills: collision backups', status: 'pass', detail };
+  }
+  return {
+    name: 'skills: collision backups',
+    status: 'warn',
+    detail,
+    suggestion: SKILLS_COLLISION_BACKUP_SUGGESTION,
+  };
+}
+
+/** When the root was written: its mtime, or 0 when it cannot be read (never a warning). */
+function backupRootAgeStampMs(root: string): number {
+  try {
+    return statSync(root).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 const SKILLS_AGENT_DIRS_SUGGESTION = 'Run `genie update` to reinstall the skills channel into every recorded home';
 
 /**
@@ -566,7 +617,9 @@ function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckRes
  * source, so it is used as the fallback. When BOTH are empty there is nothing
  * to compare against and the single record-less warning is the whole answer.
  */
-export function checkSkillsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+export function checkSkillsChannel(
+  options: { home?: string; genieHome?: string; nowMs?: () => number } = {},
+): CheckResult[] {
   const home = resolveHostHome(options.home);
   const genieHome = options.genieHome ?? resolveGlobalGenieHome();
   const read = inspectSkillsInstallRecord(genieHome);
@@ -611,6 +664,8 @@ export function checkSkillsChannel(options: { home?: string; genieHome?: string 
   if (agentDirs !== null) results.push(agentDirs);
   const retirement = evaluatePreservedRetirements(record);
   if (retirement !== null) results.push(retirement);
+  const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
+  if (backups !== null) results.push(backups);
   return results;
 }
 

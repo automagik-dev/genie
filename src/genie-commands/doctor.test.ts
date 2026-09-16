@@ -1388,6 +1388,82 @@ describe('doctor: skills.sh channel', () => {
     expect(claude).toMatchObject({ status: 'pass', detail: `2/2 @ ${releaseTag(VERSION)} (unrecorded)` });
     expect(claude.skillsChannel).toMatchObject({ recorded: false, stale: false, ref: releaseTag(VERSION) });
   });
+
+  /**
+   * D4: `state-backups/` roots are never removed by anything genie runs, so the
+   * record accumulates them and doctor is where an operator learns the kept
+   * copies exist. Warn-level only while the newest is fresh — after a week it
+   * is a fact about the host, not a finding — and always read-only.
+   */
+  function seedCollisionBackupRoot(genieHome: string, stamp: string): string {
+    const root = join(genieHome, 'state-backups', `skills-collision-${stamp}`);
+    mkdirSync(join(root, '.claude', 'skills', 'alpha'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'skills', 'alpha', 'SKILL.md'), '# someone else\n');
+    return root;
+  }
+
+  test('kept collision backup roots are listed, warning only while the newest is fresh', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    const older = seedCollisionBackupRoot(genieHome, '2026-09-01T00-00-00-000Z');
+    const newest = seedCollisionBackupRoot(genieHome, '2026-09-15T00-00-00-000Z');
+    seedSkillsRecord(genieHome, {
+      collisionBackups: [
+        { root: older, entries: [{ dir: join(isolatedHome, '.claude', 'skills', 'alpha'), skill: 'alpha' }] },
+        {
+          root: newest,
+          entries: [
+            { dir: join(isolatedHome, '.claude', 'skills', 'alpha'), skill: 'alpha', kind: 'foreign' },
+            { dir: join(isolatedHome, '.claude', 'skills', 'beta'), skill: 'beta', kind: 'modified' },
+          ],
+        },
+      ],
+    });
+    const writtenAtMs = statSync(newest).mtimeMs;
+    const detail = `2 root(s), latest ${newest} (2 replaced dir(s))`;
+
+    const fresh = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome,
+      nowMs: () => writtenAtMs + 6 * 24 * 60 * 60 * 1000,
+    });
+    expect(byName(fresh, 'skills: collision backups')).toMatchObject({ status: 'warn', detail });
+
+    const settled = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome,
+      nowMs: () => writtenAtMs + 8 * 24 * 60 * 60 * 1000,
+    });
+    expect(byName(settled, 'skills: collision backups')).toMatchObject({ status: 'pass', detail });
+    expect(settled.find((result) => result.name === 'skills: collision backups')?.suggestion).toBeUndefined();
+    // Read-only observer: nothing under state-backups was touched.
+    expect(existsSync(join(older, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(newest, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+  });
+
+  test('a recorded collision backup root the operator deleted reports as gone, never recreated', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    const root = join(genieHome, 'state-backups', 'skills-collision-2026-09-01T00-00-00-000Z');
+    seedSkillsRecord(genieHome, {
+      collisionBackups: [
+        { root, entries: [{ dir: join(isolatedHome, '.claude', 'skills', 'alpha'), skill: 'alpha' }] },
+      ],
+    });
+
+    const results = skillsChannelResults();
+    expect(byName(results, 'skills: collision backups')).toMatchObject({
+      status: 'pass',
+      detail: '1 recorded root(s), none still on disk',
+    });
+    expect(existsSync(root)).toBe(false);
+  });
+
+  test('a record with no collision backups prints no line at all', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(skillsChannelResults().some((result) => result.name === 'skills: collision backups')).toBe(false);
+  });
 });
 
 describe('doctor: legacy marker-owned integrations', () => {

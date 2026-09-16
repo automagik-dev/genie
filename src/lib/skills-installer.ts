@@ -5,11 +5,15 @@
  * `genie install` and `genie update` shell out to a PINNED skills CLI
  * (`SKILLS_CLI_VERSION`) with a fixed argv:
  *
- *   npx -y skills@<PINNED> add <GENIE_HOME>/skills --all --copy -g
+ *   npx -y skills@<PINNED> add <GENIE_HOME>/skills \
+ *     --skill '*' --agent <detected agents> -y --copy -g
  *
- * `--all` expands to `--skill '*' --agent '*' -y` inside the CLI (so no extra
- * `-y` belongs on our side), `--copy` writes plain files rather than links, and
- * `-g` selects the global (per-user) scope.
+ * The agent list is EXPLICIT (`buildSkillsAddArgv`): every agent whose product
+ * root genie can see, and no other. The channel used to pass `--all`, which the
+ * CLI expands to `--agent '*'` — every agent in its 77-entry registry, whether
+ * installed or not — and that is what materialized ~53 product homes on the
+ * 2026-09-01 dogfood host. `--copy` writes plain files rather than links, `-g`
+ * selects the global (per-user) scope, and the single `-y` is npx's own.
  *
  * THE SOURCE IS THE LOCAL DELIVERED TREE, NOT A GITHUB REF (wish
  * `skills-everywhere-b`, decision 1). The channel used to pass the release repo
@@ -70,7 +74,12 @@ import {
   type IntegrationSelection,
   runBoundedIntegrationCommand,
 } from './runtime-integrations.js';
-import { type SkillsAgentSelection, agentHomeIsIndependentlyDetected, selectSkillsCliAgents } from './skills-agents.js';
+import {
+  type SkillsAgentSelection,
+  agentDetectionRoots,
+  agentHomeIsIndependentlyDetected,
+  selectSkillsCliAgents,
+} from './skills-agents.js';
 
 /**
  * Pinned skills CLI. Bumping it is an ordinary dependency PR (wish decision 1),
@@ -125,8 +134,9 @@ const SKILLS_INSTALL_OUTPUT_LIMIT_BYTES = 1024 * 1024;
  * recorded, so a host without goose/windsurf records nothing for them.
  *
  * `.codex/skills` and `.cursor/skills` are deliberately NOT in this table.
- * Empirically verified against skills.sh 1.5.23 (`--all --copy -g`): that CLI
- * never creates either directory. Codex reads the shared `~/.agents/skills`
+ * Empirically verified against skills.sh 1.5.23 (`--agent <list> --copy -g`,
+ * and against the `--all` argv this channel used before it): that CLI never
+ * creates either directory. Codex reads the shared `~/.agents/skills`
  * home — the `agents` row below IS the Codex home. Listing `.codex/skills`
  * here made doctor report a permanent false `skills: codex 0/n` warning on
  * every Codex host.
@@ -183,10 +193,47 @@ function isTraversalFreeAbsolutePath(value: string): boolean {
 }
 
 /** One foreign skill directory the install was about to overwrite. */
+/**
+ * What genie knew about a directory it was about to overwrite.
+ *
+ * `'modified'` is the honest verdict for a directory at a RECORDED
+ * `agentDir × inventory` pair: genie put it there, so it is genie's own skill
+ * dir the operator (or another tool) edited afterwards — reporting it as "a
+ * foreign skill dir" told the operator someone else's content had changed when
+ * the content was genie's all along. `'foreign'` is everything else: a
+ * same-named directory this channel never delivered.
+ */
+const skillsCollisionKindSchema = z.enum(['foreign', 'modified']);
+
+/** Foreign or locally-modified; see {@link skillsCollisionKindSchema}. */
+export type SkillsCollisionKind = z.infer<typeof skillsCollisionKindSchema>;
+
 const skillsCollisionSchema = z.object({
   dir: z.string().refine(isTraversalFreeAbsolutePath, 'collision dir must be a traversal-free absolute path'),
   skill: z.string().regex(SKILL_NAME_PATTERN),
+  /**
+   * Optional for the same decision-2 reason as `source`: records written before
+   * the distinction existed carry no `kind`, and a required field would
+   * invalidate every one of them.
+   */
+  kind: skillsCollisionKindSchema.optional(),
 });
+
+/**
+ * One kept collision backup root and what it holds.
+ *
+ * ACCUMULATES: a run appends its own root and never drops an earlier one. The
+ * pre-fix record rewrote `collisions` from scratch every run, so the second
+ * update erased the only pointer to a backup root that was still on disk —
+ * the bytes survived with nothing in the receipt naming them.
+ */
+const skillsCollisionBackupSchema = z.object({
+  root: z.string().refine(isTraversalFreeAbsolutePath, 'collision backup root must be a traversal-free absolute path'),
+  entries: z.array(skillsCollisionSchema),
+});
+
+/** One kept collision backup root; see {@link skillsCollisionBackupSchema}. */
+export type SkillsCollisionBackup = z.infer<typeof skillsCollisionBackupSchema>;
 
 /**
  * One retired skill directory this run could NOT archive, carried in the record
@@ -267,6 +314,16 @@ const skillsInstallRecordSchema = z.object({
    */
   collisions: z.array(skillsCollisionSchema).optional(),
   /**
+   * Every collision backup root still worth naming, oldest first — the durable
+   * half of `collisions`, which describes THIS run only.
+   *
+   * `state-backups/` is an archive: a root a previous run wrote stays on disk
+   * forever, so the receipt that names it has to survive too. `genie doctor`
+   * reads this list to tell the operator the bytes are there and where.
+   * Optional for the same decision-2 reason as `source`.
+   */
+  collisionBackups: z.array(skillsCollisionBackupSchema).optional(),
+  /**
    * Retired skill directories left on disk for a human. Optional for the same
    * decision-2 reason as `source`: a required field would invalidate every
    * record already written and silently turn `genie uninstall` into a no-op.
@@ -282,12 +339,14 @@ const skillsInstallRecordSchema = z.object({
    * and was therefore written by an `--all` run, which materialized every
    * product home in the pinned CLI's 77-agent registry.
    *
-   * That distinction is what makes the genie-created-home prune honest. Content
-   * alone cannot make it: after a correct install an operator's own `~/.claude`
-   * holding only `skills/` is byte-for-byte what a genie-materialized home
-   * looks like, so a content-only proof hands back the operator's real home on
-   * the second run (r2 verify §6/§7). Gated on this field the prune is what it
-   * always claimed to be — a ONE-SHOT migration off the `--all` era.
+   * That distinction is what BOUNDS the genie-created-home prune. Content alone
+   * cannot: after a correct install an operator's own `~/.claude` holding only
+   * `skills/` is byte-for-byte what a genie-materialized home looks like, so
+   * treating content as ownership hands back the operator's real home on the
+   * second run (r2 verify §6/§7). With this field the prune still runs on every
+   * update — it must, or a phantom home the first explicit run failed to
+   * recognize is kept forever — but it hands back only what genie created
+   * INSIDE a root the operator already had.
    *
    * Optional for the same decision-2 reason as `source`: a required field would
    * invalidate every record already on disk and turn `genie uninstall` into a
@@ -801,10 +860,12 @@ export function selectSkillsHomesWrittenBy(options: SkillsHomeSelectionOptions):
 // ============================================================================
 
 export interface SkillsCollision {
-  /** The foreign skill directory `--copy` was about to overwrite. */
+  /** The skill directory `--copy` was about to overwrite. */
   dir: string;
   /** The inventory name it collides with. */
   skill: string;
+  /** Genie's own dir the operator edited (`modified`), or someone else's. */
+  kind: SkillsCollisionKind;
 }
 
 /**
@@ -849,45 +910,80 @@ export interface SkillsCollisionSnapshotOptions {
   now?: () => Date;
 }
 
-function isGenieOwned(target: string, expectedSkillMd: Buffer | null, previous: SkillsInstallRecord | null): boolean {
-  const actual = readProbeFile(join(target, 'SKILL.md'));
-  if (expectedSkillMd !== null && actual !== null && actual.equals(expectedSkillMd)) return true;
-  const recorded = previous?.dirDigests?.[target];
-  if (recorded === undefined) return false;
-  return computeSkillDirDigest(target) === recorded;
+/** `'genie'` = this install's own bytes, unchanged; see {@link classifySkillDir}. */
+type SkillDirOwnership = 'genie' | SkillsCollisionKind;
+
+/**
+ * True when the previous record puts a genie skill dir at exactly this path.
+ *
+ * Identity, not content: `<recorded agentDir>/<recorded inventory name>` is a
+ * directory THIS CHANNEL wrote, whatever its bytes say now. The digest map is
+ * the stronger form of the same fact and is checked first by the caller; this
+ * pair check is what still answers for a legacy record that carries no digests.
+ */
+function recordPlacedSkillDir(target: string, skill: string, previous: SkillsInstallRecord | null): boolean {
+  if (previous === null) return false;
+  if (previous.dirDigests?.[target] !== undefined) return true;
+  return previous.inventory.includes(skill) && previous.agentDirs.includes(dirname(target));
 }
 
 /**
- * True for a physical directory at `<home>/<skill>` that is NOT genie's: not
- * byte-equal to the delivered tree and not proven by the previous record's
- * digest. A file or a symlink at that name is not a collision — `--copy` writes
+ * Whose directory this is, and — when it is genie's — whether it still holds
+ * what genie put there.
+ *
+ * Byte-equality with the NEW delivered `SKILL.md` and the PREVIOUS recorded
+ * digest are both proofs of an UNCHANGED genie dir. Neither can disprove
+ * ownership: a genie skill dir that drifted locally AND changed upstream fails
+ * both, and was therefore reported (and recorded) as "a foreign skill dir that
+ * changed while this install ran" — a factually wrong sentence about the
+ * operator's own host. Identity comes from the record; content only decides
+ * `'genie'` vs `'modified'`.
+ */
+function classifySkillDir(
+  target: string,
+  expectedSkillMd: Buffer | null,
+  previous: SkillsInstallRecord | null,
+  skill: string,
+): SkillDirOwnership {
+  const actual = readProbeFile(join(target, 'SKILL.md'));
+  if (expectedSkillMd !== null && actual !== null && actual.equals(expectedSkillMd)) return 'genie';
+  const recorded = previous?.dirDigests?.[target];
+  if (recorded !== undefined && computeSkillDirDigest(target) === recorded) return 'genie';
+  return recordPlacedSkillDir(target, skill, previous) ? 'modified' : 'foreign';
+}
+
+/**
+ * Why `<home>/<skill>` must be backed up before `--copy` overwrites it, or
+ * `null` when it is genie's own unchanged install and there is nothing to lose.
+ * A file or a symlink at that name is not a collision — `--copy` writes
  * directories, so nothing this channel wrote can be either.
  */
-function isForeignSkillDir(
+function collidingSkillDirKind(
   target: string,
   context: { sourceRoot: string; skill: string; previous: SkillsInstallRecord | null },
-): boolean {
-  if (!isSafeSkillName(context.skill)) return false;
-  if (!isTraversalFreeAbsolutePath(target)) return false;
+): SkillsCollisionKind | null {
+  if (!isSafeSkillName(context.skill)) return null;
+  if (!isTraversalFreeAbsolutePath(target)) return null;
   let stat: Stats;
   try {
     stat = lstatSync(target);
   } catch {
-    return false;
+    return null;
   }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
   const expected = readProbeFile(join(context.sourceRoot, context.skill, 'SKILL.md'));
-  return !isGenieOwned(target, expected, context.previous);
+  const ownership = classifySkillDir(target, expected, context.previous, context.skill);
+  return ownership === 'genie' ? null : ownership;
 }
 
 /**
  * Copy every foreign same-named skill directory out of harm's way BEFORE the
  * install overwrites it — but only in the homes `backupHomes` names.
  *
- * `--all` gives no per-home veto, so "refuse for that home" is unimplementable
- * without abandoning the `--all` contract (decisions 4/5): collisions are
- * detected, backed up, recorded and reported — never refused, and never
- * restored (restoration is explicitly out of scope). A directory that cannot be
+ * The pinned CLI takes an agent list but no per-home veto, so "install
+ * everywhere except that one directory" is unimplementable (decisions 4/5):
+ * collisions are detected, backed up, recorded and reported — never refused,
+ * and never restored (restoration is explicitly out of scope). A directory that cannot be
  * backed up is NOT recorded as handled; it is reported as a failure instead, so
  * the operator line can never claim a backup that does not exist.
  *
@@ -909,10 +1005,11 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
   for (const home of options.homes) {
     for (const skill of options.inventory) {
       const target = join(home, skill);
-      if (!isForeignSkillDir(target, { sourceRoot: options.sourceRoot, skill, previous })) continue;
+      const kind = collidingSkillDirKind(target, { sourceRoot: options.sourceRoot, skill, previous });
+      if (kind === null) continue;
       const digest = computeSkillDirDigest(target);
       if (backupHomes !== null && !backupHomes.has(home)) {
-        collisions.push({ dir: target, skill, digest, backedUp: false });
+        collisions.push({ dir: target, skill, kind, digest, backedUp: false });
         continue;
       }
       const mirrored = relative(options.home, target);
@@ -935,7 +1032,7 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
         failures.push(`${target}: ${errorMessage(error)}`);
         continue;
       }
-      collisions.push({ dir: target, skill, digest, backedUp: true });
+      collisions.push({ dir: target, skill, kind, digest, backedUp: true });
     }
   }
   return { collisions, backupRoot, failures };
@@ -1465,6 +1562,8 @@ export interface PrunedAgentHome {
   productRoot: string;
   /** Where its bytes went. */
   backedUpTo: string;
+  /** Ancestors the move emptied and this prune then removed (e.g. `~/.astrbot`). */
+  removedAncestors: string[];
 }
 
 export interface AgentHomePruneResult {
@@ -1481,42 +1580,80 @@ interface AgentHomePruneContext {
   rename: (source: string, destination: string) => void;
 }
 
-/**
- * The product root a recorded skills home belongs to — its parent, unless that
- * parent is HOME itself or the shared XDG `~/.config` root, neither of which is
- * ever a product home. Deliberately conservative: for `~/.pi/agent/skills` it
- * answers `~/.pi/agent` rather than `~/.pi`, so the prune moves LESS than the
- * product owns, never more.
- */
-export function productRootForAgentDir(home: string, agentDir: string): string | null {
-  const parent = dirname(agentDir);
-  const mirrored = relative(home, parent);
-  if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) return null;
-  if (parent === join(home, '.config')) return null;
-  return parent;
+/** True when `dir` holds exactly one entry, and that entry is the directory `child`. */
+function holdsOnlyChild(dir: string, child: string): boolean {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  const only = entries.length === 1 ? entries[0] : undefined;
+  if (only === undefined || !only.isDirectory() || only.isSymbolicLink()) return false;
+  return join(dir, only.name) === child;
 }
 
 /**
- * True when `productRoot` holds NOTHING except the skills directory genie
- * wrote: one entry, a real directory, and every entry inside it is a recorded
- * inventory skill whose content still matches the recorded digest. Any foreign
- * file anywhere — a config, a dotfile, a skill genie never recorded, an edited
- * one — answers `false` and the home is left alone.
+ * The ancestor chain of a recorded skills home that exists only because that
+ * home does — lowest first, starting at the skills dir's parent.
+ *
+ * The walk climbs while each ancestor holds exactly one entry (the level below
+ * it), and stops BELOW HOME and BELOW the shared XDG `~/.config` root, neither
+ * of which is ever a product home. `~/.astrbot/data/skills` therefore yields
+ * `[~/.astrbot/data, ~/.astrbot]` and `~/.config/kimchi/harness/skills` yields
+ * `[~/.config/kimchi/harness, ~/.config/kimchi]`. The pre-fix code answered
+ * with the parent alone, so those chains could never be handed back as a whole
+ * and the genie-made root above them read as independent product evidence.
+ */
+export function agentDirAncestorChain(home: string, agentDir: string): string[] {
+  const config = join(home, '.config');
+  const chain: string[] = [];
+  let child = agentDir;
+  let current = dirname(agentDir);
+  while (current !== child) {
+    const mirrored = relative(home, current);
+    if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) break;
+    if (current === config) break;
+    if (chain.length > 0 && !holdsOnlyChild(current, child)) break;
+    chain.push(current);
+    child = current;
+    current = dirname(current);
+  }
+  return chain;
+}
+
+/**
+ * The product root a recorded skills home belongs to: the highest ancestor that
+ * exists only because the skills dir does. `null` for a skills dir sitting
+ * directly in HOME or in `~/.config`, neither of which is ever a product home.
+ */
+export function productRootForAgentDir(home: string, agentDir: string): string | null {
+  const chain = agentDirAncestorChain(home, agentDir);
+  return chain.length === 0 ? null : (chain[chain.length - 1] as string);
+}
+
+/**
+ * True when everything from `productRoot` down to `agentDir` holds NOTHING
+ * except the path to the skills directory genie wrote, and every entry inside
+ * that directory is a recorded inventory skill whose content still matches the
+ * recorded digest. Any foreign file anywhere — a config, a dotfile, a skill
+ * genie never recorded, an edited one — answers `false` and the home is left
+ * alone.
  */
 function holdsOnlyRecordedSkills(context: {
   productRoot: string;
   agentDir: string;
   previous: SkillsInstallRecord;
 }): boolean {
-  let roots: Dirent[];
-  try {
-    roots = readdirSync(context.productRoot, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  const only = roots.length === 1 ? roots[0] : undefined;
-  if (only === undefined || !only.isDirectory() || join(context.productRoot, only.name) !== context.agentDir) {
-    return false;
+  let child = context.agentDir;
+  let current = dirname(context.agentDir);
+  while (true) {
+    if (!holdsOnlyChild(current, child)) return false;
+    if (current === context.productRoot) break;
+    child = current;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
   }
   let entries: Dirent[];
   try {
@@ -1565,55 +1702,130 @@ function moveProductRoot(source: string, destination: string, rename: (a: string
 }
 
 /**
- * True when the previous record proves genie created no product home writing
+ * True when the previous record proves genie created no product ROOT writing
  * it — i.e. it carries `agentSelection: 'explicit'`.
  *
- * This is the prune's ownership proof, and it must be a RECORD fact rather than
- * a content fact. A product root holding only `skills/` is exactly what a
- * correct install leaves behind in an operator's OWN `~/.claude`, so a
- * content-only proof pruned the operator's real home on the second run of the
+ * It bounds HOW MUCH of the chain may be handed back; it is not a switch that
+ * turns the prune off. A product root holding only `skills/` is exactly what a
+ * correct install leaves behind in an operator's OWN `~/.claude`, so treating
+ * content as ownership pruned the operator's real home on the second run of the
  * identical command (r2 verify §6), and on a two-product host it pruned both
- * and then reported `no agent skill home detected` (§7) — install → update →
- * the agent's skills are gone. Genie no longer creates product homes, so the
- * only homes it may ever hand back are the ones an `--all` era record names.
+ * and then reported `no agent skill home detected` (§7). An explicit-agent run
+ * only ever writes to a product root that ALREADY existed, so that root is the
+ * operator's and the handback stops below it — while everything genie created
+ * INSIDE it (`~/.astrbot/data`, `~/.config/kimchi/harness`) is still handed
+ * back, and the emptied root above it is removed as an empty ancestor.
  */
 export function recordCreatedNoProductHomes(previous: SkillsInstallRecord): boolean {
   return previous.agentSelection === 'explicit';
 }
 
 /**
- * Hand back the product homes genie itself created (r2 §3.2 B).
+ * The highest directory on the chain genie may hand back.
  *
- * Until this release the argv was `--all`, so every `genie install` materialized
- * ~53 product homes the operator had never installed — `~/.openclaw`,
- * `~/.adal`, `~/.qwen`, … — each holding nothing but genie-written skills.
- * Those homes are recorded by an `--all` era record, so genie can prove
- * ownership and give them back: ONE-SHOT (never for a record genie wrote with
- * an explicit agent list), backup-first (never a bare delete), only when the
- * ENTIRE product root holds nothing but recorded, digest-matching skills, and
- * one reported line each.
+ * `--all` era record: the chain top — genie materialized the product root
+ * itself, so the whole phantom goes back.
+ *
+ * Explicit-agent record: the highest chain entry BELOW the agent's own
+ * detection root, because such a run installs only into products already
+ * present and therefore created no root. `null` when the detection root is the
+ * skills dir's own parent (`~/.claude` for `~/.claude/skills`): there is
+ * nothing above the skills dir that genie made, so nothing to hand back. This
+ * is what keeps the prune running on EVERY update — a phantom recorded home
+ * survived forever once one run stamped the record `explicit` — without ever
+ * handing back a home the operator installed.
+ */
+function handbackRoot(
+  home: string,
+  agentDir: string,
+  chain: readonly string[],
+  createdProductRoots: boolean,
+): string | null {
+  if (chain.length === 0) return null;
+  if (createdProductRoots) return chain[chain.length - 1] as string;
+  const detectionRoots = new Set(agentDetectionRoots(home, agentDir));
+  let candidate: string | null = null;
+  for (const dir of chain) {
+    if (detectionRoots.has(dir)) break;
+    candidate = dir;
+  }
+  return candidate;
+}
+
+/**
+ * Remove the directories a prune just emptied, walking up from the moved root
+ * and stopping BELOW HOME and BELOW `~/.config`. Returns what it removed, so
+ * the prune line can name it. Never removes a directory that still holds
+ * anything, and never throws.
+ */
+function removeEmptiedAncestors(moved: string, home: string): string[] {
+  const config = join(home, '.config');
+  const removed: string[] = [];
+  let current = dirname(moved);
+  while (current !== home && current !== config) {
+    const mirrored = relative(home, current);
+    if (mirrored === '' || mirrored.startsWith('..') || isAbsolute(mirrored)) break;
+    try {
+      if (readdirSync(current).length > 0) break;
+      // Verified empty one line above; `recursive` is what makes `rm` accept a
+      // directory at all (a bare `rmSync` on one throws `ERR_FS_EISDIR`).
+      rmSync(current, { recursive: true, force: true });
+    } catch {
+      break;
+    }
+    removed.push(current);
+    current = dirname(current);
+  }
+  return removed;
+}
+
+/**
+ * Hand back the directories genie itself created around a recorded skills home
+ * (r2 §3.2 B).
+ *
+ * Until the explicit agent list the argv was `--all`, so every `genie install`
+ * materialized ~53 product homes the operator had never installed —
+ * `~/.openclaw`, `~/.adal`, `~/.qwen`, … — each holding nothing but
+ * genie-written skills, plus whole nested chains (`~/.astrbot/data/skills`,
+ * `~/.config/kimchi/harness/skills`, `~/.tabnine/agent/skills`).
+ *
+ * It runs on EVERY update over the recorded `agentDirs` — cheap, idempotent,
+ * and the only way a phantom an earlier run failed to recognize is ever handed
+ * back (a run that stamps the record `explicit` used to disable it forever).
+ * What it may move is bounded by `handbackRoot`, it is backup-first (never a
+ * bare delete), it acts only when the ENTIRE chain holds nothing but recorded,
+ * digest-matching skills, it removes the ancestors that move empties, and it
+ * prints one line each.
  *
  * Never throws: a home that cannot be moved is simply kept.
  */
 export function pruneGenieCreatedAgentHomes(context: AgentHomePruneContext, warnings: string[]): AgentHomePruneResult {
   const result: AgentHomePruneResult = { pruned: [] };
-  // A record this release wrote names only detected products, so every home it
-  // lists sits in a product root the OPERATOR created. Nothing to hand back.
-  if (recordCreatedNoProductHomes(context.previous)) return result;
+  const createdProductRoots = !recordCreatedNoProductHomes(context.previous);
   for (const agentDir of new Set(context.previous.agentDirs)) {
-    const productRoot = productRootForAgentDir(context.home, agentDir);
-    if (productRoot === null) continue;
+    const chain = agentDirAncestorChain(context.home, agentDir);
+    if (chain.length === 0) continue;
     // A home an agent installed ELSEWHERE reads is that agent's, not genie's to
     // hand back — `~/.agents/skills` is shared by every universal agent.
-    if (agentHomeIsIndependentlyDetected(context.home, agentDir, productRoot)) continue;
+    if (agentHomeIsIndependentlyDetected(context.home, agentDir, chain[chain.length - 1] as string)) continue;
+    const productRoot = handbackRoot(context.home, agentDir, chain, createdProductRoots);
+    if (productRoot === null) continue;
     if (!holdsOnlyRecordedSkills({ productRoot, agentDir, previous: context.previous })) continue;
     const mirrored = relative(context.home, productRoot);
     try {
       const destination = join(ensurePruneBackupRoot(context, result), mirrored);
       mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
       moveProductRoot(productRoot, destination, context.rename);
-      result.pruned.push({ agentDir, productRoot, backedUpTo: destination });
-      warnings.push(`skills: pruned genie-created agent home ${productRoot} — backed up to ${destination}`);
+      // The move can empty the ancestors above it (`~/.astrbot` once
+      // `~/.astrbot/data` is gone). Leaving those behind left the dogfood host
+      // carrying empty `~/.codeium`, `~/.posit` and `~/.snowflake` roots the
+      // operator never created.
+      const removedAncestors = removeEmptiedAncestors(productRoot, context.home);
+      result.pruned.push({ agentDir, productRoot, backedUpTo: destination, removedAncestors });
+      const alsoRemoved = removedAncestors.length === 0 ? '' : ` (also removed empty ${removedAncestors.join(', ')})`;
+      warnings.push(
+        `skills: pruned genie-created agent home ${productRoot} — backed up to ${destination}${alsoRemoved}`,
+      );
     } catch (error) {
       warnings.push(`skills: could not prune genie-created agent home ${productRoot}: ${errorMessage(error)}`);
     }
@@ -1698,6 +1910,33 @@ function dropPrunedHomesFromRecord(
   }
 }
 
+/**
+ * The record's two collision fields: what THIS run replaced, and every kept
+ * backup root — the previous record's plus this run's, never fewer and never
+ * the same root twice.
+ *
+ * The root list is a durable receipt for bytes that stay on disk forever. A run
+ * that backs nothing up still carries every earlier root forward; dropping them
+ * was what left the dogfood host with a `skills-collision-*` root no record
+ * named. Both fields stay absent when empty (decision 2: an optional field a
+ * legacy record may lack).
+ */
+function collisionRecordFields(
+  previous: SkillsInstallRecord | null,
+  outcome: CollisionOutcome,
+): Pick<SkillsInstallRecord, 'collisions' | 'collisionBackups'> {
+  const kept = [...(previous?.collisionBackups ?? [])];
+  if (outcome.backup !== null) {
+    const existing = kept.findIndex((entry) => entry.root === outcome.backup?.root);
+    if (existing >= 0) kept[existing] = outcome.backup;
+    else kept.push(outcome.backup);
+  }
+  return {
+    ...(outcome.collisions.length > 0 ? { collisions: outcome.collisions } : {}),
+    ...(kept.length > 0 ? { collisionBackups: kept } : {}),
+  };
+}
+
 /** True when a recorded digest key lives inside one of the pruned agent dirs. */
 function isUnderAnyPrunedDir(path: string, prunedDirs: ReadonlySet<string>): boolean {
   for (const dir of prunedDirs) {
@@ -1744,8 +1983,8 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const previous = read.status === 'ok' ? read.record : null;
   const vanished = reportVanishedAgentDirs(previous, warnings);
 
-  // RETIREMENT RUNS BEFORE THE INSTALL PASS. `--all` rewrites every supported
-  // agent home wholesale, so a home skills.sh replaces takes the previous
+  // RETIREMENT RUNS BEFORE THE INSTALL PASS. The CLI rewrites each named
+  // agent's home wholesale, so a home skills.sh replaces takes the previous
   // release's retired directories with it — on 2026-09-15 eleven recorded
   // directories and a user's own symlink were destroyed that way, minutes
   // before a retirement pass that then found nothing to back up. Archiving
@@ -1798,7 +2037,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // What the snapshot staged is judged — kept and reported, or discarded — by
   // re-digesting the originals after the spawn. It is therefore correct on
   // every exit path below, including the ones where the install never ran.
-  const finalizeCollisions = (): SkillsCollision[] =>
+  const finalizeCollisions = (): CollisionOutcome =>
     finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
   const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot, agents: selection.agents });
@@ -1849,7 +2088,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     finalizeCollisions();
     return { ok: false, reason: 'the skills CLI wrote no verifiable skill directory', remedy, warnings };
   }
-  const collisions = finalizeCollisions();
+  const collisionOutcome = finalizeCollisions();
   try {
     const record: SkillsInstallRecord = {
       ref: releaseTag(options.version),
@@ -1864,7 +2103,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
         ...vanished.filter((dir) => !agents.dirs.includes(dir) && !prunedDirs.has(dir)),
       ],
       dirDigests,
-      ...(collisions.length > 0 ? { collisions } : {}),
+      // `collisionBackups` ACCUMULATES: `state-backups/` roots are never
+      // removed, so a record that rewrote the list from scratch (the pre-fix
+      // behaviour) left roots on disk with nothing naming them by the next run.
+      ...collisionRecordFields(previous, collisionOutcome),
       ...(preserved.length > 0 ? { preserved } : {}),
       // This run named its agents explicitly from products already installed,
       // so it created no product home — the durable fact that stops the next
@@ -1885,11 +2127,11 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
 }
 
 /**
- * Every directory the install could conceivably overwrite: the agent homes
- * `--all` writes (the known table, whether or not they exist yet), the homes
- * the previous record proves the CLI wrote last time, and — because neither
- * list can track a self-discovering CLI whose registry names 77 agents — every
- * `skills` directory the bounded `$HOME` walk finds.
+ * Every directory the install could conceivably overwrite: the known table
+ * (whether or not those homes exist yet), the homes the previous record proves
+ * the CLI wrote last time, and — because neither list can track a CLI whose
+ * registry names 77 agents and whose `--agent` list genie derives from product
+ * detection — every `skills` directory the bounded `$HOME` walk finds.
  *
  * The walk is deliberately UNFILTERED here — but DETECTION is all it feeds.
  * Narrowing detection to the known table would lose the signal for any of the
@@ -1926,7 +2168,11 @@ function collisionCandidateHomes(context: {
   return homes;
 }
 
-/** True when at least one delivered skill name under `home` is provably genie's own. */
+/**
+ * True when at least one delivered skill name under `home` is provably genie's
+ * own — including one the operator has since edited, which is still proof this
+ * channel delivers here and therefore still a home worth backing up.
+ */
 function hasGenieOwnedSkill(
   home: string,
   context: { skillsRoot: string; inventory: readonly string[]; previous: SkillsInstallRecord | null },
@@ -1935,7 +2181,8 @@ function hasGenieOwnedSkill(
     if (!isSafeSkillName(skill)) continue;
     const target = join(home, skill);
     if (!isDirectory(target)) continue;
-    if (isGenieOwned(target, readProbeFile(join(context.skillsRoot, skill, 'SKILL.md')), context.previous)) return true;
+    const expected = readProbeFile(join(context.skillsRoot, skill, 'SKILL.md'));
+    if (classifySkillDir(target, expected, context.previous, skill) !== 'foreign') return true;
   }
   return false;
 }
@@ -1945,7 +2192,7 @@ function hasGenieOwnedSkill(
  * "which directories is the installer about to write?", answered with evidence
  * rather than with a `$HOME` sweep:
  *
- *  - the known table, which `--all` writes by construction;
+ *  - the known table, whose homes every selected agent writes by construction;
  *  - every dir the previous record proves the CLI wrote last time (57 of them
  *    on the dogfood host, 53 outside the table — this is what keeps M1's
  *    `~/.openclaw` case backed up);
@@ -2011,6 +2258,33 @@ function collisionIsUntouched(collision: StagedSkillsCollision): boolean {
   return computeSkillDirDigest(collision.dir) === collision.digest;
 }
 
+/** What the run reports, and what its record keeps. */
+interface CollisionOutcome {
+  /** This run's replaced directories — the record's `collisions`. */
+  collisions: SkillsCollision[];
+  /** The backup root this run kept, if any — appended to `collisionBackups`. */
+  backup: SkillsCollisionBackup | null;
+}
+
+/**
+ * The operator-facing sentence for one replaced directory.
+ *
+ * A `modified` dir is genie's own, so the line says so: telling an operator
+ * that "a foreign skill dir" changed, when the bytes are the ones genie
+ * installed and they edited, sends them hunting for a second tool that does not
+ * exist.
+ */
+function describeCollision(collision: SkillsCollision, backupRoot: string | null): string {
+  if (collision.kind === 'modified') {
+    return backupRoot === null
+      ? `skills: genie skill dir ${collision.dir} was modified locally — it sits outside every agent home genie could name in advance, so no copy of it was taken`
+      : `skills: genie skill dir ${collision.dir} was modified locally — previous contents backed up to ${backupRoot}`;
+  }
+  return backupRoot === null
+    ? `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`
+    : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`;
+}
+
 /**
  * Decide which staged collision copies survive, and report them honestly.
  *
@@ -2029,7 +2303,7 @@ function finalizeCollisionSnapshot(context: {
   home: string;
   genieHome: string;
   warnings: string[];
-}): SkillsCollision[] {
+}): CollisionOutcome {
   const { snapshot, warnings } = context;
   for (const failure of snapshot.failures) {
     warnings.push(`skills: collision not backed up: ${failure}`);
@@ -2045,12 +2319,9 @@ function finalizeCollisionSnapshot(context: {
       }
       continue;
     }
-    kept.push({ dir: collision.dir, skill: collision.skill });
-    warnings.push(
-      collision.backedUp && backupRoot !== null
-        ? `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`
-        : `skills: collision: ${collision.dir} (${collision.skill}) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
-    );
+    const entry: SkillsCollision = { dir: collision.dir, skill: collision.skill, kind: collision.kind };
+    kept.push(entry);
+    warnings.push(describeCollision(entry, collision.backedUp && backupRoot !== null ? backupRoot : null));
   }
   // X1: a state-backups root is an ARCHIVE. Nothing here removes, moves or
   // rewrites a root a previous run wrote — the deleted `pruneCollisionBackups`
@@ -2058,13 +2329,13 @@ function finalizeCollisionSnapshot(context: {
   // destroyed the dogfood host's hop-1 root. Only the CURRENT run's staging is
   // ever discarded, above, and only while the live original still proves the
   // copy protects nothing. What survives is named on stdout.
-  const backedUp = kept.filter((collision) => stagedDirs.has(collision.dir)).length;
-  if (backupRoot !== null && backedUp > 0) {
-    warnings.push(`skills: collision backup kept at ${backupRoot} (${backedUp} replaced dir(s))`);
-  } else if (backupRoot !== null) {
-    discardEmptyCollisionBackupRoot(backupRoot);
+  const backedUp = kept.filter((collision) => stagedDirs.has(collision.dir));
+  if (backupRoot !== null && backedUp.length > 0) {
+    warnings.push(`skills: collision backup kept at ${backupRoot} (${backedUp.length} replaced dir(s))`);
+    return { collisions: kept, backup: { root: backupRoot, entries: backedUp } };
   }
-  return kept;
+  if (backupRoot !== null) discardEmptyCollisionBackupRoot(backupRoot);
+  return { collisions: kept, backup: null };
 }
 
 /**
@@ -2184,11 +2455,15 @@ export interface SkillsChannelConvergenceOptions extends Omit<SkillsInstallOptio
 /**
  * The single skills-channel step both command seams call.
  *
- * Consent `none` skips it; every other selection installs to ALL detected
- * agents (wish `skills-everywhere` decision 3 — an explicit widening of the
+ * Consent `none` skips it; every other selection installs to every agent whose
+ * product root is present, named one by one in the `--agent` list the run
+ * builds (wish `skills-everywhere` decision 3 — an explicit widening of the
  * install-consent contract for skills only, because skills.sh already installs
- * per-agent and a consent-narrowed `-a <agents>` argv is the documented
- * fallback if that is ever contested).
+ * per-agent). Detection is the whole consent boundary now: genie writes no home
+ * for a product the host does not have, and creates none.
+ *
+ * What it prints, in order: what the run DID (retirement, prune, collisions),
+ * then the one-line summary of what the host now HAS.
  */
 export function runSkillsChannelConvergence(options: SkillsChannelConvergenceOptions): SkillsChannelConvergenceResult {
   const emit = options.log ?? defaultLog;
@@ -2213,12 +2488,17 @@ export function runSkillsChannelConvergence(options: SkillsChannelConvergenceOpt
     return { status: 'failed', reason: outcome.reason };
   }
   const { record } = outcome;
+  // ORDER IS THE MESSAGE: what this run DID to the host, in the order it did it
+  // (retirement, prune, collisions), and only then what the host now HAS. The
+  // summary used to come first, so on a host with 49 prune lines the operator
+  // read `installed 19 skill(s) … into 8 agent dir(s)` and then fifty lines of
+  // directories moving, with no way to tell which count the summary described.
+  for (const warning of outcome.warnings ?? []) emit(warning);
   // `agentDirs.length` is the SCANNED count, not the size of a fixed table: the
   // number the operator reads is the number `genie uninstall` will act on.
   emit(
     `skills: installed ${record.inventory.length} skill(s) from ${record.source ?? record.ref} into ${record.agentDirs.length} agent dir(s)`,
   );
-  for (const warning of outcome.warnings ?? []) emit(warning);
   return { status: 'installed', record };
 }
 
