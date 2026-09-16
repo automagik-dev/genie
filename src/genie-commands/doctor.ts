@@ -33,6 +33,7 @@ import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
+import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
 import {
   type AgentSkillHomeSpec,
@@ -1517,6 +1518,78 @@ export function checkRetiredJsonMcpEntry(root: string | null): CheckResult[] {
   ];
 }
 
+/** The `git: machine-local .genie state` check name — stable across renders and `--json`. */
+export const TRACKED_MACHINE_STATE_CHECK = 'git: machine-local .genie state';
+
+/**
+ * The remedy for a repo that tracks machine-local `.genie/` state. Two steps,
+ * in this order and both required: a `.gitignore` rule does NOT untrack an
+ * already-tracked file, and untracking without the rule lets the next
+ * `git add -A .genie` put it straight back.
+ */
+export function trackedMachineStateRemedy(paths: readonly string[]): string {
+  return [
+    'Run `genie init` to append the missing .gitignore rules, then untrack the files with',
+    `\`git rm --cached ${paths.join(' ')}\` and commit —`,
+    'ignoring a path never untracks it, and untracking without the rule re-commits it on the next `git add`.',
+  ].join(' ');
+}
+
+/**
+ * Tracked machine-local `.genie/` paths, as `git ls-files` reports them.
+ * Separated from the check so the classification is testable without a doctor
+ * run, and so a git failure (no git, not a work tree, a bare repo) is one
+ * `null` the caller renders as "could not observe", never a false clean bill.
+ */
+export function listTrackedMachineState(root: string): string[] | null {
+  try {
+    const stdout = execFileSync('git', ['-C', root, 'ls-files', '--cached', '-z', '--', ...MACHINE_LOCAL_GENIE_PATHS], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return stdout.split('\0').filter((path) => path.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `git: machine-local .genie state` check.
+ *
+ * `genie init` only ever APPENDS `.gitignore` rules, so a repo that committed
+ * `.genie/roadmap-sync` (or a `genie.db` sidecar) before the rule existed keeps
+ * tracking it forever — and a tracked sync baseline is the one that silently
+ * destroys shared state: it travels to a fresh clone, matches that clone's
+ * freshly created EMPTY database, and the first `genie task sync` publishes the
+ * empty board over the committed `roadmap.json`.
+ *
+ * Warning-level and read-only: the repair rewrites the operator's git index, so
+ * doctor names the files and the exact two commands and never flips `ok:false`
+ * (and never repairs, not even under `--fix`).
+ */
+export function checkTrackedMachineState(root: string | null): CheckResult[] {
+  const name = TRACKED_MACHINE_STATE_CHECK;
+  if (root === null) {
+    return [{ name, status: 'pass', detail: 'not inside a git repository' }];
+  }
+  const tracked = listTrackedMachineState(root);
+  if (tracked === null) {
+    return [{ name, status: 'pass', detail: `could not query the git index at ${root}` }];
+  }
+  if (tracked.length === 0) {
+    return [{ name, status: 'pass', detail: 'no machine-local .genie/ paths are tracked' }];
+  }
+  const sorted = [...tracked].sort();
+  return [
+    {
+      name,
+      status: 'warn',
+      detail: `${sorted.length} machine-local path(s) are committed: ${namedWithRemainder(sorted)}`,
+      suggestion: trackedMachineStateRemedy(sorted),
+    },
+  ];
+}
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -1640,6 +1713,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
+    ...checkTrackedMachineState(root),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

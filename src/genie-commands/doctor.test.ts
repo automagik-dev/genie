@@ -29,12 +29,14 @@ import {
   checkRetiredJsonMcpEntry,
   checkSkillsChannel,
   checkSubagentModelOverride,
+  checkTrackedMachineState,
   checkV4Residue,
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
   evaluateOmniBridgeHealth,
   globalDbContaminationRemedy,
+  listTrackedMachineState,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -1065,6 +1067,91 @@ describe('checkRetiredJsonMcpEntry', () => {
   test('never flips doctor ok:false — it is warning-level on a user-owned file', () => {
     writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"genie","args":["mcp"]}}}');
     expect(checkRetiredJsonMcpEntry(repoRoot).every((c) => c.status !== 'fail')).toBe(true);
+  });
+});
+
+describe('checkTrackedMachineState (committed machine-local .genie state)', () => {
+  let repoRoot: string;
+
+  function gitIn(...args: string[]): string {
+    return execFileSync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Test',
+        GIT_AUTHOR_EMAIL: 'test@example.com',
+        GIT_COMMITTER_NAME: 'Test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+      },
+    });
+  }
+
+  function commitPath(relative: string, body = '{}\n'): void {
+    const target = join(repoRoot, relative);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, body);
+    // `-f`: the point of the check is a file a LATER .gitignore rule covers.
+    gitIn('add', '-f', relative);
+    gitIn('commit', '-q', '-m', `add ${relative}`);
+  }
+
+  beforeEach(() => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'genie-doctor-tracked-'));
+    execFileSync('git', ['init', '-q'], { cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+  afterEach(() => rmSync(repoRoot, { recursive: true, force: true }));
+
+  test('a clean repo passes, and so does one that only tracks real board documents', () => {
+    expect(checkTrackedMachineState(repoRoot)[0]).toMatchObject({ status: 'pass' });
+    commitPath('.genie/roadmap.json', '{"schemaVersion":1}\n');
+    commitPath('.genie/INDEX.md', '# Plans Index\n');
+    expect(checkTrackedMachineState(repoRoot)[0]).toMatchObject({ status: 'pass' });
+  });
+
+  test('a committed .genie/roadmap-sync warns, names the file, and gives both repair steps', () => {
+    commitPath('.genie/roadmap-sync');
+    const [check] = checkTrackedMachineState(repoRoot);
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain('.genie/roadmap-sync');
+    // Both halves of the remedy: the rule alone never untracks the file.
+    expect(check.suggestion).toContain('genie init');
+    expect(check.suggestion).toContain('git rm --cached .genie/roadmap-sync');
+  });
+
+  test('every machine-local path is observed, sorted, and bounded in the detail line', () => {
+    commitPath('.genie/roadmap-sync');
+    commitPath('.genie/genie.db', 'binary-ish\n');
+    commitPath('.genie/launch/group.prompt', 'kickoff\n');
+    expect(listTrackedMachineState(repoRoot)).toEqual([
+      '.genie/genie.db',
+      '.genie/launch/group.prompt',
+      '.genie/roadmap-sync',
+    ]);
+    const [check] = checkTrackedMachineState(repoRoot);
+    expect(check.detail).toContain('3 machine-local path(s) are committed');
+    expect(check.detail?.indexOf('.genie/genie.db')).toBeLessThan(check.detail?.indexOf('.genie/roadmap-sync') ?? -1);
+  });
+
+  test('outside git, or where the index cannot be read, it observes nothing instead of lying', () => {
+    expect(checkTrackedMachineState(null)[0]).toMatchObject({ status: 'pass', detail: 'not inside a git repository' });
+    const notARepo = mkdtempSync(join(tmpdir(), 'genie-doctor-nogit-'));
+    try {
+      expect(listTrackedMachineState(notARepo)).toBeNull();
+      expect(checkTrackedMachineState(notARepo)[0].status).toBe('pass');
+    } finally {
+      rmSync(notARepo, { recursive: true, force: true });
+    }
+  });
+
+  test('warning-level only: a tracked baseline never flips doctor ok:false', async () => {
+    commitPath('.genie/roadmap-sync');
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(repoRoot)));
+    const doc = JSON.parse(output) as { ok: boolean; checks: Array<{ name: string; status: string }> };
+    const check = doc.checks.find((c) => c.name === 'git: machine-local .genie state');
+    expect(check?.status).toBe('warn');
+    expect(doc.ok).toBe(true);
   });
 });
 
