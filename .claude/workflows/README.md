@@ -60,3 +60,4 @@ produce more evidence than their own CLAUDE.md/AGENTS.md injection costs) rests 
 | `wf_c9209af9-91b` (2026-09-15) | workfly building `skill-audit-sweep` (Opus) | 16 | 1.39M | 42 min | script drafted, static gate green, 4 script findings landed by hand |
 | `wf_dd37d1db-bf6` (2026-09-16) | skill-audit-sweep, first live run (Opus) | 6 | 361k | 6 min | ok, 20/20 judged, report in `.genie/wishes/workflows-catalog/` |
 | `wf_8dcc346c-59a` (2026-09-16) | docs-audit, first live run (Opus) | 6 | 454k | 9 min | ok, 4/4 surfaces, report in `.genie/wishes/workflows-catalog/` |
+| `wf_ed316125-671` (2026-09-16) | research-sweep, first live run (Opus) | 5 | 316k | 5 min | ok, 3/3 readers, external URL fetched, report in `.genie/wishes/workflows-catalog/` |

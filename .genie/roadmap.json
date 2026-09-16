@@ -1967,6 +1967,15 @@
       "kind": "move",
       "note": "Idea→Review",
       "task_id": "t_mu3bf6x8bb007675"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789570412583,
+      "id": 274,
+      "kind": "move",
+      "note": "Idea→Review",
+      "task_id": "t_mu3bf6vc67fe3e8b"
     }
   ],
   "tasks": [
@@ -3404,10 +3413,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6vc67fe3e8b",
-      "lane": "Idea",
+      "lane": "Review",
       "status": "ready",
       "title": "workflow: research fan-out-core, split by source, injection fence in every agent (council order 2)",
-      "updated_at": 1789515663240,
+      "updated_at": 1789570412583,
       "wish": null
     },
     {
