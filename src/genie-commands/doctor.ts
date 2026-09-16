@@ -278,10 +278,31 @@ const PER_REPO_ONLY_TABLES = [
 /** The check name, exported so the remedy and the test never drift apart. */
 export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';
 
-/** The exact manual remedy: back the file up first, then drop ONLY those tables. */
-export function globalDbContaminationRemedy(dbPath: string, tables: readonly string[]): string {
+/**
+ * The sqlite3 spelling of the same repair, named as an ALTERNATIVE only.
+ * sqlite3 is not part of a genie install and was absent on the dogfood host, so
+ * pasting it made the backup copy and then died at `sqlite3: command not found`,
+ * leaving a stray `.backup-*` file and the contamination unrepaired (r5 Z10).
+ */
+export function globalDbContaminationSqliteAlternative(dbPath: string, tables: readonly string[]): string {
   const drops = tables.map((name) => `DROP TABLE IF EXISTS ${name};`).join(' ');
-  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && sqlite3 ${dbPath} "${drops}"`;
+  return `sqlite3 ${dbPath} "${drops}"`;
+}
+
+/**
+ * The exact manual remedy: back the file up first, then drop ONLY those tables.
+ * Driven by `bun -e`, not `sqlite3` — bun is a hard requirement of every genie
+ * install, so this runs on a stock host with nothing else to install. The table
+ * names come from {@link PER_REPO_ONLY_TABLES}, never from user input, so they
+ * are interpolated as bare identifiers.
+ */
+export function globalDbContaminationRemedy(dbPath: string, tables: readonly string[]): string {
+  const drop =
+    'import{Database}from"bun:sqlite";' +
+    'const d=new Database(process.argv[1]);' +
+    'for(const t of process.argv.slice(2))d.run("DROP TABLE IF EXISTS "+t);' +
+    'd.close()';
+  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && bun -e '${drop}' ${dbPath} ${tables.join(' ')}`;
 }
 
 /**
@@ -296,10 +317,13 @@ export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]
     return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
   }
   const remedy = globalDbContaminationRemedy(dbPath, strays);
+  const alternative = globalDbContaminationSqliteAlternative(dbPath, strays);
   return {
     name: GLOBAL_DB_CONTAMINATION_CHECK,
     status: 'warn',
-    detail: `${dbPath}: per-repo tables present (${strays.join(', ')}); back up, then drop only those tables: ${remedy}`,
+    detail:
+      `${dbPath}: per-repo tables present (${strays.join(', ')}); back up, then drop only those tables: ${remedy}` +
+      ` (same repair with sqlite3, if you have it: ${alternative})`,
     suggestion: remedy,
   };
 }

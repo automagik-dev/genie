@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +37,7 @@ import {
   evaluateIndexLaneDrift,
   evaluateOmniBridgeHealth,
   globalDbContaminationRemedy,
+  globalDbContaminationSqliteAlternative,
   listTrackedMachineState,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
@@ -1745,9 +1747,13 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     expect(check.suggestion).toBe(remedy);
     expect(check.detail).toContain(remedy);
     expect(remedy).toContain(`cp ${dbPath} ${dbPath}.backup-`);
-    expect(remedy).toContain('DROP TABLE IF EXISTS boards;');
+    expect(remedy).toContain('boards tasks task_events');
     expect(remedy).not.toContain('approvals');
     expect(remedy).not.toContain('inbound_messages');
+    // The sqlite3 spelling is named as an alternative, never as THE remedy.
+    expect(remedy).not.toContain('sqlite3');
+    expect(check.detail).toContain('same repair with sqlite3, if you have it');
+    expect(check.detail).toContain(globalDbContaminationSqliteAlternative(dbPath, ['boards', 'tasks', 'task_events']));
     // Read-only: the check never repairs, so the tables are still there.
     const after = new Database(dbPath, { readonly: true });
     const names = (
@@ -1757,6 +1763,57 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     ).map((row) => row.name);
     after.close();
     expect(names).toContain('boards');
+  });
+
+  /**
+   * Regression (dogfood r5 Z10): the remedy invoked `sqlite3`, which is not part
+   * of a genie install and was absent on the dogfood host — pasting it made the
+   * backup copy and then died at `command not found`, leaving a stray
+   * `.backup-*` file and the contamination unrepaired. The emitted suggestion
+   * must run on a stock host, so this executes it with a PATH that has bun and
+   * coreutils and deliberately NO sqlite3.
+   */
+  test('the emitted remedy actually runs on a host without sqlite3', () => {
+    const genieHome = join(isolatedHome, 'globaldb-remedy-run');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const seed = new Database(dbPath);
+    seed.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    seed.run('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
+    seed.close();
+
+    // A PATH holding exactly what the remedy may rely on. `command -v sqlite3`
+    // must fail here, or this test would not prove anything.
+    const bin = join(genieHome, 'bin');
+    mkdirSync(bin, { recursive: true });
+    for (const tool of ['cp', 'date']) {
+      const resolved = Bun.spawnSync(['/usr/bin/which', tool]).stdout.toString().trim();
+      expect(resolved).not.toBe('');
+      symlinkSync(resolved, join(bin, tool));
+    }
+    symlinkSync(process.execPath, join(bin, 'bun'));
+    expect(Bun.spawnSync(['/bin/sh', '-c', 'command -v sqlite3'], { env: { PATH: bin } }).exitCode).not.toBe(0);
+
+    const suggestion = (checkGlobalDbContamination({ genieHome })[0] as CheckResult).suggestion as string;
+    const run = Bun.spawnSync(['/bin/sh', '-c', suggestion], { env: { PATH: bin } });
+    expect(run.stderr.toString()).toBe('');
+    expect(run.exitCode).toBe(0);
+
+    const after = new Database(dbPath, { readonly: true });
+    const names = (
+      after.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    after.close();
+    // Only the per-repo strays are gone; the operator's approval queue survives.
+    expect(names).toContain('approvals');
+    expect(names).not.toContain('boards');
+    expect(names).not.toContain('tasks');
+    // Backed up first, so the repair is reversible.
+    expect(readdirSync(genieHome).some((entry) => entry.startsWith('genie.db.backup-'))).toBe(true);
+
+    // And re-running doctor now passes.
+    expect(checkGlobalDbContamination({ genieHome })[0]).toMatchObject({ status: 'pass' });
   });
 
   test('an absent global db is not a finding', () => {
