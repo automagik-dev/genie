@@ -1949,6 +1949,15 @@
       "kind": "move",
       "note": "Done→Work",
       "task_id": "t_mtlkd9g2aae24594"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789522197264,
+      "id": 272,
+      "kind": "move",
+      "note": "Idea→Review",
+      "task_id": "t_mu3bf6tcafe4efb0"
     }
   ],
   "tasks": [
@@ -3366,10 +3375,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6tcafe4efb0",
-      "lane": "Idea",
+      "lane": "Review",
       "status": "ready",
       "title": "workflow: skill-audit as a sharded assess-only fan-out (workfly dogfood, council order 1)",
-      "updated_at": 1789515663168,
+      "updated_at": 1789522197264,
       "wish": null
     },
     {
