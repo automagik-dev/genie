@@ -41,6 +41,7 @@ import {
 } from '../lib/omni-runner.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
 import { type ApprovalRow, enqueueApproval, getApproval, listInbox } from '../lib/v5/omni-queue.js';
+import { VERSION } from '../lib/version.js';
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
@@ -598,7 +599,7 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 
   const hostname = options.hostname ?? previousRecord?.hostname ?? osHostname() ?? 'unknown-host';
   const capabilities = {
-    genieVersion: process.env.GENIE_VERSION ?? 'unknown',
+    genieVersion: VERSION,
     platform: process.platform,
     nodeVersion: process.version,
   };

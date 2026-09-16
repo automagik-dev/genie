@@ -18,6 +18,7 @@ import { createOmniRunner, natsConnectionCount } from '../lib/omni-runner.js';
 import { __test__ as sigTest } from '../lib/omni-signature.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
 import { enqueueApproval, listInbox } from '../lib/v5/omni-queue.js';
+import { VERSION } from '../lib/version.js';
 import { __test__ as omniTest } from './omni.js';
 
 function rt(overrides: Partial<OmniRuntimeConfig> = {}): OmniRuntimeConfig {
@@ -702,6 +703,9 @@ describe('omni failure paths are one actionable line (r2 §3.3 #8–#11)', () =>
  * operator at `omni trust revoke <id>` (not a genie command at all), and exited
  * 0 while the old key was still live on the omni server.
  *
+ * Plus the capability drift found in the same run: every host registered with
+ * `capabilities.genieVersion: "unknown"` because the body read an env var
+ * nothing sets.
  */
 describe('omni handshake — rotation, revocation and reported capabilities (r5 Z2)', () => {
   const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
@@ -863,6 +867,20 @@ describe('omni handshake — rotation, revocation and reported capabilities (r5 
       expect(res.stderr).toContain('mutually exclusive');
       expect(stub.handshakes).toHaveLength(0);
       expect(stub.deletes).toHaveLength(0);
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('the handshake body reports the running binary version, never "unknown"', async () => {
+    const stub = startTrustStub(200);
+    const home = sandbox();
+    try {
+      expect((await runHandshake([], home, stub.url)).code).toBe(0);
+
+      const capabilities = (stub.handshakes[0] as { capabilities: Record<string, unknown> }).capabilities;
+      expect(capabilities.genieVersion).toBe(VERSION);
+      expect(capabilities.genieVersion).not.toBe('unknown');
     } finally {
       stub.stop();
     }
