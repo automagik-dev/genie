@@ -1958,6 +1958,15 @@
       "kind": "move",
       "note": "Idea→Review",
       "task_id": "t_mu3bf6tcafe4efb0"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789569766601,
+      "id": 273,
+      "kind": "move",
+      "note": "Idea→Review",
+      "task_id": "t_mu3bf6x8bb007675"
     }
   ],
   "tasks": [
@@ -3415,10 +3424,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6x8bb007675",
-      "lane": "Idea",
+      "lane": "Review",
       "status": "ready",
       "title": "workflow: docs audit half as a sharded read sweep; write half stays in the front door (council order 3)",
-      "updated_at": 1789515663308,
+      "updated_at": 1789569766601,
       "wish": null
     },
     {
