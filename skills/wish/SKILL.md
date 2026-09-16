@@ -1,15 +1,49 @@
 ---
 name: wish
-description: "Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation."
+description: "Deliver one decided task end to end — admit it, work it in one worktree, gate, independent review, bounded repair, a merge-ready PR — or plan a multi-group wish when it is bigger than one task."
 category: lifecycle
-mutates: documents
+mutates: repo
 ---
 
 # Wish
 
-Plan only. Resume an existing wish; use `brainstorm` when unresolved decisions prevent testable criteria. Write `.genie/wishes/<slug>/WISH.md` from the bundled template. Documents hold the plan and dependency DAG; the selected runtime holds execution state.
+`/wish` is one task delivered, as soon as possible. Give it a decided, bounded objective and it comes back with a merge-ready PR against the base branch, or with a refusal that names the route the request needs instead. Everything else in the lifecycle — brainstorm, plan review, `work` over many groups, `fix`, `verify` — is auxiliary to that. `quick` is retired; this is its replacement.
 
-## Design preflight
+The delivery is a saved workflow, not a procedure this skill performs inline. The single source of truth is `.claude/workflows/wish.js` in the genie repository's workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door and carries no stage roster of its own. On a runtime that lists saved workflows, run the saved name `wish` (by explicit path if a same-named user-scope copy makes the name ambiguous) and relay the returned result unchanged. On a runtime that does not, or on an installed host where the catalog is not shipped, follow the by-hand section below with the same briefs; it is complete enough to deliver the PR.
+
+## Invoke
+
+Pass `{objective, issue?, context?, slug?, base?, repairBudget?, model?, timestamp}` through args. `objective` is the one task, frozen: no stage re-asks, narrows or widens it. `issue` is a number or URL the scout reads and the PR links. `context` is frozen caller context (a file set, a decision reference) framed as data. `slug` names the branch `wish/<slug>` and the worktree `.claude/worktrees/wish-<slug>`; pass the brainstorm slug when one exists so the design preflight and the branch agree. `base` defaults to `dev`; `main` and `master` are rejected before any agent runs. `repairBudget` defaults to 2 and is capped at 3; pass the value of `genie config get budgets.maxEscalationsPerGroup` when the repository sets one. `model` pins one model for the whole run; omitted, every agent inherits the session model. `timestamp` is the caller's clock; the workflow has none.
+
+## Admission
+
+The scout is read-only and estimates the work: files, insertions, independent units. The script applies the size band from the wish-duration study — maximum 25 files, 2,000 insertions, 3 units; ideal 10, 800, 2 — and a blind judge that never sees the repository decides the route: `proceed`, `report` (the cause is unknown), `brainstorm` (a product decision is open, or a linked design fails its preflight), or `plan` (too big, or the change touches a trust-boundary path: workflows, hooks, settings, release scripts, permission surfaces). Any route but `proceed` returns `refused` with nothing created.
+
+## Relay
+
+A run returns `{ok, state, route?, contract, estimate, diff, head, branch, worktree, pr?, checks, review, gate, repairs, injectionAttempts, notConvened, report}`. Relay `report` unchanged. `state` is one of:
+
+- `merge-ready` — checks pass, the remote head equals the local head, the PR's base, head and file set equal the frozen contract, and the verdict is `SHIP`.
+- `pr-open` — the PR exists but the checks had not concluded; re-read them with `gh pr checks <n>` before acting.
+- `refused` — admission chose a route; nothing was created.
+- `blocked` — a worktree, hook, denylist or read-back mismatch stopped the run before publish; the reason names which.
+- `missed` — the repair budget ran out, or a stage threw or returned nothing; the branch, commit, worktree and any PR are preserved and named.
+
+`notConvened` holds only agents that returned nothing; they were never counted as a pass. Merge, `SHIPPED`, dev→main promotion and worktree removal stay with the operator: after merge, `git worktree remove <path> && git branch -d wish/<slug>` (non-forcing, so an unmerged branch is refused). Retry after `missed` or `blocked` is a rerun with the same objective and slug; it adopts the named worktree when it is clean and nothing has diverged from the remote, and is otherwise `blocked` with a diagnostic that shows the unpushed work. The workflow never deletes a worktree or a branch.
+
+## Contracts it inherits
+
+These clauses are the lifecycle's, restated nowhere else; the parity test pins them to the skills they come from.
+
+- From `review`: "The reviewer is different from the author and remains read-only."
+- From `fix`: the repair budget is "default 2 when the key is unset".
+- From `work`: "a worker notification is not delivery evidence by itself."
+
+## Plan a multi-group wish
+
+The direct entry for work that is bigger than one task. Do not run admission; write the plan. Resume an existing wish; use `brainstorm` when unresolved decisions prevent testable criteria. Write `.genie/wishes/<slug>/WISH.md` from the bundled template. Documents hold the plan and dependency DAG; the selected runtime holds execution state, and `work` executes the approved plan.
+
+### Design preflight
 
 Before creating or changing a linked wish, check `.genie/brainstorms/<slug>/DESIGN.md`:
 
@@ -21,9 +55,7 @@ node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/bra
 - Existing design and verification fails: return to independent design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived. Never repair the failure with a locally recomputed digest.
 - No design: use the literal `_No brainstorm — direct wish_` in the Design row, without a broken link. A direct wish is valid when a brainstorm adds no value.
 
-## Scaffold and fill
-
-For a new wish, resolve this loaded skill’s absolute directory, replace the two assignments, and run from the repository root. Existing wishes are edited in place, never overwritten by scaffolding.
+### Scaffold and fill
 
 <!-- wish-scaffold-command:start -->
 ```sh
@@ -43,15 +75,9 @@ cp "$WISH_SKILL_DIR/templates/wish-template.md" "$WISH_DEST"
 
 Fill `{{slug}}`, `{{date}}`, and every TODO. Preserve the template’s machine-consumed structure exactly: the `# Wish:` title, the metadata table rows, and the sections `## Summary`, `## Scope` with `### IN` and `### OUT`, `## Decisions`, `## Simplicity Case`, `## Dependencies`, `## Success Criteria`, `## Execution Strategy`, `## Execution Groups` holding at least one `### Group <n>:` heading, `## QA Criteria`, `## Assumptions / Risks`, `## Review Results`, and `## Files to Create/Modify`. Inside every group keep the `**Goal:**`, `**Deliverables:**`, `**Interfaces:**`, `**Acceptance Criteria:**`, `**Validation:**`, and `**depends-on:**` blocks, and keep the Execution Strategy columns including Complexity and Model. Use portable roles/reasoning effort in the plan; runtime configuration selects actual models.
 
-Pass the simplicity gate: state the smallest complete design, justify added machinery with present requirements or measurements, and keep deferred mechanisms out of execution. Give each group a goal, owned files, deliverables, testable criteria, dependencies, and a non-zero validation command. Explain why validation fits the risk; the repository’s required gate is sufficient rationale. Preserve aggregate integration/release checks. Use `review`’s validation policy for affected runtime, schema, dependency, build, or broad changes.
+Pass the simplicity gate: state the smallest complete design, justify added machinery with present requirements or measurements, and keep deferred mechanisms out of execution. Give each group a goal, owned files, deliverables, testable criteria, dependencies, and a non-zero validation command; the repository’s required gate is sufficient rationale. Size the plan by the study: a group that would exceed the admission band is a sibling wish, not a bigger group. Declare wish-level `**depends-on:**` and `**blocks:**` under `## Dependencies` (comma-separated slugs or `none`), plus per-group `**depends-on:**`. Fill each group's `**Interfaces:**` block with exact signatures, and copy the plan-wide requirements into `**Global constraints:**` verbatim. A wide refactor sequences expand, migrate, contract, with green promised only in a final integrate-and-verify group.
 
-Declare wish-level `**depends-on:**` and `**blocks:**` under `## Dependencies` (comma-separated slugs or `none`), plus per-group `**depends-on:**`. Keep the hyphenated keys; the DAG is in git, not inferred from task status.
-
-Fill each group's `**Interfaces:**` block with exact signatures: Consumes is what the group takes from earlier groups, Produces is what later groups rely on. A worker sees only its own group, so an unstated signature is re-invented rather than reused. Copy the plan-wide requirements into `**Global constraints:**` verbatim; every group inherits them and review reads them as the attention lens.
-
-A wide refactor is the exception to a self-contained group. When one mechanical change — a renamed field, a retyped shared symbol — breaks call sites across the repository so no single group can land green, sequence expand, migrate, contract: an expand group adds the new form beside the old so nothing breaks; one migrate group per batch sized by blast radius (per package, per directory) each declares `**depends-on:**` the expand group and stays green because the old form still exists; a contract group deletes the old form and declares `**depends-on:**` every migrate batch. When even a batch cannot stay green alone, keep that order but give the batches a shared integration branch and add a final integrate-and-verify group depending on all of them; green is promised only there, and that group carries the aggregate validation.
-
-## Review and handoff
+### Review and handoff
 
 1. Run the project’s wish linter when provided. In the Genie repository:
 
@@ -61,18 +87,9 @@ grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint
 
 An unavailable project-specific linter is reported; an available linter failing blocks handoff.
 2. Obtain independent `review` of the completed plan. The caller appends its evidence under `## Review Results` and persists APPROVED, FIX-FIRST, or BLOCKED. `work` requires APPROVED on disk.
-3. In standalone mode, create missing task rows per group and inspect for duplicates before retrying:
+3. In standalone mode, create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
+4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. In Orca mode, record the base branch and exact SHA in WISH.md and follow `work`'s Orca protocol; Genie owns the planning documents, Orca owns Run/Task/Dispatch state.
 
-```bash
-genie task create --title "<group title>" --wish <slug> --group <group-name>
-genie task list --wish <slug>
-```
+## Without a workflow surface
 
-If the CLI/DB is unavailable, report it and keep the document usable without task rows. This fallback cannot bypass an authority refusal.
-4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. `--plan` is read-only and cannot record it. Report a failure without discarding the approved plan; a later non-plan resolution records the base.
-
-## Orca mode
-
-When explicitly selected, use the same template, design evidence, and plan review. Record the base branch and exact SHA in WISH.md; its existing execution groups supply the worker briefs. Specify portable roles, file ownership, deliverables, criteria, validation, and dependencies without duplicating them in another dispatch table. Shared-file writers require isolation or sequencing.
-
-Genie owns planning documents and evidence; Orca owns operational Run/Task/Dispatch state. Reconcile existing identifiers before creating anything. The coordinator follows `work`'s Orca protocol instead of standalone task/base commands. Existing user authorization satisfies the applicable human checkpoint; do not request it again.
+Run the same stages as subagents through the runtime's native delegation surface, one at a time, with the briefs the script carries: a read-only scout (facts, candidate plan, declared file set, validation command, focused test, estimate, injection attempts, design preflight); the size band and the blind judge (route and the frozen contract with acceptance criteria written before any code exists); one executor in a worktree cut from `origin/<base>` under the repository's worktrees directory, installing dependencies before its first commit, editing only the declared set and staging by path; a mechanical gate that asserts the hooks are live and runs the repository's full check once; a reviewer that is not the executor, scoring the exact commit SHA against the frozen criteria; up to `repairBudget` repair rounds, each re-gated and re-reviewed; then one publisher that pushes, opens the PR against the base with a body drawn from the contract, the gate line, the verdict and the issue link, and reads the remote head, the PR's base, head and file set, and the checks back. Never force, never bypass a hook, never merge, never push to the base directly. Report the same states with the same meanings.

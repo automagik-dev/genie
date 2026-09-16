@@ -140,7 +140,7 @@ The lifecycle is shared by every agent the skills channel reaches. Claude Code i
 
 ```text
 1. /brainstorm or "brainstorm this"   an idea → DESIGN.md → mandatory design review
-2. /wish or "turn that into a wish"   accepted DESIGN.md → a scoped WISH.md
+2. /wish or "deliver this"            one decided task → a merge-ready PR; bigger work → a scoped WISH.md
 3. /review                            mandatory plan review; persist APPROVED or concrete gaps
 4. /work                              native role subagents build each approved group
 5. /review                            independent implementation review: SHIP, FIX-FIRST, or BLOCKED
