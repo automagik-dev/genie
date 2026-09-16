@@ -59,3 +59,4 @@ produce more evidence than their own CLAUDE.md/AGENTS.md injection costs) rests 
 | `wf_a48db0e8-339` (2026-09-15) | council (skills-to-workflows, Opus) | 6 | 716k | 13 min | proceed-with-conditions |
 | `wf_c9209af9-91b` (2026-09-15) | workfly building `skill-audit-sweep` (Opus) | 16 | 1.39M | 42 min | script drafted, static gate green, 4 script findings landed by hand |
 | `wf_dd37d1db-bf6` (2026-09-16) | skill-audit-sweep, first live run (Opus) | 6 | 361k | 6 min | ok, 20/20 judged, report in `.genie/wishes/workflows-catalog/` |
+| `wf_8dcc346c-59a` (2026-09-16) | docs-audit, first live run (Opus) | 6 | 454k | 9 min | ok, 4/4 surfaces, report in `.genie/wishes/workflows-catalog/` |
