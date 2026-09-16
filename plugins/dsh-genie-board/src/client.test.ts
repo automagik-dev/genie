@@ -22,7 +22,9 @@ mock.module('@deepseek-ai/dsh-client-ui-primitives', () => ({
   Input: () => null,
 }));
 
-const { BoardPicker, boardOptionLabel, Conversation, showingLabel } = await import('./client/BoardPanel');
+const { Audit, auditLabel, BoardPicker, boardOptionLabel, Conversation, showingLabel } = await import(
+  './client/BoardPanel'
+);
 
 /** A card exactly as `genie board --board <id> --json` emits it, through the shipped schema. */
 function seedCard(comments: number, otherEvents: number) {
@@ -122,4 +124,42 @@ test('an untruncated card shows the pane without a window label', () => {
   expect(html).not.toContain('showing last');
   expect(showingLabel(3, 3)).toBeUndefined();
   expect(showingLabel(25, 30)).toBe('showing last 25 of 30');
+});
+
+test('a worker report is readable in History, body and all', () => {
+  const body = 'done: 12 tests pass, migration applied';
+  const card = seedCard(1, 0);
+  const reported = cardSchema.parse({
+    ...card,
+    timeline: [
+      ...card.timeline,
+      { id: 99, kind: 'report', note: body, authorKind: 'agent', author: 'eng-A', createdAt: 1_500 },
+    ],
+    eventCount: card.eventCount + 1,
+  });
+  // The Comments pane is the `comments` window, which the emitter builds from
+  // comment events only, so a report never appears there...
+  const chat = render(createElement(Conversation, { card: reported, busy: false, onSend: () => undefined }));
+  expect(chat).not.toContain(body);
+  // ...which makes History the only surface that can carry the handoff text.
+  const history = render(createElement(Audit, { card: reported, now: 2_000 }));
+  expect(history).toContain(`Reported: ${body}`);
+  expect(auditLabel({ id: 1, kind: 'report', note: body, author: null, authorKind: null, createdAt: 0 })).toBe(
+    `Reported: ${body}`,
+  );
+  // A report with no note is still just the label, and the other kinds are unchanged.
+  expect(auditLabel({ id: 2, kind: 'report', note: null, author: null, authorKind: null, createdAt: 0 })).toBe(
+    'Reported',
+  );
+  expect(auditLabel({ id: 3, kind: 'comment', note: 'hi', author: null, authorKind: null, createdAt: 0 })).toBe(
+    'Commented',
+  );
+  expect(auditLabel({ id: 4, kind: 'move', note: null, author: null, authorKind: null, createdAt: 0 })).toBe('move');
+  expect(auditLabel({ id: 5, kind: 'move', note: 'to Work', author: null, authorKind: null, createdAt: 0 })).toBe(
+    'Moved to Work',
+  );
+  expect(
+    auditLabel({ id: 6, kind: 'claim', note: 'claimed by eng-A', author: null, authorKind: null, createdAt: 0 }),
+  ).toBe('Claimed (eng-A)');
+  expect(auditLabel({ id: 7, kind: 'nova', note: 'x', author: null, authorKind: null, createdAt: 0 })).toBe('nova: x');
 });
