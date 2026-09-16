@@ -64,7 +64,6 @@ export const meta = {
 //    unprobed[], rowsRejected[], consolidatorNote, notConvened[]}
 // A failure return is {ok: false, error, ...the same trace keys that were reached}.
 
-const DEFAULT_MODEL = 'opus'
 // Used ONLY when the Locate stage returns nothing, and always labelled assumed: it gives a
 // stranded auditor somewhere to start without ever being reported as resolved.
 const DEFAULT_DOCS_HOME = 'docs'
@@ -250,7 +249,7 @@ function normalizeInput(raw) {
     requested: asked,
     // Held raw: the default quorum depends on the roster AFTER narrowing.
     quorum: Number.isInteger(input.quorum) ? input.quorum : null,
-    model: text(input.model) || DEFAULT_MODEL,
+    model: text(input.model),
     timestamp: text(input.timestamp),
   }
 }
@@ -547,7 +546,7 @@ if (narrowedOut.length) log(`Narrowed to ${roster.join(', ')}; ${narrowedOut.joi
 log(`${surfacesExpected} surface(s) on the roster; quorum ${quorum}.`)
 
 phase('Locate')
-const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, model: MODEL, effort: 'low' })
+const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
 if (!located) {
   notConvened.push('locate:docs-home')
   log('No response from locate:docs-home; the auditors are told the docs home is unresolved and every fix is marked unrouted.')
@@ -583,7 +582,7 @@ const rawAudits = await parallel(
       label: `audit:${surface.key}`,
       phase: 'Audit',
       schema: AUDIT_SCHEMA,
-      model: MODEL,
+      ...(MODEL ? { model: MODEL } : {}),
       effort: surface.effort,
     }),
   ),
@@ -681,7 +680,7 @@ const judged = await agent(consolidatePrompt(job, responded, silent.map((surface
   label: 'consolidate:audit-table',
   phase: 'Consolidate',
   schema: CONSOLIDATE_SCHEMA,
-  model: MODEL,
+  ...(MODEL ? { model: MODEL } : {}),
   effort: 'high',
 })
 if (!judged) {

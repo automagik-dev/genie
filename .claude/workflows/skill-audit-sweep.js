@@ -45,7 +45,6 @@ export const meta = {
 // A failure return is {ok: false, error, ...the same trace keys that were reached}.
 
 const DEFAULT_SKILLS_DIR = 'skills'
-const DEFAULT_MODEL = 'opus'
 const DEFAULT_SHARD_COUNT = 4
 const MIN_SHARD_COUNT = 3
 const MAX_SHARD_COUNT = 4
@@ -193,7 +192,7 @@ function normalizeInput(raw) {
     shardCount: clampInt(input.shardCount, MIN_SHARD_COUNT, MAX_SHARD_COUNT, DEFAULT_SHARD_COUNT),
     // Held raw: the default depends on the shard count AFTER the roster lowers it.
     quorum: Number.isInteger(input.quorum) ? input.quorum : null,
-    model: text(input.model) || DEFAULT_MODEL,
+    model: text(input.model),
     timestamp: text(input.timestamp),
   }
 }
@@ -418,7 +417,7 @@ log(`skill-audit-sweep over ${job.skillsDir}/: ${job.focus ? job.focus.slice(0, 
 if (job.droppedSkillsDir) log(`Skills directory ${job.droppedSkillsDir} does not resolve inside the repository; using ${job.skillsDir}.`)
 
 phase('Signals')
-const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, model: MODEL, effort: 'low' })
+const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
 if (!signals) {
   notConvened.push('signals:catalogue')
   log('No response from signals:catalogue; the run continues with empty per-shard findings and nothing is inferred.')
@@ -504,7 +503,7 @@ const rawShards = await parallel(
       label: `characterize:shard-${entry.index}`,
       phase: 'Characterize',
       schema: CHARACTERIZE_SCHEMA,
-      model: MODEL,
+      ...(MODEL ? { model: MODEL } : {}),
       effort: 'medium',
     }),
   ),
@@ -578,7 +577,7 @@ const judged = await agent(verdictPrompt(job, respondedShards, absentShards, sig
   label: 'verdict:consolidate',
   phase: 'Verdicts',
   schema: VERDICT_SCHEMA,
-  model: MODEL,
+  ...(MODEL ? { model: MODEL } : {}),
   effort: 'high',
 })
 if (!judged) {
@@ -621,7 +620,7 @@ if (rejected.length) {
     label: 'verdict:restate',
     phase: 'Verdicts',
     schema: RESTATE_SCHEMA,
-    model: MODEL,
+    ...(MODEL ? { model: MODEL } : {}),
     effort: 'high',
   })
   if (!restated) {

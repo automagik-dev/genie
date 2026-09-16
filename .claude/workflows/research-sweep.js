@@ -48,7 +48,6 @@ export const meta = {
 const MIN_SOURCES_PER_READER = 2
 const MAX_READERS = 6
 const DEFAULT_MAX_READERS = 4
-const DEFAULT_MODEL = 'opus'
 
 const CONFIDENCE = ['high', 'medium', 'low']
 const KINDS = ['primary', 'secondary', 'unknown']
@@ -187,7 +186,7 @@ function normalizeInput(raw) {
     sources: Array.isArray(input.sources) ? input.sources : [],
     notesHint: text(input.notesHint),
     maxReaders: clampInt(input.maxReaders, 1, MAX_READERS, DEFAULT_MAX_READERS),
-    model: text(input.model) || DEFAULT_MODEL,
+    model: text(input.model),
     timestamp: text(input.timestamp),
   }
 }
@@ -430,7 +429,7 @@ const readersExpected = Math.max(1, Math.min(job.maxReaders, Math.floor(kept.len
 if (readersExpected < job.maxReaders) log(`Fan-out degraded on purpose: ${kept.length} source(s) at ${MIN_SOURCES_PER_READER} per reader support ${readersExpected} reader(s), under the ${job.maxReaders} allowed.`)
 
 phase('Plan')
-const plan = await agent(planPrompt(job, kept.map((entry) => entry.ref), readersExpected), { label: 'plan:shard', phase: 'Plan', schema: PLAN_SCHEMA, model: MODEL, effort: 'low' })
+const plan = await agent(planPrompt(job, kept.map((entry) => entry.ref), readersExpected), { label: 'plan:shard', phase: 'Plan', schema: PLAN_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
 let planFallback = false
 let planUnderPartitioned = null
 let shards = []
@@ -550,7 +549,7 @@ log(`${kept.length} source(s) over ${readersDispatched} shard(s): ${shards.map((
 
 phase('Read')
 const rawReads = await parallel(
-  shards.map((shard) => () => agent(readPrompt(job, shard), { label: `read:shard-${shard.index}`, phase: 'Read', schema: READ_SCHEMA, model: MODEL, effort: 'medium' })),
+  shards.map((shard) => () => agent(readPrompt(job, shard), { label: `read:shard-${shard.index}`, phase: 'Read', schema: READ_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'medium' })),
 )
 const silentReaders = shards.filter((_, i) => !rawReads[i])
 for (const shard of silentReaders) notConvened.push(`read:shard-${shard.index}`)
@@ -664,7 +663,7 @@ for (const reader of readers)
   }
 
 phase('Synthesize')
-const synth = await agent(synthesizePrompt(job, readers, silentReaders, injectionAttempts), { label: 'synthesize:merge', phase: 'Synthesize', schema: SYNTH_SCHEMA, model: MODEL, effort: 'high' })
+const synth = await agent(synthesizePrompt(job, readers, silentReaders, injectionAttempts), { label: 'synthesize:merge', phase: 'Synthesize', schema: SYNTH_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
 if (!synth) {
   notConvened.push('synthesize:merge')
   log('No response from synthesize:merge; every reader finding returns in the trace so the fan-out is not wasted.')
@@ -731,7 +730,7 @@ if (uncitedClaims.length) {
   const named = new Set(uncitedClaims.flatMap((entry) => entry.citations.map((c) => c.source)).filter(Boolean))
   log(`${uncitedClaims.length} synthesized claim(s) match no reader citation; one bounded re-cite round over the findings for ${named.size} named source(s).`)
   const corpusFindings = readers.flatMap((reader) => reader.findings.filter((finding) => named.has(finding.source)))
-  const recited = await agent(recitePrompt(job, uncitedClaims, corpusFindings), { label: 'attribute:recite', phase: 'Attribute', schema: RECITE_SCHEMA, model: MODEL, effort: 'high' })
+  const recited = await agent(recitePrompt(job, uncitedClaims, corpusFindings), { label: 'attribute:recite', phase: 'Attribute', schema: RECITE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
   if (!recited) {
     notConvened.push('attribute:recite')
     log('No response from attribute:recite; the claims stay uncited with the defect named and none is dropped from the report.')

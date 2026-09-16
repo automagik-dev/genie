@@ -18,8 +18,8 @@ export const meta = {
 // clauses below, so the structural half of the file stays the reference shape.
 
 const DEFAULT_CATALOG = '.claude/workflows'
-const DEFAULT_MODEL = 'opus'
 const DEFAULT_MAX_REPAIRS = 2
+const MAX_REPAIRS = 3
 const META_TEST = 'scripts/workflows-meta.test.ts'
 const SKILLS_DIR = 'skills'
 const STAGE_KINDS = ['fan-out', 'sequential', 'verify', 'synthesis', 'user-facing']
@@ -80,7 +80,13 @@ const REPAIR_SCHEMA = obj(['applied', 'skipped'], { applied: strList, skipped: s
 const list = (value) => (Array.isArray(value) ? value : [])
 const section = (title, items) => (items && items.length ? `${title}:\n${items.map((x) => `- ${x}`).join('\n')}` : `${title}: (none given)`)
 
-const slugify = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').split('-').slice(0, 4).join('-') || 'workflow'
+// kebab is the normalisation alone; slugify adds the four-segment cap a derived candidate
+// gets. The rename check compares against the uncapped form, so a requested name the
+// designer kept verbatim never reads as a rename just because the cap shortened it.
+const kebab = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+const slugify = (text) => kebab(text).split('-').slice(0, 4).join('-') || 'workflow'
+// An integer inside [min, max]; anything else (a float, a string, out of range) takes the fallback.
+const clampInt = (value, min, max, fallback) => (Number.isInteger(value) ? Math.min(max, Math.max(min, value)) : fallback)
 // The only name shape that may reach a path: one kebab slug, no separator, no dot.
 const KEBAB_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
@@ -112,10 +118,10 @@ function normalizeInput(raw) {
   const catalogDir = repoRelative(askedDir) || DEFAULT_CATALOG
   const pinnedModel = text(input.model, '')
   return {
-    objective, requested, catalogDir, pinnedModel, candidate: slugify(requested || objective),
+    objective, requested, sanitized: kebab(requested), catalogDir, pinnedModel, candidate: slugify(requested || objective),
     sources: declared.map(repoRelative).filter(Boolean), droppedSources: declared.filter((value) => !repoRelative(value)),
-    droppedCatalogDir: repoRelative(askedDir) ? '' : askedDir, model: pinnedModel || DEFAULT_MODEL, timestamp: text(input.timestamp, ''),
-    maxRepairs: Number.isInteger(input.maxRepairs) && input.maxRepairs >= 0 ? input.maxRepairs : DEFAULT_MAX_REPAIRS,
+    droppedCatalogDir: repoRelative(askedDir) ? '' : askedDir, model: pinnedModel, timestamp: text(input.timestamp, ''),
+    maxRepairs: clampInt(input.maxRepairs, 0, MAX_REPAIRS, DEFAULT_MAX_REPAIRS),
   }
 }
 
@@ -189,7 +195,7 @@ function designPrompt(job, source, contract, economy) {
 
 function draftPrompt(job, spec, contract, name, target) {
   const stamp = job.timestamp ? `"${job.timestamp}"` : '(omit the timestamp line — none was supplied)'
-  return join([`${head('AUTHOR', job)}\nWrite the saved workflow script at ${target} from the SPEC below. Write that one file, and nothing else.`,
+  return join([`${head('AUTHOR', job)}\nWrite the saved workflow script at ${target} from the SPEC below. Write that one file, and nothing else. If a file already exists at ${target}, write nothing at all — do not overwrite it, do not rename it, do not pick another path — and return an empty string for path so the caller knows nothing was written.`,
     block('SPEC', spec), block('Catalog contract', contract),
     `Open ${job.catalogDir}/council.js and ${job.catalogDir}/pm-ledger-verify.js first and match their shape. The file starts with a pure-literal export const meta = {name, description, whenToUse, phases} whose name is "${name}", followed by a header comment naming the objective and the declared sources stated above, and the timestamp ${stamp}.`,
     `Then the body: ${BODY_RULES}. Where the SPEC leaves an agent's model empty, omit the model option entirely so the agent inherits the session model; pass a model only where the SPEC pins one.`,
@@ -226,9 +232,9 @@ if (job.droppedCatalogDir) log(`Catalog directory ${job.droppedCatalogDir} is no
 phase('Discover')
 const READERS = ['source', 'contract', 'economy']
 const discovery = await parallel([
-  () => agent(sourcePrompt(job), { label: 'discover:source', phase: 'Discover', schema: SOURCE_SCHEMA, model: MODEL, effort: 'high' }),
-  () => agent(contractPrompt(job), { label: 'discover:contract', phase: 'Discover', schema: CONTRACT_SCHEMA, model: MODEL, effort: 'medium' }),
-  () => agent(economyPrompt(job), { label: 'discover:economy', phase: 'Discover', schema: ECONOMY_SCHEMA, model: MODEL, effort: 'medium' }),
+  () => agent(sourcePrompt(job), { label: 'discover:source', phase: 'Discover', schema: SOURCE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' }),
+  () => agent(contractPrompt(job), { label: 'discover:contract', phase: 'Discover', schema: CONTRACT_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'medium' }),
+  () => agent(economyPrompt(job), { label: 'discover:economy', phase: 'Discover', schema: ECONOMY_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'medium' }),
 ])
 const [source, contract, economy] = discovery
 const absentReaders = READERS.filter((_, i) => !discovery[i])
@@ -238,7 +244,7 @@ if (!source || !contract) return { ok: false, error: 'The source and the contrac
 
 phase('Design')
 const pricing = economy || { tiers: [], dynamicFanOut: { recommended: false, reason: 'the economy reader did not respond' }, budgetNotes: '' }
-const spec = await agent(designPrompt(job, source, contract, pricing), { label: 'design:spec', phase: 'Design', schema: SPEC_SCHEMA, model: MODEL, effort: 'high' })
+const spec = await agent(designPrompt(job, source, contract, pricing), { label: 'design:spec', phase: 'Design', schema: SPEC_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
 if (!spec) return { ok: false, error: 'The designer returned nothing; there is no SPEC to build from.', notConvened }
 const name = typeof spec.name === 'string' ? spec.name.trim() : ''
 if (!name) return { ok: false, error: 'The designer returned a SPEC with no name; there is nothing to build.', spec, notConvened }
@@ -254,7 +260,7 @@ if (!taken.length) {
   return { ok: false, error: `No existing names were reported, so ${name} could not be checked for a collision; nothing was drafted.`, spec, notConvened }
 }
 if (taken.includes(name.toLowerCase())) return { ok: false, error: `The name ${name} is already taken by a workflow or a skill; pass a free name (converting a skill keeps that skill's name for the skill).`, spec, notConvened }
-if (job.requested && name !== job.candidate) log(`The designer renamed ${job.requested} to ${name}; the drafted script and every prompt use ${name}.`)
+if (job.requested && name !== job.sanitized) log(`The designer renamed ${job.requested} to ${name}; the drafted script and every prompt use ${name}.`)
 log(`SPEC ${name}: ${list(spec.phases).map((p) => (p && p.title) || '(untitled)').join(' → ')}`)
 const openQuestions = list(spec.openQuestions)
 if (openQuestions.length) log(`${openQuestions.length} open question(s) carried into the draft.`)
@@ -266,9 +272,12 @@ const scriptPath = `${job.catalogDir}/${name}.js`
 if (repoRelative(scriptPath) !== scriptPath) return { ok: false, error: `The script path ${scriptPath} does not resolve inside the repository; nothing was drafted.`, name, path: scriptPath, spec, notConvened }
 
 phase('Draft')
-const draft = await agent(draftPrompt(job, spec, contract, name, scriptPath), { label: 'draft:script', phase: 'Draft', schema: DRAFT_SCHEMA, model: MODEL, effort: 'high' })
+const draft = await agent(draftPrompt(job, spec, contract, name, scriptPath), { label: 'draft:script', phase: 'Draft', schema: DRAFT_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
 if (!draft) return { ok: false, error: `The author returned nothing; check ${scriptPath} for a partial write before re-running.`, name, path: scriptPath, spec, notConvened }
-if (draft.path && draft.path !== scriptPath) log(`The author reported ${draft.path}; verification stays on ${scriptPath}, the name that was checked.`)
+// An empty path is the author's overwrite refusal: the target already existed, so nothing
+// was written and there is nothing to verify. A success here would verify the old file.
+if (!draft.path || !String(draft.path).trim()) return { ok: false, error: `The author wrote nothing: ${scriptPath} already exists, so the draft was refused rather than overwritten; move or remove the existing file, or pass a free name, before re-running.`, name, path: scriptPath, spec, notConvened }
+if (draft.path !== scriptPath) log(`The author reported ${draft.path}; verification stays on ${scriptPath}, the name that was checked.`)
 
 // A non-default catalogDir is appended to the static problems by this script and forces
 // pass false, but is never a repair target: no edit to the drafted file brings it into
@@ -288,9 +297,9 @@ function standingRefusal(key, result) {
 // all three verdicts together, and a round that fixes nothing must not start.
 async function verify(round) {
   const results = await parallel([
-    () => agent(staticPrompt(scriptPath), { label: `verify:static#${round}`, phase: 'Verify', schema: STATIC_SCHEMA, model: MODEL, effort: 'low' }),
-    () => agent(semanticsPrompt(job, spec, scriptPath), { label: `verify:semantics#${round}`, phase: 'Verify', schema: REFUTE_SCHEMA, model: MODEL, effort: 'high' }),
-    () => agent(fidelityPrompt(job, source, scriptPath), { label: `verify:fidelity#${round}`, phase: 'Verify', schema: REFUTE_SCHEMA, model: MODEL, effort: 'high' }),
+    () => agent(staticPrompt(scriptPath), { label: `verify:static#${round}`, phase: 'Verify', schema: STATIC_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' }),
+    () => agent(semanticsPrompt(job, spec, scriptPath), { label: `verify:semantics#${round}`, phase: 'Verify', schema: REFUTE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' }),
+    () => agent(fidelityPrompt(job, source, scriptPath), { label: `verify:fidelity#${round}`, phase: 'Verify', schema: REFUTE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' }),
   ])
   const absent = ['static', 'semantics', 'fidelity'].filter((_, i) => !results[i])
   for (const key of absent) notConvened.push(`verify:${key}#${round}`)
@@ -334,7 +343,7 @@ let repairs = 0
 while (verification.blocking.length > 0 && repairs < job.maxRepairs) {
   const round = repairs + 1
   phase('Repair')
-  const repair = await agent(repairPrompt(scriptPath, verification.blocking), { label: `repair#${round}`, phase: 'Repair', schema: REPAIR_SCHEMA, model: MODEL, effort: 'high' })
+  const repair = await agent(repairPrompt(scriptPath, verification.blocking), { label: `repair#${round}`, phase: 'Repair', schema: REPAIR_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
   if (!repair) {
     notConvened.push(`repair#${round}`)
     log(`Repair round ${round}: the repairer did not respond; no round was spent and the blocking findings stand.`)
