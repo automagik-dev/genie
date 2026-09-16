@@ -175,24 +175,45 @@ export function selectSkillsCliAgents(options: {
 }
 
 /**
- * True when some agent that reads `agentDir` is proven installed by evidence
- * OUTSIDE `productRoot`.
+ * Every declared product root of every agent that reads `agentDir`, absolute.
  *
- * This is the guard that keeps the genie-created-home prune honest. A product
- * root genie itself created makes its own agent look "installed" (`~/.openclaw`
- * exists BECAUSE genie wrote `~/.openclaw/skills`), so self-detection proves
- * nothing and is excluded. Evidence elsewhere is real: `~/.agents/skills` is
- * the shared canonical home, and `~/.codex` — outside `~/.agents` — proves Codex
- * reads it, so that home is never handed back.
+ * The prune uses it to find where an agent's OWN evidence would live: under an
+ * explicit-agent record genie never created those roots (it names only detected
+ * products), so a root on the skills dir's own ancestor chain is the boundary
+ * the handback must stop below.
  */
-export function agentHomeIsIndependentlyDetected(home: string, agentDir: string, productRoot: string): boolean {
-  const inside = (path: string): boolean => path === productRoot || path.startsWith(`${productRoot}${sep}`);
+export function agentDetectionRoots(home: string, agentDir: string): string[] {
+  const roots: string[] = [];
   for (const spec of SKILLS_CLI_AGENTS) {
     if (agentSkillsHome(home, spec) !== agentDir) continue;
     for (const segments of spec.roots) {
       const root = join(home, ...segments);
-      if (!inside(root) && existsSync(root)) return true;
+      if (!roots.includes(root)) roots.push(root);
     }
+  }
+  return roots;
+}
+
+/**
+ * True when some agent that reads `agentDir` is proven installed by evidence
+ * that is NOT on `chainRoot`'s single-entry ancestor chain.
+ *
+ * This is the guard that keeps the genie-created-home prune honest, and
+ * `chainRoot` is what makes it correct. A product root genie itself created
+ * makes its own agent look "installed" (`~/.openclaw` exists BECAUSE genie
+ * wrote `~/.openclaw/skills`), so self-detection proves nothing and is
+ * excluded. Passing only the skills dir's PARENT excluded too little: for
+ * `~/.astrbot/data/skills` the parent is `~/.astrbot/data`, so the genie-made
+ * `~/.astrbot` above it read as independent evidence and the whole phantom
+ * chain was kept forever (r3, D2). The chain root covers every directory that
+ * exists only because the skills dir does; evidence elsewhere is real —
+ * `~/.codex`, outside the `~/.agents` chain, proves Codex reads the shared
+ * canonical home, so that home is never handed back.
+ */
+export function agentHomeIsIndependentlyDetected(home: string, agentDir: string, chainRoot: string): boolean {
+  const inside = (path: string): boolean => path === chainRoot || path.startsWith(`${chainRoot}${sep}`);
+  for (const root of agentDetectionRoots(home, agentDir)) {
+    if (!inside(root) && existsSync(root)) return true;
   }
   return false;
 }
