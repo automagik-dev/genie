@@ -73,9 +73,10 @@ describe('retireProjectMcpConfigs', () => {
       join(root, '.codex', 'config.toml'),
       '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old"\n# END GENIE MCP FALLBACK\n',
     );
+    // The block was all the file held, so the file itself goes (issue #2927).
     expect(retireProjectMcpConfigs(root)[1]).toMatchObject({
-      action: 'updated',
-      detail: 'retired marker-owned project registration',
+      action: 'removed',
+      detail: 'retired marker-owned project registration; .codex/config.toml held nothing else and was removed',
     });
   });
 
@@ -453,5 +454,31 @@ describe('projectTrustState (bounded targeted parse)', () => {
 
   test('null config (absent/unreadable/oversized) is unknown', () => {
     expect(projectTrustState(null, root)).toEqual({ state: 'unknown' });
+  });
+});
+
+/** Issue #2927 (3): a config that held nothing but the marker block is genie's own artifact. */
+describe('retireProjectMcpConfigs: an emptied .codex/config.toml is removed, never left as a 0-byte file', () => {
+  const OWNED_ONLY = '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old"\n# END GENIE MCP FALLBACK\n';
+
+  test('removes the file and the .codex directory it was the only entry of', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'config.toml'), OWNED_ONLY);
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({
+      action: 'removed',
+      detail: 'retired marker-owned project registration; .codex/config.toml held nothing else and was removed',
+    });
+    expect(existsSync(join(root, '.codex'))).toBe(false);
+    // Idempotent: the retired surface classifies absent.
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({ action: 'skipped' });
+  });
+
+  test('keeps a .codex directory that holds anything else', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'config.toml'), `\n${OWNED_ONLY}\n`);
+    writeFileSync(join(root, '.codex', 'notes.txt'), 'theirs\n');
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({ action: 'removed' });
+    expect(existsSync(join(root, '.codex', 'config.toml'))).toBe(false);
+    expect(readFileSync(join(root, '.codex', 'notes.txt'), 'utf8')).toBe('theirs\n');
   });
 });

@@ -17,8 +17,10 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,7 +28,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from './trusted-executable.js';
 
-export type ArtifactAction = 'created' | 'updated' | 'skipped';
+export type ArtifactAction = 'created' | 'updated' | 'removed' | 'skipped';
 
 export interface McpConfigResult {
   path: string;
@@ -707,6 +709,21 @@ export function removeCodexMcpFallback(configPath: string): ArtifactAction {
   if (owned === null) return 'skipped';
   const content = removeOwnedFallback(raw, owned);
   assertNonGenieTomlSemantics(raw, content, configPath);
+  // A file that held nothing but the marker block is genie's own artifact: on
+  // 2026-09-16 `genie init` left a 0-byte `.codex/config.toml` behind, which is
+  // the same trash the retirement exists to remove. Unlink it — and the
+  // `.codex/` directory too when the file was its only entry — the way the
+  // `.mcp.json` path removes a file that held nothing but the dead entry.
+  if (content.trim() === '') {
+    unlinkSync(configPath);
+    const dir = dirname(configPath);
+    try {
+      if (readdirSync(dir).length === 0) rmdirSync(dir);
+    } catch {
+      // The directory is user territory; leaving it is never an error.
+    }
+    return 'removed';
+  }
   applyPreparedWrite({ path: configPath, action: 'updated', content });
   return 'updated';
 }
@@ -1080,9 +1097,11 @@ export function retireProjectMcpConfigs(root: string, _options: RetireProjectMcp
     path: codexPath,
     action,
     detail:
-      action === 'updated'
-        ? 'retired marker-owned project registration'
-        : 'no marker-owned project registration to retire',
+      action === 'removed'
+        ? 'retired marker-owned project registration; .codex/config.toml held nothing else and was removed'
+        : action === 'updated'
+          ? 'retired marker-owned project registration'
+          : 'no marker-owned project registration to retire',
   });
   return results;
 }

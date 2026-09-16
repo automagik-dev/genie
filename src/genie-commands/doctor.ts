@@ -35,10 +35,12 @@ import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
+import { findLegacySkillLeftovers } from '../lib/legacy-skills.js';
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  existingAgentSkillHomes,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
@@ -643,6 +645,34 @@ function evaluatePreservedRetirements(record: SkillsInstallRecord | null): Check
   };
 }
 
+const SKILLS_LEGACY_LEFTOVERS_SUGGESTION =
+  'Run `genie update` — it archives proven pre-record genie dirs under state-backups; review any name-only match by hand';
+
+/**
+ * Genie skill directories that predate the install record (see
+ * `src/lib/legacy-skills.ts`): the record names none of them, so the
+ * recorded-agent-dirs line above reads complete while `~/.agents/skills` still
+ * holds a 2026-07 `genie-review`. Scans the record's homes plus every known home
+ * on disk, so a host with NO record — the host most likely to carry them — is
+ * covered too. Read-only: `genie update` is what moves them.
+ */
+function evaluateLegacyLeftovers(
+  record: SkillsInstallRecord | null,
+  home: string,
+  inventory: readonly string[],
+): CheckResult | null {
+  const dirs = [...(record?.agentDirs ?? []), ...existingAgentSkillHomes(home).map((entry) => entry.dir)];
+  const leftovers = findLegacySkillLeftovers(dirs, inventory);
+  if (leftovers.length === 0) return null;
+  const named = leftovers.map((entry) => `${join(entry.agentDir, entry.entry)} (${entry.kind})`);
+  return {
+    name: 'skills: legacy leftovers',
+    status: 'warn',
+    detail: `${leftovers.length} genie skill dir(s) predate the install record: ${namedWithRemainder(named)}`,
+    suggestion: SKILLS_LEGACY_LEFTOVERS_SUGGESTION,
+  };
+}
+
 /** A backup root younger than this is news the operator has not seen yet. */
 const RECENT_COLLISION_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -765,6 +795,9 @@ export function checkSkillsChannel(
       ? record.inventory
       : inventoryFromSkillsDir(join(genieHome, 'skills'));
   const results: CheckResult[] = [];
+  // Leftovers are scanned BEFORE the no-record early return: a host that never
+  // wrote a record is exactly the host that carries pre-record genie dirs.
+  const legacy = evaluateLegacyLeftovers(record, home, inventory);
   if (record === null) {
     results.push({
       name: 'skills: channel',
@@ -772,7 +805,10 @@ export function checkSkillsChannel(
       detail: 'no install record',
       suggestion: SKILLS_CHANNEL_SUGGESTION,
     });
-    if (inventory.length === 0) return results;
+    if (inventory.length === 0) {
+      if (legacy !== null) results.push(legacy);
+      return results;
+    }
   }
   const context: SkillsChannelContext = {
     home,
@@ -787,6 +823,7 @@ export function checkSkillsChannel(
   if (agentDirs !== null) results.push(agentDirs);
   const retirement = evaluatePreservedRetirements(record);
   if (retirement !== null) results.push(retirement);
+  if (legacy !== null) results.push(legacy);
   const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
   if (backups !== null) results.push(backups);
   return results;
