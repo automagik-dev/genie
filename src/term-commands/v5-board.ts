@@ -15,7 +15,11 @@ import { color, padRight, truncate } from '../lib/term-format.js';
 import { cardBadges } from '../lib/v5/card-render.js';
 import { openDb, resolveRepoRoot } from '../lib/v5/genie-db.js';
 import {
+  BOARD_JSON_EVENT_LIMIT,
+  BOARD_JSON_EVENT_LIMIT_STEPS,
+  BOARD_JSON_MAX_BYTES,
   type BoardRow,
+  type BoardTaskAggregate,
   DEFAULT_LIFECYCLE_LANES,
   type Lane,
   type LaneTaskRow,
@@ -31,6 +35,7 @@ import {
   listTasks,
   listTasksWithLane,
   moveTask,
+  readBoardAggregate,
   resolveBoard,
 } from '../lib/v5/task-state.js';
 import { WISH_SLUG_PATTERN, extractStatusCell, readBoundedWishFile } from '../lib/wish-status.js';
@@ -43,12 +48,24 @@ function out(line = ''): void {
   process.stdout.write(`${line}\n`);
 }
 
+/** A note on stderr that is NOT a failure — stdout and the exit code are untouched. */
+function note(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
 function fail(message: string): never {
   process.stderr.write(`Error: ${message}\n`);
   process.exit(1);
 }
 
 /** Wrap a handler so typed errors become clean stderr + non-zero exit. */
+/**
+ * The refusal for `--wish ""`/`--wish "   "` — the wish-side twin of
+ * `board id must not be empty`. Exported so the CLI test and any future caller
+ * assert the same sentence.
+ */
+export const EMPTY_WISH_SCOPE_MESSAGE = 'wish slug must not be empty';
+
 function run(handler: () => void): void {
   try {
     handler();
@@ -271,36 +288,62 @@ function handleBoardWithDb(opts: BoardOptions): void {
     const filter: TaskFilter = {};
     let scopeLabel = 'all tasks';
     let board: BoardRow | null = null;
-    if (opts.board) {
+    // `!== undefined`, not truthiness: `--board ""` (an unset shell variable)
+    // must be refused by the resolver, never silently widen the read to every
+    // task in the repo.
+    if (opts.board !== undefined) {
       board = resolveBoard(db, opts.board);
       filter.boardId = board.id;
       scopeLabel = `board "${board.name}"`;
     }
-    if (opts.wish) {
+    // Same fail-closed rule the board ref gets: `--wish ""` (an unset shell
+    // variable) is a supplied-but-empty scope, never a request for every task
+    // in the repo. Truthiness alone silently widened the read to the unscoped
+    // board with exit 0 (dogfood r5 Z6), so both scoping flags are now tested
+    // with `!== undefined` and refused when blank.
+    if (opts.wish !== undefined) {
+      if (opts.wish.trim() === '') fail(EMPTY_WISH_SCOPE_MESSAGE);
       filter.wish = opts.wish;
-      scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
+      scopeLabel = opts.board !== undefined ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
+
+    // Unusable stored lane metadata is NOT a read failure. `boards.lanes` is
+    // untrusted TEXT that `task import`/`sync` accepts unvalidated, and no board
+    // verb repairs it, so both paths say so once on stderr and then render the
+    // board laneless — same message, same exit code, on `--json` and the human
+    // render alike (never a `Malformed board detail` exit on one path only).
+    if (board?.laneMetadataMalformed) note(lanelessNotice(board));
 
     // A scoped board that defines lanes renders on the lifecycle axis. Every
     // other scope (no board, or a laneless board) falls through to the frozen
     // status render below — kept byte-identical (Group B owns any rework).
-    if (board?.lanes && board.lanes.length > 0) {
+    // Every `--json` path is refused in the same words when it cannot fit the
+    // response budget, and the refusal recommends a narrowing this read has not
+    // already applied.
+    const advice = budgetAdvice(opts);
+
+    if (board?.lanes) {
       // The only write a board read may perform, and only when this read's own
       // output renders lanes: `--json` on a lane-defining board. Deliberately
       // CLI-only — MCP queries call their shared read projection and never
       // enter this verb handler. The human lane render and every laneless read
       // (including unscoped `--json`) stay pure reads.
-      if (opts.json) reconcileWishLanes(db, filter, board, repoRoot);
-      renderLaneBoard(db, board.lanes, filter, scopeLabel, opts.json ?? false);
-      return;
+      if (!opts.json) {
+        renderLaneBoard(db, board.lanes, filter, scopeLabel);
+        return;
+      }
+      reconcileWishLanes(db, filter, board, repoRoot);
+      if (renderLaneAggregate(db, board.id, filter, scopeLabel, advice)) return;
+      // The board lost its lanes between the scope read and the snapshot; the
+      // frozen laneless payload below is the honest answer for that snapshot.
+      note(lanelessNotice(board));
     }
 
     // `--json` FROZEN path: pre-assignment TaskRows grouped by the four raw
     // statuses. The explicit projection strips the two assignment fields A1
     // added to TaskRow — the laneless payload stays byte-identical (Decision 7).
     if (opts.json) {
-      const grouped = groupByStatus(listTasks(db, filter).map(toLanelessJsonCard));
-      out(JSON.stringify({ scope: scopeLabel, columns: grouped }, null, 2));
+      out(serializeLanelessPayload(scopeLabel, listTasks(db, filter).map(toLanelessJsonCard), advice));
       return;
     }
 
@@ -351,51 +394,216 @@ function groupByLane<T extends LaneTaskRow>(lanes: Lane[], tasks: T[]): Map<stri
 }
 
 /**
- * One card on the additive lane `--json` path — the frozen ten TaskRow keys
- * plus the two declared-routing fields and `lane` + `enforcedBlock`, picked
- * explicitly so the lane shape states exactly what it serializes. Key order
- * matches the pre-assignment spread, so lane output changes by exactly the two
- * added fields; the TaskCardRow runtime layer (identity, heartbeat, block
- * provenance) stays off this path.
+ * The one explicit message for a board that cannot render lanes. Both paths
+ * emit it; neither fails. Lane metadata is validated in exactly one place —
+ * `normalizeLanes` in the state engine — so `--json` and the human render can
+ * never disagree about whether a board has lanes.
  */
-function toLaneJsonCard(t: LaneTaskRow): LaneTaskRow {
+function lanelessNotice(board: BoardRow): string {
+  return `Note: board "${board.name}" has no usable lane metadata; rendering it as a laneless board.`;
+}
+
+/**
+ * Emit the scoped board aggregate (schemaVersion 1). Returns false — emitting
+ * nothing — when the transactional snapshot finds the board laneless, so the
+ * caller can fall through to the frozen laneless payload.
+ *
+ * The aggregate is the complete v1 contract: lanes AND every card, dependency,
+ * and event come from ONE SQLite read transaction, so the lane definition the
+ * cards are grouped into is the one that was stored alongside them. Grouping
+ * here only preserves the board's declared lane order.
+ */
+function renderLaneAggregate(
+  db: Database,
+  boardId: string,
+  filter: TaskFilter,
+  scopeLabel: string,
+  advice: string,
+): boolean {
+  const snapshot = readBoardAggregate(db, boardId, filter);
+  const lanes = snapshot.board.lanes;
+  if (!lanes) return false;
+  const byLane = groupByLane<BoardTaskAggregate>(lanes, snapshot.cards);
+  const laneGroups: AggregateLaneGroup[] = lanes.map((l) => ({
+    name: l.name,
+    label: l.label ?? null,
+    action: l.action ?? null,
+    cards: byLane.get(l.name) ?? [],
+  }));
+  const { json, eventLimit } = serializeBoardAggregate(scopeLabel, laneGroups, snapshot.board, advice);
+  // A degraded response is not a failure, but a human must be able to see that
+  // this board is at the edge of the budget before its history silently thins.
+  if (eventLimit < BOARD_JSON_EVENT_LIMIT) note(degradedNotice(snapshot.board, eventLimit));
+  out(json);
+  return true;
+}
+
+/** One lane of the scoped aggregate payload, before the response budget applies. */
+interface AggregateLaneGroup {
+  name: string;
+  label: string | null;
+  action: string | null;
+  cards: BoardTaskAggregate[];
+}
+
+/**
+ * Re-cap one card's embedded history to `limit`, keeping the counts truthful:
+ * `eventCount`/`commentCount` are the card's real totals at every cap, and
+ * `eventsTruncated` describes the slice this response actually carries.
+ */
+function capCardHistory(card: BoardTaskAggregate, limit: number): BoardTaskAggregate {
+  if (card.timeline.length <= limit && card.comments.length <= limit) return card;
+  const timeline = limit === 0 ? [] : card.timeline.slice(-limit);
   return {
-    id: t.id,
-    boardId: t.boardId,
-    title: t.title,
-    status: t.status,
-    claimedBy: t.claimedBy,
-    claimedAt: t.claimedAt,
-    wish: t.wish,
-    group: t.group,
-    assignedAgent: t.assignedAgent,
-    assignedReason: t.assignedReason,
-    createdAt: t.createdAt,
-    updatedAt: t.updatedAt,
-    lane: t.lane,
-    enforcedBlock: t.enforcedBlock,
+    ...card,
+    timeline,
+    eventsTruncated: card.eventCount > timeline.length,
+    comments: limit === 0 ? [] : card.comments.slice(-limit),
   };
 }
 
-function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string, json: boolean): void {
-  // `--json` keeps the additive lane shape. Its cards carry the two declared-
-  // routing fields (`assignedAgent`/`assignedReason`) plus exactly one runtime
-  // field beyond the frozen TaskRow — `enforcedBlock` (null when unblocked), so
-  // a lane consumer can tell a parked card from a live one and read who it is
-  // routed to. Identity, heartbeat, and block provenance stay off this path,
-  // and the frozen laneless `--json` remains byte-identical.
-  if (json) {
-    const byLane = groupByLane(lanes, listTasksWithLane(db, filter));
-    const laneGroups = lanes.map((l) => ({
-      name: l.name,
-      label: l.label ?? null,
-      action: l.action ?? null,
-      cards: (byLane.get(l.name) ?? []).map(toLaneJsonCard),
-    }));
-    out(JSON.stringify({ scope: scopeLabel, lanes: laneGroups }, null, 2));
-    return;
-  }
+/**
+ * Serialize the aggregate under the WHOLE-response budget, not just the per-card
+ * one. The per-card cap bounds a card's depth; a board is unbounded in card
+ * count too, so a thousand short cards overflow a fixed read budget with every
+ * card well inside the cap. The emitter therefore walks
+ * {@link BOARD_JSON_EVENT_LIMIT_STEPS} widest-first and emits the first response
+ * that fits {@link BOARD_JSON_MAX_BYTES}; the applied cap rides the payload as
+ * the root `eventLimit` so a client can say what it is not showing. A board that
+ * does not fit even with no history at all is refused by name — an actionable
+ * `Error:` line the caller can print, never an opaque truncation downstream.
+ */
+function serializeBoardAggregate(
+  scopeLabel: string,
+  lanes: AggregateLaneGroup[],
+  board: BoardRow,
+  advice: string,
+): { json: string; eventLimit: number } {
+  const cards = lanes.reduce((total, lane) => total + lane.cards.length, 0);
+  return serializeWithinBudget(
+    BOARD_JSON_EVENT_LIMIT_STEPS,
+    (eventLimit) => {
+      const capped = lanes.map((lane) => ({
+        ...lane,
+        cards: lane.cards.map((card) => capCardHistory(card, eventLimit)),
+      }));
+      return JSON.stringify({ schemaVersion: 1, scope: scopeLabel, eventLimit, lanes: capped }, null, 2);
+    },
+    (bytes) => boardTooLargeMessage(board, cards, bytes, advice),
+  );
+}
 
+/**
+ * The frozen laneless `--json` payload (`{ scope, columns }`), under the SAME
+ * whole-response budget as the scoped aggregate.
+ *
+ * Without this, the escape hatch the aggregate's own refusal recommends —
+ * `--wish <slug>`, and the unscoped read it falls back to — was the one
+ * unguarded `--json` path: it exited 0 and handed a DSH client (which caps a
+ * read at 4 MiB) a payload past both that limit and this budget, with no note
+ * and no error.
+ *
+ * The two paths differ only in what can DEGRADE. An aggregate card embeds
+ * history, so its emitter walks the cap ladder; a frozen laneless card embeds
+ * none at all ({@link toLanelessJsonCard} is the whole shape), so narrowing the
+ * per-card cap cannot shrink this payload by one byte and its ladder is the
+ * single widest rung — it fits, or it is refused by name. What the paths share
+ * is the guarantee that matters: no `--json` response exceeds
+ * {@link BOARD_JSON_MAX_BYTES}, and the card set is never silently truncated.
+ */
+const LANELESS_JSON_STEPS: readonly number[] = [BOARD_JSON_EVENT_LIMIT];
+
+function serializeLanelessPayload(scopeLabel: string, cards: FrozenJsonCard[], advice: string): string {
+  return serializeWithinBudget(
+    LANELESS_JSON_STEPS,
+    () => JSON.stringify({ scope: scopeLabel, columns: groupByStatus(cards) }, null, 2),
+    (bytes) => lanelessTooLargeMessage(scopeLabel, cards.length, bytes, advice),
+  ).json;
+}
+
+/**
+ * Emit one `--json` response inside {@link BOARD_JSON_MAX_BYTES}: walk `steps`
+ * widest-first and take the first payload that fits, returning the cap that was
+ * applied so the caller can announce a degraded response. A payload that does
+ * not fit at the narrowest step is refused by name through `tooLarge` — an
+ * actionable `Error:` line the caller prints verbatim, never an opaque
+ * truncation downstream. ONE budget gate for every machine payload this verb
+ * emits, so no path can be added that skips it.
+ */
+function serializeWithinBudget(
+  steps: readonly number[],
+  build: (eventLimit: number) => string,
+  tooLarge: (bytes: number) => string,
+): { json: string; eventLimit: number } {
+  let bytes = 0;
+  for (const eventLimit of steps) {
+    const json = build(eventLimit);
+    // `out` appends the newline the consumer counts against its own budget.
+    bytes = Buffer.byteLength(json, 'utf8') + 1;
+    if (bytes <= BOARD_JSON_MAX_BYTES) return { json, eventLimit };
+  }
+  throw new Error(tooLarge(bytes));
+}
+
+/**
+ * `--wish <slug>` is the ONLY flag that shrinks a `--json` response without
+ * changing its shape: it narrows the card set on both paths. Adding
+ * `--board <ref>` is not narrowing at all — it re-routes a lane-defining board
+ * onto the aggregate, which embeds history and is usually LARGER — so no
+ * refusal recommends it.
+ */
+const NARROW_BY_WISH = 'Narrow the read with --wish <slug>, or split the board.';
+
+/**
+ * A read that is already `--wish`-scoped has spent the one narrowing axis, so
+ * telling it to narrow with `--wish <slug>` is the circular advice that sent
+ * operators onto the (previously unguarded) laneless path in the first place.
+ */
+const SPLIT_THE_WISH = 'Split the wish across boards, or archive the cards this read does not need.';
+
+/** The one advice rule both `--json` paths share, keyed on the scope in force. */
+function budgetAdvice(opts: BoardOptions): string {
+  return opts.wish ? SPLIT_THE_WISH : NARROW_BY_WISH;
+}
+
+/** Bytes as MiB with one decimal, for a message a human reads once. */
+function mib(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+/** The stderr note for a response whose per-card history had to be narrowed. */
+function degradedNotice(board: BoardRow, eventLimit: number): string {
+  const events = eventLimit === 1 ? 'event' : 'events';
+  return [
+    `Note: board "${board.name}" is large; each card's embedded history was capped at ${eventLimit} ${events}`,
+    `to fit the ${mib(BOARD_JSON_MAX_BYTES)} MiB response budget`,
+    '(eventCount/commentCount still report the true totals).',
+  ].join(' ');
+}
+
+/** The refusal for a board that cannot be emitted as one response at any cap. */
+function boardTooLargeMessage(board: BoardRow, cards: number, bytes: number, advice: string): string {
+  return [
+    `Board "${board.name}" is too large to emit as one JSON response: ${cards} cards serialize to`,
+    `${mib(bytes)} MiB with no embedded history at all, over the ${mib(BOARD_JSON_MAX_BYTES)} MiB budget.`,
+    advice,
+  ].join(' ');
+}
+
+/**
+ * The refusal for a laneless read whose card set alone is past the budget. It
+ * names the SCOPE rather than a board: this path also serves the unscoped read
+ * and a `--wish`-only read, neither of which has a board to name.
+ */
+function lanelessTooLargeMessage(scopeLabel: string, cards: number, bytes: number, advice: string): string {
+  return [
+    `Board read (${scopeLabel}) is too large to emit as one JSON response: ${cards} cards serialize to`,
+    `${mib(bytes)} MiB, over the ${mib(BOARD_JSON_MAX_BYTES)} MiB budget.`,
+    advice,
+  ].join(' ');
+}
+
+function renderLaneBoard(db: Database, lanes: Lane[], filter: TaskFilter, scopeLabel: string): void {
   const byLane = groupByLane(lanes, listTaskCards(db, filter));
   const comments = commentCounts(db);
   const now = Date.now();

@@ -24,6 +24,7 @@ import {
   type DeliveryEvidenceChannel,
   type DeliveryEvidencePlatformId,
   type DeliveryEvidenceVerificationDependencies,
+  verifyDeliveryEvidenceArtifact,
   verifyDownloadedDeliveryEvidence,
 } from '../lib/delivery-evidence-verify.js';
 import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
@@ -62,6 +63,7 @@ import {
 import { parseReleaseVersion, scanPhysicalTree } from '../lib/release-payload-proof.js';
 import { type IntegrationSelection, readIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
+import { printOut, writeErr, writeOut } from '../lib/term-output.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
@@ -309,7 +311,8 @@ export function decideDowngrade(args: {
 //   1. fetch .well-known/<channel>.json from raw.githubusercontent.com
 //   2. resolve target version + tarball base URL
 //   3. gh release download to a staging directory
-//   4. gh attestation verify the tarball
+//   4. verify the release's signed delivery evidence offline (credential-free),
+//      cross-checked by `gh attestation verify` when a usable gh is present
 //   5. extract and atomically swap the binary at ~/.genie/bin/genie
 //
 // Old binary moves to ~/.genie/bin/.previous/genie-<old-version> for rollback.
@@ -554,6 +557,10 @@ interface DownloadAndVerifyOptions {
   /** Test seam: skip release signature verification (used by integration
    *  smokes where the real gh/cosign CLIs are not available). */
   skipAttestation?: boolean;
+  /** Cryptographic verifier seam only; every descriptor binding stays live. */
+  evidenceVerification?: DeliveryEvidenceVerificationDependencies;
+  /** Transcript sink for the advisory cross-check line. Defaults to `log`. */
+  notice?: (message: string) => void;
 }
 
 export interface DownloadedDeliveryAssets {
@@ -582,11 +589,115 @@ const ATTESTATION_VERIFY_TIMEOUT_MS = 60_000;
  */
 const RELEASE_DOWNLOAD_TIMEOUT_MS = 300_000;
 
-async function verifyTarballSignature(
-  tarballName: string,
+/**
+ * Outcome of the ADVISORY `gh attestation verify` cross-check.
+ *
+ * `unavailable` means the cross-check could not run at all (no gh, a gh too old
+ * for `gh attestation`, no GitHub credential, or the network round-trip failed)
+ * — a public release must still install on such a host, so the update proceeds
+ * on the offline delivery-evidence proof alone and says so in one line.
+ * `failed` means gh RAN and reported the tarball does not verify: that is a
+ * real negative signal and stays fatal.
+ */
+export type AttestationCrossCheck =
+  | { kind: 'verified' }
+  | { kind: 'unavailable'; detail: string }
+  | { kind: 'failed'; detail: string };
+
+/**
+ * Failure texts that mean "the cross-check could not run", never "the artifact
+ * is unsigned". Keep this list conservative: anything unmatched is treated as a
+ * genuine verification failure and aborts the update.
+ *
+ * The "binary is missing" wording is RUNTIME-SPECIFIC and the shipped binary is
+ * a compiled Bun single file, so both spellings must be listed:
+ *   node: `spawn gh ENOENT`
+ *   bun:  `Executable not found in $PATH: "gh"`   (no ENOENT in the message)
+ * Matching only Node's spelling is what made `genie update` exit 1 on every
+ * host with no `gh` at all (dogfood round 6, Z1) while the unit tests — which
+ * hardcoded the Node string — stayed green. `runCommandSilent` additionally
+ * appends the spawn error's `errno` code so a future runtime's wording still
+ * lands on the `\bENOENT\b` pattern below; the literal below is the belt to
+ * that suspenders, for transcripts that reach the classifier as text only.
+ */
+const ATTESTATION_UNAVAILABLE_PATTERNS: readonly RegExp[] = [
+  /gh auth login/i,
+  /GH_TOKEN|GITHUB_TOKEN/,
+  /authentication token/i,
+  /not logged in|no authentication|authentication required|requires authentication/i,
+  /unknown command|unknown flag|unknown shorthand|command not found|no such file or directory/i,
+  /executable not found in \$PATH/i,
+  /\bENOENT\b|\bEACCES\b|\bEPERM\b/,
+  /timed out after|i\/o timeout|deadline exceeded/i,
+  /no such host|network is unreachable|connection refused|connection reset|dial tcp|TLS handshake|EAI_AGAIN|proxy/i,
+];
+
+/** Collapse a subprocess transcript into one transcript-safe line. */
+function oneLineDetail(output: string, fallback: string): string {
+  return output.replace(/\s+/g, ' ').trim().slice(0, 300) || fallback;
+}
+
+/** True when a failing `gh` invocation means "gh could not run here", not
+ *  "GitHub answered and the answer is bad". */
+export function isGhUnavailable(output: string): boolean {
+  return ATTESTATION_UNAVAILABLE_PATTERNS.some((pattern) => pattern.test(output));
+}
+
+/** Pure classifier so the "unauthenticated host" branch is unit-testable. */
+export function classifyAttestationCrossCheck(result: { success: boolean; output: string }): AttestationCrossCheck {
+  if (result.success) return { kind: 'verified' };
+  const detail = oneLineDetail(result.output, 'gh produced no output');
+  return isGhUnavailable(detail) ? { kind: 'unavailable', detail } : { kind: 'failed', detail };
+}
+
+/**
+ * Every release asset `genie update` may need, in download order. The two
+ * `delivery.json*` assets are REQUIRED (they carry the offline proof); the
+ * tarball attestation `.bundle` only feeds the advisory `gh` cross-check, so a
+ * credential-free host that cannot fetch it still updates.
+ */
+function releaseAssetNames(manifest: LatestManifest, platform: string): Array<{ name: string; required: boolean }> {
+  const tarballName = `genie-${manifest.version}-${platform}.tar.gz`;
+  const descriptorName = `${tarballName}.${manifest.channel}.delivery.json`;
+  return [
+    { name: tarballName, required: true },
+    { name: descriptorName, required: true },
+    { name: `${descriptorName}.sigstore.json`, required: true },
+    { name: `${tarballName}.bundle`, required: false },
+  ];
+}
+
+/**
+ * Credential-free asset download straight from the public release URL, used
+ * when `gh` itself cannot run (absent, too old, unauthenticated). The URL is
+ * built from the pinned owner/repo constants, never from a manifest field, and
+ * every byte is still gated by `verifyTarballSignature` afterwards.
+ */
+async function downloadReleaseAssetsFromPublicUrl(
+  manifest: LatestManifest,
+  platform: string,
+  destDir: string,
+  runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
+): Promise<{ success: boolean; output: string }> {
+  const base = `https://github.com/${RELEASES_OWNER}/${RELEASES_REPO}/releases/download/v${manifest.version}`;
+  for (const asset of releaseAssetNames(manifest, platform)) {
+    const url = `${base}/${asset.name}`;
+    const result = await runner(
+      'curl',
+      ['-fsSL', '--retry', '2', '--max-time', '300', '-o', join(destDir, asset.name), url],
+      RELEASE_DOWNLOAD_TIMEOUT_MS,
+    );
+    if (!result.success && asset.required) {
+      return { success: false, output: `${url}: ${oneLineDetail(result.output, 'curl failed')}` };
+    }
+  }
+  return { success: true, output: '' };
+}
+
+async function crossCheckTarballAttestation(
   tarballPath: string,
   runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
-): Promise<void> {
+): Promise<AttestationCrossCheck> {
   const ghVerifyResult = await runner(
     'gh',
     [
@@ -604,17 +715,100 @@ async function verifyTarballSignature(
     ],
     ATTESTATION_VERIFY_TIMEOUT_MS,
   );
-  if (ghVerifyResult.success) return;
-  throw new Error(
-    `signature verification failed for ${tarballName}: gh attestation verify: ${ghVerifyResult.output.trim() || `failed after ${ATTESTATION_VERIFY_TIMEOUT_MS}ms`}. The reduced cosign verify-blob proof does not validate Genie's required custom predicate/subject; install GitHub CLI with attestation support and retry.`,
-  );
+  return classifyAttestationCrossCheck(ghVerifyResult);
 }
 
 /**
- * Download the platform-specific tarball + cosign bundle + attestation, then
- * verify with GitHub native attestations or the local cosign bundle fallback.
- * Returns the path to the downloaded tarball on success; throws on failure
- * (caller surfaces the error).
+ * The release-signature gate. Two independent proofs, in strength order:
+ *
+ *  1. MANDATORY, offline, credential-free: the release's signed delivery
+ *     evidence. `verifyDeliveryEvidenceArtifact` checks the Sigstore bundle
+ *     against the embedded public-good trust root with the release workflow's
+ *     certificate identity and OIDC issuer pinned, requires the custom
+ *     `delivery-evidence/v1` predicate type, requires the DSSE subject digest
+ *     to equal the SHA-256 of the exact descriptor bytes, and binds the
+ *     descriptor's `artifactSha256` to the SHA-256 of the tarball on disk.
+ *     No GitHub credential and no `gh`/`cosign` binary is involved.
+ *  2. ADVISORY cross-check: `gh attestation verify` over the separate
+ *     sign-attest.yml tarball attestation. Before 2026-09-16 this was the ONLY
+ *     verifier, so `genie update --stable` failed outright on any host without
+ *     an authenticated GitHub CLI even though the release is public. It is now
+ *     a bonus signal: unavailable → one transcript line and carry on; a real
+ *     verification failure → abort.
+ *
+ * `installedBinarySha256` / `canonicalPayloadSha256` are bound after extraction
+ * by `verifyDownloadedDeliveryEvidence` in `runDelivery`.
+ */
+async function verifyTarballSignature(
+  manifest: LatestManifest,
+  platform: string,
+  tarballName: string,
+  tarballPath: string,
+  evidence: { descriptorBytes: Buffer; bundleBytes: Buffer },
+  runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
+  opts: DownloadAndVerifyOptions,
+): Promise<void> {
+  const artifactSha256 = hashFileSha256(tarballPath);
+  if (artifactSha256 === null) throw new Error(`downloaded tarball ${tarballName} became unreadable before verifying`);
+  try {
+    verifyDeliveryEvidenceArtifact(
+      {
+        descriptorBytes: evidence.descriptorBytes,
+        bundleBytes: evidence.bundleBytes,
+        manifestBytes: manifest.manifestBytes,
+        targetVersion: manifest.version,
+        channel: manifest.channel as DeliveryEvidenceChannel,
+        platformId: platform as DeliveryEvidencePlatformId,
+        platformTriple: `${process.platform}-${process.arch}`,
+        releaseTag: `v${manifest.version}`,
+        releaseName: tarballName,
+        artifactSha256,
+      },
+      opts.evidenceVerification,
+    );
+  } catch (cause) {
+    throw new Error(`signature verification failed for ${tarballName}: ${errMsg(cause)}`);
+  }
+
+  const crossCheck = await crossCheckTarballAttestation(tarballPath, runner);
+  if (crossCheck.kind === 'failed') {
+    throw new Error(`signature verification failed for ${tarballName}: gh attestation verify: ${crossCheck.detail}`);
+  }
+  const notice = opts.notice ?? log;
+  if (crossCheck.kind === 'unavailable') {
+    notice(
+      `gh attestation cross-check unavailable (${crossCheck.detail}) — release verified offline from its signed delivery evidence`,
+    );
+  }
+}
+
+/** Read the channel-scoped signed delivery evidence that sits beside the tarball. */
+function readDeliveryEvidenceAssets(
+  tarballPath: string,
+  channel: ReleaseChannel,
+): { descriptorBytes: Buffer; bundleBytes: Buffer } {
+  const tarballName = tarballPath.split('/').pop();
+  const descriptorPath = `${tarballPath}.${channel}.delivery.json`;
+  const bundlePath = `${descriptorPath}.sigstore.json`;
+  let descriptorBytes: Buffer;
+  let bundleBytes: Buffer;
+  try {
+    descriptorBytes = readFileSync(descriptorPath);
+    bundleBytes = readFileSync(bundlePath);
+  } catch (cause) {
+    throw new Error(`signed delivery evidence is incomplete for ${tarballName}: ${errMsg(cause)}`);
+  }
+  if (descriptorBytes.length === 0 || bundleBytes.length === 0) {
+    throw new Error(`signed delivery evidence is empty for ${tarballName}`);
+  }
+  return { descriptorBytes, bundleBytes };
+}
+
+/**
+ * Download the platform-specific tarball plus its sidecars (tarball attestation
+ * bundle + channel-scoped signed delivery evidence), then run the release
+ * signature gate in `verifyTarballSignature`. Returns the path to the verified
+ * tarball; throws on failure (caller surfaces the error).
  */
 export async function downloadAndVerifyTarball(
   manifest: LatestManifest,
@@ -661,16 +855,29 @@ export async function downloadAndVerifyTarball(
     RELEASE_DOWNLOAD_TIMEOUT_MS,
   );
   if (!downloadResult.success) {
-    throw new Error(
-      `gh release download ${versionTag} failed for ${platform}: ${downloadResult.output.trim() || 'no output'}`,
-    );
+    // A host with no usable `gh` must still be able to install a PUBLIC
+    // release, so fall back to the pinned public download URL. A gh that DID
+    // run and answered (`release not found`, a 5xx) is a real failure and is
+    // surfaced unchanged.
+    const detail = oneLineDetail(downloadResult.output, 'no output');
+    if (!isGhUnavailable(detail)) {
+      throw new Error(`gh release download ${versionTag} failed for ${platform}: ${detail}`);
+    }
+    (opts.notice ?? log)(`gh release download unavailable (${detail}) — fetching the public release assets directly`);
+    const fallback = await downloadReleaseAssetsFromPublicUrl(manifest, platform, destDir, runner);
+    if (!fallback.success) {
+      throw new Error(
+        `gh release download ${versionTag} failed for ${platform}: ${detail}; public release download also failed: ${fallback.output}`,
+      );
+    }
   }
   if (!existsSync(tarballPath)) {
-    throw new Error(`gh release download succeeded but ${tarballPath} is missing`);
+    throw new Error(`release download for ${versionTag} succeeded but ${tarballPath} is missing`);
   }
 
   if (!opts.skipAttestation) {
-    await verifyTarballSignature(tarballName, tarballPath, runner);
+    const evidence = readDeliveryEvidenceAssets(tarballPath, manifest.channel);
+    await verifyTarballSignature(manifest, platform, tarballName, tarballPath, evidence, runner, opts);
   }
 
   return tarballPath;
@@ -678,8 +885,10 @@ export async function downloadAndVerifyTarball(
 
 /**
  * Download the release tarball and the channel-specific signed evidence pack.
- * The legacy tarball attestation remains a pre-execution defense; the descriptor
- * bundle is the durable authority setup/doctor can later reverify offline.
+ * The descriptor bundle is both the pre-execution defense (see
+ * `verifyTarballSignature`) and the durable authority setup/doctor can later
+ * reverify offline; the sign-attest.yml tarball attestation is an advisory
+ * cross-check on hosts that have a usable, authenticated GitHub CLI.
  */
 export async function downloadAndVerifyDeliveryAssets(
   manifest: LatestManifest,
@@ -688,20 +897,7 @@ export async function downloadAndVerifyDeliveryAssets(
   opts: DownloadAndVerifyOptions = {},
 ): Promise<DownloadedDeliveryAssets> {
   const tarballPath = await downloadAndVerifyTarball(manifest, platform, destDir, opts);
-  const descriptorPath = `${tarballPath}.${manifest.channel}.delivery.json`;
-  const bundlePath = `${descriptorPath}.sigstore.json`;
-  let descriptorBytes: Buffer;
-  let bundleBytes: Buffer;
-  try {
-    descriptorBytes = readFileSync(descriptorPath);
-    bundleBytes = readFileSync(bundlePath);
-  } catch (cause) {
-    throw new Error(`signed delivery evidence is incomplete for ${tarballPath.split('/').pop()}: ${errMsg(cause)}`);
-  }
-  if (descriptorBytes.length === 0 || bundleBytes.length === 0) {
-    throw new Error(`signed delivery evidence is empty for ${tarballPath.split('/').pop()}`);
-  }
-  return { tarballPath, descriptorBytes, bundleBytes };
+  return { tarballPath, ...readDeliveryEvidenceAssets(tarballPath, manifest.channel) };
 }
 
 /**
@@ -940,29 +1136,30 @@ export function formatVerifyBanner(result: VerifyResult): string[] {
 }
 
 // ============================================================================
-// Output primitives — direct ANSI; NO_COLOR honored.
+// Output primitives — compose ANSI freely; the write sink gates it.
 // ============================================================================
 
-function colorEnabled(): boolean {
-  if (process.env.NO_COLOR) return false;
-  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
-  return Boolean(process.stdout.isTTY);
-}
-
+/**
+ * Wrap `text` in `open`…`close` unconditionally. Whether the escapes survive
+ * is decided by `printOut`/`writeErr` (src/lib/term-output.ts) against the
+ * stream the line is actually written to. The local gate this replaced tested
+ * `process.stdout.isTTY` for every line — including the ones that go to
+ * stderr — and never honoured `TERM=dumb`.
+ */
 function colorize(open: string, close: string, text: string): string {
-  return colorEnabled() ? `${open}${text}${close}` : text;
+  return `${open}${text}${close}`;
 }
 
 function log(message: string): void {
-  console.log(`${colorize('\x1b[32m', '\x1b[0m', '▸')} ${message}`);
+  printOut(`${colorize('\x1b[32m', '\x1b[0m', '▸')} ${message}`);
 }
 
 function success(message: string): void {
-  console.log(`${colorize('\x1b[32m', '\x1b[0m', '✔')} ${message}`);
+  printOut(`${colorize('\x1b[32m', '\x1b[0m', '✔')} ${message}`);
 }
 
 function error(message: string): void {
-  console.log(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
+  printOut(`${colorize('\x1b[31m', '\x1b[0m', '✖')} ${message}`);
 }
 
 function isTruthyEnv(value: string | undefined): boolean {
@@ -983,7 +1180,9 @@ interface UpdateDiagnosticsContext {
   cliVersion: string;
   /** Path to the downloaded tarball, or null when delivery short-circuited. */
   tarballPath: string | null;
-  /** Whether `gh attestation verify` succeeded (or was skipped). */
+  /** Whether the release signature gate passed (or was skipped). The mandatory
+   *  half is the offline delivery-evidence proof; `gh attestation verify` is an
+   *  advisory cross-check that may legitimately be unavailable. */
   attestationVerified: boolean;
   /** Backup path for the previous binary, set after atomic swap. */
   previousBackup: string | null;
@@ -1222,7 +1421,25 @@ async function collectUpdateDiagnostics(
 // Subprocess wrappers.
 // ============================================================================
 
-async function runCommandSilent(
+/**
+ * Format a `child_process` spawn error so the transcript is runtime-independent.
+ *
+ * Node spells a missing binary `spawn gh ENOENT`; Bun spells the same failure
+ * `Executable not found in $PATH: "gh"` and carries the errno only on the error
+ * object. Since the shipped `genie` is a compiled Bun binary, appending the code
+ * is what lets `isGhUnavailable` classify an absent `gh` the same way under both
+ * runtimes (and any future one) instead of calling it a bad signature.
+ *
+ * Exported for the Z1 regression test, which spawns a genuinely missing binary
+ * through the real `runCommandSilent` rather than asserting a hardcoded string.
+ */
+export function describeSpawnError(err: NodeJS.ErrnoException): string {
+  const message = err.message || 'spawn failed';
+  const code = typeof err.code === 'string' ? err.code : '';
+  return code && !message.includes(code) ? `${message} (${code})` : message;
+}
+
+export async function runCommandSilent(
   command: string,
   args: string[],
   cwd?: string,
@@ -1257,7 +1474,7 @@ async function runCommandSilent(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ success: false, output: err.message });
+      resolve({ success: false, output: describeSpawnError(err) });
     });
   });
 }
@@ -1284,9 +1501,7 @@ let nextDeprecationEmitted = false;
 function emitNextDeprecationOnce(): void {
   if (nextDeprecationEmitted) return;
   nextDeprecationEmitted = true;
-  process.stderr.write(
-    'warning: --next is deprecated; use --dev instead (--next will be removed in a future release)\n',
-  );
+  writeErr('warning: --next is deprecated; use --dev instead (--next will be removed in a future release)\n');
 }
 
 /** Test-only: reset the deprecation latch so successive in-process resolves
@@ -1389,9 +1604,7 @@ function resolveChannelFromConfig(): ReleaseChannel {
   const path = getGenieConfigPath();
   const read = readConfigTolerant();
   if (read.kind === 'unreadable') {
-    process.stderr.write(
-      `warning: could not read ${contractPath(path)} (${read.reason}); falling back to stable channel\n`,
-    );
+    writeErr(`warning: could not read ${contractPath(path)} (${read.reason}); falling back to stable channel\n`);
     return 'stable';
   }
   const channel = channelFromToken(read.raw.updateChannel);
@@ -1402,12 +1615,12 @@ function resolveChannelFromConfig(): ReleaseChannel {
   // JSON-parseable but schema-invalid — recover the channel from the raw key
   // rather than silently resetting to stable.
   if (channel) {
-    process.stderr.write(
+    writeErr(
       `warning: could not fully read ${contractPath(path)} (invalid config); keeping channel ${channel} from updateChannel\n`,
     );
     return channel;
   }
-  process.stderr.write(
+  writeErr(
     `warning: could not fully read ${contractPath(path)} (invalid config, no usable updateChannel); falling back to stable channel\n`,
   );
   return 'stable';
@@ -1435,7 +1648,7 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
   // preserves every other key verbatim; an unparseable file is left untouched.
   const read = readConfigTolerant();
   if (read.kind === 'unreadable') {
-    process.stderr.write(
+    writeErr(
       `warning: ${contractPath(getGenieConfigPath())} is unparseable (${read.reason}); leaving it untouched — channel ${channel} not persisted\n`,
     );
     return;
@@ -1822,9 +2035,9 @@ async function confirmPlannedDelivery(
     `Update v${normalizeVersion(installedVersion)} → v${normalizeVersion(latestVersion)}?`,
   );
   if (proceed) return true;
-  console.log();
+  printOut();
   log('Update declined.');
-  console.log();
+  printOut();
   return false;
 }
 
@@ -2009,7 +2222,7 @@ export function projectLocalDeliveryVerification(
 
 function emitLocalDeliveryVerification(projection: LocalDeliveryVerificationProjection): void {
   for (const line of projection.stdout) log(line);
-  for (const line of projection.stderr) process.stderr.write(`${line}\n`);
+  for (const line of projection.stderr) writeErr(`${line}\n`);
   process.exitCode = projection.exitCode;
 }
 
@@ -2085,7 +2298,7 @@ export async function handleAlreadyCurrentUpdate(
     latestVersion ?? normalizeVersion(installedVersion),
   );
   (dependencies.retireLegacyMarker ?? retireLegacyInstallMarkerSafe)();
-  console.log();
+  printOut();
   return null;
 }
 
@@ -2160,7 +2373,7 @@ class DeferredUpdateTerminal extends Error {
 function projectDeferredUpdateTerminal(terminal: DeferredUpdateTerminal): void {
   error(terminal.message);
   if (terminal.trailer !== undefined) log(terminal.trailer);
-  if (terminal.trailingBlankLine) console.log();
+  if (terminal.trailingBlankLine) printOut();
   process.exitCode = terminal.exitCode;
 }
 
@@ -2206,10 +2419,10 @@ export async function updateCommand(
   // the signal the rollback capability floor relies on.
   if (await dispatchNonNormalUpdateMode(options)) return;
 
-  console.log();
-  console.log(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
-  console.log(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
-  console.log();
+  printOut();
+  printOut(`${colorize('\x1b[1m', '\x1b[0m', '🧞 Genie CLI Update')}`);
+  printOut(`${colorize('\x1b[2m', '\x1b[0m', '────────────────────────────────────')}`);
+  printOut();
 
   const noRestart = options.restart === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_RESTART);
   const noVerify = options.verify === false || isTruthyEnv(process.env.GENIE_UPDATE_NO_VERIFY);
@@ -2222,7 +2435,7 @@ export async function updateCommand(
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
   const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
   const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
-  console.log();
+  printOut();
 
   if (!(await confirmPlannedDelivery(options, plannedInstalledVersion, latestVersion))) return;
 
@@ -2248,7 +2461,7 @@ export async function updateCommand(
 
       if (applyDowngradeGuard(installedVersion, latestVersion, channel, options)) {
         runTrackedManualUpdateConvergence(normalizeVersion(installedVersion));
-        console.log();
+        printOut();
         return;
       }
 
@@ -2537,6 +2750,7 @@ async function runDelivery(
     manifest,
     platform,
     externalRoot,
+    { evidenceVerification: dependencies.evidenceVerification },
   );
   const { tarballPath } = downloaded;
   const artifactSha256 = hashFileSha256(tarballPath);
@@ -3106,7 +3320,7 @@ async function runRollback(): Promise<DeferredUpdateTerminal | null> {
  */
 async function promptConfirm(question: string): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return true;
-  process.stdout.write(`${question} [Y/n] `);
+  writeOut(`${question} [Y/n] `);
   return new Promise((resolve) => {
     const onData = (chunk: Buffer) => {
       process.stdin.removeListener('data', onData);
@@ -3135,19 +3349,19 @@ function printDiagnosticsSummary(diagnostics: {
   newestStaleTimestamp?: string | null;
 }): void {
   log('Post-update diagnostics captured.');
-  console.log(`  Report: ${diagnostics.path}`);
-  console.log('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
-  console.log('  local process state, and recent scheduler/TUI log signals.');
+  printOut(`  Report: ${diagnostics.path}`);
+  printOut('  Include this file when opening a GitHub issue; it contains install metadata, step output,');
+  printOut('  local process state, and recent scheduler/TUI log signals.');
   if (diagnostics.signals.length === 0) {
     if (diagnostics.newestStaleTimestamp) {
-      console.log(`  No recent scheduler signals; last entry ${diagnostics.newestStaleTimestamp}`);
+      printOut(`  No recent scheduler signals; last entry ${diagnostics.newestStaleTimestamp}`);
     }
     return;
   }
-  console.log('  Recent scheduler signals:');
+  printOut('  Recent scheduler signals:');
   for (const signal of diagnostics.signals.slice(0, 3)) {
     const errorDetail = signal.lastError ? ` — ${signal.lastError}` : '';
-    console.log(`    ${signal.level}:${signal.event} ×${signal.count}${errorDetail}`);
+    printOut(`    ${signal.level}:${signal.event} ×${signal.count}${errorDetail}`);
   }
 }
 
@@ -3167,9 +3381,9 @@ async function capturePostUpdateDiagnostics(
 }
 
 function printVerifyBanner(result: VerifyResult): void {
-  console.log();
-  for (const line of formatVerifyBanner(result)) console.log(`  ${line}`);
-  console.log();
+  printOut();
+  for (const line of formatVerifyBanner(result)) printOut(`  ${line}`);
+  printOut();
 }
 
 interface MaintenanceOptions {

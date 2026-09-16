@@ -1,47 +1,43 @@
 ---
 name: docs
-description: "Dispatch docs subagent to audit, generate, and validate documentation against the codebase."
+description: "Audit documentation and developer experience against the live product — drift, onboarding, error messages — and write or fix docs when asked."
+category: authoring
+mutates: repo
 ---
 
-# docs — Documentation Generation
+# Docs
 
-**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+Assess by default; write only when the request asks. Documentation is judged by use: a page that cannot be followed is worse than none. The live interface (the real `--help` output, routes, exports) is the truth; every README table, guide, and agent-context file is a claim to check against it.
 
-Audit existing documentation, fill gaps, and validate every claim against actual code. Standalone or as part of `work`.
+## When to use
 
-## When to Use
-- Undocumented modules, APIs, or workflows; docs referencing removed features
-- A wish deliverable includes documentation
-- Code just changed in ways existing docs describe (e.g. after `work` completes)
+- Modules, APIs, or workflows are undocumented, or docs describe removed behavior.
+- Code changed in ways the docs describe, or a wish deliverable includes documentation.
+- Someone wants the contributor experience audited: onboarding, drift, error messages.
 
 ## Surfaces
 
-| Type | Location | Purpose |
-|------|----------|---------|
-| README | `README.md`, `*/README.md` | Overview, setup, usage |
-| AGENTS.md | `AGENTS.md`, `*/AGENTS.md` | Agent conventions, constraints, commands, verification |
-| CLAUDE.md | `CLAUDE.md`, `*/CLAUDE.md` | Conventions, commands, gotchas for agents |
-| API docs | `docs/api/`, inline JSDoc/TSDoc | Contracts, request/response schemas |
-| Architecture | `docs/architecture.md`, `ARCHITECTURE.md` | System design, data flow |
-| Inline | JSDoc, TSDoc, docstrings | Function/class/module docs |
+| Surface | Where |
+|---|---|
+| README | `README.md`, `*/README.md` |
+| Agent instructions | `AGENTS.md` (governing), `CLAUDE.md` and kin (overlays; keep both current when both exist) |
+| Reference and architecture | `docs/`, `ARCHITECTURE.md`, inline JSDoc/TSDoc |
+| Runtime DX | `--help` text, error messages, onboarding path in README/CONTRIBUTING |
 
-`AGENTS.md` is the governing agent instruction surface. `CLAUDE.md` remains evidence of repository intent when present; keep both current when the project has both files.
+Find where docs live before judging them: in-repo, a submodule, or a separate site with its own workflow. Internal pages deliberately excluded from a public site are design, not gaps. A fix that says "edit here" when the docs live elsewhere strands the change; name the real workflow.
 
-## Flow
-1. **Audit** — map what exists across the surfaces above.
-2. **Diff against code** — find missing, stale, or wrong claims; governing `AGENTS.md` accuracy first.
-3. **Generate** — fill gaps in the project's existing documentation style.
-4. **Validate** — every referenced path exists, every API matches, every described behavior is real.
-5. **Report** — created/updated files with per-claim validation results.
+## Audit
 
-## Dispatch
+1. **Diff docs against the live interface.** Enumerate real commands, flags, routes, or exports; quote both sides of every mismatch. Governing agent instructions first.
+2. **Run the contributor test** when onboarding is in scope: follow the written path verbatim from clone to the first passing check, logging every divergence. Hold the repo to its own stated bar.
+3. **Classify each page** as tutorial, how-to, reference, or explanation; flag content filed in the wrong kind and kinds that are missing.
+4. **Sample error messages** from a few realistic failures: exit code, text, and whether each says what failed, why, and what to do next. Terse is fine; grade on the three questions.
+5. **Rank**: onboarding blockers, then drift, then misfiling, then message polish.
 
-Runs as a subagent (native runtime): the dispatching agent issues an native delegation surface call with a curated brief — scope (which docs, which change triggered the audit), the code areas to validate against, and the expected report shape.
+## Write
 
-Example brief: "Audit README.md, CLAUDE.md, and skills/work/SKILL.md after PR #746 — verify dispatch examples match current code, fix stale references, report per-file verdicts with evidence."
+When asked, fill gaps in the project's existing style through its documented docs workflow. Never document features that do not exist; every referenced path, API, and behavior must be verified real. Write to the reader's decision boundary: what they need to decide, do, observe, and verify. Keep internal mechanism out of operator pages unless it changes a decision, a safety boundary, or a troubleshooting step.
 
-## Rules
-- Grounded progress: report only what was audited or generated in this session, each claim backed by a check actually run — "3 files verified current, 1 updated, 0 dead references", never just "docs written".
-- No fiction: never document features that don't exist yet; no dead paths or APIs.
-- Write to the reader's interface boundary: explain what they need to decide, do, observe, and verify. Prefer observable promises, outcomes, failure behavior, and next steps over internal machinery. Include implementation details only when the reader needs them to use the feature safely, troubleshoot it, or extend it; otherwise keep that mechanism in internal or architecture documentation.
-- Match existing project conventions for style and structure.
+## Report
+
+Lead with the verdict: did the contributor test pass, what is the worst drift. Then findings with evidence (both sides of each drift, the exact stumble step, the quoted error message) and concrete fixes routed through the real workflow. Say what was verified current and what was skipped. Report only what was checked or written in this session.

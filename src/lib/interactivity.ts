@@ -16,11 +16,18 @@ import { findWorkspace } from './workspace.js';
  *
  * Returns false when ANY of these are true:
  *   - stdout is not a TTY (piped output)
+ *   - stdin is not a TTY (closed, `< /dev/null`, or piped)
  *   - `CI` environment variable is truthy (any non-empty value)
  *   - `--no-interactive` flag is present in process.argv
+ *
+ * The stdin clause is load-bearing, not belt-and-braces: a prompt READS stdin,
+ * and @inquirer/prompts against a non-TTY stdin renders its question and then
+ * busy-loops at 100% CPU without ever resolving (2026-09-15 dogfood B1). Any
+ * caller that gates a prompt on this function must therefore see stdin too.
  */
 export function isInteractive(): boolean {
   if (!process.stdout.isTTY) return false;
+  if (!process.stdin.isTTY) return false;
   if (process.env.CI) return false;
   if (process.argv.includes('--no-interactive')) return false;
   return true;
@@ -78,6 +85,11 @@ const WORKSPACE_EXEMPT = new Set([
   // stderr and exits 1. It touches no workspace state, so the legacy workspace
   // gate must not exit 2 and mask the diagnostic callers are told to expect.
   'ui-bridge',
+  // `config` is the read-only global-config reader. It resolves keys against
+  // `<GENIE_HOME>/config.json` and the schema, never against a repo, so the
+  // legacy per-repo workspace gate must not exit 2 on a machine that has a
+  // config but no workspace — which is every fresh install.
+  'config',
 ]);
 
 /**

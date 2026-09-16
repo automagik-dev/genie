@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Audit"
+  short_description: "Audit the skill catalogue for overlap, staleness, drift"
+  default_prompt: "Audit the shipped skill catalogue against the lint, parity, and install-record signals, and propose a verdict with a reason for each skill."

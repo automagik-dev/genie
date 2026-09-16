@@ -55,19 +55,11 @@
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| 1 | engineer | <TODO: score + rationale> | <TODO: route> | <TODO: task description> |
+| 1 | engineer | <TODO: risk + rationale> | inherit | <TODO: task description> |
 
-Complexity scoring rubric: score each group independently and record the total plus a short rationale in **Complexity**. Add:
+**Global constraints:** <TODO: the plan-wide requirements every group inherits — version floors, dependency limits, naming and interface rules, platform requirements — one line each, values copied verbatim from the source they come from. Use `none` only when there are genuinely none.>
 
-- **+2** each for orchestration / agent-lifecycle / routing; cost / model / escalation; stateful work; subjective acceptance.
-- **+1** each for multi-package work; OTel-label dependency; no deterministic test; prior rework; prompt-skill change; CI / release work.
-
-Route the total in **Model** by portable role and reasoning effort: **0–1** →
-`implementor-low` / low; **2–3** → `implementor-mid` / medium or high;
-**4–6** → `implementor-high` / high; **7+** → `implementor-high` plus an
-independent `final-gate` at the highest justified effort. Each runtime maps
-these to its matching native roles. Keep
-model and effort in runtime session/agent configuration, never skill frontmatter.
+Describe each group’s coupling and risk in **Complexity**. In **Model**, inherit the active model unless user instructions or an evidenced capacity need justify another supported runtime configuration. Use portable role names; keep actual model/effort settings in the runtime. Order groups by dependencies and give parallel writers disjoint files or isolated worktrees.
 
 ## Execution Groups
 
@@ -78,6 +70,10 @@ model and effort in runtime session/agent configuration, never skill frontmatter
 **Deliverables:**
 1. <TODO: deliverable 1>
 2. <TODO: deliverable 2>
+
+**Interfaces:**
+- Consumes: <TODO: exact signatures this group takes from earlier groups, or `none`>
+- Produces: <TODO: exact names and types later groups rely on, or `none`. A group's worker sees only its own group; this block is how it learns the neighbouring shapes.>
 
 **Acceptance Criteria:**
 - [ ] <TODO: testable acceptance criterion>

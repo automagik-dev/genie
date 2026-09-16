@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/dsh-client-ui-primitives": ["./types/primitives.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "build.ts", "build.test.ts"],
+  "exclude": ["dist"]
+}

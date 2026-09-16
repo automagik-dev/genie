@@ -31,6 +31,7 @@ import { resolveOmniApiKey, resolveOmniApiUrl } from '../lib/omni-registration.j
 import {
   type NatsFactory,
   type OmniSend,
+  type OmniSendResult,
   type OmniSetReaction,
   createOmniRedactor,
   createOmniRunner,
@@ -40,6 +41,7 @@ import {
 } from '../lib/omni-runner.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
 import { type ApprovalRow, enqueueApproval, getApproval, listInbox } from '../lib/v5/omni-queue.js';
+import { VERSION } from '../lib/version.js';
 
 function out(line = ''): void {
   process.stdout.write(`${line}\n`);
@@ -50,6 +52,44 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/**
+ * The halves of the approval gate this host is missing, each named in BOTH
+ * forms it can be supplied in.
+ *
+ * The refusal used to name only the config keys, while CLAUDE.md documents the
+ * `OMNI_*` environment path — so an operator following the docs was told to fix
+ * something they had never set (dogfood r2 §3.3 #11).
+ */
+function missingApprovalSettings(rt: OmniRuntimeConfig): string[] {
+  const missing: string[] = [];
+  if (!rt.approvals.enabled) missing.push('omni.approvals.enabled=true (OMNI_APPROVALS_ENABLED=1)');
+  if (!rt.instance) missing.push('omni.instance (OMNI_INSTANCE)');
+  if (!rt.approvalChat) missing.push('omni.approvalChat (OMNI_APPROVAL_CHAT)');
+  return missing;
+}
+
+/** The one line every not-enabled refusal prints, whichever verb asked. */
+function approvalsNotEnabledMessage(rt: OmniRuntimeConfig, verb: string): string {
+  return `Omni approvals are not enabled, so ${verb} has nothing to talk to. Missing: ${missingApprovalSettings(rt).join(', ')}.`;
+}
+
+/**
+ * Flatten any error — `AggregateError` members included — into ONE line.
+ *
+ * `runOmniServe` reports every shutdown failure (a transport `close()` that
+ * rejects, a spawned agent that will not settle inside the drain budget, a
+ * lease that will not release) as the members of a single `AggregateError`,
+ * whose own `message` is just `Omni shutdown failed`. Printing that message
+ * alone would name none of them.
+ */
+function flattenOmniError(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const parts = error.errors.map((entry) => flattenOmniError(entry)).filter((part) => part.length > 0);
+    return parts.length > 0 ? `${error.message}: ${parts.join('; ')}` : error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 // ============================================================================
 // omni serve
 // ============================================================================
@@ -57,18 +97,23 @@ function fail(message: string): never {
 async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
   const redact = createOmniRedactor(rt);
-  if (!isOmniApprovalEnabled(rt)) {
-    fail(
-      'Omni approvals are not enabled. Set omni.approvals.enabled=true and omni.instance + omni.approvalChat ' +
-        '(or OMNI_APPROVALS_ENABLED=1 + OMNI_INSTANCE + OMNI_APPROVAL_CHAT).',
-    );
-  }
+  if (!isOmniApprovalEnabled(rt)) fail(approvalsNotEnabledMessage(rt, '`omni serve`'));
 
   const db = openGlobalDb();
   const controller = new AbortController();
-  const stop = () => controller.abort();
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  // Which signal stopped the run, if any. `omni serve` is a foreground resident:
+  // the shell contract for one is to leave with 128+signum, and to leave
+  // PROMPTLY — the NATS connect used to ignore both signals for its whole ~20s
+  // retry window (dogfood r2 §3.3 #4).
+  let stopSignal: 'SIGINT' | 'SIGTERM' | undefined;
+  const stopOn = (signal: 'SIGINT' | 'SIGTERM') => () => {
+    stopSignal ??= signal;
+    controller.abort();
+  };
+  const onInt = stopOn('SIGINT');
+  const onTerm = stopOn('SIGTERM');
+  process.once('SIGINT', onInt);
+  process.once('SIGTERM', onTerm);
 
   try {
     await runOmniServe({
@@ -79,12 +124,27 @@ async function serveCommand(natsFactory?: NatsFactory): Promise<void> {
       log: (line) => out(line),
     });
   } catch (error) {
-    throw new Error(redact(error instanceof Error ? error.message : String(error)));
+    // One operator-readable line: what failed and which endpoint it was using,
+    // both config-redacted.
+    const detail = redact(flattenOmniError(error));
+    const line = `${detail} (NATS ${redact(rt.natsUrl)})`;
+    // A signal is not itself a failure — the abort path resolves cleanly and
+    // never lands here — so a signalled stop keeps its 128+signum exit. But a
+    // shutdown that FAILED is never silent: a lease that would not release
+    // (the next `omni serve` is then refused for the whole TTL) or an agent
+    // that would not settle has to reach the operator either way. The caller
+    // turns the thrown form into `Error: <line>` + exit 1.
+    if (!stopSignal) throw new Error(`omni serve failed: ${line}`);
+    process.stderr.write(`omni serve stopped with errors: ${line}\n`);
   } finally {
-    process.off('SIGINT', stop);
-    process.off('SIGTERM', stop);
+    process.off('SIGINT', onInt);
+    process.off('SIGTERM', onTerm);
     db.close();
   }
+
+  // An in-flight transport connect keeps the event loop alive long after the
+  // run is over, so the exit is explicit rather than awaited.
+  if (stopSignal) process.exit(stopSignal === 'SIGINT' ? 130 : 143);
 }
 
 // ============================================================================
@@ -292,15 +352,28 @@ async function testApprovalCommand(opts: { live?: boolean }): Promise<void> {
  */
 async function runLiveTestApproval(): Promise<void> {
   const rt = await resolveOmniRuntimeConfig();
-  if (!isOmniApprovalEnabled(rt)) {
-    fail(
-      'Omni approvals are not enabled. `--live` needs omni.approvals.enabled=true + omni.instance + omni.approvalChat.',
-    );
-  }
+  const redact = createOmniRedactor(rt);
+  if (!isOmniApprovalEnabled(rt)) fail(approvalsNotEnabledMessage(rt, '`omni test-approval --live`'));
   out('genie omni test-approval --live — sending ONE real WhatsApp approval message.');
   const db = openGlobalDb();
   try {
-    const row = await driveApprovalRoundTrip(db, rt, makeDefaultOmniSend(rt), makeDefaultOmniSetReaction(rt));
+    // The runner treats a failed send as an un-announced approval and leaves the
+    // row pending, which made an unreachable Omni indistinguishable from a real
+    // WhatsApp prompt nobody answered (dogfood r2 §3.3 #9). Watch the send
+    // outcome so the diagnostic can name the endpoint instead.
+    const send = makeDefaultOmniSend(rt);
+    let lastSend: OmniSendResult | undefined;
+    const watchedSend: OmniSend = async (opts) => {
+      lastSend = await send(opts);
+      return lastSend;
+    };
+    const row = await driveApprovalRoundTrip(db, rt, watchedSend, makeDefaultOmniSetReaction(rt));
+    if (lastSend && lastSend.outcome !== 'accepted') {
+      fail(
+        `live round-trip could not deliver the approval message to ${rt.apiUrl ?? '(no OMNI_API_URL / omni.apiUrl configured)'}: ` +
+          `${redact(lastSend.error)} (send outcome=${lastSend.outcome})`,
+      );
+    }
     if (row?.status !== 'approved') {
       fail(
         `live round-trip did not resolve to approved (status=${row?.status ?? 'none'}, omniId=${row?.omniMessageId ?? 'none'})`,
@@ -330,6 +403,12 @@ interface HostRecord {
   hostname: string;
   registeredAt: string;
   rotatedFrom?: string;
+  /**
+   * The old host id a `--rotate` could NOT revoke. Recorded so the residue is
+   * visible on disk (and clearable by `--revoke <host-id>`) instead of living
+   * only in a stderr line the operator has already scrolled past.
+   */
+  pendingRevocation?: string;
 }
 
 function keyPaths(): KeyPaths {
@@ -394,6 +473,9 @@ function writeHostJson(paths: KeyPaths, record: HostRecord): void {
   writeFileSync(paths.hostJson, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o644 });
 }
 
+/** Wall-clock budget for one trust call; named so the timeout diagnostic can quote it. */
+const TRUST_TIMEOUT_MS = 10_000;
+
 async function callTrustEndpoint<T>(
   apiUrl: string,
   apiKey: string | undefined,
@@ -403,12 +485,31 @@ async function callTrustEndpoint<T>(
 ): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(`${apiUrl.replace(/\/+$/, '')}/api/v2/trust${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const url = `${apiUrl.replace(/\/+$/, '')}/api/v2/trust${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(TRUST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // `fetch` reports a refused connection as a bare "Unable to connect. Is the
+    // computer able to access the url?" — with several OMNI_* sources able to
+    // supply the endpoint, an operator had nothing to check (dogfood r2 §3.3
+    // #8). Name the URL that failed, and where it came from.
+    const name = error instanceof Error ? error.name : '';
+    const reason =
+      name === 'TimeoutError' || name === 'AbortError'
+        ? `no response within ${TRUST_TIMEOUT_MS / 1000}s`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    throw new Error(
+      `omni trust ${method} ${path}: could not reach ${url} — ${reason}. Check OMNI_API_URL (or omni.apiUrl in your genie config).`,
+    );
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`omni trust ${method} ${path}: HTTP ${res.status}${text ? ` — ${text}` : ''}`);
@@ -422,10 +523,12 @@ interface TrustHostResponse {
 
 interface HandshakeOptions {
   rotate?: boolean;
+  revoke?: string;
   hostname?: string;
 }
 
-async function handleHandshake(options: HandshakeOptions): Promise<void> {
+/** The two credentials every trust call needs, or the one-line refusal naming both spellings. */
+async function requireTrustCredentials(): Promise<{ apiUrl: string; apiKey: string }> {
   const apiUrl = await resolveOmniApiUrl();
   if (!apiUrl) {
     throw new Error('Omni is not configured. Set OMNI_API_URL or `omni.apiUrl` in your genie config first.');
@@ -433,6 +536,48 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
   const apiKey = await resolveOmniApiKey();
   if (!apiKey) {
     throw new Error('Omni API key not configured. Set OMNI_API_KEY or `omni.apiKey` in your genie config.');
+  }
+  return { apiUrl, apiKey };
+}
+
+/** `DELETE /api/v2/trust/hosts/<id>` — the one revocation call both modes make. */
+async function revokeTrustHost(apiUrl: string, apiKey: string, hostId: string): Promise<void> {
+  await callTrustEndpoint<{ data: unknown }>(apiUrl, apiKey, 'DELETE', `/hosts/${encodeURIComponent(hostId)}`);
+}
+
+/**
+ * `genie omni handshake --revoke <host-id>` — the remedy a failed rotation
+ * points at. It used to point at `omni trust revoke <id>`, which is not a genie
+ * command at all, so the only documented way to clear a still-live key was a
+ * command that could not be run (dogfood r5 Z2).
+ */
+async function handleRevoke(apiUrl: string, apiKey: string, options: HandshakeOptions): Promise<void> {
+  if (options.rotate) {
+    throw new Error('`--rotate` and `--revoke` are mutually exclusive: rotate issues a key, revoke retires one.');
+  }
+  const hostId = (options.revoke ?? '').trim();
+  if (!hostId) {
+    throw new Error('`--revoke` needs the omni host id to retire, e.g. `genie omni handshake --revoke host-1`.');
+  }
+  await revokeTrustHost(apiUrl, apiKey, hostId);
+  const paths = keyPaths();
+  const record = loadHostJson(paths);
+  if (record?.pendingRevocation === hostId) {
+    const { pendingRevocation: _cleared, ...rest } = record;
+    writeHostJson(paths, rest);
+  }
+  out(`Revoked omni host: ${hostId}`);
+  if (record?.hostId === hostId) {
+    out("  That was THIS host's own registration — run `genie omni handshake` to register again.");
+  }
+}
+
+async function handleHandshake(options: HandshakeOptions): Promise<void> {
+  const { apiUrl, apiKey } = await requireTrustCredentials();
+
+  if (options.revoke !== undefined) {
+    await handleRevoke(apiUrl, apiKey, options);
+    return;
   }
 
   const paths = keyPaths();
@@ -454,7 +599,7 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 
   const hostname = options.hostname ?? previousRecord?.hostname ?? osHostname() ?? 'unknown-host';
   const capabilities = {
-    genieVersion: process.env.GENIE_VERSION ?? 'unknown',
+    genieVersion: VERSION,
     platform: process.platform,
     nodeVersion: process.version,
   };
@@ -476,14 +621,15 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
 
   // Revoke the OLD host AFTER the new one registers — order matters, so a
   // revoke failure never loses access.
-  if (options.rotate && previousRecord && previousRecord.hostId !== host.id) {
+  let revokeError: string | undefined;
+  const staleHostId =
+    options.rotate && previousRecord && previousRecord.hostId !== host.id ? previousRecord.hostId : undefined;
+  if (staleHostId) {
     try {
-      await callTrustEndpoint<{ data: unknown }>(apiUrl, apiKey, 'DELETE', `/hosts/${previousRecord.hostId}`);
+      await revokeTrustHost(apiUrl, apiKey, staleHostId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `Rotated key registered as ${host.id}, but revoking the old host (${previousRecord.hostId}) failed: ${message}\n  Finish manually: omni trust revoke ${previousRecord.hostId}\n`,
-      );
+      revokeError = err instanceof Error ? err.message : String(err);
+      writeHostJson(paths, { ...newRecord, pendingRevocation: staleHostId });
     }
   }
 
@@ -491,22 +637,49 @@ async function handleHandshake(options: HandshakeOptions): Promise<void> {
   out(`  Hostname:     ${host.hostname}`);
   out(`  Public key:   ${host.pubkey}`);
   out(`  Private key:  ${paths.privateKey} (perms 0600)`);
-  if (options.rotate && previousRecord) out(`  Rotated from: ${previousRecord.hostId} (revoked)`);
+  if (options.rotate && previousRecord) {
+    // The summary used to say `(revoked)` unconditionally, contradicting the
+    // warning printed one line earlier (dogfood r5 Z2). The old key being live
+    // is a security-relevant residue, so it is also a non-zero exit.
+    out(
+      `  Rotated from: ${previousRecord.hostId} ${revokeError ? '(revoke FAILED — old key still live)' : '(revoked)'}`,
+    );
+  }
+  if (revokeError && staleHostId) {
+    throw new Error(
+      `the rotated key registered as ${host.id}, but revoking the old host ${staleHostId} failed: ${revokeError} ` +
+        `The old key is STILL LIVE — retire it with: genie omni handshake --revoke ${staleHostId}`,
+    );
+  }
 }
 
 // ============================================================================
 // Registration
 // ============================================================================
 
+/**
+ * The group summary names every subcommand registered below. Listing four of
+ * the five was the CLI-side half of the CLAUDE.md drift the 2026-09-15 dogfood
+ * run found; `claude-md-drift.test.ts` now compares both against the registry.
+ */
+const OMNI_GROUP_DESCRIPTION = 'Omni integration (serve, status, inbox, test-approval, handshake)';
+
 export function registerOmniCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'omni');
-  const omni = existing ?? program.command('omni').description('Omni integration (serve, status, inbox, handshake)');
+  const omni = existing ?? program.command('omni').description(OMNI_GROUP_DESCRIPTION);
 
   omni
     .command('serve')
     .description('Run the resident Omni runner (NATS bridge → approval queue). Foreground.')
     .action(async () => {
-      await serveCommand();
+      try {
+        await serveCommand();
+      } catch (err) {
+        // An unreachable NATS endpoint is an operator-fixable environment
+        // problem: print the same one-line diagnostic every other omni failure
+        // uses, never a stack trace.
+        fail(err instanceof Error ? err.message : String(err));
+      }
     });
 
   omni
@@ -533,13 +706,22 @@ export function registerOmniCommands(program: Command): void {
     .description('Drive one approval round-trip (enqueue → ⏳ → approve → ✅). Fake transport by default.')
     .option('--live', 'Send ONE real WhatsApp approval to the configured instance/approvalChat (deliberate)')
     .action(async (opts: { live?: boolean }) => {
-      await testApprovalCommand(opts);
+      try {
+        await testApprovalCommand(opts);
+      } catch (err) {
+        // A held machine-wide service lease (a resident `omni serve`, or a
+        // second `--live` inside the 300 s TTL) used to escape as an uncaught
+        // exception with six bundle frames (dogfood r2 §3.3 #10). Every
+        // guardrail on this command is one line.
+        fail(err instanceof Error ? err.message : String(err));
+      }
     });
 
   omni
     .command('handshake')
     .description('Register this genie host with the omni server (ed25519 keypair, idempotent)')
     .option('--rotate', 'Issue a new keypair and revoke the existing host record')
+    .option('--revoke <host-id>', 'Revoke one omni host record server-side (the remedy for a failed --rotate)')
     .option('--hostname <name>', 'Override the hostname reported to omni (defaults to os.hostname())')
     .action(async (options: HandshakeOptions) => {
       try {

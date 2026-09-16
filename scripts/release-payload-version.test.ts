@@ -29,6 +29,10 @@ describe('release payload version contract', () => {
     for (const path of ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json']) {
       writeJson(root, path, { name: 'genie', version: '5.000000.0' });
     }
+    writeJson(root, 'plugins/dsh-genie-board/package.json', {
+      version: '5.000000.0',
+      minimumGenieVersion: '5.000000.0',
+    });
     return root;
   }
 

@@ -1,0 +1,26 @@
+# The Genie suite: one manager row plus three sub-rows.
+#
+# The manager owns the resolved Genie executable, the trust fence and
+# /api/genie-board/health; each sub-row registers only its own routes through
+# the manager's `genieRuntime` service. Any row can be turned off from a profile
+# patch by its id — `- id: genie-dsh-board-skills` / `disabled: true` — and the
+# browser drops that panel because health stops reporting it as mounted.
+- insert:
+    - id: genie-dsh-board
+      name: '@automagik/genie-dsh-board'
+      config:
+        deadlineMs: 10000
+        outputBudgetBytes: 4194304
+    - id: genie-dsh-board-board
+      name: '@automagik/genie-dsh-board/board'
+      config:
+        order: 10
+    - id: genie-dsh-board-skills
+      name: '@automagik/genie-dsh-board/skills'
+      config:
+        order: 11
+        groupBy: category
+    - id: genie-dsh-board-workflows
+      name: '@automagik/genie-dsh-board/workflows'
+      config:
+        order: 12

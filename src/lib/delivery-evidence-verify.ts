@@ -86,6 +86,36 @@ export interface VerifyDownloadedDeliveryEvidenceInput {
   canonicalPayloadSha256: string;
 }
 
+/**
+ * The subset of caller-observed facts that exist BEFORE the tarball is
+ * extracted. `genie update` runs this pre-execution gate so a public release
+ * verifies on a host with no GitHub credential at all: the same embedded
+ * public-good Sigstore trust root, the same pinned release-workflow identity
+ * and OIDC issuer, the same custom predicate type, and the same
+ * descriptor-bytes subject digest — only the post-extraction bindings
+ * (`installedBinarySha256`, `canonicalPayloadSha256`) are deferred to
+ * `verifyDownloadedDeliveryEvidence`.
+ */
+export interface VerifyDeliveryEvidenceArtifactInput {
+  descriptorBytes: Uint8Array | string;
+  bundleBytes: Uint8Array | string;
+  manifestBytes: Uint8Array | string;
+  targetVersion: string;
+  channel: DeliveryEvidenceChannel;
+  platformId: DeliveryEvidencePlatformId;
+  platformTriple: string;
+  releaseTag: string;
+  releaseName: string;
+  artifactSha256: string;
+}
+
+/** Plain (unminted) facts from the pre-execution gate. Publication still
+ *  requires the opaque value only `verifyDownloadedDeliveryEvidence` mints. */
+export interface VerifiedDeliveryArtifactFacts {
+  descriptor: Readonly<DeliveryEvidenceDescriptor>;
+  deliveredAt: string;
+}
+
 export interface DeliveryEvidenceBundleVerificationInput {
   /** Parsed serialized-bundle JSON. The default path converts it with bundleFromJSON. */
   bundleJson: unknown;
@@ -128,31 +158,95 @@ export function verifyDownloadedDeliveryEvidence(
   input: VerifyDownloadedDeliveryEvidenceInput,
   dependencies: DeliveryEvidenceVerificationDependencies = {},
 ): VerifiedDeliveryEvidence {
-  const descriptorBytes = boundedBytes(input.descriptorBytes, MAX_DESCRIPTOR_BYTES, 'descriptor');
-  const bundleBytes = boundedBytes(input.bundleBytes, MAX_BUNDLE_BYTES, 'bundle');
-  const manifestBytes = boundedBytes(input.manifestBytes, MAX_MANIFEST_BYTES, 'manifest');
+  const verified = verifyEvidenceCore(
+    input,
+    [
+      ...artifactBindings(input),
+      ['installedBinarySha256', input.installedBinarySha256],
+      ['canonicalPayloadSha256', input.canonicalPayloadSha256],
+    ],
+    dependencies,
+  );
+  const evidenceDigest = computeEvidenceDigest(verified.descriptorBytes, verified.bundleBytes, verified.manifestBytes);
+  return mintVerifiedEvidence({
+    descriptor: verified.descriptor,
+    evidenceDigest,
+    deliveredAt: verified.deliveredAt,
+    descriptorBytes: verified.descriptorBytes,
+    bundleBytes: verified.bundleBytes,
+    manifestBytes: verified.manifestBytes,
+  });
+}
+
+/**
+ * Pre-execution gate over a downloaded tarball: the full cryptographic proof
+ * (embedded trust root, pinned identity + OIDC issuer, custom predicate type,
+ * descriptor-bytes subject digest) plus every binding observable before
+ * extraction, including `artifactSha256` — the digest of the tarball bytes on
+ * disk. This is the security floor `genie update` enforces on every host,
+ * authenticated GitHub CLI or not.
+ */
+export function verifyDeliveryEvidenceArtifact(
+  input: VerifyDeliveryEvidenceArtifactInput,
+  dependencies: DeliveryEvidenceVerificationDependencies = {},
+): VerifiedDeliveryArtifactFacts {
+  const verified = verifyEvidenceCore(input, artifactBindings(input), dependencies);
+  return { descriptor: verified.descriptor, deliveredAt: verified.deliveredAt };
+}
+
+interface EvidenceCoreResult {
+  descriptor: Readonly<DeliveryEvidenceDescriptor>;
+  deliveredAt: string;
+  descriptorBytes: Buffer;
+  bundleBytes: Buffer;
+  manifestBytes: Buffer;
+}
+
+type DescriptorBinding = readonly [keyof DeliveryEvidenceDescriptor, string];
+
+function artifactBindings(input: VerifyDeliveryEvidenceArtifactInput): DescriptorBinding[] {
+  return [
+    ['version', input.targetVersion],
+    ['channel', input.channel],
+    ['platformId', input.platformId],
+    ['platformTriple', input.platformTriple],
+    ['releaseTag', input.releaseTag],
+    ['releaseName', input.releaseName],
+    ['artifactSha256', input.artifactSha256],
+  ];
+}
+
+/**
+ * The one verification pipeline. Both entry points run identical parsing,
+ * manifest binding, DSSE-statement and cryptographic checks; they differ only
+ * in how many descriptor fields the caller can already observe.
+ */
+function verifyEvidenceCore(
+  raw: { descriptorBytes: Uint8Array | string; bundleBytes: Uint8Array | string; manifestBytes: Uint8Array | string },
+  bindings: ReadonlyArray<DescriptorBinding>,
+  dependencies: DeliveryEvidenceVerificationDependencies,
+): EvidenceCoreResult {
+  const descriptorBytes = boundedBytes(raw.descriptorBytes, MAX_DESCRIPTOR_BYTES, 'descriptor');
+  const bundleBytes = boundedBytes(raw.bundleBytes, MAX_BUNDLE_BYTES, 'bundle');
+  const manifestBytes = boundedBytes(raw.manifestBytes, MAX_MANIFEST_BYTES, 'manifest');
   const descriptor = parseDescriptor(descriptorBytes);
-  bindCallerObservation(descriptor, input);
+  bindCallerObservation(descriptor, bindings);
   verifyManifestBytes(descriptor, manifestBytes);
 
   const bundleJson = parseJson(bundleBytes, 'bundle');
   const statement = parseDsseStatement(bundleJson);
-  const descriptorSha256 = sha256(descriptorBytes);
-  if (statement.subjectSha256 !== descriptorSha256) {
+  if (statement.subjectSha256 !== sha256(descriptorBytes)) {
     throw new Error('delivery evidence DSSE subject does not bind the exact descriptor bytes');
   }
   const integratedTime =
     dependencies.verifyBundle?.({ bundleJson, descriptorBytes }) ?? verifyBundleWithEmbeddedTrustRoot(bundleJson);
-  const deliveredAt = deliveredAtFromIntegratedTime(integratedTime.integratedTime);
-  const evidenceDigest = computeEvidenceDigest(descriptorBytes, bundleBytes, manifestBytes);
-  return mintVerifiedEvidence({
+  return {
     descriptor: Object.freeze({ ...descriptor }),
-    evidenceDigest,
-    deliveredAt,
+    deliveredAt: deliveredAtFromIntegratedTime(integratedTime.integratedTime),
     descriptorBytes,
     bundleBytes,
     manifestBytes,
-  });
+  };
 }
 
 /** Return immutable, independently verified facts or reject a forged lookalike. */
@@ -243,19 +337,8 @@ function parseDescriptor(bytes: Buffer): DeliveryEvidenceDescriptor {
 
 function bindCallerObservation(
   descriptor: DeliveryEvidenceDescriptor,
-  input: VerifyDownloadedDeliveryEvidenceInput,
+  bindings: ReadonlyArray<DescriptorBinding>,
 ): void {
-  const bindings: ReadonlyArray<[keyof DeliveryEvidenceDescriptor, string]> = [
-    ['version', input.targetVersion],
-    ['channel', input.channel],
-    ['platformId', input.platformId],
-    ['platformTriple', input.platformTriple],
-    ['releaseTag', input.releaseTag],
-    ['releaseName', input.releaseName],
-    ['artifactSha256', input.artifactSha256],
-    ['installedBinarySha256', input.installedBinarySha256],
-    ['canonicalPayloadSha256', input.canonicalPayloadSha256],
-  ];
   for (const [field, observed] of bindings) {
     if (descriptor[field] !== observed) {
       throw new Error(`delivery evidence ${field} does not match the selected/downloaded candidate`);

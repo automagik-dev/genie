@@ -1,47 +1,43 @@
 ---
 name: omni
 description: "Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip."
+category: integration
+mutates: external
 ---
 
-# Omni — Canonical Genie ↔ Omni Wiring
+# Omni
 
-**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+Take an operator from "channel connected in Omni" to "messages in that channel reach a Genie agent and get replies". Omni installation, authentication, QR connection, instance creation, platform administration and outbound messaging are separate authority domains; a wiring request does not imply them. When a required capability is missing, hand off to the operator and pause rather than nesting an interactive flow.
 
-Take an operator from "channel connected in Omni" to "messages in that channel reach a Genie agent and get replies". This skill owns the wiring flow. If separate Omni setup, messaging, or administration skills are installed, invoke them through the active runtime's skill surface; otherwise use current `omni --help` output and stop when a required capability is unavailable.
-
-- Omni installation, authentication, QR connection, instance creation, platform administration, and outbound messaging are separate authority domains. Do not infer permission for them from a wiring request.
-
-## v5 model
-
-Genie is zero-daemon; the one optional foreground process is `genie omni serve` — a NATS bridge that (a) sends tool-approval requests to a phone chat and resolves replies/reactions, and (b) routes inbound messages from mapped chats into one-shot agent runs in a target repo. Wiring is four short phases; every phase is idempotent, so re-running the flow is safe.
+Genie is zero-daemon; the one optional foreground process is `genie omni serve`, a NATS bridge that sends tool-approval requests to a phone chat and routes inbound messages from mapped chats into one-shot agent runs in a target repo. The four phases are idempotent, so re-running the flow is safe.
 
 ## Pre-checks
 
 ```bash
-omni auth status          # Omni CLI authenticated? If not, report the missing setup capability
-omni instances list       # need at least one connected instance
+omni auth status          # Omni CLI authenticated? Otherwise report the missing setup capability
+omni instances list       # at least one connected instance
 genie omni status         # genie-side config sanity + queue counts (no network)
 ```
 
-## Phase 1 — Host trust
+## 1. Host trust
 
 ```bash
-genie omni handshake      # idempotent; --rotate reissues, --hostname overrides
+genie omni handshake      # idempotent; --rotate reissues, --revoke <host-id> retires one, --hostname overrides
 ```
 
-Registers this machine with the Omni server via an ed25519 keypair stored under `$GENIE_HOME/keys/` (default `~/.genie/keys/`; the command refuses to write keys inside any git working tree). Requires `OMNI_API_URL` + `OMNI_API_KEY` (or `omni.apiUrl` / `omni.apiKey` in `~/.genie/config.json`).
+Registers this machine with the Omni server via an ed25519 keypair under `$GENIE_HOME/keys/` (default `~/.genie/keys/`; refuses to write keys inside a git working tree). Needs `OMNI_API_URL` + `OMNI_API_KEY`, or `omni.apiUrl` / `omni.apiKey` in `~/.genie/config.json`.
 
-## Phase 2 — Bind the instance
+## 2. Bind the instance
 
 ```bash
 omni connect <instance-id> <agent-name>   # idempotent
 ```
 
-Creates or reuses a `nats-genie` provider and agent record on the Omni side and points the instance at them. Options: `--mode turn-based` (default, chat round-trips) or `--mode fire-and-forget`; `--reply-filter all|filtered`. Pick the instance id from `omni instances list`; if none is connected yet, pause and request the separate instance-setup action.
+Creates or reuses a `nats-genie` provider and agent record on the Omni side and points the instance at them. `--mode turn-based` (default) or `--mode fire-and-forget`; `--reply-filter all|filtered`. If an operator started creating providers by hand, stop and run `omni connect`; it reuses what exists.
 
-## Phase 3 — Route chats and enable approvals (genie side)
+## 3. Route chats and enable approvals
 
-Configuration lives in the `omni` section of `~/.genie/config.json`; env vars override:
+Configuration lives in the `omni` section of `~/.genie/config.json`; environment variables override:
 
 | Key | Env override | Meaning |
 |-----|--------------|---------|
@@ -52,7 +48,7 @@ Configuration lives in the `omni` section of `~/.genie/config.json`; env vars ov
 | `omni.approvals.enabled` | `OMNI_APPROVALS_ENABLED=1` | Feature gate (also needs instance + approvalChat) |
 | `omni.routes[]` | — | Inbound one-shot routes: `{instance, chat, repo, agent, persona?}` where `agent` is `claude` or `codex` |
 
-A route maps an `(instance, chat)` pair to an absolute repo path and an explicit provider. Do not omit `agent`: the compatibility default is `claude`, which can silently route a message to the wrong client when the operator intended Codex. The run's persona defaults to `<repo>/AGENTS.md` when `persona` is omitted. Unrouted chats are store-only — they land in the inbox with no agent run.
+A route maps an `(instance, chat)` pair to an absolute repo path and an explicit provider. Always set `agent`: the compatibility default is `claude`, which silently routes to the wrong client when Codex was intended. `persona` defaults to `<repo>/AGENTS.md`. Unrouted chats are store-only: they land in the inbox with no agent run.
 
 ```json
 {
@@ -69,21 +65,20 @@ A route maps an `(instance, chat)` pair to an absolute repo path and an explicit
 }
 ```
 
-## Phase 4 — Run and verify
+## 4. Run and verify
 
 ```bash
-genie omni serve                    # foreground resident runner — its own pane/service
-genie omni status --json            # approvals queue counts + config sanity
+genie omni serve                    # foreground resident runner — its own pane or service
+genie omni status --json            # approval-queue counts + config sanity
 genie omni test-approval            # one approval round-trip, fake transport
-genie omni test-approval --live     # ONE real approval to the configured chat (deliberate)
+genie omni test-approval --live     # ONE real approval to the configured chat
 genie omni inbox --unhandled        # inbound messages awaiting handling
 ```
 
-Finish with a real round-trip: the operator sends a message in the wired chat and confirms the selected provider's reply arrives. Report the verified topology — instance id, chat, repo, `agent`, persisted provider/thread key, and persona source — with the evidence for each, not intentions.
+Finish with a real round-trip: the operator sends a message in the wired chat and confirms the selected provider's reply arrives. Report the verified topology (instance id, chat, repo, `agent`, persisted provider/thread key, persona source) with the evidence for each.
 
-## Rules
+## Boundaries
 
-- Require explicit confirmation immediately before handshake/key rotation, instance binding, route mutation, starting a resident service, sending a live test approval, or sending an external message. Read-only status checks may proceed without confirmation.
-- Never nest interactive flows: if authentication, QR setup, or an installer is needed, hand off to the operator and pause this skill.
-- One canonical path: handshake → connect → routes → serve. If the operator started manually creating providers/agents, stop and run `omni connect` instead — it reuses whatever already exists.
-- Secrets stay put: keys under `$GENIE_HOME/keys/` and `omni.apiKey` never appear in output, commits, or messages.
+- Key rotation, instance binding, route mutation, starting the resident service, a live test approval and any external message are each a distinct authority: confirm before the first of each unless the request already authorized it. Read-only status checks need no confirmation.
+- One canonical path: handshake → connect → routes → serve.
+- Secrets stay put: keys under `$GENIE_HOME/keys/` and `omni.apiKey` never appear in output, commits or messages.

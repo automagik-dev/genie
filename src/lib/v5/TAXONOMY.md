@@ -34,6 +34,86 @@ the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
 its sidecars) plus legacy v4 state paths — is gitignored; the markdown
 documents are committed.
 
+`roadmap.json` (the canonical board snapshot, tracked) is written in **canonical
+JSON — every object's keys sorted, recursively** — so its bytes depend on the
+snapshot's content alone and never on the exporting database's physical column
+order (a fresh db vs one grown by `ALTER TABLE ADD COLUMN`); the gitignored
+`.genie/roadmap-sync` marker records the hash algorithm behind its baseline pair
+as `hashVersion`, and a marker without one is compared with the pre-sorting hash
+so upgrading genie never by itself reads as divergence.
+
+Because the bytes are a function of the content alone, **importing a committed
+`roadmap.json` and exporting it again reproduces it byte for byte**, and a
+one-card change diffs as that one card rather than as a whole-file rewrite.
+
+That holds only for a snapshot already in canonical form, so **`task sync` owns
+the file's byte form too**: wherever the file's content is the agreed content —
+in sync with the db, or just imported into it — a non-canonical file is rewritten
+in canonical order and the sync line says so
+(`… was rewritten in canonical key order (no board content changed)`). A branch
+whose `roadmap.json` predates the canonical serializer therefore takes its
+reordering once, as its own content-free write, instead of having it ride along
+with the next card and bury that card in a whole-file diff. A `diverged` verdict
+normalizes nothing: it touches neither side, by contract.
+
+**`task sync` needs a `.genie/` workspace to reconcile.** The precondition is
+the directory itself, and it is checked BEFORE the database is opened — opening
+it creates `.genie/genie.db` and with it the directory under test. In a checkout
+that was never `genie init`-ed there is neither side of the pair, so sync
+refuses with a one-line error on stderr and exit 1 rather than reporting
+`in sync (none)`, which no consumer can tell from a genuinely reconciled
+workspace. The `|| true` git hooks gate on `.genie/roadmap.json` existing, so
+they never reach this refusal.
+
+**An import type-checks every column before it writes anything.** A snapshot is
+untrusted input (`roadmap.json` survives git merges and hand edits), so
+`validateSnapshot` compares each row's cells against the live schema's declared
+column model — read from `PRAGMA table_info`, so an `ALTER TABLE`-backfilled
+column such as `heartbeat_at` or `assigned_agent` is covered by the same rule —
+before the first `INSERT`. A cell must be a scalar of the column's declared
+affinity (INTEGER ⇒ a JSON integer, TEXT ⇒ a JSON string) and a NOT NULL /
+PRIMARY KEY column must be present and non-null. A violation is one
+`SnapshotFormatError` naming the file, the table, the row index (with its id)
+and the column; **nothing is written**, so there is no partial import. This is
+what keeps a non-scalar from surfacing as a context-free bun:sqlite `Binding
+expected string, TypedArray, boolean, number, bigint or null`, and what stops
+SQLite's type affinity from silently storing `"abc"` as a card's `created_at`.
+`wish_groups` is exempt: its rows are tolerated-and-dropped, never inserted.
+
+**Every snapshot genie emits carries `hire_roster: []`** — stdout, the canonical
+`--write`, and any other `--write` path alike. Hire rows hold machine-local
+worktree paths, and a snapshot is a publishable artifact wherever it is written;
+the rows stay in the database. The symmetric rule on the way back in: an import
+never destroys local hires unless the snapshot it is applying brings hire rows
+of its own.
+
+### Two databases, never one file
+
+There are two `genie.db` files and they are wholly separate databases:
+
+| File | Module | Holds | `user_version` |
+|------|--------|-------|----------------|
+| `<repo>/.genie/genie.db` | `genie-db.ts` | boards, tasks, dependencies, events, stage log, wish groups, hire roster | its own |
+| `<GENIE_HOME>/genie.db` | `global-db.ts` | Omni approval queue, inbound message inbox, agent sessions, service leases | its own, independent |
+
+The two schemas must never meet in one file. They are stamped with independent
+`PRAGMA user_version` values, so a merged file makes a future per-repo migration
+run against — or silently skip — the approval queue.
+
+The default `GENIE_HOME` is `$HOME/.genie`, which is *also* a valid spelling of
+a per-repo `.genie/` directory: a per-repo verb invoked with `cwd = $HOME`
+(outside any git repo, so path resolution falls back to `cwd`) resolves
+`$HOME/.genie/genie.db` — the global file — and would initialize the per-repo
+schema inside it. `openDb` therefore **refuses** any path that resolves (through
+symlinks) to `resolveGlobalDbPath()`, with a typed `GlobalDbPathError` naming
+the collision, whether the path came from `cwd` resolution or an explicit
+`{ path }`. The remedy is to run the command inside a repository, or to point
+`GENIE_HOME` somewhere that is not that repo's `.genie/`.
+
+The guard is the only link between the modules and it points one way:
+`genie-db.ts` imports `resolveGlobalDbPath` so the two path rules cannot drift;
+`global-db.ts` still imports nothing from `genie-db.ts`.
+
 ### Worktree sharing
 
 All linked worktrees of a repository share **one** `genie.db`. The path is
@@ -131,7 +211,7 @@ Plus the **runtime layer** — additive, all nullable, backfilled in place by
 |--------|------|-------|
 | `lane` | TEXT | lifecycle lane on a lane-defining board, or NULL |
 | `agent_kind` | TEXT | authored runtime identity, or NULL |
-| `heartbeat_at` | INTEGER | last liveness pulse, or NULL |
+| `heartbeat_at` | INTEGER | last liveness pulse, or NULL; `task checkout` seeds it to `claimed_at` |
 | `blocked_by` | TEXT | who placed the enforced block — NULL means unblocked |
 | `blocked_reason` | TEXT | why, free prose |
 | `block_kind` | TEXT | `work` \| `hold`; NULL/absent/unrecognized ⇒ `work` |
@@ -145,6 +225,14 @@ records a hold; plain `block` records `work`; `unblock` clears provenance,
 reason, and kind together. Stored kinds are untrusted TEXT (a hand-merged
 `roadmap.json` reaches the mapper unvalidated), so anything but exactly `hold`
 normalizes to `work` at read time rather than at the column.
+
+**A heartbeat belongs to a live claim; an empty board ref is never "every
+board".** `recordHeartbeat` refuses a card whose `claimed_by` is NULL
+(`TaskNotClaimedError`, exit 1 at the CLI) — stamping liveness on an unclaimed
+card records a worker that does not exist, and the card would still read `ready`.
+Symmetrically, `resolveBoard('')` raises `EmptyBoardRefError` instead of
+resolving: an empty `--board` is an unset shell variable, and widening it to the
+unscoped board silently answers a different question than the one asked.
 
 **`tasks.wish` is the lifecycle slug a card tracks — broadened semantic.** It is
 no longer "the WISH.md slug once a wish exists"; it is the single stable slug
@@ -240,6 +328,21 @@ There is no update API for this table and no way to remove a single entry — it
 only grows for as long as its task exists. Deleting the task takes its whole
 stage log with it (`deleteTask`, see `tasks`).
 
+### The claim-to-handoff span (`task_events`)
+
+The card timeline is also the span clock. `claimTask` appends a `claim` event
+inside its winning transaction, so **the newest `claim` id is the start of the
+current claim-to-handoff span**, and `task report` may append exactly ONE
+`report` event per claimant per span (`appendReportEvent`; a second one is a
+`DuplicateReportError`, exit 1). A re-checkout supersedes the previous report by
+opening the next span. `task comment` stays unbounded — it is the verb for
+progress prose; `report` is the single handoff artifact a reviewer reads.
+
+Nothing outside `task_events` records this, so the rule needs no column, is
+identical in every worktree, and survives an export/import round trip. The span
+probe and the insert share one `BEGIN IMMEDIATE`, so two concurrent reports
+cannot both pass the check.
+
 ### `wish_groups`
 Vestigial (pending drop): the wish-group execution machinery is production-dead — the table stays inert for schema compatibility, with no writer. Natural key `(wish, name)`.
 
@@ -287,18 +390,113 @@ Vestigial (pending drop): the wish-group execution machinery is production-dead 
 
 ## Row projections — which shapes carry the runtime layer
 
-The runtime columns above exist in one table but are exposed by three deliberately
+The runtime columns above exist in one table but are exposed by deliberately
 different projections. Which one a caller maps through IS the contract:
 
 | Projection | Adds | Serialized by |
 |------------|------|---------------|
 | `TaskRow` | — (frozen) | laneless board `--json`, MCP tools, `task export` tasks |
 | `LaneTaskRow` | `lane`, `enforcedBlock` | lane-grouped board `--json` |
-| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | nothing — human render + `task status` only |
+| `TaskCardRow` | `agentKind`, `heartbeatAt`, `blockedBy`, `blockedReason` | human render, `task status`, and the scoped board aggregate |
+| `BoardTaskAggregate` | `liveness`, `dependencies`, `timeline` + counts, `comments` + count | scoped lane board `--json` only |
 
 `TaskRow` is **frozen**: its key set is asserted byte-for-byte by test, and no
-runtime field may ever be added to it. `TaskCardRow` is the widest projection but
-is never serialized — it feeds badge rendering, so widening it is safe.
+runtime field may ever be added to it.
+
+`TaskCardRow` **is serialized** — by the scoped board aggregate, which extends it.
+Widening it therefore widens a machine contract and is no longer free. It is
+still the projection the human render and `task status` map through, and that
+sharing IS the contract: the aggregate mapper validates a row's scalars and then
+calls the SAME `mapTaskCard`, so the two paths can never disagree about a card.
+Concretely, an unrecognized `block_kind` coerces to `work` on both — importable
+data never makes `--json` exit 1 where the human render succeeds.
+
+### The scoped board aggregate (`board --board <ref> --json`)
+
+`{ schemaVersion: 1, scope, eventLimit, lanes: [{ name, label, action, cards }] }`.
+The board's lane definition and every card, dependency, and event come from **one
+deferred read transaction** (`readBoardAggregate`), so cards are grouped into the
+lane definition that was stored alongside them.
+
+- **`schemaVersion` is 1 and extension is additive.** Consumers ignore unknown
+  keys; a key is never removed or retyped without bumping the version.
+- **Per-card event and comment caps.** `timeline` and `comments` each carry at
+  most `BOARD_JSON_EVENT_LIMIT` (25) entries — the **most recent** ones, still in
+  chronological order. `eventCount` and `commentCount` always report the true
+  totals and `eventsTruncated` says whether the timeline is a suffix. A card
+  timeline is append-only and unbounded while every consumer reads this payload
+  as one response under a fixed byte budget, so an unbounded embed makes a
+  long-lived board permanently unloadable.
+- **A whole-response byte budget, not just a per-card one.** The per-card cap
+  bounds a card's DEPTH; a board is unbounded in card COUNT too, so a thousand
+  cards of ten events each overflow the budget with every card well inside the
+  cap. `BOARD_JSON_MAX_BYTES` (3.5 MiB — the DSH plugin caps ONE request, a
+  mutation's output plus the refresh that follows it, at 4 MiB, and 512 KiB of
+  that is reserved for the mutation output and stderr) bounds the serialized
+  response. The emitter walks `BOARD_JSON_EVENT_LIMIT_STEPS` (`25, 10, 5, 2, 0`)
+  widest-first and emits the first response that fits; the applied cap is the
+  root **`eventLimit`**, always present, so a client can say what it is not
+  showing. **Depth degrades, the card set never does** — cards are never dropped
+  or paginated away, and the counts stay the true totals at every step. A
+  degraded response prints one `Note: board "…" is large; each card's embedded
+  history was capped at N events …` on stderr and still exits 0.
+- **A board that fits at no cap is refused by name.** When even a history-free
+  response exceeds the budget (~850 bytes per history-free card, so roughly
+  4,000 cards), the read
+  exits 1 with `Error: Board "…" is too large to emit as one JSON response: N
+  cards serialize to X MiB …; narrow the read with --wish <slug>, or split the
+  board.` — an actionable sentence a client prints verbatim, never an opaque
+  downstream truncation. The human render of the same board is unaffected: the
+  budget belongs to the machine payload, not to the board. `--wish <slug>` is
+  the only narrowing a refusal ever recommends — it is the one flag that shrinks
+  the card set without changing the payload shape, while `--board <ref>`
+  re-routes a lane-defining board onto this (larger) aggregate — and a read that
+  is already `--wish`-scoped is told to split the wish or archive instead.
+- **Fails closed only on genuinely non-scalar storage** — the shapes SQLite can
+  hold but the JSON contract cannot express (a BLOB title, a status outside the
+  enum, a `comment` event with a NULL note). Every diagnostic is one bounded
+  `Malformed board detail: …` line.
+- **Laneless semantics are decided once, for both paths.** `boards.lanes` is
+  untrusted TEXT that `task import`/`sync` accepts unvalidated and no board verb
+  repairs, so `normalizeLanes` is the single validator both the human render and
+  `--json` go through. A stored `label`/`action` of `null` — exactly the shape
+  this aggregate itself emits — reads as absent, so a round-trip of emitted
+  output parses back to the lanes it came from. Anything unusable (not an array,
+  an entry that is not an object, a missing/blank/non-string `name`, a non-string
+  `label`/`action`, or an EMPTY array — a stored `[]` is a lane definition that
+  yields no lane, not the absence of one) makes the board **laneless**: both paths print the same
+  one-line `Note: board "…" has no usable lane metadata; …` on stderr, exit 0,
+  and render the laneless board — `--json` falls through to the frozen
+  `{ scope, columns }` status payload. A laneless board is never a
+  `Malformed board detail` failure on one path only.
+
+### The frozen laneless payload (`board --json`, `board --wish <slug> --json`)
+
+`{ scope, columns: { blocked, ready, in_progress, done } }` — the byte-frozen
+pre-assignment TaskRow projection (Decision 7), emitted by every `--json` read
+that does not render lanes: the unscoped read, a `--wish`-only read, and a
+`--board` read whose board is laneless.
+
+**The whole-response byte budget is the SAME `BOARD_JSON_MAX_BYTES` (3.5 MiB) as
+the aggregate's, and one gate (`serializeWithinBudget`) enforces both.** These
+paths are the escape hatch the aggregate's own refusal recommends, so an
+unguarded one hands a client that caps its read at 4 MiB an oversized response
+with no note and no error — the exact failure the aggregate budget exists to
+prevent, reached by following the aggregate's advice.
+
+What the two paths do NOT share is what can degrade. An aggregate card embeds
+history, so its emitter walks `BOARD_JSON_EVENT_LIMIT_STEPS` and announces the
+applied cap as the root `eventLimit`. A frozen laneless card embeds no history at
+all, so narrowing the per-card cap cannot shrink this payload by one byte: its
+ladder is the single widest rung, it carries no `eventLimit`/`schemaVersion` key,
+and it either fits or is refused. The refusal names the SCOPE, not a board —
+this path also serves reads with no board to name:
+`Error: Board read (wish "…") is too large to emit as one JSON response: N cards
+serialize to X MiB, over the 3.5 MiB budget. Split the wish across boards, or
+archive the cards this read does not need.` The advice rule is the aggregate's,
+unchanged: recommend `--wish <slug>` while it is still unspent, then splitting.
+As on the aggregate path, the card set is never silently truncated and the human
+render of the same scope is unaffected.
 
 `LaneTaskRow.enforcedBlock` is the one deliberate runtime field on a serialized
 additive shape: `null` when the card is unblocked, otherwise

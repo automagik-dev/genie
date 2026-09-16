@@ -27,6 +27,7 @@ import {
 } from '../lib/ordered-lifecycle-leases.js';
 import { type IntegrationSelection, persistIntegrationConsent } from '../lib/runtime-integrations.js';
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
+import { printErr, printOut } from '../lib/term-output.js';
 import { VERSION } from '../lib/version.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
@@ -139,7 +140,7 @@ function reportRetiredRuntimeIntegrations(selection: IntegrationSelection): void
   if (selection === 'auto' || selection === 'none') return;
   const runtimes = selection === 'all' ? (['codex', 'claude'] as const) : ([selection] as const);
   for (const runtime of runtimes) {
-    console.log(`  \x1b[32m+\x1b[0m ${runtime}: ${RUNTIME_INTEGRATION_RETIRED}`);
+    printOut(`  \x1b[32m+\x1b[0m ${runtime}: ${RUNTIME_INTEGRATION_RETIRED}`);
   }
 }
 
@@ -194,7 +195,7 @@ export async function installCommand(
   const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (!acquired.ok) {
     // One human-readable stderr line plus exit 2 is the whole contract here.
-    console.error(lifecycleBusyMessage(acquired.detail));
+    printErr(lifecycleBusyMessage(acquired.detail));
     process.exitCode = 2;
     return;
   }
@@ -212,7 +213,7 @@ export async function installCommand(
     }
     persistInstallOwnedConsent(selection, writeConsent);
     if (options.skipV4Cleanup) {
-      console.log('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
+      printOut('\x1b[2mSkipping v4 legacy cleanup (--skip-v4-cleanup).\x1b[0m');
     } else {
       runV4Cleanup();
     }
@@ -230,11 +231,32 @@ export async function installCommand(
   }
 }
 
+/**
+ * Every value `--integrations` accepts, in the order the help text lists them.
+ * `genie.ts` feeds this to Commander's `.choices()` so a bad value is refused
+ * at parse time; `resolveIntegrationSelection` is the second gate for callers
+ * that build `InstallOptions` programmatically.
+ */
+export const INTEGRATION_SELECTIONS: readonly IntegrationSelection[] = ['auto', 'codex', 'claude', 'all', 'none'];
+
+/**
+ * A bad `--integrations` value is operator input, not a defect: it gets one
+ * line naming the allowed values and exit 1. Before 2026-09-15 it was a bare
+ * `Error`, so `genie install --integrations bogus` printed a Bun stack trace
+ * through minified bundle source and never listed a single valid value.
+ */
+export class InvalidIntegrationSelectionError extends Error {
+  constructor(readonly value: string) {
+    super(`invalid --integrations value '${value}' (allowed: ${INTEGRATION_SELECTIONS.join(', ')})`);
+    this.name = 'InvalidIntegrationSelectionError';
+  }
+}
+
 /** Validate raw Commander input before cleanup, synchronization, or install side effects. */
 export function resolveIntegrationSelection(options: InstallOptions): IntegrationSelection {
   const selection = options.skipIntegrations ? 'none' : (options.integrations ?? 'auto');
-  if (!['auto', 'codex', 'claude', 'all', 'none'].includes(selection)) {
-    throw new Error(`Invalid --integrations value: ${selection}`);
+  if (!INTEGRATION_SELECTIONS.includes(selection)) {
+    throw new InvalidIntegrationSelectionError(String(selection));
   }
   return selection;
 }
@@ -246,10 +268,10 @@ function printAuxiliaryOutcome(outcome: AuxiliaryTreeOutcome): void {
     const fresh = outcome.freshArtifact
       ? `; verified fresh artifact: ${outcome.freshArtifact}`
       : '; no verified fresh artifact available';
-    console.log(`  \x1b[31m!\x1b[0m ${outcome.label}: failed at ${outcome.stage}: ${outcome.error}${rollback}${fresh}`);
+    printOut(`  \x1b[31m!\x1b[0m ${outcome.label}: failed at ${outcome.stage}: ${outcome.error}${rollback}${fresh}`);
     return;
   }
   const detail = outcome.status === 'unchanged' ? 'content already current; extracted residue removed' : 'refreshed';
-  console.log(`  \x1b[32m+\x1b[0m ${outcome.label}: ${detail}`);
-  for (const warning of outcome.warnings) console.log(`  \x1b[33m!\x1b[0m ${outcome.label}: ${warning}`);
+  printOut(`  \x1b[32m+\x1b[0m ${outcome.label}: ${detail}`);
+  for (const warning of outcome.warnings) printOut(`  \x1b[33m!\x1b[0m ${outcome.label}: ${warning}`);
 }

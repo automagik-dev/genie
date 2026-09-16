@@ -4,6 +4,8 @@
  * Consolidates padRight, truncate, and formatTimestamp.
  */
 
+import { colorEnabled } from './term-color.js';
+
 /** Pad a string to a minimum width with trailing spaces. */
 export function padRight(str: string, len: number): string {
   return str.length >= len ? str : str + ' '.repeat(len - str.length);
@@ -55,9 +57,12 @@ const ANSI = {
 
 type ColorName = keyof typeof ANSI;
 
-const isTTY = process.stdout.isTTY && !process.env.NO_COLOR;
-
-/** Wrap text in ANSI color (no-op when not a TTY or NO_COLOR is set). */
+/**
+ * Wrap text in ANSI color for stdout (no-op when stdout is not a TTY, or when
+ * `NO_COLOR`/`TERM=dumb` forbid it). The decision lives in `term-color.ts` and
+ * is taken per call — a module-load cache made `NO_COLOR` unobservable to any
+ * caller that set it after import.
+ */
 export function color(name: ColorName, text: string): string {
-  return isTTY ? `${ANSI[name]}${text}${ANSI.reset}` : text;
+  return colorEnabled('stdout') ? `${ANSI[name]}${text}${ANSI.reset}` : text;
 }

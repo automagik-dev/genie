@@ -11,6 +11,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
+import { serializeSnapshot } from '../lib/v5/roadmap-sync.js';
 import {
   DEFAULT_LIFECYCLE_LANES,
   type StateExport,
@@ -147,7 +148,7 @@ describe('task create', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to:claude — owns the parser');
+    expect(status.stdout).toContain('Assigned to: claude — owns the parser');
   });
 
   test('rejects a non-roster agent, naming the allowed roster in stderr', async () => {
@@ -361,6 +362,54 @@ describe('task status / done / checkout', () => {
     const bad = await cli(repo, 'status', 't_missing');
     expect(bad.code).toBe(1);
     expect(bad.stderr).toContain('Task not found: t_missing');
+  });
+
+  /**
+   * Regression (dogfood r5 Z7): `task status` printed Status/Board/Created/
+   * Updated and the timeline but no lane at all, so the only way to learn where
+   * a card sat was `genie board --json` or reading its move events. The lane it
+   * prints is the placement the board RENDERS: an unplaced card on a
+   * lane-defining board falls into the first lane, exactly as groupByLane does.
+   */
+  test('status shows the lane the card sits in, matching the board render', async () => {
+    const db = openDb({ cwd: repo });
+    const board = createBoard(db, 'dogfood', DEFAULT_LIFECYCLE_LANES);
+    const placed = createTask(db, { title: 'placed card', boardId: board.id });
+    const unplaced = createTask(db, { title: 'unplaced card', boardId: board.id });
+    const loose = createTask(db, { title: 'loose card' });
+    db.close();
+
+    const moved = await cli(repo, 'move', placed.id, '--to', 'Review');
+    expect(moved.stderr).toBe('');
+    expect(moved.code).toBe(0);
+
+    const onLane = await cli(repo, 'status', placed.id);
+    expect(onLane.code).toBe(0);
+    expect(onLane.stdout).toContain('Lane:       Review');
+
+    // The board is the oracle: status must name the lane the JSON reports.
+    const boardJson = Bun.spawnSync(['bun', GENIE, 'board', '--board', 'dogfood', '--json'], {
+      cwd: repo,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    const lanes = JSON.parse(boardJson.stdout.toString()).lanes as Array<{
+      name: string;
+      cards: Array<{ id: string }>;
+    }>;
+    const renderedLane = lanes.find((lane) => lane.cards.some((card) => card.id === placed.id))?.name;
+    expect(renderedLane).toBe('Review');
+
+    // Never moved: the board renders it in the first lane, and so does status.
+    const first = DEFAULT_LIFECYCLE_LANES[0].name;
+    const neverMoved = await cli(repo, 'status', unplaced.id);
+    expect(neverMoved.code).toBe(0);
+    expect(neverMoved.stdout).toContain(`Lane:       ${first} (default`);
+    expect(lanes.find((lane) => lane.cards.some((card) => card.id === unplaced.id))?.name).toBe(first);
+
+    // A card on no board has no lane to report, and gains no empty line.
+    const noBoard = await cli(repo, 'status', loose.id);
+    expect(noBoard.code).toBe(0);
+    expect(noBoard.stdout).not.toContain('Lane:');
   });
 
   test('checkout claims a ready task; a second claim conflicts with exit 1', async () => {
@@ -609,7 +658,7 @@ describe('task assign', () => {
 
     const status = await cli(repo, 'status', id);
     expect(status.code).toBe(0);
-    expect(status.stdout).toContain('Assigned to:codex — dissent on the parser');
+    expect(status.stdout).toContain('Assigned to: codex — dissent on the parser');
     expect(status.stdout).toContain('Timeline:');
     expect(status.stdout).toContain('assign by');
     expect(status.stdout).toContain('assigned to codex: dissent on the parser');
@@ -915,6 +964,8 @@ describe('task move', () => {
     expect(getTaskLane(db, id)).toBe('Idea');
     expect(getTaskEvents(db, id)).toHaveLength(0);
     db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
   });
 
   test('moving a card that is not on a board fails with exit 1', async () => {
@@ -1079,6 +1130,76 @@ describe('task import', () => {
     expect(mismatch.code).toBe(1);
     expect(mismatch.stderr).toContain('schemaVersion 999');
   });
+
+  /**
+   * Regression (dogfood r2 minors 12/13): a non-scalar used to reach bun:sqlite
+   * as `Binding expected string, TypedArray, boolean, number, bigint or null`
+   * with no locator, and a string in an INTEGER column imported with exit 0.
+   */
+  describe('malformed column values', () => {
+    /** Export the seeded state, mutate one cell, and re-import with --replace. */
+    async function importWithMutation(mutate: (snapshot: StateExport) => void): Promise<CliResult> {
+      const snapshotPath = join(repo, '.genie', 'roadmap.json');
+      const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as StateExport;
+      mutate(snapshot);
+      writeFileSync(snapshotPath, JSON.stringify(snapshot));
+      return cli(repo, 'import', '--replace');
+    }
+
+    beforeEach(async () => {
+      seedState();
+      expect((await cli(repo, 'export', '--write')).code).toBe(0);
+    });
+
+    test('a non-scalar in a TEXT column names the file, table, row and column', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).title = { x: 1 };
+      });
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain(join(repo, '.genie', 'roadmap.json'));
+      expect(r.stderr).toContain('Snapshot table "tasks" row 0');
+      expect(r.stderr).toContain('column "title" expects a string, got an object');
+      expect(r.stderr).toContain('database was left unchanged');
+      expect(r.stderr).not.toContain('Binding expected');
+    });
+
+    test('a non-numeric value in an INTEGER column is refused, not silently stored', async () => {
+      const r = await importWithMutation((s) => {
+        (s.tasks[0] as unknown as Record<string, unknown>).created_at = 'abc';
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "created_at" expects an integer, got the string "abc"');
+
+      // Nothing partial landed: the pre-import rows are untouched.
+      const db = openDb({ cwd: repo });
+      const rows = db.query('SELECT title, typeof(created_at) AS t FROM tasks ORDER BY title').all() as Array<{
+        title: string;
+        t: string;
+      }>;
+      db.close();
+      expect(rows.map((row) => row.title)).toEqual(['dependent', 'root']);
+      expect(rows.every((row) => row.t === 'integer')).toBe(true);
+    });
+
+    test('an array in boards.lanes is refused and no partial import lands', async () => {
+      const r = await importWithMutation((s) => {
+        (s.boards[0] as unknown as Record<string, unknown>).lanes = ['Idea', 'Done'];
+        s.tasks = [];
+        s.task_dependencies = [];
+        s.stage_log = [];
+        s.task_events = [];
+      });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('column "lanes" expects a string, got an array');
+      // --replace wipes inside the transaction: a rejected snapshot must leave
+      // every pre-import row in place.
+      const db = openDb({ cwd: repo });
+      const counts = db.query('SELECT COUNT(*) AS n FROM tasks').get() as { n: number };
+      db.close();
+      expect(counts.n).toBe(2);
+    });
+  });
 });
 
 describe('roadmap.json canonical sync', () => {
@@ -1090,6 +1211,37 @@ describe('roadmap.json canonical sync', () => {
     await mkdir(join(dir, '.genie'), { recursive: true });
     writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
   }
+
+  /**
+   * Dogfood r7 W2: in a directory that was never `genie init`-ed, sync opened
+   * (and thereby CREATED) an empty genie.db, found no snapshot and no state,
+   * and printed `Board and snapshot are in sync (none).` with exit 0 — a clean
+   * bill indistinguishable from a genuinely reconciled workspace.
+   */
+  test('a directory with no .genie workspace is refused, never reported in sync', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'genie-v5-noworkspace-'));
+    try {
+      git(bare, 'init', '-b', 'main');
+      git(bare, 'commit', '--allow-empty', '-m', 'init');
+
+      const r = await cli(bare, 'sync');
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr.trim().split('\n')).toHaveLength(1);
+      expect(r.stderr).toContain('no Genie workspace');
+      expect(r.stderr).toContain('genie init');
+      // The refusal must not create the workspace whose absence it reports.
+      expect(existsSync(join(bare, '.genie'))).toBe(false);
+
+      // An initialized workspace still reconciles quietly, exit 0.
+      await mkdir(join(bare, '.genie'), { recursive: true });
+      const initialized = await cli(bare, 'sync');
+      expect(initialized.code).toBe(0);
+      expect(initialized.stderr).toBe('');
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
 
   test('fresh clone: one `task sync` materializes the board from the snapshot', async () => {
     const db = openDb({ cwd: repo });
@@ -1180,18 +1332,31 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('explicit relative canonical path behaves like the default; custom-file exports stay lossless', async () => {
+  test('explicit relative canonical path behaves like the default; no export path leaks hires', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
     hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
     db.close();
 
-    // Custom-file --write carries the COMPLETE state (hire_roster included), so
-    // a backup.json → import --replace round-trip cannot silently drop hires.
+    // m10: a snapshot is publishable wherever it is written, so the
+    // machine-local hire_roster never travels — not on a custom --write path
+    // either. The rows stay in the db, and the backup still round-trips because
+    // an import that brings no hires leaves the local roster alone.
     const backup = await cli(repo, 'export', '--write', 'backup.json');
     expect(backup.code).toBe(0);
     const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
-    expect(backupState.hire_roster).toHaveLength(1);
+    expect(backupState.hire_roster).toEqual([]);
+    expect(backupState.tasks).toHaveLength(1);
+
+    const restored = await cli(repo, 'import', 'backup.json', '--replace');
+    expect(restored.code).toBe(0);
+    const afterBackupImport = openDb({ cwd: repo });
+    const survivingHires = afterBackupImport.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
+      wish: string;
+      worktree: string;
+    }>;
+    afterBackupImport.close();
+    expect(survivingHires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
 
     // The canonical path spelled explicitly (relative) still emits the roadmap
     // slice and still counts as canonical on import: local hires preserved.
@@ -1213,6 +1378,69 @@ describe('roadmap.json canonical sync', () => {
     // The explicit spelling also recorded the sync baseline: no divergence.
     const settled = await cli(repo, 'sync');
     expect(settled.code).toBe(0);
+  });
+
+  test('imported snapshots with reordered object keys remain in sync', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'canonical card' });
+    db.close();
+
+    const published = await cli(repo, 'export', '--write');
+    expect(published.stderr).toBe('');
+    expect(published.code).toBe(0);
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as unknown;
+    const reorderKeys = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(reorderKeys);
+      if (value !== null && typeof value === 'object') {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .reverse()
+            .map(([key, child]) => [key, reorderKeys(child)]),
+        );
+      }
+      return value;
+    };
+    writeFileSync(snapshotPath, `${JSON.stringify(reorderKeys(snapshot), null, 2)}\n`);
+
+    const imported = await cli(repo, 'import', '--replace');
+    expect(imported.code).toBe(0);
+    expect(imported.stderr).toBe('');
+    const settled = await cli(repo, 'sync');
+    expect(settled.code).toBe(0);
+    // Still `none` — the reordering is not a change. Sync does normalize the
+    // bytes on its way past, which is why the line is not the bare default.
+    expect(settled.stdout).toContain('in sync');
+    expect(settled.stderr).toBe('');
+    const settledBytes = readFileSync(snapshotPath, 'utf-8');
+    expect(settledBytes).toBe(serializeSnapshot(JSON.parse(settledBytes)));
+  });
+
+  test.each(['content', 'array order'])('sync detects changed %s after a canonical baseline', async (change) => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'first card' });
+    createTask(db, { title: 'second card' });
+    db.close();
+    const published = await cli(repo, 'export', '--write');
+    expect(published.code).toBe(0);
+    expect(published.stderr).toBe('');
+
+    const snapshotPath = join(repo, '.genie', 'roadmap.json');
+    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as StateExport;
+    if (change === 'content') snapshot.tasks[0].title = 'changed card';
+    else snapshot.tasks.reverse();
+    writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+
+    const synced = await cli(repo, 'sync');
+    expect(synced.code).toBe(0);
+    expect(synced.stderr).toBe('');
+    expect(synced.stdout).toContain('Board refreshed');
+    const imported = openDb({ cwd: repo });
+    try {
+      expect(getTask(imported, snapshot.tasks[0].id)?.title).toBe(snapshot.tasks[0].title);
+    } finally {
+      imported.close();
+    }
   });
 
   test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
@@ -1277,6 +1505,8 @@ describe('roadmap.json canonical sync', () => {
     expect(listed.stdout).toContain('keeper');
   });
 
+  // This round-trip intentionally runs 13 real CLI subprocesses. Their startup
+  // cost exceeds Bun's default 5s under the full suite; keep a bounded 20s gate.
   test('pulled snapshot imports on sync; local mutation exports; divergence is refused then resolvable', async () => {
     // Machine A (repo): publish F1, then F2 with one more card.
     const db = openDb({ cwd: repo });
@@ -1319,7 +1549,13 @@ describe('roadmap.json canonical sync', () => {
       writeFileSync(join(clone, '.genie', 'roadmap.json'), f2);
       const diverged = await cli(clone, 'sync');
       expect(diverged.code).toBe(1);
-      expect(diverged.stdout).toContain('Nothing was overwritten');
+      // The refusal is a warning on stderr (the git hooks run `task sync
+      // || true`, so the exit code alone reaches nobody) and names both
+      // resolving commands.
+      expect(diverged.stderr).toContain('Nothing was overwritten');
+      expect(diverged.stderr).toContain('genie task import --replace');
+      expect(diverged.stderr).toContain('genie task export --write');
+      expect(diverged.stdout).not.toContain('Nothing was overwritten');
       expect(snapshotOf(clone)).toBe(f2); // snapshot untouched
       const listed = await cli(clone, 'list');
       expect(listed.stdout).toContain('b-diverging card'); // local state kept
@@ -1336,7 +1572,7 @@ describe('roadmap.json canonical sync', () => {
     } finally {
       rmSync(clone, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });
 
 // Same subprocess invocation as `cli`, but with extra env vars layered on — used
@@ -1382,8 +1618,100 @@ describe('timeline verbs', () => {
     expect(r.stderr).toContain('Task not found: t_nope');
   });
 
+  test('comment and report take --worker so each speaker is attributed, never collapsed to cli', async () => {
+    const id = await seed('attributed');
+    expect((await cli(repo, 'comment', id, '--worker', 'orchestrator', 'dispatching G1')).code).toBe(0);
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect(
+      (await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-A', CLAUDECODE: '1' }, 'report', id, 'done: 12 tests pass')).code,
+    ).toBe(0);
+    expect((await cli(repo, 'comment', id, '--', 'review: SHIP — 0 gaps')).code).toBe(0);
+    const db = openDb({ cwd: repo });
+    const events = getTaskEvents(db, id);
+    db.close();
+    expect(events.map((e) => [e.kind, e.author])).toEqual([
+      ['comment', 'orchestrator'],
+      ['claim', 'cli'],
+      ['report', 'eng-A'],
+      ['comment', 'cli'],
+    ]);
+    expect(events[3].note).toBe('review: SHIP — 0 gaps');
+  });
+
+  test('report is a trust signal: refused unless the author is the current claimant', async () => {
+    const id = await seed('guarded');
+    const unclaimed = await cli(repo, 'report', id, '--worker', 'eng-A', 'done');
+    expect(unclaimed.code).toBe(1);
+    expect(unclaimed.stderr).toContain('is not claimed');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    const impostor = await cli(repo, 'report', id, '--worker', 'eng-B', 'done');
+    expect(impostor.code).toBe(1);
+    expect(impostor.stderr).toContain('claimed by eng-A, not eng-B');
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'done: verified')).code).toBe(0);
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id).filter((e) => e.kind === 'report')).toHaveLength(1);
+    db.close();
+  });
+
+  /**
+   * Dogfood r7 W1: `task report --help` promised "one per claim-to-handoff
+   * span" while the CLI accepted every repeat, so a card's timeline could hold
+   * several partial handoffs with nothing saying which one was THE report.
+   */
+  test('one report per claim-to-handoff span; a new checkout opens the next span', async () => {
+    const id = await seed('one-per-span');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 12 tests pass')).code).toBe(0);
+
+    const second = await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: actually 13');
+    expect(second.code).toBe(1);
+    expect(second.stderr.trim().split('\n')).toHaveLength(1);
+    expect(second.stderr).toContain('already reported');
+    expect(second.stderr).toContain('claim-to-handoff span');
+    // The refusal names the verb that IS unbounded, so the worker is not stuck.
+    expect(second.stderr).toContain(`genie task comment ${id}`);
+    expect((await cli(repo, 'comment', id, 'actually 13')).code).toBe(0);
+
+    const before = openDb({ cwd: repo });
+    expect(getTaskEvents(before, id).filter((e) => e.kind === 'report')).toHaveLength(1);
+    before.close();
+
+    // Handoff, then a fresh claim: the next span carries its own report.
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 13 tests pass')).code).toBe(0);
+    const after = openDb({ cwd: repo });
+    expect(getTaskEvents(after, id).filter((e) => e.kind === 'report')).toHaveLength(2);
+    after.close();
+  });
+
+  test('the report help text states the span rule the CLI enforces', async () => {
+    const help = await cli(repo, 'report', '--help');
+    expect(help.code).toBe(0);
+    // Commander hard-wraps the description, so compare on collapsed whitespace.
+    expect(help.stdout.replace(/\s+/g, ' ')).toContain('one per claim-to-handoff span');
+  });
+
+  test('comment and report reject control characters and notes over 4000 bytes', async () => {
+    const id = await seed('bounded');
+    // ESC survives argv (NUL cannot); it is a C0 control the note bound refuses.
+    const control = await cli(repo, 'comment', id, 'bad\u001bline');
+    expect(control.code).toBe(1);
+    expect(control.stderr).toContain('control characters');
+    expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
+    const long = await cli(repo, 'report', id, 'x'.repeat(4001));
+    expect(long.code).toBe(1);
+    expect(long.stderr).toContain('at most 4000 bytes');
+    const db = openDb({ cwd: repo });
+    expect(getTaskEvents(db, id).filter((e) => e.kind !== 'claim')).toHaveLength(0);
+    db.close();
+    // Newlines and tabs are text and survive verbatim, matching the board contract.
+    expect((await cli(repo, 'comment', id, 'line one\nline\ttwo')).code).toBe(0);
+  });
+
   test('report appends a report event tagged with the runtime kind', async () => {
     const id = await seed('meeseeks');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-B')).code).toBe(0);
     const r = await cliEnv(repo, { GENIE_AGENT_NAME: 'eng-B', CLAUDECODE: '1' }, 'report', id, 'implemented + tested');
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('claude-code');
@@ -1391,10 +1719,10 @@ describe('timeline verbs', () => {
     const db = openDb({ cwd: repo });
     const events = getTaskEvents(db, id);
     db.close();
-    expect(events[0].kind).toBe('report');
-    expect(events[0].note).toBe('implemented + tested');
-    expect(events[0].author).toBe('eng-B');
-    expect(events[0].authorKind).toBe('claude-code');
+    const report = events.find((e) => e.kind === 'report');
+    expect(report?.note).toBe('implemented + tested');
+    expect(report?.author).toBe('eng-B');
+    expect(report?.authorKind).toBe('claude-code');
   });
 
   test('author + runtime kind flow from env into the stored event (CLI boundary)', async () => {
@@ -1424,15 +1752,48 @@ describe('timeline verbs', () => {
     expect(ev.authorKind).toBe('hermes');
   });
 
-  test('heartbeat records a liveness pulse', async () => {
+  test('heartbeat records a liveness pulse on a claimed card', async () => {
     const id = await seed('pulse');
+    const claim = await cli(repo, 'checkout', id, '--worker', 'w1');
+    expect(claim.code).toBe(0);
     const before = Date.now();
     const r = await cli(repo, 'heartbeat', id);
     expect(r.code).toBe(0);
+    expect(r.stderr).toBe('');
     const db = openDb({ cwd: repo });
     const card = getTaskCard(db, id);
     db.close();
     expect(card?.heartbeatAt).toBeGreaterThanOrEqual(before);
+  });
+
+  /**
+   * Regression (dogfood r2 minor 15): `heartbeat` on a never-claimed card
+   * exited 0 and stamped `heartbeat_at` on a `ready` card with `claimed_by`
+   * NULL — liveness for a worker that does not exist.
+   */
+  test('heartbeat on an unclaimed card is refused with a typed error and exit 1', async () => {
+    const id = await seed('never claimed');
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('not claimed');
+    expect(r.stderr).toContain(`genie task checkout ${id} --worker`);
+    expect(r.stderr).not.toContain('at <anonymous>');
+    const db = openDb({ cwd: repo });
+    const card = getTaskCard(db, id);
+    db.close();
+    expect(card?.heartbeatAt).toBeNull();
+    expect(card?.claimedBy).toBeNull();
+  });
+
+  test('heartbeat on a released card is refused again', async () => {
+    const id = await seed('released');
+    expect((await cli(repo, 'checkout', id, '--worker', 'w1')).code).toBe(0);
+    expect((await cli(repo, 'heartbeat', id)).code).toBe(0);
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    const r = await cli(repo, 'heartbeat', id);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('not claimed');
   });
 });
 
@@ -1579,5 +1940,224 @@ describe('checkout reassignment briefing + status timeline', () => {
     expect(r.stdout).toContain('Timeline:');
     expect(r.stdout).toContain('comment by felipe');
     expect(r.stdout).toContain('a note');
+  });
+});
+
+/**
+ * M6 — a card deleted by a concurrent worktree while a timeline verb is
+ * appending must fail with the typed, attributable not-found error, never with
+ * the raw `FOREIGN KEY constraint failed` the unprotected insert produced
+ * (13/20 iterations on the dogfood host). Real subprocesses, real SQLite
+ * contention, `Promise.allSettled` — no mocked race.
+ */
+describe('timeline verbs under a concurrent delete', () => {
+  const ITERATIONS = 12;
+
+  async function raceVerb(verb: 'comment' | 'report'): Promise<void> {
+    const db = openDb({ cwd: repo });
+    const ids = Array.from({ length: ITERATIONS }, (_, i) => createTask(db, { title: `race ${i}` }).id);
+    db.close();
+
+    // `report` is gated on the current claimant, so each card is claimed as the
+    // default worker first; the race then pits the report against the delete.
+    if (verb === 'report')
+      for (const id of ids) expect((await cli(repo, 'checkout', id, '--worker', 'cli')).code).toBe(0);
+    const rounds = ids.map((id) => Promise.allSettled([cli(repo, verb, id, 'note'), cli(repo, 'delete', id)]));
+    const settled = await Promise.all(rounds);
+
+    for (const [appended] of settled) {
+      expect(appended.status).toBe('fulfilled');
+      const result = (appended as PromiseFulfilledResult<CliResult>).value;
+      expect(result.stderr).not.toContain('FOREIGN KEY');
+      if (result.code === 0) continue;
+      // The only legitimate loss is "the card is gone", and it must say so.
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/Task not found: t_\w+/);
+    }
+  }
+
+  test('comment never leaks a raw FOREIGN KEY failure', async () => {
+    await raceVerb('comment');
+  });
+
+  test('report never leaks a raw FOREIGN KEY failure', async () => {
+    await raceVerb('report');
+  });
+});
+
+/**
+ * m8 — liveness is derived purely from `heartbeat_at`, and a null heartbeat
+ * classifies as `stale`. A claim that seeds no heartbeat therefore renders the
+ * card dead the instant a worker picks it up.
+ */
+describe('task checkout liveness seeding', () => {
+  test('a freshly claimed card carries heartbeat_at = claimed_at and reads live', async () => {
+    const db = openDb({ cwd: repo });
+    const task = createTask(db, { title: 'claim me' });
+    db.close();
+
+    const r = await cli(repo, 'checkout', task.id, '--worker', 'zz');
+    expect(r.code).toBe(0);
+
+    const after = openDb({ cwd: repo });
+    const row = after.query('SELECT claimed_at, heartbeat_at FROM tasks WHERE id = ?').get(task.id) as {
+      claimed_at: number | null;
+      heartbeat_at: number | null;
+    };
+    after.close();
+    expect(row.heartbeat_at).not.toBeNull();
+    expect(row.heartbeat_at).toBe(row.claimed_at as number);
+  });
+});
+
+/**
+ * m10 — `hire_roster` rows carry machine-local worktree paths. A snapshot is a
+ * publishable artifact wherever it is written, so NO export path may emit them.
+ */
+describe('task export never publishes hire_roster', () => {
+  test('stdout and an off-canonical --write both emit an empty roster', async () => {
+    const db = openDb({ cwd: repo });
+    createTask(db, { title: 'card' });
+    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/home/someone/private/wt' });
+    db.close();
+
+    const dumped = await cli(repo, 'export');
+    expect(dumped.code).toBe(0);
+    expect(dumped.stdout).not.toContain('/home/someone/private/wt');
+    expect((JSON.parse(dumped.stdout) as StateExport).hire_roster).toEqual([]);
+
+    const offPath = join(repo, 'off.json');
+    const written = await cli(repo, 'export', '--write', offPath);
+    expect(written.code).toBe(0);
+    const offText = readFileSync(offPath, 'utf-8');
+    expect(offText).not.toContain('/home/someone/private/wt');
+    expect((JSON.parse(offText) as StateExport).hire_roster).toEqual([]);
+
+    // One database is one byte sequence on every export path.
+    expect(offText).toBe(dumped.stdout);
+
+    // The rows are sliced from the snapshot, never deleted from the database.
+    const after = openDb({ cwd: repo });
+    const hires = after.query('SELECT worktree FROM hire_roster').all() as Array<{ worktree: string }>;
+    after.close();
+    expect(hires).toEqual([{ worktree: '/home/someone/private/wt' }]);
+  });
+});
+
+/**
+ * m11 — the committed `.genie/roadmap.json` is the canonical board, so an
+ * import → export round-trip of it must reproduce it byte for byte and a
+ * one-card change must diff as one card. Otherwise every clone's first sync
+ * rewrites the whole 2k-line file (1922 insertions / 1902 deletions on the
+ * dogfood host, whose committed file predated the canonical serializer).
+ */
+/** Does every line of `before` still appear in `after`, in order? A pure insertion. */
+function isSubsequence(before: string[], after: string[]): boolean {
+  let cursor = 0;
+  for (const line of before) {
+    cursor = after.indexOf(line, cursor);
+    if (cursor === -1) return false;
+    cursor += 1;
+  }
+  return true;
+}
+
+/** Re-emit a parsed snapshot with every object's keys reversed: same content, non-canonical bytes. */
+function reverseKeyOrder(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseKeyOrder);
+  if (value === null || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>).reverse();
+  return Object.fromEntries(entries.map(([key, inner]) => [key, reverseKeyOrder(inner)]));
+}
+
+describe('committed roadmap.json round-trip', () => {
+  const COMMITTED = join(import.meta.dir, '..', '..', '.genie', 'roadmap.json');
+
+  test('this repo’s own snapshot is already canonical bytes', () => {
+    const text = readFileSync(COMMITTED, 'utf-8');
+    expect(serializeSnapshot(JSON.parse(text))).toBe(text);
+  });
+
+  test('import then export reproduces it byte for byte, and one card diffs as one card', async () => {
+    const text = readFileSync(COMMITTED, 'utf-8');
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    writeFileSync(join(repo, '.genie', 'roadmap.json'), text);
+
+    const imported = await cli(repo, 'import');
+    expect(imported.code).toBe(0);
+    const exported = await cli(repo, 'export', '--write');
+    expect(exported.code).toBe(0);
+    expect(readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8')).toBe(text);
+
+    const created = await cli(repo, 'create', '--title', 'one more card');
+    expect(created.code).toBe(0);
+    const republished = await cli(repo, 'export', '--write');
+    expect(republished.code).toBe(0);
+
+    const before = text.split('\n');
+    const after = readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8').split('\n');
+    // A pure insertion: every original line survives, in order.
+    expect(isSubsequence(before, after)).toBe(true);
+    expect(after.length - before.length).toBeLessThan(40);
+  });
+
+  /**
+   * The residual half of m11, at the CLI boundary the git hooks actually use.
+   * `import → export` being byte-stable only helps a snapshot that is ALREADY
+   * canonical; a branch whose roadmap.json predates the canonical serializer
+   * (origin/main's own file, top-level `schemaVersion, meta, boards, tasks, …`
+   * and every row in physical column order) still had its reordering ride along
+   * with the next content change — the 1922/1902 diff the dogfood hop reported.
+   * `task sync` now lands the reordering alone, and says so.
+   */
+  test('a legacy-ordered snapshot is reordered by its own sync, not by the next card', async () => {
+    const canonical = readFileSync(COMMITTED, 'utf-8');
+    await mkdir(join(repo, '.genie'), { recursive: true });
+    const roadmap = join(repo, '.genie', 'roadmap.json');
+    // The same content an older genie would have committed: reversed key order.
+    writeFileSync(roadmap, `${JSON.stringify(reverseKeyOrder(JSON.parse(canonical)), null, 2)}\n`);
+    expect(readFileSync(roadmap, 'utf-8')).not.toBe(canonical);
+
+    // Sync #1: the reordering, alone. It carries no board change and says so.
+    const first = await cli(repo, 'sync');
+    expect(first.code).toBe(0);
+    expect(first.stdout).toContain('canonical key order');
+    expect(first.stdout).toContain('no board content changed');
+    expect(readFileSync(roadmap, 'utf-8')).toBe(canonical);
+
+    // Sync #2: one new card, and the file diffs by that card alone.
+    expect((await cli(repo, 'create', '--title', 'one more card')).code).toBe(0);
+    const second = await cli(repo, 'sync');
+    expect(second.code).toBe(0);
+    const before = canonical.split('\n');
+    const after = readFileSync(roadmap, 'utf-8').split('\n');
+    expect(isSubsequence(before, after)).toBe(true);
+    expect(after.length - before.length).toBeLessThan(40);
+  });
+});
+
+/**
+ * M7 — `GENIE_HOME` defaults to `$HOME/.genie`, which is also a valid spelling
+ * of a per-repo `.genie/`. A per-repo verb run with cwd = that home resolved the
+ * GLOBAL database and initialized the per-repo schema inside the Omni approval
+ * queue. The two databases have independent `PRAGMA user_version`; they must
+ * never merge.
+ */
+describe('per-repo verbs refuse the global database', () => {
+  test('a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-home-collision-'));
+    try {
+      const genieHome = join(home, '.genie');
+      // Seed the global database through its own command, exactly as a host does.
+      const seeded = await cliEnv(home, { GENIE_HOME: genieHome }, 'list');
+      expect(seeded.code).toBe(1);
+      expect(seeded.stderr).toContain('Refusing to open the machine-scope database');
+      expect(seeded.stderr).toContain('GENIE_HOME/genie.db');
+      expect(seeded.stderr).not.toContain('at <anonymous>');
+      // Nothing was created where the global database lives.
+      expect(existsSync(join(genieHome, 'genie.db'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

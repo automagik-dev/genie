@@ -55,6 +55,7 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
 // into describing a body that no longer ships.
 const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'board',
+  'config',
   'context',
   'doctor',
   'idea',
@@ -105,5 +106,194 @@ describe('CLAUDE.md v5 drift guard', () => {
   test('documents the v5 SQLite state store', () => {
     expect(content).toContain('genie.db');
     expect(content).toContain('bun:sqlite');
+  });
+});
+
+/**
+ * The second drift axis: CLAUDE.md's SUBCOMMAND blocks against the live
+ * commander registry.
+ *
+ * The fossil guard above only forbids strings and the release-docs guard only
+ * derives the TOP-LEVEL inventory, so `genie task move <id> --lane <x>`, a
+ * `--worker` bolted onto `task heartbeat`, and an `omni` row naming four of the
+ * five subcommands all sat in the contributor contract with a green suite (the
+ * 2026-09-15 dogfood run found them by hand). Every flag and verb CLAUDE.md
+ * documents is now spawned and checked against `--help`.
+ */
+const ROOT = join(import.meta.dir, '..', '..');
+
+function cliHelp(args: string[]): string {
+  const proc = Bun.spawnSync([process.execPath, join(ROOT, 'src', 'genie.ts'), ...args, '--help'], { cwd: ROOT });
+  expect(proc.exitCode).toBe(0);
+  return proc.stdout.toString();
+}
+
+/** Registered subcommand names, `help` excluded. */
+function subcommandNames(helpText: string): string[] {
+  const block = helpText.split('Commands:')[1] ?? '';
+  return [...block.matchAll(/^ {2}([a-z][a-z-]*)/gm)]
+    .map((match) => match[1] as string)
+    .filter((name) => name !== 'help')
+    .sort();
+}
+
+/** Long options declared on the command itself (never the global block). */
+function longOptions(helpText: string): string[] {
+  const block = helpText.split('Options:')[1] ?? '';
+  return [...block.matchAll(/--[a-z][a-z-]*/g)].map((match) => match[0]);
+}
+
+/** The `## CLI Commands` prose + table, up to the first `###` subsection. */
+function commandTableSection(content: string): string {
+  return content.split('## CLI Commands')[1]?.split('\n### ')[0] ?? '';
+}
+
+/** The backticked command name that opens each table row, sorted. */
+function commandTableNames(content: string): string[] {
+  return [...commandTableSection(content).matchAll(/^\| `([a-z][a-z-]*)/gm)].map((match) => match[1] as string).sort();
+}
+
+/** Count words the command-table sentence may use, keyed by the row count. */
+const COUNT_WORDS: Readonly<Record<number, string>> = {
+  12: 'Twelve',
+  13: 'Thirteen',
+  14: 'Fourteen',
+  15: 'Fifteen',
+  16: 'Sixteen',
+  17: 'Seventeen',
+  18: 'Eighteen',
+  19: 'Nineteen',
+  20: 'Twenty',
+};
+
+/** The lines of one ```bash block under a `### <heading>` section. */
+function documentedLines(content: string, heading: string, verb: string): string[] {
+  const section = content.split(`### ${heading}`)[1] ?? '';
+  const block = section.split('```bash')[1]?.split('```')[0] ?? '';
+  expect(block.length).toBeGreaterThan(0);
+  return block
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`genie ${verb} `));
+}
+
+/** `genie task move <id> --to <lane>   # note` → `{ name: 'move', flags: ['--to'] }`. */
+function documentedInvocation(line: string, verb: string): { name: string; flags: string[] } {
+  const command = (line.split('#')[0] as string).trim();
+  const name = command.slice(`genie ${verb} `.length).trim().split(/\s+/)[0] as string;
+  return { name, flags: [...command.matchAll(/--[a-z][a-z-]*/g)].map((match) => match[0]) };
+}
+
+describe('CLAUDE.md subcommand drift guard', () => {
+  const content = readFileSync(CLAUDE_MD, 'utf8');
+
+  test('task move moves a card with --to, and --lane does not exist', () => {
+    const options = longOptions(cliHelp(['task', 'move']));
+    expect(options).toContain('--to');
+    expect(options).not.toContain('--lane');
+    const [documented] = documentedLines(content, 'Task subcommands', 'task').filter((line) =>
+      line.startsWith('genie task move '),
+    );
+    expect(documented).toContain('--to <lane>');
+    // The invocation itself, not the trailing comment that spells out the trap.
+    expect(documentedInvocation(documented as string, 'task').flags).toEqual(['--to']);
+  });
+
+  test('task heartbeat is documented, and takes no --worker', () => {
+    const options = longOptions(cliHelp(['task', 'heartbeat']));
+    expect(options).not.toContain('--worker');
+    const [documented] = documentedLines(content, 'Task subcommands', 'task').filter((line) =>
+      line.startsWith('genie task heartbeat'),
+    );
+    expect(documented).toBeDefined();
+    expect(documentedInvocation(documented as string, 'task').flags).toEqual([]);
+  });
+
+  test('every task verb and flag CLAUDE.md documents exists in the registry', () => {
+    const verbs = subcommandNames(cliHelp(['task']));
+    for (const line of documentedLines(content, 'Task subcommands', 'task')) {
+      const { name, flags } = documentedInvocation(line, 'task');
+      expect(verbs).toContain(name);
+      const options = longOptions(cliHelp(['task', name]));
+      for (const flag of flags) expect([name, ...options]).toContain(flag);
+    }
+  });
+
+  test('CLAUDE.md names every omni subcommand the registry registers', () => {
+    const help = cliHelp(['omni']);
+    const subcommands = subcommandNames(help);
+    // The dogfood defect: the table row named four of the five.
+    expect(subcommands).toContain('test-approval');
+    const row = (content.split('\n').find((line) => line.startsWith('| `omni` |')) as string) ?? '';
+    // The CLI's own one-line summary is the other half of this claim.
+    const summary = help.split('Options:')[0] as string;
+    const documented = documentedLines(content, 'Omni subcommands', 'omni').map(
+      (line) => documentedInvocation(line, 'omni').name,
+    );
+    for (const name of subcommands) {
+      expect(row).toContain(`\`${name}\``);
+      expect(documented).toContain(name);
+      expect(summary).toContain(name);
+    }
+    expect(documented.sort()).toEqual(subcommands);
+  });
+
+  /**
+   * The same claim in the other file a reader meets first. Dogfood r5 Z11: the
+   * CLAUDE.md table was corrected while README's command table kept naming four
+   * of the five omni subcommands.
+   */
+  test('the README command table names every omni subcommand too', () => {
+    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+    const row = (readme.split('\n').find((line) => line.startsWith('| `genie omni` |')) as string) ?? '';
+    expect(row).not.toBe('');
+    for (const name of subcommandNames(cliHelp(['omni']))) expect(row).toContain(`\`${name}\``);
+  });
+
+  /**
+   * Dogfood 7 W5: `genie config` shipped, the `fix` skill built its repair
+   * budget on `genie config get budgets.maxEscalationsPerGroup`, and the
+   * contributor contract's own table still listed only the other fifteen
+   * commands while claiming "Fifteen top-level commands". Nothing derived the
+   * table from the registry, so any future command lands the same way. This
+   * derives BOTH the inventory and the count word from `genie --help`.
+   */
+  test('the CLI command table names every registered top-level command', () => {
+    const registered = subcommandNames(cliHelp([]));
+    // `help` is registered too and carries its own row; every other row must
+    // correspond to a real command, and every command to a row.
+    expect(commandTableNames(content)).toEqual([...registered, 'help'].sort());
+  });
+
+  test('the CLI command table count word matches the number of rows', () => {
+    const section = commandTableSection(content);
+    const claimed = /^(\w+) top-level commands/m.exec(section)?.[1] as string;
+    expect(claimed).toBeDefined();
+    expect(COUNT_WORDS[commandTableNames(content).length]).toBe(claimed);
+  });
+
+  /**
+   * The `config` row is load-bearing for a SHIPPED skill: `fix` resolves its
+   * per-group repair budget from one dotted key. Pin the row to the key the
+   * skill actually reads, and the key to one the CLI actually resolves.
+   */
+  test('the config row names the budget key the shipped fix skill reads', () => {
+    const skill = readFileSync(join(ROOT, 'skills', 'fix', 'SKILL.md'), 'utf8');
+    const key = /genie config get ([a-zA-Z.]+)/.exec(skill)?.[1] as string;
+    expect(key).toBe('budgets.maxEscalationsPerGroup');
+    const row = (content.split('\n').find((line) => line.startsWith('| `config` |')) as string) ?? '';
+    expect(row).toContain(`\`${key}\``);
+    // The key resolves: a typo in either document is a failing command line.
+    const proc = Bun.spawnSync([process.execPath, join(ROOT, 'src', 'genie.ts'), 'config', 'get', key], { cwd: ROOT });
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stdout.toString().trim().length).toBeGreaterThan(0);
+  });
+
+  test('every omni flag CLAUDE.md documents exists on that subcommand', () => {
+    for (const line of documentedLines(content, 'Omni subcommands', 'omni')) {
+      const { name, flags } = documentedInvocation(line, 'omni');
+      const options = longOptions(cliHelp(['omni', name]));
+      for (const flag of flags) expect(options).toContain(flag);
+    }
   });
 });

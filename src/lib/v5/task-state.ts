@@ -102,6 +102,13 @@ export interface BoardRow {
   name: string;
   /** Ordered lifecycle lanes, or null for a laneless (execution-status) board. */
   lanes: Lane[] | null;
+  /**
+   * True when a non-null stored lane definition yields no usable lanes —
+   * unparseable, not an array, an entry that is not a lane, OR an empty array.
+   * A NULL definition (a board created without lanes) is a quiet laneless board
+   * and leaves this false.
+   */
+  laneMetadataMalformed: boolean;
   createdAt: number;
 }
 
@@ -203,6 +210,81 @@ export interface TaskEvent {
   authorKind: string | null;
   author: string | null;
   createdAt: number;
+}
+
+/** A dependency summary embedded in the complete board JSON snapshot. */
+export interface BoardTaskDependency {
+  id: string;
+  title: string;
+  status: TaskStatus;
+}
+
+/** A non-empty comment projection embedded in the complete board JSON snapshot. */
+export interface BoardTaskComment {
+  id: number;
+  note: string;
+  authorKind: string | null;
+  author: string | null;
+  createdAt: number;
+}
+
+/**
+ * How many timeline events (and, separately, comments) one card carries in the
+ * scoped board `--json` aggregate. A card's timeline is append-only and
+ * unbounded, while every consumer of this payload reads it as ONE response under
+ * a fixed byte budget (the DSH plugin caps a read at 4 MiB), so an unbounded
+ * embed makes a long-lived board permanently unloadable. The cap is on the
+ * serialized slice only — `eventCount`/`commentCount` always report the true
+ * totals, and `eventsTruncated` says whether anything was dropped.
+ */
+export const BOARD_JSON_EVENT_LIMIT = 25;
+
+/**
+ * Whole-response byte budget for one scoped board `--json` aggregate.
+ *
+ * {@link BOARD_JSON_EVENT_LIMIT} bounds a card's DEPTH; this bounds the whole
+ * response, because a board is unbounded in card COUNT too. A board of a
+ * thousand short-lived cards overflows a fixed read budget with every card well
+ * under the event cap, so the emitter degrades the per-card cap
+ * ({@link BOARD_JSON_EVENT_LIMIT_STEPS}) until the serialized response fits, and
+ * refuses with a named, actionable error when even a history-free response does
+ * not. The DSH plugin caps ONE request — a mutation's output plus the refresh
+ * that follows it — at 4 MiB; 512 KiB of that is reserved for the mutation
+ * output and stderr, leaving this ceiling for the aggregate itself.
+ */
+export const BOARD_JSON_MAX_BYTES = 4 * 1024 * 1024 - 512 * 1024;
+
+/**
+ * The per-card timeline caps `board --json` tries, widest first, until the whole
+ * response fits {@link BOARD_JSON_MAX_BYTES}. History depth is what degrades:
+ * the card set is never truncated, and `eventCount`/`commentCount` stay the true
+ * totals at every step, so a client can always say how much it is not showing.
+ */
+export const BOARD_JSON_EVENT_LIMIT_STEPS: readonly number[] = [BOARD_JSON_EVENT_LIMIT, 10, 5, 2, 0];
+
+/**
+ * Complete, closed card contract for one scoped board JSON snapshot. Unlike
+ * TaskRow and the human projections, this type deliberately includes every
+ * detail needed by an external board client.
+ *
+ * `timeline` and `comments` are the most recent entries in chronological order,
+ * NOT the whole history: at most {@link BOARD_JSON_EVENT_LIMIT}, and fewer when
+ * the emitter had to degrade the cap to fit {@link BOARD_JSON_MAX_BYTES} (the
+ * payload's root `eventLimit` names the cap that was applied).
+ */
+export interface BoardTaskAggregate extends TaskCardRow {
+  liveness: Liveness | null;
+  dependencies: BoardTaskDependency[];
+  /** Most recent events, oldest first; at most the applied `eventLimit`. */
+  timeline: Array<Omit<TaskEvent, 'taskId'>>;
+  /** Total events on the card, including those the cap dropped. */
+  eventCount: number;
+  /** True when `timeline` is a suffix of a longer history. */
+  eventsTruncated: boolean;
+  /** Most recent comments, oldest first; at most the applied `eventLimit`. */
+  comments: BoardTaskComment[];
+  /** Total comment events on the card, including those the cap dropped. */
+  commentCount: number;
 }
 
 export interface AppendEventInput {
@@ -319,6 +401,18 @@ export class UnknownTaskError extends Error {
   }
 }
 
+/**
+ * A board reference was supplied but empty (`--board ""`). Distinct from
+ * omitting the flag: an empty ref is an unset variable, never a request for the
+ * unscoped board.
+ */
+export class EmptyBoardRefError extends Error {
+  constructor() {
+    super('board id must not be empty');
+    this.name = 'EmptyBoardRefError';
+  }
+}
+
 /** A referenced board does not exist. */
 export class UnknownBoardError extends Error {
   readonly ref: string;
@@ -430,6 +524,44 @@ export class TaskReleaseError extends Error {
     this.name = 'TaskReleaseError';
     this.taskId = taskId;
     this.status = status;
+  }
+}
+
+/**
+ * A heartbeat was refused because the card carries no live claim. Liveness is
+ * derived from `heartbeat_at` on a CLAIMED card, so writing the timestamp onto
+ * an unclaimed card records a worker that does not exist — the card still reads
+ * `ready`/`claimed_by NULL` while its timeline says something is running.
+ */
+export class TaskNotClaimedError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string) {
+    super(
+      `Cannot heartbeat task ${taskId}: it is not claimed — run \`genie task checkout ${taskId} --worker <name>\` first`,
+    );
+    this.name = 'TaskNotClaimedError';
+    this.taskId = taskId;
+  }
+}
+
+/**
+ * A `task report` was refused because this claimant already reported inside the
+ * current claim-to-handoff span. `report` is the handoff artifact the help text
+ * promises one of per span — a second one turns the timeline into an unordered
+ * pile of partial handoffs with no way to tell which is THE report. Ordinary
+ * progress prose is `task comment`, and a fresh `task checkout` opens a new
+ * span (so a re-claimed card may be reported on again).
+ */
+export class DuplicateReportError extends Error {
+  readonly taskId: string;
+  readonly author: string;
+  constructor(taskId: string, author: string) {
+    super(
+      `report refused: ${author} already reported on task ${taskId} in this claim-to-handoff span — use \`genie task comment ${taskId}\` for progress, or check the card out again to open a new span.`,
+    );
+    this.name = 'DuplicateReportError';
+    this.taskId = taskId;
+    this.author = author;
   }
 }
 
@@ -555,19 +687,83 @@ interface RawBoardRow {
   created_at: number;
 }
 
-/** Parse the stored lanes JSON back into `Lane[]`, tolerating malformed data. */
-function parseLanes(raw: string | null): Lane[] | null {
-  if (raw == null) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Lane[]) : null;
-  } catch {
-    return null;
+/**
+ * One optional lane display string. `undefined` and `null` both read as absent:
+ * `null` is exactly the shape the lane `--json` emitter itself writes for an
+ * unset `label`/`action`, so a round-trip of emitted output through
+ * `task export`/`task import` must parse back to the same lanes it came from.
+ * Anything that is neither absent nor a string makes the whole lane unusable.
+ */
+function laneText(value: unknown): { ok: boolean; value?: string } {
+  if (value === undefined || value === null) return { ok: true };
+  if (typeof value === 'string') return { ok: true, value };
+  return { ok: false };
+}
+
+/** Normalize one stored lane entry, or null when it is not usable lane metadata. */
+function normalizeLane(raw: unknown): Lane | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const { name, label, action } = raw as Record<string, unknown>;
+  if (typeof name !== 'string' || name.length === 0) return null;
+  const laneLabel = laneText(label);
+  const laneAction = laneText(action);
+  if (!laneLabel.ok || !laneAction.ok) return null;
+  const lane: Lane = { name };
+  if (laneLabel.value !== undefined) lane.label = laneLabel.value;
+  if (laneAction.value !== undefined) lane.action = laneAction.value;
+  return lane;
+}
+
+/**
+ * The SINGLE lane validator: stored lane metadata is untrusted TEXT (a
+ * hand-merged or round-tripped `roadmap.json` reaches it unvalidated), so every
+ * reader — human render and `--json` alike — normalizes through this one
+ * function and gets the same answer. `null` means "no usable lanes"; the caller
+ * renders the board laneless rather than failing the read.
+ */
+export function normalizeLanes(raw: unknown): Lane[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const lanes: Lane[] = [];
+  for (const entry of raw) {
+    const lane = normalizeLane(entry);
+    if (!lane) return null;
+    lanes.push(lane);
   }
+  return lanes;
+}
+
+/**
+ * Parse stored lane JSON while retaining whether non-null metadata was unusable.
+ *
+ * A stored `[]` is unusable lane metadata, exactly like `{` or `[{}]`: the board
+ * carries a lane definition that yields no lane to render. It gets the same
+ * laneless note, because the alternative — silently handing back the frozen
+ * all-tasks shape with empty stderr — leaves the caller unable to tell a board
+ * that has no lanes from one whose lanes it simply could not read. A board with
+ * genuinely no lane metadata stores NULL (what `createBoard` writes for an empty
+ * lane list), and that stays the quiet, note-free laneless board.
+ */
+function parseLanes(raw: string | null): { lanes: Lane[] | null; malformed: boolean } {
+  if (raw == null) return { lanes: null, malformed: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { lanes: null, malformed: true };
+  }
+  const lanes = normalizeLanes(parsed);
+  return lanes ? { lanes, malformed: false } : { lanes: null, malformed: true };
 }
 
 function mapBoard(row: RawBoardRow): BoardRow {
-  return { id: row.id, name: row.name, lanes: parseLanes(row.lanes), createdAt: row.created_at };
+  const parsed = parseLanes(row.lanes);
+  return {
+    id: row.id,
+    name: row.name,
+    lanes: parsed.lanes,
+    laneMetadataMalformed: parsed.malformed,
+    createdAt: row.created_at,
+  };
 }
 
 /**
@@ -583,7 +779,7 @@ export function createBoard(db: Database, name: string, lanes?: Lane[]): BoardRo
   const normalizedLanes = lanes && lanes.length > 0 ? lanes : null;
   const lanesJson = normalizedLanes ? JSON.stringify(normalizedLanes) : null;
   db.query('INSERT INTO boards (id, name, lanes, created_at) VALUES (?, ?, ?, ?)').run(id, name, lanesJson, createdAt);
-  return { id, name, lanes: normalizedLanes, createdAt };
+  return { id, name, lanes: normalizedLanes, laneMetadataMalformed: false, createdAt };
 }
 
 export function getBoard(db: Database, id: string): BoardRow | null {
@@ -614,6 +810,9 @@ export function countBoardTasks(db: Database, boardId: string): number {
  * if neither matches — lets the CLI accept `--board <id-or-name>` uniformly.
  */
 export function resolveBoard(db: Database, ref: string): BoardRow {
+  // `--board ""` (an unset shell variable) used to fall through every caller's
+  // truthiness check and silently widen the read to every task on the repo.
+  if (ref.trim() === '') throw new EmptyBoardRefError();
   const board = getBoard(db, ref) ?? getBoardByName(db, ref);
   if (!board) throw new UnknownBoardError(ref);
   return board;
@@ -661,10 +860,13 @@ export function createTask(db: Database, input: CreateTaskInput): TaskRow {
     for (const depId of deps) {
       addDependencyInTx(db, id, depId);
     }
+    // Read back INSIDE the transaction: a concurrent delete between commit and a
+    // separate read would otherwise return null through a `as TaskRow` cast and
+    // surface as `null is not an object` instead of a typed result.
+    return getTask(db, id) as TaskRow;
   });
-  insert();
 
-  return getTask(db, id) as TaskRow;
+  return insert() as TaskRow;
 }
 
 export function getTask(db: Database, id: string): TaskRow | null {
@@ -934,37 +1136,46 @@ function claimFailure(db: Database, taskId: string): never {
  * losers get `CheckoutConflictError`, or `TaskBlockedError` when an enforced
  * block is what stopped them. A winning claim appends a `claim` timeline event
  * inside the same transaction so the card can never show a claim without it.
+ *
+ * The claim also seeds `heartbeat_at = claimed_at`. Liveness is derived purely
+ * from that timestamp, and a null heartbeat classifies as `stale` — so without
+ * the seed a card read `stale` the instant it was claimed and was reclaimable
+ * by the staleness rule before its worker could beat once.
  */
 export function claimTask(db: Database, taskId: string, worker: string, opts: ClaimOptions = {}): TaskRow {
   const now = opts.now ?? Date.now();
   const staleBefore = now - (opts.staleMs ?? DEFAULT_STALE_MS);
 
-  const claim = db.transaction(() => {
-    const res = db
+  // RETURNING captures the claimed row inside the winning UPDATE itself, so a
+  // racing delete cannot empty a separate post-commit read (the `as TaskRow`
+  // cast would have turned that into `null is not an object`).
+  const claim = db.transaction((): RawTask | null => {
+    const claimed = db
       .query(
         `UPDATE tasks
-         SET claimed_by = ?, claimed_at = ?, status = 'in_progress', updated_at = ?
+         SET claimed_by = ?, claimed_at = ?, heartbeat_at = ?, status = 'in_progress', updated_at = ?
          WHERE id = ?
            AND blocked_by IS NULL
            AND (
              status = 'ready'
              OR (status = 'in_progress' AND claimed_at IS NOT NULL AND claimed_at <= ?)
-           )`,
+           )
+         RETURNING *`,
       )
-      .run(worker, now, now, taskId, staleBefore);
-    if (res.changes === 1) {
-      appendTaskEvent(db, taskId, {
+      .get(worker, now, now, now, taskId, staleBefore) as RawTask | null;
+    if (claimed) {
+      appendTaskEventInTx(db, taskId, {
         kind: 'claim',
         note: `claimed by ${worker}`,
         authorKind: opts.author?.authorKind ?? undefined,
         author: opts.author?.author ?? undefined,
       });
     }
-    return res.changes;
+    return claimed;
   });
-  let changes: number;
+  let claimed: RawTask | null;
   try {
-    changes = claim.immediate();
+    claimed = claim.immediate() as RawTask | null;
   } catch (err) {
     // Under heavy cross-process contention a straggler can exhaust
     // busy_timeout and surface SQLITE_BUSY instead of a clean 0-change
@@ -980,8 +1191,8 @@ export function claimTask(db: Database, taskId: string, worker: string, opts: Cl
     throw err;
   }
 
-  if (changes !== 1) claimFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  if (!claimed) claimFailure(db, taskId);
+  return mapTask(claimed);
 }
 
 /**
@@ -1007,17 +1218,18 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
   // `checkout --worker w`, the orchestrator completes after review. The author
   // param attributes the timeline event; it does not gate the write. The
   // `release` event + recompute run ONLY inside the winning transaction.
-  const complete = db.transaction(() => {
-    const res = db
+  const complete = db.transaction((): RawTask | null => {
+    const completed = db
       .query(
         `UPDATE tasks
          SET status = 'done', updated_at = ?
          WHERE id = ?
-           AND status IN ('ready', 'in_progress')`,
+           AND status IN ('ready', 'in_progress')
+         RETURNING *`,
       )
-      .run(now, taskId);
-    if (res.changes === 1) {
-      appendTaskEvent(db, taskId, {
+      .get(now, taskId) as RawTask | null;
+    if (completed) {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'completed',
         authorKind: author?.authorKind ?? undefined,
@@ -1025,10 +1237,11 @@ export function completeTask(db: Database, taskId: string, author?: EventAuthor)
       });
       recomputeReady(db);
     }
-    return res.changes;
+    return completed;
   });
-  if (complete.immediate() !== 1) completeFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  const completed = complete.immediate() as RawTask | null;
+  if (!completed) completeFailure(db, taskId);
+  return mapTask(completed);
 }
 
 /** Translate a refused completion (status CAS matched no completable row) into a typed error. */
@@ -1063,26 +1276,28 @@ function releaseFailure(db: Database, taskId: string): never {
  */
 export function releaseTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   const now = Date.now();
-  const release = db.transaction(() => {
-    const res = db
+  const release = db.transaction((): RawTask | null => {
+    const released = db
       .query(
         `UPDATE tasks
          SET status = 'ready', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL, updated_at = ?
-         WHERE id = ? AND status = 'in_progress'`,
+         WHERE id = ? AND status = 'in_progress'
+         RETURNING *`,
       )
-      .run(now, taskId);
-    if (res.changes === 1) {
-      appendTaskEvent(db, taskId, {
+      .get(now, taskId) as RawTask | null;
+    if (released) {
+      appendTaskEventInTx(db, taskId, {
         kind: 'release',
         note: 'released',
         authorKind: author.authorKind ?? undefined,
         author: author.author ?? undefined,
       });
     }
-    return res.changes;
+    return released;
   });
-  if (release.immediate() !== 1) releaseFailure(db, taskId);
-  return getTask(db, taskId) as TaskRow;
+  const released = release.immediate() as RawTask | null;
+  if (!released) releaseFailure(db, taskId);
+  return mapTask(released);
 }
 
 /**
@@ -1103,41 +1318,45 @@ export function blockTask(
   requireTask(db, taskId);
   const blockedBy = author.author ?? author.authorKind ?? 'unknown';
   const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query('UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ? WHERE id = ?').run(
-      blockedBy,
-      reason,
-      kind,
-      now,
-      taskId,
-    );
-    appendTaskEvent(db, taskId, {
+  const tx = db.transaction((): RawTask | null => {
+    const blocked = db
+      .query(
+        `UPDATE tasks SET blocked_by = ?, blocked_reason = ?, block_kind = ?, updated_at = ?
+         WHERE id = ? RETURNING *`,
+      )
+      .get(blockedBy, reason, kind, now, taskId) as RawTask | null;
+    if (!blocked) throw new UnknownTaskError(taskId);
+    appendTaskEventInTx(db, taskId, {
       kind: 'block',
       note: reason,
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return blocked;
   });
-  tx();
-  return getTask(db, taskId) as TaskRow;
+  return mapTask(tx() as RawTask);
 }
 
 /** Clear an enforced block — provenance, reason, and kind together — and append an `unblock` event. */
 export function unblockTask(db: Database, taskId: string, author: EventAuthor): TaskRow {
   requireTask(db, taskId);
   const now = Date.now();
-  const tx = db.transaction(() => {
-    db.query(
-      'UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ? WHERE id = ?',
-    ).run(now, taskId);
-    appendTaskEvent(db, taskId, {
+  const tx = db.transaction((): RawTask | null => {
+    const unblocked = db
+      .query(
+        `UPDATE tasks SET blocked_by = NULL, blocked_reason = NULL, block_kind = NULL, updated_at = ?
+         WHERE id = ? RETURNING *`,
+      )
+      .get(now, taskId) as RawTask | null;
+    if (!unblocked) throw new UnknownTaskError(taskId);
+    appendTaskEventInTx(db, taskId, {
       kind: 'unblock',
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return unblocked;
   });
-  tx();
-  return getTask(db, taskId) as TaskRow;
+  return mapTask(tx() as RawTask);
 }
 
 // ============================================================================
@@ -1200,7 +1419,7 @@ export function assignTask(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'assign',
       note: `assigned to ${pair.agent}: ${pair.reason}`,
       authorKind: author.authorKind ?? undefined,
@@ -1235,7 +1454,7 @@ export function clearTaskAssignment(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'clear',
       note: `assignment cleared (was ${current.assignedAgent}: ${current.assignedReason})`,
       authorKind: author.authorKind ?? undefined,
@@ -1252,7 +1471,12 @@ export function clearTaskAssignment(
  * self-reported). Returns the timestamp written. Injectable clock for tests.
  */
 export function recordHeartbeat(db: Database, taskId: string, now: number = Date.now()): number {
-  requireTask(db, taskId);
+  const row = db.query('SELECT claimed_by FROM tasks WHERE id = ?').get(taskId) as { claimed_by: string | null } | null;
+  if (!row) throw new UnknownTaskError(taskId);
+  // An unclaimed card has no worker to be alive: refuse instead of stamping a
+  // liveness timestamp nothing owns (`genie task heartbeat` used to exit 0 on a
+  // `ready` card with `claimed_by` NULL).
+  if (row.claimed_by === null) throw new TaskNotClaimedError(taskId);
   db.query('UPDATE tasks SET heartbeat_at = ?, updated_at = ? WHERE id = ?').run(now, now, taskId);
   return now;
 }
@@ -1309,11 +1533,12 @@ function mapTaskEvent(row: RawTaskEvent): TaskEvent {
 }
 
 /**
- * Append one authored event to a card's timeline. This is the MINIMAL API the
- * move verb needs; the full verb surface (comment/block/release/report) lands in
- * a later group on top of this table.
+ * Append one authored event to a card's timeline. Caller owns the transaction —
+ * every in-module caller already holds an immediate one, so the existence check
+ * and the insert are atomic against a concurrent delete. The exported
+ * {@link appendTaskEvent} is the standalone entry point.
  */
-export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
   requireTask(db, taskId);
   const createdAt = Date.now();
   const res = db
@@ -1328,6 +1553,81 @@ export function appendTaskEvent(db: Database, taskId: string, event: AppendEvent
     author: event.author ?? null,
     createdAt,
   };
+}
+
+/**
+ * Append one authored event to a card's timeline (`task comment` / `task report`
+ * and every other standalone append).
+ *
+ * BEGIN IMMEDIATE around the existence check AND the insert: without it a
+ * concurrent `task delete` in another worktree lands between the two and the
+ * insert fails the `task_events.task_id` foreign key, surfacing the raw
+ * `FOREIGN KEY constraint failed` — no verb, no card id, no remedy. Under the
+ * write lock the delete is serialized, so the check decides the insert.
+ *
+ * The FK translation below is the belt to that braces: a straggler that
+ * exhausts busy_timeout can still lose the lock and see the constraint fire.
+ * The card is then genuinely gone, which is exactly {@link UnknownTaskError}.
+ */
+export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
+  const append = db.transaction((): TaskEvent => appendTaskEventInTx(db, taskId, event));
+  try {
+    return append.immediate() as TaskEvent;
+  } catch (err) {
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) throw new UnknownTaskError(taskId);
+    throw err;
+  }
+}
+
+/** Input for {@link appendReportEvent}: the author is required (a report is attributed by contract). */
+export interface ReportEventInput {
+  note: string;
+  author: string;
+  authorKind?: string;
+}
+
+/**
+ * Append the ONE `report` event a claimant may post per claim-to-handoff span
+ * (`genie task report`), refusing a second one with {@link DuplicateReportError}.
+ *
+ * The span is delimited by the card's own timeline: `claimTask` appends a
+ * `claim` event inside its winning transaction, so the newest `claim` id is the
+ * start of the current span and a `report` by the same author after it is the
+ * span's report. A re-checkout therefore supersedes the previous report by
+ * opening a new span — no state is carried outside `task_events`, so the rule
+ * survives export/import and is identical in every worktree.
+ *
+ * The span probe and the insert share one BEGIN IMMEDIATE for the same reason
+ * {@link appendTaskEvent} holds one: without the write lock a concurrent
+ * `task delete` (FK failure) or a second `task report` (two reports) lands
+ * between the decision and the write.
+ */
+export function appendReportEvent(db: Database, taskId: string, input: ReportEventInput): TaskEvent {
+  const append = db.transaction((): TaskEvent => {
+    requireTask(db, taskId);
+    const spanStart =
+      (
+        db.query("SELECT max(id) AS id FROM task_events WHERE task_id = ? AND kind = 'claim'").get(taskId) as {
+          id: number | null;
+        } | null
+      )?.id ?? 0;
+    const prior = db
+      .query("SELECT id FROM task_events WHERE task_id = ? AND kind = 'report' AND author = ? AND id > ? LIMIT 1")
+      .get(taskId, input.author, spanStart);
+    if (prior) throw new DuplicateReportError(taskId, input.author);
+    return appendTaskEventInTx(db, taskId, {
+      kind: 'report',
+      note: input.note,
+      author: input.author,
+      authorKind: input.authorKind,
+    });
+  });
+  try {
+    return append.immediate() as TaskEvent;
+  } catch (err) {
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) throw new UnknownTaskError(taskId);
+    throw err;
+  }
 }
 
 /** A card's timeline events in append order. */
@@ -1346,6 +1646,215 @@ export function commentCounts(db: Database): Map<string, number> {
     .query("SELECT task_id, count(*) AS n FROM task_events WHERE kind = 'comment' GROUP BY task_id")
     .all() as Array<{ task_id: string; n: number }>;
   return new Map(rows.map((r) => [r.task_id, r.n]));
+}
+
+/** Bounded display-only identifier; persisted values and payloads stay unchanged. */
+export function boardDetailIdentifier(value: string | number): string {
+  const text = String(value).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '?');
+  return text.length > 48 ? `${text.slice(0, 45)}...` : text;
+}
+
+interface RawBoardDependency {
+  task_id: string;
+  id: string | null;
+  title: string | null;
+  status: string | null;
+}
+
+function requireTaskStatus(value: string | null, context: string): TaskStatus {
+  if (value === 'blocked' || value === 'ready' || value === 'in_progress' || value === 'done') return value;
+  throw new Error(`Malformed board detail: ${context} has invalid status.`);
+}
+
+function requireString(value: unknown, context: string): string {
+  if (typeof value === 'string') return value;
+  throw new Error(`Malformed board detail: ${context} must be a string.`);
+}
+
+function requireNullableString(value: unknown, context: string): string | null {
+  if (value === null || typeof value === 'string') return value;
+  throw new Error(`Malformed board detail: ${context} must be a string or null.`);
+}
+
+function requireNumber(value: unknown, context: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  throw new Error(`Malformed board detail: ${context} must be a finite number.`);
+}
+
+/**
+ * Validate one raw card row at the aggregate serialization boundary, then map it
+ * through the SAME {@link mapTaskCard} projection the human render uses. Sharing
+ * the mapper is the contract: the two paths can never disagree about a card, so
+ * an unrecognized `block_kind` coerces to `work` here exactly as it does in the
+ * human render (the column is unconstrained TEXT that a hand-merged
+ * `roadmap.json` reaches unvalidated — importable data must never exit 1).
+ * Only genuinely non-scalar storage — the shapes SQLite can hold but the JSON
+ * contract cannot express — still fails the whole snapshot closed.
+ *
+ * `boardDetailIdentifier` is computed ONCE per row rather than once per field.
+ */
+function mapAggregateTask(row: RawTask): TaskCardRow {
+  const id = requireString(row.id, 'task id');
+  const label = boardDetailIdentifier(id);
+  requireNullableString(row.board_id, `task ${label} boardId`);
+  requireString(row.title, `task ${label} title`);
+  requireTaskStatus(row.status, `task ${label}`);
+  requireNullableString(row.claimed_by, `task ${label} claimedBy`);
+  if (row.claimed_at !== null) requireNumber(row.claimed_at, `task ${label} claimedAt`);
+  requireNullableString(row.wish, `task ${label} wish`);
+  requireNullableString(row.group_name, `task ${label} group`);
+  requireNullableString(row.assigned_agent, `task ${label} assignedAgent`);
+  requireNullableString(row.assigned_reason, `task ${label} assignedReason`);
+  requireNumber(row.created_at, `task ${label} createdAt`);
+  requireNumber(row.updated_at, `task ${label} updatedAt`);
+  requireNullableString(row.lane, `task ${label} lane`);
+  requireNullableString(row.agent_kind, `task ${label} agentKind`);
+  if (row.heartbeat_at !== null) requireNumber(row.heartbeat_at, `task ${label} heartbeatAt`);
+  requireNullableString(row.blocked_by, `task ${label} blockedBy`);
+  requireNullableString(row.blocked_reason, `task ${label} blockedReason`);
+  requireNullableString(row.block_kind, `task ${label} block kind`);
+  return mapTaskCard(row);
+}
+
+/**
+ * Read every detail for a board's cards from one SQLite snapshot. All rows are
+ * fetched in three set queries inside one deferred read transaction: cards,
+ * their dependency summaries, and their timelines. No caller hydrates cards
+ * individually, and any malformed joined detail aborts the whole snapshot.
+ */
+export function readBoardTaskSnapshot(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'> = {},
+  now = Date.now(),
+): BoardTaskAggregate[] {
+  const read = db.transaction((): BoardTaskAggregate[] => collectBoardTaskSnapshot(db, boardId, filter, now));
+  return read.deferred() as BoardTaskAggregate[];
+}
+
+/**
+ * The snapshot body, WITHOUT its own transaction, so {@link readBoardAggregate}
+ * can read the board's lanes and its cards inside one and the same snapshot.
+ * Never call it outside a read transaction.
+ */
+function collectBoardTaskSnapshot(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'>,
+  now: number,
+): BoardTaskAggregate[] {
+  const params = filter.wish ? [boardId, filter.wish] : [boardId];
+  const tasks = db
+    .query(`SELECT * FROM tasks WHERE board_id = ?${filter.wish ? ' AND wish = ?' : ''} ORDER BY created_at, rowid`)
+    .all(...params) as RawTask[];
+  if (tasks.length === 0) return [];
+  // One JSON binding avoids variable limits while retaining task_id index probes.
+  const taskIds = JSON.stringify(tasks.map((row) => requireString(row.id, 'task id')));
+  const dependencies = db
+    .query(
+      `SELECT td.task_id, dep.id, dep.title, dep.status
+         FROM task_dependencies td
+         LEFT JOIN tasks dep ON dep.id = td.depends_on_id
+         WHERE td.task_id IN (SELECT value FROM json_each(?))
+         ORDER BY td.task_id, dep.id`,
+    )
+    .all(taskIds) as RawBoardDependency[];
+  const events = db
+    .query(
+      `SELECT e.* FROM task_events e
+         WHERE e.task_id IN (SELECT value FROM json_each(?))
+         ORDER BY e.task_id, e.created_at, e.id`,
+    )
+    .all(taskIds) as RawTaskEvent[];
+
+  const dependenciesByTask = new Map<string, BoardTaskDependency[]>();
+  for (const dependency of dependencies) {
+    const taskId = requireString(dependency.task_id, 'dependency owner id');
+    const id = requireString(dependency.id, `task ${boardDetailIdentifier(taskId)} dependency id`);
+    const label = boardDetailIdentifier(id);
+    const summaries = dependenciesByTask.get(taskId) ?? [];
+    summaries.push({
+      id,
+      title: requireString(dependency.title, `dependency ${label} title`),
+      status: requireTaskStatus(dependency.status, `dependency ${label}`),
+    });
+    dependenciesByTask.set(taskId, summaries);
+  }
+
+  const timelineByTask = new Map<string, Array<Omit<TaskEvent, 'taskId'>>>();
+  for (const row of events) {
+    const taskId = requireString(row.task_id, 'timeline task id');
+    // One sanitize pass per event, not one per field it might name.
+    const owner = boardDetailIdentifier(taskId);
+    const event = {
+      id: requireNumber(row.id, `task ${owner} event id`),
+      kind: requireString(row.kind, `task ${owner} event kind`),
+      note: requireNullableString(row.note, `task ${owner} event note`),
+      authorKind: requireNullableString(row.author_kind, `task ${owner} event authorKind`),
+      author: requireNullableString(row.author, `task ${owner} event author`),
+      createdAt: requireNumber(row.created_at, `task ${owner} event createdAt`),
+    };
+    if (event.kind === 'comment' && event.note === null) {
+      throw new Error(
+        `Malformed board detail: task ${owner} comment ${boardDetailIdentifier(event.id)} has null text.`,
+      );
+    }
+    const timeline = timelineByTask.get(taskId) ?? [];
+    timeline.push(event);
+    timelineByTask.set(taskId, timeline);
+  }
+
+  return tasks.map((row) => {
+    const card = mapAggregateTask(row);
+    const events = timelineByTask.get(card.id) ?? [];
+    const comments = events
+      .filter((event): event is typeof event & { note: string } => event.kind === 'comment' && event.note !== null)
+      .map(({ id, note, authorKind, author, createdAt }) => ({ id, note, authorKind, author, createdAt }));
+    return {
+      ...card,
+      liveness: card.claimedBy === null ? null : livenessFromHeartbeat(card.heartbeatAt, now),
+      dependencies: dependenciesByTask.get(card.id) ?? [],
+      // The cap keeps the newest window — the end a board client renders —
+      // and never reorders: the slice stays chronological.
+      timeline: lastEvents(events),
+      eventCount: events.length,
+      eventsTruncated: events.length > BOARD_JSON_EVENT_LIMIT,
+      comments: lastEvents(comments),
+      commentCount: comments.length,
+    };
+  });
+}
+
+/** The newest {@link BOARD_JSON_EVENT_LIMIT} entries of a chronological list, still oldest-first. */
+function lastEvents<T>(entries: T[]): T[] {
+  return entries.length <= BOARD_JSON_EVENT_LIMIT ? entries : entries.slice(-BOARD_JSON_EVENT_LIMIT);
+}
+
+/** A board's lane definition and its cards, read from ONE SQLite snapshot. */
+export interface BoardAggregateSnapshot {
+  board: BoardRow;
+  cards: BoardTaskAggregate[];
+}
+
+/**
+ * The scoped board aggregate: the board's lane metadata AND every card detail
+ * from ONE deferred read transaction. Reading lanes inside the same snapshot as
+ * the cards is the contract — a concurrent `board`/lane write between the two
+ * reads would otherwise group cards against lanes that no longer describe them
+ * (cards whose lane just moved fall into the first-lane fallback).
+ */
+export function readBoardAggregate(
+  db: Database,
+  boardId: string,
+  filter: Pick<TaskFilter, 'wish'> = {},
+  now = Date.now(),
+): BoardAggregateSnapshot {
+  const read = db.transaction((): BoardAggregateSnapshot => {
+    const board = getBoard(db, boardId);
+    if (!board) throw new UnknownBoardError(boardId);
+    return { board, cards: collectBoardTaskSnapshot(db, boardId, filter, now) };
+  });
+  return read.deferred() as BoardAggregateSnapshot;
 }
 
 // ============================================================================
@@ -1383,23 +1892,78 @@ export function moveTask(db: Database, taskId: string, toLane: string, author: E
   const from = getTaskLane(db, taskId);
   const note = `${from ?? '(none)'}→${toLane}`;
   const now = Date.now();
-  const move = db.transaction(() => {
-    db.query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ?').run(toLane, now, taskId);
-    appendTaskEvent(db, taskId, {
+  const move = db.transaction((): RawTask | null => {
+    const moved = db
+      .query('UPDATE tasks SET lane = ?, updated_at = ? WHERE id = ? RETURNING *')
+      .get(toLane, now, taskId) as RawTask | null;
+    if (!moved) throw new UnknownTaskError(taskId);
+    appendTaskEventInTx(db, taskId, {
       kind: 'move',
       note,
       authorKind: author.authorKind ?? undefined,
       author: author.author ?? undefined,
     });
+    return moved;
   });
-  move();
-  return { task: getTask(db, taskId) as TaskRow, from, to: toLane };
+  return { task: mapTask(move() as RawTask), from, to: toLane };
 }
 
 // ============================================================================
 // Wish-slug resolution (read-only; the wish_groups UNION keeps legacy slugs)
 // Wish identity
 // ============================================================================
+
+export interface AdoptResult {
+  task: TaskRow;
+  board: BoardRow;
+  lane: string;
+}
+
+/**
+ * Place a laneless card onto a lane-defining board. Cards created before boards
+ * existed (or with `create` and no `--board`) carry `board_id = NULL` forever;
+ * `moveTask` refuses them by design because a lane needs a board to define it.
+ * Adoption is that one-time placement: it sets both `board_id` and `lane` and
+ * records a `move` event with the `(none)→lane` origin, exactly what a later
+ * `moveTask` would read as the card's history. A card already on a board is
+ * refused; re-homing between boards is not a supported operation.
+ */
+export function adoptTask(
+  db: Database,
+  taskId: string,
+  boardRef: string,
+  lane: string,
+  author: EventAuthor,
+): AdoptResult {
+  const task = getTask(db, taskId);
+  if (!task) throw new UnknownTaskError(taskId);
+  const board = resolveBoard(db, boardRef);
+  if (task.boardId) {
+    const current = getBoard(db, task.boardId);
+    throw new LaneError(
+      `Task ${taskId} is already on board "${current?.name ?? task.boardId}" — adopt places laneless cards only; use move to change its lane.`,
+    );
+  }
+  if (!board.lanes || board.lanes.length === 0) {
+    throw new LaneError(`Board "${board.name}" defines no lanes — nothing to adopt into.`);
+  }
+  const laneNames = board.lanes.map((l) => l.name);
+  if (!laneNames.includes(lane)) {
+    throw new LaneError(`Unknown lane "${lane}". Valid lanes: ${laneNames.join(', ')}.`);
+  }
+  const now = Date.now();
+  const adopt = db.transaction(() => {
+    db.query('UPDATE tasks SET board_id = ?, lane = ?, updated_at = ? WHERE id = ?').run(board.id, lane, now, taskId);
+    appendTaskEvent(db, taskId, {
+      kind: 'move',
+      note: `(none)→${lane}`,
+      authorKind: author.authorKind ?? undefined,
+      author: author.author ?? undefined,
+    });
+  });
+  adopt();
+  return { task: getTask(db, taskId) as TaskRow, board, lane };
+}
 
 /** The lifecycle slug + wish-group a card carries. Both null ⇒ the card is wishless. */
 export interface WishIdentity {
@@ -1457,7 +2021,7 @@ export function setTaskWish(
       now,
       taskId,
     );
-    appendTaskEvent(db, taskId, {
+    appendTaskEventInTx(db, taskId, {
       kind: 'wish',
       note,
       authorKind: author.authorKind ?? undefined,
@@ -1520,22 +2084,26 @@ function mapHire(row: RawHire): HireRosterRow {
  * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
  * preserves the original `hired_at` by OMITTING `hired_at` from the `ON CONFLICT
  * DO UPDATE SET` list — an unset column keeps its stored value, so the first
- * hire's timestamp survives every re-hire and the call converges on one row. A
- * single statement is atomic on its own; the WAL + busy_timeout the handle
- * carries (see sqlite-open.ts) serializes it against concurrent writers.
+ * hire's timestamp survives every re-hire and the call converges on one row.
+ * RETURNING captures the result inside that same write statement, so a racing
+ * unhire cannot remove the row between the upsert and a separate result read.
+ * WAL + busy_timeout (see sqlite-open.ts) serializes concurrent writers.
  */
 export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
   const now = Date.now();
   const state = input.state ?? 'hired';
-  db.query(
-    `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
+  const row = db
+    .query(
+      `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
        profile  = excluded.profile,
        worktree = excluded.worktree,
-       state    = excluded.state`,
-  ).run(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state);
-  return getHire(db, input.wish, input.agentAdapterId) as HireRosterRow;
+       state    = excluded.state
+     RETURNING *`,
+    )
+    .get(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state) as RawHire;
+  return mapHire(row);
 }
 
 /**
@@ -1670,7 +2238,123 @@ const SNAPSHOT_TABLE_KEYS = [
   'hire_roster',
 ] as const;
 
-/** Shape-validate an untrusted parsed snapshot; returns it typed or throws. */
+/**
+ * Tables whose rows the import never writes. `wish_groups` is
+ * tolerated-and-dropped (see {@link insertSnapshotRows}), so its rows are NOT
+ * column-validated — a legacy snapshot must keep importing even when the dead
+ * machinery wrote rows this build would reject.
+ */
+const UNWRITTEN_SNAPSHOT_TABLES = new Set<string>(['wish_groups']);
+
+/** The scalar JSON type a column's declared SQLite affinity accepts. */
+type ColumnKind = 'integer' | 'text';
+
+interface ColumnSpec {
+  kind: ColumnKind;
+  /** False for NOT NULL and PRIMARY KEY columns — the value must be present. */
+  nullable: boolean;
+}
+
+/**
+ * The declared column model of one table, read from the live schema so an
+ * ALTER-TABLE-backfilled column (lane, heartbeat_at, assigned_agent, …) is
+ * covered without a second hand-maintained table. `PRIMARY KEY` counts as NOT
+ * NULL: SQLite's legacy nullable-TEXT-PK quirk must never let a null id in.
+ */
+function columnSpecs(db: Database, table: string): Map<string, ColumnSpec> {
+  const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+    type: string;
+    notnull: number;
+    pk: number;
+  }>;
+  const specs = new Map<string, ColumnSpec>();
+  for (const row of rows) {
+    const kind: ColumnKind = row.type.toUpperCase().includes('INT') ? 'integer' : 'text';
+    specs.set(row.name, { kind, nullable: row.notnull === 0 && row.pk === 0 });
+  }
+  return specs;
+}
+
+/** Human phrase for an offending snapshot value — never the raw JSON blob. */
+function describeSnapshotValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'object') return 'an object';
+  if (typeof value === 'string') {
+    const shown = value.length > 40 ? `${value.slice(0, 40)}…` : value;
+    return `the string "${shown}"`;
+  }
+  if (typeof value === 'number') return `the number ${value}`;
+  if (typeof value === 'boolean') return `the boolean ${value}`;
+  return `a ${typeof value}`;
+}
+
+/** `tasks" row 3 (id "t_ab12")` — the locator every column error carries. */
+function snapshotRowLabel(table: string, index: number, row: Record<string, unknown>): string {
+  const identity = row.id ?? row.key ?? row.task_id;
+  const suffix = typeof identity === 'string' || typeof identity === 'number' ? ` (id "${identity}")` : '';
+  return `Snapshot table "${table}" row ${index}${suffix}`;
+}
+
+function snapshotColumnError(
+  table: string,
+  index: number,
+  row: Record<string, unknown>,
+  column: string,
+  problem: string,
+): SnapshotFormatError {
+  return new SnapshotFormatError(
+    `${snapshotRowLabel(table, index, row)}: column "${column}" ${problem}. The database was left unchanged; repair the snapshot and re-import.`,
+  );
+}
+
+/**
+ * Type-check one row against the declared column model. Columns the schema does
+ * not declare are ignored (the inserts drop them); every declared column must be
+ * present-and-scalar unless it is nullable. Runs BEFORE any write, so a rejected
+ * snapshot can never land a partial import.
+ */
+function validateSnapshotRow(table: string, index: number, candidate: unknown, specs: Map<string, ColumnSpec>): void {
+  if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+    throw new SnapshotFormatError(
+      `Snapshot table "${table}" row ${index} is not a JSON object (got ${describeSnapshotValue(candidate)}). The database was left unchanged; repair the snapshot and re-import.`,
+    );
+  }
+  const row = candidate as Record<string, unknown>;
+  for (const [column, spec] of specs) {
+    const value = row[column];
+    if (value === undefined || value === null) {
+      if (spec.nullable) continue;
+      const problem = value === undefined ? 'is missing and has no default' : 'must not be null';
+      throw snapshotColumnError(table, index, row, column, problem);
+    }
+    if (spec.kind === 'integer' && (typeof value !== 'number' || !Number.isInteger(value))) {
+      throw snapshotColumnError(table, index, row, column, `expects an integer, got ${describeSnapshotValue(value)}`);
+    }
+    if (spec.kind === 'text' && typeof value !== 'string') {
+      throw snapshotColumnError(table, index, row, column, `expects a string, got ${describeSnapshotValue(value)}`);
+    }
+  }
+}
+
+/**
+ * Column-validate every row of every table the import writes. Without this a
+ * non-scalar reached bun:sqlite as a raw `Binding expected string, TypedArray,
+ * boolean, number, bigint or null` with no locator, and a string in an INTEGER
+ * column was silently stored by type affinity — a corrupt `created_at` landing
+ * on the board with no signal.
+ */
+function validateSnapshotRows(db: Database, candidate: Record<string, unknown>): void {
+  for (const table of SNAPSHOT_TABLE_KEYS) {
+    if (UNWRITTEN_SNAPSHOT_TABLES.has(table)) continue;
+    const specs = columnSpecs(db, table);
+    const rows = candidate[table] as unknown[];
+    for (const [index, row] of rows.entries()) validateSnapshotRow(table, index, row, specs);
+  }
+}
+
+/** Shape- AND column-validate an untrusted parsed snapshot; returns it typed or throws. */
 function validateSnapshot(db: Database, snapshot: unknown): StateExport {
   if (typeof snapshot !== 'object' || snapshot === null || Array.isArray(snapshot)) {
     throw new SnapshotFormatError('Snapshot is not a JSON object.');
@@ -1690,6 +2374,7 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
       `Snapshot schemaVersion ${candidate.schemaVersion} does not match this database (${current}). Re-export the snapshot with a matching genie version.`,
     );
   }
+  validateSnapshotRows(db, candidate);
   return candidate as unknown as StateExport;
 }
 

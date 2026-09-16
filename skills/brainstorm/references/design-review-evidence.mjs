@@ -1,9 +1,75 @@
 #!/usr/bin/env node
 
+// SHIPPED TWICE, BYTE-IDENTICALLY: `brainstorm/references/` creates the
+// evidence block and `wish/references/` verifies it, and skills.sh supports
+// installing ONE skill (`--skill wish`), so neither copy may reach outside its
+// own skill directory. The wish copy used to be a shim re-exporting this file
+// through `../../brainstorm/...`, which died with ERR_MODULE_NOT_FOUND on any
+// subset install — the wish design gate could not run at all rather than
+// refusing cleanly. `scripts/design-review-evidence.test.ts` pins the two
+// copies byte-for-byte, so edit this file and copy it over the other.
+
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/**
+ * A refusal the design gate itself understands: one line in skill vocabulary,
+ * exit 1. Anything else (a bug in this helper) keeps exit 2, so an operator can
+ * tell "the gate refuses" from "the gate could not run".
+ */
+export class DesignEvidenceError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DesignEvidenceError';
+  }
+}
+
+// Raw libuv text ("ENOENT: no such file or directory, open '<path>'", and worse
+// "EISDIR: illegal operation on a directory, read" which names no path at all)
+// is not a diagnostic a design gate may emit: every failure names the path and
+// what was expected.
+const READ_FAILURES = {
+  ENOENT: (path) => `DESIGN.md not found at ${path}; create the design first, or pass the path to an existing one`,
+  EISDIR: (path) => `DESIGN.md path is a directory, not a file: ${path}; pass the DESIGN.md inside it`,
+  ENOTDIR: (path) => `DESIGN.md path is unreachable (a parent is not a directory): ${path}`,
+  ELOOP: (path) => `DESIGN.md path is a symbolic-link loop: ${path}`,
+  EACCES: (path) => `DESIGN.md is not readable (permission denied): ${path}`,
+  EPERM: (path) => `DESIGN.md is not readable (operation not permitted): ${path}`,
+};
+
+const WRITE_FAILURES = {
+  EISDIR: (path) => `stamped DESIGN.md cannot be written: the path is a directory: ${path}`,
+  ENOENT: (path) => `stamped DESIGN.md cannot be written: ${path} disappeared while stamping`,
+  EACCES: (path) => `stamped DESIGN.md is not writable (permission denied): ${path}`,
+  EPERM: (path) => `stamped DESIGN.md is not writable (operation not permitted): ${path}`,
+  EROFS: (path) => `stamped DESIGN.md is not writable (read-only file system): ${path}`,
+  ENOSPC: (path) => `stamped DESIGN.md could not be written (no space left on device): ${path}`,
+};
+
+function fileFailure(action, path, error) {
+  const describe = (action === 'read' ? READ_FAILURES : WRITE_FAILURES)[error?.code];
+  if (describe) return new DesignEvidenceError(describe(path));
+  const reason = error?.code ?? (error instanceof Error ? error.message : String(error));
+  return new DesignEvidenceError(`could not ${action} DESIGN.md at ${path}: ${String(reason).split('\n')[0]}`);
+}
+
+export function readDesign(designPath) {
+  try {
+    return readFileSync(designPath, 'utf8');
+  } catch (error) {
+    throw fileFailure('read', designPath, error);
+  }
+}
+
+export function writeDesign(designPath, contents) {
+  try {
+    writeFileSync(designPath, contents);
+  } catch (error) {
+    throw fileFailure('write', designPath, error);
+  }
+}
 
 export const DESIGN_REVIEW_START = '<!-- genie-design-review:start -->';
 export const DESIGN_REVIEW_END = '<!-- genie-design-review:end -->';
@@ -129,7 +195,7 @@ export function runDesignReviewEvidenceCli() {
       'usage: design-review-evidence.mjs digest|verify <DESIGN.md> | stamp <DESIGN.md> --verdict <verdict> --reviewed-sha256 <sha256> --reviewer <id> [--reviewed-at <ISO>]',
     );
   }
-  const source = readFileSync(designPath, 'utf8');
+  const source = readDesign(designPath);
   if (command === 'digest') {
     process.stdout.write(`${designReviewDigest(source)}\n`);
     return;
@@ -148,7 +214,7 @@ export function runDesignReviewEvidenceCli() {
     reviewer: option(args, '--reviewer'),
     reviewedAt: option(args, '--reviewed-at'),
   });
-  writeFileSync(designPath, stamped);
+  writeDesign(designPath, stamped);
   process.stdout.write(`${designReviewDigest(stamped)}\n`);
 }
 
@@ -157,6 +223,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     runDesignReviewEvidenceCli();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 2;
+    // A gate refusal is exit 1 (the caller's design is not ready); exit 2 stays
+    // reserved for a helper that could not run at all (usage, internal error).
+    process.exitCode = error instanceof DesignEvidenceError ? 1 : 2;
   }
 }

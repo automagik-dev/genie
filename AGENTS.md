@@ -54,7 +54,7 @@ Biome enforces single quotes, two-space indentation, 120-column lines, and trail
 
 ## Release contract
 
-Release tarballs contain the binary, the `plugins/genie` Orca payload, `skills/`, `templates/`, and `VERSION`. Three version files are stamped and must agree with `package.json`: `package.json`, `plugins/genie/package.json`, and `plugins/genie/orca-plugin.json`. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
+Release tarballs contain the binary, the `plugins/genie` Orca payload, the `plugins/dsh-genie-board` DSH payload, `skills/`, `templates/`, and `VERSION`. Committed root and Orca package versions must agree. Staging stamps the immutable candidate into `VERSION`, both plugin packages, the Orca manifest, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
 
 ## Runtime-specific notes
 

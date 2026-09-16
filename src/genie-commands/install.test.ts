@@ -29,7 +29,14 @@ import { dirname, join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
-import { type InstallOptions, normalizeAuxLayout, installCommand as runInstallCommand } from './install.js';
+import {
+  INTEGRATION_SELECTIONS,
+  type InstallOptions,
+  InvalidIntegrationSelectionError,
+  normalizeAuxLayout,
+  resolveIntegrationSelection,
+  installCommand as runInstallCommand,
+} from './install.js';
 import type { cleanupV4 } from './legacy-v4.js';
 
 function makeCleanupSpy(): { runner: typeof cleanupV4; calls: () => number } {
@@ -531,8 +538,11 @@ describe('installCommand', () => {
       ['all', ['codex: client plugin integration is retired', 'claude: client plugin integration is retired']],
     ] as const) {
       const lines: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      const originalWrite = process.stdout.write;
+      process.stdout.write = ((chunk: unknown) => {
+        lines.push(String(chunk).replace(/\n$/, ''));
+        return true;
+      }) as typeof process.stdout.write;
       try {
         await expect(
           installCommand(
@@ -545,7 +555,7 @@ describe('installCommand', () => {
           ),
         ).resolves.toBeUndefined();
       } finally {
-        console.log = originalLog;
+        process.stdout.write = originalWrite;
       }
       const reported = lines.filter((line) => line.includes('client plugin integration is retired'));
       expect(reported).toHaveLength(expected.length);
@@ -559,8 +569,11 @@ describe('installCommand', () => {
   test('auto and none report no runtime at all', async () => {
     for (const integrations of ['auto', 'none'] as const) {
       const lines: string[] = [];
-      const originalLog = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.map(String).join(' '));
+      const originalWrite = process.stdout.write;
+      process.stdout.write = ((chunk: unknown) => {
+        lines.push(String(chunk).replace(/\n$/, ''));
+        return true;
+      }) as typeof process.stdout.write;
       try {
         await installCommand(
           { integrations },
@@ -571,7 +584,7 @@ describe('installCommand', () => {
           () => null,
         );
       } finally {
-        console.log = originalLog;
+        process.stdout.write = originalWrite;
       }
       expect(lines.join('\n')).not.toContain('client plugin integration is retired');
       expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
@@ -592,7 +605,9 @@ describe('installCommand', () => {
         noopLease,
         noopConsent,
       ),
-    ).rejects.toThrow('Invalid --integrations value: codxe');
+      // The message now NAMES the allowed values (m7): an operator who
+      // mistypes must not have to read the source to learn what is valid.
+    ).rejects.toThrow("invalid --integrations value 'codxe' (allowed: auto, codex, claude, all, none)");
     expect(calls).toEqual([]);
   });
 });
@@ -1077,12 +1092,14 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
     process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = '500';
     logs = [];
     errors = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map(String).join(' '));
-    });
-    errorSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
-      errors.push(a.map(String).join(' '));
-    });
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      logs.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      errors.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
   afterEach(() => {
     logSpy.mockRestore();
@@ -1148,11 +1165,12 @@ describe('installCommand — a busy lifecycle lease (2026-08-02 incident)', () =
 describe('installCommand — skills.sh channel seam (wish skills-everywhere, group 1)', () => {
   test('runs the skills install after the retirement notice is reported', async () => {
     const calls: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      const line = args.map(String).join(' ');
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: unknown) => {
+      const line = String(chunk);
       if (line.includes('client plugin integration is retired')) calls.push('retirement-notice');
-    };
+      return true;
+    }) as typeof process.stdout.write;
     try {
       await installCommand(
         { integrations: 'claude' },
@@ -1167,7 +1185,7 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
         },
       );
     } finally {
-      console.log = originalLog;
+      process.stdout.write = originalWrite;
     }
     expect(calls).toEqual(['retirement-notice', 'skills:claude']);
   });
@@ -1228,9 +1246,10 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
   beforeEach(() => {
     process.exitCode = 0;
     logs = [];
-    logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
-      logs.push(a.map(String).join(' '));
-    });
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      logs.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
   });
 
   afterEach(() => {
@@ -1271,5 +1290,92 @@ describe('installCommand — skills failure exit precedence (PR #2866 promotion 
     }));
 
     expect(process.exitCode).toBe(0);
+  });
+});
+
+/**
+ * Dogfood m7: `genie install --integrations bogus` exited 1 through a raw Bun
+ * stack trace over minified bundle source (`at resolveIntegrationSelection
+ * (/$bunfs/root/genie:45825:11)`) and never named a single valid value. Bad
+ * operator input is not a defect report: it gets one line that lists the
+ * allowed values, and exit 1.
+ */
+describe('--integrations validation (m7)', () => {
+  const CLI_PATH = join(import.meta.dir, '..', 'genie.ts');
+  const badValueRoots: string[] = [];
+
+  afterEach(() => {
+    for (const dir of badValueRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function runInstall(args: string[]): { code: number | null; stdout: string; stderr: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-install-integrations-'));
+    badValueRoots.push(dir);
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, 'install', ...args], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 20_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
+    });
+    return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
+  }
+
+  test('an unknown mode is one stderr line naming every allowed value, exit 1, no stack', () => {
+    const res = runInstall(['--integrations', 'bogus']);
+
+    expect(res.code).toBe(1);
+    const lines = res.stderr.split('\n').filter((line) => line.trim().length > 0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("'bogus'");
+    for (const allowed of INTEGRATION_SELECTIONS) expect(lines[0]).toContain(allowed);
+    // No stack trace, and nothing from the minified bundle.
+    expect(res.stderr).not.toContain('    at ');
+    expect(res.stderr).not.toContain('$bunfs');
+    expect(res.stderr).not.toContain('Bun v');
+  });
+
+  test('the refusal happens at parse time — no install side effect runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'genie-install-integrations-noop-'));
+    badValueRoots.push(dir);
+    const genieHome = join(dir, '.genie');
+    const res = Bun.spawnSync([process.execPath, CLI_PATH, 'install', '--integrations', 'CLAUDE'], {
+      cwd: dir,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 20_000,
+      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome },
+    });
+
+    // Case matters: the allow-list is exact, not case-insensitive.
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr.toString()).not.toContain('$bunfs');
+    expect(res.stderr.toString()).not.toContain('    at ');
+    expect(existsSync(genieHome)).toBe(false);
+  });
+
+  test('every allowed value is accepted by the parser', () => {
+    for (const allowed of INTEGRATION_SELECTIONS) {
+      expect(resolveIntegrationSelection({ integrations: allowed })).toBe(allowed);
+    }
+  });
+
+  test('the programmatic gate throws the typed error, never a bare Error', () => {
+    expect(() => resolveIntegrationSelection({ integrations: 'bogus' as InstallOptions['integrations'] })).toThrow(
+      InvalidIntegrationSelectionError,
+    );
+    try {
+      resolveIntegrationSelection({ integrations: 'bogus' as InstallOptions['integrations'] });
+    } catch (error) {
+      expect((error as Error).message).toBe(
+        `invalid --integrations value 'bogus' (allowed: ${INTEGRATION_SELECTIONS.join(', ')})`,
+      );
+    }
+  });
+
+  test('--skip-integrations still resolves to none whatever --integrations said', () => {
+    expect(resolveIntegrationSelection({ skipIntegrations: true, integrations: 'all' })).toBe('none');
   });
 });

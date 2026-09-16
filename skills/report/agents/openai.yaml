@@ -1,4 +1,4 @@
 interface:
-  display_name: "Bug Report"
-  short_description: "Investigate bugs and prepare grounded issue reports"
-  default_prompt: "Investigate this bug and prepare a grounded issue report with evidence."
+  display_name: "Bug Investigation"
+  short_description: "Diagnose a failure to root cause; file issues on request"
+  default_prompt: "Investigate this failure to its root cause and report grounded evidence."

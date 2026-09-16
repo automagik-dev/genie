@@ -15,7 +15,7 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
@@ -28,20 +28,23 @@ import {
   probeCodexGeniePlugin,
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
-import { loadGenieConfig } from '../lib/genie-config.js';
+import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
+import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
+  type SkillsInstallRecord,
+  inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
-  readSkillsInstallRecord,
   releaseTag,
 } from '../lib/skills-installer.js';
+import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
@@ -116,7 +119,7 @@ export interface CheckResult {
 // ============================================================================
 
 function out(line = ''): void {
-  process.stdout.write(`${line}\n`);
+  writeOut(`${line}\n`);
 }
 
 const GLYPH: Record<CheckStatus, string> = {
@@ -170,7 +173,10 @@ function whichBinary(name: string): string | null {
 // ============================================================================
 
 function checkGenieBinary(): CheckResult[] {
-  const results: CheckResult[] = [{ name: `genie version ${VERSION}`, status: 'pass' }];
+  // The NAME is version-free on purpose: a cross-release diff of the sorted
+  // check names must show only additions and removals, never a false pair from
+  // the running version moving. The version rides in the detail (m16).
+  const results: CheckResult[] = [{ name: 'genie version', status: 'pass', detail: VERSION }];
   const onPath = whichBinary('genie');
   if (onPath) {
     results.push({ name: 'genie on PATH', status: 'pass', detail: onPath });
@@ -247,6 +253,204 @@ function checkDatabase(root: string | null): CheckResult[] {
   } catch (err) {
     const detail = err instanceof GenieDbError ? err.message : err instanceof Error ? err.message : String(err);
     return [{ name: 'genie.db', status: 'fail', detail }];
+  }
+}
+
+/**
+ * Tables that belong ONLY to a per-repo `.genie/genie.db`. The global
+ * `<GENIE_HOME>/genie.db` carries the omni approval queue and inbox and nothing
+ * else; a per-repo table sitting next to `approvals` is proof that some binary
+ * once opened the global path with the per-repo opener (M7). Prevention landed
+ * (the per-repo opener refuses the global path), but a host contaminated before
+ * that fix stays contaminated forever, and both databases still report
+ * `user_version = 1` — so a future numbered migration cannot tell them apart.
+ */
+const PER_REPO_ONLY_TABLES = [
+  'boards',
+  'tasks',
+  'task_dependencies',
+  'task_events',
+  'stage_log',
+  'wish_groups',
+  'hire_roster',
+] as const;
+
+/** The check name, exported so the remedy and the test never drift apart. */
+export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';
+
+/**
+ * The repair route that exists on a STOCK host: the genie binary itself, which
+ * embeds its own SQLite (bun:sqlite) and is on PATH by construction of the
+ * installer. Named explicitly and separately from `--fix`, which stays a
+ * never-repairing cleanup of v4 residue and launch worktrees.
+ */
+export const GLOBAL_DB_REPAIR_COMMAND = 'genie doctor --fix-global-db';
+
+/**
+ * The `bun -e` spelling of the same repair, named as an ALTERNATIVE only. The
+ * supported installer declares its prerequisites as `curl tar uname ln` and the
+ * shipped artifact is a `bun --compile` static executable, so `bun` is NOT on a
+ * stock host's PATH (dogfood r6 Z10) — this is the spelling for a developer
+ * checkout, not for an installed host.
+ */
+export function globalDbContaminationBunAlternative(dbPath: string, tables: readonly string[]): string {
+  const drop =
+    'import{Database}from"bun:sqlite";' +
+    'const d=new Database(process.argv[1]);' +
+    'for(const t of process.argv.slice(2))d.run("DROP TABLE IF EXISTS "+t);' +
+    'd.close()';
+  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && bun -e '${drop}' ${dbPath} ${tables.join(' ')}`;
+}
+
+/**
+ * The sqlite3 spelling of the same repair, named as an ALTERNATIVE only.
+ * sqlite3 is not part of a genie install and was absent on the dogfood host, so
+ * pasting it made the backup copy and then died at `sqlite3: command not found`,
+ * leaving a stray `.backup-*` file and the contamination unrepaired (r5 Z10).
+ */
+export function globalDbContaminationSqliteAlternative(dbPath: string, tables: readonly string[]): string {
+  const drops = tables.map((name) => `DROP TABLE IF EXISTS ${name};`).join(' ');
+  return `sqlite3 ${dbPath} "${drops}"`;
+}
+
+/**
+ * The remedy doctor hands the operator. It is a genie subcommand, never a third
+ * party binary: both earlier spellings depended on a tool a stock install does
+ * not ship (`sqlite3`, then `bun`), so pasting them died at `command not found`
+ * and left a stray backup behind.
+ */
+export function globalDbContaminationRemedy(): string {
+  return GLOBAL_DB_REPAIR_COMMAND;
+}
+
+/** `date -u +%Y%m%dT%H%M%SZ`, so a hand-run backup and this one sort together. */
+function compactUtcStamp(now = new Date()): string {
+  return now
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** What {@link repairGlobalDbContamination} did, for both renderers and tests. */
+export interface GlobalDbRepairResult {
+  status: 'repaired' | 'clean' | 'absent' | 'failed';
+  dbPath: string;
+  dropped: string[];
+  backupPath: string | null;
+  message: string;
+}
+
+/**
+ * The ONE destructive act doctor performs, and only under its own explicit flag.
+ * Backup-first and WAL-safe: the write-ahead log is folded back into the main
+ * file before the byte copy, so the backup is complete even when `genie omni
+ * serve` has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES}
+ * that are actually present are dropped; the approval queue and inbox are never
+ * touched. Idempotent — a repaired database reports `clean` on the next run.
+ */
+export function repairGlobalDbContamination(options: { genieHome?: string } = {}): GlobalDbRepairResult {
+  const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
+  if (!existsSync(dbPath)) {
+    return {
+      status: 'absent',
+      dbPath,
+      dropped: [],
+      backupPath: null,
+      message: `${dbPath}: no global database — nothing to repair.`,
+    };
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath);
+    const names = (
+      db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const strays = PER_REPO_ONLY_TABLES.filter((name) => names.includes(name));
+    if (strays.length === 0) {
+      db.close();
+      db = null;
+      return {
+        status: 'clean',
+        dbPath,
+        dropped: [],
+        backupPath: null,
+        message: `${dbPath}: already clean (omni queue + inbox only) — nothing to repair.`,
+      };
+    }
+    db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    db = null;
+    const backupPath = `${dbPath}.backup-${compactUtcStamp()}`;
+    copyFileSync(dbPath, backupPath);
+    db = new Database(dbPath);
+    for (const table of strays) db.run(`DROP TABLE IF EXISTS ${table}`);
+    db.close();
+    db = null;
+    return {
+      status: 'repaired',
+      dbPath,
+      dropped: [...strays],
+      backupPath,
+      message: `${dbPath}: backed up to ${backupPath}, dropped per-repo table(s): ${strays.join(', ')}.`,
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      dbPath,
+      dropped: [],
+      backupPath: null,
+      message: `${dbPath} could not be repaired: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Read-only detection of a contaminated global database. A doctor RUN never
+ * repairs this, not even under `--fix`: dropping a table is a destructive act on
+ * a file that also holds the operator's approval history, so the check names the
+ * remedy and the human decides. The repair lives behind its own explicit verb,
+ * {@link GLOBAL_DB_REPAIR_COMMAND}, so that consent is a separate keystroke.
+ */
+export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]): CheckResult {
+  const strays = PER_REPO_ONLY_TABLES.filter((name) => tables.includes(name));
+  if (strays.length === 0) {
+    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
+  }
+  const remedy = globalDbContaminationRemedy();
+  const detail =
+    `${dbPath}: per-repo tables present (${strays.join(', ')}); repair it with \`${remedy}\`` +
+    ` (backs the file up first, drops only those tables). In a bun checkout: ${globalDbContaminationBunAlternative(dbPath, strays)}` +
+    ` — or with sqlite3, if you have it: ${globalDbContaminationSqliteAlternative(dbPath, strays)}`;
+  return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'warn', detail, suggestion: remedy };
+}
+
+/** Never opens (or creates) anything: an absent global DB is simply not a finding. */
+export function checkGlobalDbContamination(options: { genieHome?: string } = {}): CheckResult[] {
+  const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
+  if (!existsSync(dbPath)) return [];
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const rows = db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
+    return [
+      evaluateGlobalDbTables(
+        dbPath,
+        rows.map((row) => row.name),
+      ),
+    ];
+  } catch (error) {
+    return [
+      {
+        name: GLOBAL_DB_CONTAMINATION_CHECK,
+        status: 'warn',
+        detail: `${dbPath} could not be read: ${error instanceof Error ? error.message : String(error)}`,
+        suggestion: `Inspect the global database by hand; ${GLOBAL_DB_REPAIR_COMMAND} repairs contamination, never corruption.`,
+      },
+    ];
+  } finally {
+    db?.close();
   }
 }
 
@@ -385,19 +589,176 @@ function evaluateAgentSkillHome(spec: AgentSkillHomeSpec, context: SkillsChannel
   return { name, status: 'warn', detail, suggestion: SKILLS_CHANNEL_SUGGESTION, skillsChannel: rider };
 }
 
+/** How many paths the preserved-retirement and agent-dir checks name before summarizing. */
+const MAX_PRESERVED_SKILL_PATHS = 5;
+
+const SKILLS_RETIREMENT_SUGGESTION = 'Review them, remove them, then run `genie update` to retry retirement';
+
+/** `a; b; c; +N more` — the shared rendering of a bounded path list. */
+function namedWithRemainder(paths: readonly string[]): string {
+  const named = paths.slice(0, MAX_PRESERVED_SKILL_PATHS);
+  const rest = paths.length - named.length;
+  return `${named.join('; ')}${rest > 0 ? `; +${rest} more` : ''}`;
+}
+
+/**
+ * Retired skill directories genie could not archive.
+ *
+ * They ride the install record on purpose: an entry dropped from the record is
+ * never retried by `genie update`, never removed by `genie uninstall`, and
+ * invisible here — the host reads `skills: claude 14/14` while a retired skill
+ * sits in the home forever. Doctor stays a read-only observer; it names them.
+ *
+ * An entry whose path is no longer on disk is RESOLVED, not outstanding: the
+ * check used to reproduce the record verbatim, so a directory the operator had
+ * already deleted was still named — byte-identically — until the next
+ * `genie update` dropped it from the record.
+ */
+function evaluatePreservedRetirements(record: SkillsInstallRecord | null): CheckResult | null {
+  const preserved = record?.preserved ?? [];
+  if (preserved.length === 0) return null;
+  const outstanding: string[] = [];
+  const resolved: string[] = [];
+  for (const entry of preserved) {
+    const target = join(entry.agentDir, entry.skill);
+    if (isDirectory(target)) outstanding.push(`${target} (${entry.reason})`);
+    else resolved.push(target);
+  }
+  const resolvedSuffix =
+    resolved.length === 0
+      ? ''
+      : `; ${resolved.length} already resolved (gone from disk, dropped from the record by the next \`genie update\`): ${namedWithRemainder(resolved)}`;
+  if (outstanding.length === 0) {
+    return {
+      name: 'skills: retirement',
+      status: 'pass',
+      detail: `all ${preserved.length} preserved retired skill dir(s) are gone from disk; the next \`genie update\` drops them from the record: ${namedWithRemainder(resolved)}`,
+    };
+  }
+  return {
+    name: 'skills: retirement',
+    status: 'warn',
+    detail: `${outstanding.length} preserved retired skill dir(s): ${namedWithRemainder(outstanding)}${resolvedSuffix}`,
+    suggestion: SKILLS_RETIREMENT_SUGGESTION,
+  };
+}
+
+/** A backup root younger than this is news the operator has not seen yet. */
+const RECENT_COLLISION_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
+
+const SKILLS_COLLISION_BACKUP_SUGGESTION =
+  'Review the kept copies, then delete the root(s) yourself — genie never removes a state-backups root';
+
+/**
+ * Collision backup roots the record still names.
+ *
+ * `state-backups/` is an archive: nothing genie runs removes a root a previous
+ * install wrote, so the record accumulates them and doctor is where an operator
+ * learns the bytes are there. It warns only while the newest is younger than a
+ * week — fresh enough that the operator has probably not looked yet — and
+ * passes afterwards, because an old root is a fact about the host, not a
+ * finding. Read-only, like every other line here: a root that is gone from disk
+ * is reported as gone, never recreated.
+ */
+function evaluateCollisionBackups(record: SkillsInstallRecord | null, nowMs: number): CheckResult | null {
+  const backups = record?.collisionBackups ?? [];
+  if (backups.length === 0) return null;
+  const onDisk = backups.filter((entry) => isDirectory(entry.root));
+  if (onDisk.length === 0) {
+    return {
+      name: 'skills: collision backups',
+      status: 'pass',
+      detail: `${backups.length} recorded root(s), none still on disk`,
+    };
+  }
+  const latest = onDisk[onDisk.length - 1] as { root: string; entries: unknown[] };
+  const detail = `${onDisk.length} root(s), latest ${latest.root} (${latest.entries.length} replaced dir(s))`;
+  const ageMs = nowMs - backupRootAgeStampMs(latest.root);
+  if (ageMs >= RECENT_COLLISION_BACKUP_MS) {
+    return { name: 'skills: collision backups', status: 'pass', detail };
+  }
+  return {
+    name: 'skills: collision backups',
+    status: 'warn',
+    detail,
+    suggestion: SKILLS_COLLISION_BACKUP_SUGGESTION,
+  };
+}
+
+/** When the root was written: its mtime, or 0 when it cannot be read (never a warning). */
+function backupRootAgeStampMs(root: string): number {
+  try {
+    return statSync(root).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+const SKILLS_AGENT_DIRS_SUGGESTION = 'Run `genie update` to reinstall the skills channel into every recorded home';
+
+/**
+ * Per-recorded-agent-dir inventory drift.
+ *
+ * The four `KNOWN_AGENT_SKILL_HOMES` rows above are not the removal authority:
+ * `agentDirs` is, and it held 57 entries on the 2026-09-15 dogfood host. A home
+ * that lost content — or vanished entirely — read `ok: true` there because
+ * doctor could only see four of the 57. This line closes that gap: it compares
+ * the record's own inventory against each recorded home and says how many are
+ * complete, naming up to five that are not. Warn-level and read-only.
+ */
+function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckResult | null {
+  if (record === null || record.inventory.length === 0) return null;
+  const dirs = [...new Set(record.agentDirs)];
+  if (dirs.length === 0) return null;
+  const incomplete: string[] = [];
+  for (const dir of dirs) {
+    if (!isDirectory(dir)) {
+      incomplete.push(`${dir} (not on disk)`);
+      continue;
+    }
+    const present = countInstalledSkills(dir, record.inventory);
+    if (present < record.inventory.length) incomplete.push(`${dir} (${present}/${record.inventory.length})`);
+  }
+  const complete = dirs.length - incomplete.length;
+  const detail = `${complete}/${dirs.length} recorded homes complete @ ${record.ref}`;
+  if (incomplete.length === 0) return { name: 'skills: agent dirs', status: 'pass', detail };
+  return {
+    name: 'skills: agent dirs',
+    status: 'warn',
+    detail: `${detail}; incomplete: ${namedWithRemainder(incomplete)}`,
+    suggestion: SKILLS_AGENT_DIRS_SUGGESTION,
+  };
+}
+
 /**
  * One line per known agent skill home, plus a `skills: channel` warning when no
- * install record exists at all.
+ * install record exists at all, plus a `skills: retirement` warning naming
+ * every directory the last install preserved instead of archiving.
  *
  * The comparison inventory is the record's when there is one; without a record
  * the delivered tree under `<GENIE_HOME>/skills` is the only remaining truth
  * source, so it is used as the fallback. When BOTH are empty there is nothing
  * to compare against and the single record-less warning is the whole answer.
  */
-export function checkSkillsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+export function checkSkillsChannel(
+  options: { home?: string; genieHome?: string; nowMs?: () => number } = {},
+): CheckResult[] {
   const home = resolveHostHome(options.home);
   const genieHome = options.genieHome ?? resolveGlobalGenieHome();
-  const record = readSkillsInstallRecord(genieHome);
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is NOT "no record": it is a receipt genie can no longer
+  // act on, and every consumer now refuses on it, so doctor names the field.
+  if (read.status === 'invalid') {
+    return [
+      {
+        name: 'skills: channel',
+        status: 'warn',
+        detail: read.error.message,
+        suggestion: `Repair or remove ${read.error.path}, then run \`genie update\` — until then \`genie uninstall\` refuses to touch the recorded skill dirs.`,
+      },
+    ];
+  }
+  const record = read.status === 'ok' ? read.record : null;
   const binaryTag = releaseTag(VERSION);
   const inventory =
     record !== null && record.inventory.length > 0
@@ -422,6 +783,12 @@ export function checkSkillsChannel(options: { home?: string; genieHome?: string 
     binaryTag,
   };
   for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
+  const agentDirs = evaluateRecordedAgentDirs(record);
+  if (agentDirs !== null) results.push(agentDirs);
+  const retirement = evaluatePreservedRetirements(record);
+  if (retirement !== null) results.push(retirement);
+  const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
+  if (backups !== null) results.push(backups);
   return results;
 }
 
@@ -598,23 +965,29 @@ function versionAtLeast(actual: string, minimum: string): boolean {
   return compareSemVer(left, right) >= 0;
 }
 
+/**
+ * m16 / r2 #7: the check NAME is the cross-release diff key, so it carries no
+ * version string — `bun 1.3.11` made every bun upgrade read as one removed and
+ * one added check. The running version lives in `detail`, exactly as the
+ * `genie version` check already does.
+ */
 export function evaluateBunVersion(bunVersion: string | null, onPath: string | null): CheckResult[] {
   if (bunVersion) {
     if (!versionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
       return [
         {
-          name: `bun ${bunVersion}`,
+          name: 'bun present',
           status: 'fail',
-          detail: `unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
+          detail: `${bunVersion} unsupported; Genie requires Bun >=${MINIMUM_BUN_VERSION}`,
           suggestion: `Run \`bun upgrade\`, then confirm \`bun --version\` is at least ${MINIMUM_BUN_VERSION}.`,
         },
       ];
     }
     return [
       {
-        name: `bun ${bunVersion}`,
+        name: 'bun present',
         status: 'pass',
-        detail: onPath ?? 'running under bun',
+        detail: `${bunVersion} (${onPath ?? 'running under bun'})`,
       },
     ];
   }
@@ -827,6 +1200,19 @@ export async function checkCodexIntegration(
   return results;
 }
 
+/**
+ * Echo the repair budget the fix skill resolves against. Read-only: doctor never
+ * repairs, and never writes a config file — a budget an operator has not set is
+ * reported as the schema default, not materialized on disk.
+ *
+ * Its own function rather than a branch inside `doctorCommand`: this is a config
+ * read, a different concern from the binary/git/database probes around it.
+ */
+export async function checkBudgets(): Promise<CheckResult[]> {
+  const resolved = await resolveConfigKey('budgets.maxEscalationsPerGroup');
+  return [{ name: `budgets: maxEscalationsPerGroup=${String(resolved.value)} (${resolved.source})`, status: 'pass' }];
+}
+
 /** Warn only when Claude Code's global subagent-model override is present. */
 export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env): CheckResult[] {
   if (env.CLAUDE_CODE_SUBAGENT_MODEL === undefined) return [];
@@ -910,19 +1296,31 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
       detail: 'kept (user-modified) — not counted as reclaimable; --fix will not touch it',
     });
   }
-  for (const dir of orphanedCaches) {
+  // ONE row for every orphaned cache dir, never one row per version: a check
+  // NAME is the cross-release diff key, so `v4 residue: plugin cache 4.260421.17`
+  // reproduced exactly the removed/added pair m16 eliminated — the name
+  // appeared and disappeared with the cache, and differed host to host. The
+  // versions ride the detail instead (r2 #7).
+  if (orphanedCaches.length > 0) {
+    const bytes = orphanedCaches.reduce((sum, d) => sum + safeSizeOf(d.path), 0);
     results.push({
-      name: `v4 residue: plugin cache ${dir.version}`,
+      name: 'v4 residue: plugin cache',
       status: 'warn',
-      detail: `orphaned, ${prettyBytes(safeSizeOf(dir.path))}`,
+      detail: `${orphanedCaches.length} orphaned version dir(s), ${prettyBytes(bytes)}: ${orphanedCaches
+        .map((d) => d.version)
+        .sort()
+        .join(', ')}`,
     });
   }
   // Report-only (Decision 2): uncertain names we deliberately never touch.
-  for (const name of uncertainKeeps) {
+  // Summarized for the same reason as the cache row — these names come from
+  // whatever the genie home happens to hold, so any of them could carry a
+  // version and none of them is a stable diff key.
+  if (uncertainKeeps.length > 0) {
     results.push({
-      name: `kept (uncertain): ${name}`,
+      name: 'kept (uncertain)',
       status: 'pass',
-      detail: 'not provably v4 — never touched by --fix',
+      detail: `not provably v4 — never touched by --fix: ${[...uncertainKeeps].sort().join(', ')}`,
     });
   }
   return results;
@@ -1242,6 +1640,135 @@ export function checkRetiredJsonMcpEntry(root: string | null): CheckResult[] {
   ];
 }
 
+/** The `git: machine-local .genie state` check name — stable across renders and `--json`. */
+export const TRACKED_MACHINE_STATE_CHECK = 'git: machine-local .genie state';
+
+/**
+ * The remedy for a repo that tracks machine-local `.genie/` state. Two steps,
+ * in this order and both required: a `.gitignore` rule does NOT untrack an
+ * already-tracked file, and untracking without the rule lets the next
+ * `git add -A .genie` put it straight back.
+ */
+export function trackedMachineStateRemedy(paths: readonly string[]): string {
+  return [
+    'Run `genie init` to append the missing .gitignore rules, then untrack the files with',
+    `\`git rm --cached ${paths.join(' ')}\` and commit —`,
+    'ignoring a path never untracks it, and untracking without the rule re-commits it on the next `git add`.',
+  ].join(' ');
+}
+
+/**
+ * What one probe of the git index learned. `observed: false` carries WHICH
+ * failure it was, because "git is not installed" and "this is not a work tree"
+ * are different facts about the host and the check must not print one for the
+ * other.
+ */
+export type TrackedMachineStateProbe =
+  | { observed: true; paths: string[] }
+  | { observed: false; reason: 'no-git-binary' | 'unreadable-index' };
+
+/**
+ * A spawn that failed because the `git` executable is not on PATH — Node/Bun
+ * report that as an ENOENT spawn error with no exit status, while a git that
+ * ran and refused (not a work tree, a bare repo, a missing directory) carries
+ * the exit status instead.
+ */
+function isMissingGitBinary(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown } | null;
+  return e?.code === 'ENOENT' && (e.status === undefined || e.status === null);
+}
+
+/** Is a `git` executable on PATH at all? Asked only to name the reason a probe observed nothing. */
+function gitBinaryPresent(): boolean {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch (err) {
+    // Anything other than "not on PATH" leaves git's presence unproven — say
+    // present, so the check never invents a missing-binary diagnosis.
+    return !isMissingGitBinary(err);
+  }
+}
+
+/**
+ * Probe the git index for tracked machine-local `.genie/` paths. Separated from
+ * the check so the classification is testable without a doctor run, and so a
+ * git failure (no git, not a work tree, a bare repo) stays an explicit
+ * "could not observe" the caller must render as such — never a false clean bill.
+ */
+export function probeTrackedMachineState(root: string): TrackedMachineStateProbe {
+  try {
+    const stdout = execFileSync('git', ['-C', root, 'ls-files', '--cached', '-z', '--', ...MACHINE_LOCAL_GENIE_PATHS], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return { observed: true, paths: stdout.split('\0').filter((path) => path.length > 0) };
+  } catch (err) {
+    return { observed: false, reason: isMissingGitBinary(err) ? 'no-git-binary' : 'unreadable-index' };
+  }
+}
+
+/**
+ * The check result for a probe that observed nothing. Warning-level, never
+ * `pass`: a consumer reading `status` alone (a dashboard counting pass/warn, or
+ * the operator scanning glyphs) must not be handed a clean bill this check
+ * never earned. It still never flips `ok:false` — an unobservable index is not
+ * a broken installation.
+ */
+function unobservedMachineState(reason: 'no-git-binary' | 'unreadable-index', root: string | null): CheckResult {
+  const name = TRACKED_MACHINE_STATE_CHECK;
+  const unchecked = 'the machine-local .genie/ paths could not be checked';
+  if (reason === 'no-git-binary') {
+    return {
+      name,
+      status: 'warn',
+      detail: `git is not installed (no \`git\` on PATH) — ${unchecked}`,
+      suggestion: 'Install git, then rerun `genie doctor`.',
+    };
+  }
+  const where = root === null ? 'not inside a git repository' : `could not query the git index at ${root}`;
+  return { name, status: 'warn', detail: `${where} — ${unchecked}` };
+}
+
+/**
+ * The `git: machine-local .genie state` check.
+ *
+ * `genie init` only ever APPENDS `.gitignore` rules, so a repo that committed
+ * `.genie/roadmap-sync` (or a `genie.db` sidecar) before the rule existed keeps
+ * tracking it forever — and a tracked sync baseline is the one that silently
+ * destroys shared state: it travels to a fresh clone, matches that clone's
+ * freshly created EMPTY database, and the first `genie task sync` publishes the
+ * empty board over the committed `roadmap.json`.
+ *
+ * Warning-level and read-only: the repair rewrites the operator's git index, so
+ * doctor names the files and the exact two commands and never flips `ok:false`
+ * (and never repairs, not even under `--fix`).
+ */
+export function checkTrackedMachineState(root: string | null): CheckResult[] {
+  const name = TRACKED_MACHINE_STATE_CHECK;
+  // A null root is "no worktree to read", and the index of some OTHER directory
+  // is not a substitute — but WHY there is no worktree still has to be named:
+  // with git absent the root resolves to null for the wrong reason (dogfood r7
+  // saw a real work tree reported as "not inside a git repository").
+  if (root === null) {
+    return [unobservedMachineState(gitBinaryPresent() ? 'unreadable-index' : 'no-git-binary', null)];
+  }
+  const probe = probeTrackedMachineState(root);
+  if (!probe.observed) return [unobservedMachineState(probe.reason, root)];
+  if (probe.paths.length === 0) {
+    return [{ name, status: 'pass', detail: 'no machine-local .genie/ paths are tracked' }];
+  }
+  const sorted = [...probe.paths].sort();
+  return [
+    {
+      name,
+      status: 'warn',
+      detail: `${sorted.length} machine-local path(s) are committed: ${namedWithRemainder(sorted)}`,
+      suggestion: trackedMachineStateRemedy(sorted),
+    },
+  ];
+}
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -1312,7 +1839,45 @@ export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = tr
   return results;
 }
 
-export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
+/**
+ * --fix: run the cleanups BEFORE the checks so the report reflects the post-fix
+ * state, and AFTER the caller's Git resolution because the worktree cleanup is
+ * scoped to the resolved repo root. Without --fix, detection only — both residue
+ * checks are pure reads and nothing on disk changes. In --json mode stdout
+ * belongs to the JSON document, so cleanup chatter goes to stderr.
+ */
+function runDoctorCleanups(options: { json?: boolean; fix?: boolean } | undefined, root: string | null): void {
+  const cleanupOptions = options?.json ? { logSink: (line: string) => writeErr(`${line}\n`) } : {};
+  if (options?.fix) {
+    cleanupV4(cleanupOptions);
+    cleanupLaunchWorktrees(root, cleanupOptions);
+    // Mode repair runs AFTER worktree removal: the removal scan decides on the
+    // pre-repair state, so a worktree whose only dirt is mode drift is never
+    // removed in the same run that tightens it (removal stays fail-closed on
+    // the state the user last saw; the next --fix may reclaim it).
+    repairWorktreeModes(root, cleanupOptions);
+  }
+}
+
+/** The `--fix-global-db` verb: repair, report, and decide the exit code alone. */
+function renderGlobalDbRepair(json: boolean): void {
+  const repair = repairGlobalDbContamination();
+  if (json) out(JSON.stringify({ ok: repair.status !== 'failed', repair }, null, 2));
+  else out(repair.message);
+  if (repair.status === 'failed') process.exitCode = 1;
+}
+
+export async function doctorCommand(
+  options?: { json?: boolean; fix?: boolean; fixGlobalDb?: boolean },
+  deps: DoctorDeps = {},
+): Promise<void> {
+  // `--fix-global-db` is a repair VERB, not a diagnostic run: it performs the one
+  // destructive act doctor owns and returns on its own result. It deliberately
+  // does not run the other checks, so its exit code answers exactly one question
+  // — "did the repair succeed?" — on a host whose unrelated warnings are not this
+  // operator's problem. That is what makes the emitted remedy safe to paste.
+  if (options?.fixGlobalDb) return renderGlobalDbRepair(options.json === true);
+
   // One bounded Git resolution and one bounded Codex plugin query feed every
   // downstream check. No doctor branch independently re-spawns either probe.
   const injectedRoot = deps.root === null || typeof deps.root === 'string';
@@ -1323,21 +1888,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
       ? deps.databaseRoot
       : (gitRoots?.commonRoot ?? root);
 
-  // --fix: run the cleanups BEFORE the checks so the report below reflects the
-  // post-fix state, and AFTER the Git resolution above because the worktree
-  // cleanup is scoped to the resolved repo root. Without --fix, detection only —
-  // both residue checks are pure reads and nothing on disk changes. In --json
-  // mode stdout belongs to the JSON document, so cleanup chatter goes to stderr.
-  const cleanupOptions = options?.json ? { logSink: (line: string) => process.stderr.write(`${line}\n`) } : {};
-  if (options?.fix) {
-    cleanupV4(cleanupOptions);
-    cleanupLaunchWorktrees(root, cleanupOptions);
-    // Mode repair runs AFTER worktree removal: the removal scan decides on the
-    // pre-repair state, so a worktree whose only dirt is mode drift is never
-    // removed in the same run that tightens it (removal stays fail-closed on
-    // the state the user last saw; the next --fix may reclaim it).
-    repairWorktreeModes(root, cleanupOptions);
-  }
+  runDoctorCleanups(options, root);
 
   const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
   const results: CheckResult[] = [
@@ -1345,10 +1896,12 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOrcaLifecycle(deps, !injectedRoot || deps.orcaCompatibilityProbe !== undefined)),
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
+    ...checkGlobalDbContamination(),
     ...checkSkills(root),
     ...checkSkillsChannel(),
     ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
+    ...(await checkBudgets()),
     ...checkSubagentModelOverride(),
     ...(await checkCodexIntegration(root, pluginProbe)),
     // Live context resolution only when the root itself was live-resolved: an
@@ -1363,6 +1916,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
+    ...checkTrackedMachineState(root),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

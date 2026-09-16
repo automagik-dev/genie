@@ -12,7 +12,7 @@ if (genieHome === undefined || scenario !== 'already-current') {
 
 const bin = join(genieHome, 'bin');
 for (const directory of ['.agents', '.claude-plugin', 'plugins/genie', 'skills/review', 'templates']) {
-  mkdirSync(join(bin, directory), { recursive: true });
+  mkdirSync(join(bin, directory), { recursive: true, mode: 0o755 });
 }
 writeFileSync(join(bin, 'LICENSE'), 'fixture\n');
 writeFileSync(join(bin, 'VERSION'), `${VERSION}\n`);
@@ -22,8 +22,8 @@ writeFileSync(join(bin, 'templates', 'fixture.txt'), 'fixture\n');
 const executable = join(bin, 'genie');
 writeFileSync(executable, `#!/bin/sh\nif [ "\${1:-}" = "--version" ]; then printf 'genie ${VERSION}\\n'; fi\nexit 0\n`);
 chmodSync(executable, 0o755);
-mkdirSync(process.env.HOME as string, { recursive: true });
-mkdirSync(process.env.CODEX_HOME as string, { recursive: true });
+mkdirSync(process.env.HOME as string, { recursive: true, mode: 0o755 });
+mkdirSync(process.env.CODEX_HOME as string, { recursive: true, mode: 0o755 });
 const marker = join(genieHome, '.install-version');
 writeFileSync(marker, 'prior-marker\n');
 

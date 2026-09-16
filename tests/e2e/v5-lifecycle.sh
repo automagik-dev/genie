@@ -121,7 +121,7 @@ printf 'pgserve/postgres baseline pids: [%s]\n' "$(printf '%s' "$PG_BASELINE" | 
 # ============================================================================
 # 1. Create the fixture git repo (real git init) and scaffold it with the real
 #    `genie init` command — the same idempotent bootstrap an operator runs. init
-#    writes `.genie/INDEX.md` and the three genie.db ignore rules into
+#    writes `.genie/INDEX.md` and every machine-local `.genie/` ignore rule into
 #    `.gitignore`; we assert both landed, then commit the scaffold so the tree
 #    stays clean for the git-cleanliness audit later.
 # ============================================================================
@@ -138,9 +138,11 @@ assert genie-init-exit-0
 assert genie-init-created-index
 [ -f "$FIXTURE/.genie/INDEX.md" ] || die "genie init did not create .genie/INDEX.md"
 
-assert gitignore-has-three-genie-db-lines
+assert gitignore-has-every-machine-local-genie-rule
 [ -f "$FIXTURE/.gitignore" ] || die "genie init did not create .gitignore"
-[ "$(grep -c '^\.genie/genie\.db' "$FIXTURE/.gitignore")" -eq 3 ] || die "genie init did not write all 3 genie.db ignore rules"
+for rule in '.genie/genie.db' '.genie/genie.db-wal' '.genie/genie.db-shm' '.genie/genie.db-recovery-lock' '.genie/roadmap-sync' '.genie/launch/'; do
+  grep -qxF "$rule" "$FIXTURE/.gitignore" || die "genie init did not write the $rule ignore rule"
+done
 
 git -C "$FIXTURE" add .gitignore .genie/INDEX.md
 git -C "$FIXTURE" commit -q -m "chore: genie init scaffold"

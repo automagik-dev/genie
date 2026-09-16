@@ -12,7 +12,12 @@
 import { Command, Option } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type InstallPromoteCommandOptions, installPromoteCommand } from './genie-commands/install-promote.js';
-import { type InstallOptions, installCommand } from './genie-commands/install.js';
+import {
+  INTEGRATION_SELECTIONS,
+  type InstallOptions,
+  InvalidIntegrationSelectionError,
+  installCommand,
+} from './genie-commands/install.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -22,7 +27,10 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
+import { colorizeFor } from './lib/term-color.js';
+import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
+import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
@@ -49,7 +57,7 @@ program
       // (e.g. a group-writable ~/.local/bin); print the remedy, never a stack.
       const name = error instanceof Error ? error.name : '';
       if (name === 'CanonicalInstallLinkError' || name === 'InstallPromoteCommandError') {
-        console.error(`\u2716 ${(error as Error).message}`);
+        printErr(`\u2716 ${(error as Error).message}`);
         process.exitCode = 1;
         return;
       }
@@ -66,10 +74,15 @@ program.configureHelp({
 });
 
 program.configureOutput({
-  outputError: (str, write) => {
+  // Commander writes this to stderr. Colour is gated on the STDERR stream (plus
+  // NO_COLOR / TERM=dumb): a redirected or piped diagnostic must be plain text,
+  // never `\x1b[31m` smuggled into a log file. Commander's own `write` callback
+  // is deliberately unused — every genie line leaves through the one sink in
+  // src/lib/term-output.ts, which is where the escapes are stripped.
+  outputError: (str) => {
     const cmd = program.commands.find((c) => process.argv.slice(2, 6).includes(c.name()));
     const prefix = cmd ? `genie ${cmd.name()}` : 'genie';
-    write(`\x1b[31mError (${prefix}): ${str}\x1b[0m\n`);
+    writeErr(`${colorizeFor('stderr', '\x1b[31m', `Error (${prefix}): ${str}`)}\n`);
   },
 });
 
@@ -102,6 +115,10 @@ program
   .option(
     '--fix',
     'Backup/remove proven v4 residue and merged clean `genie launch` worktrees; tighten registered-worktree files only from wider modes to their index modes and dirs only from 0775/0777 to 0755; refuse replacements, symlinks, and non-wider or ambiguous modes (idempotent)',
+  )
+  .option(
+    '--fix-global-db',
+    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it (the omni approval queue and inbox are never touched). Runs this repair alone, not the other checks (idempotent)',
   )
   .action(doctorCommand);
 
@@ -168,9 +185,50 @@ program
   .command('install')
   .description('Post-install finishing step — invoked by install.sh after the binary is linked')
   .option('--skip-v4-cleanup', 'Leave v4-era leftovers in place (orchestration rules, orphaned plugin caches)')
-  .option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none', 'auto')
+  // `.choices()` (not a bare `.option()`) so an unknown mode is refused at parse
+  // time with a one-line Commander error that NAMES the allowed values and exits
+  // 1 — never the Bun stack trace `resolveIntegrationSelection` used to produce.
+  .addOption(
+    new Option('--integrations <mode>', 'Consent scope for the skills channel: auto, codex, claude, all, or none')
+      .choices([...INTEGRATION_SELECTIONS])
+      .default('auto'),
+  )
   .option('--skip-integrations', 'Alias for --integrations none')
-  .action((options: InstallOptions) => installCommand(options));
+  // The consent contract in the operator's own words. `--all` used to hand the
+  // skills CLI `--agent '*'`, which CREATED ~53 product homes that had never
+  // existed on the 2026-09-01 dogfood host; nothing in `--help` said so.
+  .addHelpText(
+    'after',
+    [
+      '',
+      'Skills channel:',
+      '  Any --integrations mode but `none` installs skills to every agent DETECTED on',
+      '  this host — one whose product home (~/.claude, ~/.codex, ~/.cursor, …) already',
+      '  exists, or whose skills home the previous install record names.',
+      '  Genie NEVER creates a product home: the agents are named explicitly on the',
+      '  skills CLI command line.',
+      '  ONE-SHOT hand-back: a home recorded by a pre-5.260915 install (the `--all`',
+      '  era, which did create product homes) that now holds nothing but genie-written',
+      '  skills is moved, backup-first, under',
+      '  <GENIE_HOME>/state-backups/skills-prune-<timestamp>/, dropped from the record',
+      '  and named on stdout. A home recorded by this release is never handed back —',
+      '  genie did not create it, so an install followed by an update is idempotent.',
+    ].join('\n'),
+  )
+  .action(async (options: InstallOptions) => {
+    // Second gate: `--skip-integrations` and programmatic callers bypass
+    // `.choices()`. Operator input still gets one line and exit 1, no stack.
+    try {
+      await installCommand(options);
+    } catch (error) {
+      if (error instanceof InvalidIntegrationSelectionError) {
+        printErr(colorizeFor('stderr', '\x1b[31m', `Error (genie install): ${error.message}`));
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  });
 
 program
   .command('uninstall')
@@ -184,8 +242,13 @@ shortcuts.command('show').description('Show available shortcuts and installation
 shortcuts
   .command('install')
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
   .action(shortcutsInstallCommand);
-shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
+shortcuts
+  .command('uninstall')
+  .description('Remove shortcuts from config files')
+  .option('-y, --yes', 'Accept every target without prompting (the non-interactive route)')
+  .action(shortcutsUninstallCommand);
 
 // ============================================================================
 // Bare task/board — thin commands over the zero-daemon SQLite state engine.
@@ -197,6 +260,7 @@ registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerContextCommand(program);
+registerConfigCommand(program);
 registerIdeaCommand(program);
 registerOmniCommands(program);
 
@@ -206,4 +270,8 @@ registerOmniCommands(program);
 
 installWorkspaceCheck(program);
 
-await program.parseAsync(process.argv);
+// One process-level broken-pipe guard for the whole CLI. `genie task status
+// <id> | head -1` closes the reader before the producer is done; without this
+// the EPIPE surfaced as an uncaught Bun stack trace and exit 1, so a claim that
+// had already been committed read as a failure (2026-09-15 dogfood r2 §3.2 C).
+await runUnderBrokenPipeGuard(() => program.parseAsync(process.argv).then(() => undefined));

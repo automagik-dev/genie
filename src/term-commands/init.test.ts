@@ -14,10 +14,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dir, '..', 'genie.ts');
+/**
+ * Spelled out on purpose — the pin, not a re-derivation of the source list.
+ * `.genie/roadmap-sync` and `.genie/genie.db-recovery-lock` are here because a
+ * committed sync baseline silently overwrites a shared board (see the
+ * fresh-clone test below), so dropping either rule must fail this file.
+ */
 const GITIGNORE_RULES = [
   '.genie/genie.db',
   '.genie/genie.db-wal',
   '.genie/genie.db-shm',
+  '.genie/genie.db-recovery-lock',
+  '.genie/roadmap-sync',
   '.genie/launch/',
   '.mcp.json.genie-backup-*',
 ];
@@ -26,6 +34,28 @@ let dir: string;
 
 function initGitRepo(root: string): void {
   execFileSync('git', ['init', '-q'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+const GIT_IDENTITY = {
+  GIT_AUTHOR_NAME: 'Test',
+  GIT_AUTHOR_EMAIL: 'test@example.com',
+  GIT_COMMITTER_NAME: 'Test',
+  GIT_COMMITTER_EMAIL: 'test@example.com',
+};
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync('git', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...GIT_IDENTITY } });
+}
+
+/** Run any genie verb with an isolated GENIE_HOME (global state never leaks between repos). */
+function genie(cwd: string, home: string, ...args: string[]): { code: number; stdout: string; stderr: string } {
+  const res = Bun.spawnSync([process.execPath, CLI, ...args], {
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: { ...process.env, ...GIT_IDENTITY, GENIE_HOME: home, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+  });
+  return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
 }
 
 /** Run `genie init` in `cwd`. Returns { code, stdout, stderr }. */
@@ -184,6 +214,38 @@ describe('genie init', () => {
     expect(readFileSync(gitignorePath).equals(after)).toBe(true);
   });
 
+  /**
+   * A `.gitignore` rule is only ever APPENDED, so every repo scaffolded before
+   * a rule existed must pick it up on its next `genie init` — and only it.
+   */
+  test('an existing repo gains only the newly added rules, idempotently', () => {
+    initGitRepo(dir);
+    const gitignorePath = join(dir, '.gitignore');
+    // Exactly what a pre-roadmap-sync build wrote.
+    writeFileSync(
+      gitignorePath,
+      'node_modules\n.genie/genie.db\n.genie/genie.db-wal\n.genie/genie.db-shm\n.genie/launch/\n.mcp.json.genie-backup-*\n',
+    );
+
+    const first = JSON.parse(runInit(dir, ['--json']).stdout);
+    expect(first.gitignore).toBe('updated');
+    expect(first.rulesAdded).toEqual(['.genie/genie.db-recovery-lock', '.genie/roadmap-sync']);
+    expect(readFileSync(gitignorePath, 'utf-8')).toContain('node_modules');
+
+    const after = readFileSync(gitignorePath);
+    const second = JSON.parse(runInit(dir, ['--json']).stdout);
+    expect(second.gitignore).toBe('skipped');
+    expect(second.rulesAdded).toEqual([]);
+    expect(readFileSync(gitignorePath).equals(after)).toBe(true);
+
+    // git, not just the file text, agrees the sync baseline is ignored now.
+    mkdirSync(join(dir, '.genie'), { recursive: true });
+    writeFileSync(join(dir, '.genie', 'roadmap-sync'), '{}\n');
+    expect(execFileSync('git', ['check-ignore', '.genie/roadmap-sync'], { cwd: dir, encoding: 'utf-8' }).trim()).toBe(
+      '.genie/roadmap-sync',
+    );
+  });
+
   test('--json emits per-artifact actions', () => {
     initGitRepo(dir);
     const { code, stdout } = runInit(dir, ['--json']);
@@ -199,6 +261,46 @@ describe('genie init', () => {
     expect(second.gitignore).toBe('skipped');
     expect(second.rulesAdded).toEqual([]);
   });
+
+  /**
+   * The end-to-end defect the `.genie/roadmap-sync` rule exists to prevent.
+   *
+   * The baseline records THIS machine's (roadmap.json, genie.db) hash pair. Once
+   * committed it travels to a fresh clone, where its file hash still matches the
+   * committed snapshot but its db hash cannot match that clone's freshly created
+   * EMPTY database — so the clone's first `task sync` reads "the db moved, the
+   * file did not", exports, and publishes an empty board over the shared one.
+   * Ignoring the baseline turns the same flow back into an import.
+   */
+  test('fresh clone: `git add -A .genie` never commits the sync baseline, so the first sync imports', () => {
+    const origin = join(dir, 'origin');
+    const clone = join(dir, 'clone');
+    mkdirSync(origin, { recursive: true });
+    initGitRepo(origin);
+    expect(runInit(origin).code).toBe(0);
+
+    const publisher = join(dir, 'home-publisher');
+    expect(genie(origin, publisher, 'board', 'create', 'roadmap', '--lanes', 'Idea,Work,Done').code).toBe(0);
+    expect(genie(origin, publisher, 'task', 'create', '--title', 'shared card', '--board', 'roadmap').code).toBe(0);
+    expect(genie(origin, publisher, 'task', 'export', '--write').code).toBe(0);
+
+    // The operator stages the whole directory — the only thing standing between
+    // that and a committed baseline is the ignore rule.
+    git(origin, 'add', '-A', '.genie', '.gitignore');
+    git(origin, 'commit', '-q', '-m', 'publish the board');
+    const tracked = execFileSync('git', ['ls-files'], { cwd: origin, encoding: 'utf-8' });
+    expect(tracked).toContain('.genie/roadmap.json');
+    expect(tracked).not.toContain('.genie/roadmap-sync');
+
+    execFileSync('git', ['clone', '-q', origin, clone], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const cloner = join(dir, 'home-cloner');
+    const sync = genie(clone, cloner, 'task', 'sync');
+    expect(sync.code).toBe(0);
+    expect(`${sync.stdout}${sync.stderr}`).toContain('Board refreshed from');
+    expect(genie(clone, cloner, 'task', 'list').stdout).toContain('shared card');
+    // The shared snapshot survived the clone's first sync byte-for-byte.
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: clone, encoding: 'utf-8' })).toBe('');
+  }, 60_000);
 
   describe('MCP retirement', () => {
     const mcpPath = (root: string) => join(root, '.mcp.json');

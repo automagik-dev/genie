@@ -135,19 +135,6 @@
           }
         }
       }
-    },
-    {
-      "include": ["skills/genie-orca-work/scripts/**"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noExplicitAny": "off"
-          },
-          "style": {
-            "noNonNullAssertion": "off"
-          }
-        }
-      }
     }
   ]
 }

@@ -1,0 +1,93 @@
+# NOTICE
+
+Five skills in this directory are adapted from third-party work. Each adapted
+SKILL.md carries a one-line provenance comment at its end; this file records the
+upstream repository, licence, commit, and the SHA-256 of the exact source file
+that was adapted.
+
+All three upstream repositories are MIT licensed, verified from the LICENSE file
+in each clone. No source was adapted without a permissive licence on disk.
+
+
+## Collision policy
+
+`research` and `merge` are generic names. A host may already own a skill under
+either name in one of its agent skill homes, installed by another catalogue or
+by the user. When genie's skills.sh pass installs over such a directory, it
+backs the previous contents up first and reports the replacement, restricted to
+the homes it can name in advance: the known agent-home table, every directory
+the previous install record proves genie wrote, and any other discovered home
+that already carries a genie-owned skill directory
+(`collisionBackupHomes`, `src/lib/skills-installer.ts`).
+
+The documented gap is the first install. With no previous install record and no
+genie-owned skill yet present in that home, a foreign directory in an agent home
+genie cannot name in advance is reported as changed but is NOT backed up,
+because nothing at that moment distinguishes it from an unrelated tree that
+merely happens to be called `skills`. The home is recorded, so the next update
+does back it up. A user who owns a personal `research` or `merge` skill in an
+unrecognised home should copy it aside before the first genie install.
+
+
+## Matt Pocock — mattpocock/skills
+
+Upstream:   https://github.com/mattpocock/skills
+Obtained:   https://github.com/gongyijie85/mattpocock-skills-dsh
+Licence:    MIT — Copyright (c) 2026 Matt Pocock (original skills);
+            Copyright (c) 2026 mattpocock-skills-dsh contributors (DSH port)
+Commit:     cddededbbb2ed38f0e0b26b46be8455c59d78ab1
+
+Adapted sources (SHA-256 of the file as adapted):
+
+  551adca942227b44192edba88acd4e8db911f0121ce58ad16944ccf6a896a74a
+    skills/writing-for-agents/SKILL.md            -> skills/authoring
+  c768e6307c7c10728c401c213f2c4ba71c542127eeb7ad2956aabd15a0fa0059
+    skills/writing-for-agents/SKILL-MECHANICS.md  -> skills/authoring
+  9d8114f8ef0b31f535a265fc05c364bd8cf2e2895a830040e06c22acb11f54b0
+    skills/resolving-merge-conflicts/SKILL.md     -> skills/merge
+  985569f15739c713d6784887c3d186d4ef9ac85bec5ad9c068d25bf0739928e4
+    skills/research/SKILL.md                      -> skills/research
+
+
+## Jesse Vincent — obra/superpowers
+
+Upstream:   https://github.com/obra/superpowers
+Obtained:   https://github.com/dennisrongo/dsh-plugins, vendored snapshot at
+            plugins/dsh-superpowers/vendor/, whose PROVENANCE file records the
+            upstream commit b36e0829c6d0140e93cfef2ca599b1b07d4a7797 dated
+            2026-08-12 and the licence MIT, Copyright (c) 2025 Jesse Vincent.
+Licence:    MIT — verified from dsh-plugins/LICENSE (Copyright (c) 2026 Dennis
+            Rongo) and from the vendor PROVENANCE licence line above.
+Commit:     3db02e78835276b22aeab41f301fc5f446468166 (dsh-plugins clone),
+            b36e0829c6d0140e93cfef2ca599b1b07d4a7797 (obra/superpowers upstream)
+
+Adapted source (SHA-256 of the file as adapted):
+
+  2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3
+    plugins/dsh-superpowers/vendor/skills/verification-before-completion/SKILL.md
+      -> skills/verify
+
+The vendor PROVENANCE notes that line endings were normalised to LF on the way
+in, so the digest above is of the normalised file this adaptation read, not of
+the bytes in the upstream commit.
+
+
+## Affaan Mustafa — affaan-m/ECC
+
+Upstream:   https://github.com/affaan-m/ECC
+Obtained:   https://github.com/gongyijie85/dsh-ecc
+Licence:    MIT — Copyright (c) 2026 Affaan Mustafa (original skills);
+            Copyright (c) 2026 dsh-ecc contributors (DSH port)
+Commit:     e73abf7f9770f5448699273f20fe3862de8d60b4
+
+Adapted sources (SHA-256 of the file as adapted):
+
+  aa8f287c48c5a33bf15094358ffccbe0d4faff9eee9fa2ffcd70c8e9f3d22cdd
+    skills/skill-stocktake/SKILL.md  -> skills/skill-audit
+  71b1e8a4aedebeaf4468838389c0a93e4d3bf4e2779bd0a99e0396b045f82d32
+    skills/skill-scout/SKILL.md      -> skills/skill-audit (folded in as the
+                                       "Before authoring" section)
+
+The dsh-ecc skill-scout SKILL.md states in its own body that it was salvaged
+from a stale community pull request by `redminwang`; that attribution is carried
+here unchanged.

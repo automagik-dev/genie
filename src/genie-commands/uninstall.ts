@@ -34,6 +34,7 @@ import { z } from 'zod';
 import { hookScriptExists } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from '../lib/genie-home.js';
+import { isInteractive } from '../lib/interactivity.js';
 import { runLegacyIntegrationRetirement } from '../lib/legacy-integration-retirement.js';
 import {
   type LifecycleLease,
@@ -56,9 +57,10 @@ import {
   type SkillsInstallRecord,
   computeSkillDirDigest,
   deleteSkillsInstallRecord,
+  inspectSkillsInstallRecord,
   isSafeSkillName,
-  readSkillsInstallRecord,
 } from '../lib/skills-installer.js';
+import { printErr, printOut } from '../lib/term-output.js';
 import { detectV4Install } from './legacy-v4.js';
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
@@ -1058,6 +1060,27 @@ export interface UninstallResult {
   preserved?: UninstallPreservation[];
   /** Non-failure advisories (e.g. a legacy batch re-planned from current live state). */
   notes?: string[];
+  /** Emptied-directory sweep of a fully successful run; absent when anything failed. */
+  residue?: UninstallResidueSweep;
+}
+
+/** One directory the post-uninstall residue sweep kept, and the reason a human can act on. */
+export interface UninstallResidueKept {
+  path: string;
+  reason: string;
+}
+
+/**
+ * What the residue sweep did with the two directories a successful uninstall
+ * would otherwise leave behind: the emptied GENIE_HOME pathname itself and the
+ * `.genie-recovery` root this command creates for its batch journal. Only a
+ * genuinely EMPTY directory is removed — anything still holding bytes (state
+ * backups, v4 rule backups, another GENIE_HOME's journal) is the user's and is
+ * kept with an explicit reason.
+ */
+export interface UninstallResidueSweep {
+  removed: string[];
+  kept: UninstallResidueKept[];
 }
 
 function recordPreservation(result: UninstallResult, item: UninstallPreservation): void {
@@ -1464,14 +1487,14 @@ export function settleRuntimeIntegrationProgress(
 
 /** Try an uninstall step, logging success or warning and returning structured failure. */
 function tryRemoveStep(label: string, successMsg: string, fn: () => void): UninstallFailure | null {
-  console.log(`\x1b[2m${label}\x1b[0m`);
+  printOut(`\x1b[2m${label}\x1b[0m`);
   try {
     fn();
-    console.log(`  \x1b[32m+\x1b[0m ${successMsg}`);
+    printOut(`  \x1b[32m+\x1b[0m ${successMsg}`);
     return null;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.log(`  \x1b[33m!\x1b[0m ${label.replace('...', '')} failed: ${message}`);
+    printOut(`  \x1b[33m!\x1b[0m ${label.replace('...', '')} failed: ${message}`);
     return { step: label.replace('...', ''), detail: message };
   }
 }
@@ -1561,11 +1584,11 @@ export function removeRulesMember(
   const member = uninstallBatchMemberId('rules', ownedRules.path);
   if (progress.isCompleted(member) || progress.isPreserved(member)) return null;
   progress.begin(member);
-  console.log('\x1b[2mBacking up and removing marker-proven v4 orchestration rules...\x1b[0m');
+  printOut('\x1b[2mBacking up and removing marker-proven v4 orchestration rules...\x1b[0m');
   try {
     removeProvenV4Rules(genieDir, ownedRules, options);
     progress.complete(member);
-    console.log(`  \x1b[32m+\x1b[0m Marker-proven orchestration rules removed (${contractPath(ownedRules.path)})`);
+    printOut(`  \x1b[32m+\x1b[0m Marker-proven orchestration rules removed (${contractPath(ownedRules.path)})`);
     return null;
   } catch (error) {
     const detail = errorMessage(error);
@@ -1862,6 +1885,68 @@ function removeGenieDirPreservingStateBackups(
   }
 }
 
+/** At most five names, so a crowded directory still reports in one readable line. */
+function describeResidueEntries(entries: string[]): string {
+  const sorted = [...entries].sort();
+  const shown = sorted.slice(0, 5);
+  const rest = sorted.length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+}
+
+/**
+ * Remove one residue directory, but ONLY while it is empty.
+ *
+ * `null` means there was nothing to do (the path is already gone); a reason
+ * string means the directory survived and the user is told exactly why. rmdir
+ * is the fail-closed check: a concurrent writer makes it ENOTEMPTY and the
+ * directory survives with its bytes intact.
+ */
+function sweepEmptyResidueDirectory(path: string): { removed: boolean; reason: string | null } {
+  const stat = lstatOrNull(path);
+  if (stat === null) return { removed: false, reason: null };
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    return { removed: false, reason: 'it is not a physical directory' };
+  }
+  let entries: string[];
+  try {
+    entries = readdirSync(path);
+  } catch (error) {
+    return { removed: false, reason: `its contents could not be read (${errorMessage(error)})` };
+  }
+  if (entries.length > 0) {
+    return { removed: false, reason: `it still holds ${describeResidueEntries(entries)}` };
+  }
+  try {
+    rmdirSync(path);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return { removed: false, reason: null };
+    if (isNodeErrorCode(error, 'ENOTEMPTY')) {
+      return { removed: false, reason: 'new content appeared while it was being removed' };
+    }
+    return { removed: false, reason: `it could not be removed (${errorMessage(error)})` };
+  }
+  return { removed: true, reason: null };
+}
+
+/**
+ * The last step of a FULLY successful uninstall: the two directories the
+ * removal itself cannot delete from the inside — the now-emptied GENIE_HOME
+ * pathname and the `.genie-recovery` root that held the batch journal — are
+ * removed when, and only when, they are empty. A non-empty one is kept and
+ * reported; a shared `.genie-recovery` (a second GENIE_HOME under the same
+ * parent) therefore survives by construction.
+ */
+export function sweepUninstallResidue(genieDir: string): UninstallResidueSweep {
+  const sweep: UninstallResidueSweep = { removed: [], kept: [] };
+  const targets = [resolve(genieDir), dirname(uninstallBatchJournalPath(genieDir))];
+  for (const target of targets) {
+    const outcome = sweepEmptyResidueDirectory(target);
+    if (outcome.removed) sweep.removed.push(target);
+    else if (outcome.reason !== null) sweep.kept.push({ path: target, reason: outcome.reason });
+  }
+  return sweep;
+}
+
 /** A durable-backups/active-lock-only root is recovery state, not an installed Genie tree. */
 export function hasRemovableGenieInstallState(genieDir: string): boolean {
   try {
@@ -1906,7 +1991,7 @@ export function removeSymlinkMembers(
 ): UninstallFailure[] {
   const failures: UninstallFailure[] = [];
   if (names.length === 0) return failures;
-  console.log('\x1b[2mRemoving symlinks...\x1b[0m');
+  printOut('\x1b[2mRemoving symlinks...\x1b[0m');
   for (const symlink of names) {
     const member = uninstallBatchMemberId('symlink', symlink.name);
     if (progress.isCompleted(member) || progress.isPreserved(member)) continue;
@@ -1931,7 +2016,7 @@ export function removeSymlinkMembers(
       return failures;
     }
     progress.complete(member);
-    if (symlinks.removed.length > 0) console.log(`  \x1b[32m+\x1b[0m Removed: ${symlink.name}`);
+    if (symlinks.removed.length > 0) printOut(`  \x1b[32m+\x1b[0m Removed: ${symlink.name}`);
   }
   return failures;
 }
@@ -2002,6 +2087,14 @@ function uninstallBatchScope(plan: UninstallPlan): UninstallBatchScope {
  */
 export interface SkillsChannelRemoval {
   record: SkillsInstallRecord | null;
+  /**
+   * Set when a record file IS present but genie cannot trust it (bad JSON, or a
+   * field the schema rejects). The sweep then does NOTHING: before this, one
+   * schema-invalid `preserved[]` entry made the record read as absent, uninstall
+   * printed `no install record; nothing to remove.`, exited 0, deleted
+   * `~/.genie` — and left every recorded skill directory orphaned (r2 #14).
+   */
+  malformed: string | null;
   removed: string[];
   failures: string[];
   /**
@@ -2011,64 +2104,144 @@ export interface SkillsChannelRemoval {
    * cleanliness — they stay in place and are reported, never removed.
    */
   preserved: string[];
+  /**
+   * The subset of `removed` that came from the record's `preserved` retirement
+   * entries rather than its current inventory. They are named individually in
+   * the report: a retired directory a previous update could not archive is the
+   * one class of removal an operator has been told to expect a human decision
+   * about, and burying it in a `removed <n> recorded skill dir(s)` count meant
+   * nothing ever said which of them uninstall finally deleted.
+   */
+  removedRetired: string[];
   recordRemoved: boolean;
 }
 
+/** Accumulator shared by the inventory sweep and the preserved-retirement sweep. */
+interface SkillsRemovalSink {
+  removed: string[];
+  failures: string[];
+  preserved: string[];
+}
+
+/** The one remedy line for a record genie cannot read. */
+const MALFORMED_RECORD_REMEDY =
+  'Repair or remove the skills install record, then rerun `genie uninstall` — nothing was removed.';
+
+/**
+ * ONE wording for a preserved skill directory, used verbatim by the inline
+ * report and by the failure list an operator actually acts on (r2 c2: the two
+ * used to differ, and the actionable one omitted the retirement cause).
+ */
+export function preservedSkillDirDetail(dir: string): string {
+  return `preserved ${dir} (unverified: content differs from the recorded install, the record predates digests, or retirement could not prove it); remove it manually, then rerun \`genie uninstall\``;
+}
+
+/**
+ * Delete one recorded directory only when `expected` still proves it is genie's
+ * byte-identical install. No digest (a legacy record, a directory that appeared
+ * after the install, a retirement genie never proved) or a digest mismatch
+ * (user-modified/foreign content) preserves it instead — never delete
+ * unverified directories.
+ */
+function removeVerifiedSkillDir(target: string, expected: string | undefined, sink: SkillsRemovalSink): void {
+  const stat = lstatOrNull(target);
+  // Only real directories genie recorded; a symlink or file at that name was
+  // not written by `--copy` and stays untouched.
+  if (stat === null || !stat.isDirectory()) return;
+  const current = computeSkillDirDigest(target);
+  if (expected === undefined || current === null || current !== expected) {
+    sink.preserved.push(target);
+    return;
+  }
+  try {
+    rmSync(target, { recursive: true, force: true });
+    sink.removed.push(target);
+  } catch (error) {
+    sink.failures.push(`${target}: ${errorMessage(error)}`);
+  }
+}
+
 export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
-  const record = readSkillsInstallRecord(genieHome);
-  if (record === null) return { record: null, removed: [], failures: [], preserved: [], recordRemoved: false };
-  const removed: string[] = [];
-  const failures: string[] = [];
-  const preserved: string[] = [];
+  const read = inspectSkillsInstallRecord(genieHome);
+  if (read.status === 'invalid') {
+    return {
+      record: null,
+      malformed: read.error.message,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    };
+  }
+  const record = read.status === 'ok' ? read.record : null;
+  if (record === null) {
+    return {
+      record: null,
+      malformed: null,
+      removed: [],
+      failures: [],
+      preserved: [],
+      removedRetired: [],
+      recordRemoved: false,
+    };
+  }
+  const sink: SkillsRemovalSink = { removed: [], failures: [], preserved: [] };
   for (const agentDir of record.agentDirs) {
     if (!isAbsolute(agentDir)) continue;
     for (const name of record.inventory) {
       // One traversal guard, owned by the module that also writes the record.
       if (!isSafeSkillName(name)) continue;
-      const target = join(agentDir, name);
-      const stat = lstatOrNull(target);
-      // Only real directories genie recorded; a symlink or file at that name
-      // was not written by `--copy` and stays untouched.
-      if (stat === null || !stat.isDirectory()) continue;
-      // Delete only what the record can prove is still genie's byte-identical
-      // install. No digest entry (a legacy record, or a directory that appeared
-      // after the install) or a digest mismatch (user-modified/foreign content)
-      // preserves the directory instead — never delete unverified directories.
-      const recordedDigest = record.dirDigests?.[target];
-      const currentDigest = computeSkillDirDigest(target);
-      if (recordedDigest === undefined || currentDigest === null || currentDigest !== recordedDigest) {
-        preserved.push(target);
-        continue;
-      }
-      try {
-        rmSync(target, { recursive: true, force: true });
-        removed.push(target);
-      } catch (error) {
-        failures.push(`${target}: ${errorMessage(error)}`);
-      }
+      removeVerifiedSkillDir(join(agentDir, name), record.dirDigests?.[join(agentDir, name)], sink);
     }
   }
+  // Retired skill directories the last install could not archive. They are NOT
+  // in `inventory` (this release no longer delivers them), so without this
+  // sweep an uninstall would leave them on disk with no record left to find
+  // them by. Only entries genie proved at retirement time carry a digest, so
+  // only those can be removed; the rest are reported.
+  const inventorySweepCount = sink.removed.length;
+  for (const entry of record.preserved ?? []) {
+    if (!isAbsolute(entry.agentDir) || !isSafeSkillName(entry.skill)) continue;
+    removeVerifiedSkillDir(join(entry.agentDir, entry.skill), entry.digest, sink);
+  }
+  const { removed, failures, preserved } = sink;
+  const removedRetired = removed.slice(inventorySweepCount);
   // The record is the receipt for retrying an incomplete removal, so it is
   // deleted only after a fully clean sweep of every recorded directory.
   if (failures.length > 0 || preserved.length > 0) {
-    return { record, removed, failures, preserved, recordRemoved: false };
+    return { record, malformed: null, removed, failures, preserved, removedRetired, recordRemoved: false };
   }
-  return { record, removed, failures, preserved, recordRemoved: deleteSkillsInstallRecord(genieHome) };
+  return {
+    record,
+    malformed: null,
+    removed,
+    failures,
+    preserved,
+    removedRetired,
+    recordRemoved: deleteSkillsInstallRecord(genieHome),
+  };
 }
 
 function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
-  if (removal.record === null) {
-    console.log('\x1b[36mi\x1b[0m skills.sh channel: no install record; nothing to remove.');
+  if (removal.malformed !== null) {
+    printOut(`\x1b[31m-\x1b[0m skills.sh channel: ${removal.malformed}`);
+    printOut(`  \x1b[33m!\x1b[0m ${MALFORMED_RECORD_REMEDY}`);
     return;
   }
-  console.log(
+  if (removal.record === null) {
+    printOut('\x1b[36mi\x1b[0m skills.sh channel: no install record; nothing to remove.');
+    return;
+  }
+  printOut(
     `  \x1b[32m+\x1b[0m skills.sh channel: removed ${removal.removed.length} recorded skill dir(s) (${removal.record.ref})`,
   );
-  for (const failure of removal.failures) console.log(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
+  for (const dir of removal.removedRetired) {
+    printOut(`  \x1b[32m+\x1b[0m skills.sh channel: removed preserved retired skill dir ${dir}`);
+  }
+  for (const failure of removal.failures) printOut(`  \x1b[33m!\x1b[0m skills.sh channel: ${failure}`);
   for (const dir of removal.preserved) {
-    console.log(
-      `  \x1b[33m~\x1b[0m skills.sh channel: preserved ${dir} (unverified: content differs from the recorded install or the record predates digests)`,
-    );
+    printOut(`  \x1b[33m~\x1b[0m skills.sh channel: ${preservedSkillDirDetail(dir)}`);
   }
 }
 
@@ -2084,6 +2257,24 @@ export function performFreshUninstallPlan(
   // deletes the home that holds the record.
   const skillsRemoval = removeSkillsChannelInstall(genieDir);
   reportSkillsChannelRemoval(skillsRemoval);
+  if (skillsRemoval.malformed !== null) {
+    // Fail closed: nothing was removed and nothing will be. GENIE_HOME (and the
+    // record inside it) stays put so the operator can repair it and retry.
+    return {
+      execution: inspectUninstallPlan(genieDir, removeMarketplace),
+      result: {
+        failures: [
+          {
+            step: 'skills.sh channel',
+            detail: `${skillsRemoval.malformed}; ${MALFORMED_RECORD_REMEDY}`,
+          },
+        ],
+        notes: [
+          'skills.sh channel removal refused: the install record is unreadable, so nothing was removed and GENIE_HOME was kept.',
+        ],
+      },
+    };
+  }
   if (skillsRemoval.failures.length > 0 || skillsRemoval.preserved.length > 0) {
     // Anything not cleanly removed keeps its receipt: the skills install record
     // lives inside GENIE_HOME, so the plan must stop before the batch deletes
@@ -2098,7 +2289,7 @@ export function performFreshUninstallPlan(
           ...skillsRemoval.preserved.map(
             (dir): UninstallFailure => ({
               step: 'skills.sh channel',
-              detail: `${dir} preserved (unverified: content differs from the recorded install or the record predates digests); remove it manually, then rerun \`genie uninstall\``,
+              detail: preservedSkillDirDetail(dir),
             }),
           ),
         ],
@@ -2116,10 +2307,10 @@ export function performFreshUninstallPlan(
   try {
     runLegacyIntegrationRetirement({
       homes: { home: homedir(), genieHome: genieDir },
-      log: (line) => console.log(`  \x1b[2m${line}\x1b[0m`),
+      log: (line) => printOut(`  \x1b[2m${line}\x1b[0m`),
     });
   } catch (error) {
-    console.log(`  \x1b[33m~\x1b[0m legacy integration retirement skipped: ${errorMessage(error)}`);
+    printOut(`  \x1b[33m~\x1b[0m legacy integration retirement skipped: ${errorMessage(error)}`);
   }
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
@@ -2134,54 +2325,69 @@ export function performFreshUninstallPlan(
   const batch = executeUninstallBatch(genieDir, uninstallBatchScope(execution), (scope, progress) =>
     performUninstallScope(genieDir, scope, progress, homeRemovalOptions),
   );
+  // Only a run with nothing left to retry may clear the pathnames: while a
+  // failure stands, GENIE_HOME and the recovery root ARE the retry path.
+  if (batch.result.failures.length === 0) batch.result.residue = sweepUninstallResidue(genieDir);
   return {
     execution,
     result: batch.result,
   };
 }
 
+/** Name every emptied directory that went, and every one that stayed, with why. */
+export function reportUninstallResidue(residue: UninstallResidueSweep | undefined): void {
+  if (residue === undefined) return;
+  for (const path of residue.removed) {
+    printOut(`  \x1b[32m+\x1b[0m Removed empty directory ${contractPath(path)}`);
+  }
+  for (const item of residue.kept) {
+    printOut(`  \x1b[33m~\x1b[0m Kept ${contractPath(item.path)}: ${item.reason}`);
+  }
+}
+
 function reportUninstallResult(execution: UninstallPlan, result: UninstallResult, genieDir: string): void {
-  console.log();
+  printOut();
   for (const note of result.notes ?? []) {
-    console.log(`\x1b[36mi\x1b[0m ${note}`);
+    printOut(`\x1b[36mi\x1b[0m ${note}`);
   }
   const preserved = result.preserved ?? [];
   if (preserved.length > 0) {
     // Surface identity-mismatched preservations prominently; a recorded-removable
     // object was replaced or edited after the batch and was kept byte-identical.
-    console.log(
+    printOut(
       '\x1b[33m!\x1b[0m Preserved recorded-removable items whose identity changed after the batch (kept byte-identical):',
     );
-    for (const item of preserved) console.log(`  \x1b[33m~\x1b[0m ${item.step}: ${item.detail}`);
-    console.log();
+    for (const item of preserved) printOut(`  \x1b[33m~\x1b[0m ${item.step}: ${item.detail}`);
+    printOut();
   }
   if (result.failures.length > 0) {
     process.exitCode = 1;
-    console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; no success was reported.');
+    printOut('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; no success was reported.');
     for (const failure of result.failures) {
-      console.log(`  \x1b[31m-\x1b[0m ${failure.step}: ${failure.detail}`);
+      printOut(`  \x1b[31m-\x1b[0m ${failure.step}: ${failure.detail}`);
     }
     if (execution.hasGenieDir && existsSync(genieDir)) {
-      console.log(`  \x1b[33m!\x1b[0m Kept ${contractPath(genieDir)} so you can retry \`genie uninstall\`.`);
+      printOut(`  \x1b[33m!\x1b[0m Kept ${contractPath(genieDir)} so you can retry \`genie uninstall\`.`);
     }
-    console.log();
+    printOut();
     return;
   }
-  console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
-  console.log();
-  console.log('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
-  console.log('  \x1b[36mbun remove -g @automagik/genie\x1b[0m');
-  console.log('  \x1b[2mor\x1b[0m');
-  console.log('  \x1b[36mnpm uninstall -g @automagik/genie\x1b[0m');
-  console.log();
+  reportUninstallResidue(result.residue);
+  printOut('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
+  printOut();
+  printOut('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
+  printOut('  \x1b[36mbun remove -g @automagik/genie\x1b[0m');
+  printOut('  \x1b[2mor\x1b[0m');
+  printOut('  \x1b[36mnpm uninstall -g @automagik/genie\x1b[0m');
+  printOut();
 }
 
 /** Preview line for a retained batch, noting any interrupted member (recovered, not replayed). */
 function reportPendingBatchPreview(genieDir: string): void {
-  console.log('  \x1b[31m-\x1b[0m Resume the authenticated pending uninstall batch');
+  printOut('  \x1b[31m-\x1b[0m Resume the authenticated pending uninstall batch');
   const interrupted = pendingUninstallBatchInterruptedMember(genieDir);
   if (interrupted !== null) {
-    console.log(
+    printOut(
       `  \x1b[33m!\x1b[0m A prior batch member (${interrupted}) was interrupted; it will be recovered transactionally, not replayed`,
     );
   }
@@ -2189,13 +2395,13 @@ function reportPendingBatchPreview(genieDir: string): void {
 
 function reportUninstallLeaseFailure(detail: string): void {
   process.exitCode = 1;
-  console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; the lifecycle lease was not acquired.');
-  console.log(`  \x1b[31m-\x1b[0m ${detail}`);
-  console.log();
+  printOut('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; the lifecycle lease was not acquired.');
+  printOut(`  \x1b[31m-\x1b[0m ${detail}`);
+  printOut();
 }
 
 function executeFreshUninstall(genieDir: string, removeMarketplace: boolean): void {
-  console.log();
+  printOut();
   // The prompt may remain open while another lifecycle process finishes.
   // Discard every preview decision and rebuild the complete plan under both
   // locks; destructive helpers still perform their per-artifact CAS checks.
@@ -2205,9 +2411,9 @@ function executeFreshUninstall(genieDir: string, removeMarketplace: boolean): vo
     ({ execution, result } = performFreshUninstallPlan(genieDir, removeMarketplace));
   } catch (error) {
     process.exitCode = 1;
-    console.log('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; recovery or batch validation failed.');
-    console.log(`  \x1b[31m-\x1b[0m ${errorMessage(error)}`);
-    console.log();
+    printOut('\x1b[31m!\x1b[0m Genie CLI uninstall is incomplete; recovery or batch validation failed.');
+    printOut(`  \x1b[31m-\x1b[0m ${errorMessage(error)}`);
+    printOut();
     return;
   }
   reportUninstallResult(execution, result, genieDir);
@@ -2226,10 +2432,76 @@ function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean)
   }
 }
 
+/**
+ * Why this process may not prompt. Each value maps to one clause of the
+ * refusal, and ONLY the causes that actually hold are named — the old single
+ * sentence told every refused run to "re-run without --no-interactive", a flag
+ * a piped `genie uninstall` never passed (dogfood r5 Z8).
+ */
+export type UninstallNonInteractiveCause = 'no-interactive-flag' | 'ci' | 'not-a-terminal';
+
+/** What {@link isInteractive} looked at, so the message can name the same facts. */
+export interface InteractivityFacts {
+  argv?: string[];
+  env?: Record<string, string | undefined>;
+  stdinIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
+}
+
+/**
+ * The causes that hold, in the order {@link isInteractive} would meet them.
+ * Every cause present is reported: a CI job with a closed stdin has to fix both
+ * to reach the prompt, so naming only the first would be a second wrong remedy.
+ */
+export function detectUninstallNonInteractiveCauses(facts: InteractivityFacts = {}): UninstallNonInteractiveCause[] {
+  const argv = facts.argv ?? process.argv;
+  const env = facts.env ?? process.env;
+  const stdinIsTTY = facts.stdinIsTTY ?? Boolean(process.stdin.isTTY);
+  const stdoutIsTTY = facts.stdoutIsTTY ?? Boolean(process.stdout.isTTY);
+  const causes: UninstallNonInteractiveCause[] = [];
+  if (!stdinIsTTY || !stdoutIsTTY) causes.push('not-a-terminal');
+  if (env.CI) causes.push('ci');
+  if (argv.includes('--no-interactive')) causes.push('no-interactive-flag');
+  return causes;
+}
+
+const CAUSE_CLAUSES: Record<UninstallNonInteractiveCause, string> = {
+  'not-a-terminal': 'stdin or stdout is not a terminal, and piped input cannot answer the prompt',
+  ci: 'CI is set in the environment',
+  'no-interactive-flag': '--no-interactive was passed',
+};
+
+/**
+ * The one stderr line a non-interactive `genie uninstall` gets. `--help` says
+ * `--no-interactive` means "exit 2 instead of prompting", so this is the whole
+ * contract: nothing was removed, WHY this run could not confirm (naming only
+ * what actually applies to it), and the one invocation that works. There is
+ * deliberately no `--yes`: uninstall is destructive and consent is interactive.
+ */
+export function uninstallNonInteractiveMessage(causes: readonly UninstallNonInteractiveCause[]): string {
+  const why = causes.length > 0 ? ` ${causes.map((cause) => CAUSE_CLAUSES[cause]).join('; ')}.` : '';
+  return `genie uninstall needs an interactive confirmation. Nothing was removed.${why} There is no non-interactive consent flag — run \`genie uninstall\` directly from a terminal.`;
+}
+
 /** Deterministic seams for the destructive uninstall path; production uses the real dependencies. */
 export interface UninstallDeps {
   /** Interactive confirmation seam; production uses @inquirer/prompts. */
   confirm?: typeof confirm;
+  /**
+   * Whether this process may render a prompt at all; production uses
+   * {@link isInteractive} (TTY + no `CI` + no `--no-interactive`).
+   *
+   * Uninstall MUST decide this before touching `confirm`: @inquirer/prompts
+   * against a closed or non-TTY stdin renders the question and then busy-loops
+   * at 100% CPU forever (2026-09-15 dogfood B1 — 10m52s, no exit code), so any
+   * scripted or CI uninstall wedged indefinitely instead of failing fast.
+   */
+  canPrompt?: () => boolean;
+  /**
+   * Why prompting is forbidden, for the refusal's own wording; production reads
+   * argv/env/the TTY flags through {@link detectUninstallNonInteractiveCauses}.
+   */
+  nonInteractiveCauses?: () => UninstallNonInteractiveCause[];
   /**
    * Lifecycle-lease seam, mirroring install's `acquireLease`.
    * Tests can drive a busy/held holder without a real lock file, and the bounded
@@ -2246,7 +2518,7 @@ function acquireUninstallLifecycleLeasesOrProject(
   const acquired = acquireOrderedLifecycleLeases(() => acquireLifecycleLeaseWithWait(acquireLease));
   if (acquired.ok) return acquired;
   // One stderr line, exit 2: nothing was removed.
-  console.error(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
+  printErr(lifecycleBusyMessage(acquired.detail, '. No files were removed; retry once it completes.'));
   process.exitCode = 2;
   return null;
 }
@@ -2255,9 +2527,9 @@ export async function uninstallCommand(
   options: { removeMarketplace?: boolean } = {},
   deps: UninstallDeps = {},
 ): Promise<void> {
-  console.log();
-  console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
-  console.log();
+  printOut();
+  printOut('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
+  printOut();
 
   // Preview is strictly read-only. Recovery and the lifecycle lease begin only
   // after confirmation, and destructive helpers revalidate ownership again.
@@ -2275,20 +2547,19 @@ export async function uninstallCommand(
   const rulesStatus = legacyReport.rulesFile.status;
   const rulesPath = legacyReport.rulesFile.path;
 
-  console.log('\x1b[2mThis will remove:\x1b[0m');
-  console.log('  \x1b[31m-\x1b[0m Genie client plugin registrations');
-  if (options.removeMarketplace) console.log('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
-  if (hasOwnedRules)
-    console.log(`  \x1b[31m-\x1b[0m Marker-proven v4 orchestration rules (${contractPath(rulesPath)})`);
+  printOut('\x1b[2mThis will remove:\x1b[0m');
+  printOut('  \x1b[31m-\x1b[0m Genie client plugin registrations');
+  if (options.removeMarketplace) printOut('  \x1b[31m-\x1b[0m Automagik client marketplace registrations');
+  if (hasOwnedRules) printOut(`  \x1b[31m-\x1b[0m Marker-proven v4 orchestration rules (${contractPath(rulesPath)})`);
   if (hasUnprovenHookScript)
-    console.log('  \x1b[33m~\x1b[0m KEPT unproven hook script (~/.claude/hooks/genie-bash-hook.sh)');
+    printOut('  \x1b[33m~\x1b[0m KEPT unproven hook script (~/.claude/hooks/genie-bash-hook.sh)');
   if (rulesStatus === 'user-modified')
-    console.log(`  \x1b[33m~\x1b[0m KEPT unproven orchestration rules (${contractPath(rulesPath)})`);
-  if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
+    printOut(`  \x1b[33m~\x1b[0m KEPT unproven orchestration rules (${contractPath(rulesPath)})`);
+  if (hasGenieDir) printOut(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
-    console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
+    printOut(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
   if (hasPendingBatch) reportPendingBatchPreview(genieDir);
-  console.log();
+  printOut();
 
   if (
     !hasUninstallWork({
@@ -2301,8 +2572,8 @@ export async function uninstallCommand(
       removeMarketplace: options.removeMarketplace ?? false,
     })
   ) {
-    console.log('\x1b[33mNothing to uninstall.\x1b[0m');
-    console.log();
+    printOut('\x1b[33mNothing to uninstall.\x1b[0m');
+    printOut();
     return;
   }
 
@@ -2310,20 +2581,30 @@ export async function uninstallCommand(
   // active plugin generation can break any currently active or resumable Codex
   // task pinned to it. This is not the activation protocol — uninstall never
   // mints or accepts an assertion/permit.
-  console.log(
+  printOut(
     '\x1b[1m\x1b[33m⚠ Warning:\x1b[0m removing Genie can break current or resumable tasks. A Codex task pinned to the',
   );
-  console.log(
+  printOut(
     '\x1b[33m  active plugin generation may fail to resume after uninstall; retire such tasks first if they matter.\x1b[0m',
   );
-  console.log();
+  printOut();
+
+  // Gate BEFORE the prompt exists, not inside it: an inquirer prompt on a
+  // non-TTY stdin never returns. Preview above is read-only, so exiting here
+  // has removed nothing.
+  const canPrompt = deps.canPrompt ?? isInteractive;
+  if (!canPrompt()) {
+    printErr(uninstallNonInteractiveMessage((deps.nonInteractiveCauses ?? detectUninstallNonInteractiveCauses)()));
+    process.exitCode = 2;
+    return;
+  }
 
   const askConfirm = deps.confirm ?? confirm;
   const proceed = await askConfirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
   if (!proceed) {
-    console.log();
-    console.log('\x1b[2mUninstall cancelled.\x1b[0m');
-    console.log();
+    printOut();
+    printOut('\x1b[2mUninstall cancelled.\x1b[0m');
+    printOut();
     return;
   }
 

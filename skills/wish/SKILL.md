@@ -1,113 +1,78 @@
 ---
 name: wish
-description: "Convert an idea into a structured wish plan with scope, acceptance criteria, and execution groups for work."
+description: "Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation."
+category: lifecycle
+mutates: documents
 ---
 
-# wish — Plan Before You Build
+# Wish
 
-**Runtime syntax:** invoke the plugin copy through the active runtime's owner-qualified skill selector; use a bare selector only when intentionally selecting a user-tier copy (a separately installed personal copy; Genie no longer seeds this tier). Cross-skill prose below uses bare names as portable semantic routes; the orchestrator resolves the selector for the active runtime.
+Plan only. Resume an existing wish; use `brainstorm` when unresolved decisions prevent testable criteria. Write `.genie/wishes/<slug>/WISH.md` from the bundled template. Documents hold the plan and dependency DAG; the selected runtime holds execution state.
 
-Convert a validated idea into an executable wish document at `.genie/wishes/<slug>/WISH.md`.
+## Design preflight
 
-## When to Use
-- Non-trivial work needs planning before implementation.
-- User wants to scope, decompose, or formalize a feature/change.
-- Prior `brainstorm` output exists and needs to become actionable.
-
-Wish artifacts live in `.genie/wishes/` in the shared worktree. Execution-group definitions go in WISH.md (git) so other agents and skills can read them; per-group execution state lives in the state DB via `genie task` (see the `work` skill for how groups are claimed and completed). When spawned as a native subagent, use the curated context from your dispatch prompt directly.
-
-## Design link pre-flight
-
-Before writing the wish, check the design exists and, when present, verify the
-review evidence with the helper shipped in this skill:
+Before creating or changing a linked wish, check `.genie/brainstorms/<slug>/DESIGN.md`:
 
 ```bash
-test -f .genie/brainstorms/<slug>/DESIGN.md
 node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
 ```
 
-- **Present and verification exits 0:** consume the reviewer-bound evidence and emit `| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |`.
-- **Present but verification fails:** stop and return to design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived; editing DESIGN.md invalidates its prior review. Never repair the failure with a locally recomputed digest — only a new design review may return the `reviewed-sha256` passed to stamping.
-- **Absent:** emit `| **Design** | _No brainstorm — direct wish_ |` (no link) — valid for hotfixes, trivial changes, or plans obvious enough that a brainstorm adds no value. The linter (`scripts/wishes-lint.ts`) accepts the literal stub text; a bracket-link to a non-existent brainstorm file fails lint.
+- Existing design and verification passes: link `[DESIGN.md](../../brainstorms/<slug>/DESIGN.md)` in the Design row.
+- Existing design and verification fails: return to independent design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived. Never repair the failure with a locally recomputed digest.
+- No design: use the literal `_No brainstorm — direct wish_` in the Design row, without a broken link. A direct wish is valid when a brainstorm adds no value.
 
-## Flow
-1. **Gate check:** if the request is fuzzy (no prior design, unclear scope, vague requirements), run `brainstorm` first and say so. If a design exists, do not scaffold until its digest-bound design-review evidence verifies as SHIP.
-2. **Align intent:** clarify until success criteria are testable.
-3. **Pass the simplicity gate:** state the simplest complete design, justify every mechanism beyond it with a present requirement or measurement, and defer plausible future complexity behind a concrete trigger. A wish cannot outsource this decision to implementation.
-4. **Define scope:** explicit IN and OUT lists. OUT cannot be empty.
-5. **Decompose:** small, loosely coupled execution groups.
-6. **Scaffold** — always copy the template, never hand-write WISH.md. Resolve
-   the absolute directory containing this loaded `SKILL.md`, replace only the
-   two placeholder assignments below, and run the complete command from the
-   repository root:
+## Scaffold and fill
 
-   <!-- wish-scaffold-command:start -->
-   ```sh
-   WISH_SKILL_DIR='<absolute directory containing this SKILL.md>'
-   WISH_SLUG='<slug>'
-   case "$WISH_SLUG" in
-     ''|*[!a-z0-9-]*|-*|*-) printf 'invalid wish slug: %s\n' "$WISH_SLUG" >&2; exit 2 ;;
-   esac
-   WISH_DEST=".genie/wishes/$WISH_SLUG/WISH.md"
-   test -f "$WISH_SKILL_DIR/templates/wish-template.md"
-   test ! -e "$WISH_DEST"
-   mkdir -p "$(dirname "$WISH_DEST")"
-   cp "$WISH_SKILL_DIR/templates/wish-template.md" "$WISH_DEST"
-   ```
-   <!-- wish-scaffold-command:end -->
+For a new wish, resolve this loaded skill’s absolute directory, replace the two assignments, and run from the repository root. Existing wishes are edited in place, never overwritten by scaffolding.
 
-   The template ships inside this skill as the single source of truth for wish structure — a plain document, no runtime scaffolder. Copying guarantees the skeleton the parser and linter expect; ad-hoc wishes regularly fail structural lint.
-7. **Fill:** replace the `{{slug}}`/`{{date}}` tokens and every `<TODO: …>` marker with real content. Every group gets
-   acceptance criteria plus a non-zero validation command proportional to the planned diff's risk and reach. Start with
-   the narrowest checks that can disprove the changed behavior or contract: documentation-only groups, including
-   deterministic generated documentation or plugin skill mirrors, use relevant format, link, example, generator, parity,
-   or content-contract checks; runtime groups use focused behavior tests and add type, lint, or build checks only for
-   boundaries they reach. Escalate shared runtime/core behavior, dependency or lockfile, generated executable or runtime
-   artifact, configuration or schema, CI or release, broad-refactor, or uncertain-impact groups to the repository full
-   gate plus affected build or end-to-end checks. State why the command scope fits; a repository-documented
-   gate is by itself sufficient justification for its scope. Preserve any repository-defined aggregate integration or
-   release gate separately from per-group validation.
-8. **Declare dependencies:** use the wish-level `## Dependencies` keys
-   `**depends-on:** <comma-separated slugs or none>` and
-   `**blocks:** <comma-separated slugs or none>` for cross-wish edges. Keep
-   per-group `**depends-on:**` fields under each execution group. The spelling
-   is always hyphenated; the DAG is a machine-readable planning artifact in git.
-9. **Create tasks** — one per execution group, so `work` can claim and complete each group and the board reflects progress:
-   ```bash
-   genie task create --title "<group title>" --wish <slug> --group <group-name>
-   genie task list --wish <slug>   # inspect what was created
-   ```
-   Tasks carry the `--wish`/`--group` linkage; the dependency DAG stays in the WISH.md document, not in task rows. If creation fails (no `.genie/genie.db` yet, CLI unavailable), warn and continue — WISH.md in git is the source of truth and must remain usable by `work` without task rows.
-10. **Handoff:** run the wish linter — inside the genie repo, `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. If it reports any error, surface it and stop — never hand a structurally broken wish onward. Only after lint passes, auto-invoke `review` (plan review) on the WISH.md. Never suggest `work` directly — the review gate comes first.
-11. **Persist the verdict:** the reviewer only returns evidence. The invoking orchestrator appends that evidence under `## Review Results` and sets the WISH status to `APPROVED` on SHIP, `FIX-FIRST` on FIX-FIRST, or `BLOCKED` on BLOCKED. Do not route to `work` until the `APPROVED` status is on disk.
-12. **Record the wave base (APPROVED only):** once the status on disk is `APPROVED`, run `genie context --wish <slug>` from the repository root. This non-`--plan` resolution pins the integration base SHA as the wish's wave base — every group spawn cuts its worktree from that one SHA. A later run returns the recorded SHA; `genie context --wish <slug> --re-resolve` refreshes it. Never use `--plan` for this step: the preview writes nothing, so it cannot record the base. If the command fails (genie CLI or state DB unavailable — an empty ready-task set is NOT a failure; the base is still recorded and returned), warn and continue — the first non-plan resolution or the first `spawn --wish` records the base instead.
+<!-- wish-scaffold-command:start -->
+```sh
+set -eu
+WISH_SKILL_DIR='<absolute directory containing this SKILL.md>'
+WISH_SLUG='<slug>'
+case "$WISH_SLUG" in
+  ''|*[!a-z0-9-]*|-*|*-) printf 'invalid wish slug: %s\n' "$WISH_SLUG" >&2; exit 2 ;;
+esac
+WISH_DEST=".genie/wishes/$WISH_SLUG/WISH.md"
+test -f "$WISH_SKILL_DIR/templates/wish-template.md"
+test ! -e "$WISH_DEST"
+mkdir -p "$(dirname "$WISH_DEST")"
+cp "$WISH_SKILL_DIR/templates/wish-template.md" "$WISH_DEST"
+```
+<!-- wish-scaffold-command:end -->
 
-## Wish Document Sections
+Fill `{{slug}}`, `{{date}}`, and every TODO. Preserve the template’s machine-consumed structure exactly: the `# Wish:` title, the metadata table rows, and the sections `## Summary`, `## Scope` with `### IN` and `### OUT`, `## Decisions`, `## Simplicity Case`, `## Dependencies`, `## Success Criteria`, `## Execution Strategy`, `## Execution Groups` holding at least one `### Group <n>:` heading, `## QA Criteria`, `## Assumptions / Risks`, `## Review Results`, and `## Files to Create/Modify`. Inside every group keep the `**Goal:**`, `**Deliverables:**`, `**Interfaces:**`, `**Acceptance Criteria:**`, `**Validation:**`, and `**depends-on:**` blocks, and keep the Execution Strategy columns including Complexity and Model. Use portable roles/reasoning effort in the plan; runtime configuration selects actual models.
 
-| Section | Required | Notes |
-|---------|----------|-------|
-| Status / Slug / Date | Yes | Status: DRAFT on creation |
-| Summary | Yes | 2-3 sentences: what and why |
-| Scope IN / OUT | Yes | OUT cannot be empty |
-| Decisions | Yes | Key choices with rationale |
-| Simplicity Case | Yes | Simplest complete design, justified additions, and measurable deferrals |
-| Success Criteria | Yes | Checkboxes, each testable |
-| Execution Strategy | Yes | Wave-based plan — mandatory even if a single sequential wave; forces ordering, parallelism, and dependency thinking upfront |
-| Execution Groups | Yes | Goal, deliverables, acceptance criteria, validation command |
-| Dependencies | Yes | Wish-level `depends-on` / `blocks` using slug or `repo/slug`; use `none` when empty |
-| QA Criteria | No | What to verify on dev after merge |
-| Assumptions / Risks | No | What could invalidate the plan |
+Pass the simplicity gate: state the smallest complete design, justify added machinery with present requirements or measurements, and keep deferred mechanisms out of execution. Give each group a goal, owned files, deliverables, testable criteria, dependencies, and a non-zero validation command. Explain why validation fits the risk; the repository’s required gate is sufficient rationale. Preserve aggregate integration/release checks. Use `review`’s validation policy for affected runtime, schema, dependency, build, or broad changes.
 
-## Rules
-- Never write WISH.md from scratch — always copy the in-skill template, then edit.
-- Lint before handoff: the genie repo's wish linter must pass before `review` sees the wish.
-- Never emit a bracket-link to a non-existent brainstorm — use the `_No brainstorm — direct wish_` stub.
-- Never consume a linked design whose persisted review evidence is missing, non-SHIP, or stale; the wish linter independently enforces this for new wishes.
-- No implementation during `wish` — planning only.
-- On APPROVED, record the wave base with the non-`--plan` `genie context --wish <slug>` (warn and continue on failure; never `--plan`).
-- No speculative optimization: caches, deltas, sharding, background coordination, and configuration surfaces require a current criterion or measurement in the Simplicity Case.
-- Every group testable, bite-sized, and independently shippable; no vague tasks ("improve everything").
-- Every group has non-zero, risk-proportional validation with its scope explained; aggregate integration and release
-  gates remain intact.
-- OUT scope must contain at least one concrete exclusion.
-- Declare cross-wish dependencies early.
+Declare wish-level `**depends-on:**` and `**blocks:**` under `## Dependencies` (comma-separated slugs or `none`), plus per-group `**depends-on:**`. Keep the hyphenated keys; the DAG is in git, not inferred from task status.
+
+Fill each group's `**Interfaces:**` block with exact signatures: Consumes is what the group takes from earlier groups, Produces is what later groups rely on. A worker sees only its own group, so an unstated signature is re-invented rather than reused. Copy the plan-wide requirements into `**Global constraints:**` verbatim; every group inherits them and review reads them as the attention lens.
+
+A wide refactor is the exception to a self-contained group. When one mechanical change — a renamed field, a retyped shared symbol — breaks call sites across the repository so no single group can land green, sequence expand, migrate, contract: an expand group adds the new form beside the old so nothing breaks; one migrate group per batch sized by blast radius (per package, per directory) each declares `**depends-on:**` the expand group and stays green because the old form still exists; a contract group deletes the old form and declares `**depends-on:**` every migrate batch. When even a batch cannot stay green alone, keep that order but give the batches a shared integration branch and add a final integrate-and-verify group depending on all of them; green is promised only there, and that group carries the aggregate validation.
+
+## Review and handoff
+
+1. Run the project’s wish linter when provided. In the Genie repository:
+
+```bash
+grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint
+```
+
+An unavailable project-specific linter is reported; an available linter failing blocks handoff.
+2. Obtain independent `review` of the completed plan. The caller appends its evidence under `## Review Results` and persists APPROVED, FIX-FIRST, or BLOCKED. `work` requires APPROVED on disk.
+3. In standalone mode, create missing task rows per group and inspect for duplicates before retrying:
+
+```bash
+genie task create --title "<group title>" --wish <slug> --group <group-name>
+genie task list --wish <slug>
+```
+
+If the CLI/DB is unavailable, report it and keep the document usable without task rows. This fallback cannot bypass an authority refusal.
+4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. `--plan` is read-only and cannot record it. Report a failure without discarding the approved plan; a later non-plan resolution records the base.
+
+## Orca mode
+
+When explicitly selected, use the same template, design evidence, and plan review. Record the base branch and exact SHA in WISH.md; its existing execution groups supply the worker briefs. Specify portable roles, file ownership, deliverables, criteria, validation, and dependencies without duplicating them in another dispatch table. Shared-file writers require isolation or sequencing.
+
+Genie owns planning documents and evidence; Orca owns operational Run/Task/Dispatch state. Reconcile existing identifiers before creating anything. The coordinator follows `work`'s Orca protocol instead of standalone task/base commands. Existing user authorization satisfies the applicable human checkpoint; do not request it again.

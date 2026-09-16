@@ -29,20 +29,26 @@ import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
 import { resolveEventAuthor, resolveWorkerIdentity } from '../lib/v5/identity.js';
 import {
+  hasGenieWorkspace,
   recordExportBaseline,
   recordImportBaseline,
+  resolveWorkspaceDir,
   roadmapSnapshot,
+  serializeSnapshot,
   syncRoadmap,
   writeSnapshotFile,
 } from '../lib/v5/roadmap-sync.js';
 import {
   type BlockKind,
   type ImportSummary,
+  SnapshotFormatError,
   type TaskCardRow,
   type TaskFilter,
   type TaskRow,
   type TaskStatus,
   UnknownTaskError,
+  adoptTask,
+  appendReportEvent,
   appendTaskEvent,
   assignTask,
   blockTask,
@@ -51,8 +57,8 @@ import {
   completeTask,
   createTask,
   deleteTask,
-  exportState,
   formatWishRef,
+  getBoard,
   getDependencies,
   getStageLog,
   getTask,
@@ -135,16 +141,42 @@ function formatEventLine(e: TaskEvent): string {
   return `${formatTimestamp(new Date(e.createdAt))}  ${e.kind} by ${who}${note}`;
 }
 
-function printDetailHeader(task: TaskCardRow): void {
+/**
+ * The lane `task status` reports — the SAME placement `genie board` renders,
+ * not merely the stored `tasks.lane` column. `groupByLane` puts a card whose
+ * lane is null (or names a lane the board no longer defines) in the board's
+ * FIRST lane, so printing the raw column alone would let status and board
+ * disagree. Returns null when there is no lane to speak of (no board, or a
+ * laneless board and an unplaced card).
+ *
+ * Dogfood r5 Z7: status printed no lane at all, so the only way to learn where
+ * a card sat was `genie board --json` or reading its move events.
+ */
+function laneLine(db: Database, task: TaskCardRow): string | null {
+  const lanes = task.boardId ? (getBoard(db, task.boardId)?.lanes ?? null) : null;
+  if (lanes === null || lanes.length === 0) {
+    if (!task.lane) return null;
+    const why = task.boardId ? ' (board defines no lanes)' : '';
+    return `  Lane:       ${task.lane}${why}`;
+  }
+  if (task.lane && lanes.some((lane) => lane.name === task.lane)) return `  Lane:       ${task.lane}`;
+  const first = lanes[0].name;
+  if (task.lane) return `  Lane:       ${first} (stored lane "${task.lane}" is not on this board)`;
+  return `  Lane:       ${first} (default — the card has never been moved)`;
+}
+
+function printDetailHeader(db: Database, task: TaskCardRow): void {
   out('');
   out(`Task ${task.id}: ${task.title}`);
   out('─'.repeat(60));
   out(`  Status:     ${statusLabel(task.status)}`);
   if (task.boardId) out(`  Board:      ${task.boardId}`);
+  const lane = laneLine(db, task);
+  if (lane) out(lane);
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.assignedAgent) {
     const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
-    out(`  Assigned to:${task.assignedAgent}${why}`);
+    out(`  Assigned to: ${task.assignedAgent}${why}`);
   }
   if (task.claimedBy) {
     const badge = livenessBadge(task, Date.now());
@@ -172,7 +204,7 @@ function printDependencies(db: Database, taskId: string): void {
 }
 
 function printTaskDetail(db: Database, task: TaskCardRow): void {
-  printDetailHeader(task);
+  printDetailHeader(db, task);
   printDependencies(db, task.id);
 
   const events = getTaskEvents(db, task.id);
@@ -213,7 +245,9 @@ function handleCreate(opts: CreateOptions): void {
   run(() => {
     const db = openDb();
     try {
-      const boardId = opts.board ? resolveBoard(db, opts.board).id : undefined;
+      // `!== undefined`, not truthiness: an explicit `--board ""` must reach the
+      // resolver and be refused, never widen to "no board".
+      const boardId = opts.board !== undefined ? resolveBoard(db, opts.board).id : undefined;
       // The assignment pair invariant (both halves or neither) and the roster
       // allowlist are enforced by the state API — the typed errors surface here
       // through run() with the roster named verbatim.
@@ -270,7 +304,7 @@ function handleList(opts: ListOptions): void {
     try {
       const filter: TaskFilter = {};
       if (opts.status) filter.status = opts.status as TaskStatus;
-      if (opts.board) filter.boardId = resolveBoard(db, opts.board).id;
+      if (opts.board !== undefined) filter.boardId = resolveBoard(db, opts.board).id;
       if (opts.wish) filter.wish = opts.wish;
       const tasks = listTasks(db, filter);
       if (opts.json) {
@@ -415,6 +449,27 @@ function handleMove(id: string, opts: MoveOptions): void {
   });
 }
 
+interface AdoptOptions {
+  board?: string;
+  lane?: string;
+}
+
+function handleAdopt(id: string, opts: AdoptOptions): void {
+  const boardRef = opts.board?.trim();
+  const lane = opts.lane?.trim();
+  if (!boardRef) fail('--board <ref> is required.');
+  if (!lane) fail('--lane <name> is required.');
+  run(() => {
+    const db = openDb();
+    try {
+      const result = adoptTask(db, id, boardRef, lane, resolveEventAuthor());
+      out(`Adopted task ${result.task.id} onto board "${result.board.name}" in lane ${result.lane}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 interface CheckoutOptions {
   worker?: string;
 }
@@ -442,42 +497,69 @@ function handleCheckout(id: string, opts: CheckoutOptions): void {
   });
 }
 
-function handleComment(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty comment is required.');
+interface AuthoredNoteOptions {
+  worker?: string;
+}
+
+/** Timeline prose crosses the DSH board input contract (4000 bytes, no control characters); bound it at the CLI too. */
+const NOTE_MAX_BYTES = 4000;
+function boundedNote(text: string | undefined, what: string): string {
+  const note = text?.trim() ?? '';
+  if (!note) fail(`a non-empty ${what} is required.`);
+  // Tab, line feed and carriage return are text (the board's own contract keeps
+  // newlines verbatim); every other C0 control and DEL is refused.
+  for (const character of note) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code === 0x7f || (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d))
+      fail(`${what} must not contain control characters.`);
+  }
+  if (Buffer.byteLength(note) > NOTE_MAX_BYTES) fail(`${what} must be at most ${NOTE_MAX_BYTES} bytes.`);
+  return note;
+}
+
+/** `--worker` names the speaker the way `checkout --worker` does; kind still comes from the runtime. */
+function authoredBy(opts: AuthoredNoteOptions): { author: string; authorKind: string | undefined } {
+  const base = resolveEventAuthor();
+  const worker = opts.worker?.trim();
+  return { author: worker || base.author || 'cli', authorKind: base.authorKind ?? undefined };
+}
+
+function handleComment(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'comment');
   run(() => {
     const db = openDb();
     try {
       if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'comment',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Commented on task ${id}.`);
+      const author = authoredBy(opts);
+      appendTaskEvent(db, id, { kind: 'comment', note, authorKind: author.authorKind, author: author.author });
+      out(`Commented on task ${id} as ${author.author}.`);
     } finally {
       db.close();
     }
   });
 }
 
-function handleReport(id: string, text: string): void {
-  const note = text?.trim();
-  if (!note) fail('a non-empty report is required.');
+function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const note = boundedNote(text, 'report');
   run(() => {
     const db = openDb();
     try {
-      if (!getTask(db, id)) throw new UnknownTaskError(id);
-      const author = resolveEventAuthor();
-      appendTaskEvent(db, id, {
-        kind: 'report',
-        note,
-        authorKind: author.authorKind ?? undefined,
-        author: author.author ?? undefined,
-      });
-      out(`Reported on task ${id} (${author.authorKind}).`);
+      const task = getTask(db, id);
+      if (!task) throw new UnknownTaskError(id);
+      const author = authoredBy(opts);
+      // The report tag is a trust signal: only the card's current claimant may post one.
+      if (task.claimedBy !== author.author) {
+        fail(
+          task.claimedBy
+            ? `report refused: task ${id} is claimed by ${task.claimedBy}, not ${author.author}. Use comment, or checkout first.`
+            : `report refused: task ${id} is not claimed. Checkout as ${author.author} first, or use comment.`,
+        );
+      }
+      // One report per claim-to-handoff span (the promise `task report --help`
+      // makes): the span rule lives in the state module so the probe and the
+      // insert share one write lock.
+      appendReportEvent(db, id, { note, authorKind: author.authorKind, author: author.author });
+      out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {
       db.close();
     }
@@ -567,34 +649,48 @@ function samePath(a: string, b: string): boolean {
 /**
  * True for ANY target spelled `<dir>/.genie/roadmap.json`, not just this repo's
  * canonical file — a subdirectory or linked-worktree spelling resolves elsewhere
- * yet is still a git-trackable file under the canonical name. Such a file gets
- * the roadmap slice so full-state `hire_roster` rows (machine-local worktree
- * paths) can never travel in it. Custom-file writes and the plain stdout dump
- * stay the complete database, so a backup file round-trips lossless.
+ * yet is still a git-trackable file under the canonical name.
+ *
+ * It no longer decides what the snapshot CONTAINS (every export is the roadmap
+ * slice — see {@link handleExport}); it decides only that an import of such a
+ * file must leave local hires alone, the same way the canonical one does.
  */
 function isRoadmapSlicePath(path: string): boolean {
   const normalized = normalizedPath(path);
   return basename(normalized) === 'roadmap.json' && basename(dirname(normalized)) === '.genie';
 }
 
+/**
+ * Emit the database as a snapshot — to stdout, or atomically to a file.
+ *
+ * EVERY export is {@link roadmapSnapshot}: the whole database except
+ * `hire_roster`, whose rows carry machine-local worktree paths. A snapshot is a
+ * publishable artifact wherever it is written — stdout gets piped into a gist, a
+ * `--write /tmp/backup.json` gets attached to an issue — so the machine-local
+ * slice must not depend on the caller having spelled the canonical path. The
+ * rows stay in the db; `task import` never destroys local hires with a snapshot
+ * that carries none.
+ */
 function handleExport(opts: ExportOptions): void {
   run(() => {
     const db = openDb();
     try {
       const target = opts.write ? (typeof opts.write === 'string' ? resolve(opts.write) : resolveRoadmapPath()) : null;
       if (target === null) {
-        process.stdout.write(`${JSON.stringify(exportState(db), null, 2)}\n`);
+        // Same serializer AND same slice as `--write`: one export of one
+        // database is one byte sequence, whatever each machine's physical
+        // column order or local hires happen to be.
+        process.stdout.write(serializeSnapshot(roadmapSnapshot(db)));
         return;
       }
-      const sliced = isRoadmapSlicePath(target);
-      const canonical = sliced && samePath(target, resolveRoadmapPath());
+      const canonical = samePath(target, resolveRoadmapPath());
       // ONE immediate transaction over snapshot → file write → baseline. genie.db
       // is shared across worktrees, so a writer landing mid-sequence would
       // otherwise yield a torn snapshot (dependency rows whose tasks were missed)
       // or a baseline dbHash describing a NEWER db than the published file — the
       // next `task sync` then reads as in-sync and silently drops that change.
       const publish = db.transaction(() => {
-        const state = sliced ? roadmapSnapshot(db) : exportState(db);
+        const state = roadmapSnapshot(db);
         // Atomic (temp + rename) so a torn write can never leave the canonical
         // board — or a custom backup — truncated mid-command.
         writeSnapshotFile(target, state);
@@ -615,17 +711,53 @@ interface ImportOptions {
   replace?: boolean;
 }
 
+/** Does this parsed snapshot bring hire rows of its own? */
+function snapshotCarriesHires(snapshot: unknown): boolean {
+  const rows = (snapshot as { hire_roster?: unknown } | null)?.hire_roster;
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 function handleSync(): void {
   run(() => {
+    // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
+    // very directory being tested. A directory that was never `genie init`-ed
+    // has neither side of the pair to reconcile, and reporting it "in sync"
+    // (exit 0) is a clean bill sync never verified — the `|| true` git hooks
+    // gate on `.genie/roadmap.json`, so they never reach this refusal.
+    if (!hasGenieWorkspace()) {
+      fail(
+        `no Genie workspace at ${resolveWorkspaceDir()} — there is no board and no snapshot to reconcile. Run \`genie init\` here first.`,
+      );
+    }
     const db = openDb();
     try {
       const result = syncRoadmap(db);
+      // The git hooks run this as `task sync || true`, so the exit code alone
+      // reaches nobody: a refusal has to be readable in the hook output, on the
+      // stream reserved for it, and has to name the two resolving commands.
+      if (result.action === 'diverged') {
+        const detail = result.message ?? 'The local board and .genie/roadmap.json both changed since the last sync.';
+        process.stderr.write(`warn: ${detail}\n`);
+        process.exit(1);
+      }
       out(result.message ?? `Board and snapshot are in sync (${result.action}).`);
-      if (result.action === 'diverged') process.exit(1);
     } finally {
       db.close();
     }
   });
+}
+
+/**
+ * Run the import transaction, re-labelling a snapshot-format refusal with the
+ * source path. Every other failure (lock contention, IO) propagates untouched.
+ */
+function runImport(apply: { immediate: () => unknown }, source: string): ImportSummary {
+  try {
+    return apply.immediate() as ImportSummary;
+  } catch (err) {
+    if (err instanceof SnapshotFormatError) throw new SnapshotFormatError(`${source}: ${err.message}`);
+    throw err;
+  }
 }
 
 function handleImport(file: string | undefined, opts: ImportOptions): void {
@@ -644,21 +776,27 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     }
     const db = openDb();
     try {
-      // A roadmap-sliced snapshot carries no hires, so local hires stay untouched;
-      // only the true canonical file may stamp the sync baseline.
+      // Local hires survive any import that does not bring replacements: every
+      // snapshot this build writes is the roadmap slice (`hire_roster: []`), so
+      // a `--replace` from a backup file must not wipe the machine-local roster
+      // it was never able to capture. A snapshot that DOES carry hires (a legacy
+      // full-state export, a hand-written file) still replaces them.
       const sliced = isRoadmapSlicePath(source);
       const canonical = sliced && samePath(source, resolveRoadmapPath());
+      const preserveHireRoster = sliced || !snapshotCarriesHires(snapshot);
       // ONE immediate transaction over import → baseline (importState's own
       // transaction nests as a savepoint): the baseline's post-import db
       // re-snapshot must not see another worktree's write, or the marker would
       // claim a db state the file never described and the next `task sync` would
       // report in-sync while that change stayed unpublished.
       const apply = db.transaction(() => {
-        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster: sliced });
+        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster });
         if (canonical) recordImportBaseline(db, snapshot);
         return result;
       });
-      const summary = apply.immediate() as ImportSummary;
+      // A malformed snapshot names the file it came from: `validateSnapshot`
+      // knows the table/row/column, only this frame knows the path.
+      const summary = runImport(apply, source);
       out(
         `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
       );
@@ -764,6 +902,13 @@ export, with two caveats:
     .action((id: string, opts: MoveOptions) => handleMove(id, opts));
 
   task
+    .command('adopt <id>')
+    .description('Place a laneless card onto a board lane (one-time; appends a move event from (none))')
+    .requiredOption('--board <ref>', 'Board id or name')
+    .requiredOption('--lane <name>', 'Lane on that board')
+    .action((id: string, opts: AdoptOptions) => handleAdopt(id, opts));
+
+  task
     .command('checkout <id>')
     .description('Atomically claim a ready task for a worker')
     .option('--worker <name>', 'Worker identity (defaults to $GENIE_AGENT_NAME or "cli")')
@@ -771,13 +916,17 @@ export, with two caveats:
 
   task
     .command('comment <id> <text>')
-    .description('Append an authored comment to the card timeline')
-    .action((id: string, text: string) => handleComment(id, text));
+    .description('Append an authored comment to the card timeline (use -- before text that starts with a dash)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleComment(id, text, opts));
 
   task
     .command('report <id> <text>')
-    .description('Append an authored worker report to the card timeline')
-    .action((id: string, text: string) => handleReport(id, text));
+    .description(
+      "Append the claimant's worker report to the card timeline (one per claim-to-handoff span; a new checkout opens the next)",
+    )
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
 
   task
     .command('block <id>')

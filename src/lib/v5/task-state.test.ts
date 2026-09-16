@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
-import { roadmapSnapshot, syncRoadmap } from './roadmap-sync.js';
+import { roadmapSnapshot, serializeSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
   AssignmentReasonRequiredError,
   CheckoutConflictError,
@@ -13,19 +13,26 @@ import {
   DEFAULT_LIFECYCLE_LANES,
   DEFAULT_STALE_MS,
   DuplicateBoardError,
+  DuplicateReportError,
+  EmptyBoardRefError,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
   LaneError,
   ROSTER,
+  type StateExport,
   TaskBlockedError,
   TaskCompleteError,
   TaskHasDependentsError,
+  TaskNotClaimedError,
   TaskNotReadyError,
   TaskReleaseError,
   type TaskRow,
+  UnknownBoardError,
   UnknownRosterAgentError,
   UnknownTaskError,
   addDependency,
+  adoptTask,
+  appendReportEvent,
   appendStage,
   appendTaskEvent,
   assignTask,
@@ -62,6 +69,7 @@ import {
   recomputeReady,
   recordHeartbeat,
   releaseTask,
+  resolveBoard,
   setTaskWish,
   unblockTask,
   unhireAgent,
@@ -184,6 +192,23 @@ describe('boards with lifecycle lanes', () => {
   test('an empty lane list normalizes to a laneless board', () => {
     const board = createBoard(db, 'empty-lanes', []);
     expect(board.lanes).toBeNull();
+    // Stored as NULL, not "[]": a board created without lanes is the quiet
+    // laneless board and must NOT carry the unusable-metadata note.
+    const stored = db.query('SELECT lanes FROM boards WHERE id = ?').get(board.id) as { lanes: string | null };
+    expect(stored.lanes).toBeNull();
+    expect(getBoardByName(db, 'empty-lanes')?.laneMetadataMalformed).toBe(false);
+  });
+
+  // m9: `[]` only reaches boards.lanes through import or a hand-merged
+  // roadmap.json. It is a lane definition that yields no lane, so it reads as
+  // unusable metadata and earns the same laneless note as `{` or `[{}]` —
+  // rather than the frozen all-tasks shape with empty stderr.
+  test('a stored empty lane ARRAY is unusable metadata, not a quiet laneless board', () => {
+    const board = createBoard(db, 'imported', DEFAULT_LIFECYCLE_LANES);
+    db.query('UPDATE boards SET lanes = ? WHERE id = ?').run('[]', board.id);
+    const fetched = getBoardByName(db, 'imported');
+    expect(fetched?.lanes).toBeNull();
+    expect(fetched?.laneMetadataMalformed).toBe(true);
   });
 
   test('a duplicate board name throws DuplicateBoardError (UNIQUE surfaced cleanly)', () => {
@@ -237,6 +262,30 @@ describe('lane moves + task_events timeline', () => {
     expect(getTaskEvents(db, task.id)[0].note).toBe('(none)→Wish');
   });
 
+  test('adoptTask places a laneless card on a board lane and records the (none) origin', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const task = createTask(db, { title: 'pre-board card' });
+    expect(task.boardId).toBeNull();
+    expect(() => moveTask(db, task.id, 'Wish', HUMAN)).toThrow(LaneError);
+    const result = adoptTask(db, task.id, 'roadmap', 'Wish', HUMAN);
+    expect(result.task.boardId).toBe(board.id);
+    expect(getTaskLane(db, task.id)).toBe('Wish');
+    const last = getTaskEvents(db, task.id).at(-1);
+    expect(last?.kind).toBe('move');
+    expect(last?.note).toBe('(none)→Wish');
+    expect(moveTask(db, task.id, 'Work', HUMAN).from).toBe('Wish');
+  });
+
+  test('adoptTask refuses a card already on a board, an unknown board, and an unknown lane', () => {
+    createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const placed = createTask(db, { title: 'placed', boardId: getBoardByName(db, 'roadmap')?.id, lane: 'Idea' });
+    expect(() => adoptTask(db, placed.id, 'roadmap', 'Wish', HUMAN)).toThrow(/already on board "roadmap"/);
+    const loose = createTask(db, { title: 'loose' });
+    expect(() => adoptTask(db, loose.id, 'nope', 'Wish', HUMAN)).toThrow(UnknownBoardError);
+    expect(() => adoptTask(db, loose.id, 'roadmap', 'Nope', HUMAN)).toThrow(LaneError);
+    expect(getTask(db, loose.id)?.boardId).toBeNull();
+  });
+
   test('rejects an undefined lane, listing the valid lanes', () => {
     const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
     const task = createTask(db, { title: 'idea', boardId: board.id, lane: 'Idea' });
@@ -280,6 +329,45 @@ describe('lane moves + task_events timeline', () => {
 
   test('appendTaskEvent rejects an unknown task', () => {
     expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
+  });
+
+  // M6: the append is check-then-insert. Under a concurrent delete the insert
+  // used to violate the task_events foreign key and surface the raw
+  // `FOREIGN KEY constraint failed`. The immediate transaction closes the
+  // window; this asserts the translation that backstops a lost write lock.
+  test('appendTaskEvent raises the typed not-found error, never a raw FOREIGN KEY failure', () => {
+    const task = createTask(db, { title: 'doomed' });
+    db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+    let caught: unknown;
+    try {
+      appendTaskEvent(db, task.id, { kind: 'comment', note: 'too late' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnknownTaskError);
+    expect((caught as Error).message).toBe(`Task not found: ${task.id}`);
+    expect((caught as Error).message).not.toContain('FOREIGN KEY');
+  });
+});
+
+// m8 — liveness is derived purely from heartbeat_at and a null heartbeat reads
+// `stale`, so a claim that seeds none renders the card dead on arrival.
+describe('claim seeds liveness', () => {
+  test('claimTask stamps heartbeat_at equal to claimed_at', () => {
+    const task = createTask(db, { title: 'claim me' });
+    const claimed = claimTask(db, task.id, 'w1');
+    expect(claimed.claimedAt).not.toBeNull();
+    const card = getTaskCard(db, task.id);
+    expect(card?.heartbeatAt).toBe(claimed.claimedAt as number);
+    expect(livenessFromHeartbeat(card?.heartbeatAt ?? null, claimed.claimedAt as number)).toBe('running');
+  });
+
+  test('releaseTask clears the seeded heartbeat with the claim', () => {
+    const task = createTask(db, { title: 'claim me' });
+    claimTask(db, task.id, 'w1');
+    const released = releaseTask(db, task.id, HUMAN);
+    expect(released.claimedAt).toBeNull();
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
   });
 });
 
@@ -611,6 +699,10 @@ describe('runtime layer — liveness (pure, injected timestamps)', () => {
 
   test('recordHeartbeat writes heartbeat_at, visible on the card projection', () => {
     const a = createTask(db, { title: 'a' });
+    // A heartbeat is only meaningful for a live claim — claim first, or the
+    // write is refused (TaskNotClaimedError).
+    claimTask(db, a.id, 'w1');
+    db.query('UPDATE tasks SET heartbeat_at = NULL WHERE id = ?').run(a.id);
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
     const t = recordHeartbeat(db, a.id, NOW);
     expect(t).toBe(NOW);
@@ -745,6 +837,7 @@ describe('lane projection carries enforcedBlock', () => {
 
   test('the lane projection gains ONLY enforcedBlock beyond TaskRow — provenance and heartbeat stay off it', () => {
     const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent' });
+    claimTask(db, a.id, 'w1');
     blockTask(db, a.id, 'r', HUMAN, 'hold');
     recordHeartbeat(db, a.id);
     const row = listTasksWithLane(db).find((t) => t.id === a.id) as unknown as Record<string, unknown>;
@@ -886,12 +979,14 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(10_000_000);
 
     releaseTask(db, a.id, HUMAN);
-    // The card is back to ready with no lingering pulse; a fresh checkout by
-    // worker B must read stale (never running) until B itself heartbeats.
+    // The card is back to ready with no lingering pulse: the released card must
+    // never carry worker A's timestamp into the ready queue.
     expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
 
-    claimTask(db, a.id, 'w2');
-    expect(getTaskCard(db, a.id)?.heartbeatAt).toBeNull();
+    // Worker B's own claim seeds a FRESH pulse of its own (m8) — never A's.
+    const reclaimed = claimTask(db, a.id, 'w2');
+    expect(getTaskCard(db, a.id)?.heartbeatAt).toBe(reclaimed.claimedAt as number);
+    expect(getTaskCard(db, a.id)?.heartbeatAt).not.toBe(10_000_000);
   });
 
   test('releaseTask REFUSES a done card — never resurrects it, emits no release event', () => {
@@ -913,6 +1008,32 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
     expect(getTask(db, a.id)!.status).toBe('ready');
     expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+  });
+
+  /**
+   * The span rule is derived from the timeline alone — the newest `claim` event
+   * starts the current claim-to-handoff span — so it needs no extra column and
+   * survives an export/import round trip.
+   */
+  test('appendReportEvent allows one report per claim span and supersedes it on re-claim', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    expect(appendReportEvent(db, a.id, { note: 'handoff 1', author: 'w1' }).kind).toBe('report');
+    expect(() => appendReportEvent(db, a.id, { note: 'handoff 1b', author: 'w1' })).toThrow(DuplicateReportError);
+    // A refused report leaves no phantom event.
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'report')).toHaveLength(1);
+
+    // A new claim opens the next span, which carries its own report.
+    releaseTask(db, a.id, HUMAN);
+    claimTask(db, a.id, 'w1');
+    expect(appendReportEvent(db, a.id, { note: 'handoff 2', author: 'w1' }).kind).toBe('report');
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'report')).toHaveLength(2);
+  });
+
+  test('appendReportEvent on a deleted card is UnknownTaskError, never a raw FK failure', () => {
+    const a = createTask(db, { title: 'a' });
+    deleteTask(db, a.id);
+    expect(() => appendReportEvent(db, a.id, { note: 'x', author: 'w1' })).toThrow(UnknownTaskError);
   });
 
   test('commentCounts tallies only comment events, keyed by task', () => {
@@ -1061,10 +1182,111 @@ describe('declared routing — roster allowlist + assignment state API (W1)', ()
 
 describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockstep)', () => {
   // Mirrors roadmap-sync's canonicalHash: sha256 over the parsed JSON form, so
-  // whitespace/formatting differences never count as content changes.
+  // whitespace and object-key order never count as content changes.
   function canonicalHash(value: unknown): string {
-    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    const canonical = JSON.stringify(value, (_key, current: unknown) => {
+      if (current === null || Array.isArray(current) || typeof current !== 'object') return current;
+      return Object.fromEntries(
+        Object.keys(current)
+          .sort()
+          .map((key) => [key, (current as Record<string, unknown>)[key]]),
+      );
+    });
+    return createHash('sha256').update(canonical).digest('hex');
   }
+
+  test('an equal file/db pair refreshes an old order-sensitive marker without changing the board', () => {
+    const repo = join(dir, 'hash-upgrade');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    createTask(db, { title: 'existing card' });
+    const snapshot = roadmapSnapshot(db);
+    const legacyHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const markerPath = join(repo, '.genie', 'roadmap-sync');
+    const content = `${JSON.stringify(snapshot, null, 2)}\n`;
+    writeFileSync(filePath, content);
+    writeFileSync(markerPath, JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash }));
+
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    // The marker migration publishes NO board change. The bytes are normalized
+    // on the way past (see roadmap-sync's legacy-ordered snapshot contract), so
+    // the invariant here is the content, not the byte form the file arrived in.
+    expect(JSON.parse(readFileSync(filePath, 'utf-8'))).toEqual(JSON.parse(content));
+    expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(snapshot));
+    const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
+    expect(marker.fileHash).not.toBe(legacyHash);
+    expect(marker.fileHash).toBe(marker.dbHash);
+    expect(syncRoadmap(db, repo).action).toBe('none');
+  });
+
+  test('diverged only in the card timeline merges both sides and republishes (the conversation is global)', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'genie-merge-'));
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const task = createTask(db, { title: 'shared card' });
+    // Baseline: both sides in sync.
+    expect(syncRoadmap(db, repo).action).toBe('exported');
+    // The other clone commented and published; this clone reported locally.
+    const theirs = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    theirs.task_events.push({
+      id: 999,
+      task_id: task.id,
+      kind: 'comment',
+      note: 'dispatch: eng-A — G1',
+      author_kind: 'claude-code',
+      author: 'orchestrator',
+      created_at: 1_700_000_000_000,
+    });
+    writeFileSync(filePath, `${JSON.stringify(theirs, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'report', note: 'done: verified', author: 'eng-A', authorKind: 'codex' });
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('merged');
+    const kinds = getTaskEvents(db, task.id).map((e) => [e.kind, e.author]);
+    expect(kinds).toEqual([
+      ['report', 'eng-A'],
+      ['comment', 'orchestrator'],
+    ]);
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    expect(published.task_events.map((e) => e.kind).sort()).toEqual(['comment', 'report']);
+    // Idempotent: the same file event is never inserted twice, and the sides now agree.
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    expect(getTaskEvents(db, task.id)).toHaveLength(2);
+    // A real card conflict still stops: a title edit on the file side is not mergeable.
+    const conflict = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
+    conflict.tasks[0].title = 'renamed on the other clone';
+    writeFileSync(filePath, `${JSON.stringify(conflict, null, 2)}\n`);
+    appendTaskEvent(db, task.id, { kind: 'comment', note: 'local only', author: 'x', authorKind: 'human' });
+    expect(syncRoadmap(db, repo).action).toBe('diverged');
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('an old order-sensitive marker with pending edits publishes them (db-only change)', () => {
+    const repo = join(dir, 'hash-upgrade-pending');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    createTask(db, { title: 'existing card' });
+    const snapshot = roadmapSnapshot(db);
+    const legacyHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const filePath = join(repo, '.genie', 'roadmap.json');
+    const markerPath = join(repo, '.genie', 'roadmap-sync');
+    const content = `${JSON.stringify(snapshot, null, 2)}\n`;
+    const marker = JSON.stringify({ fileHash: legacyHash, dbHash: legacyHash });
+    writeFileSync(filePath, content);
+    writeFileSync(markerPath, marker);
+    const pending = createTask(db, { title: 'unpublished card' });
+
+    // The pre-`hashVersion` marker is still a usable baseline (it is compared
+    // with the algorithm that wrote it), so this reads as what it is: the file
+    // sits exactly where the baseline left it and only the db moved. Publishing
+    // can lose nothing — an upgrade alone must not manufacture a divergence.
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('exported');
+    const published = JSON.parse(readFileSync(filePath, 'utf-8')) as ReturnType<typeof roadmapSnapshot>;
+    expect(published.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
+    expect(getTask(db, pending.id)?.title).toBe('unpublished card');
+    // And the baseline is migrated on the way out.
+    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(2);
+  });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {
     const a = createTask(db, { title: 'a', assignedAgent: 'codex', assignedReason: 'dissent on parser' });
@@ -1330,6 +1552,89 @@ describe('hire roster (single-row upsert / delete)', () => {
       },
     ]);
   });
+});
+
+describe('multi-process hire/unhire return race', () => {
+  test('every hire returns its complete row even when another process unhires it', async () => {
+    const dbPath = join(dir, 'hire-unhire.db');
+    const seed = openDb({ path: dbPath });
+    hireAgent(seed, { wish: 'race', agentAdapterId: 'adapter', worktree: '/wt/seed' });
+    seed.close();
+    const workerPath = join(dir, 'hire-unhire-worker.ts');
+    writeFileSync(
+      workerPath,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+import { hireAgent, unhireAgent } from ${JSON.stringify(join(import.meta.dir, 'task-state.ts'))};
+const [dbPath, op] = process.argv.slice(2);
+const db = openDb({ path: dbPath });
+process.stdout.write('ready');
+await Bun.stdin.text();
+let invalid = 0;
+let removed = 0;
+try {
+  for (let i = 0; i < 3000; i++) {
+    if (op === 'unhire') {
+      if (unhireAgent(db, 'race', 'adapter')) removed++;
+    } else {
+      const row = hireAgent(db, {
+        wish: 'race', agentAdapterId: 'adapter', profile: 'profile-' + i,
+        worktree: '/wt/' + i, state: 'active',
+      });
+      if (!row || row.wish !== 'race' || row.agentAdapterId !== 'adapter' ||
+          row.profile !== 'profile-' + i || row.worktree !== '/wt/' + i ||
+          row.state !== 'active' || !Number.isInteger(row.hiredAt) || row.hiredAt <= 0) invalid++;
+    }
+  }
+  process.stdout.write(JSON.stringify({ invalid, removed }));
+} finally {
+  db.close();
+}
+`,
+    );
+    const workers = ['hire', 'unhire'].map((op) =>
+      Bun.spawn(['bun', 'run', workerPath, dbPath, op], {
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
+      }),
+    );
+    try {
+      // Both handles are open before either loop begins, so startup cannot
+      // serialize away the race. The child waits for stdin EOF after readiness.
+      await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          const ready = await reader.read();
+          reader.releaseLock();
+          expect(new TextDecoder().decode(ready.value)).toBe('ready');
+        }),
+      );
+      for (const worker of workers) worker.stdin.end();
+      const results = await Promise.all(
+        workers.map(async (worker) => {
+          const reader = worker.stdout.getReader();
+          let output = '';
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            output += new TextDecoder().decode(value);
+          }
+          return { output, stderr: await new Response(worker.stderr).text(), code: await worker.exited };
+        }),
+      );
+      for (const result of results) {
+        expect(result.code).toBe(0);
+        expect(result.stderr).toBe('');
+      }
+      expect(JSON.parse(results[0].output).invalid).toBe(0);
+      expect(JSON.parse(results[1].output).removed).toBeGreaterThan(0);
+    } finally {
+      for (const worker of workers) worker.kill();
+      await Promise.all(workers.map((worker) => worker.exited));
+    }
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -1608,8 +1913,160 @@ describe('importState — replace is a full wipe even without operational rows',
       // title NOT NULL in schema — null must not surface as a raw SQLite error.
       tasks: [{ id: 't_bad', title: null, status: 'ready', created_at: 1, updated_at: 1 }],
     };
+    expect(() => importState(db, bad as unknown, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 \(id "t_bad"\): column "title" must not be null/,
+    );
+    expect(exportState(db)).toEqual(before); // nothing was written
+  });
+
+  test('a row-schema failure the column model cannot see still classifies as SnapshotFormatError', () => {
+    const before = exportState(db);
+    const bad = {
+      ...before,
+      // Every column is a well-typed scalar; only the FOREIGN KEY is broken, so
+      // the failure comes from SQLite and must still be reclassified.
+      task_dependencies: [{ task_id: 't_ghost', depends_on_id: 't_ghost2' }],
+    };
     expect(() => importState(db, bad as unknown, { replace: true })).toThrow(/Snapshot rows could not be imported/);
-    expect(exportState(db)).toEqual(before); // transaction rolled back
+    expect(exportState(db)).toEqual(before);
+  });
+});
+
+/**
+ * Regression (dogfood r2 minors 12/13): `validateSnapshot` type-checks every
+ * column against the declared schema BEFORE any write, so a non-scalar no
+ * longer reaches bun:sqlite as a context-free `Binding expected string,
+ * TypedArray, boolean, number, bigint or null`, and a string in an INTEGER
+ * column is no longer stored by type affinity as a corrupt timestamp.
+ */
+describe('importState — per-column scalar validation', () => {
+  function snapshotWithTask(overrides: Record<string, unknown>): Record<string, unknown> {
+    const base = exportState(db);
+    return {
+      ...base,
+      tasks: [
+        { id: 't_probe', board_id: null, title: 'probe', status: 'ready', created_at: 1, updated_at: 2, ...overrides },
+      ],
+    };
+  }
+
+  test('a non-scalar in a TEXT column is refused, naming table, row and column', () => {
+    const before = exportState(db);
+    expect(() => importState(db, snapshotWithTask({ title: { x: 1 } }), { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 \(id "t_probe"\): column "title" expects a string, got an object/,
+    );
+    expect(() => importState(db, snapshotWithTask({ title: { x: 1 } }), { replace: true })).toThrow(
+      /database was left unchanged/,
+    );
+    expect(exportState(db)).toEqual(before);
+  });
+
+  test('a non-numeric value in an INTEGER column is refused instead of silently stored', () => {
+    expect(() => importState(db, snapshotWithTask({ created_at: 'abc' }), { replace: true })).toThrow(
+      /column "created_at" expects an integer, got the string "abc"/,
+    );
+    expect(() => importState(db, snapshotWithTask({ created_at: 1.5 }), { replace: true })).toThrow(
+      /column "created_at" expects an integer, got the number 1.5/,
+    );
+    expect(listTasks(db)).toHaveLength(0);
+  });
+
+  test('an array in boards.lanes (TEXT holding JSON) is refused', () => {
+    const base = exportState(db);
+    const bad = {
+      ...base,
+      boards: [{ id: 'b_1', name: 'main', lanes: ['Idea', 'Done'], created_at: 1 }],
+    };
+    expect(() => importState(db, bad, { replace: true })).toThrow(
+      /Snapshot table "boards" row 0 \(id "b_1"\): column "lanes" expects a string, got an array/,
+    );
+    expect(listBoards(db)).toHaveLength(0);
+  });
+
+  test('a row that is not an object at all is refused with its table and index', () => {
+    const base = exportState(db);
+    expect(() => importState(db, { ...base, tasks: ['t_1'] }, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 0 is not a JSON object \(got the string "t_1"\)/,
+    );
+  });
+
+  test('a required column that is absent is named, not reported as a binding failure', () => {
+    const base = exportState(db);
+    const bad = { ...base, tasks: [{ id: 't_probe', status: 'ready', created_at: 1, updated_at: 2 }] };
+    expect(() => importState(db, bad, { replace: true })).toThrow(/column "title" is missing and has no default/);
+  });
+
+  test('the multi-row locator names the offending row index, and nothing partial lands', () => {
+    const base = exportState(db);
+    const bad = {
+      ...base,
+      tasks: [
+        { id: 't_ok', board_id: null, title: 'fine', status: 'ready', created_at: 1, updated_at: 1 },
+        { id: 't_bad', board_id: null, title: 'bad', status: 'ready', created_at: true, updated_at: 1 },
+      ],
+    };
+    expect(() => importState(db, bad, { replace: true })).toThrow(
+      /Snapshot table "tasks" row 1 \(id "t_bad"\): column "created_at" expects an integer, got the boolean true/,
+    );
+    // No partial import: the first, well-formed row never landed either.
+    expect(listTasks(db)).toHaveLength(0);
+  });
+
+  test('an ALTER-TABLE-backfilled column is covered by the same model', () => {
+    expect(() => importState(db, snapshotWithTask({ heartbeat_at: 'soon' }), { replace: true })).toThrow(
+      /column "heartbeat_at" expects an integer, got the string "soon"/,
+    );
+    expect(() => importState(db, snapshotWithTask({ assigned_agent: 7 }), { replace: true })).toThrow(
+      /column "assigned_agent" expects a string, got the number 7/,
+    );
+  });
+
+  test('a well-typed snapshot still imports, and wish_groups rows stay tolerated-and-dropped', () => {
+    const base = exportState(db);
+    const good = {
+      ...base,
+      tasks: [{ id: 't_probe', board_id: null, title: 'probe', status: 'ready', created_at: 1, updated_at: 2 }],
+      // Dead machinery: never inserted, therefore never column-validated.
+      wish_groups: [{ wish: 'w', name: 'g', status: 'nonsense', depends_on: [], created_at: 'x' }],
+    };
+    const summary = importState(db, good, { replace: true });
+    expect(summary.tasks).toBe(1);
+    expect(summary.wishGroups).toBe(0);
+    expect(listTasks(db)[0].title).toBe('probe');
+  });
+});
+
+/**
+ * Regression (dogfood r2 minor 15 / cosmetic c3): liveness is only meaningful
+ * for a claimed card, and an empty board ref is an unset variable, never a
+ * request for every task in the repo.
+ */
+describe('typed refusals — heartbeat and board scoping', () => {
+  test('recordHeartbeat refuses an unclaimed card and writes nothing', () => {
+    const task = createTask(db, { title: 'unclaimed' });
+    expect(() => recordHeartbeat(db, task.id)).toThrow(TaskNotClaimedError);
+    expect(() => recordHeartbeat(db, task.id)).toThrow(/not claimed/);
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBeNull();
+  });
+
+  test('recordHeartbeat stamps a claimed card, and refuses again after release', () => {
+    const task = createTask(db, { title: 'claimed' });
+    claimTask(db, task.id, 'w1');
+    expect(recordHeartbeat(db, task.id, 4242)).toBe(4242);
+    expect(getTaskCard(db, task.id)?.heartbeatAt).toBe(4242);
+    releaseTask(db, task.id, HUMAN);
+    expect(() => recordHeartbeat(db, task.id)).toThrow(TaskNotClaimedError);
+  });
+
+  test('recordHeartbeat on an unknown id is still UnknownTaskError', () => {
+    expect(() => recordHeartbeat(db, 't_nope')).toThrow(UnknownTaskError);
+  });
+
+  test('resolveBoard refuses an empty ref instead of widening the scope', () => {
+    createBoard(db, 'main');
+    expect(() => resolveBoard(db, '')).toThrow(EmptyBoardRefError);
+    expect(() => resolveBoard(db, '   ')).toThrow(/board id must not be empty/);
+    expect(resolveBoard(db, 'main').name).toBe('main');
   });
 });
 
@@ -1848,4 +2305,98 @@ try {
     expect(releaseEvents.length).toBe(1);
     expect(releaseEvents[0].note).toBe('completed');
   }, 30_000);
+});
+
+describe('mutating verbs return the row their own write captured', () => {
+  /**
+   * Make a concurrent hard-delete land in the window a post-commit re-read would
+   * have used: the row is gone the instant the verb's transaction commits. A
+   * verb that read the card back AFTER its commit returns `null` through an
+   * unchecked `as TaskRow` cast, which the CLI surfaces as the raw
+   * `null is not an object` TypeError; a verb whose write captured the row
+   * (RETURNING, or a read inside the transaction) is unaffected.
+   */
+  function deleteOnCommit(connection: Database, taskId: string): void {
+    const originalTransaction = connection.transaction.bind(connection);
+    Object.defineProperty(connection, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as {
+          (...args: unknown[]): unknown;
+          immediate: (...args: unknown[]) => unknown;
+          deferred: (...args: unknown[]) => unknown;
+        };
+        const purge = <T>(result: T): T => {
+          connection.query('DELETE FROM task_events WHERE task_id = ?').run(taskId);
+          connection.query('DELETE FROM tasks WHERE id = ?').run(taskId);
+          return result;
+        };
+        const wrapped = (...args: unknown[]) => purge(transaction(...args));
+        wrapped.immediate = (...args: unknown[]) => purge(transaction.immediate(...args));
+        wrapped.deferred = (...args: unknown[]) => purge(transaction.deferred(...args));
+        return wrapped;
+      },
+    });
+  }
+
+  const verbs: Array<{ name: string; prepare?: (taskId: string) => void; run: (taskId: string) => TaskRow }> = [
+    { name: 'claimTask', run: (id) => claimTask(db, id, 'worker') },
+    { name: 'completeTask', run: (id) => completeTask(db, id) },
+    {
+      name: 'releaseTask',
+      prepare: (id) => {
+        claimTask(db, id, 'worker');
+      },
+      run: (id) => releaseTask(db, id, HUMAN),
+    },
+    { name: 'blockTask', run: (id) => blockTask(db, id, 'why', HUMAN) },
+    {
+      name: 'unblockTask',
+      prepare: (id) => {
+        blockTask(db, id, 'why', HUMAN);
+      },
+      run: (id) => unblockTask(db, id, HUMAN),
+    },
+    { name: 'moveTask', run: (id) => moveTask(db, id, 'Work', HUMAN).task },
+  ];
+
+  for (const verb of verbs) {
+    test(`${verb.name} survives a delete racing its commit`, () => {
+      const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+      const task = createTask(db, { title: 'raced card', boardId: board.id, lane: 'Idea' });
+      verb.prepare?.(task.id);
+      deleteOnCommit(db, task.id);
+
+      const returned = verb.run(task.id);
+      expect(returned.id).toBe(task.id);
+      expect(returned.title).toBe('raced card');
+      // The card really is gone — the verb reported its OWN write, not a re-read.
+      expect(getTask(db, task.id)).toBeNull();
+    });
+  }
+
+  test('createTask survives a delete racing its commit', () => {
+    const board = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
+    const probe = createTask(db, { title: 'probe', boardId: board.id });
+    db.query('DELETE FROM tasks WHERE id = ?').run(probe.id);
+    // The next generated id is unknown up front, so purge every task instead.
+    const originalTransaction = db.transaction.bind(db);
+    Object.defineProperty(db, 'transaction', {
+      configurable: true,
+      value: (callback: (...args: unknown[]) => unknown) => {
+        const transaction = originalTransaction(callback as never) as unknown as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => {
+          const result = transaction(...args);
+          db.query('DELETE FROM task_events').run();
+          db.query('DELETE FROM tasks').run();
+          return result;
+        };
+      },
+    });
+
+    const created = createTask(db, { title: 'raced creation', boardId: board.id });
+    expect(created.title).toBe('raced creation');
+    expect(created.status).toBe('ready');
+    expect(getTask(db, created.id)).toBeNull();
+  });
 });

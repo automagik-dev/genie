@@ -7,6 +7,10 @@ import { join } from 'node:path';
 const SCRIPT = join(import.meta.dir, 'reconcile-release-assets.sh');
 const VERSION = '5.260714.3';
 const CHANNEL = 'dev';
+// These fixtures execute the real shell pipeline with 20/28 assets and many
+// verifier subprocesses. A dev run takes ~7s locally, beyond Bun's 5s default.
+// Bound each pipeline itself, then allow grouped scenarios their own budget.
+const PIPELINE_TIMEOUT_MS = 30_000;
 const PLATFORMS = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'];
 function namesFor(channel: 'stable' | 'dev'): string[] {
   const channels = channel === 'stable' ? ['stable', 'dev'] : ['dev'];
@@ -299,6 +303,8 @@ save();
 
   const result = Bun.spawnSync(['bash', SCRIPT], {
     cwd: root,
+    timeout: PIPELINE_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
     env: {
       ...process.env,
       PATH: `${root}:${process.env.PATH ?? ''}`,
@@ -337,7 +343,7 @@ describe('exact GitHub release asset reconciliation', () => {
     // One by-id POST per asset — finer resumption than the old batch upload.
     expect(uploadCalls(state)).toHaveLength(NAMES.length);
     expect(state.usedClobber).not.toBe(true);
-  });
+  }, 60_000);
 
   test('expands exact descriptor inventory by selected-channel fanout', () => {
     for (const channel of ['dev', 'stable'] as const) {
@@ -351,7 +357,7 @@ describe('exact GitHub release asset reconciliation', () => {
     //   stable = 4 * (3 + 2*2) = 28
     expect(namesFor('dev')).toHaveLength(20);
     expect(namesFor('stable')).toHaveLength(28);
-  }, 15_000);
+  }, 120_000);
 
   test('never mutates a published prerelease; channel promotions require fresh immutable tags', () => {
     const devAssets = localAssets('dev-release', 'dev');
@@ -360,7 +366,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(stable.result.stderr.toString()).toContain('published immutable release');
     expect(stable.state.assets).toEqual(devAssets);
     expect(uploadCalls(stable.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('rejects missing and extra local inventory before any GitHub mutation', () => {
     const missing = run({ draft: true, assets: {} }, (dist) => rmSync(join(dist, NAMES[0])));
@@ -370,7 +376,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const extra = run({ draft: true, assets: {} }, (dist) => writeFileSync(join(dist, 'unexpected'), 'x'));
     expect(extra.result.exitCode).toBe(3);
     expect(calls(extra.state, 'gh')).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('rejects empty, symlinked, and directory local assets before GitHub mutation', () => {
     const empty = run({ draft: true, assets: {} }, (dist) => writeFileSync(join(dist, NAMES[0]), ''));
@@ -390,7 +396,7 @@ describe('exact GitHub release asset reconciliation', () => {
     });
     expect(symlink.result.exitCode).toBe(3);
     expect(calls(symlink.state, 'gh')).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('resumes authenticated partial drafts and rejects a cryptographically inconsistent mix', () => {
     const local = localAssets();
@@ -404,14 +410,14 @@ describe('exact GitHub release asset reconciliation', () => {
     const mismatch = run({ draft: true, assets: { [NAMES[0]]: 'different' } });
     expect(mismatch.result.exitCode).toBe(3);
     expect(uploadCalls(mismatch.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('a complete authenticated draft reuses prior nondeterministic bundle bytes', () => {
     const draft = run({ draft: true, assets: localAssets('older-run') });
     expect(draft.result.exitCode).toBe(0);
     expect(draft.result.stdout.toString()).toContain('preserves its complete authenticated draft inventory');
     expect(uploadCalls(draft.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('a retry rejects authenticated old descriptors bound to different candidate manifest bytes', () => {
     const stale = localAssets('older-run');
@@ -424,7 +430,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const retry = run({ draft: true, assets: stale });
     expect(retry.result.exitCode).toBe(3);
     expect(uploadCalls(retry.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('an interrupted draft preserves prior bundle bytes while uploading only missing assets', () => {
     const current = localAssets();
@@ -441,7 +447,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(resumed.state.assets[priorBundle]).toBe(partial[priorBundle]);
     expect(Object.keys(resumed.state.assets).sort()).toEqual([...NAMES].sort());
     expect(uploadCalls(resumed.state)).toHaveLength(NAMES.length - Object.keys(partial).length);
-  });
+  }, 60_000);
 
   test('reuses a complete published inventory only after pinned cryptographic verification', () => {
     const publishedAssets = localAssets('published');
@@ -465,7 +471,7 @@ describe('exact GitHub release asset reconciliation', () => {
         'https://github.com/automagik-dev/genie/.github/workflows/release-publish.yml@refs/heads/main',
       );
     }
-  });
+  }, 60_000);
 
   test('selects our release predicate when GitHub also attests the immutable release', () => {
     const publishedAssets = localAssets('published');
@@ -477,7 +483,7 @@ describe('exact GitHub release asset reconciliation', () => {
     // answered with GitHub's immutable-release attestation ahead of ours.
     expect(state.attestationBatchSizes).toHaveLength(8);
     expect(state.attestationBatchSizes?.every((size) => size === 2)).toBe(true);
-  });
+  }, 60_000);
 
   test('never repairs a partial published release or accepts remote extras', () => {
     const partial = run({ draft: false, prerelease: false, assets: { [NAMES[0]]: localAssets()[NAMES[0]] } });
@@ -489,7 +495,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(extra.result.exitCode).toBe(3);
     expect(extra.result.stderr.toString()).toContain('unexpected assets');
     expect(uploadCalls(extra.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('rejects duplicate and malformed remote inventory before upload', () => {
     const duplicate = run({
@@ -506,7 +512,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const malformed = run({ draft: true, assets: {}, remoteAssets: [{ name: 7 }] });
     expect(malformed.result.exitCode).toBe(3);
     expect(uploadCalls(malformed.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('rides out transient upload failures without duplicating or clobbering assets', () => {
     // One 502 on the first upload POST; the retry succeeds. Every asset lands
@@ -516,7 +522,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(Object.keys(state.assets).sort()).toEqual([...NAMES].sort());
     expect(state.usedClobber).not.toBe(true);
     expect((state.calls ?? []).every((call) => !call.args.includes('DELETE'))).toBe(true);
-  });
+  }, 60_000);
 
   test('an upload that landed but lost its response is skipped, and byte verification adjudicates', () => {
     // The first POST stores the bytes server-side but reports a transient
@@ -532,7 +538,7 @@ describe('exact GitHub release asset reconciliation', () => {
     const corrupt = run({ draft: true, assets: {}, uploadLandThenFail: 1, uploadCorruptFirst: true });
     expect(corrupt.result.exitCode).toBe(3);
     expect(corrupt.result.stderr.toString()).toContain('remote release asset verification failed after upload');
-  }, 30_000);
+  }, 120_000);
 
   test('fails closed before any mutation when the release cannot be resolved', () => {
     const unknown = run({ draft: true, assets: {}, failTimes: { 'releases/tags': 99 } });
@@ -544,7 +550,7 @@ describe('exact GitHub release asset reconciliation', () => {
     expect(absent.result.exitCode).toBe(3);
     expect(absent.result.stderr.toString()).toContain('run prepare first');
     expect(uploadCalls(absent.state)).toHaveLength(0);
-  });
+  }, 60_000);
 
   test('propagates upload and verification failures', () => {
     const upload = run({ draft: true, assets: {}, failOn: 'uploads.github.com' });
@@ -572,5 +578,5 @@ describe('exact GitHub release asset reconciliation', () => {
     const nativePolicy = run({ draft: false, assets: localAssets('published'), invalidNative: true });
     expect(nativePolicy.result.exitCode).not.toBe(0);
     expect(uploadCalls(nativePolicy.state)).toHaveLength(0);
-  }, 15_000);
+  }, 120_000);
 });

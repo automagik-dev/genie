@@ -47,6 +47,7 @@ import {
   type VerifyResult,
   _resetNextDeprecationLatchForTest,
   applyConvergenceExitSignal,
+  classifyAttestationCrossCheck,
   compareVersions,
   createPrivateUpdateTempRoot,
   decideDowngrade,
@@ -59,6 +60,7 @@ import {
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
+  isGhUnavailable,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -69,6 +71,7 @@ import {
   resolveUpdateExecutionMode,
   resumePendingDelivery,
   rollbackBinaryAt,
+  runCommandSilent,
   runFreshBinaryPostDeliveryConvergence,
   runManualUpdateConvergence,
   runNormalUpdatePublicationBoundary,
@@ -501,8 +504,16 @@ describe('updateCommand wiring', () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const events: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    // Every line leaves through the colour-gated sink (src/lib/term-output.ts),
+    // so the capture sits on the streams, not on console.
+    const logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      stdout.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    const errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderr.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
     process.exitCode = undefined;
     // Millisecond-scale so the bounded poll is exercised, not endured. 500ms
     // (not 60ms) so a GC/scheduler pause cannot collapse the 25ms poll loop to
@@ -561,7 +572,7 @@ describe('updateCommand wiring', () => {
     } finally {
       logSpy.mockRestore();
       errorSpy.mockRestore();
-      process.exitCode = priorExitCode;
+      process.exitCode = priorExitCode ?? 0;
       if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
       else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
     }
@@ -571,8 +582,16 @@ describe('updateCommand wiring', () => {
     const priorExitCode = process.exitCode;
     const stdout: string[] = [];
     const stderr: string[] = [];
-    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => stdout.push(args.join(' ')));
-    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => stderr.push(args.join(' ')));
+    // Every line leaves through the colour-gated sink (src/lib/term-output.ts),
+    // so the capture sits on the streams, not on console.
+    const logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      stdout.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+    const errorSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderr.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
     let successFinalizers = 0;
     process.exitCode = undefined;
     try {
@@ -1133,172 +1152,449 @@ describe('private external update staging', () => {
   });
 });
 
-describe('downloadAndVerifyTarball (G5)', () => {
-  const manifest: LatestManifest = {
+// ============================================================================
+// Release signature gate (dogfood round 6, Z1).
+//
+// Before 2026-09-16 `downloadAndVerifyTarball` required `gh attestation verify`
+// to succeed, so `genie update --stable` failed outright on any host without an
+// authenticated GitHub CLI even though every Genie release is public. The gate
+// now has two halves:
+//
+//   MANDATORY  the release's signed delivery evidence, verified in-process
+//              (pinned workflow identity + OIDC issuer via the embedded
+//              public-good trust root, pinned custom predicate type, DSSE
+//              subject == sha256(exact descriptor bytes), descriptor
+//              artifactSha256 == sha256(downloaded tarball)).
+//   ADVISORY   `gh attestation verify` over the sign-attest.yml tarball
+//              attestation — a bonus when gh is usable, never a requirement.
+//
+// The `evidenceVerification` seam below stubs ONLY the Sigstore signature math;
+// every descriptor/manifest/statement/caller binding stays live. The end-to-end
+// cryptographic half runs against a real published release's assets in
+// src/lib/delivery-evidence-verify.test.ts.
+// ============================================================================
+
+const HOST_PLATFORM_ID =
+  process.platform === 'darwin' ? 'darwin-arm64' : process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64-glibc';
+
+/** Signature-math seam only — never a binding seam. */
+const EVIDENCE_SEAM = { verifyBundle: () => ({ integratedTime: '1758000000' }) };
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+interface ReleaseFixture {
+  manifest: LatestManifest;
+  tarballName: string;
+  tarballBytes: string;
+  descriptor: Record<string, unknown>;
+}
+
+function buildReleaseFixture(
+  opts: { version?: string; channel?: 'stable' | 'dev'; platformId?: string; tarballBytes?: string } = {},
+): ReleaseFixture {
+  const version = opts.version ?? '5.260916.1';
+  const channel = opts.channel ?? 'stable';
+  const platformId = opts.platformId ?? HOST_PLATFORM_ID;
+  const tarballBytes = opts.tarballBytes ?? 'fake-tarball-bytes';
+  const releaseTag = `v${version}`;
+  const tarballName = `genie-${version}-${platformId}.tar.gz`;
+  const manifestObject = {
     schema_version: 1,
-    channel: 'stable',
-    version: '4.260509.5',
-    released_at: '2026-05-09T22:11:00Z',
-    tarball_base: 'https://github.com/automagik-dev/genie/releases/download/v4.260509.5',
-    platforms: ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'],
-    manifestBytes: '{}',
-    manifestSha256: '0'.repeat(64),
+    channel,
+    version,
+    released_at: '2026-09-16T00:00:00Z',
+    tarball_base: `https://github.com/automagik-dev/genie/releases/download/${releaseTag}`,
+    platforms: [platformId],
   };
+  const manifestBytes = `${JSON.stringify(manifestObject, null, 2)}\n`;
+  return {
+    manifest: {
+      ...manifestObject,
+      channel: channel as LatestManifest['channel'],
+      manifestBytes,
+      manifestSha256: sha256Hex(manifestBytes),
+    },
+    tarballName,
+    tarballBytes,
+    descriptor: {
+      schemaVersion: 1,
+      repository: 'automagik-dev/genie',
+      version,
+      channel,
+      platformId,
+      platformTriple: `${process.platform}-${process.arch}`,
+      releaseTag,
+      releaseName: tarballName,
+      releaseManifestSha256: sha256Hex(manifestBytes),
+      artifactSha256: sha256Hex(tarballBytes),
+      installedBinarySha256: 'd'.repeat(64),
+      canonicalPayloadSha256: 'e'.repeat(64),
+      sourceSha: 'a'.repeat(40),
+      sourceBranch: channel === 'stable' ? 'main' : 'dev',
+      sourceCiRunId: '35040810369',
+      controlSha: 'b'.repeat(40),
+      digestAlgorithm: 'genie-physical-tree-v1',
+    },
+  };
+}
+
+function writeReleaseAssets(
+  dir: string,
+  fixture: ReleaseFixture,
+  overrides: {
+    descriptor?: Record<string, unknown>;
+    predicateType?: string;
+    subjectSha256?: string;
+    omitEvidence?: boolean;
+  } = {},
+): void {
+  writeFileSync(join(dir, fixture.tarballName), fixture.tarballBytes);
+  writeFileSync(join(dir, `${fixture.tarballName}.bundle`), 'tarball-attestation-bundle');
+  if (overrides.omitEvidence) return;
+  const descriptorBytes = `${JSON.stringify({ ...fixture.descriptor, ...overrides.descriptor }, null, 2)}\n`;
+  const statement = {
+    _type: 'https://in-toto.io/Statement/v1',
+    subject: [
+      {
+        name: 'delivery-evidence.json',
+        digest: { sha256: overrides.subjectSha256 ?? sha256Hex(descriptorBytes) },
+      },
+    ],
+    predicateType: overrides.predicateType ?? 'https://github.com/automagik-dev/genie/delivery-evidence/v1',
+    predicate: { schemaVersion: 1 },
+  };
+  const descriptorPath = join(dir, `${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`);
+  writeFileSync(descriptorPath, descriptorBytes);
+  writeFileSync(
+    `${descriptorPath}.sigstore.json`,
+    JSON.stringify({
+      mediaType: 'application/vnd.dev.sigstore.bundle.v0.3+json',
+      dsseEnvelope: {
+        payload: Buffer.from(JSON.stringify(statement), 'utf8').toString('base64'),
+        payloadType: 'application/vnd.in-toto+json',
+        signatures: [{ keyid: '', sig: 'AA==' }],
+      },
+      verificationMaterial: { certificate: { rawBytes: 'AA==' }, tlogEntries: [] },
+    }),
+  );
+}
+
+interface RunnerCall {
+  cmd: string;
+  args: string[];
+  timeoutMs?: number;
+}
+
+/**
+ * Both spellings of "there is no `gh` on this PATH". Node's `child_process`
+ * says `spawn gh ENOENT`; Bun says `Executable not found in $PATH: "gh"` and
+ * puts the errno only on the error object. The shipped `genie` is a compiled
+ * Bun binary, so BUN_GH_ABSENT is the wording real hosts produce — asserting
+ * only the Node spelling is what let the absent-gh bug ship green (Z1).
+ */
+const NODE_GH_ABSENT = 'spawn gh ENOENT';
+const BUN_GH_ABSENT = 'Executable not found in $PATH: "gh"';
+const GH_ABSENT_OUTPUTS: ReadonlyArray<[string, string]> = [
+  ['node runtime wording', NODE_GH_ABSENT],
+  ['bun runtime wording (the shipped binary)', BUN_GH_ABSENT],
+];
+
+/** Stub gh: `release download` materializes the release assets, `attestation
+ *  verify` answers with whatever this host's gh would have said. Set
+ *  `ghDownload` to simulate a host where `gh` cannot run at all — then the
+ *  assets appear only once the public-URL `curl` fallback is invoked. */
+function stubGh(
+  dir: string,
+  fixture: ReleaseFixture,
+  attestation: { success: boolean; output: string },
+  overrides?: Parameters<typeof writeReleaseAssets>[2],
+  ghDownload: 'ok' | 'unavailable' = 'ok',
+  ghDownloadOutput: string = BUN_GH_ABSENT,
+): {
+  runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>;
+  calls: RunnerCall[];
+} {
+  const calls: RunnerCall[] = [];
+  const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
+    calls.push({ cmd, args, timeoutMs });
+    if (cmd === 'gh' && args[0] === 'release') {
+      if (ghDownload === 'unavailable') return { success: false, output: ghDownloadOutput };
+      writeReleaseAssets(dir, fixture, overrides);
+      return { success: true, output: '' };
+    }
+    if (cmd === 'curl') {
+      writeReleaseAssets(dir, fixture, overrides);
+      return { success: true, output: '' };
+    }
+    if (cmd === 'gh' && args[0] === 'attestation') return attestation;
+    return { success: false, output: `unexpected subprocess: ${cmd}` };
+  };
+  return { runner, calls };
+}
+
+describe('classifyAttestationCrossCheck', () => {
+  test('a zero exit is a verified cross-check', () => {
+    expect(classifyAttestationCrossCheck({ success: true, output: '' })).toEqual({ kind: 'verified' });
+  });
+
+  test.each([
+    [
+      'unauthenticated gh',
+      'To get started with GitHub CLI, please run: gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.',
+    ],
+    ['gh not installed (node wording)', NODE_GH_ABSENT],
+    ['gh not installed (bun wording — the shipped binary)', BUN_GH_ABSENT],
+    ['gh too old for attestation', 'unknown command "attestation" for "gh"'],
+    ['verify round-trip timed out', 'Timed out after 60000ms'],
+    ['offline host', 'dial tcp: lookup api.github.com: no such host'],
+  ])('treats %s as unavailable, not as a bad signature', (_label, output) => {
+    expect(classifyAttestationCrossCheck({ success: false, output }).kind).toBe('unavailable');
+  });
+
+  test.each([
+    ['no attestation on the artifact', 'no matching attestation found for subject'],
+    ['identity mismatch', 'verification failed: certificate identity mismatch'],
+  ])('treats %s as a hard failure', (_label, output) => {
+    expect(classifyAttestationCrossCheck({ success: false, output }).kind).toBe('failed');
+  });
+
+  // Z1 regression: the classifier is fed by `runCommandSilent`, whose "missing
+  // binary" wording is decided by the RUNTIME, not by this file. Spawn a
+  // genuinely absent binary through the production wrapper so the assertion
+  // tracks whatever Bun (the shipped runtime) actually emits instead of a
+  // hardcoded Node string that no released binary ever produces.
+  test('a genuinely missing binary spawned through runCommandSilent classifies as unavailable', async () => {
+    const result = await runCommandSilent('genie-no-such-binary-zzz', ['--version']);
+    expect(result.success).toBe(false);
+    expect(isGhUnavailable(result.output)).toBe(true);
+    expect(classifyAttestationCrossCheck(result).kind).toBe('unavailable');
+  });
+});
+
+describe('downloadAndVerifyTarball (G5)', () => {
+  let tmp: string;
+  let notices: string[];
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
+    notices = [];
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const opts = (
+    runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
+  ) => ({
+    runner,
+    evidenceVerification: EVIDENCE_SEAM,
+    notice: (message: string) => notices.push(message),
+  });
 
   test('issues gh release download with the correct version tag and pattern set', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      const calls: Array<{ cmd: string; args: string[]; timeoutMs?: number }> = [];
-      // Stub runner: capture every gh invocation, place the tarball where
-      // downloadAndVerifyTarball expects it on the success path.
-      const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
-        calls.push({ cmd, args, timeoutMs });
-        if (cmd === 'gh' && args[0] === 'release') {
-          // Drop a placeholder tarball so the existsSync check passes.
-          const tarballName = `genie-${manifest.version}-linux-x64-glibc.tar.gz`;
-          writeFileSync(join(tmp, tarballName), 'fake-tarball-bytes');
-        }
-        return { success: true, output: '' };
-      };
-      const tarballPath = await downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner });
-      expect(tarballPath).toBe(join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`));
-      // First call — release download with v<version>.
-      expect(calls[0].cmd).toBe('gh');
-      expect(calls[0].args).toContain('release');
-      expect(calls[0].args).toContain('download');
-      expect(calls[0].args).toContain(`v${manifest.version}`);
-      // Patterns include tarball + sidecar artifacts.
-      const argString = calls[0].args.join(' ');
-      expect(argString).toContain(`genie-${manifest.version}-linux-x64-glibc.tar.gz`);
-      expect(argString).toContain('.bundle');
-      expect(argString).toContain('.intoto.jsonl');
-      // 37MB+ tarballs outgrew runCommandSilent's 4s default (v5.260714.8
-      // timeout regression) — the download must carry its own generous bound.
-      expect(calls[0].timeoutMs).toBe(300_000);
-      // Second call — gh attestation verify with workflow identity pinned.
-      expect(calls[1].cmd).toBe('gh');
-      expect(calls[1].args).toEqual([
-        'attestation',
-        'verify',
-        tarballPath,
-        '--repo',
-        'automagik-dev/genie',
-        // Must match the custom predicate type registered by sign-attest.yml,
-        // else `gh attestation verify` defaults to slsa.dev/provenance/v1 and
-        // 404s the by-digest lookup (the shipped-tarball regression).
-        '--predicate-type',
-        'https://github.com/automagik-dev/genie/release-tarballs/v1',
-        '--cert-identity-regex',
-        '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
-        '--cert-oidc-issuer',
-        'https://token.actions.githubusercontent.com',
-      ]);
-      expect(calls[1].timeoutMs).toBe(60_000);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    const fixture = buildReleaseFixture();
+    const { runner, calls } = stubGh(tmp, fixture, { success: true, output: '' });
+
+    const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner));
+    expect(tarballPath).toBe(join(tmp, fixture.tarballName));
+
+    expect(calls[0].cmd).toBe('gh');
+    expect(calls[0].args).toContain('release');
+    expect(calls[0].args).toContain('download');
+    expect(calls[0].args).toContain(`v${fixture.manifest.version}`);
+    const argString = calls[0].args.join(' ');
+    expect(argString).toContain(fixture.tarballName);
+    expect(argString).toContain('.bundle');
+    expect(argString).toContain('.intoto.jsonl');
+    expect(argString).toContain(`.${fixture.manifest.channel}.delivery.json`);
+    expect(argString).toContain('.sigstore.json');
+    // 37MB+ tarballs outgrew runCommandSilent's 4s default (v5.260714.8
+    // timeout regression) — the download must carry its own generous bound.
+    expect(calls[0].timeoutMs).toBe(300_000);
+    // Second call — the ADVISORY gh attestation cross-check, identity pinned.
+    expect(calls[1].cmd).toBe('gh');
+    expect(calls[1].args).toEqual([
+      'attestation',
+      'verify',
+      tarballPath,
+      '--repo',
+      'automagik-dev/genie',
+      // Must match the custom predicate type registered by sign-attest.yml,
+      // else `gh attestation verify` defaults to slsa.dev/provenance/v1 and
+      // 404s the by-digest lookup (the shipped-tarball regression).
+      '--predicate-type',
+      'https://github.com/automagik-dev/genie/release-tarballs/v1',
+      '--cert-identity-regex',
+      '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+      '--cert-oidc-issuer',
+      'https://token.actions.githubusercontent.com',
+    ]);
+    expect(calls[1].timeoutMs).toBe(60_000);
+    // gh verified too, so there is nothing to explain in the transcript.
+    expect(notices).toEqual([]);
   });
 
   test('throws when gh release download fails', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      const runner = async () => ({ success: false, output: 'release not found' });
-      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
-        /gh release download/,
-      );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    const fixture = buildReleaseFixture();
+    const runner = async () => ({ success: false, output: 'release not found' });
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      /gh release download/,
+    );
   });
 
-  test('throws when attestation verification fails', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      let call = 0;
-      const runner = async (_cmd: string, _args: string[]) => {
-        call++;
-        if (call === 1) {
-          // download succeeds — drop the file
-          writeFileSync(join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`), 'x');
-          return { success: true, output: '' };
-        }
-        // attestation verify fails
-        return { success: false, output: 'no matching attestation' };
-      };
-      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
-        /attestation verify/,
-      );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+  // --- Z1: a public release installs without a GitHub credential ------------
+
+  test.each([
+    [
+      '--stable on a host with no GitHub credential',
+      'stable' as const,
+      'To get started with GitHub CLI, please run: gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.',
+    ],
+    ['--dev on a host with no gh binary at all (node wording)', 'dev' as const, NODE_GH_ABSENT],
+    ['--dev on a host with no gh binary at all (bun wording)', 'dev' as const, BUN_GH_ABSENT],
+  ])('verifies %s from the signed delivery evidence alone', async (_label, channel, ghOutput) => {
+    const fixture = buildReleaseFixture({ channel });
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: ghOutput });
+
+    const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner));
+
+    expect(tarballPath).toBe(join(tmp, fixture.tarballName));
+    // Exactly one transcript line, and it names the offline route the user got.
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('gh attestation cross-check unavailable');
+    expect(notices[0]).toContain('verified offline from its signed delivery evidence');
+    // Still no cosign subprocess, and no third command of any kind.
+    expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh']);
   });
 
-  test('fails closed instead of minting delivery facts from the reduced cosign fallback', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
-      const bundlePath = `${tarballPath}.bundle`;
-      const calls: Array<{ cmd: string; args: string[]; timeoutMs?: number }> = [];
-      const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
-        calls.push({ cmd, args, timeoutMs });
-        if (cmd === 'gh' && args[0] === 'release') {
-          writeFileSync(tarballPath, 'x');
-          writeFileSync(bundlePath, 'bundle');
-          return { success: true, output: '' };
-        }
-        if (cmd === 'gh' && args[0] === 'attestation') {
-          return { success: false, output: 'Timed out after 60000ms' };
-        }
-        return { success: true, output: '' };
-      };
-
-      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
-        /reduced cosign verify-blob proof does not validate/,
+  test.each(GH_ABSENT_OUTPUTS)(
+    'falls back to the public release URL when gh cannot run at all (%s)',
+    async (_label, ghAbsent) => {
+      const fixture = buildReleaseFixture();
+      const { runner, calls } = stubGh(
+        tmp,
+        fixture,
+        { success: false, output: ghAbsent },
+        undefined,
+        'unavailable',
+        ghAbsent,
       );
-      expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh']);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+
+      const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner));
+      expect(tarballPath).toBe(join(tmp, fixture.tarballName));
+
+      const curlCalls = calls.filter((call) => call.cmd === 'curl');
+      // Every URL is built from the PINNED owner/repo, never from a manifest field.
+      const urls = curlCalls.map((call) => call.args[call.args.length - 1]);
+      for (const url of urls) {
+        expect(
+          url.startsWith(`https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/`),
+        ).toBe(true);
+      }
+      expect(urls).toContain(
+        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`,
+      );
+      expect(urls).toContain(
+        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json.sigstore.json`,
+      );
+      expect(notices.some((line) => line.includes('gh release download unavailable'))).toBe(true);
+      expect(notices.some((line) => line.includes('gh attestation cross-check unavailable'))).toBe(true);
+    },
+  );
+
+  test('a gh that ran and answered is a real download failure, not a reason to fall back', async () => {
+    const fixture = buildReleaseFixture();
+    const calls: RunnerCall[] = [];
+    const runner = async (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      return { success: false, output: 'release not found' };
+    };
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      /gh release download/,
+    );
+    expect(calls.map((call) => call.cmd)).toEqual(['gh']);
   });
 
-  test('reports the primary attestation failure and never invokes cosign', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      const tarballPath = join(tmp, `genie-${manifest.version}-linux-x64-glibc.tar.gz`);
-      const runner = async (cmd: string, args: string[]) => {
-        if (cmd === 'gh' && args[0] === 'release') {
-          writeFileSync(tarballPath, 'x');
-          writeFileSync(`${tarballPath}.bundle`, 'bundle');
-          return { success: true, output: '' };
-        }
-        if (cmd === 'gh' && args[0] === 'attestation') {
-          return { success: false, output: 'no matching attestation' };
-        }
-        return { success: false, output: 'invalid signature' };
-      };
-      await expect(downloadAndVerifyTarball(manifest, 'linux-x64-glibc', tmp, { runner })).rejects.toThrow(
-        /gh attestation verify: no matching attestation/,
-      );
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+  test('a cross-check timeout is not a bad signature and never shells out to cosign', async () => {
+    const fixture = buildReleaseFixture();
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: 'Timed out after 60000ms' });
+
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).resolves.toBe(
+      join(tmp, fixture.tarballName),
+    );
+    expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh']);
+  });
+
+  // --- Z1: the security floor does not drop --------------------------------
+
+  test('aborts when gh reports a genuine verification failure', async () => {
+    const fixture = buildReleaseFixture();
+    const { runner } = stubGh(tmp, fixture, { success: false, output: 'no matching attestation' });
+
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      /gh attestation verify: no matching attestation/,
+    );
+    expect(notices).toEqual([]);
+  });
+
+  test('aborts when the signed delivery evidence is absent', async () => {
+    const fixture = buildReleaseFixture();
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: BUN_GH_ABSENT }, { omitEvidence: true });
+
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      /signed delivery evidence is incomplete/,
+    );
+    // No credential, no evidence, no install — and the advisory cross-check is
+    // never reached, so an unauthenticated host cannot be talked into skipping.
+    expect(calls.map((call) => call.cmd)).toEqual(['gh']);
+  });
+
+  test.each([
+    [
+      'the predicate type is not the pinned delivery-evidence type',
+      { predicateType: 'https://slsa.dev/provenance/v1' },
+      /predicate type/,
+    ],
+    [
+      'the DSSE subject does not bind the exact descriptor bytes',
+      { subjectSha256: 'f'.repeat(64) },
+      /exact descriptor bytes/,
+    ],
+    [
+      'the signed artifactSha256 is not the downloaded tarball digest',
+      { descriptor: { artifactSha256: 'f'.repeat(64) } },
+      /artifactSha256 does not match/,
+    ],
+    [
+      'the signed release name is for another platform',
+      { descriptor: { releaseName: 'genie-5.260916.1-darwin-arm64.tar.gz' } },
+      /releaseName is invalid/,
+    ],
+  ])('aborts when %s, without a credential to hide behind', async (_label, overrides, expected) => {
+    const fixture = buildReleaseFixture();
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: BUN_GH_ABSENT }, overrides);
+
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      expected,
+    );
+    expect(calls.map((call) => call.cmd)).toEqual(['gh']);
+    expect(notices).toEqual([]);
   });
 
   test('skipAttestation skips signature verification calls', async () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'genie-update-dl-'));
-    try {
-      const calls: Array<{ cmd: string; args: string[] }> = [];
-      const runner = async (cmd: string, args: string[]) => {
-        calls.push({ cmd, args });
-        writeFileSync(join(tmp, `genie-${manifest.version}-darwin-arm64.tar.gz`), 'x');
-        return { success: true, output: '' };
-      };
-      await downloadAndVerifyTarball(manifest, 'darwin-arm64', tmp, { runner, skipAttestation: true });
-      expect(calls).toHaveLength(1);
-      expect(calls[0].args[0]).toBe('release');
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    const fixture = buildReleaseFixture();
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const runner = async (cmd: string, args: string[]) => {
+      calls.push({ cmd, args });
+      writeFileSync(join(tmp, fixture.tarballName), fixture.tarballBytes);
+      return { success: true, output: '' };
+    };
+    await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, { runner, skipAttestation: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args[0]).toBe('release');
   });
 });
 
@@ -1449,10 +1745,17 @@ describe('Diagnostics schema (G5)', () => {
     expect(isGenieProcessSnapshotLine('2588570 1 2588570 S postgres -D /home/genie/.genie/data/pgserve')).toBe(false);
   });
 
-  test('NO_COLOR honored via colorEnabled() helper', () => {
+  test('colour is delegated to the one gate — update.ts keeps no private NO_COLOR copy', () => {
+    // m15: the local gate this replaced read `process.stdout.isTTY` for every
+    // line (stderr ones included) and never honoured TERM=dumb. Every line now
+    // leaves through src/lib/term-output.ts, which asks src/lib/term-color.ts
+    // about the stream it is actually writing to.
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain('process.env.NO_COLOR');
-    expect(source).toContain('colorEnabled');
+    expect(source).toContain("from '../lib/term-output.js'");
+    expect(source).not.toContain('process.env.NO_COLOR');
+    expect(source).not.toContain('function colorEnabled');
+    expect(source).not.toContain('console.log(');
+    expect(source).not.toContain('process.stderr.write(');
   });
 });
 
@@ -2207,7 +2510,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   });
 
   afterEach(() => {
-    process.exitCode = previousExitCode;
+    process.exitCode = previousExitCode ?? 0;
   });
 
   test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {

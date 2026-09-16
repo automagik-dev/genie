@@ -34,11 +34,16 @@
  *   - the CLI's own "Found N skills" count, when printed, equals the number of
  *     names parsed (so a parser drift cannot silently shrink both sides).
  *
- * Anything else exits 1 with every failure named. There is no `--fix`: the
- * remedy is a source change, not a rewrite of CI's view of the source.
+ * It also owns the `skills/README.md` catalog block: the default run fails when
+ * that block is stale, and `--write` regenerates it from the tree:
+ *   bun scripts/skills-inventory-parity.ts --write
+ *
+ * Anything else exits 1 with every failure named. There is no `--fix` for the
+ * inventory itself: the remedy is a source change, not a rewrite of CI's view
+ * of the source.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
 /** Mirrors `SKILL_NAME_PATTERN` in src/lib/skills-installer.ts. */
@@ -279,17 +284,205 @@ export function formatSkillsInventoryParityFailures(report: SkillsInventoryParit
   return failures;
 }
 
+/**
+ * The closed `category` enum. Order is the rendering order of the
+ * `skills/README.md` catalog table, so it is a contract, not a detail.
+ */
+export const SKILL_CATEGORIES = [
+  'lifecycle',
+  'routing',
+  'delivery',
+  'investigation',
+  'authoring',
+  'verification',
+  'integration',
+  'skill-ops',
+] as const;
+export type SkillCategory = (typeof SKILL_CATEGORIES)[number];
+
+/**
+ * The closed `mutates` enum. ADVISORY metadata: it describes the widest blast
+ * radius a skill's body claims, and no code path gates on it. Its one
+ * enforcement is the `mutates: none` fence rule in `scripts/skills-lint.ts`.
+ */
+export const SKILL_MUTATES_LEVELS = ['none', 'documents', 'repo', 'external'] as const;
+export type SkillMutates = (typeof SKILL_MUTATES_LEVELS)[number];
+
+export interface FrontmatterParse {
+  /** `null` when the block is structurally absent or unterminated. */
+  fields: Map<string, string> | null;
+  violations: string[];
+}
+
+/**
+ * The ONE SKILL.md frontmatter reader. Deliberately a one-line `key: value`
+ * regex — nested keys are unsupported by both this parser and the DSH catalog
+ * reader, so a nested key is a parser rewrite, not a key addition.
+ *
+ * `scripts/skills-lint.ts` layers the allowed-key and enum contracts on top of
+ * this; nothing re-implements the block scan.
+ */
+export function parseSkillFrontmatter(text: string): FrontmatterParse {
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== '---') return { fields: null, violations: ['SKILL.md must start with YAML frontmatter'] };
+  const end = lines.indexOf('---', 1);
+  if (end < 0) return { fields: null, violations: ['SKILL.md frontmatter is not closed'] };
+
+  const fields = new Map<string, string>();
+  const violations: string[] = [];
+  for (const line of lines.slice(1, end)) {
+    if (line.trim() === '') continue;
+    const match = /^([a-z][a-z0-9_-]*):\s*(.+)$/.exec(line);
+    if (!match) {
+      violations.push(`unsupported frontmatter syntax: ${line.trim()}`);
+      continue;
+    }
+    const [, key, value] = match as unknown as [string, string, string];
+    if (fields.has(key)) violations.push(`duplicate frontmatter field: ${key}`);
+    fields.set(key, unquote(value.trim()));
+  }
+  return { fields, violations };
+}
+
+function unquote(value: string): string {
+  return value.replace(/^['"]|['"]$/g, '');
+}
+
+export interface SkillCatalogEntry {
+  name: string;
+  /** `null` when the optional key is absent — absent is legal. */
+  category: string | null;
+  mutates: string | null;
+  description: string;
+}
+
+/** The catalog block markers in `skills/README.md`. */
+export const CATALOG_START_MARKER = '<!-- skills-catalog:start -->';
+export const CATALOG_END_MARKER = '<!-- skills-catalog:end -->';
+
+/** Derive the catalog from the tree. Never hand-listed: new skills appear here the moment their directory does. */
+export function readSkillCatalog(skillsRoot: string): SkillCatalogEntry[] {
+  const entries: SkillCatalogEntry[] = [];
+  for (const name of scanRepoSkills(skillsRoot, skillsRoot).names) {
+    const parsed = parseSkillFrontmatter(readFileSync(join(skillsRoot, name, 'SKILL.md'), 'utf8'));
+    const fields = parsed.fields;
+    entries.push({
+      name,
+      category: fields?.get('category') ?? null,
+      mutates: fields?.get('mutates') ?? null,
+      description: fields?.get('description') ?? '',
+    });
+  }
+  return entries.sort(compareCatalogEntries);
+}
+
+function categoryRank(category: string | null): number {
+  const index = (SKILL_CATEGORIES as readonly string[]).indexOf(category ?? '');
+  return index === -1 ? SKILL_CATEGORIES.length : index;
+}
+
+function compareCatalogEntries(left: SkillCatalogEntry, right: SkillCatalogEntry): number {
+  const byCategory = categoryRank(left.category) - categoryRank(right.category);
+  return byCategory !== 0 ? byCategory : left.name.localeCompare(right.name);
+}
+
+/** Escape the only markdown-table metacharacter a description can carry. */
+function cell(value: string): string {
+  return value.replace(/\|/g, '\\|').trim();
+}
+
+/** The exact block the README must contain, markers included. */
+export function renderSkillCatalogBlock(entries: readonly SkillCatalogEntry[]): string {
+  const rows = entries.map(
+    (entry) =>
+      `| \`${entry.name}\` | ${entry.category ?? '—'} | ${entry.mutates ?? '—'} | ${cell(entry.description)} |`,
+  );
+  return [
+    CATALOG_START_MARKER,
+    '',
+    '| Skill | Category | Mutates | Description |',
+    '|---|---|---|---|',
+    ...rows,
+    '',
+    CATALOG_END_MARKER,
+  ].join('\n');
+}
+
+export interface CatalogBlockCheck {
+  /** Operator-actionable failure lines; empty means the block is current. */
+  failures: string[];
+  expected: string;
+}
+
+/** Compare the README's stored block against the block the tree derives. */
+export function evaluateSkillCatalogBlock(
+  readmeText: string,
+  entries: readonly SkillCatalogEntry[],
+): CatalogBlockCheck {
+  const expected = renderSkillCatalogBlock(entries);
+  const start = readmeText.indexOf(CATALOG_START_MARKER);
+  const end = readmeText.indexOf(CATALOG_END_MARKER);
+  if (start === -1 || end === -1 || end < start) {
+    return {
+      failures: [
+        `skills/README.md is missing the ${CATALOG_START_MARKER} / ${CATALOG_END_MARKER} catalog block — regenerate it with \`bun scripts/skills-inventory-parity.ts --write\``,
+      ],
+      expected,
+    };
+  }
+  const actual = readmeText.slice(start, end + CATALOG_END_MARKER.length);
+  if (actual === expected) return { failures: [], expected };
+  return {
+    failures: [
+      'the skills/README.md catalog block is stale — regenerate it with `bun scripts/skills-inventory-parity.ts --write`',
+    ],
+    expected,
+  };
+}
+
+/** Rewrite the README block in place. Returns true when the file changed. */
+export function writeSkillCatalogBlock(readmePath: string, entries: readonly SkillCatalogEntry[]): boolean {
+  const text = readFileSync(readmePath, 'utf8');
+  const start = text.indexOf(CATALOG_START_MARKER);
+  const end = text.indexOf(CATALOG_END_MARKER);
+  if (start === -1 || end === -1 || end < start) {
+    throw new Error(`skills/README.md has no ${CATALOG_START_MARKER} / ${CATALOG_END_MARKER} catalog block to rewrite`);
+  }
+  const next = text.slice(0, start) + renderSkillCatalogBlock(entries) + text.slice(end + CATALOG_END_MARKER.length);
+  if (next === text) return false;
+  writeFileSync(readmePath, next, 'utf8');
+  return true;
+}
+
+/**
+ * The catalog half of the contract, for callers that hold a skills root:
+ * `scripts/skills-lint.ts` runs this so `bun run skills:lint` catches drift.
+ * A tree with no README (a lint fixture) has no catalog to be stale.
+ */
+export function checkSkillCatalogDrift(skillsRoot: string): string[] {
+  const readmePath = join(skillsRoot, 'README.md');
+  if (!existsSync(readmePath)) return [];
+  return evaluateSkillCatalogBlock(readFileSync(readmePath, 'utf8'), readSkillCatalog(skillsRoot)).failures;
+}
+
 interface CliOptions {
   repoRoot: string;
   listFile: string | null;
+  /** `--write`: regenerate the skills/README.md catalog block and exit. */
+  write: boolean;
 }
 
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let repoRoot = process.cwd();
   let listFile: string | null = null;
+  let write = false;
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
+    if (flag === '--write') {
+      write = true;
+      continue;
+    }
     if (flag === '--repo' || flag === '--list-file') {
       if (value === undefined) throw new Error(`${flag} requires a value`);
       if (flag === '--repo') repoRoot = isAbsolute(value) ? value : resolve(process.cwd(), value);
@@ -299,7 +492,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     }
     throw new Error(`unknown argument: ${flag}`);
   }
-  return { repoRoot, listFile };
+  return { repoRoot, listFile, write };
 }
 
 async function readListInput(listFile: string | null): Promise<string> {
@@ -315,8 +508,15 @@ async function main(): Promise<void> {
   if (!statSync(skillsRoot, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`no skills/ directory under ${options.repoRoot}`);
   }
+  if (options.write) {
+    const changed = writeSkillCatalogBlock(join(skillsRoot, 'README.md'), readSkillCatalog(skillsRoot));
+    console.log(
+      `skills-inventory-parity: skills/README.md catalog block ${changed ? 'regenerated' : 'already current'}`,
+    );
+    return;
+  }
   const report = evaluateSkillsInventoryParity(await readListInput(options.listFile), options.repoRoot);
-  const failures = formatSkillsInventoryParityFailures(report);
+  const failures = [...formatSkillsInventoryParityFailures(report), ...checkSkillCatalogDrift(skillsRoot)];
   if (failures.length === 0) {
     console.log(`skills-inventory-parity: OK — ${report.repo.length} skills agree (${report.repo.join(', ')})`);
     return;

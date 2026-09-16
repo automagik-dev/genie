@@ -273,6 +273,36 @@ recover_stale_lifecycle_lock() {
   [[ ! -e "$LIFECYCLE_LOCK" ]]
 }
 
+# Materialize GENIE_HOME (and every missing parent) before the lease is taken.
+#
+# A relocated GENIE_HOME whose directory chain does not exist yet is the
+# ordinary first install on a fresh host, not an operator error: the installer
+# owns that directory, and refusing it left `GENIE_HOME=$H/nested/.genie bash
+# install.sh` dead with a message that named no remedy (dogfood r2 §3.3 #1).
+# The chain is created at 0700 — the same mode every later genie run expects —
+# and an existing directory is never re-chmodded.
+#
+# Creating it before `acquire_lifecycle_lock` does not weaken that guard's
+# invariant: the only object written here is the installer's own home directory,
+# empty and identical whichever installer wins the lease. The parent check
+# inside `acquire_lifecycle_lock` stays as a fail-closed backstop for callers
+# that source install.sh and skip this step.
+ensure_genie_home_root() {
+  local canonical_home
+  canonical_home="$(logical_absolute_path "$GENIE_HOME")"
+  [[ "$canonical_home" != "/" ]] ||
+    die "GENIE_HOME must not be the filesystem root; set GENIE_HOME to a directory: $GENIE_HOME" 1
+  if [[ -e "$canonical_home" || -L "$canonical_home" ]]; then
+    [[ -d "$canonical_home" ]] ||
+      die "GENIE_HOME exists and is not a directory; move it aside or point GENIE_HOME elsewhere: $canonical_home" 1
+    return 0
+  fi
+  (umask 077; mkdir -p "$canonical_home") ||
+    die "could not create GENIE_HOME; check write permission on its parent chain: $canonical_home" 1
+  chmod 700 "$canonical_home" 2>/dev/null || true
+  log "created GENIE_HOME: $canonical_home"
+}
+
 # Coordinate the standalone installer with TypeScript lifecycle commands. The
 # lock pathname exactly mirrors lifecycleLockPath() in src/lib/agent-sync.ts.
 # A same-directory hard link is the portable atomic create-if-absent primitive;
@@ -893,6 +923,9 @@ main() {
   [[ -n "$version"      && "$version"      != "null" ]] || die "latest.json missing .version" 1
   [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
   log "installing genie v${version}"
+  # The home is materialized first so a relocated GENIE_HOME on a fresh host is
+  # an ordinary install rather than a refusal (dogfood r2 §3.3 #1).
+  ensure_genie_home_root
   # Acquire before download verification because INSECURE=1 records its audit
   # event under GENIE_HOME. Ownership then remains continuous through every
   # extraction, PATH, child-finisher, and final-verification mutation.

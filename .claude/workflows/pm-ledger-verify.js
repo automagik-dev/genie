@@ -89,7 +89,7 @@ const results = await parallel(
   LENSES.map(l => () => agent(l.prompt, { label: `verify:${l.key}`, phase: 'Verify', schema: FINDINGS, effort: 'high' }))
 )
 
-const all = results.filter(Boolean).flatMap((r, i) => r.findings.map(f => ({ ...f, lens: LENSES[i].key })))
+const all = results.flatMap((r, i) => (r ? r.findings.map(f => ({ ...f, lens: LENSES[i].key })) : []))
 const mustFix = all.filter(f => f.mustFix)
 log(`${all.length} findings (${mustFix.length} must-fix) across ${results.filter(Boolean).length}/3 lenses`)
 return { mustFixCount: mustFix.length, findings: all }
