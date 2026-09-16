@@ -608,6 +608,17 @@ export type AttestationCrossCheck =
  * Failure texts that mean "the cross-check could not run", never "the artifact
  * is unsigned". Keep this list conservative: anything unmatched is treated as a
  * genuine verification failure and aborts the update.
+ *
+ * The "binary is missing" wording is RUNTIME-SPECIFIC and the shipped binary is
+ * a compiled Bun single file, so both spellings must be listed:
+ *   node: `spawn gh ENOENT`
+ *   bun:  `Executable not found in $PATH: "gh"`   (no ENOENT in the message)
+ * Matching only Node's spelling is what made `genie update` exit 1 on every
+ * host with no `gh` at all (dogfood round 6, Z1) while the unit tests — which
+ * hardcoded the Node string — stayed green. `runCommandSilent` additionally
+ * appends the spawn error's `errno` code so a future runtime's wording still
+ * lands on the `\bENOENT\b` pattern below; the literal below is the belt to
+ * that suspenders, for transcripts that reach the classifier as text only.
  */
 const ATTESTATION_UNAVAILABLE_PATTERNS: readonly RegExp[] = [
   /gh auth login/i,
@@ -615,6 +626,7 @@ const ATTESTATION_UNAVAILABLE_PATTERNS: readonly RegExp[] = [
   /authentication token/i,
   /not logged in|no authentication|authentication required|requires authentication/i,
   /unknown command|unknown flag|unknown shorthand|command not found|no such file or directory/i,
+  /executable not found in \$PATH/i,
   /\bENOENT\b|\bEACCES\b|\bEPERM\b/,
   /timed out after|i\/o timeout|deadline exceeded/i,
   /no such host|network is unreachable|connection refused|connection reset|dial tcp|TLS handshake|EAI_AGAIN|proxy/i,
@@ -1409,7 +1421,25 @@ async function collectUpdateDiagnostics(
 // Subprocess wrappers.
 // ============================================================================
 
-async function runCommandSilent(
+/**
+ * Format a `child_process` spawn error so the transcript is runtime-independent.
+ *
+ * Node spells a missing binary `spawn gh ENOENT`; Bun spells the same failure
+ * `Executable not found in $PATH: "gh"` and carries the errno only on the error
+ * object. Since the shipped `genie` is a compiled Bun binary, appending the code
+ * is what lets `isGhUnavailable` classify an absent `gh` the same way under both
+ * runtimes (and any future one) instead of calling it a bad signature.
+ *
+ * Exported for the Z1 regression test, which spawns a genuinely missing binary
+ * through the real `runCommandSilent` rather than asserting a hardcoded string.
+ */
+export function describeSpawnError(err: NodeJS.ErrnoException): string {
+  const message = err.message || 'spawn failed';
+  const code = typeof err.code === 'string' ? err.code : '';
+  return code && !message.includes(code) ? `${message} (${code})` : message;
+}
+
+export async function runCommandSilent(
   command: string,
   args: string[],
   cwd?: string,
@@ -1444,7 +1474,7 @@ async function runCommandSilent(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ success: false, output: err.message });
+      resolve({ success: false, output: describeSpawnError(err) });
     });
   });
 }
