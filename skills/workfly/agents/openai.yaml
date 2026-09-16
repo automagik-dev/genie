@@ -1,0 +1,4 @@
+interface:
+  display_name: "Workflow Builder"
+  short_description: "Build a saved workflow from a procedure"
+  default_prompt: "Discover this procedure and build its saved workflow, verified against the catalog contract."
