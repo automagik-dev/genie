@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GENIE_SKILL_DESCRIPTIONS, LEGACY_MARKER_DIRS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
+import { LEGACY_MARKER_DIRS, LEGACY_SKILL_DESCRIPTIONS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
 import { classifyLegacySkillEntry, findLegacySkillLeftovers, readSkillDescription } from './legacy-skills.js';
 
 /** A description genie really shipped — the 2026-07 `pm` skill's, found as residue on the dogfood host. */
@@ -32,9 +32,13 @@ describe('legacy skills catalog', () => {
     // The generator excludes the current inventory; the reader relies on it.
     for (const name of ['wish', 'work', 'review', 'workfly', 'genie']) expect(LEGACY_SKILL_NAMES).not.toContain(name);
     for (const name of ['pm', 'wizard', 'brain']) expect(LEGACY_SKILL_NAMES).toContain(name);
-    expect(GENIE_SKILL_DESCRIPTIONS).toContain(SHIPPED_PM_DESCRIPTION);
-    expect(new Set(GENIE_SKILL_DESCRIPTIONS).size).toBe(GENIE_SKILL_DESCRIPTIONS.length);
-    expect(GENIE_SKILL_DESCRIPTIONS.every((entry) => entry.length > 0)).toBe(true);
+    expect(LEGACY_SKILL_DESCRIPTIONS).toContain(SHIPPED_PM_DESCRIPTION);
+    expect(new Set(LEGACY_SKILL_DESCRIPTIONS).size).toBe(LEGACY_SKILL_DESCRIPTIONS.length);
+    expect(LEGACY_SKILL_DESCRIPTIONS.every((entry) => entry.length > 0)).toBe(true);
+    // A fork of a CURRENT skill keeps a current description; none of those may prove anything.
+    expect(LEGACY_SKILL_DESCRIPTIONS).not.toContain(
+      readSkillDescription(join(import.meta.dir, '..', '..', 'skills', 'review')),
+    );
     expect(LEGACY_MARKER_DIRS).toEqual(['.genie-codex-fallback-retirement']);
   });
 });
@@ -52,21 +56,25 @@ describe('readSkillDescription', () => {
 });
 
 describe('classifyLegacySkillEntry', () => {
-  test('a description genie shipped proves the dir under ANY name; a retired name alone is only reported', () => {
+  test('a retired description under a genie name is proven; either half alone is only reported', () => {
     seedSkill('pm', `---\nname: pm\ndescription: "${SHIPPED_PM_DESCRIPTION}"\n---`);
-    // The 2026-07 `genie-review` residue carried the description of the skill
-    // genie ships as `review` today: the name is not in the roster, the
-    // description is, and that is what proves it.
+    // The 2026-07 `genie-review` residue: never a `skills/genie-review` dir in
+    // history, but the `genie-` prefix is genie's and its description is a
+    // retired one — the July text of the skill shipped as `review` today.
     seedSkill('genie-review', `---\nname: genie-review\ndescription: "${SHIPPED_PM_DESCRIPTION}"\n---`);
     // A live third-party `brain` product shares a retired genie NAME and nothing else.
     seedSkill('brain', '---\nname: brain\ndescription: Route Brain knowledge, memory, setup, health\n---');
+    // A user's fork of a retired genie skill under a custom name keeps genie's
+    // description: reported, never moved (Codex review on PR #2928).
+    seedSkill('my-pm', `---\nname: my-pm\ndescription: "${SHIPPED_PM_DESCRIPTION}"\n---`);
     expect(classifyLegacySkillEntry(agentDir, 'pm', [])).toEqual({ agentDir, entry: 'pm', kind: 'proven' });
     expect(classifyLegacySkillEntry(agentDir, 'genie-review', [])).toEqual({
       agentDir,
       entry: 'genie-review',
       kind: 'proven',
     });
-    expect(classifyLegacySkillEntry(agentDir, 'brain', [])).toEqual({ agentDir, entry: 'brain', kind: 'name-only' });
+    expect(classifyLegacySkillEntry(agentDir, 'brain', [])).toEqual({ agentDir, entry: 'brain', kind: 'unproven' });
+    expect(classifyLegacySkillEntry(agentDir, 'my-pm', [])).toEqual({ agentDir, entry: 'my-pm', kind: 'unproven' });
   });
 
   test('the current inventory, symlinks, markerless unknown dirs and files are never leftovers', () => {
@@ -77,7 +85,7 @@ describe('classifyLegacySkillEntry', () => {
     expect(classifyLegacySkillEntry(agentDir, 'pm-link', [])).toBeNull();
     seedSkill('theirs', `---\nname: theirs\ndescription: Someone else's skill\n---`);
     expect(classifyLegacySkillEntry(agentDir, 'theirs', [])).toBeNull();
-    // A retired NAME with no SKILL.md at all is not even name-only: nothing to read.
+    // A retired NAME with no SKILL.md at all is not even unproven: nothing to read.
     mkdirSync(join(agentDir, 'wizard'));
     expect(classifyLegacySkillEntry(agentDir, 'wizard', [])).toBeNull();
     writeFileSync(join(agentDir, 'trace'), 'a file, not a dir\n');
@@ -106,7 +114,7 @@ describe('findLegacySkillLeftovers', () => {
     expect(findLegacySkillLeftovers([agentDir, other, agentDir, join(home, 'absent')], [])).toEqual([
       { agentDir, entry: '.genie-codex-fallback-retirement', kind: 'marker' },
       { agentDir, entry: 'pm', kind: 'proven' },
-      { agentDir: other, entry: 'wizard', kind: 'name-only' },
+      { agentDir: other, entry: 'wizard', kind: 'unproven' },
     ]);
   });
 });

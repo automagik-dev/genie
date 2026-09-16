@@ -68,7 +68,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { atomicRenameDirectoryNoClobber, fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
-import { type LegacySkillLeftover, findLegacySkillLeftovers } from './legacy-skills.js';
+import { type LegacySkillLeftover, findLegacySkillLeftovers, legacyScanHomes } from './legacy-skills.js';
 import {
   type CommandResult,
   type CommandRunner,
@@ -1493,11 +1493,6 @@ function reportRetirement(tally: RetirementTally, backupRoot: string | undefined
   );
 }
 
-/** The homes the legacy pass scans: everything the record names plus every known home on disk. */
-function legacyScanDirs(previous: SkillsInstallRecord | null, home: string): string[] {
-  return [...(previous?.agentDirs ?? []), ...existingAgentSkillHomes(home).map((entry) => entry.dir)];
-}
-
 /**
  * Archive the genie skill directories that predate the install record.
  *
@@ -1508,22 +1503,32 @@ function legacyScanDirs(previous: SkillsInstallRecord | null, home: string): str
  * `nothing to retire`. Ownership is proven by the description catalog (see
  * `legacy-skills.ts`), never by name alone: a proven dir or a genie marker dir
  * is archived under the same backup root as any retired skill, with the digest
- * proven at plan time standing in for the record's; a name-only match is
- * reported for a human and never moved. Proven dirs genie could not move join
- * `preserved` (their names satisfy the record schema), so the next update
- * retries them; a marker dir (leading dot) never enters the record, because one
- * schema-invalid entry would make the whole record read as absent.
+ * proven at plan time standing in for the record's; an unproven match (a
+ * retired genie name or a retired genie description, not both) is reported for
+ * a human and never moved. Proven dirs genie could not move join `preserved`
+ * (their names satisfy the record schema), so the next update retries them; a
+ * marker dir (leading dot) never enters the record, because one schema-invalid
+ * entry would make the whole record read as absent.
+ *
+ * Every path the RECORD names — its `agentDirs` x its `inventory`, and its
+ * `preserved` entries — is excluded here and judged by the recorded path only:
+ * a recorded skill this release drops still carries a retired description, and
+ * archiving it on its own current digest would bypass the recorded-digest
+ * comparison that preserves a locally modified install.
  */
 function retireLegacySkillLeftovers(context: SkillsRetirementContext, tally: RetirementTally): void {
-  const recordedSkills = new Set((context.previous?.preserved ?? []).map((entry) => join(entry.agentDir, entry.skill)));
+  const recorded = new Set<string>();
+  for (const entry of context.previous?.preserved ?? []) recorded.add(join(entry.agentDir, entry.skill));
+  for (const agentDir of context.previous?.agentDirs ?? []) {
+    for (const skill of context.previous?.inventory ?? []) recorded.add(join(agentDir, skill));
+  }
   for (const leftover of findLegacySkillLeftovers(context.legacyScanDirs, context.inventory)) {
     const target = join(leftover.agentDir, leftover.entry);
-    // A preserved entry the record already carries is retried by the recorded path.
-    if (recordedSkills.has(target)) continue;
+    if (recorded.has(target)) continue;
     tally.legacyTargets += 1;
-    if (leftover.kind === 'name-only') {
+    if (leftover.kind === 'unproven') {
       tally.attention.push(
-        `skills: ${target} carries a skill name genie once shipped but no description genie ever delivered; review it manually`,
+        `skills: ${target} carries a retired genie skill name or description but not both; review it manually`,
       );
       continue;
     }
@@ -1578,7 +1583,6 @@ function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[
     legacyTargets: 0,
   };
   try {
-    retireLegacySkillLeftovers(context, tally);
     for (const { agentDir, skill } of retirementTargets(context.previous, context.inventory)) {
       tally.targets += 1;
       const planned = planRetiredSkillArchival(agentDir, skill, context);
@@ -1595,6 +1599,8 @@ function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[
         tally.absent.push(join(agentDir, skill));
       }
     }
+    // Recorded retirements first, so the record's own judgement is never pre-empted.
+    retireLegacySkillLeftovers(context, tally);
   } finally {
     discardEmptyRetirementBackupRoot(context);
     reportRetirement(tally, context.backupRoot, warnings);
@@ -2084,7 +2090,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
           previous,
           inventory,
           expectedDigests: previousDigests(previous),
-          legacyScanDirs: legacyScanDirs(previous, home),
+          legacyScanDirs: legacyScanHomes(home, previous?.agentDirs ?? []),
           rename: options.renameRetiredSkill ?? renameSync,
           now,
         },

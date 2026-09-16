@@ -35,12 +35,11 @@ import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
-import { findLegacySkillLeftovers } from '../lib/legacy-skills.js';
+import { findLegacySkillLeftovers, legacyScanHomes } from '../lib/legacy-skills.js';
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
-  existingAgentSkillHomes,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
@@ -652,17 +651,16 @@ const SKILLS_LEGACY_LEFTOVERS_SUGGESTION =
  * Genie skill directories that predate the install record (see
  * `src/lib/legacy-skills.ts`): the record names none of them, so the
  * recorded-agent-dirs line above reads complete while `~/.agents/skills` still
- * holds a 2026-07 `genie-review`. Scans the record's homes plus every known home
- * on disk, so a host with NO record — the host most likely to carry them — is
- * covered too. Read-only: `genie update` is what moves them.
+ * holds a 2026-07 `genie-review`. Scans the record's homes plus every skills.sh
+ * registry home on disk, so a host with NO record — the host most likely to
+ * carry them — is covered too. Read-only: `genie update` is what moves them.
  */
 function evaluateLegacyLeftovers(
   record: SkillsInstallRecord | null,
   home: string,
   inventory: readonly string[],
 ): CheckResult | null {
-  const dirs = [...(record?.agentDirs ?? []), ...existingAgentSkillHomes(home).map((entry) => entry.dir)];
-  const leftovers = findLegacySkillLeftovers(dirs, inventory);
+  const leftovers = findLegacySkillLeftovers(legacyScanHomes(home, record?.agentDirs ?? []), inventory);
   if (leftovers.length === 0) return null;
   const named = leftovers.map((entry) => `${join(entry.agentDir, entry.entry)} (${entry.kind})`);
   return {

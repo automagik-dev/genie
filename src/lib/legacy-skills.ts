@@ -12,26 +12,30 @@
  *
  * Ownership of such a directory cannot be proven by bytes: those installs were
  * copied from working trees, so no digest genie ever shipped matches them. It
- * is proven by DESCRIPTION instead. Every frontmatter `description` a genie
- * skill ever carried, under any name on any ref, is embedded in
- * `legacy-skills-catalog.ts`; a directory outside the current inventory whose
- * `SKILL.md` carries one of them is genie's own — a third party does not copy
- * genie's description verbatim — and is retired backup-first like any other
- * retired skill. A directory that merely carries a NAME genie once shipped is
- * reported for a human and never moved: `brain` is a live third-party product
- * on the dogfood host today, and genie once shipped a `brain` skill too.
+ * is proven by DESCRIPTION under a GENIE NAME instead. Every retired frontmatter
+ * `description` a genie skill ever carried — any name, any ref, minus what the
+ * tree ships today — is embedded in `legacy-skills-catalog.ts`; a directory
+ * outside the current inventory whose `SKILL.md` carries one of them AND whose
+ * name is a retired genie skill name or a `genie-` prefixed one is genie's own,
+ * and is retired backup-first like any other retired skill. Either half alone
+ * is only reported: `brain` is a live third-party product on the dogfood host
+ * today and genie once shipped a `brain` skill too (name alone), and a user's
+ * fork of a genie skill under a custom name keeps genie's description
+ * (description alone). A fork of a CURRENT skill is never even a candidate,
+ * because current descriptions are deliberately absent from the catalog.
  */
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { GENIE_SKILL_DESCRIPTIONS, LEGACY_MARKER_DIRS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
+import { LEGACY_MARKER_DIRS, LEGACY_SKILL_DESCRIPTIONS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
+import { SKILLS_CLI_AGENTS, agentSkillsHome } from './skills-agents.js';
 
 /**
- * `proven`: a `SKILL.md` description genie shipped — retired backup-first.
+ * `proven`: a retired genie description under a genie name — retired backup-first.
  * `marker`: a `.genie-*` transaction dir a deleted runtime left — genie's by name.
- * `name-only`: a retired genie skill NAME with a description genie never shipped
- * — reported, never moved.
+ * `unproven`: a retired genie NAME or a retired genie DESCRIPTION, not both —
+ * reported, never moved.
  */
-export type LegacySkillLeftoverKind = 'proven' | 'marker' | 'name-only';
+export type LegacySkillLeftoverKind = 'proven' | 'marker' | 'unproven';
 
 export interface LegacySkillLeftover {
   agentDir: string;
@@ -40,9 +44,14 @@ export interface LegacySkillLeftover {
   kind: LegacySkillLeftoverKind;
 }
 
-const DESCRIPTIONS = new Set(GENIE_SKILL_DESCRIPTIONS);
+const DESCRIPTIONS = new Set(LEGACY_SKILL_DESCRIPTIONS);
 const NAMES = new Set(LEGACY_SKILL_NAMES);
 const MARKERS = new Set(LEGACY_MARKER_DIRS);
+
+/** A retired genie skill name, or the `genie-` prefix only genie's own plugin-era skills carried. */
+function isGenieSkillName(entry: string): boolean {
+  return NAMES.has(entry) || entry.startsWith('genie-');
+}
 
 /**
  * The frontmatter `description` of one `SKILL.md`, unquoted, or `null` when the
@@ -99,9 +108,27 @@ export function classifyLegacySkillEntry(
   if (!isPhysicalDirectory(path)) return null;
   if (MARKERS.has(entry)) return { agentDir, entry, kind: 'marker' };
   const description = readSkillDescription(path);
-  if (description !== null && DESCRIPTIONS.has(description)) return { agentDir, entry, kind: 'proven' };
-  if (NAMES.has(entry) && description !== null) return { agentDir, entry, kind: 'name-only' };
+  if (description === null) return null;
+  const genieName = isGenieSkillName(entry);
+  const genieDescription = DESCRIPTIONS.has(description);
+  if (genieName && genieDescription) return { agentDir, entry, kind: 'proven' };
+  if (genieName || genieDescription) return { agentDir, entry, kind: 'unproven' };
   return null;
+}
+
+/**
+ * The homes a legacy scan covers: every directory the record names, plus every
+ * skills home in the skills.sh agent registry that exists on disk. The four-row
+ * known table is not enough — the `--all` era wrote `~/.openclaw/skills` and
+ * fifty more, and a host with no record has nothing else naming them.
+ */
+export function legacyScanHomes(home: string, recorded: readonly string[]): string[] {
+  const homes = new Set(recorded);
+  for (const spec of SKILLS_CLI_AGENTS) {
+    const dir = agentSkillsHome(home, spec);
+    if (isPhysicalDirectory(dir)) homes.add(dir);
+  }
+  return [...homes].sort();
 }
 
 /**

@@ -2,9 +2,9 @@
 //
 // Every skill name genie shipped under a `skills/` directory on any ref and no
 // longer delivers, plus every frontmatter `description` any genie skill ever
-// carried under any name. A directory in an agent home that is not in the
-// current inventory and whose description appears here is genie's own
-// pre-record install (see `src/lib/legacy-skills.ts`).
+// carried under any name that no currently shipped skill carries. A directory
+// in an agent home under a genie name whose description appears here is
+// genie's own pre-record install (see `src/lib/legacy-skills.ts`).
 
 /** Genie-owned marker directories left by deleted runtimes; genie's by name alone. */
 export const LEGACY_MARKER_DIRS: readonly string[] = ['.genie-codex-fallback-retirement'];
@@ -50,19 +50,14 @@ export const LEGACY_SKILL_NAMES: readonly string[] = [
   'work-orchestration',
 ];
 
-/** Every frontmatter `description` a genie skill ever shipped with, under any name. */
-export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
+/** Every retired frontmatter `description` a genie skill ever shipped with, under any name. */
+export const LEGACY_SKILL_DESCRIPTIONS: readonly string[] = [
   'Activate work mode. Enter focused session with clear context loading, goal orientation, and structured execution. Use when ready to tackle a task with full engagement.',
   'Agent knowledge vault — Obsidian-style brain managed via notesmd-cli. Use when an agent needs to store, search, or retrieve knowledge across sessions.',
-  'Assess a proposal through independent technical, product, risk, and dissenting lenses, then synthesize a decision without mutating unless explicitly requested.',
-  'Audit documentation and developer experience against the live product — drift, onboarding, error messages — and write or fix docs when asked.',
-  'Audit the shipped skill catalogue for overlap, staleness, and drift against the install record, and propose keep, improve, merge, or retire per skill.',
-  'Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results.',
   "Bootstrap or migrate a Genie workspace into a new agent/body. Use when the user says 'new workspace', 'new body', 'wake up', 'divide yourself', or asks to carry progress forward.",
   "Bootstrap or migrate an OpenClaw personal-assistant workspace into a new agent/body while preserving the current Genie conventions, persona, and memory files. Use when the user says things like: 'new workspace', 'new body', 'wake up buddy', 'divide yourself', 'make a base agent', 'survive for good', or asks to carry progress forward into a reusable skill/template. Includes scripts to install/update AGENTS.md/SOUL.md/USER.md/TOOLS.md/MEMORY.md/HEARTBEAT.md/IDENTITY.md and daily memory notes, plus a post-migration sanity scan for stale paths and tmux/session conventions.'",
   'Brainstorm and critique with 10 specialist viewpoints. Use for architecture, plan reviews, or tradeoffs.',
   'Bridge contract between KHAW Brain/Purpose Sessions and Genie execution — KHAW stays canonical for purpose, Genie owns execution detail, evidence over vibes.',
-  'Browse, search, and contribute community hacks — real-world patterns for provider switching, teams, skills, hooks, cost optimization, and more.',
   'Cockpit contract for driving Genie from Hermes — structured read-only tools first, human-gated mutations, outcome-first evidence reporting.',
   'Convene real AI agents for multi-perspective deliberation on architecture, design, and strategy decisions.',
   'Convert an idea into a structured wish plan with scope, acceptance criteria, and execution groups for /work.',
@@ -70,7 +65,6 @@ export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
   "Coordinator loop for an approved wish on Orca — one Run per wish, one Task per group, supervised workers in child worktrees, review→fix loops, Linear written only at gate transitions. genie v6 'corpo leve': genie owns the documents and this protocol; Orca owns dispatch state; Linear owns status; brain owns preferences.",
   'Development guide for genie-cli - the AI-friendly terminal orchestration tool built on tmux. Use when modifying term commands, tmux library, or adding new CLI features.',
   'Diagnose and fix agent behavioral surfaces when the user corrects a mistake — connects to Claude native memory.',
-  'Discover a procedure and build its saved workflow — dynamic discovery, drafted script, adversarial verification, landed in the catalog.',
   'Dispatch debug subagent to investigate unknown issues — reproduces, traces, and reports root cause for /fix handoff.',
   'Dispatch docs subagent to audit, generate, and validate documentation against the codebase.',
   'Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops.',
@@ -85,28 +79,22 @@ export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
   'Entry point for Genie operations — routes bug reports, questions, and operational commands, resumes existing lifecycle state, and orchestrates work that needs durable planning or coordination. Other ordinary requests bypass the lifecycle with a one-line notice unless the user asks for Genie.',
   'Entry point for all genie operations — auto-routes natural language to the right skill, detects lifecycle state, and handles operational commands. Use when planning features, reporting bugs, managing teams, or asking about genie.',
   'Entry point for all genie operations — auto-routes natural language to the right skill, detects lifecycle state, and handles operational commands. Use when planning features, reporting bugs, orchestrating execution, or asking about genie.',
-  'Execute an approved wish in dependency order with scoped workers, independent review, bounded repairs, and verified completion.',
   'Execute an approved wish plan - dispatches implementor subagents per task with bounded fix loops and verification until done.',
   'Execute an approved wish plan — orchestrate subagents per task group with fix loops, validation, and review handoff.',
   'Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for /wish.',
   'Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for wish.',
-  'Explore an ambiguous idea with the user, settle scope and success criteria, and produce an independently reviewed design for wish.',
   'Explore ideas collaboratively, validate direction, and hand off a clear design for /wish.',
   'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.',
   'Generate professional PDFs programmatically from markdown, JSON templates, or structured data. Use when creating invoices, reports, resumes, research papers, or any document that needs clean PDF output.',
   'Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate.',
   'Handle FIX-FIRST verdicts from /review — dispatch fix subagent, re-review, escalate after 2 loops.',
   'How to orchestrate real work with the human using term, claudio, and beads. Stop planning, start doing.',
-  'Improve a prompt using official OpenAI or Claude guidance. Text or @file mode; --for openai or --for claude selects guidance, not a runtime model.',
   'Independent, read-only review of a group, a wish, or a PR on Orca — SHIP / FIX-FIRST / BLOCKED with severity-tagged findings. Council and retro are this skill with a different input.',
-  'Independently assess designs, plans, implementations, PRs, or repository quality; return evidence and SHIP, FIX-FIRST, or BLOCKED without applying fixes.',
   'Initialize a fresh Genie clone with blank persona (first-activation experience). Use when the user wants a clone that will ask who it should be called.',
   'Initialize a fresh, user-centric Genie clone with a blank persona (first-activation experience) while keeping OS/environment competence. Use when the user wants a clone that will ask who it should be called, run BOOTSTRAP.md once, then delete BOOTSTRAP.md after verifying install. Pairs with genie-base or existing ENVIRONMENT/TOOLS.',
   'Initialize and personalize a knowledge brain — interviews the user, refines rlmx.yaml config, generates starter entities.',
   'Interactive first-run onboarding — validate workspace, welcome new users/agents, gather preferences, inject hooks, and configure a ready-to-work environment.',
   'Interactive learning mode — explore context, absorb user knowledge, generate plan, apply behavioral improvements.',
-  'Investigate a failure to its root cause with grounded evidence, hand the diagnosis to fix, and create a GitHub issue only when asked.',
-  "Investigate a question against primary sources, cite every claim, and write the findings into the repository's own notes.",
   'Investigate bugs comprehensively — cascade through /trace, capture browser evidence, extract observability data, and auto-create a GitHub issue with all findings.',
   'Investigate bugs comprehensively — cascade through trace, capture browser evidence, extract observability data, and prepare or explicitly create a GitHub issue with grounded findings.',
   'Knowledge graph engine — search, analyze, and manage AI agent brains with confidence scoring, autoschema, and multimodal support.',
@@ -117,17 +105,12 @@ export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
   "Overnight batch execution — human defines tasks before sleep, agent executes the full pipeline (brainstorm → wish → work → review → PR) autonomously. Wake up to reviewed PRs. Use when the user says 'sleepyhead', 'overnight', 'batch run', 'kill the backlog', 'run while I sleep', or hands off a task list for autonomous execution.",
   "Overnight batch execution — human defines tasks before sleep, agent executes the full pipeline (wish → forge → reveal → PR) autonomously. Wake up to reviewed PRs. Use when the user says 'sleepyhead', 'overnight', 'batch run', 'kill the backlog', 'run while I sleep', or hands off a task list for autonomous execution.",
   'Pressure-test a decision through five independent lenses (architecture, delivery, product, security, dissent) and synthesize a decision without mutating anything — runs the saved `council` workflow.',
-  "Prove a completion claim with fresh evidence before making it — the gate's exit code, the real diff, the remote's checks, the reviewer's verdict.",
-  'Resolve an in-progress merge or rebase by the intent of both sides, re-run the full gate on the merged tree, and finish the operation.',
-  'Resolve blocking review gaps through bounded repairs and independent re-review; diagnose stalled attempts without expanding scope.',
   'Review discipline for Genie wishes — SHIP / FIX-FIRST / BLOCKED verdicts with severity-tagged gaps and evidence against acceptance criteria.',
   'Rewrite a brief, draft, or system prompt using official OpenAI or Claude prompting guidance. File or text mode; --for openai or --for claude selects the provider.',
   'Rewrite any brief, draft, or system prompt to the Claude Fable 5.1 prompting guidelines via the refiner subagent. File or text mode.',
   'Rewrite any brief, draft, or system prompt to the official prompting guidelines of the model that will run it, via a per-target refiner subagent. File or text mode; --for picks the target.',
-  'Route Genie questions, operations, bugs, and planned work. Resume related wishes; handle ordinary requests directly unless Genie planning or coordination adds value.',
   'Route code reviews to appropriate council members. Use when reviewing PRs, architecture decisions, or significant code changes that need expert perspective.',
   "SINGLE SOURCE OF TRUTH for piloting tmux terminals with the 'term' CLI. Load this skill before ANY terminal orchestration. Covers: sessions, commands, workers, Claude Code control.",
-  'Ship tiny low-risk changes to dev within one hour.',
   'Single entry point for all genie operations — auto-routes natural language to the right skill, detects existing lifecycle state, and handles operational commands. Use when planning features, reporting bugs, managing teams, or asking about the system.',
   'Thin cockpit pointer for driving Genie from Hermes — load product wish/work/review skills, use standalone board/task commands for task truth, and keep mutations human-gated.',
   'Thin cockpit pointer for driving Genie from Hermes — load the product wish/work/review skills via the first-class skill path, use the MCP board tools for task truth, keep mutations human-gated.',
@@ -135,7 +118,6 @@ export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
   'Transform any Claude Code session into an Automagik Genie orchestrator — guide users through brainstorm, wish, team, and PR lifecycle.',
   'Transform any brief or prompt into a production-ready structured prompt. Standalone and embedded in workers.',
   'Turn a brainstorm/design into an APPROVED-able wish whose Dispatch plan is the literal input to Orca tasks and Linear issues. High-reasoning pass: pre-decide everything so fast workers can execute without judgment calls.',
-  'Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation.',
   'Universal reviewer for plans and execution - validates readiness and returns SHIP/FIX-FIRST/BLOCKED with actionable gaps.',
   'Use before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.',
   'Use when all forge tasks are complete and work needs final validation - produces SHIP/FIX-FIRST/BLOCKED verdict with categorized gaps.',
@@ -158,7 +140,5 @@ export const GENIE_SKILL_DESCRIPTIONS: readonly string[] = [
   'Validate a wish document (structure, scope boundaries, acceptance criteria, validation commands). Use after creating or editing .genie/wishes/<slug>/wish.md to catch missing sections before make.',
   'Validate plans, execution, or PRs against wish criteria — returns SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps.',
   'Wire a Genie agent to an Omni channel in one canonical flow — register the agent, bind to an instance, verify the round-trip. Replaces the 5+ command legacy chain.',
-  'Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip.',
   'Work execution discipline for Genie wishes — dry-run work plans first, dispatch stays in the Genie/Claude Code lane, reviewer differs from engineer.',
-  'Write or revise a Genie skill so it survives the shipped contract — frontmatter, house size, starter card, and runtime-neutral voice.',
 ];
