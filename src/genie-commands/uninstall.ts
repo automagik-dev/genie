@@ -1060,6 +1060,27 @@ export interface UninstallResult {
   preserved?: UninstallPreservation[];
   /** Non-failure advisories (e.g. a legacy batch re-planned from current live state). */
   notes?: string[];
+  /** Emptied-directory sweep of a fully successful run; absent when anything failed. */
+  residue?: UninstallResidueSweep;
+}
+
+/** One directory the post-uninstall residue sweep kept, and the reason a human can act on. */
+export interface UninstallResidueKept {
+  path: string;
+  reason: string;
+}
+
+/**
+ * What the residue sweep did with the two directories a successful uninstall
+ * would otherwise leave behind: the emptied GENIE_HOME pathname itself and the
+ * `.genie-recovery` root this command creates for its batch journal. Only a
+ * genuinely EMPTY directory is removed — anything still holding bytes (state
+ * backups, v4 rule backups, another GENIE_HOME's journal) is the user's and is
+ * kept with an explicit reason.
+ */
+export interface UninstallResidueSweep {
+  removed: string[];
+  kept: UninstallResidueKept[];
 }
 
 function recordPreservation(result: UninstallResult, item: UninstallPreservation): void {
@@ -1864,6 +1885,68 @@ function removeGenieDirPreservingStateBackups(
   }
 }
 
+/** At most five names, so a crowded directory still reports in one readable line. */
+function describeResidueEntries(entries: string[]): string {
+  const sorted = [...entries].sort();
+  const shown = sorted.slice(0, 5);
+  const rest = sorted.length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+}
+
+/**
+ * Remove one residue directory, but ONLY while it is empty.
+ *
+ * `null` means there was nothing to do (the path is already gone); a reason
+ * string means the directory survived and the user is told exactly why. rmdir
+ * is the fail-closed check: a concurrent writer makes it ENOTEMPTY and the
+ * directory survives with its bytes intact.
+ */
+function sweepEmptyResidueDirectory(path: string): { removed: boolean; reason: string | null } {
+  const stat = lstatOrNull(path);
+  if (stat === null) return { removed: false, reason: null };
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    return { removed: false, reason: 'it is not a physical directory' };
+  }
+  let entries: string[];
+  try {
+    entries = readdirSync(path);
+  } catch (error) {
+    return { removed: false, reason: `its contents could not be read (${errorMessage(error)})` };
+  }
+  if (entries.length > 0) {
+    return { removed: false, reason: `it still holds ${describeResidueEntries(entries)}` };
+  }
+  try {
+    rmdirSync(path);
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ENOENT')) return { removed: false, reason: null };
+    if (isNodeErrorCode(error, 'ENOTEMPTY')) {
+      return { removed: false, reason: 'new content appeared while it was being removed' };
+    }
+    return { removed: false, reason: `it could not be removed (${errorMessage(error)})` };
+  }
+  return { removed: true, reason: null };
+}
+
+/**
+ * The last step of a FULLY successful uninstall: the two directories the
+ * removal itself cannot delete from the inside — the now-emptied GENIE_HOME
+ * pathname and the `.genie-recovery` root that held the batch journal — are
+ * removed when, and only when, they are empty. A non-empty one is kept and
+ * reported; a shared `.genie-recovery` (a second GENIE_HOME under the same
+ * parent) therefore survives by construction.
+ */
+export function sweepUninstallResidue(genieDir: string): UninstallResidueSweep {
+  const sweep: UninstallResidueSweep = { removed: [], kept: [] };
+  const targets = [resolve(genieDir), dirname(uninstallBatchJournalPath(genieDir))];
+  for (const target of targets) {
+    const outcome = sweepEmptyResidueDirectory(target);
+    if (outcome.removed) sweep.removed.push(target);
+    else if (outcome.reason !== null) sweep.kept.push({ path: target, reason: outcome.reason });
+  }
+  return sweep;
+}
+
 /** A durable-backups/active-lock-only root is recovery state, not an installed Genie tree. */
 export function hasRemovableGenieInstallState(genieDir: string): boolean {
   try {
@@ -2242,10 +2325,24 @@ export function performFreshUninstallPlan(
   const batch = executeUninstallBatch(genieDir, uninstallBatchScope(execution), (scope, progress) =>
     performUninstallScope(genieDir, scope, progress, homeRemovalOptions),
   );
+  // Only a run with nothing left to retry may clear the pathnames: while a
+  // failure stands, GENIE_HOME and the recovery root ARE the retry path.
+  if (batch.result.failures.length === 0) batch.result.residue = sweepUninstallResidue(genieDir);
   return {
     execution,
     result: batch.result,
   };
+}
+
+/** Name every emptied directory that went, and every one that stayed, with why. */
+export function reportUninstallResidue(residue: UninstallResidueSweep | undefined): void {
+  if (residue === undefined) return;
+  for (const path of residue.removed) {
+    printOut(`  \x1b[32m+\x1b[0m Removed empty directory ${contractPath(path)}`);
+  }
+  for (const item of residue.kept) {
+    printOut(`  \x1b[33m~\x1b[0m Kept ${contractPath(item.path)}: ${item.reason}`);
+  }
 }
 
 function reportUninstallResult(execution: UninstallPlan, result: UninstallResult, genieDir: string): void {
@@ -2275,6 +2372,7 @@ function reportUninstallResult(execution: UninstallPlan, result: UninstallResult
     printOut();
     return;
   }
+  reportUninstallResidue(result.residue);
   printOut('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
   printOut();
   printOut('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
