@@ -138,7 +138,7 @@ assert genie-init-exit-0
 assert genie-init-created-index
 [ -f "$FIXTURE/.genie/INDEX.md" ] || die "genie init did not create .genie/INDEX.md"
 
-assert gitignore-has-three-genie-db-lines
+assert gitignore-has-every-machine-local-genie-rule
 [ -f "$FIXTURE/.gitignore" ] || die "genie init did not create .gitignore"
 for rule in '.genie/genie.db' '.genie/genie.db-wal' '.genie/genie.db-shm' '.genie/genie.db-recovery-lock' '.genie/roadmap-sync' '.genie/launch/'; do
   grep -qxF "$rule" "$FIXTURE/.gitignore" || die "genie init did not write the $rule ignore rule"
