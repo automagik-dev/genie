@@ -25,8 +25,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb } from './genie-db.js';
 import {
+  hasGenieWorkspace,
   recordExportBaseline,
   recordImportBaseline,
+  resolveWorkspaceDir,
   roadmapSnapshot,
   serializeSnapshot,
   syncRoadmap,
@@ -92,6 +94,26 @@ function snapshotWithExtraCard(base: StateExport, path: string, title: string): 
 function readMarkerFile(path: string): { fileHash: string; dbHash: string; hashVersion?: number } {
   return JSON.parse(readFileSync(path, 'utf-8'));
 }
+
+describe('workspace precondition', () => {
+  /**
+   * The guard must be asked BEFORE `openDb`, which creates `.genie/genie.db`
+   * and with it the directory under test — so the answer has to come from the
+   * filesystem, not from a database handle (dogfood r7 W2).
+   */
+  test('a directory with no .genie/ is not a workspace; the directory alone makes it one', () => {
+    expect(resolveWorkspaceDir(dir)).toBe(join(dir, '.genie'));
+    expect(hasGenieWorkspace(dir)).toBe(false);
+
+    // A FILE named .genie is not a workspace either.
+    writeFileSync(join(dir, '.genie'), 'not a directory\n');
+    expect(hasGenieWorkspace(dir)).toBe(false);
+
+    rmSync(join(dir, '.genie'));
+    mkdirSync(join(dir, '.genie'));
+    expect(hasGenieWorkspace(dir)).toBe(true);
+  });
+});
 
 describe('sync-marker hash-algorithm migration', () => {
   test('a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as v2', () => {

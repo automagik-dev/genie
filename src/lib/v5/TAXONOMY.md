@@ -56,6 +56,15 @@ reordering once, as its own content-free write, instead of having it ride along
 with the next card and bury that card in a whole-file diff. A `diverged` verdict
 normalizes nothing: it touches neither side, by contract.
 
+**`task sync` needs a `.genie/` workspace to reconcile.** The precondition is
+the directory itself, and it is checked BEFORE the database is opened — opening
+it creates `.genie/genie.db` and with it the directory under test. In a checkout
+that was never `genie init`-ed there is neither side of the pair, so sync
+refuses with a one-line error on stderr and exit 1 rather than reporting
+`in sync (none)`, which no consumer can tell from a genuinely reconciled
+workspace. The `|| true` git hooks gate on `.genie/roadmap.json` existing, so
+they never reach this refusal.
+
 **An import type-checks every column before it writes anything.** A snapshot is
 untrusted input (`roadmap.json` survives git merges and hand edits), so
 `validateSnapshot` compares each row's cells against the live schema's declared

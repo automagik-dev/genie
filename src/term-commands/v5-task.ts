@@ -29,8 +29,10 @@ import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
 import { resolveEventAuthor, resolveWorkerIdentity } from '../lib/v5/identity.js';
 import {
+  hasGenieWorkspace,
   recordExportBaseline,
   recordImportBaseline,
+  resolveWorkspaceDir,
   roadmapSnapshot,
   serializeSnapshot,
   syncRoadmap,
@@ -717,6 +719,16 @@ function snapshotCarriesHires(snapshot: unknown): boolean {
 
 function handleSync(): void {
   run(() => {
+    // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
+    // very directory being tested. A directory that was never `genie init`-ed
+    // has neither side of the pair to reconcile, and reporting it "in sync"
+    // (exit 0) is a clean bill sync never verified — the `|| true` git hooks
+    // gate on `.genie/roadmap.json`, so they never reach this refusal.
+    if (!hasGenieWorkspace()) {
+      fail(
+        `no Genie workspace at ${resolveWorkspaceDir()} — there is no board and no snapshot to reconcile. Run \`genie init\` here first.`,
+      );
+    }
     const db = openDb();
     try {
       const result = syncRoadmap(db);

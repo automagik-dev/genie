@@ -1212,6 +1212,37 @@ describe('roadmap.json canonical sync', () => {
     writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
   }
 
+  /**
+   * Dogfood r7 W2: in a directory that was never `genie init`-ed, sync opened
+   * (and thereby CREATED) an empty genie.db, found no snapshot and no state,
+   * and printed `Board and snapshot are in sync (none).` with exit 0 — a clean
+   * bill indistinguishable from a genuinely reconciled workspace.
+   */
+  test('a directory with no .genie workspace is refused, never reported in sync', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'genie-v5-noworkspace-'));
+    try {
+      git(bare, 'init', '-b', 'main');
+      git(bare, 'commit', '--allow-empty', '-m', 'init');
+
+      const r = await cli(bare, 'sync');
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr.trim().split('\n')).toHaveLength(1);
+      expect(r.stderr).toContain('no Genie workspace');
+      expect(r.stderr).toContain('genie init');
+      // The refusal must not create the workspace whose absence it reports.
+      expect(existsSync(join(bare, '.genie'))).toBe(false);
+
+      // An initialized workspace still reconciles quietly, exit 0.
+      await mkdir(join(bare, '.genie'), { recursive: true });
+      const initialized = await cli(bare, 'sync');
+      expect(initialized.code).toBe(0);
+      expect(initialized.stderr).toBe('');
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
   test('fresh clone: one `task sync` materializes the board from the snapshot', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'canonical card' });
