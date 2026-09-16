@@ -67,13 +67,13 @@ bun scripts/skills-inventory-parity.ts --write
 | `brainstorm` | lifecycle | documents | Explore an ambiguous idea with the user, settle scope and success criteria, and produce an independently reviewed design for wish. |
 | `fix` | lifecycle | repo | Resolve blocking review gaps through bounded repairs and independent re-review; diagnose stalled attempts without expanding scope. |
 | `review` | lifecycle | none | Independently assess designs, plans, implementations, PRs, or repository quality; return evidence and SHIP, FIX-FIRST, or BLOCKED without applying fixes. |
-| `wish` | lifecycle | documents | Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation. |
+| `wish` | lifecycle | repo | Deliver one decided task end to end — admit it, work it in one worktree, gate, independent review, bounded repair, a merge-ready PR — or plan a multi-group wish when it is bigger than one task. |
 | `work` | lifecycle | repo | Execute an approved wish in dependency order with scoped workers, independent review, bounded repairs, and verified completion. |
 | `council` | routing | none | Assess a proposal through independent technical, product, risk, and dissenting lenses, then synthesize a decision without mutating unless explicitly requested. |
 | `genie` | routing | none | Route Genie questions, operations, bugs, and planned work. Resume related wishes; handle ordinary requests directly unless Genie planning or coordination adds value. |
 | `dream` | delivery | external | Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results. |
 | `merge` | delivery | repo | Resolve an in-progress merge or rebase by the intent of both sides, re-run the full gate on the merged tree, and finish the operation. |
-| `quick` | delivery | repo | Ship tiny low-risk changes to dev within one hour. |
+| `quick` | delivery | none | Retired: superseded by wish, which delivers one task end to end; this stub is removed after three measured runs. |
 | `report` | investigation | documents | Investigate a failure to its root cause with grounded evidence, hand the diagnosis to fix, and create a GitHub issue only when asked. |
 | `research` | investigation | documents | Investigate a question against primary sources, cite every claim, and write the findings into the repository's own notes. |
 | `authoring` | authoring | none | Write or revise a Genie skill so it survives the shipped contract — frontmatter, house size, starter card, and runtime-neutral voice. |

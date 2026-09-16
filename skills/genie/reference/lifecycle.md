@@ -32,4 +32,4 @@ Plan SHIP sets APPROVED; plan FIX-FIRST/BLOCKED sets the matching status. Execut
 
 Use native completion notifications/structured waits. Inspect standalone state with `genie board` or `genie task status`; `genie context --wish <slug> --plan` previews without mutation. Claims do not replace dependency ordering or independent review.
 
-For task choice use the `genie` router and the installed skill descriptions. `quick` has its own one-hour dev-read-back contract; `dream` batches approved wishes. Neither bypasses existing authorization or required evidence.
+For task choice use the `genie` router and the installed skill descriptions. `wish` delivers one admitted task to a merge-ready PR and never merges; `dream` batches approved wishes. Neither bypasses existing authorization or required evidence.
