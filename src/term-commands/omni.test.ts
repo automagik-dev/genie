@@ -9,7 +9,7 @@
 import type { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OmniRuntimeConfig } from '../lib/omni-config.js';
@@ -18,6 +18,7 @@ import { createOmniRunner, natsConnectionCount } from '../lib/omni-runner.js';
 import { __test__ as sigTest } from '../lib/omni-signature.js';
 import { openGlobalDb } from '../lib/v5/global-db.js';
 import { enqueueApproval, listInbox } from '../lib/v5/omni-queue.js';
+import { VERSION } from '../lib/version.js';
 import { __test__ as omniTest } from './omni.js';
 
 function rt(overrides: Partial<OmniRuntimeConfig> = {}): OmniRuntimeConfig {
@@ -694,4 +695,194 @@ describe('omni failure paths are one actionable line (r2 §3.3 #8–#11)', () =>
     expect(res.stderr).toContain('OMNI_APPROVAL_CHAT');
     expect(res.stderr).toContain('omni.approvals.enabled=true');
   });
+});
+
+/**
+ * Dogfood r5 Z2 — `--rotate` printed `Rotated from: <old> (revoked)` on stdout
+ * immediately after a stderr line saying the revoke had FAILED, pointed the
+ * operator at `omni trust revoke <id>` (not a genie command at all), and exited
+ * 0 while the old key was still live on the omni server.
+ *
+ * Plus the capability drift found in the same run: every host registered with
+ * `capabilities.genieVersion: "unknown"` because the body read an env var
+ * nothing sets.
+ */
+describe('omni handshake — rotation, revocation and reported capabilities (r5 Z2)', () => {
+  const GENIE_CLI = join(import.meta.dir, '..', 'genie.ts');
+
+  interface TrustStub {
+    url: string;
+    stop: () => void;
+    handshakes: Array<Record<string, unknown>>;
+    deletes: string[];
+  }
+
+  /** A trust endpoint that hands out a fresh host id per handshake; DELETE status is the knob. */
+  function startTrustStub(deleteStatus: number): TrustStub {
+    const handshakes: Array<Record<string, unknown>> = [];
+    const deletes: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (req.method === 'POST' && path === '/api/v2/trust/handshake') {
+          const body = (await req.json()) as Record<string, unknown>;
+          handshakes.push(body);
+          const id = `host-${handshakes.length}`;
+          return Response.json({
+            data: { id, pubkey: String(body.pubkey ?? ''), hostname: String(body.hostname ?? '') },
+          });
+        }
+        if (req.method === 'DELETE' && path.startsWith('/api/v2/trust/hosts/')) {
+          deletes.push(decodeURIComponent(path.slice('/api/v2/trust/hosts/'.length)));
+          if (deleteStatus !== 200) return new Response('{"error":"boom"}', { status: deleteStatus });
+          return Response.json({ data: { revoked: true } });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    });
+    return { url: `http://127.0.0.1:${server.port}`, stop: () => server.stop(true), handshakes, deletes };
+  }
+
+  const homes: string[] = [];
+  afterEach(() => {
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  });
+
+  function sandbox(): string {
+    const home = mkdtempSync(join(tmpdir(), 'omni-rotate-'));
+    homes.push(home);
+    return home;
+  }
+
+  /**
+   * ASYNC on purpose: the stub is a `Bun.serve` on this test process's own loop,
+   * and `Bun.spawnSync` would block that loop until the CLI gives up on a server
+   * that can never answer.
+   */
+  async function runHandshake(args: string[], home: string, apiUrl: string) {
+    const proc = Bun.spawn(['bun', GENIE_CLI, 'omni', 'handshake', ...args], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1', GENIE_HOME: home, OMNI_API_URL: apiUrl, OMNI_API_KEY: 'dummy' },
+    });
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, stdout, stderr };
+  }
+
+  test('a rotation whose revoke fails never claims the old host was revoked, and exits 1', async () => {
+    const stub = startTrustStub(500);
+    const home = sandbox();
+    try {
+      expect((await runHandshake([], home, stub.url)).code).toBe(0);
+
+      const rotated = await runHandshake(['--rotate'], home, stub.url);
+
+      expect(rotated.code).toBe(1);
+      expect(rotated.stdout).toContain('Genie host registered: host-2');
+      expect(rotated.stdout).toContain('Rotated from: host-1 (revoke FAILED — old key still live)');
+      expect(rotated.stdout).not.toContain('(revoked)');
+      // The remedy must be a command that exists, never `omni trust revoke`.
+      expect(rotated.stderr).toContain('genie omni handshake --revoke host-1');
+      expect(rotated.stderr).not.toContain('omni trust revoke host-1');
+      expect(rotated.stderr).not.toContain('    at ');
+      // The still-live key is recorded on disk, not only in a scrolled-past line.
+      const record = JSON.parse(readFileSync(join(home, 'keys', 'host.json'), 'utf8')) as Record<string, unknown>;
+      expect(record.pendingRevocation).toBe('host-1');
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('a rotation whose revoke succeeds says (revoked), exits 0 and records nothing pending', async () => {
+    const stub = startTrustStub(200);
+    const home = sandbox();
+    try {
+      await runHandshake([], home, stub.url);
+      const rotated = await runHandshake(['--rotate'], home, stub.url);
+
+      expect(rotated.code).toBe(0);
+      expect(rotated.stdout).toContain('Rotated from: host-1 (revoked)');
+      expect(rotated.stdout).not.toContain('revoke FAILED');
+      expect(stub.deletes).toEqual(['host-1']);
+      const record = JSON.parse(readFileSync(join(home, 'keys', 'host.json'), 'utf8')) as Record<string, unknown>;
+      expect(record.pendingRevocation).toBeUndefined();
+      expect(record.rotatedFrom).toBe('host-1');
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('`handshake --revoke <host-id>` is a real command that retires the named host', async () => {
+    const failing = startTrustStub(500);
+    const home = sandbox();
+    try {
+      await runHandshake([], home, failing.url);
+      await runHandshake(['--rotate'], home, failing.url);
+    } finally {
+      failing.stop();
+    }
+
+    const stub = startTrustStub(200);
+    try {
+      const revoked = await runHandshake(['--revoke', 'host-1'], home, stub.url);
+
+      expect(revoked.code).toBe(0);
+      expect(revoked.stdout).toContain('Revoked omni host: host-1');
+      expect(stub.deletes).toEqual(['host-1']);
+      const record = JSON.parse(readFileSync(join(home, 'keys', 'host.json'), 'utf8')) as Record<string, unknown>;
+      expect(record.pendingRevocation).toBeUndefined();
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('a failed `--revoke` is one diagnostic line and a non-zero exit', async () => {
+    const stub = startTrustStub(500);
+    const home = sandbox();
+    try {
+      const revoked = await runHandshake(['--revoke', 'host-9'], home, stub.url);
+
+      expect(revoked.code).toBe(1);
+      expect(revoked.stderr).toContain('HTTP 500');
+      expect(revoked.stdout).not.toContain('Revoked omni host');
+      expect(revoked.stderr).not.toContain('    at ');
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('`--rotate --revoke` is refused instead of half-applied', async () => {
+    const stub = startTrustStub(200);
+    const home = sandbox();
+    try {
+      const res = await runHandshake(['--rotate', '--revoke', 'host-1'], home, stub.url);
+
+      expect(res.code).toBe(1);
+      expect(res.stderr).toContain('mutually exclusive');
+      expect(stub.handshakes).toHaveLength(0);
+      expect(stub.deletes).toHaveLength(0);
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
+
+  test('the handshake body reports the running binary version, never "unknown"', async () => {
+    const stub = startTrustStub(200);
+    const home = sandbox();
+    try {
+      expect((await runHandshake([], home, stub.url)).code).toBe(0);
+
+      const capabilities = (stub.handshakes[0] as { capabilities: Record<string, unknown> }).capabilities;
+      expect(capabilities.genieVersion).toBe(VERSION);
+      expect(capabilities.genieVersion).not.toBe('unknown');
+    } finally {
+      stub.stop();
+    }
+  }, 30_000);
 });

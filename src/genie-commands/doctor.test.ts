@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,12 +30,17 @@ import {
   checkRetiredJsonMcpEntry,
   checkSkillsChannel,
   checkSubagentModelOverride,
+  checkTrackedMachineState,
   checkV4Residue,
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
   evaluateOmniBridgeHealth,
+  globalDbContaminationBunAlternative,
   globalDbContaminationRemedy,
+  globalDbContaminationSqliteAlternative,
+  listTrackedMachineState,
+  repairGlobalDbContamination,
 } from './doctor.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -1068,6 +1074,91 @@ describe('checkRetiredJsonMcpEntry', () => {
   });
 });
 
+describe('checkTrackedMachineState (committed machine-local .genie state)', () => {
+  let repoRoot: string;
+
+  function gitIn(...args: string[]): string {
+    return execFileSync('git', args, {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Test',
+        GIT_AUTHOR_EMAIL: 'test@example.com',
+        GIT_COMMITTER_NAME: 'Test',
+        GIT_COMMITTER_EMAIL: 'test@example.com',
+      },
+    });
+  }
+
+  function commitPath(relative: string, body = '{}\n'): void {
+    const target = join(repoRoot, relative);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, body);
+    // `-f`: the point of the check is a file a LATER .gitignore rule covers.
+    gitIn('add', '-f', relative);
+    gitIn('commit', '-q', '-m', `add ${relative}`);
+  }
+
+  beforeEach(() => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'genie-doctor-tracked-'));
+    execFileSync('git', ['init', '-q'], { cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+  afterEach(() => rmSync(repoRoot, { recursive: true, force: true }));
+
+  test('a clean repo passes, and so does one that only tracks real board documents', () => {
+    expect(checkTrackedMachineState(repoRoot)[0]).toMatchObject({ status: 'pass' });
+    commitPath('.genie/roadmap.json', '{"schemaVersion":1}\n');
+    commitPath('.genie/INDEX.md', '# Plans Index\n');
+    expect(checkTrackedMachineState(repoRoot)[0]).toMatchObject({ status: 'pass' });
+  });
+
+  test('a committed .genie/roadmap-sync warns, names the file, and gives both repair steps', () => {
+    commitPath('.genie/roadmap-sync');
+    const [check] = checkTrackedMachineState(repoRoot);
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain('.genie/roadmap-sync');
+    // Both halves of the remedy: the rule alone never untracks the file.
+    expect(check.suggestion).toContain('genie init');
+    expect(check.suggestion).toContain('git rm --cached .genie/roadmap-sync');
+  });
+
+  test('every machine-local path is observed, sorted, and bounded in the detail line', () => {
+    commitPath('.genie/roadmap-sync');
+    commitPath('.genie/genie.db', 'binary-ish\n');
+    commitPath('.genie/launch/group.prompt', 'kickoff\n');
+    expect(listTrackedMachineState(repoRoot)).toEqual([
+      '.genie/genie.db',
+      '.genie/launch/group.prompt',
+      '.genie/roadmap-sync',
+    ]);
+    const [check] = checkTrackedMachineState(repoRoot);
+    expect(check.detail).toContain('3 machine-local path(s) are committed');
+    expect(check.detail?.indexOf('.genie/genie.db')).toBeLessThan(check.detail?.indexOf('.genie/roadmap-sync') ?? -1);
+  });
+
+  test('outside git, or where the index cannot be read, it observes nothing instead of lying', () => {
+    expect(checkTrackedMachineState(null)[0]).toMatchObject({ status: 'pass', detail: 'not inside a git repository' });
+    const notARepo = mkdtempSync(join(tmpdir(), 'genie-doctor-nogit-'));
+    try {
+      expect(listTrackedMachineState(notARepo)).toBeNull();
+      expect(checkTrackedMachineState(notARepo)[0].status).toBe('pass');
+    } finally {
+      rmSync(notARepo, { recursive: true, force: true });
+    }
+  });
+
+  test('warning-level only: a tracked baseline never flips doctor ok:false', async () => {
+    commitPath('.genie/roadmap-sync');
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(repoRoot)));
+    const doc = JSON.parse(output) as { ok: boolean; checks: Array<{ name: string; status: string }> };
+    const check = doc.checks.find((c) => c.name === 'git: machine-local .genie state');
+    expect(check?.status).toBe('warn');
+    expect(doc.ok).toBe(true);
+  });
+});
+
 // ============================================================================
 // Orca lifecycle authority — doctor never opens the local store
 // ============================================================================
@@ -1653,14 +1744,26 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     expect(check).toMatchObject({ name: 'global db', status: 'warn' });
     expect(check.detail).toContain('per-repo tables present (boards, tasks, task_events)');
     expect(check.detail).toContain(dbPath);
-    // The remedy backs the file up first and drops ONLY the stray tables.
-    const remedy = globalDbContaminationRemedy(dbPath, ['boards', 'tasks', 'task_events']);
+    // The remedy is a genie subcommand: the only repair route that exists on a
+    // stock install, which ships neither `bun` nor `sqlite3` on PATH.
+    const remedy = globalDbContaminationRemedy();
+    expect(remedy).toBe('genie doctor --fix-global-db');
     expect(check.suggestion).toBe(remedy);
     expect(check.detail).toContain(remedy);
-    expect(remedy).toContain(`cp ${dbPath} ${dbPath}.backup-`);
-    expect(remedy).toContain('DROP TABLE IF EXISTS boards;');
-    expect(remedy).not.toContain('approvals');
-    expect(remedy).not.toContain('inbound_messages');
+    expect(remedy).not.toContain('sqlite3');
+    expect(remedy).not.toContain('bun');
+    // Both third-party spellings survive, named as alternatives only, and each
+    // still drops ONLY the stray tables.
+    const bunAlternative = globalDbContaminationBunAlternative(dbPath, ['boards', 'tasks', 'task_events']);
+    const sqliteAlternative = globalDbContaminationSqliteAlternative(dbPath, ['boards', 'tasks', 'task_events']);
+    expect(check.detail).toContain(`In a bun checkout: ${bunAlternative}`);
+    expect(check.detail).toContain(`with sqlite3, if you have it: ${sqliteAlternative}`);
+    expect(bunAlternative).toContain(`cp ${dbPath} ${dbPath}.backup-`);
+    expect(bunAlternative).toContain('boards tasks task_events');
+    for (const spelling of [bunAlternative, sqliteAlternative]) {
+      expect(spelling).not.toContain('approvals');
+      expect(spelling).not.toContain('inbound_messages');
+    }
     // Read-only: the check never repairs, so the tables are still there.
     const after = new Database(dbPath, { readonly: true });
     const names = (
@@ -1670,6 +1773,180 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     ).map((row) => row.name);
     after.close();
     expect(names).toContain('boards');
+  });
+
+  /**
+   * Regression (dogfood r6 Z10): `genie doctor --fix-global-db` is the repair
+   * itself, so it needs nothing the install does not already ship. Backup-first
+   * and surgical: only the per-repo strays go, the approval queue and its rows
+   * survive, and the backup still holds the pre-repair schema.
+   */
+  test('--fix-global-db backs the file up, drops only the strays, and is idempotent', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const seed = new Database(dbPath);
+    seed.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    seed.run("INSERT INTO approvals (id) VALUES ('keep-me')");
+    seed.run('CREATE TABLE inbound_messages (id TEXT PRIMARY KEY)');
+    seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    seed.run('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
+    seed.close();
+
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));
+    expect(exitCode).toBe(0);
+    expect(output).toContain('dropped per-repo table(s): boards, tasks');
+    // It ran the repair ALONE — no diagnostic report, so no unrelated check can
+    // decide the exit code of a pasted remedy.
+    expect(output).not.toContain('genie doctor\n\n');
+
+    const tables = () => {
+      const db = new Database(dbPath, { readonly: true });
+      const names = (
+        db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+      ).map((row) => row.name);
+      db.close();
+      return names;
+    };
+    expect(tables()).toContain('approvals');
+    expect(tables()).toContain('inbound_messages');
+    expect(tables()).not.toContain('boards');
+    expect(tables()).not.toContain('tasks');
+
+    // The operator's approval history is untouched.
+    const live = new Database(dbPath, { readonly: true });
+    expect((live.query('SELECT id FROM approvals').all() as Array<{ id: string }>).map((r) => r.id)).toEqual([
+      'keep-me',
+    ]);
+    live.close();
+
+    // Backed up first, so the repair is reversible: the backup still carries the
+    // pre-repair schema.
+    const backup = readdirSync(genieHome).find((entry) => entry.startsWith('genie.db.backup-'));
+    expect(backup).toBeDefined();
+    const restored = new Database(join(genieHome, backup as string), { readonly: true });
+    const backedUp = (
+      restored.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    restored.close();
+    expect(backedUp).toContain('boards');
+    expect(backedUp).toContain('approvals');
+
+    // Doctor now passes, and a second repair is a no-op that makes no backup.
+    expect(checkGlobalDbContamination({ genieHome })[0]).toMatchObject({ status: 'pass' });
+    const again = await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));
+    expect(again.exitCode).toBe(0);
+    expect(again.output).toContain('already clean');
+    expect(readdirSync(genieHome).filter((entry) => entry.startsWith('genie.db.backup-'))).toHaveLength(1);
+  });
+
+  test('--fix-global-db on a host with no global database says so and exits 0', async () => {
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));
+    expect(exitCode).toBe(0);
+    expect(output).toContain('no global database');
+  });
+
+  /**
+   * The hand-written `cp` spellings copy `genie.db` alone, so with an
+   * uncheckpointed WAL the "backup" is an empty database — voiding the
+   * reversibility the remedy promises while `genie omni serve` holds the file.
+   * The in-process repair folds the WAL back in before the byte copy.
+   */
+  test('--fix-global-db backs up a database with a live WAL completely', async () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const seed = new Database(dbPath);
+    seed.run('PRAGMA journal_mode = WAL');
+    seed.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    seed.run("INSERT INTO approvals (id) VALUES ('pending-in-wal')");
+    seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    // Deliberately NOT checkpointed and NOT closed cleanly: the rows live in
+    // genie.db-wal, exactly as they do while the omni runner is writing.
+    expect(existsSync(`${dbPath}-wal`)).toBe(true);
+
+    await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));
+    seed.close();
+
+    const backup = readdirSync(genieHome).find((entry) => entry.startsWith('genie.db.backup-')) as string;
+    const restored = new Database(join(genieHome, backup), { readonly: true });
+    const rows = restored.query('SELECT id FROM approvals').all() as Array<{ id: string }>;
+    restored.close();
+    expect(rows.map((r) => r.id)).toEqual(['pending-in-wal']);
+  });
+
+  test('a repair failure is reported and exits 1 without claiming a backup', () => {
+    const genieHome = join(isolatedHome, 'globaldb-unreadable');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    writeFileSync(dbPath, 'this is not a sqlite database');
+    const result = repairGlobalDbContamination({ genieHome });
+    expect(result.status).toBe('failed');
+    expect(result.backupPath).toBeNull();
+    expect(result.dropped).toEqual([]);
+    expect(readdirSync(genieHome).filter((entry) => entry.startsWith('genie.db.backup-'))).toEqual([]);
+  });
+
+  /**
+   * THE Z10 regression, at the real boundary. The dogfood host proved the
+   * previous two remedies both died at `command not found`: the installer
+   * declares its prerequisites as `curl tar uname ln`, the shipped artifact is a
+   * `bun --compile` static executable, and the frozen tarball payload carries
+   * neither `bun` nor `sqlite3`. So the PATH here holds ONLY the installer's
+   * prerequisites plus `genie` itself — `command -v bun` and `command -v sqlite3`
+   * both fail — and the suggestion doctor emits is executed on it verbatim.
+   */
+  test('the emitted remedy runs on a stock PATH with no bun and no sqlite3', () => {
+    const genieHome = join(isolatedHome, 'globaldb-stock-host');
+    mkdirSync(genieHome, { recursive: true });
+    const dbPath = join(genieHome, 'genie.db');
+    const seed = new Database(dbPath);
+    seed.run('CREATE TABLE approvals (id TEXT PRIMARY KEY)');
+    seed.run("INSERT INTO approvals (id) VALUES ('keep-me')");
+    seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
+    seed.run('CREATE TABLE tasks (id TEXT PRIMARY KEY)');
+    seed.close();
+
+    const bin = join(genieHome, 'bin');
+    mkdirSync(bin, { recursive: true });
+    // install.sh's declared prerequisites plus the coreutils any paste-able
+    // shell command may lean on — and nothing else.
+    for (const tool of ['curl', 'tar', 'uname', 'ln', 'cp', 'date', 'ls', 'cat', 'rm', 'mkdir']) {
+      const resolved = Bun.spawnSync(['/usr/bin/which', tool]).stdout.toString().trim();
+      if (resolved !== '') symlinkSync(resolved, join(bin, tool));
+    }
+    // `genie` itself: the shipped artifact embeds its own runtime, so it resolves
+    // neither its interpreter nor bun:sqlite through PATH. The shim models that
+    // with absolute paths only.
+    const repoRoot = join(import.meta.dir, '..', '..');
+    const geniePath = join(bin, 'genie');
+    writeFileSync(geniePath, `#!/bin/sh\nexec ${process.execPath} ${join(repoRoot, 'src', 'genie.ts')} "$@"\n`, {
+      mode: 0o755,
+    });
+
+    const env = { PATH: bin, HOME: isolatedHome, GENIE_HOME: genieHome };
+    const has = (tool: string) => Bun.spawnSync(['/bin/sh', '-c', `command -v ${tool}`], { env }).exitCode === 0;
+    expect(has('bun')).toBe(false);
+    expect(has('sqlite3')).toBe(false);
+    expect(has('genie')).toBe(true);
+
+    const suggestion = (checkGlobalDbContamination({ genieHome })[0] as CheckResult).suggestion as string;
+    const run = Bun.spawnSync(['/bin/sh', '-c', suggestion], { env });
+    expect(run.stderr.toString()).not.toContain('not found');
+    expect(run.exitCode).toBe(0);
+
+    const after = new Database(dbPath, { readonly: true });
+    const names = (
+      after.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const approvals = (after.query('SELECT id FROM approvals').all() as Array<{ id: string }>).map((r) => r.id);
+    after.close();
+    expect(names).toContain('approvals');
+    expect(names).not.toContain('boards');
+    expect(names).not.toContain('tasks');
+    expect(approvals).toEqual(['keep-me']);
+    expect(readdirSync(genieHome).some((entry) => entry.startsWith('genie.db.backup-'))).toBe(true);
+    expect(checkGlobalDbContamination({ genieHome })[0]).toMatchObject({ status: 'pass' });
   });
 
   test('an absent global db is not a finding', () => {

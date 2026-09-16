@@ -116,6 +116,10 @@ program
     '--fix',
     'Backup/remove proven v4 residue and merged clean `genie launch` worktrees; tighten registered-worktree files only from wider modes to their index modes and dirs only from 0775/0777 to 0755; refuse replacements, symlinks, and non-wider or ambiguous modes (idempotent)',
   )
+  .option(
+    '--fix-global-db',
+    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it (the omni approval queue and inbox are never touched). Runs this repair alone, not the other checks (idempotent)',
+  )
   .action(doctorCommand);
 
 program

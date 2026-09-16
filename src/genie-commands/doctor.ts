@@ -15,7 +15,7 @@
 
 import { Database } from 'bun:sqlite';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { DEAD_GENIE_OTEL_EXPORTER, getCodexConfigPath } from '../lib/codex-config.js';
@@ -33,6 +33,7 @@ import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
+import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
 import {
   type AgentSkillHomeSpec,
@@ -277,30 +278,152 @@ const PER_REPO_ONLY_TABLES = [
 /** The check name, exported so the remedy and the test never drift apart. */
 export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';
 
-/** The exact manual remedy: back the file up first, then drop ONLY those tables. */
-export function globalDbContaminationRemedy(dbPath: string, tables: readonly string[]): string {
-  const drops = tables.map((name) => `DROP TABLE IF EXISTS ${name};`).join(' ');
-  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && sqlite3 ${dbPath} "${drops}"`;
+/**
+ * The repair route that exists on a STOCK host: the genie binary itself, which
+ * embeds its own SQLite (bun:sqlite) and is on PATH by construction of the
+ * installer. Named explicitly and separately from `--fix`, which stays a
+ * never-repairing cleanup of v4 residue and launch worktrees.
+ */
+export const GLOBAL_DB_REPAIR_COMMAND = 'genie doctor --fix-global-db';
+
+/**
+ * The `bun -e` spelling of the same repair, named as an ALTERNATIVE only. The
+ * supported installer declares its prerequisites as `curl tar uname ln` and the
+ * shipped artifact is a `bun --compile` static executable, so `bun` is NOT on a
+ * stock host's PATH (dogfood r6 Z10) — this is the spelling for a developer
+ * checkout, not for an installed host.
+ */
+export function globalDbContaminationBunAlternative(dbPath: string, tables: readonly string[]): string {
+  const drop =
+    'import{Database}from"bun:sqlite";' +
+    'const d=new Database(process.argv[1]);' +
+    'for(const t of process.argv.slice(2))d.run("DROP TABLE IF EXISTS "+t);' +
+    'd.close()';
+  return `cp ${dbPath} ${dbPath}.backup-$(date -u +%Y%m%dT%H%M%SZ) && bun -e '${drop}' ${dbPath} ${tables.join(' ')}`;
 }
 
 /**
- * Read-only detection of a contaminated global database. Doctor NEVER repairs
- * this, not even under `--fix`: dropping a table is a destructive act on a file
- * that also holds the operator's approval history, so the remedy is printed and
- * the human runs it.
+ * The sqlite3 spelling of the same repair, named as an ALTERNATIVE only.
+ * sqlite3 is not part of a genie install and was absent on the dogfood host, so
+ * pasting it made the backup copy and then died at `sqlite3: command not found`,
+ * leaving a stray `.backup-*` file and the contamination unrepaired (r5 Z10).
+ */
+export function globalDbContaminationSqliteAlternative(dbPath: string, tables: readonly string[]): string {
+  const drops = tables.map((name) => `DROP TABLE IF EXISTS ${name};`).join(' ');
+  return `sqlite3 ${dbPath} "${drops}"`;
+}
+
+/**
+ * The remedy doctor hands the operator. It is a genie subcommand, never a third
+ * party binary: both earlier spellings depended on a tool a stock install does
+ * not ship (`sqlite3`, then `bun`), so pasting them died at `command not found`
+ * and left a stray backup behind.
+ */
+export function globalDbContaminationRemedy(): string {
+  return GLOBAL_DB_REPAIR_COMMAND;
+}
+
+/** `date -u +%Y%m%dT%H%M%SZ`, so a hand-run backup and this one sort together. */
+function compactUtcStamp(now = new Date()): string {
+  return now
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** What {@link repairGlobalDbContamination} did, for both renderers and tests. */
+export interface GlobalDbRepairResult {
+  status: 'repaired' | 'clean' | 'absent' | 'failed';
+  dbPath: string;
+  dropped: string[];
+  backupPath: string | null;
+  message: string;
+}
+
+/**
+ * The ONE destructive act doctor performs, and only under its own explicit flag.
+ * Backup-first and WAL-safe: the write-ahead log is folded back into the main
+ * file before the byte copy, so the backup is complete even when `genie omni
+ * serve` has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES}
+ * that are actually present are dropped; the approval queue and inbox are never
+ * touched. Idempotent — a repaired database reports `clean` on the next run.
+ */
+export function repairGlobalDbContamination(options: { genieHome?: string } = {}): GlobalDbRepairResult {
+  const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
+  if (!existsSync(dbPath)) {
+    return {
+      status: 'absent',
+      dbPath,
+      dropped: [],
+      backupPath: null,
+      message: `${dbPath}: no global database — nothing to repair.`,
+    };
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath);
+    const names = (
+      db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const strays = PER_REPO_ONLY_TABLES.filter((name) => names.includes(name));
+    if (strays.length === 0) {
+      db.close();
+      db = null;
+      return {
+        status: 'clean',
+        dbPath,
+        dropped: [],
+        backupPath: null,
+        message: `${dbPath}: already clean (omni queue + inbox only) — nothing to repair.`,
+      };
+    }
+    db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+    db.close();
+    db = null;
+    const backupPath = `${dbPath}.backup-${compactUtcStamp()}`;
+    copyFileSync(dbPath, backupPath);
+    db = new Database(dbPath);
+    for (const table of strays) db.run(`DROP TABLE IF EXISTS ${table}`);
+    db.close();
+    db = null;
+    return {
+      status: 'repaired',
+      dbPath,
+      dropped: [...strays],
+      backupPath,
+      message: `${dbPath}: backed up to ${backupPath}, dropped per-repo table(s): ${strays.join(', ')}.`,
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      dbPath,
+      dropped: [],
+      backupPath: null,
+      message: `${dbPath} could not be repaired: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * Read-only detection of a contaminated global database. A doctor RUN never
+ * repairs this, not even under `--fix`: dropping a table is a destructive act on
+ * a file that also holds the operator's approval history, so the check names the
+ * remedy and the human decides. The repair lives behind its own explicit verb,
+ * {@link GLOBAL_DB_REPAIR_COMMAND}, so that consent is a separate keystroke.
  */
 export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]): CheckResult {
   const strays = PER_REPO_ONLY_TABLES.filter((name) => tables.includes(name));
   if (strays.length === 0) {
     return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
   }
-  const remedy = globalDbContaminationRemedy(dbPath, strays);
-  return {
-    name: GLOBAL_DB_CONTAMINATION_CHECK,
-    status: 'warn',
-    detail: `${dbPath}: per-repo tables present (${strays.join(', ')}); back up, then drop only those tables: ${remedy}`,
-    suggestion: remedy,
-  };
+  const remedy = globalDbContaminationRemedy();
+  const detail =
+    `${dbPath}: per-repo tables present (${strays.join(', ')}); repair it with \`${remedy}\`` +
+    ` (backs the file up first, drops only those tables). In a bun checkout: ${globalDbContaminationBunAlternative(dbPath, strays)}` +
+    ` — or with sqlite3, if you have it: ${globalDbContaminationSqliteAlternative(dbPath, strays)}`;
+  return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'warn', detail, suggestion: remedy };
 }
 
 /** Never opens (or creates) anything: an absent global DB is simply not a finding. */
@@ -323,7 +446,7 @@ export function checkGlobalDbContamination(options: { genieHome?: string } = {})
         name: GLOBAL_DB_CONTAMINATION_CHECK,
         status: 'warn',
         detail: `${dbPath} could not be read: ${error instanceof Error ? error.message : String(error)}`,
-        suggestion: 'Inspect the global database by hand; genie never repairs it.',
+        suggestion: `Inspect the global database by hand; ${GLOBAL_DB_REPAIR_COMMAND} repairs contamination, never corruption.`,
       },
     ];
   } finally {
@@ -1517,6 +1640,78 @@ export function checkRetiredJsonMcpEntry(root: string | null): CheckResult[] {
   ];
 }
 
+/** The `git: machine-local .genie state` check name — stable across renders and `--json`. */
+export const TRACKED_MACHINE_STATE_CHECK = 'git: machine-local .genie state';
+
+/**
+ * The remedy for a repo that tracks machine-local `.genie/` state. Two steps,
+ * in this order and both required: a `.gitignore` rule does NOT untrack an
+ * already-tracked file, and untracking without the rule lets the next
+ * `git add -A .genie` put it straight back.
+ */
+export function trackedMachineStateRemedy(paths: readonly string[]): string {
+  return [
+    'Run `genie init` to append the missing .gitignore rules, then untrack the files with',
+    `\`git rm --cached ${paths.join(' ')}\` and commit —`,
+    'ignoring a path never untracks it, and untracking without the rule re-commits it on the next `git add`.',
+  ].join(' ');
+}
+
+/**
+ * Tracked machine-local `.genie/` paths, as `git ls-files` reports them.
+ * Separated from the check so the classification is testable without a doctor
+ * run, and so a git failure (no git, not a work tree, a bare repo) is one
+ * `null` the caller renders as "could not observe", never a false clean bill.
+ */
+export function listTrackedMachineState(root: string): string[] | null {
+  try {
+    const stdout = execFileSync('git', ['-C', root, 'ls-files', '--cached', '-z', '--', ...MACHINE_LOCAL_GENIE_PATHS], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return stdout.split('\0').filter((path) => path.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `git: machine-local .genie state` check.
+ *
+ * `genie init` only ever APPENDS `.gitignore` rules, so a repo that committed
+ * `.genie/roadmap-sync` (or a `genie.db` sidecar) before the rule existed keeps
+ * tracking it forever — and a tracked sync baseline is the one that silently
+ * destroys shared state: it travels to a fresh clone, matches that clone's
+ * freshly created EMPTY database, and the first `genie task sync` publishes the
+ * empty board over the committed `roadmap.json`.
+ *
+ * Warning-level and read-only: the repair rewrites the operator's git index, so
+ * doctor names the files and the exact two commands and never flips `ok:false`
+ * (and never repairs, not even under `--fix`).
+ */
+export function checkTrackedMachineState(root: string | null): CheckResult[] {
+  const name = TRACKED_MACHINE_STATE_CHECK;
+  if (root === null) {
+    return [{ name, status: 'pass', detail: 'not inside a git repository' }];
+  }
+  const tracked = listTrackedMachineState(root);
+  if (tracked === null) {
+    return [{ name, status: 'pass', detail: `could not query the git index at ${root}` }];
+  }
+  if (tracked.length === 0) {
+    return [{ name, status: 'pass', detail: 'no machine-local .genie/ paths are tracked' }];
+  }
+  const sorted = [...tracked].sort();
+  return [
+    {
+      name,
+      status: 'warn',
+      detail: `${sorted.length} machine-local path(s) are committed: ${namedWithRemainder(sorted)}`,
+      suggestion: trackedMachineStateRemedy(sorted),
+    },
+  ];
+}
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -1587,22 +1782,14 @@ export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = tr
   return results;
 }
 
-export async function doctorCommand(options?: { json?: boolean; fix?: boolean }, deps: DoctorDeps = {}): Promise<void> {
-  // One bounded Git resolution and one bounded Codex plugin query feed every
-  // downstream check. No doctor branch independently re-spawns either probe.
-  const injectedRoot = deps.root === null || typeof deps.root === 'string';
-  const gitRoots = injectedRoot ? null : resolveGitProjectRoots();
-  const root = injectedRoot ? (deps.root ?? null) : (gitRoots?.worktreeRoot ?? null);
-  const databaseRoot =
-    deps.databaseRoot === null || typeof deps.databaseRoot === 'string'
-      ? deps.databaseRoot
-      : (gitRoots?.commonRoot ?? root);
-
-  // --fix: run the cleanups BEFORE the checks so the report below reflects the
-  // post-fix state, and AFTER the Git resolution above because the worktree
-  // cleanup is scoped to the resolved repo root. Without --fix, detection only —
-  // both residue checks are pure reads and nothing on disk changes. In --json
-  // mode stdout belongs to the JSON document, so cleanup chatter goes to stderr.
+/**
+ * --fix: run the cleanups BEFORE the checks so the report reflects the post-fix
+ * state, and AFTER the caller's Git resolution because the worktree cleanup is
+ * scoped to the resolved repo root. Without --fix, detection only — both residue
+ * checks are pure reads and nothing on disk changes. In --json mode stdout
+ * belongs to the JSON document, so cleanup chatter goes to stderr.
+ */
+function runDoctorCleanups(options: { json?: boolean; fix?: boolean } | undefined, root: string | null): void {
   const cleanupOptions = options?.json ? { logSink: (line: string) => writeErr(`${line}\n`) } : {};
   if (options?.fix) {
     cleanupV4(cleanupOptions);
@@ -1613,6 +1800,38 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     // the state the user last saw; the next --fix may reclaim it).
     repairWorktreeModes(root, cleanupOptions);
   }
+}
+
+/** The `--fix-global-db` verb: repair, report, and decide the exit code alone. */
+function renderGlobalDbRepair(json: boolean): void {
+  const repair = repairGlobalDbContamination();
+  if (json) out(JSON.stringify({ ok: repair.status !== 'failed', repair }, null, 2));
+  else out(repair.message);
+  if (repair.status === 'failed') process.exitCode = 1;
+}
+
+export async function doctorCommand(
+  options?: { json?: boolean; fix?: boolean; fixGlobalDb?: boolean },
+  deps: DoctorDeps = {},
+): Promise<void> {
+  // `--fix-global-db` is a repair VERB, not a diagnostic run: it performs the one
+  // destructive act doctor owns and returns on its own result. It deliberately
+  // does not run the other checks, so its exit code answers exactly one question
+  // — "did the repair succeed?" — on a host whose unrelated warnings are not this
+  // operator's problem. That is what makes the emitted remedy safe to paste.
+  if (options?.fixGlobalDb) return renderGlobalDbRepair(options.json === true);
+
+  // One bounded Git resolution and one bounded Codex plugin query feed every
+  // downstream check. No doctor branch independently re-spawns either probe.
+  const injectedRoot = deps.root === null || typeof deps.root === 'string';
+  const gitRoots = injectedRoot ? null : resolveGitProjectRoots();
+  const root = injectedRoot ? (deps.root ?? null) : (gitRoots?.worktreeRoot ?? null);
+  const databaseRoot =
+    deps.databaseRoot === null || typeof deps.databaseRoot === 'string'
+      ? deps.databaseRoot
+      : (gitRoots?.commonRoot ?? root);
+
+  runDoctorCleanups(options, root);
 
   const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
   const results: CheckResult[] = [
@@ -1640,6 +1859,7 @@ export async function doctorCommand(options?: { json?: boolean; fix?: boolean },
     ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
+    ...checkTrackedMachineState(root),
   ];
 
   const failed = results.filter((r) => r.status === 'fail');

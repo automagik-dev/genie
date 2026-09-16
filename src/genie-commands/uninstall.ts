@@ -2335,12 +2335,55 @@ function executeConfirmedUninstall(genieDir: string, removeMarketplace: boolean)
 }
 
 /**
+ * Why this process may not prompt. Each value maps to one clause of the
+ * refusal, and ONLY the causes that actually hold are named — the old single
+ * sentence told every refused run to "re-run without --no-interactive", a flag
+ * a piped `genie uninstall` never passed (dogfood r5 Z8).
+ */
+export type UninstallNonInteractiveCause = 'no-interactive-flag' | 'ci' | 'not-a-terminal';
+
+/** What {@link isInteractive} looked at, so the message can name the same facts. */
+export interface InteractivityFacts {
+  argv?: string[];
+  env?: Record<string, string | undefined>;
+  stdinIsTTY?: boolean;
+  stdoutIsTTY?: boolean;
+}
+
+/**
+ * The causes that hold, in the order {@link isInteractive} would meet them.
+ * Every cause present is reported: a CI job with a closed stdin has to fix both
+ * to reach the prompt, so naming only the first would be a second wrong remedy.
+ */
+export function detectUninstallNonInteractiveCauses(facts: InteractivityFacts = {}): UninstallNonInteractiveCause[] {
+  const argv = facts.argv ?? process.argv;
+  const env = facts.env ?? process.env;
+  const stdinIsTTY = facts.stdinIsTTY ?? Boolean(process.stdin.isTTY);
+  const stdoutIsTTY = facts.stdoutIsTTY ?? Boolean(process.stdout.isTTY);
+  const causes: UninstallNonInteractiveCause[] = [];
+  if (!stdinIsTTY || !stdoutIsTTY) causes.push('not-a-terminal');
+  if (env.CI) causes.push('ci');
+  if (argv.includes('--no-interactive')) causes.push('no-interactive-flag');
+  return causes;
+}
+
+const CAUSE_CLAUSES: Record<UninstallNonInteractiveCause, string> = {
+  'not-a-terminal': 'stdin or stdout is not a terminal, and piped input cannot answer the prompt',
+  ci: 'CI is set in the environment',
+  'no-interactive-flag': '--no-interactive was passed',
+};
+
+/**
  * The one stderr line a non-interactive `genie uninstall` gets. `--help` says
  * `--no-interactive` means "exit 2 instead of prompting", so this is the whole
- * contract: nothing was removed, and the operator is told how to proceed.
+ * contract: nothing was removed, WHY this run could not confirm (naming only
+ * what actually applies to it), and the one invocation that works. There is
+ * deliberately no `--yes`: uninstall is destructive and consent is interactive.
  */
-export const UNINSTALL_NON_INTERACTIVE_MESSAGE =
-  'genie uninstall needs an interactive confirmation. Nothing was removed. Re-run it from a terminal without --no-interactive.';
+export function uninstallNonInteractiveMessage(causes: readonly UninstallNonInteractiveCause[]): string {
+  const why = causes.length > 0 ? ` ${causes.map((cause) => CAUSE_CLAUSES[cause]).join('; ')}.` : '';
+  return `genie uninstall needs an interactive confirmation. Nothing was removed.${why} There is no non-interactive consent flag — run \`genie uninstall\` directly from a terminal.`;
+}
 
 /** Deterministic seams for the destructive uninstall path; production uses the real dependencies. */
 export interface UninstallDeps {
@@ -2356,6 +2399,11 @@ export interface UninstallDeps {
    * scripted or CI uninstall wedged indefinitely instead of failing fast.
    */
   canPrompt?: () => boolean;
+  /**
+   * Why prompting is forbidden, for the refusal's own wording; production reads
+   * argv/env/the TTY flags through {@link detectUninstallNonInteractiveCauses}.
+   */
+  nonInteractiveCauses?: () => UninstallNonInteractiveCause[];
   /**
    * Lifecycle-lease seam, mirroring install's `acquireLease`.
    * Tests can drive a busy/held holder without a real lock file, and the bounded
@@ -2448,7 +2496,7 @@ export async function uninstallCommand(
   // has removed nothing.
   const canPrompt = deps.canPrompt ?? isInteractive;
   if (!canPrompt()) {
-    printErr(UNINSTALL_NON_INTERACTIVE_MESSAGE);
+    printErr(uninstallNonInteractiveMessage((deps.nonInteractiveCauses ?? detectUninstallNonInteractiveCauses)()));
     process.exitCode = 2;
     return;
   }

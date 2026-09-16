@@ -11,6 +11,51 @@ const STATUS_LABEL: Record<Card['status'], string> = {
   blocked: 'Blocked',
 };
 
+/**
+ * "showing last N of M", or nothing when the view carries the whole history.
+ *
+ * The aggregate's `timeline` and `comments` are the newest window of a longer
+ * history, and `eventCount`/`commentCount` are the true totals at every cap, so
+ * both panes say what they are not showing in the same words (Z4).
+ */
+export function showingLabel(shown: number, total: number): string | undefined {
+  return total > shown ? `showing last ${shown} of ${total}` : undefined;
+}
+
+/**
+ * The picker label for one board. A board whose lane metadata migration or an
+ * import left NULL reports `laneCount: 0` and cannot be shown as lanes at all,
+ * so the picker marks it instead of letting it look like any other board until
+ * the user selects it (Z3).
+ */
+export function boardOptionLabel(entry: Board): string {
+  return `${entry.name} · ${entry.cardCount}${entry.laneCount === 0 ? ' (no lanes)' : ''}`;
+}
+
+/** The board picker, marking the boards that carry no usable lanes. */
+export function BoardPicker({
+  boards,
+  value,
+  disabled,
+  onSelect,
+}: { boards: Board[]; value: string; disabled: boolean; onSelect: (ref: string) => void }) {
+  return (
+    <select
+      className="gb-select"
+      aria-label="Board"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onSelect(event.currentTarget.value)}
+    >
+      {boards.map((entry) => (
+        <option key={entry.id} value={entry.id}>
+          {boardOptionLabel(entry)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function liveness(card: Card): 'ongoing' | 'idle' | 'warning' | 'done' | 'error' {
   if (card.enforcedBlock) return 'error';
   if (card.status === 'done') return 'done';
@@ -50,14 +95,23 @@ function who(event: { author: string | null; authorKind: string | null }): strin
   return event.author ?? event.authorKind ?? 'unknown';
 }
 
-/** Chat-style conversation: comments and worker reports in order, oldest first. */
-function Conversation({
+/**
+ * Chat-style conversation, oldest first.
+ *
+ * The list is the aggregate's own `comments` window, not a filter over the
+ * event window: the two are capped independently, so filtering `timeline`
+ * silently dropped comments the aggregate had carried and disagreed with the
+ * `commentCount` badge (Z4). Worker reports stay in the History rail, which is
+ * where the whole event stream lives.
+ */
+export function Conversation({
   card,
   busy,
   onSend,
 }: { card: Card; busy: boolean; onSend: (kind: 'comment' | 'block' | 'hold', text: string) => void }) {
   const [text, setText] = useState('');
-  const messages = card.timeline.filter((event) => event.kind === 'comment' || event.kind === 'report');
+  const messages = card.comments;
+  const truncated = showingLabel(messages.length, card.commentCount);
   const send = (kind: 'comment' | 'block' | 'hold') => {
     if (!text.trim()) return;
     onSend(kind, text);
@@ -65,18 +119,22 @@ function Conversation({
   };
   return (
     <section className="gb-chat" aria-label="Conversation">
+      <h3 className="gb-chat-head">
+        Comments
+        {truncated ? <span className="gb-sub"> · {truncated}</span> : null}
+      </h3>
       <div className="gb-chat-log">
         {messages.length === 0 && (
           <p className="gb-chat-empty">
-            No comments or reports yet. Agents post here as they claim, work and hand off this card.
+            No comments yet. Agents post here as they claim, work and hand off this card; their reports and every other
+            event are in History.
           </p>
         )}
         {messages.map((event) => (
-          <article key={event.id} className="gb-msg" data-kind={event.kind}>
+          <article key={event.id} className="gb-msg" data-kind="comment">
             <header>
               <strong>{event.author ?? 'unknown'}</strong>
               {event.authorKind && <span className="gb-msg-kind">{event.authorKind}</span>}
-              {event.kind === 'report' && <Tag tone="info">report</Tag>}
               <time title={new Date(event.createdAt).toLocaleString()}>{when(event.createdAt)}</time>
             </header>
             <p>{event.note}</p>
@@ -132,48 +190,61 @@ function Conversation({
   );
 }
 
+/**
+ * The History row label for one event, body included.
+ *
+ * `report` is the one kind whose body lives nowhere else: `genie task report
+ * <id> "<text>"` is how a worker hands a card off, and the Comments pane renders
+ * `card.comments`, which the emitter builds from comment events only. History is
+ * therefore the sole surface for a report, so it interpolates the note exactly
+ * as `block` does; dropping it made the text readable only through the CLI (Z4).
+ */
+export function auditLabel(event: Card['timeline'][number]): string {
+  const note = event.note ?? '';
+  switch (event.kind) {
+    case 'move':
+      // A move with no note is not "Moved"; it falls through to the bare kind.
+      if (note) return `Moved ${note}`;
+      break;
+    case 'claim':
+      return `Claimed${note ? ` (${note.replace(/^claimed by /, '')})` : ''}`;
+    case 'release':
+      return `Released${note ? ` · ${note}` : ''}`;
+    case 'wish':
+      return `Wish ${event.note ?? ''}`;
+    case 'comment':
+      return 'Commented';
+    case 'report':
+      return `Reported${note ? `: ${note}` : ''}`;
+    case 'block':
+      return `Blocked${note ? `: ${note}` : ''}`;
+    case 'unblock':
+      return 'Unblocked';
+    case 'done':
+      return 'Completed';
+    default:
+      break;
+  }
+  return note ? `${event.kind}: ${note}` : event.kind;
+}
+
 /** Audit rail: every event since creation, with how long the card sat in the previous state. */
-function Audit({ card, now }: { card: Card; now: number }) {
+export function Audit({ card, now }: { card: Card; now: number }) {
   const rows: { key: string; at: number; label: string; by?: string; held: number }[] = [];
   let previous = card.createdAt;
   rows.push({ key: 'created', at: card.createdAt, label: 'Created', held: 0 });
   for (const event of card.timeline) {
-    const label =
-      event.kind === 'move' && event.note
-        ? `Moved ${event.note}`
-        : event.kind === 'claim'
-          ? `Claimed${event.note ? ` (${event.note.replace(/^claimed by /, '')})` : ''}`
-          : event.kind === 'release'
-            ? `Released${event.note ? ` · ${event.note}` : ''}`
-            : event.kind === 'wish'
-              ? `Wish ${event.note ?? ''}`
-              : event.kind === 'comment'
-                ? 'Commented'
-                : event.kind === 'report'
-                  ? 'Reported'
-                  : event.kind === 'block'
-                    ? `Blocked${event.note ? `: ${event.note}` : ''}`
-                    : event.kind === 'unblock'
-                      ? 'Unblocked'
-                      : event.kind === 'done'
-                        ? 'Completed'
-                        : event.note
-                          ? `${event.kind}: ${event.note}`
-                          : event.kind;
+    const label = auditLabel(event);
     rows.push({ key: String(event.id), at: event.createdAt, label, by: who(event), held: event.createdAt - previous });
     previous = event.createdAt;
   }
   const sinceLast = now - previous;
+  const truncated = card.eventsTruncated ? showingLabel(card.timeline.length, card.eventCount) : undefined;
   return (
     <aside className="gb-audit" aria-label="History">
       <h3>
         History
-        {card.eventsTruncated ? (
-          <span className="gb-sub">
-            {' '}
-            · last {card.timeline.length} of {card.eventCount}
-          </span>
-        ) : null}
+        {truncated ? <span className="gb-sub"> · {truncated}</span> : null}
       </h3>
       <ol className="gb-audit-list">
         {rows.map((row, index) => (
@@ -448,25 +519,17 @@ export function BoardPanel() {
       status={ws.status}
       actions={
         <>
-          <select
-            className="gb-select"
-            aria-label="Board"
+          <BoardPicker
+            boards={boards}
             value={boardRef}
             disabled={busy || !boards.length}
-            onChange={(event) => {
-              const ref = event.currentTarget.value;
+            onSelect={(ref) => {
               setBoardRef(ref);
               remembered.set('board', ref);
               setSelected(undefined);
               void load(ws.workspaceId, ref);
             }}
-          >
-            {boards.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name} · {entry.cardCount}
-              </option>
-            ))}
-          </select>
+          />
           <form
             className="gb-row"
             onSubmit={(event) => {

@@ -22,7 +22,7 @@ genie omni status         # genie-side config sanity + queue counts (no network)
 ## 1. Host trust
 
 ```bash
-genie omni handshake      # idempotent; --rotate reissues, --hostname overrides
+genie omni handshake      # idempotent; --rotate reissues, --revoke <host-id> retires one, --hostname overrides
 ```
 
 Registers this machine with the Omni server via an ed25519 keypair under `$GENIE_HOME/keys/` (default `~/.genie/keys/`; refuses to write keys inside a git working tree). Needs `OMNI_API_URL` + `OMNI_API_KEY`, or `omni.apiUrl` / `omni.apiKey` in `~/.genie/config.json`.
