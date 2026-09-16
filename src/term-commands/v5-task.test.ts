@@ -1212,6 +1212,37 @@ describe('roadmap.json canonical sync', () => {
     writeFileSync(join(dir, '.genie', 'roadmap.json'), snapshot);
   }
 
+  /**
+   * Dogfood r7 W2: in a directory that was never `genie init`-ed, sync opened
+   * (and thereby CREATED) an empty genie.db, found no snapshot and no state,
+   * and printed `Board and snapshot are in sync (none).` with exit 0 — a clean
+   * bill indistinguishable from a genuinely reconciled workspace.
+   */
+  test('a directory with no .genie workspace is refused, never reported in sync', async () => {
+    const bare = mkdtempSync(join(tmpdir(), 'genie-v5-noworkspace-'));
+    try {
+      git(bare, 'init', '-b', 'main');
+      git(bare, 'commit', '--allow-empty', '-m', 'init');
+
+      const r = await cli(bare, 'sync');
+      expect(r.code).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr.trim().split('\n')).toHaveLength(1);
+      expect(r.stderr).toContain('no Genie workspace');
+      expect(r.stderr).toContain('genie init');
+      // The refusal must not create the workspace whose absence it reports.
+      expect(existsSync(join(bare, '.genie'))).toBe(false);
+
+      // An initialized workspace still reconciles quietly, exit 0.
+      await mkdir(join(bare, '.genie'), { recursive: true });
+      const initialized = await cli(bare, 'sync');
+      expect(initialized.code).toBe(0);
+      expect(initialized.stderr).toBe('');
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
   test('fresh clone: one `task sync` materializes the board from the snapshot', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'canonical card' });
@@ -1620,6 +1651,45 @@ describe('timeline verbs', () => {
     const db = openDb({ cwd: repo });
     expect(getTaskEvents(db, id).filter((e) => e.kind === 'report')).toHaveLength(1);
     db.close();
+  });
+
+  /**
+   * Dogfood r7 W1: `task report --help` promised "one per claim-to-handoff
+   * span" while the CLI accepted every repeat, so a card's timeline could hold
+   * several partial handoffs with nothing saying which one was THE report.
+   */
+  test('one report per claim-to-handoff span; a new checkout opens the next span', async () => {
+    const id = await seed('one-per-span');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 12 tests pass')).code).toBe(0);
+
+    const second = await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: actually 13');
+    expect(second.code).toBe(1);
+    expect(second.stderr.trim().split('\n')).toHaveLength(1);
+    expect(second.stderr).toContain('already reported');
+    expect(second.stderr).toContain('claim-to-handoff span');
+    // The refusal names the verb that IS unbounded, so the worker is not stuck.
+    expect(second.stderr).toContain(`genie task comment ${id}`);
+    expect((await cli(repo, 'comment', id, 'actually 13')).code).toBe(0);
+
+    const before = openDb({ cwd: repo });
+    expect(getTaskEvents(before, id).filter((e) => e.kind === 'report')).toHaveLength(1);
+    before.close();
+
+    // Handoff, then a fresh claim: the next span carries its own report.
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 13 tests pass')).code).toBe(0);
+    const after = openDb({ cwd: repo });
+    expect(getTaskEvents(after, id).filter((e) => e.kind === 'report')).toHaveLength(2);
+    after.close();
+  });
+
+  test('the report help text states the span rule the CLI enforces', async () => {
+    const help = await cli(repo, 'report', '--help');
+    expect(help.code).toBe(0);
+    // Commander hard-wraps the description, so compare on collapsed whitespace.
+    expect(help.stdout.replace(/\s+/g, ' ')).toContain('one per claim-to-handoff span');
   });
 
   test('comment and report reject control characters and notes over 4000 bytes', async () => {

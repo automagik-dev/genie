@@ -545,6 +545,27 @@ export class TaskNotClaimedError extends Error {
 }
 
 /**
+ * A `task report` was refused because this claimant already reported inside the
+ * current claim-to-handoff span. `report` is the handoff artifact the help text
+ * promises one of per span — a second one turns the timeline into an unordered
+ * pile of partial handoffs with no way to tell which is THE report. Ordinary
+ * progress prose is `task comment`, and a fresh `task checkout` opens a new
+ * span (so a re-claimed card may be reported on again).
+ */
+export class DuplicateReportError extends Error {
+  readonly taskId: string;
+  readonly author: string;
+  constructor(taskId: string, author: string) {
+    super(
+      `report refused: ${author} already reported on task ${taskId} in this claim-to-handoff span — use \`genie task comment ${taskId}\` for progress, or check the card out again to open a new span.`,
+    );
+    this.name = 'DuplicateReportError';
+    this.taskId = taskId;
+    this.author = author;
+  }
+}
+
+/**
  * A completion was refused because the status CAS in {@link completeTask}
  * matched no row: the card is already `done` (or a concurrent transition moved
  * it out of a completable status between decision and write). The status is
@@ -1550,6 +1571,57 @@ function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInp
  */
 export function appendTaskEvent(db: Database, taskId: string, event: AppendEventInput): TaskEvent {
   const append = db.transaction((): TaskEvent => appendTaskEventInTx(db, taskId, event));
+  try {
+    return append.immediate() as TaskEvent;
+  } catch (err) {
+    if (err instanceof Error && /FOREIGN KEY constraint failed/i.test(err.message)) throw new UnknownTaskError(taskId);
+    throw err;
+  }
+}
+
+/** Input for {@link appendReportEvent}: the author is required (a report is attributed by contract). */
+export interface ReportEventInput {
+  note: string;
+  author: string;
+  authorKind?: string;
+}
+
+/**
+ * Append the ONE `report` event a claimant may post per claim-to-handoff span
+ * (`genie task report`), refusing a second one with {@link DuplicateReportError}.
+ *
+ * The span is delimited by the card's own timeline: `claimTask` appends a
+ * `claim` event inside its winning transaction, so the newest `claim` id is the
+ * start of the current span and a `report` by the same author after it is the
+ * span's report. A re-checkout therefore supersedes the previous report by
+ * opening a new span — no state is carried outside `task_events`, so the rule
+ * survives export/import and is identical in every worktree.
+ *
+ * The span probe and the insert share one BEGIN IMMEDIATE for the same reason
+ * {@link appendTaskEvent} holds one: without the write lock a concurrent
+ * `task delete` (FK failure) or a second `task report` (two reports) lands
+ * between the decision and the write.
+ */
+export function appendReportEvent(db: Database, taskId: string, input: ReportEventInput): TaskEvent {
+  const append = db.transaction((): TaskEvent => {
+    requireTask(db, taskId);
+    const spanStart =
+      (
+        db.query("SELECT max(id) AS id FROM task_events WHERE task_id = ? AND kind = 'claim'").get(taskId) as {
+          id: number | null;
+        } | null
+      )?.id ?? 0;
+    const prior = db
+      .query("SELECT id FROM task_events WHERE task_id = ? AND kind = 'report' AND author = ? AND id > ? LIMIT 1")
+      .get(taskId, input.author, spanStart);
+    if (prior) throw new DuplicateReportError(taskId, input.author);
+    return appendTaskEventInTx(db, taskId, {
+      kind: 'report',
+      note: input.note,
+      author: input.author,
+      authorKind: input.authorKind,
+    });
+  });
   try {
     return append.immediate() as TaskEvent;
   } catch (err) {

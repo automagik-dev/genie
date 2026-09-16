@@ -35,7 +35,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { resolveRepoRoot, resolveRoadmapPath } from './genie-db.js';
@@ -52,6 +52,26 @@ export interface SyncResult {
 /** Machine-local sync baseline. Lives next to genie.db; never git-tracked. */
 export function resolveSyncMarkerPath(cwd?: string): string {
   return join(resolveRepoRoot(cwd), '.genie', 'roadmap-sync');
+}
+
+/** The `.genie/` directory that owns both sides of the sync (genie.db + roadmap.json). */
+export function resolveWorkspaceDir(cwd?: string): string {
+  return join(resolveRepoRoot(cwd), '.genie');
+}
+
+/**
+ * Is there a `.genie` workspace to reconcile at all?
+ *
+ * Callers MUST ask before opening the database: `openDb` creates
+ * `<root>/.genie/genie.db` (and the directory) on the way in, so a check made
+ * afterwards always answers yes. Without it `genie task sync` in a directory
+ * that was never `genie init`-ed materializes an empty database, finds no
+ * snapshot and no state, and reports `Board and snapshot are in sync (none).`
+ * with exit 0 — a clean bill indistinguishable from a genuinely reconciled
+ * workspace (dogfood r7).
+ */
+export function hasGenieWorkspace(cwd?: string): boolean {
+  return statSync(resolveWorkspaceDir(cwd), { throwIfNoEntry: false })?.isDirectory() === true;
 }
 
 /**
