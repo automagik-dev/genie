@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BOOT_SETTLE_MS,
+  GENIE_ROUTES,
   PLUGIN_BUNDLES,
   type Runner,
   buildPluginDist,
@@ -127,4 +129,31 @@ test('the smoke sandboxes its children rather than building an env inline', () =
   const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
   expect(source).toContain('const env = sandboxEnvironment(temporary)');
   expect(source).toContain('for (const directory of sandboxDirectories(temporary))');
+});
+
+/**
+ * V1: disabling the manager row by id used to abort the whole DSH boot, because
+ * the three sub-rows declared a hard `inject` on the manager's service. Phase
+ * three of the smoke is the end-to-end proof, so it must stay wired up — and it
+ * must probe EVERY route the suite can own, or a new route could quietly
+ * survive a disabled manager.
+ */
+test('the smoke has a manager-disabled phase that probes every route the plugin registers', () => {
+  const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
+  const patch = source.indexOf('`${workspaceRow}- id: genie-dsh-board\\n  disabled: true\\n`');
+  expect(patch).toBeGreaterThan(-1);
+  expect(source).toContain("await assertManagerDisabled(await start('fixture-manager-disabled.patch.yml')");
+  // A printed URL is not a boot: `dsh web` prints one before the tree audit.
+  expect(source).toContain('await Bun.sleep(BOOT_SETTLE_MS)');
+  expect(BOOT_SETTLE_MS).toBeGreaterThanOrEqual(5000);
+
+  const rows = ['index', 'board', 'skills', 'workflows'];
+  const registered = new Set<string>();
+  for (const row of rows) {
+    const row_source = readFileSync(join(import.meta.dir, `../plugins/dsh-genie-board/src/${row}.ts`), 'utf8');
+    for (const [, path] of row_source.matchAll(/'\/api\/genie-board\/([^']*)'/g)) registered.add(path);
+  }
+  expect(registered.size).toBeGreaterThan(0);
+  const probed = new Set(GENIE_ROUTES.map((route) => route.split('?')[0]));
+  expect([...registered].filter((path) => !probed.has(path))).toEqual([]);
 });

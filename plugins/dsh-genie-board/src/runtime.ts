@@ -27,6 +27,13 @@ export interface HostContext {
   effect(effect: () => () => void, label?: string): void;
   provide(name: string, value?: unknown): () => void;
   get(name: string): unknown;
+  /**
+   * cordis' deferred-dependency shorthand for `ctx.plugin({ inject, apply })`:
+   * the callback runs in a CHILD fiber once every named service exists, and is
+   * disposed again when one goes away. Optional on the interface because the
+   * row must still mount on a host that does not expose it.
+   */
+  inject?(deps: string[], callback: (scope: HostContext) => void): unknown;
 }
 
 /** The sub-rows this package ships, in panel order. */
@@ -74,12 +81,43 @@ export function requireService<T>(ctx: HostContext, key: keyof HostContext & str
   return service as T;
 }
 
-/** Resolve the manager service from a sub-row's context, or explain its absence. */
-export function requireRuntime(ctx: Pick<HostContext, 'get'>): GenieRuntime {
+/** The manager service if this Host has one, `undefined` when the manager row is off. */
+function optionalRuntime(ctx: Pick<HostContext, 'get'>): GenieRuntime | undefined {
   const runtime = ctx.get('genieRuntime') as GenieRuntime | undefined;
-  if (!runtime || typeof runtime.route !== 'function')
-    throw new Error('@automagik/genie-dsh-board sub-rows require the "genieRuntime" service from the manager row');
-  return runtime;
+  return runtime && typeof runtime.route === 'function' ? runtime : undefined;
+}
+
+/**
+ * Mount a sub-row's surface once `genieRuntime` exists — and never abort a boot
+ * because it does not.
+ *
+ * A row-level `export const inject = ['genieRuntime']` is a HARD dependency:
+ * cordis parks the row's own fiber in PENDING while the service is absent, and
+ * DSH's boot audit turns every pending enabled loader entry into a fatal
+ * `N entries did not activate`. So disabling ONLY the manager row by its id in
+ * a profile patch — `- id: genie-dsh-board` / `disabled: true`, a supported DSH
+ * gesture — killed the whole Host with three
+ * `pending (waiting for service: genieRuntime)` lines instead of simply
+ * dropping the Genie panels.
+ *
+ * `ctx.inject(deps, callback)` is the cordis idiom for the optional form. The
+ * row itself activates immediately; the callback runs in a child fiber if and
+ * when the manager provides the service, and that child is not a loader entry,
+ * so it is invisible to the boot audit. With the manager off, each sub-row
+ * registers nothing, `/api/genie-board/health` is absent along with every other
+ * Genie route, and DSH boots.
+ */
+export function whenRuntime(ctx: HostContext, mount: (runtime: GenieRuntime, scope: HostContext) => void): void {
+  const defer = ctx.inject;
+  if (typeof defer !== 'function') {
+    const runtime = optionalRuntime(ctx);
+    if (runtime) mount(runtime, ctx);
+    return;
+  }
+  defer.call(ctx, ['genieRuntime'], (scope) => {
+    const runtime = optionalRuntime(scope);
+    if (runtime) mount(runtime, scope);
+  });
 }
 
 /**

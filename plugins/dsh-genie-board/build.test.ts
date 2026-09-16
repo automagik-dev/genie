@@ -29,14 +29,18 @@ test('valid repeated builds regenerate identical Host and lazy browser bundles',
         expect((await stat(host)).size).toBeGreaterThan(1000);
         const module = (await import(`${host}?attempt=${attempt}`)) as {
           apply: unknown;
-          inject: string[];
+          inject: string[] | undefined;
           Config: unknown;
         };
         expect(typeof module.apply).toBe('function');
-        // Every sub-row declares the manager service; only the manager itself
-        // asks for the raw host services.
+        // Only the manager declares an `inject`, of raw host services DSH always
+        // provides. A sub-row must NOT: a row-level inject on the manager's own
+        // service is a hard dependency, and DSH fails the whole boot on any
+        // enabled loader entry still pending once the tree settles — so
+        // disabling the manager row by id would take the Host down with it. The
+        // sub-rows wait through deferred `ctx.inject` inside `apply` instead.
         expect(module.inject).toEqual(
-          bundle === 'index.js' ? ['workspaceRegistry', 'webServer', 'connection'] : ['genieRuntime'],
+          bundle === 'index.js' ? ['workspaceRegistry', 'webServer', 'connection'] : undefined,
         );
         expect(module.Config).toBeDefined();
         bytes.push(await readFile(host, 'utf8'));

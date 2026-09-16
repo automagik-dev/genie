@@ -22,31 +22,58 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 /**
- * Mount the four rows the shipped `cordis.patch.yml` inserts, against one fake
- * cordis context: the manager provides `genieRuntime`, each sub-row resolves it
- * and registers only its own routes. `rows` turns a row off exactly the way a
- * profile patch's `disabled: true` does.
+ * A fake cordis context that models the two behaviours the four rows depend on:
+ * `provide`/`get` for services, and `ctx.inject(deps, callback)` — the DEFERRED
+ * form, which parks the callback until every named service exists and then runs
+ * it. Deferring is the whole point: a sub-row mounted before its manager must
+ * still end up with its routes, and a sub-row whose manager never arrives must
+ * simply never run.
  */
-type RowConfigs = { manager?: unknown; board?: unknown; skills?: unknown; workflows?: unknown };
-async function mountRows(
-  host: Omit<HostContext, 'provide' | 'get'>,
-  rows: { board?: boolean; skills?: boolean; workflows?: boolean } = {},
-  configs: RowConfigs = {},
-): Promise<void> {
+function fakeCordis(host: Omit<HostContext, 'provide' | 'get' | 'inject'>): HostContext {
   const services = new Map<string, unknown>();
+  const parked: { deps: string[]; callback: (scope: HostContext) => void }[] = [];
+  const settle = () => {
+    for (const waiting of parked.splice(0)) {
+      if (waiting.deps.every((dep) => services.get(dep) !== undefined)) waiting.callback(ctx);
+      else parked.push(waiting);
+    }
+  };
   const ctx: HostContext = {
     ...host,
     provide(name, value) {
       services.set(name, value);
+      settle();
       return () => services.delete(name);
     },
     get: (name) => services.get(name),
+    inject(deps, callback) {
+      parked.push({ deps, callback });
+      settle();
+      return undefined;
+    },
   };
-  const manager = await import('./index');
-  await manager.apply(ctx, configs.manager);
+  return ctx;
+}
+
+/**
+ * Mount the four rows the shipped `cordis.patch.yml` inserts, against one fake
+ * cordis context: the manager provides `genieRuntime`, each sub-row waits for
+ * it and registers only its own routes. `rows` turns a row off exactly the way
+ * a profile patch's `disabled: true` does — `manager: false` included, which is
+ * the gesture that used to abort the whole DSH boot.
+ */
+type RowConfigs = { manager?: unknown; board?: unknown; skills?: unknown; workflows?: unknown };
+async function mountRows(
+  host: Omit<HostContext, 'provide' | 'get' | 'inject'>,
+  rows: { manager?: boolean; board?: boolean; skills?: boolean; workflows?: boolean } = {},
+  configs: RowConfigs = {},
+): Promise<void> {
+  const ctx = fakeCordis(host);
+  // Sub-rows first, on purpose: `ctx.inject` must not care about row order.
   if (rows.board !== false) (await import('./board')).apply(ctx, configs.board);
   if (rows.skills !== false) (await import('./skills')).apply(ctx, configs.skills);
   if (rows.workflows !== false) (await import('./workflows')).apply(ctx, configs.workflows);
+  if (rows.manager !== false) await (await import('./index')).apply(ctx, configs.manager);
 }
 
 const card = {
@@ -1013,27 +1040,63 @@ test('a row disabled by id registers no route, and health reports it unmounted',
   }
 });
 
-test('a sub-row without the manager service registers nothing and names the missing service', async () => {
-  const { apply } = await import('./skills');
+/**
+ * The manager row is disableable too (V1). DSH's boot audit fails the whole
+ * Host on any enabled loader entry still PENDING once the tree settles, so a
+ * row-level `inject` on a service the operator just turned off is a boot abort:
+ * `3 entries did not activate / ...: pending (waiting for service:
+ * genieRuntime)`. No sub-row may declare one.
+ */
+test('no sub-row declares a row-level inject, which would park it pending and abort DSH boot', async () => {
+  for (const module of ['./board', './skills', './workflows']) {
+    expect((await import(module)).inject).toBeUndefined();
+  }
+  // The manager's own injects are host services DSH always provides.
+  expect((await import('./index')).inject).toEqual(['workspaceRegistry', 'webServer', 'connection']);
+});
+
+test('with the manager row disabled every sub-row activates cleanly and registers nothing', async () => {
   const registered: string[] = [];
-  expect(() =>
-    apply({
-      workspaceRegistry: { list: () => [] },
-      connection: { requestRejection: () => undefined },
-      webServer: {
-        register(route) {
-          registered.push(route.path);
-          return () => {};
-        },
+  const effects: string[] = [];
+  const ctx = {
+    workspaceRegistry: { list: () => [] },
+    connection: { requestRejection: () => undefined },
+    webServer: {
+      register(route: { path: string }) {
+        registered.push(route.path);
+        return () => {};
       },
-      effect(effect) {
-        effect();
-      },
-      provide: () => () => {},
-      get: () => undefined,
-    }),
-  ).toThrow('genieRuntime');
+    },
+    effect(effect: () => () => void, label?: string) {
+      effects.push(label ?? '');
+      effect();
+    },
+    provide: () => () => {},
+    get: () => undefined,
+    // cordis' deferred inject: the manager never provides, so it never runs.
+    inject: () => undefined,
+  } as unknown as HostContext;
+  for (const module of ['./board', './skills', './workflows']) {
+    const { apply } = await import(module);
+    expect(() => apply(ctx)).not.toThrow();
+  }
   expect(registered).toEqual([]);
+  expect(effects).toEqual([]);
+});
+
+test('a sub-row mounted before its manager still gets its routes once the service arrives', async () => {
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'genie-late-manager-')));
+  directories.push(workspace);
+  // `mountRows` applies the sub-rows first and the manager last.
+  const host = await hostRoutes(() => [{ id: 'w', path: workspace, title: 'Workspace' }]);
+  try {
+    const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
+      mounted: Record<string, boolean>;
+    };
+    expect(health.mounted).toEqual({ board: true, skills: true, workflows: true });
+  } finally {
+    await host.close();
+  }
 });
 
 test('the manager names a missing host service instead of failing later as a silent 503', async () => {
