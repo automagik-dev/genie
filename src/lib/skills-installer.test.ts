@@ -464,7 +464,9 @@ describe('runSkillsInstall', () => {
     const collisions = (outcome.ok ? (outcome.warnings ?? []) : []).filter((line) => line.includes('collision:'));
     expect(collisions).toHaveLength(1);
     expect(collisions[0]).toContain(join(claudeSkills, 'wish'));
-    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish' }]);
+    expect(outcome.ok && outcome.record.collisions).toEqual([
+      { dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' },
+    ]);
     const backupRoot = (collisions[0] as string).split('backed up to ')[1] as string;
     expect(existsSync(join(backupRoot, '.claude', 'skills', 'wish'))).toBe(true);
     // Nothing outside an agent home was read into the backup, and both stray
@@ -504,7 +506,9 @@ describe('runSkillsInstall', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.ok && outcome.record.agentDirs).toContain(astrbot);
-    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
+    expect(outcome.ok && outcome.record.collisions).toEqual([
+      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+    ]);
     const lines = (outcome.ok ? (outcome.warnings ?? []) : []).filter((entry) => entry.includes('collision:'));
     expect(lines).toEqual([
       `skills: collision: ${join(astrbot, 'wish')} (wish) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
@@ -537,8 +541,14 @@ describe('runSkillsInstall', () => {
     });
 
     expect(outcome.ok).toBe(true);
-    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
-    const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
+    // The record puts a genie skill dir at exactly this path, so whatever its
+    // bytes say now it is genie's own — `modified`, never `foreign`.
+    expect(outcome.ok && outcome.record.collisions).toEqual([
+      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'modified' },
+    ]);
+    const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) =>
+      entry.includes('was modified locally'),
+    ) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
     expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       '# a foreign wish\n',
@@ -567,7 +577,9 @@ describe('runSkillsInstall', () => {
     });
 
     expect(outcome.ok).toBe(true);
-    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
+    expect(outcome.ok && outcome.record.collisions).toEqual([
+      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+    ]);
     const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
     expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
@@ -627,7 +639,9 @@ describe('runSkillsInstall', () => {
     // so only the recorded digest justified the backup. `.astrbot` exists, so
     // AstrBot is a detected agent this run targeted — hence the recorded home.
     expect(outcome.ok && outcome.record.agentDirs).toContain(astrbot);
-    expect(outcome.ok && outcome.record.collisions).toEqual([{ dir: join(astrbot, 'wish'), skill: 'wish' }]);
+    expect(outcome.ok && outcome.record.collisions).toEqual([
+      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+    ]);
     const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
     expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
@@ -1660,6 +1674,7 @@ describe('collision snapshot', () => {
       {
         dir: join(claudeSkills, 'wish'),
         skill: 'wish',
+        kind: 'foreign',
         digest: computeSkillDirDigest(join(claudeSkills, 'wish')),
         backedUp: true,
       },
@@ -2215,7 +2230,7 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
     }
 
     const record = readSkillsInstallRecord(genieHome);
-    expect(record?.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish' }]);
+    expect(record?.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' }]);
     const collisionLine = lines.find((line) => line.includes('collision:'));
     expect(collisionLine).toContain(
       `collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
@@ -2592,5 +2607,365 @@ describe('agent selection never creates a product home', () => {
       process.exitCode = savedExitCode;
     }
     expect(readdirSync(bareHome)).toEqual(['.genie']);
+  });
+});
+
+/**
+ * The r3 dogfood rehearsal defects, one regression test each (BRIEF4 D1–D6).
+ * Every one of these was observed on a replica of the 2026-09-15 host before it
+ * was written down here.
+ */
+describe('r3 rehearsal defects', () => {
+  const RECORD_BASE = { cliVersion: SKILLS_CLI_VERSION, installedAt: '2026-09-15T00:00:00.000Z' } as const;
+
+  /** `skills add … --agent <names> -g`: writes ONLY the named agents' homes. */
+  function agentAwareRunner(record: { argv: string[][] } = { argv: [] }): CommandRunner {
+    return (command, args) => {
+      record.argv.push([command, ...args]);
+      const source = args[args.indexOf('add') + 1] as string;
+      for (const agent of args.slice(args.indexOf('--agent') + 1)) {
+        if (agent.startsWith('-')) break;
+        const spec = SKILLS_CLI_AGENTS.find((entry) => entry.agent === agent);
+        if (spec === undefined) throw new Error(`unknown agent: ${agent}`);
+        const target = agentSkillsHome(home, spec);
+        mkdirSync(target, { recursive: true });
+        cpSync(source, target, { recursive: true });
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+  }
+
+  function seedSkillDir(dir: string, body: string): string {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), body, 'utf8');
+    return computeSkillDirDigest(dir) as string;
+  }
+
+  function warningsOf(outcome: ReturnType<typeof runSkillsInstall>): string[] {
+    return outcome.warnings ?? [];
+  }
+
+  // D1 ----------------------------------------------------------------------
+  /**
+   * `isGenieOwned` accepted byte-equality with the NEW delivered `SKILL.md` or
+   * the PREVIOUS recorded digest — both proofs of an UNCHANGED dir. A genie
+   * skill dir that drifted locally AND changed upstream failed both, so genie
+   * told the operator their own edited skill was "a foreign skill dir that
+   * changed while this install ran" and recorded it that way.
+   */
+  test('a recorded skill dir that drifted locally AND changed upstream reports as modified, not foreign', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    const wish = join(claudeSkills, 'wish');
+    // Genie's own delivery from the PREVIOUS release: upstream has moved on, so
+    // it is not byte-equal to the delivered tree either.
+    const digest = seedSkillDir(wish, '# wish (previous release)\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+    });
+    // …and then the operator edited it, so the recorded digest no longer holds.
+    writeFileSync(join(wish, 'NOTES.md'), 'my own notes\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-16T00-00-00-000Z');
+    expect(warningsOf(outcome)).toContain(
+      `skills: genie skill dir ${wish} was modified locally — previous contents backed up to ${backupRoot}`,
+    );
+    expect(warningsOf(outcome).some((line) => line.includes('a foreign skill dir'))).toBe(false);
+    expect(outcome.ok === true && outcome.record.collisions).toEqual([{ dir: wish, skill: 'wish', kind: 'modified' }]);
+    // Still backup-first: the operator's bytes are kept, whatever it is called.
+    expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'NOTES.md'), 'utf8')).toBe('my own notes\n');
+  });
+
+  // D2 ----------------------------------------------------------------------
+  /**
+   * `~/.astrbot/data/skills`: the parent-only product root left the genie-made
+   * `~/.astrbot` above it looking like independent product evidence, so the
+   * whole phantom chain was kept on every run.
+   */
+  test('a nested single-entry ancestor chain is pruned as a whole', () => {
+    fixtureSkillsTree(['wish']);
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    const digest = seedSkillDir(join(astrbot, 'wish'), '# wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [astrbot],
+      dirDigests: { [join(astrbot, 'wish')]: digest },
+    });
+
+    const calls = { argv: [] as string[][] };
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner(calls),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(home, '.astrbot'))).toBe(false);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-prune-2026-09-16T00-00-00-000Z');
+    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('# wish\n');
+    expect(warningsOf(outcome)).toContain(
+      `skills: pruned genie-created agent home ${join(home, '.astrbot')} — backed up to ${join(backupRoot, '.astrbot')}`,
+    );
+    expect(outcome.ok === true && outcome.record.agentDirs).not.toContain(astrbot);
+    expect(calls.argv[0]).not.toContain('astrbot');
+  });
+
+  test('a chain whose ancestor holds a second entry is kept, product root and skills alike', () => {
+    fixtureSkillsTree(['wish']);
+    const tabnine = join(home, '.tabnine', 'agent', 'skills');
+    const digest = seedSkillDir(join(tabnine, 'wish'), '# wish\n');
+    // One file of the product's own, one level above the single-entry chain.
+    writeFileSync(join(home, '.tabnine', 'config.json'), '{}\n', 'utf8');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [tabnine],
+      dirDigests: { [join(tabnine, 'wish')]: digest },
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner(),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(home, '.tabnine', 'config.json'), 'utf8')).toBe('{}\n');
+    expect(existsSync(join(tabnine, 'wish'))).toBe(true);
+    expect(warningsOf(outcome).filter((line) => line.includes('pruned'))).toEqual([]);
+  });
+
+  /**
+   * The prune used to stop forever once ANY run stamped the record
+   * `agentSelection: 'explicit'`, so a phantom the first explicit run failed to
+   * recognize (the D2 chain above) could never be handed back. It now runs on
+   * every update; what an explicit record bounds is HOW MUCH it may move.
+   */
+  test('an explicit record still hands back a phantom chain on the next update', () => {
+    fixtureSkillsTree(['wish']);
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    const claudeSkills = join(home, '.claude', 'skills');
+    const astrbotDigest = seedSkillDir(join(astrbot, 'wish'), '# wish\n');
+    const claudeDigest = seedSkillDir(join(claudeSkills, 'wish'), '# wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [claudeSkills, astrbot],
+      dirDigests: { [join(astrbot, 'wish')]: astrbotDigest, [join(claudeSkills, 'wish')]: claudeDigest },
+      agentSelection: 'explicit',
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner(),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    // Handed back below the agent's own detection root, and the root that move
+    // emptied is gone too — the chain as a whole (D2 + D3).
+    expect(existsSync(join(home, '.astrbot'))).toBe(false);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-prune-2026-09-16T00-00-00-000Z');
+    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe('# wish\n');
+    expect(warningsOf(outcome)).toContain(
+      `skills: pruned genie-created agent home ${join(home, '.astrbot', 'data')} — backed up to ${join(backupRoot, '.astrbot', 'data')} (also removed empty ${join(home, '.astrbot')})`,
+    );
+    // The operator's own product home is untouched, and still installed into.
+    expect(existsSync(join(claudeSkills, 'wish', 'SKILL.md'))).toBe(true);
+    expect(outcome.ok === true && outcome.record.agentDirs).toContain(claudeSkills);
+  });
+
+  // D3 ----------------------------------------------------------------------
+  test('a prune under ~/.config removes the emptied product root but never ~/.config itself', () => {
+    fixtureSkillsTree(['wish']);
+    const kimchi = join(home, '.config', 'kimchi', 'harness', 'skills');
+    const digest = seedSkillDir(join(kimchi, 'wish'), '# wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [kimchi],
+      dirDigests: { [join(kimchi, 'wish')]: digest },
+      agentSelection: 'explicit',
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner(),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(home, '.config', 'kimchi'))).toBe(false);
+    // The shared XDG root is never a product home, and HOME is never touched.
+    expect(existsSync(join(home, '.config'))).toBe(true);
+    expect(existsSync(home)).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-prune-2026-09-16T00-00-00-000Z');
+    expect(warningsOf(outcome)).toContain(
+      `skills: pruned genie-created agent home ${join(home, '.config', 'kimchi', 'harness')} — backed up to ${join(backupRoot, '.config', 'kimchi', 'harness')} (also removed empty ${join(home, '.config', 'kimchi')})`,
+    );
+  });
+
+  // D4 ----------------------------------------------------------------------
+  /**
+   * `collisions` describes the LAST run, so the next one dropped it while the
+   * backup root it named stayed on disk forever: bytes with nothing in the
+   * receipt pointing at them.
+   */
+  test('the record accumulates collision backup roots across runs, and never drops one', () => {
+    fixtureSkillsTree(['wish', 'work']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    seedSkillDir(join(claudeSkills, 'wish'), '# someone else entirely\n');
+
+    const first = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+    expect(first.ok).toBe(true);
+    const firstRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-16T00-00-00-000Z');
+    expect(first.ok === true && first.record.collisionBackups).toEqual([
+      { root: firstRoot, entries: [{ dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' }] },
+    ]);
+
+    // A second run with a second replaced directory — genie's own this time.
+    writeFileSync(join(claudeSkills, 'work', 'SKILL.md'), '# my own work skill\n', 'utf8');
+    const second = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }),
+      now: () => new Date('2026-09-17T00:00:00.000Z'),
+    });
+
+    expect(second.ok).toBe(true);
+    const secondRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-17T00-00-00-000Z');
+    expect(second.ok === true && second.record.collisionBackups).toEqual([
+      { root: firstRoot, entries: [{ dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' }] },
+      { root: secondRoot, entries: [{ dir: join(claudeSkills, 'work'), skill: 'work', kind: 'modified' }] },
+    ]);
+    // Both roots are still on disk: `state-backups/` is an archive.
+    expect(readFileSync(join(firstRoot, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+      '# someone else entirely\n',
+    );
+    expect(readFileSync(join(secondRoot, '.claude', 'skills', 'work', 'SKILL.md'), 'utf8')).toBe(
+      '# my own work skill\n',
+    );
+  });
+
+  // D5 ----------------------------------------------------------------------
+  /** The doc comment immediately above `anchor`, as written in the source. */
+  function docCommentAbove(source: string, anchor: string): string {
+    const at = source.indexOf(anchor);
+    expect(at).toBeGreaterThan(-1);
+    const start = source.lastIndexOf('/**', at);
+    return source.slice(start, source.indexOf('*/', start));
+  }
+
+  test('no docstring still describes `--all` as the argv this channel runs', () => {
+    const source = readFileSync(join(import.meta.dir, 'skills-installer.ts'), 'utf8');
+    const anchors = [
+      'function collisionCandidateHomes(',
+      'function collisionBackupHomes(',
+      'export function snapshotSkillsCollisions(',
+      'export function runSkillsChannelConvergence(',
+    ];
+    for (const anchor of anchors) expect(docCommentAbove(source, anchor)).not.toContain('--all');
+    // The module header documents the argv the installer actually builds.
+    const header = source.slice(0, source.indexOf('*/'));
+    expect(header).not.toContain('--all --copy');
+    for (const flag of ['--skill', '--agent', '--copy', '-g']) expect(header).toContain(flag);
+    const argv = buildSkillsAddArgv({ sourceRoot: join(genieHome, 'skills'), agents: ['claude-code'] });
+    expect(argv).not.toContain('--all');
+    // …and the retirement-order comment no longer credits `--all` for it.
+    const retirementComment = source.slice(
+      source.indexOf('// RETIREMENT RUNS BEFORE THE INSTALL PASS.'),
+      source.indexOf('let preserved: SkillsPreservedEntry[]'),
+    );
+    expect(retirementComment).not.toContain('--all');
+  });
+
+  // D6 ----------------------------------------------------------------------
+  /**
+   * The summary used to print FIRST, so on the rehearsal host the operator read
+   * `installed 19 skill(s) … into 8 agent dir(s)` and then fifty lines of
+   * directories moving — with no way to tell which count it described.
+   */
+  test('the transcript reports retirement, prune and collisions before the install summary', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    const traceDigest = seedSkillDir(join(claudeSkills, 'trace'), '# trace\n');
+    const astrbotDigest = seedSkillDir(join(astrbot, 'wish'), '# wish\n');
+    // A genie dir the operator edited: this run replaces it (the collision).
+    seedSkillDir(join(claudeSkills, 'wish'), '# my own wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      // `trace` is recorded but no longer delivered: this release retires it.
+      inventory: ['wish', 'trace'],
+      agentDirs: [claudeSkills, astrbot],
+      dirDigests: { [join(claudeSkills, 'trace')]: traceDigest, [join(astrbot, 'wish')]: astrbotDigest },
+      agentSelection: 'explicit',
+    });
+
+    const lines: string[] = [];
+    const result = runSkillsChannelConvergence({
+      selection: 'auto',
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: agentAwareRunner(),
+      log: (line) => lines.push(line),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(result.status).toBe('installed');
+    const indexOfLine = (needle: string): number => lines.findIndex((line) => line.includes(needle));
+    const retired = indexOfLine('skills: retired trace from');
+    const pruned = indexOfLine('skills: pruned genie-created agent home');
+    const collision = indexOfLine('was modified locally');
+    const kept = indexOfLine('skills: collision backup kept at');
+    const summary = indexOfLine('skills: installed ');
+    expect([retired, pruned, collision, kept].every((index) => index >= 0)).toBe(true);
+    expect(retired).toBeLessThan(pruned);
+    expect(pruned).toBeLessThan(collision);
+    expect(collision).toBeLessThan(kept);
+    // The summary is what the host HAS, so it comes last — always.
+    expect(summary).toBe(lines.length - 1);
   });
 });
