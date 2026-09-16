@@ -5,8 +5,8 @@ import { join } from 'node:path';
 const ROOT = join(import.meta.dir, '..');
 
 /**
- * The skills Genie ships, pinned by name. Wish `skills-everywhere-b`
- * consolidated the roster to these fourteen workflows; a self-referential
+ * The skills Genie ships. The list below is the roster — no prose count
+ * restates it. Wish `skills-everywhere-b` consolidated it; a self-referential
  * parity check (every directory with a SKILL.md equals every directory with an
  * openai.yaml) silently passes when a whole skill is deleted, which is exactly
  * the drift this list exists to catch. Adding or removing a shipped skill is a
@@ -32,6 +32,7 @@ const SHIPPED_SKILLS = [
   'verify',
   'wish',
   'work',
+  'workfly',
 ] as const;
 
 function skillDirectories(marker: string): string[] {
