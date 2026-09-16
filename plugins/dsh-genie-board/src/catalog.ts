@@ -1,5 +1,6 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { clientError } from './runtime';
 import type { Registry } from './service';
 import { SKILL_CATEGORIES, SKILL_MUTATES_LEVELS, type SkillCategory, type SkillMutates } from './taxonomy';
 
@@ -140,7 +141,7 @@ export class CatalogService {
   constructor(private readonly registry: Registry) {}
   private async root(workspaceId: string): Promise<string> {
     const workspace = this.registry.list().find((entry) => entry.id === workspaceId);
-    if (!workspace) throw new Error('Unknown workspace');
+    if (!workspace) throw clientError('Unknown workspace');
     const path = await realpath(workspace.path);
     if (!(await stat(path)).isDirectory()) throw new Error('Workspace is not a directory');
     return path;
@@ -153,12 +154,12 @@ export class CatalogService {
   }
   /** The document body for one entry, read-only, path derived from the catalog listing only. */
   async document(workspaceId: string, kind: 'skill' | 'workflow', name: string): Promise<string> {
-    if (!SAFE_NAME.test(name)) throw new Error('Invalid name');
+    if (!SAFE_NAME.test(name)) throw clientError('Invalid name');
     const root = await this.root(workspaceId);
     const path =
       kind === 'skill' ? join(root, 'skills', name, 'SKILL.md') : join(root, '.claude', 'workflows', `${name}.js`);
     const text = await bounded(path);
-    if (text === undefined) throw new Error('Document not found');
+    if (text === undefined) throw clientError('Document not found');
     return text;
   }
 }

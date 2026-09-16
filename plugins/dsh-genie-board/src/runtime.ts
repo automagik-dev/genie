@@ -82,6 +82,29 @@ export function requireRuntime(ctx: Pick<HostContext, 'get'>): GenieRuntime {
   return runtime;
 }
 
+/**
+ * Mark a failure as the CALLER's fault, with a message vetted for display.
+ *
+ * Without this tag a read route can only answer an opaque 500, so an invalid
+ * name, an unknown document and an unknown workspace all arrive at the browser
+ * as the same "Genie board route failed" a genuine server fault produces, and
+ * neither the panel nor an operator can tell them apart (Z5). The tag is a
+ * plain property rather than an Error subclass on purpose: the manager row's
+ * `route()` catches failures thrown inside a SUB-ROW's own bundle, and
+ * `instanceof` does not survive that boundary.
+ */
+export function clientError(message: string, status = 400): Error {
+  return Object.assign(new Error(message), { clientStatus: status });
+}
+
+/** The 4xx status a failure carries, or `undefined` when it is not a caller's fault. */
+export function clientStatusOf(failure: unknown): number | undefined {
+  if (typeof failure !== 'object' || failure === null) return undefined;
+  const status = (failure as { clientStatus?: unknown }).clientStatus;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 499) return undefined;
+  return status;
+}
+
 export function trusted(req: IncomingMessage): boolean {
   const address = req.socket.remoteAddress;
   if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address ?? '')) return false;
@@ -181,8 +204,13 @@ export function createRuntime(ctx: HostContext, config: ManagerConfig, verdict: 
             json(res, 200, await handler(req));
           } catch (failure) {
             const message = failure instanceof Error ? failure.message : 'Board request failed';
-            // A route failure is the plugin's own fault and its message is not
-            // a user-facing one, so only the vetted board path reports detail.
+            // A tagged failure is the caller's, and its message is a vetted
+            // constant, so it is reported verbatim with its own 4xx on every
+            // route, read ones included.
+            const status = clientStatusOf(failure);
+            if (status !== undefined) return json(res, status, { error: message });
+            // Anything else is the plugin's own fault and its message is not a
+            // user-facing one, so only the vetted board path reports detail.
             json(res, mutation ? 400 : 500, { error: mutation ? message : 'Genie board route failed' });
           }
         },
@@ -190,7 +218,7 @@ export function createRuntime(ctx: HostContext, config: ManagerConfig, verdict: 
     },
     workspaceOf(req) {
       const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('workspaceId') ?? '';
-      if (!id || id.length > 200) throw new Error('workspaceId required');
+      if (!id || id.length > 200) throw clientError('workspaceId required');
       return id;
     },
     mount(row, rowConfig) {

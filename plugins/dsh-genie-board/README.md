@@ -184,8 +184,13 @@ application/json; a read does not, because a same-origin `fetch` sends no Origin
 and older Safari/Firefox and embedded WebViews send no Sec-Fetch-Site either.
 Every route answers exactly once, including when its handler throws: an
 unexpected failure is a 500 with a generic message, never an unanswered request
-and never a Host path. Remote/reverse-proxy operation is intentionally
-unsupported.
+and never a Host path. A failure the CALLER caused is separated from that: on
+every route, read ones included, an invalid document name, an unknown document
+and an unknown or missing workspace answer `400` with one vetted sentence
+(`Invalid name`, `Document not found`, `Unknown workspace`, `workspaceId
+required`), so the panel and an operator can tell a bad request from a broken
+Host. Those four sentences are constants; no other message reaches a read route's
+body. Remote/reverse-proxy operation is intentionally unsupported.
 
 The Host retains bounded **selection evidence**, not board content: registry ID,
 canonical repository path, listed board IDs, and the selected board's task IDs and
