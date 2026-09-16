@@ -423,7 +423,11 @@ lane definition that was stored alongside them.
   cards serialize to X MiB …; narrow the read with --wish <slug>, or split the
   board.` — an actionable sentence a client prints verbatim, never an opaque
   downstream truncation. The human render of the same board is unaffected: the
-  budget belongs to the machine payload, not to the board.
+  budget belongs to the machine payload, not to the board. `--wish <slug>` is
+  the only narrowing a refusal ever recommends — it is the one flag that shrinks
+  the card set without changing the payload shape, while `--board <ref>`
+  re-routes a lane-defining board onto this (larger) aggregate — and a read that
+  is already `--wish`-scoped is told to split the wish or archive instead.
 - **Fails closed only on genuinely non-scalar storage** — the shapes SQLite can
   hold but the JSON contract cannot express (a BLOB title, a status outside the
   enum, a `comment` event with a NULL note). Every diagnostic is one bounded
@@ -441,6 +445,34 @@ lane definition that was stored alongside them.
   and render the laneless board — `--json` falls through to the frozen
   `{ scope, columns }` status payload. A laneless board is never a
   `Malformed board detail` failure on one path only.
+
+### The frozen laneless payload (`board --json`, `board --wish <slug> --json`)
+
+`{ scope, columns: { blocked, ready, in_progress, done } }` — the byte-frozen
+pre-assignment TaskRow projection (Decision 7), emitted by every `--json` read
+that does not render lanes: the unscoped read, a `--wish`-only read, and a
+`--board` read whose board is laneless.
+
+**The whole-response byte budget is the SAME `BOARD_JSON_MAX_BYTES` (3.5 MiB) as
+the aggregate's, and one gate (`serializeWithinBudget`) enforces both.** These
+paths are the escape hatch the aggregate's own refusal recommends, so an
+unguarded one hands a client that caps its read at 4 MiB an oversized response
+with no note and no error — the exact failure the aggregate budget exists to
+prevent, reached by following the aggregate's advice.
+
+What the two paths do NOT share is what can degrade. An aggregate card embeds
+history, so its emitter walks `BOARD_JSON_EVENT_LIMIT_STEPS` and announces the
+applied cap as the root `eventLimit`. A frozen laneless card embeds no history at
+all, so narrowing the per-card cap cannot shrink this payload by one byte: its
+ladder is the single widest rung, it carries no `eventLimit`/`schemaVersion` key,
+and it either fits or is refused. The refusal names the SCOPE, not a board —
+this path also serves reads with no board to name:
+`Error: Board read (wish "…") is too large to emit as one JSON response: N cards
+serialize to X MiB, over the 3.5 MiB budget. Split the wish across boards, or
+archive the cards this read does not need.` The advice rule is the aggregate's,
+unchanged: recommend `--wish <slug>` while it is still unspent, then splitting.
+As on the aggregate path, the card set is never silently truncated and the human
+render of the same scope is unaffected.
 
 `LaneTaskRow.enforcedBlock` is the one deliberate runtime field on a serialized
 additive shape: `null` when the card is unblocked, otherwise
