@@ -319,6 +319,21 @@ There is no update API for this table and no way to remove a single entry — it
 only grows for as long as its task exists. Deleting the task takes its whole
 stage log with it (`deleteTask`, see `tasks`).
 
+### The claim-to-handoff span (`task_events`)
+
+The card timeline is also the span clock. `claimTask` appends a `claim` event
+inside its winning transaction, so **the newest `claim` id is the start of the
+current claim-to-handoff span**, and `task report` may append exactly ONE
+`report` event per claimant per span (`appendReportEvent`; a second one is a
+`DuplicateReportError`, exit 1). A re-checkout supersedes the previous report by
+opening the next span. `task comment` stays unbounded — it is the verb for
+progress prose; `report` is the single handoff artifact a reviewer reads.
+
+Nothing outside `task_events` records this, so the rule needs no column, is
+identical in every worktree, and survives an export/import round trip. The span
+probe and the insert share one `BEGIN IMMEDIATE`, so two concurrent reports
+cannot both pass the check.
+
 ### `wish_groups`
 Vestigial (pending drop): the wish-group execution machinery is production-dead — the table stays inert for schema compatibility, with no writer. Natural key `(wish, name)`.
 

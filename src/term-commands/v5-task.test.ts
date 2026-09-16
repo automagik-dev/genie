@@ -1622,6 +1622,45 @@ describe('timeline verbs', () => {
     db.close();
   });
 
+  /**
+   * Dogfood r7 W1: `task report --help` promised "one per claim-to-handoff
+   * span" while the CLI accepted every repeat, so a card's timeline could hold
+   * several partial handoffs with nothing saying which one was THE report.
+   */
+  test('one report per claim-to-handoff span; a new checkout opens the next span', async () => {
+    const id = await seed('one-per-span');
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 12 tests pass')).code).toBe(0);
+
+    const second = await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: actually 13');
+    expect(second.code).toBe(1);
+    expect(second.stderr.trim().split('\n')).toHaveLength(1);
+    expect(second.stderr).toContain('already reported');
+    expect(second.stderr).toContain('claim-to-handoff span');
+    // The refusal names the verb that IS unbounded, so the worker is not stuck.
+    expect(second.stderr).toContain(`genie task comment ${id}`);
+    expect((await cli(repo, 'comment', id, 'actually 13')).code).toBe(0);
+
+    const before = openDb({ cwd: repo });
+    expect(getTaskEvents(before, id).filter((e) => e.kind === 'report')).toHaveLength(1);
+    before.close();
+
+    // Handoff, then a fresh claim: the next span carries its own report.
+    expect((await cli(repo, 'release', id)).code).toBe(0);
+    expect((await cli(repo, 'checkout', id, '--worker', 'eng-A')).code).toBe(0);
+    expect((await cli(repo, 'report', id, '--worker', 'eng-A', 'handoff: 13 tests pass')).code).toBe(0);
+    const after = openDb({ cwd: repo });
+    expect(getTaskEvents(after, id).filter((e) => e.kind === 'report')).toHaveLength(2);
+    after.close();
+  });
+
+  test('the report help text states the span rule the CLI enforces', async () => {
+    const help = await cli(repo, 'report', '--help');
+    expect(help.code).toBe(0);
+    // Commander hard-wraps the description, so compare on collapsed whitespace.
+    expect(help.stdout.replace(/\s+/g, ' ')).toContain('one per claim-to-handoff span');
+  });
+
   test('comment and report reject control characters and notes over 4000 bytes', async () => {
     const id = await seed('bounded');
     // ESC survives argv (NUL cannot); it is a C0 control the note bound refuses.

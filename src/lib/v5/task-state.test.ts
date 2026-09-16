@@ -13,6 +13,7 @@ import {
   DEFAULT_LIFECYCLE_LANES,
   DEFAULT_STALE_MS,
   DuplicateBoardError,
+  DuplicateReportError,
   EmptyBoardRefError,
   LIVENESS_RUNNING_MS,
   LIVENESS_STALE_MS,
@@ -31,6 +32,7 @@ import {
   UnknownTaskError,
   addDependency,
   adoptTask,
+  appendReportEvent,
   appendStage,
   appendTaskEvent,
   assignTask,
@@ -1006,6 +1008,32 @@ describe('runtime layer — claim / release timeline events', () => {
     expect(() => releaseTask(db, a.id, HUMAN)).toThrow(TaskReleaseError);
     expect(getTask(db, a.id)!.status).toBe('ready');
     expect(getTaskEvents(db, a.id).some((e) => e.kind === 'release')).toBe(false);
+  });
+
+  /**
+   * The span rule is derived from the timeline alone — the newest `claim` event
+   * starts the current claim-to-handoff span — so it needs no extra column and
+   * survives an export/import round trip.
+   */
+  test('appendReportEvent allows one report per claim span and supersedes it on re-claim', () => {
+    const a = createTask(db, { title: 'a' });
+    claimTask(db, a.id, 'w1');
+    expect(appendReportEvent(db, a.id, { note: 'handoff 1', author: 'w1' }).kind).toBe('report');
+    expect(() => appendReportEvent(db, a.id, { note: 'handoff 1b', author: 'w1' })).toThrow(DuplicateReportError);
+    // A refused report leaves no phantom event.
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'report')).toHaveLength(1);
+
+    // A new claim opens the next span, which carries its own report.
+    releaseTask(db, a.id, HUMAN);
+    claimTask(db, a.id, 'w1');
+    expect(appendReportEvent(db, a.id, { note: 'handoff 2', author: 'w1' }).kind).toBe('report');
+    expect(getTaskEvents(db, a.id).filter((e) => e.kind === 'report')).toHaveLength(2);
+  });
+
+  test('appendReportEvent on a deleted card is UnknownTaskError, never a raw FK failure', () => {
+    const a = createTask(db, { title: 'a' });
+    deleteTask(db, a.id);
+    expect(() => appendReportEvent(db, a.id, { note: 'x', author: 'w1' })).toThrow(UnknownTaskError);
   });
 
   test('commentCounts tallies only comment events, keyed by task', () => {

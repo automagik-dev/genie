@@ -46,6 +46,7 @@ import {
   type TaskStatus,
   UnknownTaskError,
   adoptTask,
+  appendReportEvent,
   appendTaskEvent,
   assignTask,
   blockTask,
@@ -552,7 +553,10 @@ function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void
             : `report refused: task ${id} is not claimed. Checkout as ${author.author} first, or use comment.`,
         );
       }
-      appendTaskEvent(db, id, { kind: 'report', note, authorKind: author.authorKind, author: author.author });
+      // One report per claim-to-handoff span (the promise `task report --help`
+      // makes): the span rule lives in the state module so the probe and the
+      // insert share one write lock.
+      appendReportEvent(db, id, { note, authorKind: author.authorKind, author: author.author });
       out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {
       db.close();
@@ -906,7 +910,9 @@ export, with two caveats:
 
   task
     .command('report <id> <text>')
-    .description('Append an authored worker report to the card timeline (one per claim-to-handoff span)')
+    .description(
+      "Append the claimant's worker report to the card timeline (one per claim-to-handoff span; a new checkout opens the next)",
+    )
     .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
     .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
 
