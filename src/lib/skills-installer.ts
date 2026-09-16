@@ -1605,7 +1605,7 @@ function holdsOnlyChild(dir: string, child: string): boolean {
  * with the parent alone, so those chains could never be handed back as a whole
  * and the genie-made root above them read as independent product evidence.
  */
-export function agentDirAncestorChain(home: string, agentDir: string): string[] {
+function agentDirAncestorChain(home: string, agentDir: string): string[] {
   const config = join(home, '.config');
   const chain: string[] = [];
   let child = agentDir;
@@ -1620,16 +1620,6 @@ export function agentDirAncestorChain(home: string, agentDir: string): string[] 
     current = dirname(current);
   }
   return chain;
-}
-
-/**
- * The product root a recorded skills home belongs to: the highest ancestor that
- * exists only because the skills dir does. `null` for a skills dir sitting
- * directly in HOME or in `~/.config`, neither of which is ever a product home.
- */
-export function productRootForAgentDir(home: string, agentDir: string): string | null {
-  const chain = agentDirAncestorChain(home, agentDir);
-  return chain.length === 0 ? null : (chain[chain.length - 1] as string);
 }
 
 /**
