@@ -122,7 +122,13 @@ function normalizeInput(raw) {
 // Shared prompt clauses: each contract sentence is written once and reused verbatim.
 const READ_ONLY = 'Read only; change nothing.'
 const CHECKABLE = 'each one checkable — "the gate exits zero", never "understanding reached"'
-const REFUTE_TAIL = `Return refuted and findings[{severity, file, line, claim, fix}]. Severity is blocking when the script would misbehave or fail the contract, advisory otherwise. Default to refuted true when uncertain — and whenever you refute, name at least one blocking finding carrying the reason, because a bare refutation is reported as one anyway. ${READ_ONLY}`
+// The caller lands three artifacts after the run — the catalog README row, the fronting
+// skill's paragraph, and the parity test — and the repairer may edit only the drafted
+// script. A blocking finding against any of them can never be closed, so it burns the
+// repair budget and holds ok false over a script that is itself sound. Both refuters are
+// told so here, and verify() enforces it regardless of what they return.
+const LANDING_SCOPE = 'Scope: the catalog README row, the fronting skill paragraph, and the parity test are landing artifacts the caller writes after this run, not part of the drafted file; their absence is never a finding against the script. Judge the drafted file alone — anything outside it is at most advisory, with file naming that artifact.'
+const REFUTE_TAIL = `Return refuted and findings[{severity, file, line, claim, fix}]. Severity is blocking when the script would misbehave or fail the contract, advisory otherwise. Default to refuted true when uncertain — and whenever you refute, name at least one blocking finding carrying the reason, because a bare refutation is reported as one anyway. ${LANDING_SCOPE} ${READ_ONLY}`
 const BODY_RULES = 'plain JavaScript, bare globals only, every path arriving through args and relative to the repository, no clock and no entropy, no reads or writes in the script itself, .filter(Boolean) on every parallel result, and a log() line naming whatever was dropped. A normal failure returns a plain object; it never throws'
 const CATALOG_IDIOMS = 'normalizeInput, section(), reporting what did not respond, meta.phases titles matching the phase() calls, and a schema root whose required is a subset of its properties'
 const NAMESPACE_RULE = `every saved workflow name — always list ${DEFAULT_CATALOG} itself, even when the catalog directory above differs — AND every top-level directory name under ${SKILLS_DIR}/, listed from that directory`
@@ -301,7 +307,15 @@ async function verify(round) {
   const claims = unexplained ? ['the static contract test did not pass'] : reported
 
   const staticFindings = claims.map((claim) => ({ severity: 'blocking', file: scriptPath, line: 0, claim, fix: `satisfy ${META_TEST}` }))
-  const refuterFindings = [semantics, fidelity].filter(Boolean).flatMap((r) => list(r.findings))
+  const raw = [semantics, fidelity].filter(Boolean).flatMap((r) => list(r.findings)).filter(Boolean)
+  // Only the drafted file is repairable, so a blocking finding naming anything else — the
+  // README row, the fronting skill, the parity test, an unnamed file — is downgraded to
+  // advisory rather than dropped: it is still returned as the caller's landing work, but it
+  // never spends a repair round and never holds ok false over a sound script.
+  const inScope = (f) => { const at = String(f.file || '').trim(); return at === scriptPath || at === `${name}.js` || at.endsWith(`/${name}.js`) }
+  const downgraded = raw.filter((f) => f.severity === 'blocking' && !inScope(f))
+  if (downgraded.length) log(`Round ${round}: downgraded ${downgraded.length} blocking refuter finding(s) to advisory — outside ${scriptPath}, so the repairer cannot act on them: ${[...new Set(downgraded.map((f) => String(f.file || '').trim() || '(unnamed)'))].join(', ')}. They are the caller's landing work.`)
+  const refuterFindings = raw.map((f) => (f.severity === 'blocking' && !inScope(f) ? { ...f, severity: 'advisory', claim: `${f.claim} (advisory: outside ${scriptPath}, landed by the caller)` } : f))
   const findings = [...staticFindings, ...refuterFindings, ...standingRefusal('semantics', semantics), ...standingRefusal('fidelity', fidelity)]
   const problems = coverageNote ? [...reported, coverageNote] : reported
   return {

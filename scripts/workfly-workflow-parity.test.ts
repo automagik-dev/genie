@@ -45,4 +45,11 @@ describe('workfly skill fronts the workfly workflow', () => {
     expect(byHand).toContain('semantics against the contract, fidelity against the source stages');
     expect(byHand).toContain('defaulting to refuted when uncertain');
   });
+
+  test('the shared refuter clause puts the three landing artifacts outside the script scope', () => {
+    expect(JS).toContain(
+      'the catalog README row, the fronting skill paragraph, and the parity test are landing artifacts the caller writes after this run',
+    );
+    expect(SKILL).toContain('always arrives as advisory');
+  });
 });
