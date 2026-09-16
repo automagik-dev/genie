@@ -175,7 +175,7 @@ genie --help
 | `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
 | `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
-| `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `handshake`) |
+| `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `test-approval`, `handshake`) |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
 | `genie doctor` | Run diagnostic checks on the installation |

@@ -59,6 +59,13 @@ function fail(message: string): never {
 }
 
 /** Wrap a handler so typed errors become clean stderr + non-zero exit. */
+/**
+ * The refusal for `--wish ""`/`--wish "   "` — the wish-side twin of
+ * `board id must not be empty`. Exported so the CLI test and any future caller
+ * assert the same sentence.
+ */
+export const EMPTY_WISH_SCOPE_MESSAGE = 'wish slug must not be empty';
+
 function run(handler: () => void): void {
   try {
     handler();
@@ -289,9 +296,15 @@ function handleBoardWithDb(opts: BoardOptions): void {
       filter.boardId = board.id;
       scopeLabel = `board "${board.name}"`;
     }
-    if (opts.wish) {
+    // Same fail-closed rule the board ref gets: `--wish ""` (an unset shell
+    // variable) is a supplied-but-empty scope, never a request for every task
+    // in the repo. Truthiness alone silently widened the read to the unscoped
+    // board with exit 0 (dogfood r5 Z6), so both scoping flags are now tested
+    // with `!== undefined` and refused when blank.
+    if (opts.wish !== undefined) {
+      if (opts.wish.trim() === '') fail(EMPTY_WISH_SCOPE_MESSAGE);
       filter.wish = opts.wish;
-      scopeLabel = opts.board ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
+      scopeLabel = opts.board !== undefined ? `${scopeLabel}, wish "${opts.wish}"` : `wish "${opts.wish}"`;
     }
 
     // Unusable stored lane metadata is NOT a read failure. `boards.lanes` is

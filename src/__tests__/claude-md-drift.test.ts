@@ -214,6 +214,18 @@ describe('CLAUDE.md subcommand drift guard', () => {
     expect(documented.sort()).toEqual(subcommands);
   });
 
+  /**
+   * The same claim in the other file a reader meets first. Dogfood r5 Z11: the
+   * CLAUDE.md table was corrected while README's command table kept naming four
+   * of the five omni subcommands.
+   */
+  test('the README command table names every omni subcommand too', () => {
+    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+    const row = (readme.split('\n').find((line) => line.startsWith('| `genie omni` |')) as string) ?? '';
+    expect(row).not.toBe('');
+    for (const name of subcommandNames(cliHelp(['omni']))) expect(row).toContain(`\`${name}\``);
+  });
+
   test('every omni flag CLAUDE.md documents exists on that subcommand', () => {
     for (const line of documentedLines(content, 'Omni subcommands', 'omni')) {
       const { name, flags } = documentedInvocation(line, 'omni');

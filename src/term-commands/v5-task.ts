@@ -55,6 +55,7 @@ import {
   createTask,
   deleteTask,
   formatWishRef,
+  getBoard,
   getDependencies,
   getStageLog,
   getTask,
@@ -137,12 +138,38 @@ function formatEventLine(e: TaskEvent): string {
   return `${formatTimestamp(new Date(e.createdAt))}  ${e.kind} by ${who}${note}`;
 }
 
-function printDetailHeader(task: TaskCardRow): void {
+/**
+ * The lane `task status` reports — the SAME placement `genie board` renders,
+ * not merely the stored `tasks.lane` column. `groupByLane` puts a card whose
+ * lane is null (or names a lane the board no longer defines) in the board's
+ * FIRST lane, so printing the raw column alone would let status and board
+ * disagree. Returns null when there is no lane to speak of (no board, or a
+ * laneless board and an unplaced card).
+ *
+ * Dogfood r5 Z7: status printed no lane at all, so the only way to learn where
+ * a card sat was `genie board --json` or reading its move events.
+ */
+function laneLine(db: Database, task: TaskCardRow): string | null {
+  const lanes = task.boardId ? (getBoard(db, task.boardId)?.lanes ?? null) : null;
+  if (lanes === null || lanes.length === 0) {
+    if (!task.lane) return null;
+    const why = task.boardId ? ' (board defines no lanes)' : '';
+    return `  Lane:       ${task.lane}${why}`;
+  }
+  if (task.lane && lanes.some((lane) => lane.name === task.lane)) return `  Lane:       ${task.lane}`;
+  const first = lanes[0].name;
+  if (task.lane) return `  Lane:       ${first} (stored lane "${task.lane}" is not on this board)`;
+  return `  Lane:       ${first} (default — the card has never been moved)`;
+}
+
+function printDetailHeader(db: Database, task: TaskCardRow): void {
   out('');
   out(`Task ${task.id}: ${task.title}`);
   out('─'.repeat(60));
   out(`  Status:     ${statusLabel(task.status)}`);
   if (task.boardId) out(`  Board:      ${task.boardId}`);
+  const lane = laneLine(db, task);
+  if (lane) out(lane);
   if (task.wish) out(`  Wish:       ${task.group ? `${task.wish}#${task.group}` : task.wish}`);
   if (task.assignedAgent) {
     const why = task.assignedReason ? ` — ${task.assignedReason}` : '';
@@ -174,7 +201,7 @@ function printDependencies(db: Database, taskId: string): void {
 }
 
 function printTaskDetail(db: Database, task: TaskCardRow): void {
-  printDetailHeader(task);
+  printDetailHeader(db, task);
   printDependencies(db, task.id);
 
   const events = getTaskEvents(db, task.id);
