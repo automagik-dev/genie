@@ -78,7 +78,7 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `doctor` | Diagnostic checks on the genie installation; `--fix-global-db` is the one repair verb it owns (backs up `<GENIE_HOME>/genie.db`, drops only the per-repo tables that do not belong in it, never the omni queue or inbox) |
 | `init` | Scaffold per-repo state and retire proven Genie-owned project MCP registrations: the marker-owned `.codex/config.toml` route, and in `.mcp.json` only a `genie` server whose command is a genie binary with args exactly `["mcp"]` (backed up first; every other server and key preserved byte-for-byte; a symlinked file is skipped) |
 | `install` | Post-install finisher — authenticated delivery, v4 cleanup (`--skip-v4-cleanup`), and non-Codex convergence |
-| `config` | Read the resolved global config: `config get <dotted.key>` prints one schema key's value; `--json` adds `{key, value, source}` |
+| `config` | Read the resolved global config: `config get <dotted.key>` prints one schema key's value (`budgets.maxEscalationsPerGroup` is the per-group repair budget the shipped `fix` skill reads); `--json` adds `{key, value, source}` |
 | `context` | Resolve spawn context: wish/group branch + base SHA, or the integration branch (versioned JSON); `--plan` previews |
 | `mcp` | Retired — prints the stable non-zero MCP-retirement diagnostic (use `genie task` / `genie board`) |
 | `omni` | Omni integration — `serve`, `status`, `inbox`, `test-approval`, `handshake` |
