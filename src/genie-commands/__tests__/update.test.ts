@@ -60,6 +60,7 @@ import {
   formatVerifyBanner,
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
+  isGhUnavailable,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -70,6 +71,7 @@ import {
   resolveUpdateExecutionMode,
   resumePendingDelivery,
   rollbackBinaryAt,
+  runCommandSilent,
   runFreshBinaryPostDeliveryConvergence,
   runManualUpdateConvergence,
   runNormalUpdatePublicationBoundary,
@@ -1285,6 +1287,20 @@ interface RunnerCall {
   timeoutMs?: number;
 }
 
+/**
+ * Both spellings of "there is no `gh` on this PATH". Node's `child_process`
+ * says `spawn gh ENOENT`; Bun says `Executable not found in $PATH: "gh"` and
+ * puts the errno only on the error object. The shipped `genie` is a compiled
+ * Bun binary, so BUN_GH_ABSENT is the wording real hosts produce — asserting
+ * only the Node spelling is what let the absent-gh bug ship green (Z1).
+ */
+const NODE_GH_ABSENT = 'spawn gh ENOENT';
+const BUN_GH_ABSENT = 'Executable not found in $PATH: "gh"';
+const GH_ABSENT_OUTPUTS: ReadonlyArray<[string, string]> = [
+  ['node runtime wording', NODE_GH_ABSENT],
+  ['bun runtime wording (the shipped binary)', BUN_GH_ABSENT],
+];
+
 /** Stub gh: `release download` materializes the release assets, `attestation
  *  verify` answers with whatever this host's gh would have said. Set
  *  `ghDownload` to simulate a host where `gh` cannot run at all — then the
@@ -1295,6 +1311,7 @@ function stubGh(
   attestation: { success: boolean; output: string },
   overrides?: Parameters<typeof writeReleaseAssets>[2],
   ghDownload: 'ok' | 'unavailable' = 'ok',
+  ghDownloadOutput: string = BUN_GH_ABSENT,
 ): {
   runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>;
   calls: RunnerCall[];
@@ -1303,7 +1320,7 @@ function stubGh(
   const runner = async (cmd: string, args: string[], timeoutMs?: number) => {
     calls.push({ cmd, args, timeoutMs });
     if (cmd === 'gh' && args[0] === 'release') {
-      if (ghDownload === 'unavailable') return { success: false, output: 'spawn gh ENOENT' };
+      if (ghDownload === 'unavailable') return { success: false, output: ghDownloadOutput };
       writeReleaseAssets(dir, fixture, overrides);
       return { success: true, output: '' };
     }
@@ -1327,7 +1344,8 @@ describe('classifyAttestationCrossCheck', () => {
       'unauthenticated gh',
       'To get started with GitHub CLI, please run: gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.',
     ],
-    ['gh not installed', 'spawn gh ENOENT'],
+    ['gh not installed (node wording)', NODE_GH_ABSENT],
+    ['gh not installed (bun wording — the shipped binary)', BUN_GH_ABSENT],
     ['gh too old for attestation', 'unknown command "attestation" for "gh"'],
     ['verify round-trip timed out', 'Timed out after 60000ms'],
     ['offline host', 'dial tcp: lookup api.github.com: no such host'],
@@ -1340,6 +1358,18 @@ describe('classifyAttestationCrossCheck', () => {
     ['identity mismatch', 'verification failed: certificate identity mismatch'],
   ])('treats %s as a hard failure', (_label, output) => {
     expect(classifyAttestationCrossCheck({ success: false, output }).kind).toBe('failed');
+  });
+
+  // Z1 regression: the classifier is fed by `runCommandSilent`, whose "missing
+  // binary" wording is decided by the RUNTIME, not by this file. Spawn a
+  // genuinely absent binary through the production wrapper so the assertion
+  // tracks whatever Bun (the shipped runtime) actually emits instead of a
+  // hardcoded Node string that no released binary ever produces.
+  test('a genuinely missing binary spawned through runCommandSilent classifies as unavailable', async () => {
+    const result = await runCommandSilent('genie-no-such-binary-zzz', ['--version']);
+    expect(result.success).toBe(false);
+    expect(isGhUnavailable(result.output)).toBe(true);
+    expect(classifyAttestationCrossCheck(result).kind).toBe('unavailable');
   });
 });
 
@@ -1423,7 +1453,8 @@ describe('downloadAndVerifyTarball (G5)', () => {
       'stable' as const,
       'To get started with GitHub CLI, please run: gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.',
     ],
-    ['--dev on a host with no gh binary at all', 'dev' as const, 'spawn gh ENOENT'],
+    ['--dev on a host with no gh binary at all (node wording)', 'dev' as const, NODE_GH_ABSENT],
+    ['--dev on a host with no gh binary at all (bun wording)', 'dev' as const, BUN_GH_ABSENT],
   ])('verifies %s from the signed delivery evidence alone', async (_label, channel, ghOutput) => {
     const fixture = buildReleaseFixture({ channel });
     const { runner, calls } = stubGh(tmp, fixture, { success: false, output: ghOutput });
@@ -1439,36 +1470,40 @@ describe('downloadAndVerifyTarball (G5)', () => {
     expect(calls.map((call) => call.cmd)).toEqual(['gh', 'gh']);
   });
 
-  test('falls back to the public release URL when gh cannot run at all', async () => {
-    const fixture = buildReleaseFixture();
-    const { runner, calls } = stubGh(
-      tmp,
-      fixture,
-      { success: false, output: 'spawn gh ENOENT' },
-      undefined,
-      'unavailable',
-    );
+  test.each(GH_ABSENT_OUTPUTS)(
+    'falls back to the public release URL when gh cannot run at all (%s)',
+    async (_label, ghAbsent) => {
+      const fixture = buildReleaseFixture();
+      const { runner, calls } = stubGh(
+        tmp,
+        fixture,
+        { success: false, output: ghAbsent },
+        undefined,
+        'unavailable',
+        ghAbsent,
+      );
 
-    const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner));
-    expect(tarballPath).toBe(join(tmp, fixture.tarballName));
+      const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner));
+      expect(tarballPath).toBe(join(tmp, fixture.tarballName));
 
-    const curlCalls = calls.filter((call) => call.cmd === 'curl');
-    // Every URL is built from the PINNED owner/repo, never from a manifest field.
-    const urls = curlCalls.map((call) => call.args[call.args.length - 1]);
-    for (const url of urls) {
-      expect(
-        url.startsWith(`https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/`),
-      ).toBe(true);
-    }
-    expect(urls).toContain(
-      `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`,
-    );
-    expect(urls).toContain(
-      `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json.sigstore.json`,
-    );
-    expect(notices.some((line) => line.includes('gh release download unavailable'))).toBe(true);
-    expect(notices.some((line) => line.includes('gh attestation cross-check unavailable'))).toBe(true);
-  });
+      const curlCalls = calls.filter((call) => call.cmd === 'curl');
+      // Every URL is built from the PINNED owner/repo, never from a manifest field.
+      const urls = curlCalls.map((call) => call.args[call.args.length - 1]);
+      for (const url of urls) {
+        expect(
+          url.startsWith(`https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/`),
+        ).toBe(true);
+      }
+      expect(urls).toContain(
+        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`,
+      );
+      expect(urls).toContain(
+        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json.sigstore.json`,
+      );
+      expect(notices.some((line) => line.includes('gh release download unavailable'))).toBe(true);
+      expect(notices.some((line) => line.includes('gh attestation cross-check unavailable'))).toBe(true);
+    },
+  );
 
   test('a gh that ran and answered is a real download failure, not a reason to fall back', async () => {
     const fixture = buildReleaseFixture();
@@ -1507,12 +1542,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
 
   test('aborts when the signed delivery evidence is absent', async () => {
     const fixture = buildReleaseFixture();
-    const { runner, calls } = stubGh(
-      tmp,
-      fixture,
-      { success: false, output: 'spawn gh ENOENT' },
-      { omitEvidence: true },
-    );
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: BUN_GH_ABSENT }, { omitEvidence: true });
 
     await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
       /signed delivery evidence is incomplete/,
@@ -1545,7 +1575,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
     ],
   ])('aborts when %s, without a credential to hide behind', async (_label, overrides, expected) => {
     const fixture = buildReleaseFixture();
-    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: 'spawn gh ENOENT' }, overrides);
+    const { runner, calls } = stubGh(tmp, fixture, { success: false, output: BUN_GH_ABSENT }, overrides);
 
     await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
       expected,
