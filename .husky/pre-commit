@@ -17,10 +17,12 @@ fi
 # on divergence — so a stale local db can never clobber the roadmap. Fail-open:
 # sync trouble warns but never blocks a commit. Skipped in linked worktrees
 # (the snapshot lives in the main checkout). post-merge/post-rewrite run the
-# same sync after pulls.
+# same sync after pulls. Skipped without a .genie/ workspace: `task sync`
+# refuses there (there is no board and no snapshot), and that refusal is not a
+# commit-time warning.
 git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
 git_common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ]; then
+if [ "$git_dir" = "$git_common" ] && [ -f src/genie.ts ] && [ -d .genie ]; then
   # Stage roadmap.json only when the sync itself rewrote it (export) — never
   # absorb pre-existing unstaged edits into an unrelated commit.
   roadmap_before=$( [ -f .genie/roadmap.json ] && git hash-object .genie/roadmap.json || echo absent )

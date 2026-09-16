@@ -59,7 +59,9 @@ import {
   removeSkillsChannelInstall,
   removeSymlinkMembers,
   removeSymlinks,
+  reportUninstallResidue,
   settleRuntimeIntegrationProgress,
+  sweepUninstallResidue,
   uninstallBatchIntegrationViolations,
   uninstallBatchJournalPath,
   uninstallBatchMemberId,
@@ -577,7 +579,9 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     // The record deletion happens before the home snapshot, so the batch can
     // still authorize a clean wholesale removal of GENIE_HOME's contents.
     expect(existsSync(join(genieHome, 'plugins'))).toBe(false);
-    expect(readdirSync(genieHome)).toEqual([]);
+    // W4: the emptied pathname goes too — the preview promised `- Genie
+    // directory (~/.genie)`, and an empty `~/.genie` contradicts it.
+    expect(existsSync(genieHome)).toBe(false);
   });
 
   /**
@@ -620,6 +624,122 @@ describe('skills.sh channel removal inside the fresh uninstall plan (PR #2866 pr
     // plain text (m15), so the assertion is on the words, not the escapes.
     expect(output).toContain(`  + skills.sh channel: removed preserved retired skill dir ${retired}`);
     expect(output.some((line) => line.includes('removed 2 recorded skill dir(s)'))).toBe(true);
+  });
+
+  /**
+   * W4 (dogfood 7): a run that printed `+ Genie CLI uninstalled.` left an EMPTY
+   * `$GENIE_HOME` directory and the `.genie-recovery` root it had created for
+   * its own batch journal — residue the preview line `- Genie directory
+   * (~/.genie)` promised was gone, and residue nothing in the output mentioned.
+   * The removal cannot delete those two from the inside, so a successful plan
+   * sweeps them afterwards, and only while they are genuinely empty.
+   */
+  function seedVerifiedChannel(): void {
+    seedRemovableGenieHome();
+    const wish = seedWishSkill();
+    const digest = computeSkillDirDigest(wish);
+    if (digest === null) throw new Error('fixture skill dir was not digestable');
+    seedChannelRecord(wish, digest);
+  }
+
+  test('a fully successful uninstall removes the emptied GENIE_HOME and its recovery root', () => {
+    seedVerifiedChannel();
+    const recoveryRoot = dirname(uninstallBatchJournalPath(genieHome));
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(genieHome)).toBe(false);
+    expect(existsSync(recoveryRoot)).toBe(false);
+    expect(outcome.result.residue?.removed.sort()).toEqual([genieHome, recoveryRoot].sort());
+    expect(outcome.result.residue?.kept).toEqual([]);
+  });
+
+  test('a GENIE_HOME still holding state backups is kept, and the reason names them', () => {
+    seedVerifiedChannel();
+    mkdirSync(join(genieHome, 'state-backups', 'integration-retirement-1'), { recursive: true });
+    writeFileSync(join(genieHome, 'state-backups', 'integration-retirement-1', 'kept.json'), '{}\n', 'utf8');
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(join(genieHome, 'state-backups', 'integration-retirement-1', 'kept.json'))).toBe(true);
+    expect(outcome.result.residue?.removed).not.toContain(genieHome);
+    const kept = outcome.result.residue?.kept.find((item) => item.path === genieHome);
+    expect(kept?.reason).toBe('it still holds state-backups');
+  });
+
+  test('a recovery root shared with another GENIE_HOME survives with its reason', () => {
+    seedVerifiedChannel();
+    const recoveryRoot = dirname(uninstallBatchJournalPath(genieHome));
+    mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
+    // A sibling install's journal: same parent directory, different home token.
+    const foreign = join(recoveryRoot, 'uninstall-batch-0123456789abcdef.json');
+    writeFileSync(foreign, '{}\n', { encoding: 'utf8', mode: 0o600 });
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(genieHome)).toBe(false);
+    expect(existsSync(foreign)).toBe(true);
+    const kept = outcome.result.residue?.kept.find((item) => item.path === recoveryRoot);
+    expect(kept?.reason).toBe('it still holds uninstall-batch-0123456789abcdef.json');
+  });
+
+  test('the residue report names what went and what stayed, with the reason', () => {
+    output.length = 0;
+    reportUninstallResidue({
+      removed: [genieHome],
+      kept: [{ path: join(root, '.genie-recovery'), reason: 'it still holds uninstall-v4' }],
+    });
+
+    expect(output).toContain(`  + Removed empty directory ${genieHome}`);
+    expect(output).toContain(`  ~ Kept ${join(root, '.genie-recovery')}: it still holds uninstall-v4`);
+  });
+});
+
+/**
+ * W4 unit boundary: the sweep itself never removes anything it did not prove
+ * empty, and it is silent about a path that is already gone.
+ */
+describe('post-uninstall residue sweep', () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-uninstall-residue-'));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('an absent GENIE_HOME and recovery root produce no removals and no kept entries', () => {
+    expect(sweepUninstallResidue(join(root, 'genie'))).toEqual({ removed: [], kept: [] });
+  });
+
+  test('a symlinked GENIE_HOME is never followed or unlinked', () => {
+    const target = join(root, 'elsewhere');
+    mkdirSync(target, { recursive: true });
+    const genieHome = join(root, 'genie');
+    symlinkSync(target, genieHome);
+
+    const sweep = sweepUninstallResidue(genieHome);
+
+    expect(sweep.removed).toEqual([]);
+    expect(sweep.kept).toEqual([{ path: genieHome, reason: 'it is not a physical directory' }]);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(existsSync(target)).toBe(true);
+  });
+
+  test('a crowded directory reports at most five names plus a remainder count', () => {
+    const genieHome = join(root, 'genie');
+    mkdirSync(genieHome, { recursive: true });
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) writeFileSync(join(genieHome, name), '', 'utf8');
+
+    const sweep = sweepUninstallResidue(genieHome);
+
+    expect(sweep.kept).toEqual([{ path: genieHome, reason: 'it still holds a, b, c, d, e and 2 more' }]);
   });
 });
 

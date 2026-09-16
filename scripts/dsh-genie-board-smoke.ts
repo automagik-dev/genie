@@ -69,6 +69,30 @@ export function sandboxDirectories(temporary: string): string[] {
 }
 
 /**
+ * Every route the Genie suite can own, as a browser would ask for it. With the
+ * manager row disabled not one of them may exist.
+ */
+export const GENIE_ROUTES = [
+  'health',
+  'workspaces',
+  'action',
+  'skills?workspaceId=x',
+  'skills/document?workspaceId=x&name=wish',
+  'workflows?workspaceId=x',
+  'workflows/document?workspaceId=x&name=work',
+] as const;
+
+/**
+ * How long a manager-disabled Host must stay up before the smoke believes it.
+ *
+ * `dsh web` prints its authenticated URL BEFORE the loader audits the settled
+ * plugin tree, so a URL is not a boot. The regression this phase owns exited
+ * ~1.3 s after printing one, with `3 entries did not activate / ...: pending
+ * (waiting for service: genieRuntime)`; ten seconds is that gap with room.
+ */
+export const BOOT_SETTLE_MS = 10_000;
+
+/**
  * Acceptance proof for disable-by-id, against the REAL four-row patch.
  *
  * The profile turns `genie-dsh-board-skills` off by its id; the row must then
@@ -105,6 +129,45 @@ async function assertDisabledRow(launchUrl: string): Promise<Record<string, bool
   // The rows that stayed enabled still answer through the one fence.
   if ((await read('workspaces')).status !== 200) throw new Error('Disabling one row broke the board row');
   return mounted;
+}
+
+/**
+ * Acceptance proof for V1: the MANAGER row disabled by its id.
+ *
+ * The three sub-rows used to declare `inject: ['genieRuntime']`, a HARD cordis
+ * dependency, so turning the manager off parked all three loader entries in
+ * PENDING and DSH's boot audit killed the Host — an operator could disable one
+ * plugin row and lose their whole shell. DSH must instead boot with the Genie
+ * suite simply absent: no health route, no board routes, no catalog routes.
+ */
+async function assertManagerDisabled(
+  launchUrl: string,
+  child: () => ChildProcess | undefined,
+): Promise<Record<string, number>> {
+  const origin = new URL(launchUrl).origin;
+  const exchange = await fetch(launchUrl, { redirect: 'manual' });
+  const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
+  if (!cookie) throw new Error('DSH token exchange did not set a cookie on the manager-disabled launch');
+  // Surviving the tree audit is the assertion; the printed URL is not.
+  await Bun.sleep(BOOT_SETTLE_MS);
+  const running = child();
+  if (!running || running.exitCode !== null || running.signalCode !== null)
+    throw new Error(
+      `DSH did not survive boot with the manager row disabled (exit ${String(running?.exitCode)}/${String(running?.signalCode)})`,
+    );
+  const statuses: Record<string, number> = {};
+  for (const path of GENIE_ROUTES) {
+    const mutation = path === 'action';
+    const response = await fetch(`${origin}/api/genie-board/${path}`, {
+      method: mutation ? 'POST' : 'GET',
+      headers: { origin, cookie, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      ...(mutation ? { body: JSON.stringify({ action: 'list', workspaceId: 'x' }) } : {}),
+    });
+    if (response.status !== 404)
+      throw new Error(`Manager-disabled Host still serves /api/genie-board/${path} (${response.status})`);
+    statuses[path] = response.status;
+  }
+  return statuses;
 }
 
 const root = resolve(import.meta.dir, '..');
@@ -202,6 +265,12 @@ async function main(): Promise<void> {
       join(temporary, 'fixture-disabled.patch.yml'),
       `${workspaceRow}- id: genie-dsh-board-skills\n  disabled: true\n`,
     );
+    // ... and the same profile with the MANAGER row off instead, which is the
+    // one row every other row used to depend on to exist.
+    await writeFile(
+      join(temporary, 'fixture-manager-disabled.patch.yml'),
+      `${workspaceRow}- id: genie-dsh-board\n  disabled: true\n`,
+    );
     await command('dsh', ['plugin', '--profile', 'web', 'add', `link:${join(root, 'plugins/dsh-genie-board')}`]);
     installed = true;
     await start();
@@ -264,9 +333,12 @@ async function main(): Promise<void> {
       .find((entry: { id: string }) => entry.id === id);
     if (!commentCard?.comments.some((entry: { note: string }) => entry.note === '--help'))
       throw new Error('Option-shaped comment was not stored literally');
-    // Phase two: the same four-row patch with one row disabled by its id.
+    // Phase two: the same four-row patch with one SUB-row disabled by its id.
     await stop();
     const mounted = await assertDisabledRow(await start('fixture-disabled.patch.yml'));
+    // Phase three: the same patch with the MANAGER row disabled by its id.
+    await stop();
+    const managerOff = await assertManagerDisabled(await start('fixture-manager-disabled.patch.yml'), () => server);
     console.log(
       JSON.stringify({
         dsh: await command('dsh', ['--version']),
@@ -277,7 +349,8 @@ async function main(): Promise<void> {
         id,
         lane,
         mountedWithSkillsDisabled: mounted,
-        result: 'PASS: install/list/restart/health/load/create/move/disable-by-id',
+        routesWithManagerDisabled: managerOff,
+        result: 'PASS: install/list/restart/health/load/create/move/disable-by-id/disable-manager',
       }),
     );
   } finally {

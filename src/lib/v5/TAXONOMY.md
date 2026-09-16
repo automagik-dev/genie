@@ -56,6 +56,15 @@ reordering once, as its own content-free write, instead of having it ride along
 with the next card and bury that card in a whole-file diff. A `diverged` verdict
 normalizes nothing: it touches neither side, by contract.
 
+**`task sync` needs a `.genie/` workspace to reconcile.** The precondition is
+the directory itself, and it is checked BEFORE the database is opened — opening
+it creates `.genie/genie.db` and with it the directory under test. In a checkout
+that was never `genie init`-ed there is neither side of the pair, so sync
+refuses with a one-line error on stderr and exit 1 rather than reporting
+`in sync (none)`, which no consumer can tell from a genuinely reconciled
+workspace. The `|| true` git hooks gate on `.genie/roadmap.json` existing, so
+they never reach this refusal.
+
 **An import type-checks every column before it writes anything.** A snapshot is
 untrusted input (`roadmap.json` survives git merges and hand edits), so
 `validateSnapshot` compares each row's cells against the live schema's declared
@@ -318,6 +327,21 @@ Append-only audit trail of stage transitions per task.
 There is no update API for this table and no way to remove a single entry — it
 only grows for as long as its task exists. Deleting the task takes its whole
 stage log with it (`deleteTask`, see `tasks`).
+
+### The claim-to-handoff span (`task_events`)
+
+The card timeline is also the span clock. `claimTask` appends a `claim` event
+inside its winning transaction, so **the newest `claim` id is the start of the
+current claim-to-handoff span**, and `task report` may append exactly ONE
+`report` event per claimant per span (`appendReportEvent`; a second one is a
+`DuplicateReportError`, exit 1). A re-checkout supersedes the previous report by
+opening the next span. `task comment` stays unbounded — it is the verb for
+progress prose; `report` is the single handoff artifact a reviewer reads.
+
+Nothing outside `task_events` records this, so the rule needs no column, is
+identical in every worktree, and survives an export/import round trip. The span
+probe and the insert share one `BEGIN IMMEDIATE`, so two concurrent reports
+cannot both pass the check.
 
 ### `wish_groups`
 Vestigial (pending drop): the wish-group execution machinery is production-dead — the table stays inert for schema compatibility, with no writer. Natural key `(wish, name)`.

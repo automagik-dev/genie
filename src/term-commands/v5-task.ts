@@ -29,8 +29,10 @@ import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
 import { resolveEventAuthor, resolveWorkerIdentity } from '../lib/v5/identity.js';
 import {
+  hasGenieWorkspace,
   recordExportBaseline,
   recordImportBaseline,
+  resolveWorkspaceDir,
   roadmapSnapshot,
   serializeSnapshot,
   syncRoadmap,
@@ -46,6 +48,7 @@ import {
   type TaskStatus,
   UnknownTaskError,
   adoptTask,
+  appendReportEvent,
   appendTaskEvent,
   assignTask,
   blockTask,
@@ -552,7 +555,10 @@ function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void
             : `report refused: task ${id} is not claimed. Checkout as ${author.author} first, or use comment.`,
         );
       }
-      appendTaskEvent(db, id, { kind: 'report', note, authorKind: author.authorKind, author: author.author });
+      // One report per claim-to-handoff span (the promise `task report --help`
+      // makes): the span rule lives in the state module so the probe and the
+      // insert share one write lock.
+      appendReportEvent(db, id, { note, authorKind: author.authorKind, author: author.author });
       out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
     } finally {
       db.close();
@@ -713,6 +719,16 @@ function snapshotCarriesHires(snapshot: unknown): boolean {
 
 function handleSync(): void {
   run(() => {
+    // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
+    // very directory being tested. A directory that was never `genie init`-ed
+    // has neither side of the pair to reconcile, and reporting it "in sync"
+    // (exit 0) is a clean bill sync never verified — the `|| true` git hooks
+    // gate on `.genie/roadmap.json`, so they never reach this refusal.
+    if (!hasGenieWorkspace()) {
+      fail(
+        `no Genie workspace at ${resolveWorkspaceDir()} — there is no board and no snapshot to reconcile. Run \`genie init\` here first.`,
+      );
+    }
     const db = openDb();
     try {
       const result = syncRoadmap(db);
@@ -906,7 +922,9 @@ export, with two caveats:
 
   task
     .command('report <id> <text>')
-    .description('Append an authored worker report to the card timeline (one per claim-to-handoff span)')
+    .description(
+      "Append the claimant's worker report to the card timeline (one per claim-to-handoff span; a new checkout opens the next)",
+    )
     .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
     .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
 

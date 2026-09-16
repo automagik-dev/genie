@@ -59,6 +59,18 @@ them as the cordis service `genieRuntime`, and a sub-row registers every route
 through `genieRuntime.route`. A sub-row that cannot resolve the service
 registers nothing at all and never resolves an executable of its own.
 
+A sub-row waits for that service through cordis' **deferred**
+`ctx.inject(['genieRuntime'], …)` (the `whenRuntime` helper in `src/runtime.ts`),
+never a row-level `export const inject`. A row-level `inject` is a *hard*
+dependency: cordis parks the row's own fiber in `PENDING` while the service is
+missing, and DSH's boot audit fails the whole Host on any enabled loader entry
+that is still pending once the tree settles. That is why disabling only the
+manager row used to kill DSH with `3 entries did not activate` (one
+`pending (waiting for service: genieRuntime)` line per sub-row) instead of
+simply dropping the Genie panels. With the deferred form each sub-row activates
+immediately and its callback runs in a child fiber — invisible to the boot audit
+— if and when the manager provides the service.
+
 The fence stays singular on purpose. Three copies drift, and the first row that
 forgot `Origin`-on-POST would reopen CSRF against a loopback service that can
 spawn the Genie binary.
@@ -110,8 +122,29 @@ Any row can be turned off from a profile patch by its id:
 
 That row then registers no route, and health stops reporting it as mounted — so
 the browser drops its panel instead of leaving one that 404s on first use.
-`scripts/dsh-genie-board-smoke.ts` mounts exactly this patch as its acceptance
-proof, and `src/board.test.ts` asserts the same thing against a fake context.
+
+**The manager row is disableable too**, and it is the one whose absence takes
+the whole suite with it:
+
+```yaml
+- id: genie-dsh-board
+  disabled: true
+```
+
+DSH then boots normally with **no Genie surface at all**: the three sub-rows
+activate cleanly and register nothing, so `/api/genie-board/health` is absent
+along with `/workspaces`, `/action`, `/skills`, `/skills/document`,
+`/workflows` and `/workflows/document` — every one of them a plain DSH 404 — and
+the browser half shows no Genie panels because it has no health to gate them on.
+This is the supported way to keep the plugin installed while turning it off.
+
+`scripts/dsh-genie-board-smoke.ts` mounts both patches as its acceptance proof:
+phase two disables `genie-dsh-board-skills` and phase three disables
+`genie-dsh-board`, holding the Host up past the loader audit (a printed
+authenticated URL is *not* a boot — `dsh web` prints one before it audits the
+settled tree) and then proving every route 404s. `src/board.test.ts` asserts the
+same two shapes against a fake cordis context, plus the rule that keeps the
+manager-disabled case working: no sub-row module exports a row-level `inject`.
 
 ### Why the client half is NOT split (2026-09-15)
 
@@ -287,7 +320,11 @@ removes the plugin and temporary state in `finally`. Personal profiles are not u
 Its second phase relaunches the same profile with `genie-dsh-board-skills`
 disabled by id and asserts both halves of the contract: the row's routes are
 absent, and health reports `mounted.skills: false` — which is what the browser
-gates its panel on.
+gates its panel on. Its third phase relaunches with the **manager** row
+`genie-dsh-board` disabled instead, holds the Host up for ten seconds past the
+printed URL so the loader's settled-tree audit has run, and then requires a 404
+from every route in `GENIE_ROUTES` — `/health` included. That is the regression
+guard for the boot abort described under *Per-row config, and disabling a row*.
 
 ## Release verification
 
