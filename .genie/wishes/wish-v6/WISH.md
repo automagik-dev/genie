@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `wish-v6` |
 | **Date** | 2026-09-16 |
 | **Author** | Claude (session 8e0382e3) for Felipe |
@@ -133,6 +133,16 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Reviewer: `plan-review@session-8e0382e3` (read-only, different agent from the author), worktree head `296db0509`.
 - Evidence: design digest `d23d7ff9…` verified; `wishes-lint: OK (95 files scanned, 0 broken brainstorm links, template validator green)`; 11 of 13 listed paths exist, the two absent are the new files; every design anchor resolves.
 - Findings: 0 CRITICAL/HIGH; 3 MEDIUM (darwin gate tolerance missing from the Validation block; ordering of workfly draft, dry runs, dogfood and row unplaced; hook probe read JSON on stdin) and 3 LOW (new files unmarked, rename scope, docs follow-up owner) — all applied in-document before this block; status DRAFT → APPROVED.
+
+### Execution — 2026-09-16 — Group 1 landed, PR #2931 open against dev
+
+- Branch `wish/wish-v6` (stacked on `docs/wish-v6-design`, PR #2930); head after review round 1 `0ef761ca7`. 13 code files, 1,560 insertions in the landing commit `75cc17f3c`.
+- Script: workfly run `wf_93b90188-3d0` (16 agents, 1.74M tokens, 59 min) drafted `wish-v6.js`; static gate green; 4 blocking refuter findings landed by hand (review path union, hook liveness on every gate, ancestor-based worktree adoption, darwin tolerance re-confirmed at the base) and re-verified by an independent reader (`script-check`), which found one more (`<base>` placeholder) — fixed.
+- Gate on darwin: `bun run check` green except `bun test` 2536 pass / 6 fail = the six #2926 names; `bun test scripts/workflows-meta.test.ts scripts/wish-workflow-parity.test.ts scripts/release-docs.test.ts scripts/fresh-install-smoke.test.ts` green; `skills:lint`, `wishes:lint` OK.
+- Dry run A (`wf_d1251eed-383`): `refused`/`plan`, 26 files and 5 units over the band, nothing created, 2 agents, 152k, 7.3 min. Dry run B (`wf_f0fbb70a-b4f`): `refused`/`plan` on `.github/`, nothing created, 2 agents, 110k, 1.4 min.
+- Live run (`wf_7218c974-893`): attempt 1 `missed` at Gate (gate agent backgrounded the check and returned nothing → prompt now says foreground under a timeout); resume adopted the same commit and reached `merge-ready`: PR #2932 closes #2921, 13/13 checks, review SHIP 11/11 criteria, darwin six tolerated after base re-confirmation, estimate 5/95/2 vs real 5/117; 4 + 6 agents (3 replayed), 284k + 192k tokens, 6.4 + 10.9 min.
+- PR review round 1 (Codex, 3 threads) accepted and landed in `dbc6ab8ed`; the widened `gh api` guard then blocked a review-thread reply and was narrowed to merge endpoints and protected refs in `0ef761ca7`.
+- Stays IN_PROGRESS through PR and CI; SHIPPED only after an authorized merge.
 
 ---
 
