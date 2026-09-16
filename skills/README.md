@@ -79,6 +79,7 @@ bun scripts/skills-inventory-parity.ts --write
 | `authoring` | authoring | none | Write or revise a Genie skill so it survives the shipped contract — frontmatter, house size, starter card, and runtime-neutral voice. |
 | `docs` | authoring | repo | Audit documentation and developer experience against the live product — drift, onboarding, error messages — and write or fix docs when asked. |
 | `refine` | authoring | documents | Improve a prompt using official OpenAI or Claude guidance. Text or @file mode; --for openai or --for claude selects guidance, not a runtime model. |
+| `workfly` | authoring | repo | Discover a procedure and build its saved workflow — dynamic discovery, drafted script, adversarial verification, landed in the catalog. |
 | `verify` | verification | none | Prove a completion claim with fresh evidence before making it — the gate's exit code, the real diff, the remote's checks, the reviewer's verdict. |
 | `genie-hacks` | integration | external | Browse, search, and contribute community hacks — real-world patterns for provider switching, teams, skills, hooks, cost optimization, and more. |
 | `omni` | integration | external | Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip. |

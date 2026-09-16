@@ -41,6 +41,23 @@ workflow and carries no lens roster of its own (`scripts/council-workflow-parity
 | Workflow | Purpose |
 |----------|---------|
 | `council` | Five independent lenses (architecture, delivery, product, security, dissent) plus a synthesis; assess-only. `args`: a decision string or `{decision, constraints?, evidence?, unknowns?}`. |
+| `docs-audit` | Audits every documentation surface against the live product — one docs-home reader, four read-only surface auditors, one cross-surface consolidator, and a ranked drift table; assess-only. `args`: `{focus?, surfaces?, quorum?, model?, timestamp?}`. |
 | `pm-ledger-verify` | Three adversarial lenses over uncommitted wish-ledger edits. `args`: `{wishDir, evidenceFile?, repoRoot?}`. |
+| `research-sweep` | Investigates a frozen question against a frozen source list — one planner shards by source, a bounded reader fan-out returns cited findings under the research injection fence, one synthesizer merges them, and a mechanical citation gate keeps every claim traceable; read-only. `args`: `{question, sources[], notesHint?, maxReaders?, model?, timestamp?}`. |
+| `skill-audit-sweep` | Sweeps the shipped skill catalogue — one signals reader, three or four characterizer shards, one consolidating judge, and a rendered keep/improve/update/merge/retire table; assess-only. `args`: `{focus?, skills?, searchPass?, skillsDir?, shardCount?, quorum?, model?, timestamp?}`. |
+| `workfly` | Discovers a procedure and builds its saved workflow — three readers, one SPEC, a drafted script, then the static test plus two refuters with bounded repair. `args`: `{objective, sources?, name?, catalogDir?, model?, maxRepairs?, timestamp?}`. |
 
 The static half of this contract is enforced by `scripts/workflows-meta.test.ts`.
+
+## Measured runs
+
+Token bills recorded so the break-even rule (convert a stage only when its agents consume or
+produce more evidence than their own CLAUDE.md/AGENTS.md injection costs) rests on numbers:
+
+| Run | Workflow | Agents | Subagent tokens | Wall clock | Result |
+|-----|----------|--------|-----------------|------------|--------|
+| `wf_a48db0e8-339` (2026-09-15) | council (skills-to-workflows, Opus) | 6 | 716k | 13 min | proceed-with-conditions |
+| `wf_c9209af9-91b` (2026-09-15) | workfly building `skill-audit-sweep` (Opus) | 16 | 1.39M | 42 min | script drafted, static gate green, 4 script findings landed by hand |
+| `wf_dd37d1db-bf6` (2026-09-16) | skill-audit-sweep, first live run (Opus) | 6 | 361k | 6 min | ok, 20/20 judged, report in `.genie/wishes/workflows-catalog/` |
+| `wf_8dcc346c-59a` (2026-09-16) | docs-audit, first live run (Opus) | 6 | 454k | 9 min | ok, 4/4 surfaces, report in `.genie/wishes/workflows-catalog/` |
+| `wf_ed316125-671` (2026-09-16) | research-sweep, first live run (Opus) | 5 | 316k | 5 min | ok, 3/3 readers, external URL fetched, report in `.genie/wishes/workflows-catalog/` |
