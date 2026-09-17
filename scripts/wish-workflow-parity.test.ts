@@ -202,28 +202,64 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
    * only teaches the next agent which spelling to use. Each of these walked through the guard when
    * PR #2935 was reviewed.
    */
-  test('blocks the spellings that used to walk through: -XPUT, implicit POST, graphql, lowercase keys', () => {
+  test('blocks the spellings that used to walk through: flags first, quoted tokens, implicit POST', () => {
     for (const command of [
       'gh  pr   merge 1',
+      // A flag before the subcommand is how an agent writes it from outside the repo.
+      'gh -R automagik-dev/genie pr merge 1 --squash',
+      'gh --repo automagik-dev/genie pr merge 1',
+      'gh pr "merge" 1',
       'gh api -XPUT repos/o/r/pulls/1/merge',
       'gh api --method=PUT repos/o/r/pulls/1/merge',
-      // A field flag makes gh POST with no -X at all; this one merges a branch.
+      // A field flag makes gh POST with no -X at all; these merge a branch.
       'gh api repos/o/r/merges -f base=dev -f head=wish/x',
+      'gh api repos/o/r/merge-upstream -f branch=main',
+      'gh api --method PATCH "repos/o/r/git/refs/heads/main" -f sha=abc',
       'gh api graphql -f query=mutation-mergePullRequest',
       'HUSKY=false git push origin wish/x',
-      // git config keys are case-insensitive.
+      // git config keys are case-insensitive, and quoting one changes nothing.
       'git -c core.hookspath=/dev/null push origin wish/x',
+      'git -c "core.hooksPath=/dev/null" commit -m x',
+      'git config "core.hooksPath" /dev/null',
+      // An empty value disables the hooks exactly as a wrong path does.
+      "git config core.hooksPath ''",
       'git config --unset core.hooksPath',
       'git config --unset-all core.hooksPath',
+      // Dashless subcommands work on git 2.50+.
+      'git config unset core.hooksPath',
       'git push origin HEAD:refs/heads/main',
-      // The same ref, reached without a colon.
-      'git push origin main',
-      'git push --set-upstream origin master',
-      // A quoted command handed to a shell IS the command.
+      'git push origin +main',
+      'git push origin refs/heads/master',
+      // `git -C <worktree>` is how the executor drives the worktree it cut.
+      'git -C /tmp/wt push --force origin wish/x',
+      // Combined short flags are one flag.
+      'git push -uf origin wish/x',
+      'git commit -n -m x',
+      // A quoted command handed to a shell IS the command, whatever the shell is called.
       'bash -c "gh pr merge 1 --squash"',
-      'eval "git push origin main"',
+      '/bin/sh -c "gh pr merge 1"',
+      "node -e \"require('child_process').execSync('gh pr merge 1')\"",
+      'echo "$(gh pr merge 1 --squash)"',
     ]) {
       expect([command, probe(command)]).toEqual([command, 2]);
+    }
+  });
+
+  /**
+   * What this guard is NOT. It matches text, so a determined spelling always gets past it — a bare
+   * `git push origin main`, a branch in a variable, `--all`, `--mirror`, a name split across quotes.
+   * Those are the pre-push hook's job: it receives the refs a push updates instead of parsing a
+   * command line, and refuses main/master for every spelling. The rules above earn their place by
+   * keeping THAT hook alive. This test records the boundary so nobody mistakes one for the other.
+   */
+  test('does not pretend to catch what only the pre-push hook can see', () => {
+    for (const command of [
+      'git push origin main',
+      'git push origin "$BRANCH"',
+      'git push --all origin',
+      'git push --mirror origin',
+    ]) {
+      expect([command, probe(command)]).toEqual([command, 0]);
     }
   });
 
@@ -235,10 +271,22 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
   test('allows a command that only mentions a forbidden form inside quotes', () => {
     for (const command of [
       "grep -rn 'gh pr merge' skills/",
+      'bash -c "grep -rn \'gh pr merge\' skills/"',
       'git commit -m "docs: explain why gh pr merge stays blocked"',
       "gh pr create --base dev --title t --body 'the workflow never runs gh pr merge'",
       'git commit -m "fix: restore --force on the temp worktree cleanup"',
+      // A review-thread reply whose body quotes an endpoint is still a reply.
+      "gh api repos/o/r/pulls/1/comments -f body='see POST /repos/o/r/merges'",
       'git config --get core.hooksPath && echo ok',
+      'git config --get core.hooksPath 2>/dev/null',
+      // The unset names another key entirely.
+      'git config --get core.hooksPath && git config --unset user.signingkey',
+      // Another program's -f on the same line is not a force push.
+      'git push origin wish/x && rm -f /tmp/push.log',
+      'grep -f /tmp/pats.txt notes.txt && git push origin wish/x',
+      // Reading a protected ref is not pushing at it.
+      'git show-ref refs/heads/main && git push origin wish/x',
+      'git fetch origin main && git push origin wish/x',
       'git push origin mainline',
       'git push origin feature/main-menu',
     ]) {
