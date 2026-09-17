@@ -20,6 +20,9 @@ const FORBIDDEN: ReadonlyArray<[string, RegExp]> = [
   ['timers', /\b(?:setTimeout|setInterval|setImmediate|queueMicrotask)\s*\(/],
   ['dynamic code', /\b(?:eval|Function)\s*\(|\.\s*constructor\b|\b__proto__\b|\bglobalThis\s*\[/],
   ['quoted absolute path', /['"`]\/(?:Users|home|opt|var|tmp)\//],
+  // A home-relative path stamped into a prompt or string resolves against whichever body runs the
+  // script. `~/` counts only at a path start, so a regex character class such as `[.~/-]` passes.
+  ['home-relative path', /(?:^|[^\w.~/\\-])~\/|\$\{?HOME\b/m],
 ];
 
 function stripComments(source: string): string {
@@ -94,6 +97,27 @@ describe('.claude/workflows catalog contract', () => {
         "export const meta = {\n  name: 'probe',\n  description: 'x',\n}\nconst d = new Date()\nconst p = process.env\nreturn d\n",
       ),
     ).toEqual(['probe: forbidden token argless new Date()', 'probe: forbidden token process access']);
+  });
+
+  test('rejects a home-relative path in a prompt or string', () => {
+    const head = "export const meta = {\n  name: 'probe',\n  description: 'x',\n}\n";
+    const tilde = `${head}const r = await agent(\`Read ~/.claude/CLAUDE.md and report\`)\nreturn r\n`;
+    const home = `${head}const p = '$HOME/.claude/rules.md'\nreturn p\n`;
+    const braced = `${head}const p = \`\${HOME}/notes\`\nreturn p\n`;
+    for (const src of [tilde, home, braced]) {
+      expect(checkWorkflowSource('probe', src)).toContain('probe: forbidden token home-relative path');
+    }
+    const quotedTilde = `${head}return '~/x'\n`;
+    expect(checkWorkflowSource('probe', quotedTilde)).toContain('probe: forbidden token home-relative path');
+  });
+
+  test('a regex character class carrying ~/ is not a home-relative path', () => {
+    const src =
+      "export const meta = {\n  name: 'probe',\n  description: 'x',\n}\nconst PATH_TOKEN = /[A-Za-z0-9_.~/-]*\\/[a-z]+/g\nreturn PATH_TOKEN\n";
+    expect(checkWorkflowSource('probe', src)).toEqual([]);
+    const docsAudit = readFileSync(join(CATALOG, 'docs-audit.js'), 'utf8');
+    expect(docsAudit).toContain('~/');
+    expect(checkWorkflowSource('docs-audit', docsAudit)).toEqual([]);
   });
 
   test('rejects a body that does not parse', () => {
