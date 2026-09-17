@@ -36,7 +36,8 @@ runnable=$(printf '%s\n' "$command" |
 # Redirects are not values: `git config --get core.hooksPath 2>/dev/null` reads, it does not write.
 # `N>&M` carries its own target, so consuming a following word there ate the next real argument —
 # `git commit >&2 --no-verify` lost its flag to the stripper.
-runnable=$(echo "$runnable" | sed -E 's/[[:space:]][0-9]*>&[0-9-]+//g; s/[[:space:]][0-9]*>>?[[:space:]]*[^[:space:];&|]+//g')
+# A target that is itself a substitution is never stripped: `cat >$(gh pr merge 1)` runs the merge.
+runnable=$(echo "$runnable" | sed -E 's/[[:space:]][0-9]*>&[0-9-]+//g; s/[[:space:]](&>>?|[0-9]*>\|?>?|[0-9]*<)[[:space:]]*[^[:space:];&|$`]+//g')
 
 # Prose is not an act. Only the value of a message/body/title/description flag is blanked — an
 # earlier version stripped EVERY quoted span, which let an apostrophe in ordinary English
@@ -45,11 +46,19 @@ runnable=$(echo "$runnable" | sed -E 's/[[:space:]][0-9]*>&[0-9-]+//g; s/[[:spac
 #
 # A value carrying `$(…)` or a backtick is NOT blanked: the shell runs that substitution, so
 # `git commit -m "$(gh pr merge 1)"` is a merge wearing a message.
+# A command carrying a substitution ANYWHERE is judged raw, because the shell runs it wherever it
+# sits. Otherwise the value is prose: a backticked `gh pr merge` in a PR body and a `$VAR` in a
+# commit message are exactly what this repository's own contract text and publisher produce.
 TEXTFLAG='(-m|--message|--body|--title|--description|--search|-S)'
-runnable=$(echo "$runnable" | sed -E \
-  "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^'\`\$]*'/\1\2 TEXT/g; \
-   s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\"[^\"\`\$]*\"/\1\2 TEXT/g; \
-   s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=('[^'\`\$]*'|\"[^\"\`\$]*\"|[^[:space:]\`\$]*)/\1\2 \3=TEXT/g")
+# A SINGLE-quoted value is inert to the shell, so a backticked `gh pr merge` in a PR body — which is
+# what this repository's own contract text looks like — is prose. Inside DOUBLE quotes the same
+# backtick is command substitution and the shell would run it, so that value is judged, not blanked.
+if ! printf '%s' "$command" | grep -qE '\$\('; then
+  runnable=$(echo "$runnable" | sed -E \
+    "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^']*'/\1\2 TEXT/g; \
+     s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\"[^\"\`]*\"/\1\2 TEXT/g; \
+     s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=('[^']*'|\"[^\"\`]*\"|[^[:space:]\`]*)/\1\2 \3=TEXT/g")
+fi
 
 # A pure read-only search for a forbidden form is a search, not an act — including one handed to a
 # shell, which is how an agent greps from inside a wrapper. Only when it is the WHOLE command, so
@@ -59,7 +68,7 @@ runnable=$(echo "$runnable" | sed -E \
 # executes is not.
 search=$(echo "$runnable" | sed -E "s/^[[:space:]]*(([^[:space:]]*\/)?(ba|z|k|d[a]?)?sh|eval)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-?c?[[:space:]]*['\"]?//; s/['\"][[:space:]]*$//")
 if echo "$search" | grep -qE '^[[:space:]]*(grep|rg|ag|ack|git[[:space:]]+(grep|log|show-ref)|cat|sed|awk|head|tail)\b[^;&|]*$' &&
-  ! echo "$runnable" | grep -qE '\$\(|`|<\(|(^|[[:space:]])(--pre|-i)([[:space:]]|=|$)|system[[:space:]]*\('; then
+  ! printf '%s' "$command" | grep -qE '\$\(|`|<\(|(^|[[:space:]])--pre([[:space:]]|=|$)|(sed|perl)[[:space:]]+(-[a-zA-Z]*[[:space:]]+)*-[a-zA-Z]*i|system[[:space:]]*\('; then
   exit 0
 fi
 
@@ -109,8 +118,12 @@ fi
 
 # Editing `.git/config` in place is the same act as `git config`, reached with another tool. The raw
 # command is searched, not `runnable`, because a redirect IS the writer here.
-if echo "$command" | grep -qE '\.git/config' &&
-  echo "$command" | grep -qE '(^|[[:space:]])(sed[[:space:]]+-i|tee|cp|mv|dd)\b|>>?[[:space:]]*[^[:space:]]*\.git/config'; then
+# A redirect is judged on the RAW text (the redirect is the writer); a writer word is judged on the
+# blanked text and must have `.git/config` as its destination, so a body that merely mentions the
+# file near the word `tee`, and `cp .git/config /tmp/backup` (a read), are not refused.
+if printf '%s' "$command" | grep -qE '>>?[[:space:]]*[^[:space:]]*\.git/config' ||
+  has '(^|[[:space:]])((sed|perl)[[:space:]]+(-[a-zA-Z]*[[:space:]]+)*-[a-zA-Z]*i|tee|dd)\b[^;&]*\.git/config' ||
+  has '(^|[[:space:]])(cp|mv)[[:space:]][^;&|]*[[:space:]][^[:space:];&|]*\.git/config([[:space:]]|$)'; then
   block "writing .git/config directly is FORBIDDEN here: it is where core.hooksPath lives. Read it freely; change it through a reviewed commit."
 fi
 
@@ -131,8 +144,13 @@ if has "${Q}core\.hookspath"; then
   fi
 fi
 
-# `send-pack` is the plumbing twin of `push`, and the pre-push hook never sees it.
-PUSH_SEGMENT=$(segment "${GIT}(push|send-pack)\b")
+# `send-pack` is the plumbing twin of `push`, and the pre-push hook never sees it — so the gap this
+# guard delegates below is delegated for `push` ONLY. Nothing here uses plumbing to push, and an
+# allowed-then-executed `send-pack origin main` has nothing behind it, so the verb is refused whole.
+if has "${GIT}send-pack\b"; then
+  block "git send-pack is FORBIDDEN here: it pushes without the pre-push hook ever seeing the refs. Use git push."
+fi
+PUSH_SEGMENT=$(segment "${GIT}push\b")
 
 # === HARD BLOCK: pushing at a protected branch ===
 # An early, readable refusal — not the enforcement. The pre-push hook receives every ref a push

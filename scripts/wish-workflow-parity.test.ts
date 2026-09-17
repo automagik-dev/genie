@@ -274,6 +274,18 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'git send-pack origin main:refs/heads/main',
       // core.hooksPath lives in .git/config; editing the file is the same act as `git config`.
       "sed -i '' 's|.*|hooksPath|' .git/config",
+      'perl -i -pe s/hooksPath/x/ .git/config',
+      // Redirects the first pass missed: &> and < also separate the tokens a rule needs adjacent.
+      'gh pr &> /tmp/x merge 1',
+      'gh pr < /dev/null merge 1',
+      'git push origin &> /tmp/x --force dev',
+      // A redirect target that is itself a substitution is run, so it is never stripped.
+      'cat >$(gh pr merge 1)',
+      // `send-pack` pushes without the pre-push hook ever seeing the refs.
+      'git send-pack origin main',
+      'git send-pack --all origin',
+      // Inside DOUBLE quotes a backtick is substitution: the shell would run this one.
+      'gh pr create --base dev --body "never runs `gh pr merge`"',
     ]) {
       expect([command, probe(command)]).toEqual([command, 2]);
     }
@@ -287,6 +299,15 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       "git commit -m $'fix: keep --no-verify refused'",
       'gh issue list --search "pr merge"',
       'git commit -m "feat: costs $5 more"',
+      // Single quotes are inert to the shell, so a backticked rule in a body is prose — which is
+      // what this repository's contract text, and the publisher quoting it, actually look like.
+      "gh pr create --base dev --title t --body 'never runs `gh pr merge`'",
+      'git commit -m "fix: $VAR handling of --no-verify"',
+      // Prose about the file, and a copy OUT of it, are not writes to it.
+      'gh pr create --base dev --body "never write .git/config with tee"',
+      'cp .git/config /tmp/config.backup',
+      // The -i veto is aimed at sed/perl, not at grep's case-insensitive flag.
+      "grep -i 'gh pr merge' skills/wish/SKILL.md",
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
     }
