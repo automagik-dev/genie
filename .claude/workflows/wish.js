@@ -167,8 +167,11 @@ const BASE_SHAPE_ERROR =
 // A branch name a git or gh command may carry verbatim, and the protected names no run may target.
 // Only the exact strings `main` and `master` were refused before, so `refs/heads/main`,
 // `origin/main` and `dev; touch /tmp/x` all reached the executor and the publisher as command text.
-const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
-const PROTECTED_BASE = /(^|\/)(main|master)$/
+// `HEAD` is protected too: `origin/HEAD` resolves to the default branch on an ordinary clone, so a
+// base of `HEAD` cuts the wish branch from main and measures every size against it. The match is
+// case-insensitive because the error promises "any spelling", and `MAIN` is a valid branch name.
+const BRANCH_NAME = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/
+const PROTECTED_BASE = /(^|\/)(main|master|head)$/i
 
 // The research skill's own injection paragraph, verbatim and held ONCE so a parity test can
 // compare it character for character against .claude/workflows/research-sweep.js and against
@@ -280,7 +283,7 @@ const GATE_SCHEMA = obj(['hooksLive', 'exitCode', 'pass', 'problems', 'summaryLi
   exitCode: int,
   failCount: int,
   failingTests: notes(
-    'the FULL name of each failing test, exactly as the runner printed it (<describe> > <test>), one per entry — never a bare file path, which names no test and is matched against nothing',
+    'one entry per failing test, each the full test name in the shape <describe> > <test> — the result marker and the duration the runner prints around it are ignored, and a bare file path names no test and is matched against nothing',
   ),
   problems: notes('every failing line, quoted verbatim from the output — a summary sentence is not a quoted line'),
   summaryLine: note('the run summary line of the check output, verbatim'),
@@ -631,7 +634,7 @@ function gatePrompt(job, worktree, branch, headSha) {
       'git config core.hooksPath and git rev-parse --git-path hooks — the configured hooks path must resolve inside this worktree',
       `${CHECK_COMMAND} in the worktree, once`,
       `git merge-base HEAD origin/${job.base}, then ${SHORTSTAT_COMMAND} <that merge-base sha> HEAD in the worktree — the size measurement, read-only`,
-      `Only when every failing TEST is one of the six named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
+      `Only when every failing TEST is one of the six named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
     ]),
     'Assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
     `Then run ${CHECK_COMMAND} exactly once in the worktree, in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 ${CHECK_COMMAND} > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground) — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
@@ -639,7 +642,7 @@ function gatePrompt(job, worktree, branch, headSha) {
       'On darwin only, these six TESTS are known to fail for platform reasons — the file is where each one lives, and only the test name after it is tolerated',
       DARWIN_TOLERATED.map((known) => `${known.file} > ${known.test}`),
     ),
-    'If every failing test is one of those six BY NAME, re-confirm them at the base of this branch with the temp-worktree command above and list in baseReconfirmed the exact name of every test that ALSO fails there, spelled as you spelled it in failingTests. A test that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing test name is in baseReconfirmed, and say so in one line of problems naming them. A seventh test, ANOTHER test inside one of those six files, or any non-test failure is red regardless — the file is not the unit, the test is. The script re-checks both halves by exact name, so a set that fails either is simply counted as red.',
+    'Report every failing test in failingTests, and make failCount equal that list: a count larger than the list says something failed that you did not name, and the script counts the whole set as red rather than tolerate an unnamed failure. If every failing test is one of those six BY NAME, re-confirm them at the base of this branch with the temp-worktree command above and list in baseReconfirmed the exact name of every test that ALSO fails there, spelled as you spelled it in failingTests. A test that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing test name is in baseReconfirmed, and say so in one line of problems naming them. A seventh test, ANOTHER test inside one of those six files, or any non-test failure is red regardless — the file is not the unit, the test is. The script re-checks both halves by exact name, so a set that fails either is simply counted as red.',
     `Then measure the committed diff with exactly ${SHORTSTAT_COMMAND} <merge-base sha> HEAD, the merge-base taken with origin/${job.base}, and return the files-changed count in changedFiles and the insertions count in insertions as integers copied from that one line (insertions 0 when the line names none). If the command fails, omit both fields: never estimate them, never copy a count from anywhere else.`,
     'The check output never leaves you: return the summary line, the failing names and the quoted failing lines, not the stream.',
     READ_ONLY,
@@ -1058,8 +1061,14 @@ log(`Work committed ${headSha.slice(0, 12)} on ${branch} (${work.adopted ? 'adop
 diffOutsideDeclared = changed.filter((path) => !contract.files.includes(path)).concat(changedPaths.outside)
 if (diffOutsideDeclared.length) log(`The commit changed ${diffOutsideDeclared.length} path(s) outside the declared set: ${diffOutsideDeclared.join(', ')}. The review will block on it.`)
 
-// The runner prints `<describe> > <test> [12.34ms]`; the timing is dropped before any comparison.
-const withoutTiming = (value) => text(value).replace(/\s*\[\d+(?:\.\d+)?\s*m?s\]$/, '').trim()
+// The runner prints `(fail) <describe> > <test> [12.34ms]`. A gate told to copy the name it printed
+// copies that whole line, so the result marker and the duration are both stripped before any
+// comparison — matching the bare name only would have made the tolerance never fire at all.
+const withoutTiming = (value) =>
+  text(value)
+    .replace(/^\((?:fail|pass|skip|todo)\)\s*/i, '')
+    .replace(/\s*\[\d+(?:\.\d+)?\s*(?:ms|s|m)\]$/i, '')
+    .trim()
 
 // The index of the known darwin failure an entry names, or -1. Identity is the EXACT test name,
 // alone or prefixed by its file in the spellings a gate copies out of a log. A bare file path
@@ -1079,8 +1088,12 @@ function toleratedIndex(entry) {
 // Tolerance needs BOTH halves, by exact test identity: every failing test is one of the six known
 // darwin failures, and THAT SAME test was re-confirmed failing at the branch's base. A known test
 // that passes at the base was broken by this commit and stays red.
-function darwinTolerable(failingTests, baseReconfirmed) {
-  if (failingTests.length === 0) return false
+// `failCount` is the run's own count of failures. When it exceeds the names the gate enumerated,
+// something failed that this list does not describe, and tolerating the list would tolerate the
+// unnamed failure with it — the very hole the by-name matching closes, re-opened by an
+// under-enumerated answer instead of by a substring.
+function darwinTolerable(failingTests, baseReconfirmed, failCount) {
+  if (failingTests.length === 0 || failCount !== failingTests.length) return false
   const reconfirmed = new Set(baseReconfirmed.map(toleratedIndex).filter((index) => index >= 0))
   return failingTests.every((name) => {
     const index = toleratedIndex(name)
@@ -1092,7 +1105,9 @@ function normalizeGate(raw) {
   const value = objectOf(raw)
   const failingTests = texts(value.failingTests)
   const baseReconfirmed = texts(value.baseReconfirmed)
-  const tolerated = Boolean(value.darwinTolerated) && darwinTolerable(failingTests, baseReconfirmed)
+  const tolerated =
+    Boolean(value.darwinTolerated) &&
+    darwinTolerable(failingTests, baseReconfirmed, intOf(value.failCount, failingTests.length))
   const clean = intOf(value.exitCode, 1) === 0 && intOf(value.failCount, failingTests.length) === 0
   return {
     hooksLive: Boolean(value.hooksLive),
