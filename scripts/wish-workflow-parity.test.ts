@@ -197,6 +197,55 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
     }
   });
 
+  /**
+   * Every spelling of the same act, because a guard that refuses one spelling and admits another
+   * only teaches the next agent which spelling to use. Each of these walked through the guard when
+   * PR #2935 was reviewed.
+   */
+  test('blocks the spellings that used to walk through: -XPUT, implicit POST, graphql, lowercase keys', () => {
+    for (const command of [
+      'gh  pr   merge 1',
+      'gh api -XPUT repos/o/r/pulls/1/merge',
+      'gh api --method=PUT repos/o/r/pulls/1/merge',
+      // A field flag makes gh POST with no -X at all; this one merges a branch.
+      'gh api repos/o/r/merges -f base=dev -f head=wish/x',
+      'gh api graphql -f query=mutation-mergePullRequest',
+      'HUSKY=false git push origin wish/x',
+      // git config keys are case-insensitive.
+      'git -c core.hookspath=/dev/null push origin wish/x',
+      'git config --unset core.hooksPath',
+      'git config --unset-all core.hooksPath',
+      'git push origin HEAD:refs/heads/main',
+      // The same ref, reached without a colon.
+      'git push origin main',
+      'git push --set-upstream origin master',
+      // A quoted command handed to a shell IS the command.
+      'bash -c "gh pr merge 1 --squash"',
+      'eval "git push origin main"',
+    ]) {
+      expect([command, probe(command)]).toEqual([command, 2]);
+    }
+  });
+
+  /**
+   * A forbidden form quoted as DATA is text, not an act. Refusing these blocked read-only searches,
+   * a commit message that explained the rule, and the publisher's own PR body — which quotes the
+   * contract it is obeying.
+   */
+  test('allows a command that only mentions a forbidden form inside quotes', () => {
+    for (const command of [
+      "grep -rn 'gh pr merge' skills/",
+      'git commit -m "docs: explain why gh pr merge stays blocked"',
+      "gh pr create --base dev --title t --body 'the workflow never runs gh pr merge'",
+      'git commit -m "fix: restore --force on the temp worktree cleanup"',
+      'git config --get core.hooksPath && echo ok',
+      'git push origin mainline',
+      'git push origin feature/main-menu',
+    ]) {
+      expect([command, probe(command)]).toEqual([command, 0]);
+    }
+  });
+
   test('allows the publisher allowlist and the read-only hooksPath query', () => {
     for (const command of [
       'git push -u origin wish/x',
