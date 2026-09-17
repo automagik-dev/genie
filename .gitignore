@@ -139,7 +139,7 @@ core
 .dash/
 .empryo
 .mcp.json
-.rlmx/
+.mikro/
 .warp/
 
 # Local type declarations for the DSH plugin typecheck (fetched, not tracked)
