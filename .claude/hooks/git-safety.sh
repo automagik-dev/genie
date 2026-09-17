@@ -26,27 +26,40 @@ command=$(echo "$input" | jq -r '.tool_input.command // empty')
 # Only inspect commands that could reach git or gh.
 echo "$command" | grep -qE 'git|gh' || exit 0
 
-# One line, no tab/newline tricks: `gh<TAB>pr<TAB>merge` and a backslash-continued `gh pr \ merge`
-# are the same command as the spaced ones.
-runnable=$(echo "$command" | tr '\t\n' '  ' | sed -E 's/\\ +/ /g; s/  +/ /g')
+# `gh<TAB>pr<TAB>merge` and a backslash-continued `gh pr \ merge` are the same command as the spaced
+# ones. A bare newline is a SEPARATOR, not a space: joining lines put `git commit -m x` and a
+# following `grep -n TODO src` in one segment, and the `-n` of the grep then read as the commit's.
+runnable=$(printf '%s\n' "$command" |
+  awk '{ if (sub(/\\$/, "")) printf "%s ", $0; else printf "%s;", $0 }' |
+  tr '\t' ' ' | sed -E 's/  +/ /g; s/;+$//')
 
 # Redirects are not values: `git config --get core.hooksPath 2>/dev/null` reads, it does not write.
-runnable=$(echo "$runnable" | sed -E 's/[[:space:]][0-9]*>&?[0-9]*([[:space:]]*[^[:space:];&|]+)?//g')
+# `N>&M` carries its own target, so consuming a following word there ate the next real argument —
+# `git commit >&2 --no-verify` lost its flag to the stripper.
+runnable=$(echo "$runnable" | sed -E 's/[[:space:]][0-9]*>&[0-9-]+//g; s/[[:space:]][0-9]*>>?[[:space:]]*[^[:space:];&|]+//g')
 
 # Prose is not an act. Only the value of a message/body/title/description flag is blanked — an
 # earlier version stripped EVERY quoted span, which let an apostrophe in ordinary English
 # (`-m "it's ready" && git push --force`) swallow the force-push whole, hid `"$(gh pr merge 1)"`
 # from the guard while the shell still ran it, and disarmed every rule for `git push origin 'main'`.
+#
+# A value carrying `$(…)` or a backtick is NOT blanked: the shell runs that substitution, so
+# `git commit -m "$(gh pr merge 1)"` is a merge wearing a message.
+TEXTFLAG='(-m|--message|--body|--title|--description|--search|-S)'
 runnable=$(echo "$runnable" | sed -E \
-  "s/(^|[[:space:]])(-m|--message|--body|--title|--description)[[:space:]]*=?[[:space:]]*'[^']*'/\1\2 TEXT/g; \
-   s/(^|[[:space:]])(-m|--message|--body|--title|--description)[[:space:]]*=?[[:space:]]*\"[^\"]*\"/\1\2 TEXT/g; \
-   s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=('[^']*'|\"[^\"]*\"|[^[:space:]]*)/\1\2 \3=TEXT/g")
+  "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^'\`\$]*'/\1\2 TEXT/g; \
+   s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\"[^\"\`\$]*\"/\1\2 TEXT/g; \
+   s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=('[^'\`\$]*'|\"[^\"\`\$]*\"|[^[:space:]\`\$]*)/\1\2 \3=TEXT/g")
 
 # A pure read-only search for a forbidden form is a search, not an act — including one handed to a
 # shell, which is how an agent greps from inside a wrapper. Only when it is the WHOLE command, so
 # `grep … && git push --force` is still judged.
+# The exemption is withheld from anything that can RUN something: a command substitution, `awk`'s
+# `system()`, `rg --pre`, `sed -i` (which can rewrite .git/config). Reading is exempt; reading that
+# executes is not.
 search=$(echo "$runnable" | sed -E "s/^[[:space:]]*(([^[:space:]]*\/)?(ba|z|k|d[a]?)?sh|eval)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-?c?[[:space:]]*['\"]?//; s/['\"][[:space:]]*$//")
-if echo "$search" | grep -qE '^[[:space:]]*(grep|rg|ag|ack|git[[:space:]]+(grep|log|show-ref)|cat|sed|awk|head|tail)\b[^;&|]*$'; then
+if echo "$search" | grep -qE '^[[:space:]]*(grep|rg|ag|ack|git[[:space:]]+(grep|log|show-ref)|cat|sed|awk|head|tail)\b[^;&|]*$' &&
+  ! echo "$runnable" | grep -qE '\$\(|`|<\(|(^|[[:space:]])(--pre|-i)([[:space:]]|=|$)|system[[:space:]]*\('; then
   exit 0
 fi
 
@@ -94,6 +107,13 @@ if has '(^|[[:space:]])HUSKY=(0|false|off|no)\b'; then
   block "disabling husky hides every git hook. Fix the root cause instead."
 fi
 
+# Editing `.git/config` in place is the same act as `git config`, reached with another tool. The raw
+# command is searched, not `runnable`, because a redirect IS the writer here.
+if echo "$command" | grep -qE '\.git/config' &&
+  echo "$command" | grep -qE '(^|[[:space:]])(sed[[:space:]]+-i|tee|cp|mv|dd)\b|>>?[[:space:]]*[^[:space:]]*\.git/config'; then
+  block "writing .git/config directly is FORBIDDEN here: it is where core.hooksPath lives. Read it freely; change it through a reviewed commit."
+fi
+
 if has "${Q}core\.hookspath"; then
   # Only the segments that NAME core.hooksPath: `git config --get core.hooksPath && git config
   # --unset user.signingkey` unsets something else entirely.
@@ -103,7 +123,7 @@ if has "${Q}core\.hookspath"; then
   # the hooks exactly as a wrong path does, and `git config unset` (no dashes) works on git 2.50+.
   if has "(^|[[:space:]])-c[[:space:]]*${Q}core\.hookspath=" ||
     has 'git_config_parameters=[^[:space:]]*core\.hookspath' ||
-    has 'git_config_key_[0-9]+=[[:space:]]*core\.hookspath' ||
+    has "git_config_key_[0-9]+=[[:space:]]*${Q}core\.hookspath" ||
     has "(^|[[:space:]])--config-env[= ][^[:space:]]*core\.hookspath" ||
     in_segment "config[[:space:]]+(--)?(unset|unset-all|remove-section)" "$CONFIG_SEGMENT" ||
     in_segment "core\.hookspath${Q}[[:space:]]+[^-[:space:]]" "$CONFIG_SEGMENT"; then
@@ -111,7 +131,8 @@ if has "${Q}core\.hookspath"; then
   fi
 fi
 
-PUSH_SEGMENT=$(segment "${GIT}push\b")
+# `send-pack` is the plumbing twin of `push`, and the pre-push hook never sees it.
+PUSH_SEGMENT=$(segment "${GIT}(push|send-pack)\b")
 
 # === HARD BLOCK: pushing at a protected branch ===
 # An early, readable refusal — not the enforcement. The pre-push hook receives every ref a push
@@ -122,7 +143,7 @@ PUSH_SEGMENT=$(segment "${GIT}push\b")
 # the pre-push hook does not already refuse. `dev` is not guarded at all (AGENTS.md, #2705).
 if [ -n "$PUSH_SEGMENT" ] &&
   in_segment ':(refs/heads/)?(main|master)([^[:alnum:]._/-]|$)|(^|[[:space:]])\+?refs/heads/(main|master)([^[:alnum:]._/-]|$)|(^|[[:space:]])\+(main|master)([^[:alnum:]._/-]|$)' "$PUSH_SEGMENT"; then
-  block "pushing at main or master is FORBIDDEN (the pre-push hook refuses those refs for every push spelling). Open a PR against dev."
+  block "pushing at main or master is FORBIDDEN (once the hooks are installed, the pre-push hook refuses those refs for every git push spelling). Open a PR against dev."
 fi
 
 # === HARD BLOCK: --no-verify ===

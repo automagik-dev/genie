@@ -252,6 +252,46 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
    * command line, and refuses main/master for every spelling. The rules above earn their place by
    * keeping THAT hook alive. This test records the boundary so nobody mistakes one for the other.
    */
+  /**
+   * The text transforms are themselves an attack surface: a second adversarial pass broke the
+   * guard through the two the first pass asked for. A redirect that carries its own target ate the
+   * next argument; the read-only exemption admitted tools that execute; a blanked message value
+   * still ran its command substitution; and joining lines with a space put a following `grep -n`
+   * inside the commit's own segment.
+   */
+  test('blocks what the redirect, exemption and message transforms let through', () => {
+    for (const command of [
+      'git commit >&2 --no-verify -m x',
+      'git push origin >&2 --force dev',
+      'gh pr 2>&1 merge 1',
+      'awk \'BEGIN{system("gh pr merge 1")}\'',
+      'grep -rn "$(gh pr merge 1)" .',
+      'cat "$(gh pr merge 1)"',
+      'git commit -m "$(gh pr merge 1)"',
+      'gh pr create --body "$(gh pr merge 1)"',
+      'export GIT_CONFIG_KEY_0="core.hooksPath"; export GIT_CONFIG_VALUE_0=/tmp/x; git commit -m x',
+      // The plumbing twin of push: the pre-push hook never sees it.
+      'git send-pack origin main:refs/heads/main',
+      // core.hooksPath lives in .git/config; editing the file is the same act as `git config`.
+      "sed -i '' 's|.*|hooksPath|' .git/config",
+    ]) {
+      expect([command, probe(command)]).toEqual([command, 2]);
+    }
+  });
+
+  test('a newline is a separator, so the next line is not judged as the previous command', () => {
+    for (const command of [
+      'git commit -m "feat: x"\ngrep -n TODO src/app.ts',
+      'git add -A\ngit commit -m "feat: x"\nhead -n 20 /tmp/out',
+      'git push origin wish/x\nrm -f /tmp/push.log',
+      "git commit -m $'fix: keep --no-verify refused'",
+      'gh issue list --search "pr merge"',
+      'git commit -m "feat: costs $5 more"',
+    ]) {
+      expect([command, probe(command)]).toEqual([command, 0]);
+    }
+  });
+
   test('does not pretend to catch what only the pre-push hook can see', () => {
     for (const command of [
       'git push origin main',
