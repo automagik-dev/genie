@@ -77,6 +77,12 @@ function collectCatalog(): Map<string, Set<string>> {
       const key = `${blob} ${name}`;
       if (seenBlobs.has(key)) continue;
       seenBlobs.add(key);
+      // A name is recorded only through a revision whose frontmatter carries a parseable
+      // `description`. A name-only entry would be inert at best: ownership needs a retired name AND
+      // a retired description, and `readSkillDescription` ignores a directory that has no
+      // `description:` at all — so the 2026-02 `gog` skill (which used `summary:`) could never be
+      // recognised on disk under any roster, while listing it would only widen the `unproven`
+      // reporting surface that already misfires on third-party products sharing a name.
       const description = parseDescription(git('cat-file', 'blob', blob));
       if (description === null) continue;
       if (!catalog.has(name)) catalog.set(name, new Set());
@@ -102,11 +108,34 @@ function currentDescriptions(): Set<string> {
   return found;
 }
 
-function render(catalog: Map<string, Set<string>>): string {
+/**
+ * What the committed catalog already carries. `git log --all` sees only the refs THIS clone holds,
+ * so a description that lives on a branch another machine fetched would silently drop out of the
+ * catalog on the next regeneration — and the proof it backs would weaken with it. The catalog is
+ * therefore additive: a run unions what it can see with what is already recorded, and only the
+ * currently shipped names and descriptions are ever subtracted.
+ */
+async function recordedCatalog(): Promise<{ names: string[]; descriptions: string[] }> {
+  try {
+    const module = (await import(OUTPUT)) as {
+      LEGACY_SKILL_NAMES?: readonly string[];
+      LEGACY_SKILL_DESCRIPTIONS?: readonly string[];
+    };
+    return {
+      names: [...(module.LEGACY_SKILL_NAMES ?? [])],
+      descriptions: [...(module.LEGACY_SKILL_DESCRIPTIONS ?? [])],
+    };
+  } catch {
+    // No catalog yet, or one this build cannot import: history alone is the source.
+    return { names: [], descriptions: [] };
+  }
+}
+
+function render(catalog: Map<string, Set<string>>, recorded: { names: string[]; descriptions: string[] }): string {
   const current = currentSkillNames();
   const shipping = currentDescriptions();
-  const names = [...catalog.keys()].filter((name) => !current.has(name)).sort();
-  const descriptions = [...new Set([...catalog.values()].flatMap((set) => [...set]))]
+  const names = [...new Set([...catalog.keys(), ...recorded.names])].filter((name) => !current.has(name)).sort();
+  const descriptions = [...new Set([...[...catalog.values()].flatMap((set) => [...set]), ...recorded.descriptions])]
     .filter((description) => !shipping.has(description))
     .sort();
   const lines: string[] = [
@@ -133,7 +162,7 @@ function render(catalog: Map<string, Set<string>>): string {
 }
 
 const mode = process.argv[2];
-const rendered = render(collectCatalog());
+const rendered = render(collectCatalog(), await recordedCatalog());
 /** The catalog is committed in the repository's biome style, so the generator emits it that way. */
 function formatted(source: string): string {
   return execFileSync('bunx', ['biome', 'format', '--stdin-file-path', relative(ROOT, OUTPUT)], {
