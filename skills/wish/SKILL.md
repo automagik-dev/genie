@@ -26,7 +26,7 @@ A run returns `{ok, state, route?, contract, estimate, diff, head, branch, workt
 - `merge-ready` — checks pass, the remote head equals the local head, the PR's base, head and file set equal the frozen contract, and the verdict is `SHIP`.
 - `pr-open` — the PR exists but the checks had not concluded; re-read them with `gh pr checks <n>` before acting.
 - `refused` — admission chose a route; nothing was created.
-- `blocked` — a worktree, hook, denylist or read-back mismatch stopped the run before publish; the reason names which.
+- `blocked` — either before publish (a worktree, dead hooks, a denylist hit or a `BLOCKED` review verdict) or at read-back after publish (a failing check or a structural mismatch, with the PR preserved and named); the reason names which. When a PR exists, inspect it before any rerun.
 - `missed` — the repair budget ran out, or a stage threw or returned nothing; the branch, commit, worktree and any PR are preserved and named.
 
 `notConvened` holds only agents that returned nothing; they were never counted as a pass. Merge, `SHIPPED`, dev→main promotion and worktree removal stay with the operator: after merge, `git worktree remove <path> && git branch -d wish/<slug>` (non-forcing, so an unmerged branch is refused). Retry after `missed` or `blocked` is a rerun with the same objective and slug; it adopts the named worktree when it is clean and nothing has diverged from the remote, and is otherwise `blocked` with a diagnostic that shows the unpushed work. The workflow never deletes a worktree or a branch.
