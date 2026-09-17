@@ -8,7 +8,7 @@ invocation opens the SQLite file, runs one transaction, and exits.
 
 | Concern | Home | Rationale |
 |---------|------|-----------|
-| Wishes, designs, brainstorms (`.md`) | git (`.genie/wishes/<slug>/`, `.genie/brainstorms/<slug>/`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
+| Wishes, reviewed designs (`.md`) | git (`.genie/wishes/<slug>/`, `.genie/brainstorms/<slug>/DESIGN.md`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
 | Task rows, dependency edges, checkout claims, stage log, board membership, wish-group execution state | `.genie/genie.db` (SQLite, WAL) | High-churn operational state. Would create merge conflicts and noisy diffs if versioned. Never committed. |
 
 The database is **never** git-versioned. `.gitignore` excludes `genie.db`,
@@ -25,12 +25,12 @@ from the committed documents.
   genie.db-shm          # shared-memory index — gitignored
   INDEX.md              # planning index — tracked
   wishes/<slug>/        # WISH.md + per-wish evidence (qa.md, …) — tracked
-  brainstorms/<slug>/   # DESIGN.md / DRAFT.md / COUNCIL.md — tracked
+  brainstorms/<slug>/   # DESIGN.md tracked; DRAFT.md / COUNCIL.md / REVIEW.md — gitignored working notes
 ```
 
-`.genie/` holds both the tracked planning documents (wishes, designs,
-brainstorms — genie's own taxonomy, versioned in git and reviewed in PRs) and
-the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
+`.genie/` holds the tracked planning documents (wishes, reviewed designs and
+the index — genie's own taxonomy, versioned in git and reviewed in PRs), the
+gitignored brainstorm working notes, and the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
 its sidecars) plus legacy v4 state paths — is gitignored; the markdown
 documents are committed.
 

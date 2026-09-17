@@ -19,7 +19,7 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 - `src/term-commands/` owns `init`, `context`, MCP, Omni, task, and board commands.
 - `plugins/genie/` is the Orca plugin payload: the native manifest, its entrypoint bundle, and `references/orca-orchestration.md`.
 - `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
-- `.genie/` contains git-tracked wishes/brainstorms/index plus gitignored operational SQLite files.
+- `.genie/` contains git-tracked wishes, reviewed designs (`brainstorms/*/DESIGN.md`) and the index, plus gitignored brainstorm working notes and operational SQLite files.
 
 Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` bridge. Do not use telemetry presence as integration health.
 
