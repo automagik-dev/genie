@@ -132,6 +132,47 @@ describe('wish skill fronts the wish workflow', () => {
   });
 });
 
+describe('wish.js guards that must not drift', () => {
+  const fenceOf = (source: string): string => {
+    const match = /const INJECTION_FENCE = `([^`]*)`/.exec(source);
+    if (!match) throw new Error('INJECTION_FENCE not found');
+    return match[1];
+  };
+  const requiredList = (name: string): string => {
+    const match = new RegExp(`const ${name} = obj\\((\\[[^\\]]*\\])`).exec(script);
+    if (!match) throw new Error(`wish.js: ${name} not found`);
+    return match[1];
+  };
+
+  test('the gate command and the failing-checks read-back mismatch stay pinned', () => {
+    expect(script).toContain("const CHECK_COMMAND = 'bun run check'\n");
+    expect(script).toContain(
+      "if (checks === 'fail') mismatches.push(`the remote checks failed: ${pr.failingChecks.join(', ') || 'no check name was returned'}`)",
+    );
+  });
+
+  test('exactly nine model spreads, no model literal, and no required/advisory check split', () => {
+    expect(script.split('...(MODEL ? { model: MODEL } : {})').length - 1).toBe(9);
+    expect(script).not.toMatch(/model: ['"`]/);
+    expect(script).not.toContain('--required');
+  });
+
+  test('the gate and scout required lists are unchanged', () => {
+    expect(requiredList('GATE_SCHEMA')).toBe("['hooksLive', 'exitCode', 'pass', 'problems', 'summaryLine']");
+    expect(requiredList('SCOUT_SCHEMA')).toBe("['facts', 'plan', 'estimate', 'injectionAttempts']");
+  });
+
+  test('the injection fence equals the research-sweep copy', () => {
+    expect(fenceOf(script)).toBe(fenceOf(read('.claude/workflows/research-sweep.js')));
+  });
+
+  test('the skill keeps checks pass in merge-ready and does not grow past 95 lines', () => {
+    const mergeReady = skill.split('\n').find((line) => line.startsWith('- `merge-ready` — '));
+    expect(mergeReady).toContain('checks pass');
+    expect(skill.replace(/\n$/, '').split('\n').length).toBeLessThanOrEqual(95);
+  });
+});
+
 describe('git-safety hook guards the surfaces the wish publisher is forbidden', () => {
   const hook = join(ROOT, '.claude', 'hooks', 'git-safety.sh');
   const probe = (command: string): number => {
