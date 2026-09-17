@@ -28,6 +28,13 @@ const DECLARATIONS = [
   lift(/^const BRANCH_NAME = .*$/m),
   lift(/^const PROTECTED_BASE = .*$/m),
   lift(/^function baseRefusal\(base\) \{[\s\S]*?^\}$/m),
+  // `normalizeGate` is the decision itself: it is what turns a gate's answer into `pass`.
+  lift(/^const list = .*$/m),
+  lift(/^const objectOf = .*$/m),
+  lift(/^const intOf = .*$/m),
+  lift(/^const texts = .*$/m),
+  lift(/^const measuredCount = .*$/m),
+  lift(/^function normalizeGate\(raw\) \{[\s\S]*?^\}$/m),
 ].join('\n');
 
 interface KnownFailure {
@@ -36,12 +43,13 @@ interface KnownFailure {
 }
 
 const api = new Function(
-  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal }`,
+  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal, normalizeGate }`,
 )() as {
   DARWIN_TOLERATED: KnownFailure[];
   toleratedIndex: (entry: string) => number;
   darwinTolerable: (failing: string[], reconfirmed: string[], failCount: number) => boolean;
   baseRefusal: (base: string) => string;
+  normalizeGate: (raw: unknown) => { pass: boolean; darwinTolerated: boolean; failCount: number };
 };
 
 /** The gate reports as many failures as it names unless a test says otherwise. */
@@ -101,6 +109,18 @@ describe('darwin tolerance is decided by test name, never by file', () => {
     expect(tolerable(ALL_NAMES, ALL_NAMES, ALL_NAMES.length)).toBe(true);
   });
 
+  /**
+   * The count is matched against DISTINCT identities. A list that repeats one known test — in the
+   * same spelling or another one — would otherwise pad itself until it equalled a larger count,
+   * letting the failure that count refers to ride along unnamed.
+   */
+  test('a repeated known test cannot pad the list up to a larger count', () => {
+    const padded = [...ALL_NAMES, ALL_NAMES[0] as string];
+    expect(tolerable(padded, ALL_NAMES, padded.length)).toBe(false);
+    const otherSpelling = `(fail) ${DOCTOR.file} > ${DOCTOR.test} [2ms]`;
+    expect(tolerable([...ALL_NAMES, otherSpelling], ALL_NAMES, ALL_NAMES.length + 1)).toBe(false);
+  });
+
   test('a bare file path names no test and is tolerated by nothing', () => {
     for (const known of KNOWN) expect(api.toleratedIndex(known.file)).toBe(-1);
     expect(tolerable([DOCTOR.file], [DOCTOR.file])).toBe(false);
@@ -134,6 +154,45 @@ describe('darwin tolerance is decided by test name, never by file', () => {
     // The schema must not ask for a spelling the matcher cannot read back.
     expect(SCRIPT).not.toContain('exactly as the runner printed it');
     expect(SCRIPT).toContain('make failCount equal that list');
+  });
+});
+
+describe('the gate answer becomes a pass only where the script allows it', () => {
+  const answer = (over: Record<string, unknown> = {}) => ({
+    hooksLive: true,
+    exitCode: 1,
+    failCount: ALL_NAMES.length,
+    failingTests: ALL_NAMES,
+    baseReconfirmed: ALL_NAMES,
+    problems: ['six known darwin failures'],
+    summaryLine: '2614 pass, 6 fail',
+    pass: true,
+    darwinTolerated: true,
+    ...over,
+  });
+
+  test('the six known failures pass only while the gate itself claims the tolerance', () => {
+    expect(api.normalizeGate(answer()).pass).toBe(true);
+    // The gate did not claim it: the script never tolerates on its own initiative.
+    expect(api.normalizeGate(answer({ darwinTolerated: false })).pass).toBe(false);
+    expect(api.normalizeGate(answer({ darwinTolerated: undefined })).pass).toBe(false);
+    expect(api.normalizeGate(answer({ darwinTolerated: false })).darwinTolerated).toBe(false);
+  });
+
+  test('a seventh failure, or one never re-confirmed at the base, is red', () => {
+    const seventh = [...ALL_NAMES, 'some other suite > a new failure'];
+    expect(api.normalizeGate(answer({ failingTests: seventh, failCount: seventh.length })).pass).toBe(false);
+    expect(api.normalizeGate(answer({ baseReconfirmed: [] })).pass).toBe(false);
+  });
+
+  test('a clean run passes on its own, and the gate can still call it red', () => {
+    expect(
+      api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false })).pass,
+    ).toBe(true);
+    expect(
+      api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false, pass: false }))
+        .pass,
+    ).toBe(false);
   });
 });
 

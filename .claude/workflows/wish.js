@@ -1093,12 +1093,14 @@ function toleratedIndex(entry) {
 // unnamed failure with it — the very hole the by-name matching closes, re-opened by an
 // under-enumerated answer instead of by a substring.
 function darwinTolerable(failingTests, baseReconfirmed, failCount) {
-  if (failingTests.length === 0 || failCount !== failingTests.length) return false
+  // Identities, counted DISTINCTLY: a list that repeats one known test — the same test in two
+  // spellings is what reading a log twice produces — would otherwise pad its own length until it
+  // equalled a larger failCount, and the unnamed failure would ride along tolerated.
+  const ids = failingTests.map(toleratedIndex)
+  if (ids.length === 0 || ids.includes(-1)) return false
+  if (new Set(ids).size !== ids.length || failCount !== ids.length) return false
   const reconfirmed = new Set(baseReconfirmed.map(toleratedIndex).filter((index) => index >= 0))
-  return failingTests.every((name) => {
-    const index = toleratedIndex(name)
-    return index >= 0 && reconfirmed.has(index)
-  })
+  return ids.every((index) => reconfirmed.has(index))
 }
 
 function normalizeGate(raw) {
