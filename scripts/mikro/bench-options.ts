@@ -16,7 +16,7 @@
 import { join, resolve } from 'node:path';
 import { AGENT_NAMES, type AgentName, isAgentName } from './schemas';
 
-export const BENCH_USAGE = `usage: bun scripts/mikro/bench.ts <${AGENT_NAMES.join('|')}> [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--no-phoenix] [--write-evidence]\n`;
+export const BENCH_USAGE = `usage: bun scripts/mikro/bench.ts <${AGENT_NAMES.join('|')}> [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--boundary none|bwrap] [--no-phoenix] [--write-evidence]\n`;
 
 /** Thrown for an argv the bench cannot run; the CLI prints `message` and exits 2. */
 export class BenchUsageError extends Error {}

@@ -2,10 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BoundaryError } from './boundary';
 import {
   PRICE_BASIS,
   applyResolutions,
+  containedEnv,
   extractJson,
+  parseBoundaryFlag,
   parseFooter,
   prepareFacts,
   serverEnv,
@@ -307,6 +310,44 @@ describe('hardening', () => {
     const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
     expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
     expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
+  });
+});
+
+describe('containedEnv', () => {
+  test('carries the provider key the caller exported, and nothing of the host that the sandbox renames', () => {
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    process.env.SSH_AUTH_SOCK = '/tmp/sock';
+    const env = containedEnv({ timeoutMs: 1000, agentsDir: '/repo/.mikro/agents' });
+    // providerKeyEnv() answers {} when the caller already holds the key: reading only that
+    // source here would have handed the sandbox no key at all for those callers.
+    expect(env.DEEPSEEK_API_KEY).toBe('sk-test');
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.PATH).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.MIKRO_AGENTS_DIR).toBe('/repo/.mikro/agents');
+    expect(env.MIKRO_MCP_RUN_TIMEOUT_MS).toBe('1000');
+  });
+});
+
+describe('--boundary', () => {
+  test('defaults to none: the uncontained path stays the default and the control arm', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--prompt', 'x'])).toBe('none');
+  });
+
+  test('selects the sandbox when asked for it', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--boundary', 'bwrap', '--dir', '.'])).toBe('bwrap');
+    expect(parseBoundaryFlag(['--boundary', 'none'])).toBe('none');
+  });
+
+  test('a typo is refused, never treated as off — a boundary that reports itself on must be on', () => {
+    for (const bad of [['--boundary', 'bwarp'], ['--boundary', 'docker'], ['--boundary']]) {
+      expect(() => parseBoundaryFlag(bad)).toThrow(BoundaryError);
+      try {
+        parseBoundaryFlag(bad);
+      } catch (error) {
+        expect((error as BoundaryError).failure).toBe('bad-spec');
+      }
+    }
   });
 });
 

@@ -33,6 +33,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
+import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode, openBoundary } from './boundary';
 import { buildFacts, inferFactsMode, renderFacts } from './facts';
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
@@ -338,8 +339,20 @@ export class McpClient {
   private buf = '';
   readonly stderr: string[] = [];
 
-  constructor(dir: string, env: Record<string, string | undefined>) {
-    this.proc = Bun.spawn(['mikro', 'mcp', '--dir', dir], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', env });
+  /**
+   * The ONE place a child command line is assembled. Uncontained it is `mikro mcp --dir <dir>`
+   * with the allowlisted environment; under a boundary it is whatever that boundary's argv
+   * builder returns for the same command, with the environment set inside the sandbox
+   * (`--clearenv --setenv …`), so nothing of the caller's environment reaches the runtime.
+   */
+  constructor(dir: string, env: Record<string, string | undefined>, boundary?: BoundarySession | null) {
+    const command = ['mikro', 'mcp', '--dir', dir];
+    const argv = boundary ? boundary.argv(command) : command;
+    // Under a boundary the environment comes from the builder and is handed to the bwrap
+    // PROCESS, which forwards it to the sandbox. It is never passed as `--setenv`: that would
+    // put the provider key and the gh token in a world-readable `/proc/<pid>/cmdline`.
+    const spawnEnv = boundary ? boundary.env : env;
+    this.proc = Bun.spawn(argv, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', env: spawnEnv });
     void this.pump(this.proc.stdout as ReadableStream<Uint8Array>);
     void this.drain(this.proc.stderr as ReadableStream<Uint8Array>);
     void this.proc.exited.then((code) => {
@@ -417,6 +430,11 @@ export class McpClient {
     });
   }
 
+  /**
+   * Killing this process is enough to take the whole sandbox with it: `bwrap` is spawned with
+   * `--die-with-parent`, so every process it started (socat, the runtime, any REPL child) dies
+   * with it. The existing wall-clock timeout therefore bounds the sandbox, not just the request.
+   */
   close(): void {
     try {
       this.proc.kill();
@@ -449,6 +467,10 @@ export interface RunResult {
   elapsedMs: number;
   costUsd: number;
   tags: Record<string, string>;
+  /** Which arm this run belongs to. `none` is the default and the control arm of every boundary comparison. */
+  boundary: BoundaryMode;
+  /** CONNECT attempts the boundary's proxy saw, allowed and denied; null when the run was uncontained. */
+  egress: { allowed: number; denied: number } | null;
 }
 
 export interface RunOptions {
@@ -471,6 +493,10 @@ export interface RunOptions {
    * a flag of its own.
    */
   facts?: string;
+  /** Where the runtime runs: `none` (the default, and the control arm) or `bwrap` (scripts/mikro/boundary.ts). */
+  boundary?: BoundaryMode;
+  /** Extra paths bound READ-WRITE inside the boundary — the bench's canary root, so an executed side effect stays observable. */
+  boundaryWritable?: string[];
 }
 
 // ─── Facts ───────────────────────────────────────────────
@@ -570,6 +596,30 @@ function toolName(agent: string): string {
   return `mikro_${agent.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}`;
 }
 
+/**
+ * The GitHub token the contained runtime needs, read from `gh auth token` on the HOST so
+ * `~/.config/gh` itself never has to be mounted into the sandbox. Empty when gh cannot
+ * answer — `gh` then fails loudly inside, which is the same failure an unauthenticated
+ * host already has. Nothing is written anywhere.
+ */
+let cachedGhToken: Record<string, string> | null = null;
+export function ghTokenEnv(): Record<string, string> {
+  if (cachedGhToken) return cachedGhToken;
+  cachedGhToken = {};
+  if (process.env.GH_TOKEN) {
+    cachedGhToken = { GH_TOKEN: process.env.GH_TOKEN };
+    return cachedGhToken;
+  }
+  try {
+    const probe = Bun.spawnSync(['gh', 'auth', 'token'], { env: process.env });
+    const token = probe.exitCode === 0 ? probe.stdout.toString().trim() : '';
+    if (token) cachedGhToken = { GH_TOKEN: token };
+  } catch {
+    // no gh, or no credential: the agents' gh helpers fail inside, never silently succeed
+  }
+  return cachedGhToken;
+}
+
 /** The environment the MCP server gets: an allowlist, never the caller's whole environment (no SSH agent, no tokens the agents were never granted). */
 export function serverEnv(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -583,6 +633,33 @@ export function serverEnv(): Record<string, string> {
       out[k] = v;
   }
   return out;
+}
+
+/**
+ * What carries over from the host into a CONTAINED runtime. The boundary supplies its own
+ * PATH/HOME/TMPDIR (the host's name paths the sandbox does not have), so only three things
+ * cross: the provider key, a gh token, and `MIKRO_*`.
+ *
+ * Both key sources are consulted on purpose. `providerKeyEnv()` returns `{}` when the caller's
+ * own environment already holds `DEEPSEEK_API_KEY` — on the uncontained path `serverEnv()`
+ * carries it, so nothing is lost; reading only `providerKeyEnv()` here would have dropped the
+ * key for exactly the callers who export it themselves.
+ *
+ * This slice does NOT take credentials out of the REPL. Terminating TLS at the proxy and
+ * injecting them host-side is the next slice, named in the README's residuals.
+ */
+export function containedEnv(args: { timeoutMs: number; agentsDir: string }): Record<string, string> {
+  const host = serverEnv();
+  const carried: Record<string, string> = {};
+  for (const [key, value] of Object.entries(host))
+    if (key.startsWith('MIKRO_') || key === 'DEEPSEEK_API_KEY') carried[key] = value;
+  return {
+    ...carried,
+    ...providerKeyEnv(),
+    ...ghTokenEnv(),
+    MIKRO_MCP_RUN_TIMEOUT_MS: String(args.timeoutMs),
+    MIKRO_AGENTS_DIR: args.agentsDir,
+  };
 }
 
 /** mikro's own version, once per process, for the ledger and the span. */
@@ -631,6 +708,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   const attempts: Attempt[] = [];
   const started = Date.now();
   const trustedRoot = resolve(agentsDir, '..', '..');
+  const boundaryMode: BoundaryMode = options.boundary ?? 'none';
   const untrusted = untrustedConfig(dir, trustedRoot);
   if (untrusted) {
     return {
@@ -646,6 +724,8 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       elapsedMs: 0,
       costUsd: 0,
       tags,
+      boundary: boundaryMode,
+      egress: null,
     };
   }
   // Computed once, before the loop: a retry re-reads the same facts rather than
@@ -663,115 +743,138 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     }
   }
   const factsRow = facts ? { path: facts.path, candidates: facts.candidates, ms: facts.ms } : undefined;
+  // The sandbox is opened ONCE for the whole run (both attempts share one proxy and one
+  // egress ledger) and closed on every exit path. A failure to open is fatal by design:
+  // `bwrap` mode never silently downgrades to `none` — the rollback is `--boundary none`.
+  const boundary: BoundarySession | null =
+    boundaryMode === 'bwrap'
+      ? await openBoundary({
+          dir,
+          agentsDir,
+          runId,
+          ledgerDir: join(trustedRoot, '.mikro', 'runs'),
+          writable: options.boundaryWritable,
+          env: containedEnv({ timeoutMs, agentsDir }),
+        })
+      : null;
   let prompt = options.prompt;
   let answer: unknown;
   let ok = false;
   let cost = 0;
 
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const t0 = Date.now();
-    const errors: string[] = [];
-    let raw = '';
-    let footer: Footer | null = null;
-    let citations: Citation[] = [];
-    const client = new McpClient(dir, {
-      ...serverEnv(),
-      ...providerKeyEnv(),
-      MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
-      MIKRO_AGENTS_DIR: agentsDir,
-    });
-    try {
-      await client.request(
-        'initialize',
-        { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'genie-mikro-call', version: '1' } },
-        30_000,
+  try {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const t0 = Date.now();
+      const errors: string[] = [];
+      let raw = '';
+      let footer: Footer | null = null;
+      let citations: Citation[] = [];
+      const client = new McpClient(
+        dir,
+        {
+          ...serverEnv(),
+          ...providerKeyEnv(),
+          MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
+          MIKRO_AGENTS_DIR: agentsDir,
+        },
+        boundary,
       );
-      client.notify('notifications/initialized');
-      const result = (await client.request(
-        'tools/call',
-        { name: toolName(options.agent), arguments: facts ? { prompt, context: facts.contextPath } : { prompt } },
-        timeoutMs + 15_000,
-      )) as { content?: { type: string; text?: string }[]; isError?: boolean };
-      raw = (result.content ?? []).map((c) => c.text ?? '').join('\n');
-      if (result.isError) errors.push(`tool error: ${raw.slice(0, 300)}`);
-      footer = parseFooter(raw);
-      if (!footer) errors.push('no cost footer in the answer');
-      else {
-        cost += footer.cost;
-        if (footer.budgetHit) errors.push(`budget hit: ${footer.budgetHit}`);
-      }
-      const body = stripFooter(raw);
-      if (!body.trim()) errors.push('empty answer');
-      const extracted = extractJson(body);
-      if (extracted.error) errors.push(extracted.error);
-      else if (schema) {
-        const parsed = schema.safeParse(extracted.value);
-        if (!parsed.success) {
-          for (const issue of parsed.error.issues.slice(0, 12))
-            errors.push(`schema: ${issue.path.join('.') || '(root)'} — ${issue.message}`);
+      try {
+        await client.request(
+          'initialize',
+          { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'genie-mikro-call', version: '1' } },
+          30_000,
+        );
+        client.notify('notifications/initialized');
+        const result = (await client.request(
+          'tools/call',
+          { name: toolName(options.agent), arguments: facts ? { prompt, context: facts.contextPath } : { prompt } },
+          timeoutMs + 15_000,
+        )) as { content?: { type: string; text?: string }[]; isError?: boolean };
+        raw = (result.content ?? []).map((c) => c.text ?? '').join('\n');
+        if (result.isError) errors.push(`tool error: ${raw.slice(0, 300)}`);
+        footer = parseFooter(raw);
+        if (!footer) errors.push('no cost footer in the answer');
+        else {
+          cost += footer.cost;
+          if (footer.budgetHit) errors.push(`budget hit: ${footer.budgetHit}`);
+        }
+        const body = stripFooter(raw);
+        if (!body.trim()) errors.push('empty answer');
+        const extracted = extractJson(body);
+        if (extracted.error) errors.push(extracted.error);
+        else if (schema) {
+          const parsed = schema.safeParse(extracted.value);
+          if (!parsed.success) {
+            for (const issue of parsed.error.issues.slice(0, 12))
+              errors.push(`schema: ${issue.path.join('.') || '(root)'} — ${issue.message}`);
+          } else {
+            citations = verifyCitations(parsed.data, dir);
+            answer = applyResolutions(parsed.data, citations);
+            for (const c of citations.filter((x) => !x.ok))
+              errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
+          }
         } else {
-          citations = verifyCitations(parsed.data, dir);
-          answer = applyResolutions(parsed.data, citations);
+          citations = verifyCitations(extracted.value, dir);
+          answer = applyResolutions(extracted.value, citations);
           for (const c of citations.filter((x) => !x.ok))
             errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
         }
-      } else {
-        citations = verifyCitations(extracted.value, dir);
-        answer = applyResolutions(extracted.value, citations);
-        for (const c of citations.filter((x) => !x.ok))
-          errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
+      } catch (error) {
+        errors.push(`run: ${error instanceof Error ? error.message : String(error)}`);
+        const tail = client.stderr.slice(-3).join(' / ');
+        if (tail) errors.push(`stderr: ${tail.slice(0, 300)}`);
+      } finally {
+        client.close();
       }
-    } catch (error) {
-      errors.push(`run: ${error instanceof Error ? error.message : String(error)}`);
-      const tail = client.stderr.slice(-3).join(' / ');
-      if (tail) errors.push(`stderr: ${tail.slice(0, 300)}`);
-    } finally {
-      client.close();
+      const elapsedMs = Date.now() - t0;
+      const attemptOk = errors.length === 0;
+      attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw });
+      if (options.ledger !== false) {
+        mkdirSync(runsDir, { recursive: true });
+        appendFileSync(
+          join(runsDir, `${options.agent}.jsonl`),
+          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null })}\n`,
+        );
+      }
+      if (options.phoenix !== false) {
+        await postRunSpan({
+          agent: options.agent,
+          runId,
+          traceId,
+          attempt,
+          startMs: t0,
+          endMs: t0 + elapsedMs,
+          model: footer?.model ?? 'unknown',
+          iterations: footer?.iterations ?? 0,
+          tokensIn: footer?.tokensIn ?? 0,
+          tokensOut: footer?.tokensOut ?? 0,
+          costUsd: footer?.cost ?? 0,
+          ok: attemptOk,
+          errors,
+          factsCandidates: facts?.candidates,
+          tags: {
+            ...tags,
+            prompt_sha: sha(options.prompt),
+            mikro_version: mikroVersion(),
+            price_basis: PRICE_BASIS,
+            dir,
+            boundary: boundaryMode,
+          },
+          prompt,
+          answer: raw,
+        });
+      }
+      if (attemptOk) {
+        ok = true;
+        break;
+      }
+      if (attempt < retries) {
+        prompt = `${options.prompt}\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Do the work again from the starter block and return the complete JSON, fixing every point below:\n${errors.map((e) => `- ${e}`).join('\n')}`;
+      }
     }
-    const elapsedMs = Date.now() - t0;
-    const attemptOk = errors.length === 0;
-    attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw });
-    if (options.ledger !== false) {
-      mkdirSync(runsDir, { recursive: true });
-      appendFileSync(
-        join(runsDir, `${options.agent}.jsonl`),
-        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags })}\n`,
-      );
-    }
-    if (options.phoenix !== false) {
-      await postRunSpan({
-        agent: options.agent,
-        runId,
-        traceId,
-        attempt,
-        startMs: t0,
-        endMs: t0 + elapsedMs,
-        model: footer?.model ?? 'unknown',
-        iterations: footer?.iterations ?? 0,
-        tokensIn: footer?.tokensIn ?? 0,
-        tokensOut: footer?.tokensOut ?? 0,
-        costUsd: footer?.cost ?? 0,
-        ok: attemptOk,
-        errors,
-        factsCandidates: facts?.candidates,
-        tags: {
-          ...tags,
-          prompt_sha: sha(options.prompt),
-          mikro_version: mikroVersion(),
-          price_basis: PRICE_BASIS,
-          dir,
-        },
-        prompt,
-        answer: raw,
-      });
-    }
-    if (attemptOk) {
-      ok = true;
-      break;
-    }
-    if (attempt < retries) {
-      prompt = `${options.prompt}\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Do the work again from the starter block and return the complete JSON, fixing every point below:\n${errors.map((e) => `- ${e}`).join('\n')}`;
-    }
+  } finally {
+    await boundary?.close();
   }
 
   return {
@@ -785,14 +888,29 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     elapsedMs: Date.now() - started,
     costUsd: cost,
     tags,
+    boundary: boundaryMode,
+    egress: boundary ? boundary.counts() : null,
   };
 }
 
 // ─── CLI ─────────────────────────────────────────────────
 
+/**
+ * `--boundary none|bwrap`. An unknown value is REFUSED rather than ignored: a typo
+ * that silently ran uncontained would be a boundary that reports itself on and is off.
+ */
+export function parseBoundaryFlag(argv: string[]): BoundaryMode {
+  const i = argv.indexOf('--boundary');
+  if (i < 0) return 'none';
+  const value = argv[i + 1] ?? '';
+  if (!isBoundaryMode(value))
+    throw new BoundaryError('bad-spec', `--boundary must be none or bwrap, got ${value || '(missing)'}`);
+  return value;
+}
+
 function usage(): never {
   process.stderr.write(
-    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--no-phoenix] [--no-ledger] [--raw]\n`,
+    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]\n`,
   );
   process.exit(2);
 }
@@ -816,9 +934,17 @@ if (import.meta.main) {
   const promptFile = opt('--prompt-file');
   const prompt = promptFile ? readFileSync(promptFile, 'utf8') : opt('--prompt');
   if (!prompt) usage();
+  let boundary: ReturnType<typeof parseBoundaryFlag>;
+  try {
+    boundary = parseBoundaryFlag(argv);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(2);
+  }
   const result = await runAgent({
     agent,
     prompt,
+    boundary,
     dir: opt('--dir'),
     agentsDir: opt('--agents-dir'),
     facts: opt('--facts'),
@@ -828,6 +954,13 @@ if (import.meta.main) {
     traceId: opt('--trace'),
     phoenix: !has('--no-phoenix'),
     ledger: !has('--no-ledger'),
+  }).catch((error: unknown) => {
+    // A boundary that cannot be established aborts the run; it never downgrades to `none`.
+    if (error instanceof BoundaryError) {
+      process.stderr.write(`boundary (${error.failure}): ${error.message}\nrollback: re-run with --boundary none\n`);
+      process.exit(1);
+    }
+    throw error;
   });
   if (has('--raw')) {
     for (const a of result.attempts)
