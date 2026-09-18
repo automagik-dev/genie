@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deslop"
+  short_description: "Clean up scoped prose, code or interface without losing meaning"
+  default_prompt: "Clean up this text or code within the scope I gave you, protect what it guarantees, and report what changed and why."

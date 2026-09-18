@@ -631,20 +631,7 @@ export interface HazardWaiver {
  * fails nothing, because a waiver that outlived its hit is a review finding,
  * not a reason to redden everybody else's gate.
  */
-export const HAZARD_WAIVERS: readonly HazardWaiver[] = [
-  {
-    file: 'merge/SKILL.md',
-    label: 'git add -A',
-    reason:
-      'pre-existing: the finish step of a conflict resolution stages the resolved tree; narrow it to the conflicted paths and delete this row',
-  },
-  {
-    file: 'genie-hacks/references/catalog.md',
-    label: 'Hermes',
-    reason:
-      'pre-existing: a hack recipe names it as a client runtime; re-express runtime-neutrally and delete this row',
-  },
-];
+export const HAZARD_WAIVERS: readonly HazardWaiver[] = [];
 
 export function isHazardWaived(relativeFile: string, label: string): boolean {
   return HAZARD_WAIVERS.some((waiver) => waiver.file === relativeFile && waiver.label === label);

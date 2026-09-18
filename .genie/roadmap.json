@@ -14,8 +14,16 @@
       "value": "1784758341375"
     },
     {
+      "key": "wish_base:dsh-genie-board",
+      "value": "{\"branch\":\"wish/dsh-genie-board\",\"base\":\"bdcb5ec8db2d51512477afe2b507e3e1b91ad037\",\"recordedAt\":1789520649469}"
+    },
+    {
       "key": "wish_base:dsh-workflow-fork",
       "value": "{\"branch\":\"wish/dsh-workflow-fork\",\"base\":\"67a8d08b14d0d628c92cd6bffb19b8b4dab0381d\",\"recordedAt\":1789498668096}"
+    },
+    {
+      "key": "wish_base:global-workflows-local-mikro",
+      "value": "{\"branch\":\"wish/global-workflows-local-mikro\",\"base\":\"1631d16acadbd7d0c91ec26dea03b34ba52a69b2\",\"recordedAt\":1789765683055}"
     },
     {
       "key": "wish_base:observe-skill-bundle",
@@ -1980,6 +1988,105 @@
       "kind": "move",
       "note": "Idea→Review",
       "task_id": "t_mu3bf6vc67fe3e8b"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789765697565,
+      "id": 275,
+      "kind": "comment",
+      "note": "dispatch: engineer-g1 (engineer, opus) — wave 1/group-1; scope: scripts/mikro/call.ts entry + agents-dir resolution, src/term-commands/mikro.ts, build-binary.sh staging of default agents, wish.js MIKRO_CALL, README/CLAUDE.md command count",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789765763262,
+      "id": 276,
+      "kind": "claim",
+      "note": "claimed by engineer-g1",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "engineer-g1",
+      "author_kind": "claude-code",
+      "created_at": 1789767134487,
+      "id": 277,
+      "kind": "report",
+      "note": "G1 DONE. 5 commits e8c9fb4..5d3ed80 on wish/global-workflows-local-mikro-g1; 16 files, +1111/-92 (the WISH.md rows are from the two base commits).\n\nLANDED\n- call.ts: import.meta.main becomes exported runCallCli(argv) returning an exit code, no top-level await. New exports: resolveAgentsDir, shippedAgentsRoot, resolveRunsDir, gitToplevel, unavailableReason. RunOptions gains cwd + genieHome; RunResult gains agentSource, also on the ledger row.\n- src/term-commands/mikro.ts + registration; mikro joins the v4 workspace-gate exemption, without which a repo with no .genie exits 2.\n- build-binary.sh stages .mikro/agents/{wish-context,review-prep}/{agent.yaml,SYSTEM.md} into STAGE/templates/mikro/agents, all four required; paths filter and release-docs pins updated.\n- wish.js MIKRO_CALL = genie mikro call, unavailable wording, reviewer line; pins, READMEs, CLAUDE.md, count 17.\n\nEVIDENCE\n1. mikro call --help -> exit 0, every flag listed; unregistered name -> exit 2 (mikro.test.ts).\n2. tmp git repo with no .mikro + fake GENIE_HOME carrying templates/mikro/agents/wish-context, injected opener -> agentSource=shipped, ledger keyed by the CHECKOUT, no .mikro created, payload untouched (call.test.ts).\n3. mikro off PATH -> ok:false JSON, exit 1, one unavailable: error, one attempt; classified by spawn code ENOENT/EACCES, not wording.\n4. bun scripts/mikro/call.ts still drives runAgent (ok:false, agentSource=repo, zero cost); bench-options/coach/boundary green and unchanged; call.test.ts only gained a describe.\n5. check:fast -> exit 0 (typecheck, biome, knip, skills, wishes, complexity 2/7 max 29/42).\n6. build-binary.sh --platform linux-x64-glibc -> tarball carries templates/mikro/agents/wish-context/SYSTEM.md; top level is the frozen 8.\n7. Full Validation command -> exit 0, 326 pass / 0 fail, 15 files.\n\nHOP ORACLE: PASS. New tarball extracted into a 0700 staging dir in scratch, staging/genie replaced by the installed 5.260918.9 binary, isolated HOME and GENIE_HOME, lease built exactly as acquire_lifecycle_lock does. __install-promote --staging-root ... --expected-version 5.260918.9 printed \"outcome\":\"committed\", exit 0; the promoted payload carries templates/mikro/agents/*; the real home was untouched. Extra: the COMPILED binary in a plain git repo against a converged GENIE_HOME/templates answered agentSource=shipped, so the /$bunfs default is gone.\n\nRULINGS\n- resolveAgentsDir takes agent: string, not AgentName -- runAgent.agent is string, so AgentName forces a cast at the one call site; the registry check stays in the CLI and a name that is not one directory name is refused before any join. Cost: a probe for an unregistered name returns null.\n- call declares no commander options; the flags are help text, with allowUnknownOption + passThroughOptions and enablePositionalOptions on the mikro group only, because a declared option is a consumed option. Cost: --help typed after the agent name reaches the runtime (exit 2).\n- mikro call with no agent exits 1 (commander missing argument) like every group; only a bad NAME is 2.\n- Ledger opt-in is .mikro tracked by git OR present with no git at all; without the second half the existing boundary tests, on non-git tmpdirs, would have moved their facts under GENIE_HOME.\n- Bundle prose: base 1.84 MiB vs 1.90 MiB now; README said 0.9 and CLAUDE.md 1.3, both stale; both now ~2 MB.\n- The MIKRO_AGENTS_DIR README sentence was corrected here because it described the default I removed; the boundary-mount row is left for G4.",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789767244778,
+      "id": 278,
+      "kind": "comment",
+      "note": "dispatch: engineer-g2 (engineer, opus) — wave 2/group-2; scope: build-binary.sh staging of templates/workflows, src/lib/workflows-installer.ts, optional workflows record field, install/update wiring; stacked on group-1 head 5d3ed800d while its review runs",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789767293469,
+      "id": 279,
+      "kind": "claim",
+      "note": "claimed by engineer-g2",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789768066733,
+      "id": 280,
+      "kind": "comment",
+      "note": "review: SHIP at 5d3ed800d with 2 medium required repairs — docs overclaim argv forwarded untouched (program-level -V/-h/--no-interactive still parsed); two safety rules unpinned (untracked .mikro ledger rule, agent-name traversal guard: both mutants survive). 7/7 criteria pass, validation 326/0, hop oracle committed. Routed to fix loop 1 of 2",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768403630,
+      "id": 281,
+      "kind": "move",
+      "note": "(none)→Work",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768403853,
+      "id": 282,
+      "kind": "move",
+      "note": "(none)→Work",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404064,
+      "id": 283,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404275,
+      "id": 284,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404511,
+      "id": 285,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9z7vf07d0c68"
     }
   ],
   "tasks": [
@@ -3642,6 +3749,106 @@
       "title": "observe-skill-bundle: Relocate into the shipped observe skill",
       "updated_at": 1789663781661,
       "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789765763261,
+      "claimed_by": "engineer-g1",
+      "created_at": 1789765681883,
+      "group_name": "group-1",
+      "heartbeat_at": 1789765763261,
+      "id": "t_mu7g9yhn091e7ed4",
+      "lane": "Work",
+      "status": "in_progress",
+      "title": "G1: genie mikro call + shipped default agents + wish.js MIKRO_CALL",
+      "updated_at": 1789768403628,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789767293468,
+      "claimed_by": "engineer-g2",
+      "created_at": 1789765682103,
+      "group_name": "group-2",
+      "heartbeat_at": 1789767293468,
+      "id": "t_mu7g9ynr58dfed10",
+      "lane": "Work",
+      "status": "in_progress",
+      "title": "G2: workflow catalog install channel with digests",
+      "updated_at": 1789768403850,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789765682346,
+      "group_name": "group-3",
+      "heartbeat_at": null,
+      "id": "t_mu7g9yuida409ea5",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "G3: workflow drift in doctor/uninstall + explicit-path skills",
+      "updated_at": 1789768404062,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789765682597,
+      "group_name": "group-4",
+      "heartbeat_at": null,
+      "id": "t_mu7g9z1he13b1a91",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "G4: repo-first mikro agents behind a trusted ref",
+      "updated_at": 1789768404272,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789765682827,
+      "group_name": "group-5",
+      "heartbeat_at": null,
+      "id": "t_mu7g9z7vf07d0c68",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "G5: portable bench/coach, commit fixtures, mikro init",
+      "updated_at": 1789768404508,
+      "wish": "global-workflows-local-mikro"
     }
   ],
   "wish_groups": []

@@ -987,11 +987,12 @@ describe('hazards and residue — one test per pattern family', () => {
     }
   });
 
-  test('a waiver covers one file and one rule, nothing else', () => {
-    expect(isHazardWaived('merge/SKILL.md', 'git add -A')).toBe(true);
+  test('the waiver table is empty, so nothing is waived', () => {
+    expect(HAZARD_WAIVERS).toHaveLength(0);
+    expect(isHazardWaived('merge/SKILL.md', 'git add -A')).toBe(false);
     expect(isHazardWaived('merge/SKILL.md', 'git stash')).toBe(false);
     expect(isHazardWaived('work/SKILL.md', 'git add -A')).toBe(false);
-    expect(isHazardWaived('genie-hacks/references/catalog.md', 'Hermes')).toBe(true);
+    expect(isHazardWaived('genie-hacks/references/catalog.md', 'Hermes')).toBe(false);
     expect(isHazardWaived('genie-hacks/SKILL.md', 'Hermes')).toBe(false);
   });
 });
