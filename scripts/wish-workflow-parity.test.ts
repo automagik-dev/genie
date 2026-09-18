@@ -62,7 +62,7 @@ describe('wish skill fronts the wish workflow', () => {
       if (!match) throw new Error(`wish.js: ${name} not found`);
       return Number(match[1]);
     };
-    const band = `maximum ${constant('MAX_FILES')} files, ${constant('MAX_INSERTIONS').toLocaleString('en-US')} insertions, ${constant('MAX_UNITS')} units; ideal ${constant('IDEAL_FILES')}, ${constant('IDEAL_INSERTIONS')}, ${constant('IDEAL_UNITS')}`;
+    const band = `maximum ${constant('MAX_FILES')} files and ${constant('MAX_INSERTIONS').toLocaleString('en-US')} insertions, the hard maxima; ${constant('MAX_UNITS')} units, advisory; ideal ${constant('IDEAL_FILES')}, ${constant('IDEAL_INSERTIONS')}, ${constant('IDEAL_UNITS')}`;
     expect(normalize(skill)).toContain(band);
     expect(normalize(skill)).toContain(
       `\`repairBudget\` defaults to ${constant('DEFAULT_REPAIR_BUDGET')} and is capped at ${constant('MAX_REPAIR_BUDGET')}`,

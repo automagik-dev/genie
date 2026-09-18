@@ -364,6 +364,10 @@ function denylistRule(candidate) {
     }
     if (rule.includes(' ')) continue
     if (rule.includes('*')) {
+      // A `*` rule names a path shape, and a colocated `*.test.ts` beside it is the test of a
+      // release script, never the release script: scripts/release-docs.test.ts falls through
+      // while scripts/release-guard.sh and every other scripts/release-* path still hits.
+      if (value.endsWith('.test.ts')) continue
       const parts = rule.split('*').map(escapeRule).join('[^/]*')
       if (new RegExp(`^${parts}$`).test(value)) return rule
       continue
@@ -417,29 +421,32 @@ function normalizeInput(raw) {
   }
 }
 
-// Maximum routes `plan` and the script enforces it; ideal is advice the report carries.
+// Files and insertions are the hard maxima: over either routes `plan` and the script enforces
+// it. Units are advisory — the scout's judgement of how many reviewable pieces the work is, not
+// a measurement the gate can re-take — so a units count over MAX_UNITS is advice the report
+// carries, never an `exceeded` entry (run wf_8491beac-ef6 was refused on 9 units alone).
 function sizeArithmetic(estimate) {
   const files = intOf(estimate.files, -1)
   const insertions = intOf(estimate.insertions, -1)
   const units = intOf(estimate.units, -1)
   const exceeded = []
-  // A missing, non-integer or negative estimate field EXCEEDS the maximum; it is never read as
-  // 0. An unreported size is the absence of size evidence, and admitting on absent evidence is
-  // exactly how an unbounded objective would walk in as `ideal`.
+  // A missing, non-integer or negative files or insertions field EXCEEDS the maximum; it is
+  // never read as 0. An unreported size is the absence of size evidence, and admitting on
+  // absent evidence is exactly how an unbounded objective would walk in as `ideal`.
   const unreported = []
   if (files < 0) unreported.push('estimate.files')
   if (insertions < 0) unreported.push('estimate.insertions')
-  if (units < 0) unreported.push('estimate.units')
   for (const field of unreported)
     exceeded.push(`${field} was not reported as a non-negative integer — treated as over the maximum`)
   if (files > MAX_FILES) exceeded.push(`files ${files} over the maximum ${MAX_FILES}`)
   if (insertions > MAX_INSERTIONS) exceeded.push(`insertions ${insertions} over the maximum ${MAX_INSERTIONS}`)
-  if (units > MAX_UNITS) exceeded.push(`units ${units} over the maximum ${MAX_UNITS}`)
   const advice = []
   if (files > IDEAL_FILES && files <= MAX_FILES) advice.push(`files ${files} above the ideal ${IDEAL_FILES}`)
   if (insertions > IDEAL_INSERTIONS && insertions <= MAX_INSERTIONS)
     advice.push(`insertions ${insertions} above the ideal ${IDEAL_INSERTIONS}`)
-  if (units > IDEAL_UNITS && units <= MAX_UNITS) advice.push(`units ${units} above the ideal ${IDEAL_UNITS}`)
+  if (units < 0) advice.push('estimate.units was not reported as a non-negative integer — advisory only, not a refusal')
+  else if (units > MAX_UNITS) advice.push(`units ${units} over the advisory maximum ${MAX_UNITS} — not a refusal`)
+  else if (units > IDEAL_UNITS) advice.push(`units ${units} above the ideal ${IDEAL_UNITS}`)
   const missing = unreported.length > 0
   return {
     files,
@@ -529,7 +536,7 @@ function judgePrompt(job, scout, verdict) {
       `Estimate: ${reported(verdict.files)} file(s), ${reported(verdict.insertions)} insertion(s), ${reported(verdict.units)} unit(s)`,
       `Verdict: ${verdict.summary}`,
       verdict.missing
-        ? 'The scout did not report a usable estimate, so its size is UNKNOWN and the script treats an unreported field as over the maximum — never as small, and never as fitting one task.'
+        ? 'The scout did not report a usable estimate, so its size is UNKNOWN and the script treats an unreported files or insertions field as over the maximum — never as small, and never as fitting one task.'
         : verdict.exceeded.length
           ? 'The script has already decided this estimate is too large for one task; your route cannot make it smaller.'
           : 'The script has already decided this estimate fits one task; your route cannot make it larger.',
