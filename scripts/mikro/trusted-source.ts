@@ -36,6 +36,11 @@ const AMBIENT_GIT_VARS = [
   'GIT_COMMON_DIR',
   'GIT_OBJECT_DIRECTORY',
   'GIT_NAMESPACE',
+  // The two that steer DISCOVERY rather than the repository itself: a ceiling can make git
+  // refuse to find the checkout it is standing in, and the filesystem-crossing switch can
+  // make it find one it otherwise would not.
+  'GIT_CEILING_DIRECTORIES',
+  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
 ] as const;
 
 /**
@@ -88,6 +93,13 @@ export const AGENT_DIR_NAME = /^[a-z0-9][a-z0-9._-]*$/;
  * STANDING RULE: re-derive this list from `loadConfig` whenever the mikro version floor
  * moves. It is one constant on purpose — the ref path, the no-ref fail-closed path and the
  * flag path all read it, so they can never drift apart.
+ *
+ * The SECOND load-bearing dependency on the same runtime, re-derived at the same time:
+ * `agentRoots` (`mcp/agents.ts:103-116`) makes `MIKRO_AGENTS_DIR` REPLACE the default
+ * discovery roots outright. Without it — on any arm — `<dir>/.agents`,
+ * `<dir>/.rlmx/agents` and `<dir>/.mikro/agents` become roots, and the tree under review
+ * supplies the agent itself. `call.ts` therefore sets that variable on the contained AND
+ * the uncontained path, and the adversarial suite asserts it on both.
  */
 export const MIKRO_CONFIG_FILES = [
   '.mikro/mikro.yaml',

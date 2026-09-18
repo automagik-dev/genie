@@ -125,6 +125,19 @@ of them still runs. The ONE place the directory comparison still stands in witho
 8's explicit carve-out: a process started outside any git checkout, where only `--dir` = the cwd is
 accepted with configuration.
 
+**And "outside any git checkout" has to be PROVEN, not assumed.** A `git` that cannot answer is not
+the same as a directory that is not a repository, and the difference is ordinary: a `safe.directory`
+dubious-ownership refusal (exit 128 — Docker, CI, `sudo`, a shared checkout), an unreadable index, a
+`.git` FILE whose gitlink points nowhere, or no `git` on PATH at all. `probeCheckout` (`call.ts`) is
+therefore three-valued — `toplevel`, `not-a-repository`, `unanswered` — and only `not-a-repository`
+reaches the carve-out: git's own clean "not a git repository", AND no `.git` entry (file or
+directory) anywhere above the cwd. A `.git` found by walking up overrules git's message, because that
+is exactly what a broken gitlink looks like. Everything else is treated as being inside a repository
+whose ref could not be resolved, which fails closed with the reason naming what git said or that it
+could not be run. A missing `git` binary with no `.git` above the cwd is still the carve-out — that
+is a genuine non-checkout. The AGENT resolution is unchanged in all of these: shipped, with the
+reason.
+
 `MIKRO_AGENTS_DIR` is NOT an input: this runtime only WRITES it into the child environment
 (`call.ts`), so a contaminated shell cannot redirect the reviewer's prompt. It is what overrides
 mikro's own project-agent discovery inside `--dir`, which is why the adversarial tests assert on it

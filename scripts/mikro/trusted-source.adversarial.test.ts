@@ -74,6 +74,48 @@ function baseRepo(prefix: string, system: string, extra: Record<string, string> 
   return root;
 }
 
+/**
+ * A PATH holding one `mikro` stub and NOTHING else — no git, no real runtime.
+ *
+ * Every case that spawns the CLI gets this: a refusal must not depend on what is installed
+ * on the developer's PATH, and a regression that stopped refusing would otherwise reach the
+ * REAL `mikro` and bill a run. The stub exits immediately, so a run that does get that far
+ * fails with "exited before answering" — fast, and free.
+ */
+let stubBin: string | null = null;
+function stubPath(): string {
+  if (!stubBin) {
+    stubBin = tmp('mikro-stub-bin-');
+    writeFileSync(join(stubBin, 'mikro'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  return stubBin;
+}
+
+/**
+ * The same stub PATH, plus the REAL git — for every case whose refusal has to happen for
+ * its own reason rather than because git was missing.
+ *
+ * Without this, a case meant to pin the irregular-path refusal refuses through the no-git
+ * fail-closed branch instead, and the assertion it thinks it is making is vacuous. git is
+ * resolved with `Bun.which`, never hardcoded; if a real `mikro` shares that directory it
+ * would outrank the stub, so git is symlinked into the stub dir instead.
+ */
+let stubBinWithGit: string | null = null;
+function stubPathWithGit(): string {
+  if (!stubBinWithGit) {
+    const git = Bun.which('git');
+    if (!git) throw new Error('no git on PATH: these cases need a real one');
+    const gitDir = dirname(git);
+    if (existsSync(join(gitDir, 'mikro'))) {
+      stubBinWithGit = stubPath();
+      symlinkSync(git, join(stubBinWithGit, 'git'));
+    } else {
+      stubBinWithGit = `${stubPath()}:${gitDir}`;
+    }
+  }
+  return stubBinWithGit;
+}
+
 /** A GENIE_HOME carrying the shipped default agent — the fallback every case must be able to name. */
 function shippedHome(): string {
   const home = tmp('mikro-adv-home-');
@@ -392,37 +434,184 @@ describe('(f)/(g) the legacy .rlmx configuration directory is compared too', () 
 });
 
 describe('a compared path that is not a regular file', () => {
-  const runCli = (dir: string, cwd: string): Promise<number> => {
-    const saved = process.cwd();
-    process.chdir(cwd);
-    return runCallCli(['wish-context', '--prompt', 'Intent: x', '--dir', dir, '--no-phoenix', '--no-ledger']).finally(
-      () => process.chdir(saved),
+  /**
+   * Run the CLI as a SUBPROCESS on a scratch PATH that holds only a `mikro` stub.
+   *
+   * These cases refuse before anything is spawned, so the PATH should never matter — which
+   * is exactly why it is pinned. A regression that let one of them through would otherwise
+   * reach for the real `mikro` on the developer's PATH and turn a unit test into a billed
+   * runtime invocation (observed once, as a five-second stall). With the stub there is
+   * nothing to reach.
+   */
+  const runCli = (dir: string, cwd: string) => {
+    const proc = Bun.spawnSync(
+      [
+        process.execPath,
+        join(import.meta.dir, 'call.ts'),
+        'wish-context',
+        '--prompt',
+        'Intent: x',
+        '--dir',
+        dir,
+        '--retries',
+        '0',
+        '--no-phoenix',
+        '--no-ledger',
+      ],
+      {
+        cwd,
+        // The real git is on this PATH on purpose: without it the run would refuse through
+        // the no-git fail-closed branch and these cases would pin nothing.
+        env: { ...process.env, PATH: stubPathWithGit(), GENIE_HOME: shippedHome() },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
     );
+    const parsed = JSON.parse(proc.stdout.toString()) as { attempts: { errors: string[] }[] };
+    return { code: proc.exitCode, error: parsed.attempts[0]?.errors[0] ?? '' };
   };
   const leftovers = (): Set<string> =>
     new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith('mikro-agents-')));
 
-  test('a DIRECTORY named .mikro/TOOLS.md is a refusal, not an EISDIR crash, and leaks no temp tree', async () => {
+  test('a DIRECTORY named .mikro/TOOLS.md is a refusal, not an EISDIR crash, and leaks no temp tree', () => {
     const root = baseRepo('mikro-eisdir-', '# A\n');
     mkdirSync(join(root, '.mikro', 'TOOLS.md', 'inside'), { recursive: true });
     const before = leftovers();
-    expect(await runCli(root, root)).toBe(1);
+    const run = runCli(root, root);
+    expect(run.code).toBe(1);
+    // The refusal must be THIS one — the trusted ref resolved fine, so a bare exit code
+    // would also be satisfied by any other refusal on the way.
+    expect(run.error).toStartWith('config:');
+    expect(run.error).toContain('not a regular file');
     expect([...leftovers()].filter((entry) => !before.has(entry))).toEqual([]);
   });
 
-  test('a SYMLINK in a compared path is refused rather than followed', async () => {
+  test('a SYMLINK in a compared path is refused rather than followed', () => {
     const root = baseRepo('mikro-symlink-', '# A\n');
     const elsewhere = tmp('mikro-symlink-target-');
     writeFileSync(join(elsewhere, 'TOOLS.md'), '## injected through a link\n');
     symlinkSync(join(elsewhere, 'TOOLS.md'), join(root, '.mikro', 'TOOLS.md'));
     const before = leftovers();
-    expect(await runCli(root, root)).toBe(1);
+    const linked = runCli(root, root);
+    expect(linked.code).toBe(1);
+    expect(linked.error).toContain('not a regular file');
     expect([...leftovers()].filter((entry) => !before.has(entry))).toEqual([]);
     // A DANGLING link is refused too: `existsSync` answered false for it, which read as
     // "absent" and waved the run through.
     rmSync(join(root, '.mikro', 'TOOLS.md'));
     symlinkSync(join(elsewhere, 'gone.md'), join(root, '.mikro', 'TOOLS.md'));
-    expect(await runCli(root, root)).toBe(1);
+    const dangling = runCli(root, root);
+    expect(dangling.code).toBe(1);
+    expect(dangling.error).toContain('not a regular file');
+  });
+});
+
+describe('a git that cannot answer is IN a repository, not outside one', () => {
+  /**
+   * `gitToplevel` answered `null` for "git says this is not a repository" AND for "git
+   * could not answer", and the second is ordinary: a `safe.directory` refusal under Docker,
+   * CI, sudo or a shared checkout (exit 128), an unreadable index, a broken gitlink, or no
+   * `git` on PATH. Both landed in the carve-out, whose same-directory exemption then
+   * accepted the pull request's own configuration — inside a real repository with a valid
+   * `origin/HEAD` sitting right there. Only a PROVEN non-repository may reach the carve-out.
+   */
+  const cli = (dir: string, cwd: string, path: string) => {
+    const proc = Bun.spawnSync(
+      [
+        process.execPath,
+        join(import.meta.dir, 'call.ts'),
+        'wish-context',
+        '--prompt',
+        'Intent: x',
+        '--dir',
+        dir,
+        '--retries',
+        '0',
+        '--no-phoenix',
+        '--no-ledger',
+      ],
+      { cwd, env: { ...process.env, PATH: path, GENIE_HOME: shippedHome() }, stdout: 'pipe', stderr: 'pipe' },
+    );
+    const parsed = JSON.parse(proc.stdout.toString()) as {
+      ok: boolean;
+      agentSource?: string;
+      agentSourceReason?: string;
+      attempts: { errors: string[] }[];
+    };
+    return { code: proc.exitCode, ...parsed, error: parsed.attempts[0]?.errors[0] ?? '' };
+  };
+  /** A PATH with the `mikro` stub and NO git: the stub proves a run that got that far. */
+  const pathWithoutGit = (): string => stubPath();
+
+  test('(1) a real checkout with no git on PATH refuses its committed .mikro/TOOLS.md', () => {
+    const root = baseRepo('mikro-nogit-bin-', '# A\n');
+    write(root, '.mikro/TOOLS.md', '## injected by the PR\n');
+    commit(root, 'the PR injects TOOLS.md');
+    const run = cli(root, root, pathWithoutGit());
+    expect(run.code).toBe(1);
+    expect(run.error).toStartWith('config:');
+    expect(run.error).toContain('cannot be verified');
+    expect(run.agentSource).toBe('shipped'); // the AGENT still degrades, as it always did
+    expect(run.agentSourceReason).toContain('.git');
+  });
+
+  test('(2) a .git FILE pointing nowhere is a checkout, whatever git says about it', () => {
+    const root = tmp('mikro-broken-gitlink-');
+    writeFileSync(join(root, '.git'), 'gitdir: /nowhere/at/all/.git\n');
+    mkdirSync(join(root, '.mikro'), { recursive: true });
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected by the PR\n');
+    const run = cli(root, root, stubPathWithGit()); // git present, and it refuses
+    expect(run.code).toBe(1);
+    expect(run.error).toStartWith('config:');
+    expect(run.error).toContain('cannot be verified');
+    expect(run.agentSourceReason).toContain('.git');
+  });
+
+  test('(3) a plain directory with git present and --dir = cwd keeps the carve-out', () => {
+    const loose = tmp('mikro-carveout-');
+    mkdirSync(join(loose, '.mikro'), { recursive: true });
+    writeFileSync(join(loose, '.mikro', 'TOOLS.md'), '## the operator own helpers\n');
+    const run = cli(loose, loose, stubPathWithGit()); // git answers, cleanly, "not a repository"
+    expect(run.error).not.toStartWith('config:'); // it ran: the stub is not an MCP server
+    expect(run.agentSource).toBe('shipped');
+    expect(run.agentSourceReason).toContain('is no git checkout');
+  });
+
+  test('a git whose refusal is LOCALIZED still reaches the carve-out', () => {
+    // The classification reads git's message, so the probe pins the locale. Without
+    // `LC_ALL=C` a French, German or Japanese git would make every plain directory read as
+    // `unanswered` — safe, but it would silently disable the carve-out for those hosts.
+    const bin = tmp('mikro-localized-git-');
+    writeFileSync(join(bin, 'mikro'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(
+      join(bin, 'git'),
+      [
+        '#!/bin/sh',
+        'if [ "$LC_ALL" = "C" ]; then',
+        '  echo "fatal: not a git repository (or any of the parent directories): .git" >&2',
+        'else',
+        '  echo "fatal: ce n\'est pas un dépôt git (ni aucun des répertoires parents) : .git" >&2',
+        'fi',
+        'exit 128',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    const loose = tmp('mikro-localized-');
+    mkdirSync(join(loose, '.mikro'), { recursive: true });
+    writeFileSync(join(loose, '.mikro', 'TOOLS.md'), '## the operator own helpers\n');
+    const run = cli(loose, loose, bin);
+    expect(run.error).not.toStartWith('config:');
+    expect(run.agentSourceReason).toContain('is no git checkout');
+  });
+
+  test('(4) a plain directory with no git binary either is still the carve-out', () => {
+    const loose = tmp('mikro-carveout-nogit-');
+    mkdirSync(join(loose, '.mikro'), { recursive: true });
+    writeFileSync(join(loose, '.mikro', 'TOOLS.md'), '## the operator own helpers\n');
+    const run = cli(loose, loose, pathWithoutGit());
+    expect(run.error).not.toStartWith('config:');
+    expect(run.agentSource).toBe('shipped');
+    expect(run.agentSourceReason).toContain('is no git checkout');
   });
 });
 

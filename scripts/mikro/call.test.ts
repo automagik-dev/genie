@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { BoundaryError, type BoundarySession, type OpenBoundaryOptions } from './boundary';
@@ -27,6 +37,7 @@ import {
   stripFooter,
   untrustedConfig,
   untrustedConfigAtRef,
+  unverifiableConfig,
   verifyCitations,
 } from './call';
 import { FACTS_HEADER } from './facts';
@@ -381,6 +392,41 @@ describe('hardening', () => {
     // A `--dir` that carries none of the four is fine, whatever the ref holds.
     const bare = mkdtempSync(join(tmpdir(), 'mikro-bare-'));
     expect(untrustedConfigAtRef(bare, root, 'refs/heads/main', blob)).toBeNull();
+  });
+
+  test('a compared path that is not a REGULAR file is refused, in all three shapes', () => {
+    // Pure, and git-independent: what is under test is the `lstat` classification itself,
+    // not any path that happens to reach it. Each shape used to do something worse than
+    // refuse — a directory threw EISDIR out of the comparison, a live symlink was read
+    // wherever it pointed, and a dangling one read as "absent" and waved the run through.
+    const root = mkdtempSync(join(tmpdir(), 'mikro-irregular-'));
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mikro-irregular-target-'));
+    writeFileSync(join(elsewhere, 'TOOLS.md'), '## injected through a link\n');
+    mkdirSync(join(root, '.mikro'), { recursive: true });
+    // The ref carries byte-identical content for every compared path, so nothing but the
+    // SHAPE can be the reason for a refusal.
+    const blob = () => '## injected through a link\n';
+
+    mkdirSync(join(root, '.mikro', 'TOOLS.md', 'inside'), { recursive: true });
+    expect(untrustedConfigAtRef(root, root, 'refs/heads/main', blob)).toContain('not a regular file');
+    // The same shape on the FLAG path's directory comparison, and on the no-ref path.
+    expect(untrustedConfig(root, elsewhere)).toContain('not a regular file');
+    expect(unverifiableConfig(root, 'no origin/HEAD')).toContain('cannot be verified');
+
+    rmSync(join(root, '.mikro', 'TOOLS.md'), { recursive: true });
+    symlinkSync(join(elsewhere, 'TOOLS.md'), join(root, '.mikro', 'TOOLS.md'));
+    expect(untrustedConfigAtRef(root, root, 'refs/heads/main', blob)).toContain('not a regular file');
+    expect(untrustedConfig(root, elsewhere)).toContain('not a regular file');
+
+    rmSync(join(root, '.mikro', 'TOOLS.md'));
+    symlinkSync(join(elsewhere, 'never-written.md'), join(root, '.mikro', 'TOOLS.md'));
+    expect(untrustedConfigAtRef(root, root, 'refs/heads/main', blob)).toContain('not a regular file');
+    expect(untrustedConfig(root, elsewhere)).toContain('not a regular file');
+
+    // And a REGULAR file that matches is still accepted: the refusal is about the shape.
+    rmSync(join(root, '.mikro', 'TOOLS.md'));
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected through a link\n');
+    expect(untrustedConfigAtRef(root, root, 'refs/heads/main', blob)).toBeNull();
   });
   test('an untracked file is never a verified citation', () => {
     const repo = mkdtempSync(join(tmpdir(), 'mikro-untracked-'));
@@ -738,6 +784,15 @@ describe('agent resolution and the run ledger', () => {
     const loose = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-loose-')));
     mkdirSync(join(loose, '.mikro'), { recursive: true });
     expect(resolveRunsDir(loose, home)).toBe(join(loose, '.mikro', 'runs'));
+
+    // A tree git cannot answer for AT ALL — a broken gitlink, and therefore no `ls-files`
+    // either — is a checkout, not a loose directory: the ledger goes to GENIE_HOME rather
+    // than growing an untracked `.mikro/runs` inside somebody's repository. With the
+    // two-valued probe this read as "no git checkout" and landed in the tree.
+    const broken = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-brokenlink-')));
+    writeFileSync(join(broken, '.git'), 'gitdir: /nowhere/at/all/.git\n');
+    mkdirSync(join(broken, '.mikro'), { recursive: true });
+    expect(resolveRunsDir(broken, home)).toBe(join(home, 'mikro', 'runs', slug(broken)));
   });
 
   test('the git probes ignore an ambient GIT_DIR, so a hook cannot move the trusted root', () => {

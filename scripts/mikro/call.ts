@@ -43,7 +43,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
 import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode, openBoundary } from './boundary';
 import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, renderFacts } from './facts';
@@ -974,10 +974,94 @@ function gitProbe(args: string[]): string | null {
   }
 }
 
-/** The git toplevel of `cwd`, or null outside a checkout. */
+/**
+ * What the invoking cwd IS, in the only three shapes that matter to the trust boundary.
+ *
+ * `not-a-repository` is the ONLY one that reaches Decision 8's carve-out, so it is the
+ * only one that has to be proven. `unanswered` is everything else — and it is treated as
+ * being INSIDE a repository whose ref could not be resolved, which fails closed.
+ */
+export type CheckoutProbe =
+  | { kind: 'toplevel'; root: string }
+  | { kind: 'not-a-repository' }
+  | { kind: 'unanswered'; why: string };
+
+/** The nearest ancestor of `from` (inclusive) holding a `.git` entry of any kind, or null. */
+function ancestorWithDotGit(from: string): string | null {
+  let dir = resolve(from);
+  for (;;) {
+    try {
+      // lstat, not existsSync: a `.git` that is a FILE (a linked worktree), or a dangling
+      // symlink, is still proof that this tree is somebody's checkout.
+      lstatSync(join(dir, '.git'));
+      return dir;
+    } catch {
+      // keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Classify the invoking cwd — and fail closed on every answer that is not a clean one.
+ *
+ * `gitToplevel` used to answer `null` for BOTH "git says this is not a repository" and
+ * "git could not answer", and the second is common: a `safe.directory` dubious-ownership
+ * refusal (exit 128, ordinary under Docker, CI, sudo and shared checkouts), an unreadable
+ * index, a broken gitlink whose `.git` FILE points nowhere, or no `git` on PATH at all.
+ * Collapsing those into "no checkout" handed them Decision 8's carve-out, whose
+ * same-directory exemption then accepted `--dir` = cwd carrying the pull request's own
+ * `TOOLS.md` — inside a real repository, with a valid `origin/HEAD` sitting right there.
+ *
+ * So: git's clean "not a git repository" is the only answer that means what it says, and
+ * even that is overruled by a `.git` entry found walking up from cwd (which is exactly
+ * what a broken gitlink looks like: git refuses, the entry is right there). Everything
+ * else — any other non-zero exit, a spawn that failed, an empty toplevel — is
+ * `unanswered`, which the caller treats as in-repo with no trusted ref.
+ *
+ * Deciding ONE classification by git's message is deliberate and bounded: the wording
+ * only ever moves a case from the fail-closed side to the carve-out when git also could
+ * not find a `.git` anywhere above cwd, so a reworded git makes this stricter, never
+ * looser.
+ */
+export function probeCheckout(cwd: string): CheckoutProbe {
+  let exitCode: number | null = null;
+  let stdout = '';
+  let stderr = '';
+  try {
+    const probe = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], {
+      // This is the ONE git call whose MESSAGE is classified, so it is the one that must
+      // not be translated: `LC_ALL=C` with `LANGUAGE` stripped. On a localized host the
+      // carve-out would otherwise never be reached — every plain directory would read as
+      // `unanswered` and fail closed, which is safe but silently disables Decision 8's
+      // non-git carve-out for everyone whose git speaks anything but English.
+      env: { ...gitProbeEnv(process.env, ['LANGUAGE']), LC_ALL: 'C' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    exitCode = probe.exitCode;
+    stdout = probe.stdout.toString().trim();
+    stderr = probe.stderr.toString().trim();
+  } catch (error) {
+    stderr = `git could not be run (${error instanceof Error ? error.message : String(error)})`;
+  }
+  if (exitCode === 0 && stdout) return { kind: 'toplevel', root: resolve(stdout) };
+  const rooted = ancestorWithDotGit(cwd);
+  const saidNotARepository = exitCode !== null && /not a git repository/i.test(stderr);
+  const couldNotRun = exitCode === null;
+  if (!rooted && (saidNotARepository || couldNotRun)) return { kind: 'not-a-repository' };
+  const why = rooted
+    ? `${join(rooted, '.git')} exists but git did not name a toplevel${stderr ? `: ${stderr.slice(0, 200)}` : ''}`
+    : `git answered ${exitCode}${stderr ? `: ${stderr.slice(0, 200)}` : ''}`;
+  return { kind: 'unanswered', why };
+}
+
+/** The git toplevel of `cwd`, or null when git did not name one. Use {@link probeCheckout} where the DIFFERENCE matters. */
 export function gitToplevel(cwd: string): string | null {
-  const out = gitProbe(['-C', cwd, 'rev-parse', '--show-toplevel'])?.trim() ?? '';
-  return out ? resolve(out) : null;
+  const probe = probeCheckout(cwd);
+  return probe.kind === 'toplevel' ? probe.root : null;
 }
 
 const hasAgent = (root: string, agent: string): boolean => existsSync(join(root, agent, 'agent.yaml'));
@@ -995,10 +1079,15 @@ export interface ResolvedAgents {
   /** Why this source won — reported whenever the repository's own agent was not used. */
   reason?: string;
   /**
-   * The git toplevel of the invoking cwd, when there is one. Absent means the process was
-   * started outside any checkout — Decision 8's non-git carve-out, and the ONLY state in
-   * which a missing trusted ref falls back to the directory comparison rather than failing
-   * closed. Not set on the flag path, which never consults a ref.
+   * The invoking checkout, as far as this run can prove: the toplevel when git named one,
+   * and the cwd itself when git could not answer but the cwd could not be shown to be
+   * OUTSIDE a repository either (`probeCheckout` → `unanswered`).
+   *
+   * Absent means exactly one thing: the cwd was PROVEN not to be in a repository — git
+   * said so, or there is no git at all, and no `.git` entry exists anywhere above it. That
+   * is Decision 8's carve-out and the only state in which a missing trusted ref falls back
+   * to the directory comparison instead of failing closed. Not set on the flag path, which
+   * never consults a ref.
    */
   invokingRoot?: string;
   /** Removes materialized temp material. Absent unless something was materialized. */
@@ -1032,12 +1121,24 @@ export function resolveAgentsDir(options: {
     return { dir, trustedRoot: resolve(dir, '..', '..'), source: 'flag' };
   }
   if (!AGENT_DIR_NAME.test(options.agent)) return null;
-  const repoRoot = gitToplevel(options.cwd);
+  const checkout = probeCheckout(options.cwd);
+  const repoRoot = checkout.kind === 'toplevel' ? checkout.root : null;
   const trustedRoot = repoRoot ?? resolve(options.cwd);
-  const trusted = repoRoot
-    ? resolveTrustedRef(repoRoot, options.agentsRef)
-    : { ref: null, reason: `${trustedRoot} is no git checkout, so it carries no trusted ref` };
-  const invoking = repoRoot ? { invokingRoot: repoRoot } : {};
+  // Three answers, three reasons — and only the PROVEN non-repository drops `invokingRoot`,
+  // which is what sends a run to the carve-out. A git that could not answer keeps it and
+  // therefore fails closed on configuration; the AGENT still degrades to the shipped
+  // default in both, because that is genie's payload rather than the tree under review.
+  const trusted =
+    checkout.kind === 'toplevel'
+      ? resolveTrustedRef(checkout.root, options.agentsRef)
+      : {
+          ref: null,
+          reason:
+            checkout.kind === 'not-a-repository'
+              ? `${trustedRoot} is no git checkout, so it carries no trusted ref`
+              : `no trusted ref could be resolved for ${trustedRoot} — ${checkout.why}`,
+        };
+  const invoking = checkout.kind === 'not-a-repository' ? {} : { invokingRoot: repoRoot ?? trustedRoot };
   let material: MaterializedAgents | null = null;
   /** Why the SHIPPED agent won, if it does: the ref that could not be resolved, or the agent that could not be materialized from it. */
   let shippedReason = trusted.reason;
@@ -1078,12 +1179,19 @@ export function resolveAgentsDir(options: {
  * IS a checkout (a readable toplevel, an unreadable index) gets the `<GENIE_HOME>`
  * ledger, because growing an untracked directory inside somebody's repository is the
  * worse failure of the two.
+ *
+ * That asymmetry only holds if "is a checkout" is the same three-valued question the
+ * trust boundary asks: with the two-valued `gitToplevel`, a checkout whose git cannot
+ * answer AT ALL — a `safe.directory` refusal, a broken gitlink — answered "no checkout"
+ * for both probes at once and dropped an untracked `.mikro/runs` inside a repository that
+ * never opted in, which is exactly what Decision 11 exists to prevent. Only a PROVEN
+ * non-repository keeps the in-tree ledger.
  */
 function optedIntoMikro(root: string): boolean {
   if (!existsSync(join(root, '.mikro'))) return false;
   const tracked = gitProbe(['-C', root, 'ls-files', '--', '.mikro']);
   if (tracked !== null) return tracked.trim().length > 0;
-  return gitToplevel(root) === null;
+  return probeCheckout(root).kind === 'not-a-repository';
 }
 
 /**
