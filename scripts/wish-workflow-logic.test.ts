@@ -353,3 +353,53 @@ describe('per-stage models resolve from the caller args, and an unset key inheri
     expect({ ...staged, gateModel: '' }).toEqual(plain);
   });
 });
+
+// ─── Changed-path evidence: the run's own worktree is still the repository ───
+
+const PATH_DECLARATIONS = [
+  lift(/^const text = .*$/m),
+  lift(/^const list = .*$/m),
+  lift(/^const texts = .*$/m),
+  lift(/^function repoRelative\(value\) \{[\s\S]*?^\}$/m),
+  lift(/^function partitionRepoRelative\(values, root = ''\) \{[\s\S]*?^\}$/m),
+].join('\n');
+
+const partitionRepoRelative = new Function(`${PATH_DECLARATIONS}\nreturn partitionRepoRelative`)() as (
+  values: unknown,
+  root?: string,
+) => { inside: string[]; outside: string[] };
+
+describe('a path under the run worktree is inside the repository, however it is spelled', () => {
+  const WORKTREE = '/home/op/repo/.claude/worktrees/wish-one-thing';
+
+  // Run wf_dfee11f7-177 (2026-09-18): gate green, 4 declared files, and the reviewer returned
+  // `diffFiles` as absolute worktree paths — every one became "path outside the repository" and
+  // the run ended BLOCKED with nothing wrong in the commit.
+  test('an absolute path under the worktree normalises to its repository-relative form', () => {
+    const paths = partitionRepoRelative([`${WORKTREE}/scripts/a.ts`, 'scripts/b.ts', `${WORKTREE}/./c.ts`], WORKTREE);
+    expect(paths).toEqual({ inside: ['scripts/a.ts', 'scripts/b.ts', 'c.ts'], outside: [] });
+  });
+
+  test('a trailing slash on the worktree changes nothing', () => {
+    expect(partitionRepoRelative([`${WORKTREE}/a.ts`], `${WORKTREE}/`).inside).toEqual(['a.ts']);
+  });
+
+  test('every other absolute path is still a reject, and the reject keeps the spelling it arrived in', () => {
+    const rejects = [
+      '/etc/passwd',
+      '~/.ssh/id_ed25519',
+      `${WORKTREE}/../wish-other/a.ts`,
+      `${WORKTREE}-sibling/a.ts`,
+      WORKTREE,
+    ];
+    const paths = partitionRepoRelative(rejects, WORKTREE);
+    expect(paths.inside).toEqual([]);
+    expect(paths.outside).toEqual(rejects.map((raw) => `path outside the repository: ${raw}`));
+  });
+
+  test('no worktree, or a worktree that is not absolute, strips nothing', () => {
+    expect(partitionRepoRelative([`${WORKTREE}/a.ts`]).inside).toEqual([]);
+    expect(partitionRepoRelative(['repo/a.ts'], 'repo').inside).toEqual(['repo/a.ts']);
+    expect(partitionRepoRelative(['/a.ts'], '/').inside).toEqual([]);
+  });
+});

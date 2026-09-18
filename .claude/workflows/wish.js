@@ -393,11 +393,21 @@ function repoRelative(value) {
 // A path that will not resolve inside the repository is EVIDENCE, not noise: dropping it would
 // hide exactly the out-of-bounds write the declared-set and denylist comparisons exist to catch,
 // so every safety comparison partitions instead of filtering and carries the rejects forward.
-function partitionRepoRelative(values) {
+//
+// The ONE absolute spelling that is still the repository is a path under this run's own
+// worktree: `git -C <worktree> diff --name-only` is relative, but an agent that read the files
+// reports them the way it opened them. That prefix is stripped before the comparison — and only
+// that prefix, only at a segment boundary — so `<worktree>/../x` and every other absolute path
+// are still rejects. Without it a reviewer's absolute `diffFiles` blocked a gate-green run as
+// "the commit left the declared file set" (run wf_dfee11f7-177, 2026-09-18).
+function partitionRepoRelative(values, root = '') {
+  const prefix = String(root).trim().replace(/\/+$/, '')
   const inside = []
   const outside = []
   for (const raw of texts(values)) {
-    const relative = repoRelative(raw)
+    const spelled = String(raw).trim()
+    const candidate = prefix.startsWith('/') && spelled.startsWith(`${prefix}/`) ? spelled.slice(prefix.length + 1) : spelled
+    const relative = repoRelative(candidate)
     if (relative) inside.push(relative)
     else outside.push(`path outside the repository: ${raw}`)
   }
@@ -1116,7 +1126,7 @@ const work = objectOf(workStep.value)
 branch = text(work.branch)
 worktree = text(work.worktree)
 headSha = text(work.head).toLowerCase()
-const changedPaths = partitionRepoRelative(work.filesChanged)
+const changedPaths = partitionRepoRelative(work.filesChanged, worktree)
 const changed = changedPaths.inside
 // Unmeasured until the gate measures it: the executor's own insertion count is a claim, not a size.
 diff = measuredSize(-1, -1)
@@ -1202,7 +1212,7 @@ function normalizeGate(raw) {
 
 function normalizeReview(raw) {
   const value = objectOf(raw)
-  const reviewPaths = partitionRepoRelative(value.diffFiles)
+  const reviewPaths = partitionRepoRelative(value.diffFiles, worktree)
   const diffFiles = reviewPaths.inside
   // The executor's own changed-path evidence is never discarded: a path it reported and the
   // reviewer did not is still in the commit, so both lists feed the denylist and the declared-set checks.
@@ -1313,7 +1323,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
     break
   }
   const fix = objectOf(fixStep.value)
-  const touchedPaths = partitionRepoRelative(fix.filesTouched)
+  const touchedPaths = partitionRepoRelative(fix.filesTouched, worktree)
   const touched = touchedPaths.inside
   const newHead = text(fix.head).toLowerCase()
   const stillOpen = list(fix.stillOpen).map((raw2) => {
