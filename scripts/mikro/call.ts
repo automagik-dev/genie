@@ -842,15 +842,44 @@ export function shippedAgentsRoot(genieHome: string): string {
   return join(genieHome, 'templates', 'mikro', 'agents');
 }
 
-/** The git toplevel of `cwd`, or null outside a checkout. */
-export function gitToplevel(cwd: string): string | null {
+/**
+ * Environment variables that make `git` answer for a repository OTHER than the one
+ * `-C <dir>` names. A git hook — or any parent that exported them — sets `GIT_DIR`,
+ * `GIT_WORK_TREE` and `GIT_INDEX_FILE`, and `-C` does NOT override them: the probes
+ * below would then resolve a toplevel, and therefore a TRUSTED ROOT, chosen by
+ * ambient environment rather than by the operator's working directory.
+ */
+const AMBIENT_GIT_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_NAMESPACE',
+] as const;
+
+/** The caller's environment with {@link AMBIENT_GIT_VARS} removed; everything else (PATH included) survives. */
+export function gitProbeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const stripped = new Set<string>(AMBIENT_GIT_VARS);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) if (value !== undefined && !stripped.has(key)) out[key] = value;
+  return out;
+}
+
+/** stdout of one git probe, or null when git did not answer — no git binary, no repository, an unreadable index. */
+function gitProbe(args: string[]): string | null {
   try {
-    const probe = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--show-toplevel']);
-    const out = probe.exitCode === 0 ? probe.stdout.toString().trim() : '';
-    return out ? resolve(out) : null;
+    const probe = Bun.spawnSync(['git', ...args], { env: gitProbeEnv() });
+    return probe.exitCode === 0 ? probe.stdout.toString() : null;
   } catch {
     return null;
   }
+}
+
+/** The git toplevel of `cwd`, or null outside a checkout. */
+export function gitToplevel(cwd: string): string | null {
+  const out = gitProbe(['-C', cwd, 'rev-parse', '--show-toplevel'])?.trim() ?? '';
+  return out ? resolve(out) : null;
 }
 
 /** One directory name, never a path: `<agents>/<agent>/agent.yaml` is joined from it. */
@@ -900,16 +929,17 @@ export function resolveAgentsDir(options: {
  * A repository opted into mikro when it carries a `.mikro/` directory git tracks —
  * or when it is no git checkout at all, where nothing CAN be tracked and the
  * directory's presence is the whole signal.
+ *
+ * When `ls-files` cannot answer, the fallback is deliberately asymmetric: a tree that
+ * IS a checkout (a readable toplevel, an unreadable index) gets the `<GENIE_HOME>`
+ * ledger, because growing an untracked directory inside somebody's repository is the
+ * worse failure of the two.
  */
 function optedIntoMikro(root: string): boolean {
   if (!existsSync(join(root, '.mikro'))) return false;
-  try {
-    const probe = Bun.spawnSync(['git', '-C', root, 'ls-files', '--', '.mikro']);
-    if (probe.exitCode !== 0) return true;
-    return probe.stdout.toString().trim().length > 0;
-  } catch {
-    return true;
-  }
+  const tracked = gitProbe(['-C', root, 'ls-files', '--', '.mikro']);
+  if (tracked !== null) return tracked.trim().length > 0;
+  return gitToplevel(root) === null;
 }
 
 /**

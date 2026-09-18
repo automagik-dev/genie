@@ -24,9 +24,22 @@ bun scripts/mikro/call.ts issue-triage --prompt "Triage issue #2941" --dir .   #
 ```
 
 `genie mikro call` and `bun scripts/mikro/call.ts` are ONE code path: the command in the installed
-binary forwards its argv untouched to `runCallCli`, exported from this file, and the
-`import.meta.main` guard calls the same function. Prefer the `genie` form — it is the one a
-repository that is not genie has, and it is what `wish.js` runs. Exit codes: 0 ok, 1 not ok, 2 usage.
+binary declares no options of its own and hands the tail after the agent name to `runCallCli`,
+exported from this file, which the `import.meta.main` guard also calls. Prefer the `genie` form — it
+is the one a repository that is not genie has, and it is what `wish.js` runs.
+
+One exception to "as typed", and it is real: genie's own GLOBAL options win anywhere in the tail.
+`-V`/`--version`, `-h`/`--help` and `--no-interactive` are consumed by the program before the tail
+is assembled, so `genie mikro call wish-context --prompt -V` prints the version and runs no agent,
+and a trailing `--help` prints Commander's help. Quote such a value (`--prompt " -V"`) or use
+`--prompt-file`. Shielding the tail from those three would mean `enablePositionalOptions()` on the
+PROGRAM, which changes how every other genie command parses; `bun scripts/mikro/call.ts` has no
+such layer and forwards everything. `src/term-commands/mikro.test.ts` pins the behaviour.
+
+Exit codes: **0** ok, **1** not ok — an agent that failed validation, a `mikro` missing from PATH,
+and also `genie mikro call` with NO agent, which is Commander's missing-argument path through
+genie's global error handler — and **2** for the runtime's own usage refusals: an unregistered agent
+NAME, a registered one with no prompt, a bad `--boundary`.
 
 ### Where the agent files come from
 

@@ -13,6 +13,8 @@ import {
   containedEnv,
   extractJson,
   factsContextPath,
+  gitProbeEnv,
+  gitToplevel,
   parseBoundaryFlag,
   parseFooter,
   persistFailedRaw,
@@ -588,14 +590,34 @@ describe('agent resolution and the run ledger', () => {
     });
   });
 
-  test('an agent no source carries resolves to nothing, and a name that is a path is refused', () => {
+  test('an agent no source carries resolves to nothing', () => {
     const repo = gitRepo('mikro-none-');
     const home = shippedHome([]);
     expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'wish-context' })).toBeNull();
-    // `<agents>/<agent>/agent.yaml` is a JOIN: the name is one directory name, never a path.
-    withAgent(shippedAgentsRoot(home), 'wish-context');
+  });
+
+  test('a name that traverses out of the agents root is refused even when a real agent waits there', () => {
+    const repo = gitRepo('mikro-traverse-');
+    const home = shippedHome([]);
+    // A REAL agent planted one level above the shipped agents root, and a second one
+    // above the repository's. Both are reachable by joining a traversing name, so the
+    // name guard is the only thing that can refuse them: without it `hasAgent` is true
+    // and the traversal resolves. Asserting on an EMPTY traversal target would pass for
+    // the wrong reason (no agent.yaml) and would survive deleting the guard.
+    withAgent(join(home, 'templates', 'mikro'), 'evil');
+    withAgent(join(repo, '.mikro'), 'evil');
+    expect(existsSync(join(home, 'templates', 'mikro', 'agents', '..', 'evil', 'agent.yaml'))).toBe(true);
+    expect(existsSync(join(repo, '.mikro', 'agents', '..', 'evil', 'agent.yaml'))).toBe(true);
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '../evil' })).toBeNull();
     expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '../../../etc' })).toBeNull();
     expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '.ssh' })).toBeNull();
+    // The same agent, named and placed legally, resolves: the refusal is about the NAME.
+    withAgent(shippedAgentsRoot(home), 'evil');
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'evil' })).toEqual({
+      dir: shippedAgentsRoot(home),
+      trustedRoot: repo,
+      source: 'shipped',
+    });
   });
 
   test('outside any git checkout the trusted root is the cwd and the agents are the shipped ones', () => {
@@ -616,19 +638,56 @@ describe('agent resolution and the run ledger', () => {
     Bun.spawnSync(['git', '-C', opted, 'add', '.mikro']);
     expect(resolveRunsDir(opted, home)).toBe(join(opted, '.mikro', 'runs'));
 
-    // A repository that never opted into mikro must not grow untracked files.
+    // A repository that never opted into mikro must not grow untracked files. The
+    // shape is asserted concretely, not against a second call of the same function.
     const clean = gitRepo('mikro-clean-');
     const away = resolveRunsDir(clean, home);
-    expect(away.startsWith(join(home, 'mikro', 'runs'))).toBe(true);
-    expect(away).toContain(basename(clean));
+    const slug = (root: string) => `${basename(root)}-${createHash('sha256').update(root).digest('hex').slice(0, 8)}`;
+    expect(away).toBe(join(home, 'mikro', 'runs', slug(clean)));
+    expect(slug(clean)).toMatch(/-[0-9a-f]{8}$/);
     // The hash, not the name, keeps two checkouts of the same repository apart.
-    expect(resolveRunsDir(clean, home)).toBe(away);
-    expect(resolveRunsDir(gitRepo('mikro-clean-'), home)).not.toBe(away);
+    const twin = gitRepo('mikro-clean-');
+    expect(resolveRunsDir(twin, home)).toBe(join(home, 'mikro', 'runs', slug(twin)));
+    expect(resolveRunsDir(twin, home)).not.toBe(away);
+
+    // A `.mikro/` directory git does NOT track is not an opt-in either: an untracked
+    // file in it is exactly what an earlier run would have left behind.
+    const untracked = gitRepo('mikro-untracked-');
+    mkdirSync(join(untracked, '.mikro', 'runs'), { recursive: true });
+    writeFileSync(join(untracked, '.mikro', 'runs', 'wish-context.jsonl'), '{}\n');
+    expect(existsSync(join(untracked, '.mikro'))).toBe(true);
+    expect(resolveRunsDir(untracked, home)).toBe(join(home, 'mikro', 'runs', slug(untracked)));
 
     // No git at all: the directory's presence is the whole signal.
     const loose = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-loose-')));
     mkdirSync(join(loose, '.mikro'), { recursive: true });
     expect(resolveRunsDir(loose, home)).toBe(join(loose, '.mikro', 'runs'));
+  });
+
+  test('the git probes ignore an ambient GIT_DIR, so a hook cannot move the trusted root', () => {
+    expect(
+      gitProbeEnv({ PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/i', KEEP: '1' }),
+    ).toEqual({ PATH: '/bin', KEEP: '1' });
+    const mine = gitRepo('mikro-env-mine-');
+    const theirs = gitRepo('mikro-env-theirs-');
+    const saved = { dir: process.env.GIT_DIR, work: process.env.GIT_WORK_TREE };
+    try {
+      // What a git hook exports. `git -C <dir>` does NOT override it, so without the
+      // strip the toplevel — and with it the trusted root — is chosen by the environment.
+      process.env.GIT_DIR = join(theirs, '.git');
+      process.env.GIT_WORK_TREE = theirs;
+      expect(gitToplevel(mine)).toBe(mine);
+      expect(resolveAgentsDir({ cwd: mine, genieHome: shippedHome([]), agent: 'wish-context' })).toBeNull();
+      withAgent(join(mine, '.mikro', 'agents'), 'wish-context');
+      expect(resolveAgentsDir({ cwd: mine, genieHome: shippedHome([]), agent: 'wish-context' })?.trustedRoot).toBe(
+        mine,
+      );
+    } finally {
+      if (saved.dir === undefined) process.env.GIT_DIR = undefined;
+      else process.env.GIT_DIR = saved.dir;
+      if (saved.work === undefined) process.env.GIT_WORK_TREE = undefined;
+      else process.env.GIT_WORK_TREE = saved.work;
+    }
   });
 
   test('a repository with no .mikro runs the shipped agent and writes nothing into the payload', async () => {

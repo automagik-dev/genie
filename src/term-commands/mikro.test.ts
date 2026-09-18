@@ -70,6 +70,57 @@ describe('genie mikro call', () => {
     expect(stderr).toContain('--prompt or --prompt-file is required');
   });
 
+  /**
+   * The tail is forwarded AS TYPED, with one exception this test exists to keep
+   * honest: genie's own global options are consumed by the program wherever they
+   * appear, including as the VALUE of a runtime flag. `enablePositionalOptions()`
+   * on the `mikro` group shields the tail from the group's own options, not from
+   * the program's, and moving it to the program would change how every other
+   * command parses. Documented by this test rather than by folklore; the escape
+   * is to quote the value or use --prompt-file.
+   */
+  test("genie's three global options win anywhere in the tail, and run no agent", () => {
+    for (const spelling of ['-V', '--version']) {
+      const { code, stdout, stderr } = runCli(['mikro', 'call', 'wish-context', '--prompt', spelling]);
+      expect(code).toBe(0);
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/); // the version, not an answer
+      expect(stdout).not.toContain('"agent"');
+      expect(stderr).toBe('');
+    }
+    // A trailing --help is Commander's help, not the runtime's usage banner.
+    const help = runCli(['mikro', 'call', 'wish-context', '--help']);
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain('Usage: genie mikro call');
+    // --no-interactive is consumed too, so it never reaches the runtime as a value:
+    // the prompt is then missing and the runtime refuses rather than running blind.
+    const interactive = runCli(['mikro', 'call', 'wish-context', '--prompt', '--no-interactive']);
+    expect(interactive.code).toBe(2);
+    expect(interactive.stderr).toContain('--prompt or --prompt-file is required');
+    // The escape: a quoted value is ONE argv token and is forwarded. Proven at zero
+    // cost — `--dir` carries a `.mikro/TOOLS.md` the invoking checkout does not have,
+    // so the run is refused before any runtime is spawned, and reaching that refusal
+    // is itself the proof that the prompt was accepted rather than eaten.
+    const other = tmp('genie-mikro-other-');
+    mkdirSync(join(other, '.mikro'), { recursive: true });
+    writeFileSync(join(other, '.mikro', 'TOOLS.md'), '## injected\n');
+    const quoted = runCli([
+      'mikro',
+      'call',
+      'wish-context',
+      '--prompt',
+      ' -V',
+      '--dir',
+      other,
+      '--no-phoenix',
+      '--no-ledger',
+    ]);
+    expect(quoted.code).toBe(1);
+    expect(quoted.stdout).not.toMatch(/^\d+\.\d+\.\d+/);
+    const answer = JSON.parse(quoted.stdout) as { ok: boolean; attempts: { errors: string[] }[] };
+    expect(answer.ok).toBe(false);
+    expect(answer.attempts[0].errors[0]).toStartWith('config:');
+  });
+
   test('the group is exempt from the v4 workspace gate — any repository may run it', () => {
     // A directory with no `.genie/workspace.json` at all: before the exemption this
     // exited 2 with "No workspace found", in exactly the repositories the command exists for.
