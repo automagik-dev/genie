@@ -462,7 +462,10 @@ diff), a root commit for review-prep (no `<sha>^`), a commit with no files, and 
 one of whose files no longer exists at HEAD — the verifier scores the TREE, not the commit,
 so a fixture naming a deleted file would score a correct agent down. The output is
 byte-stable across runs of the same argv, so a rebuilt set is a real diff; it lands at
-`<repo>/.mikro/fixtures/<agent>.json` and is not replaced without `--force`. Aim for five
+`<repo>/.mikro/fixtures/<agent>.json` (`--out` is taken as given and may point outside the
+repository) and is not replaced without `--force`. A built prompt is repository content —
+your own commit subjects — so read the set before you commit it, the way you would read any
+generated file. Aim for five
 to ten fixtures whose file sets you would defend in review; a range like `HEAD~40..HEAD`
 with `--max 10` usually gets there.
 
@@ -478,7 +481,9 @@ prompt says so and asks for `null` rather than citing a file that is not there.
 the working tree and therefore skip the `.mikro/` configuration comparison `genie mikro
 call` makes (`--dir` equals the synthesized trusted root, so the same-directory exemption
 applies). `TOOLS.md` is Python injected into the REPL, so pointing a bench at a PR checkout
-or an unaudited clone runs that tree's configuration. Reviewing untrusted content is `genie
+or an unaudited clone runs that tree's configuration. `coach` goes one step further: when
+`<--dir>/scripts/mikro/bench.ts` exists it EXECUTES that file with `bun`, so a `--dir`
+carrying its own copy of the bench runs that copy. Reviewing untrusted content is `genie
 mikro call`'s job; measuring is an operator tool over the operator's own tree.
 
 **Host prerequisites, which genie does not ship:** `mikro` ≥ 1.260909.1 on PATH

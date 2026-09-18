@@ -164,7 +164,8 @@ Flags (parsed by the mikro runtime, forwarded as typed):
   --agent <name>             wish-context or review-prep
   --dir <repo>               The repository whose history is read; defaults to the
                              working directory
-  --out <path>               Where to write; default <dir>/.mikro/fixtures/<agent>.json
+  --out <path>               Where to write, taken as given (it may point outside
+                             <repo>); default <dir>/.mikro/fixtures/<agent>.json
   --max <n>                  Stop after n fixtures (oldest first)
   --force                    Replace an existing file (refused without it)
 
@@ -191,7 +192,8 @@ Flags (parsed by the mikro runtime, forwarded as typed):
 
 Copies this release's default wish-context and review-prep agents from
 <GENIE_HOME>/templates/mikro/agents into <repo>/.mikro/agents/, adds ".mikro/runs/"
-to .gitignore, and writes nothing else and nothing outside <repo>. An agent
+to .gitignore (reported and left alone when that file is a symlink, which would write
+outside <repo>), and writes nothing else and nothing outside <repo>. An agent
 directory that already exists is REFUSED, never overwritten, so a second run changes
 nothing. A symlinked .mikro or .mikro/agents is refused rather than followed.
 

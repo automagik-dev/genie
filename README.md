@@ -175,7 +175,7 @@ genie --help
 | `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
 | `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
-| `genie mikro` | Run a mikro microagent over any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified |
+| `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `test-approval`, `handshake`) |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
