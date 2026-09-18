@@ -232,7 +232,7 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
     }
     return n;
   };
-  const check = (path: string, line: number | null, deletedOk: boolean) => {
+  const check = (path: string, line: number | null, deletedOk: boolean, declaredNew = false) => {
     const key = `${path}:${line ?? ''}`;
     if (seen.has(key)) return;
     const clean = path.replace(/^\.\//, '').split('#')[0];
@@ -261,6 +261,24 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
             return;
           }
         }
+      }
+      // A PLAN may name a file that does not exist yet: the prompts allow a `plan.files`
+      // entry whose `reason` starts with `NEW:` under a directory the agent printed. It
+      // is a proposal, never evidence — so it passes only without a line, only under a
+      // directory that exists and holds tracked content, and a `path:line` citation of
+      // the same file elsewhere in the answer still fails on its own.
+      if (declaredNew && line === null) {
+        const parent = clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : '';
+        const parentOk = parent === '' || (existsSync(resolve(dir, parent)) && isTracked(dir, parent));
+        seen.set(key, {
+          path,
+          line,
+          ok: parentOk,
+          reason: parentOk
+            ? 'new file (declared NEW: under a tracked directory)'
+            : `declared NEW:, but ${parent}/ is not a tracked directory${hint(clean)}`,
+        });
+        return;
       }
       // `deletedOk` is the ANSWER's own claim that it deleted this file, so on its
       // own it lets a fabricated path pass as evidence by calling itself deleted —
@@ -294,10 +312,14 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
   };
   const text = JSON.stringify(parsed);
   for (const m of text.matchAll(CITE_RE)) check(m[1], Number(m[2]), false);
+  // Only a `plan.files` record may carry the marker: a `NEW:` reason anywhere else is prose.
+  const plan = (parsed as { plan?: { files?: unknown } } | null)?.plan?.files;
+  const planned = new Set<unknown>(Array.isArray(plan) ? plan : []);
   walk(parsed, (p, ctx) => {
     const bare = p.split(':')[0];
     if (/\s/.test(bare)) return; // a command or a sentence, not a path
-    check(bare, null, ctx.change === 'deleted');
+    const declaredNew = planned.has(ctx) && typeof ctx.reason === 'string' && ctx.reason.startsWith('NEW:');
+    check(bare, null, ctx.change === 'deleted', declaredNew);
   });
   return [...seen.values()];
 }
