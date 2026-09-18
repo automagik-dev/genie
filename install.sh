@@ -26,6 +26,14 @@ REPO="automagik-dev/genie"
 # `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
 # release-channel-dev (2026-05-11) for the producer-side wiring.
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
+# The same published file through the public contents API. raw.githubusercontent.com
+# caches independently of the repository — measured 2026-09-18: CDN max-age=300, API
+# max-age=60 — so for minutes after a release publishes the CDN still serves the
+# PREVIOUS manifest and a fresh install lands a version behind with nothing saying so
+# (issue #2950; `genie update` was the same bug, #2947). Neither source needs a
+# credential, so both are read and the newer answer wins. This narrows the window
+# about fivefold; it does not close it.
+MANIFEST_API_BASE="https://api.github.com/repos/${REPO}/contents/.well-known"
 EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 # sign-attest.yml registers the GitHub-native attestation under a CUSTOM
@@ -419,19 +427,81 @@ resolve_channel() {
 # Everything else → <channel>.json. The producer side
 # (release-publish.yml) writes whichever filename matches the channel passed
 # through from version.yml — see wish release-channel-dev.
+manifest_file_name() {
+  if [ "$1" = "stable" ]; then echo "latest.json"; else echo "${1}.json"; fi
+}
+
 resolve_manifest_url() {
-  local channel="$1" file
-  if [ "$channel" = "stable" ]; then file="latest.json"; else file="${channel}.json"; fi
-  echo "${MANIFEST_BASE}/${file}"
+  echo "${MANIFEST_BASE}/$(manifest_file_name "$1")"
+}
+
+# The API needs one header to answer with the file's own bytes; without it the
+# response is a JSON envelope, which carries no `channel` and is rejected below.
+resolve_manifest_api_url() {
+  echo "${MANIFEST_API_BASE}/$(manifest_file_name "$1")?ref=main"
+}
+
+# True when $1 is a strictly newer version than $2. Both must be plain dotted
+# numbers, which is what every published manifest carries; anything else answers
+# false, so an answer this cannot compare never displaces the CDN's.
+version_is_newer() {
+  local a="$1" b="$2"
+  case "$a" in '' | *[!0-9.]*) return 1 ;; esac
+  case "$b" in '' | *[!0-9.]*) return 1 ;; esac
+  local a1 a2 a3 b1 b2 b3 IFS=.
+  # shellcheck disable=SC2086
+  set -- $a
+  a1="${1:-0}" a2="${2:-0}" a3="${3:-0}"
+  # shellcheck disable=SC2086
+  set -- $b
+  b1="${1:-0}" b2="${2:-0}" b3="${3:-0}"
+  if [ "$((10#$a1))" -ne "$((10#$b1))" ]; then [ "$((10#$a1))" -gt "$((10#$b1))" ]; return; fi
+  if [ "$((10#$a2))" -ne "$((10#$b2))" ]; then [ "$((10#$a2))" -gt "$((10#$b2))" ]; return; fi
+  [ "$((10#$a3))" -gt "$((10#$b3))" ]
+}
+
+# A manifest is usable only when it names the channel we asked for and carries a
+# version. A rate-limit body, an API envelope and an error page all fail that,
+# so a stale-but-valid CDN answer is never displaced by junk.
+manifest_is_usable() {
+  local payload="$1" channel="$2"
+  [ -n "$payload" ] || return 1
+  manifest_channel_matches "$payload" "$channel" || return 1
+  [ -n "$(manifest_get "$payload" version)" ]
 }
 
 fetch_latest() {
-  local channel="$1" url payload
+  local channel="$1" url api_url cdn api cdn_v api_v
   url="$(resolve_manifest_url "$channel")"
+  api_url="$(resolve_manifest_api_url "$channel")"
   log "manifest=${url##*/}"
-  payload="$(curl -fsSL "$url")" || die "could not fetch $url" 5
-  manifest_channel_matches "$payload" "$channel" || die "manifest channel mismatch (wanted $channel)" 1
-  printf '%s\n' "$payload"
+  cdn="$(curl -fsSL "$url" 2>/dev/null)" || cdn=""
+  api="$(curl -fsSL -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)" || api=""
+  if [ -z "$cdn" ] && [ -z "$api" ]; then
+    die "could not fetch $url" 5
+  fi
+  manifest_is_usable "$cdn" "$channel" || cdn=""
+  manifest_is_usable "$api" "$channel" || api=""
+  if [ -z "$cdn" ] && [ -z "$api" ]; then
+    die "manifest channel mismatch (wanted $channel)" 1
+  fi
+  if [ -z "$api" ]; then
+    printf '%s\n' "$cdn"
+    return 0
+  fi
+  if [ -z "$cdn" ]; then
+    log "manifest: the CDN copy is unusable; using api.github.com"
+    printf '%s\n' "$api"
+    return 0
+  fi
+  cdn_v="$(manifest_get "$cdn" version)"
+  api_v="$(manifest_get "$api" version)"
+  if version_is_newer "$api_v" "$cdn_v"; then
+    log "manifest: api.github.com has ${api_v}; the CDN copy is still at ${cdn_v}"
+    printf '%s\n' "$api"
+    return 0
+  fi
+  printf '%s\n' "$cdn"
 }
 
 audit_log() {
