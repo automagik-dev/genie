@@ -31,6 +31,13 @@ gets a did-you-mean hint), and a failure is retried once with the errors appende
 appended to `.mikro/runs/<agent>.jsonl` (gitignored) and posted as an AGENT span to Phoenix project
 `cc-mikro`, beside the Opus turns it replaces. Exit 0 = the JSON on stdout is trustworthy.
 
+A FAILED attempt also keeps the raw MCP text beside its row, as `.mikro/runs/raw-<runId>-<attempt>.txt`
+— always, no flag. `--raw` prints to stdout, and inside a `wish.js` workflow that stdout is gone, so a
+failure class like `no JSON object in the answer` was undiagnosable once the run ended: the only thing
+that names it is what the model actually said. The file is capped at 1 MiB (a truncated one ends with a
+marker line), machine-local and gitignored, and untrusted model output — bytes on disk, parsed by
+nothing.
+
 ## Measure one
 
 ```sh
@@ -94,7 +101,9 @@ the Markdown over through **mikro's own MCP `context` argument** (`CONTEXT_PROPE
 available one: mikro externalizes a context file into the REPL as the Python `context` variable
 with only its metadata in the message history, so the agent's `print(context)` satisfies the third
 rule (a path you did not print is a path you may not cite) and the metadata preview is the data
-frame itself. The ledger row carries `facts: {path, candidates, ms}`; the Phoenix span carries
+frame itself. The ledger row carries `facts: {path, candidates, ms}` (and, on a failed attempt,
+`raw: {path, bytes, sha256, truncated}` for the retained answer — `sha256sum <path>` verifies the row);
+the Phoenix span carries
 `metadata.facts_candidates`. Facts are an accelerator, never a gate — a tree they cannot be
 computed over still gets its run.
 
