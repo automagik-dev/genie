@@ -125,6 +125,13 @@ describe('verifyCitations', () => {
     const real = verifyCitations({ files: [{ path: 'src/gone.ts', change: 'deleted' }] }, repo);
     expect(real[0].ok).toBe(true);
     expect(real[0].reason).toBe('absent (deleted)');
+    // A glob is not a path: git reads the argument after `--` as a PATHSPEC, so without
+    // --literal-pathspecs `src/*.ts` proves the history of src/gone.ts and every shape
+    // below passes as the deletion of a file that never existed.
+    for (const glob of ['src/*.ts', '*.ts', 'src/?one.ts', 'src/[gh]one.ts', 'src/g*.ts']) {
+      const cited = verifyCitations({ files: [{ path: glob, change: 'deleted' }] }, repo);
+      expect(cited[0]?.ok).toBe(false);
+    }
     // A path git never recorded cannot have been deleted, whatever the answer says.
     // Without this, any fabricated path passes as evidence by declaring itself deleted.
     const invented = verifyCitations({ files: [{ path: 'src/never-existed.ts', change: 'deleted' }] }, repo);

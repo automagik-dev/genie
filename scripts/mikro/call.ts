@@ -13,7 +13,8 @@
  *   2. it must contain one ```json block that parses AND validates against
  *      `scripts/mikro/schemas.ts` for that agent;
  *   3. every `path:line` it cites must exist at that line in <repo>, and every
- *      `path` field must exist on disk (deleted files excepted);
+ *      `path` field must exist on disk — a field that declares itself deleted is
+ *      excepted only when git can show the path in HEAD's history;
  * a failure on any of these is retried once with the errors appended to the
  * prompt. Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and
  * posted to Phoenix (project cc-mikro) so the bill is visible where the Opus
@@ -145,8 +146,10 @@ function isTracked(dir: string, path: string): boolean {
 /**
  * True when git has this path in HEAD's history — the proof behind a citation that
  * says a file was deleted. Absent from history means the path never existed, whatever
- * the answer declared. A checkout with no history at all cannot disprove anything, so
- * it answers true and the `deletedOk` claim stands as before.
+ * the answer declared. Any git that cannot answer — no repository, no commits, a probe
+ * that errors — cannot disprove the claim either, so it answers true and `deletedOk`
+ * stands as it did before this check existed, the same fail-open direction `isTracked`
+ * takes for an empty tracked set.
  */
 function everExisted(dir: string, path: string): boolean {
   let known = historyCache.get(dir);
@@ -156,7 +159,13 @@ function everExisted(dir: string, path: string): boolean {
   }
   const hit = known.get(path);
   if (hit !== undefined) return hit;
-  const probe = Bun.spawnSync(['git', 'rev-list', '--max-count=1', 'HEAD', '--', path], { cwd: dir });
+  // --literal-pathspecs, not decoration: `--` stops OPTION parsing, it does not stop
+  // PATHSPEC interpretation, and git's default wildmatch has no WM_PATHNAME, so `*`
+  // crosses `/`. Without this flag `src/*.ts` and even `*.ts` match the history of some
+  // other file, and a glob in a deleted `path` field proves a file that never existed.
+  const probe = Bun.spawnSync(['git', '--literal-pathspecs', 'rev-list', '--max-count=1', 'HEAD', '--', path], {
+    cwd: dir,
+  });
   const answered = probe.exitCode === 0;
   const result = !answered || probe.stdout.toString().trim().length > 0;
   known.set(path, result);
