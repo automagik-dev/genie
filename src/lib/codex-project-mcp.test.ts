@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -242,9 +243,10 @@ describe('retireJsonMcpGenieEntry', () => {
   });
 
   test('preserves the file mode', () => {
-    writeFileSync(mcp(), '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]},"k":{"command":"k"}}}', {
-      mode: 0o644,
-    });
+    writeFileSync(mcp(), '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]},"k":{"command":"k"}}}');
+    // chmod, not a create mode: a create mode is filtered through the process umask, so under 0077 the
+    // fixture itself started at 0o600 and the test blamed the code for preserving it (issue #2963).
+    chmodSync(mcp(), 0o644);
     retireJsonMcpGenieEntry(root);
     expect(statSync(mcp()).mode & 0o777).toBe(0o644);
   });
