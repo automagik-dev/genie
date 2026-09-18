@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LEGACY_MARKER_DIRS, LEGACY_SKILL_DESCRIPTIONS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
@@ -27,10 +27,26 @@ function seedSkill(name: string, frontmatter: string, body = `# ${name}\n`): str
   return dir;
 }
 
+/** The skills the tree ships right now, enumerated from disk — a hardcoded list ages out silently. */
+const SKILLS_ROOT = join(import.meta.dir, '..', '..', 'skills');
+function shippedSkillNames(): string[] {
+  return readdirSync(SKILLS_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+}
+
 describe('legacy skills catalog', () => {
   test('names none of the skills the tree currently ships, and carries the residue that was found', () => {
-    // The generator excludes the current inventory; the reader relies on it.
-    for (const name of ['wish', 'work', 'review', 'workfly', 'genie']) expect(LEGACY_SKILL_NAMES).not.toContain(name);
+    // The generator excludes the current inventory; the reader relies on it. Every shipped skill is
+    // checked, not a spot sample: one shipped name in the catalog would make `genie update` archive
+    // a live skill dir, and one shipped description would make a user's fork of it look proven.
+    const shipped = shippedSkillNames();
+    expect(shipped.length).toBeGreaterThan(0);
+    for (const name of shipped) {
+      expect(LEGACY_SKILL_NAMES).not.toContain(name);
+      const description = readSkillDescription(join(SKILLS_ROOT, name));
+      if (description !== null) expect(LEGACY_SKILL_DESCRIPTIONS).not.toContain(description);
+    }
     for (const name of ['pm', 'wizard', 'brain']) expect(LEGACY_SKILL_NAMES).toContain(name);
     expect(LEGACY_SKILL_DESCRIPTIONS).toContain(SHIPPED_PM_DESCRIPTION);
     expect(new Set(LEGACY_SKILL_DESCRIPTIONS).size).toBe(LEGACY_SKILL_DESCRIPTIONS.length);

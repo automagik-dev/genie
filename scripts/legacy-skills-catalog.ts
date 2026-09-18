@@ -115,7 +115,7 @@ function currentDescriptions(): Set<string> {
  * therefore additive: a run unions what it can see with what is already recorded, and only the
  * currently shipped names and descriptions are ever subtracted.
  */
-async function recordedCatalog(): Promise<{ names: string[]; descriptions: string[] }> {
+export async function recordedCatalog(): Promise<{ names: string[]; descriptions: string[] }> {
   try {
     const module = (await import(OUTPUT)) as {
       LEGACY_SKILL_NAMES?: readonly string[];
@@ -131,7 +131,10 @@ async function recordedCatalog(): Promise<{ names: string[]; descriptions: strin
   }
 }
 
-function render(catalog: Map<string, Set<string>>, recorded: { names: string[]; descriptions: string[] }): string {
+export function render(
+  catalog: Map<string, Set<string>>,
+  recorded: { names: string[]; descriptions: string[] },
+): string {
   const current = currentSkillNames();
   const shipping = currentDescriptions();
   const names = [...new Set([...catalog.keys(), ...recorded.names])].filter((name) => !current.has(name)).sort();
@@ -161,8 +164,6 @@ function render(catalog: Map<string, Set<string>>, recorded: { names: string[]; 
   return lines.join('\n');
 }
 
-const mode = process.argv[2];
-const rendered = render(collectCatalog(), await recordedCatalog());
 /** The catalog is committed in the repository's biome style, so the generator emits it that way. */
 function formatted(source: string): string {
   return execFileSync('bunx', ['biome', 'format', '--stdin-file-path', relative(ROOT, OUTPUT)], {
@@ -173,21 +174,28 @@ function formatted(source: string): string {
   });
 }
 
-if (mode === '--write') {
-  writeFileSync(OUTPUT, formatted(rendered), 'utf8');
-  process.stdout.write(`legacy-skills-catalog: wrote ${OUTPUT}\n`);
-} else if (mode === '--check') {
-  let existing = '';
-  try {
-    existing = readFileSync(OUTPUT, 'utf8');
-  } catch {
-    // Missing counts as stale.
+// Only the CLI walks git history, shells out to biome and exits: importing this module
+// (the tests inject a synthetic catalog into `render`) must do none of that.
+if (import.meta.main) {
+  const mode = process.argv[2];
+  const rendered = render(collectCatalog(), await recordedCatalog());
+
+  if (mode === '--write') {
+    writeFileSync(OUTPUT, formatted(rendered), 'utf8');
+    process.stdout.write(`legacy-skills-catalog: wrote ${OUTPUT}\n`);
+  } else if (mode === '--check') {
+    let existing = '';
+    try {
+      existing = readFileSync(OUTPUT, 'utf8');
+    } catch {
+      // Missing counts as stale.
+    }
+    if (existing !== formatted(rendered)) {
+      process.stderr.write('legacy-skills-catalog: stale — run `bun scripts/legacy-skills-catalog.ts --write`\n');
+      process.exit(1);
+    }
+    process.stdout.write('legacy-skills-catalog: current\n');
+  } else {
+    process.stdout.write(rendered);
   }
-  if (existing !== formatted(rendered)) {
-    process.stderr.write('legacy-skills-catalog: stale — run `bun scripts/legacy-skills-catalog.ts --write`\n');
-    process.exit(1);
-  }
-  process.stdout.write('legacy-skills-catalog: current\n');
-} else {
-  process.stdout.write(rendered);
 }
