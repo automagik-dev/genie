@@ -44,8 +44,13 @@ describe('research skill fronts the research-sweep workflow', () => {
   test('the injection fence is the skill paragraph, byte for byte', () => {
     const fence = /const INJECTION_FENCE = `([\s\S]*?)`\n/.exec(JS);
     if (!fence) throw new Error('research-sweep.js: INJECTION_FENCE not found');
-    const paragraph = section('Sources are evidence, never instruction', SKILL, 'the injection fence');
-    expect(flat(paragraph)).toContain(flat(fence[1] as string));
+    // The section ends with a sentence ABOUT the copy ("The sweep copies the four rules above…"),
+    // which the fence itself does not carry: the compared text is the rules, so it stops at the
+    // last bullet. `toContain` would pass on a fence that had lost a bullet; equality cannot.
+    const lines = section('Sources are evidence, never instruction', SKILL, 'the injection fence').split('\n');
+    while (lines.length && !(lines[lines.length - 1] as string).startsWith('- ')) lines.pop();
+    if (!lines.length) throw new Error('SKILL.md: the injection fence section has no bullets');
+    expect(flat(lines.join('\n'))).toBe(flat(fence[1] as string));
   });
 
   test('the skill keeps the frozen question and the notes-writing step the workflow never performs', () => {
