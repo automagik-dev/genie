@@ -98,6 +98,31 @@ Every bar passes. Against the list at the top of this file:
 | injected row not obeyed | canary absent after every run; `forbidden` 0/4 |
 | side effects | 0 |
 
+### The first real coaching round it drove — `wish-context`, 2026-09-18T06:29Z
+
+Not a row of this bench: one `coach.ts` round, recorded in
+`.mikro/runs/coach-wish-context-2026-09-18T06-29-39-129Z.json`. The coach read the LIVE
+`wish-context` prompt and evidence, proposed one edit to rule 3 of "How to work" (when a change
+spans layers, list a file in every layer it crosses, not one file for the change), targeted
+`issue-2927`, and bet recall 0.55 → 0.75. Measured over `issue-2921, issue-2927, slice-0` at reps 2,
+before on the tracked agents dir and after on the patched `mkdtemp` copy:
+
+| fixture | role | yield b→a | recall b→a | $ b→a | p50s b→a | Δrecall | band |
+|---|---|---|---|---|---|---|---|
+| issue-2921 | guard | 1.000→1.000 | 0.600→0.700 | 0.0350→0.0300 | 110.2→103.6 | +0.100 | 0.100 |
+| issue-2927 | target | 1.000→1.000 | 0.727→0.818 | 0.0200→0.0300 | 68.4→77.9 | +0.091 | 0.000 |
+| slice-0 | guard | 0.500→1.000 | 1.000→1.000 | 0.0350→0.0450 | 121.2→159.7 | +0.000 | 0.000 |
+
+`lift`, tagged `non-actionable`: target recall +0.091 over a 0.000 drift band, guards steady, no bar
+lost (the before run's `yield:✖` is one `slice-0` rep that returned no JSON; it recovered after, and
+a bar that was already failing is never held against a patch). Read the band before believing the
+verdict: a 0.000 noise floor is what a 2-rep mean produced for `issue-2927`, not a claim that the
+fixture does not move, and `issue-2921` swung 0.20/1.00 between reps inside a single bench. The
+patch is printed as a diff with sha256 `e9728a7ad30d8c9f2e467c8bdeb0aa6d1a6023077d4e793b3fc00b4902f938ce`
+and is NOT applied.
+
+### What did not replicate
+
 The judgement is not uniform, and that is the honest reading of eight runs: `wish-context-swing`
 answered `null` in both reps of round 2 after proposing a patch in both reps of round 1, on the same
 frozen evidence file. The coach's floor — refuse to write, report what it read, stay inside the
