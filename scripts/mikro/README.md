@@ -66,11 +66,12 @@ bun scripts/mikro/facts.ts --dir . --issue 2927 --out /tmp/facts.json
 bun scripts/mikro/facts.ts --dir <worktree> --range origin/dev..HEAD --no-gh
 ```
 
-One JSON record: `basis` (sha, mode), `keywords`, ranked `candidates` (`path`, `why`, `hits`,
+One JSON record: `basis` (sha, mode, `gh`), `keywords`, ranked `candidates` (`path`, `why`, `hits`,
 `matched`), `tests` (the pinning test per candidate), `gotchas` (CLAUDE.md / AGENTS.md lines with
 their line numbers), `recent` commits, `related` PRs / wishes / brainstorms, and `truncated`.
 Sources are `git ls-files`, `git grep`, `git log`, `git diff` and the working tree, plus `gh` for
-the issue body and related PRs — the only network, skipped cleanly when `gh` is absent. Two
+the issue body and related PRs — the only network, skipped cleanly when `gh` is absent or the
+runner is contained (see the table below). Two
 invariants the agents depend on: every path is TRACKED at `basis.sha` (so a cited fact can never
 fail `call.ts`'s citation check), and the record is bounded at 64 KB with every drop counted.
 Ranking is keyword COVERAGE first, locator keywords double-weighted, matching lines as the
@@ -88,15 +89,31 @@ MIKRO_FACTS=auto bun scripts/mikro/bench.ts wish-context --reps 2 --tag round=7
 
 `call.ts` infers the mode from the prompt (`Triage issue #N` → `--issue`, `Intent: …` →
 `--intent`, `… commit <sha> against <base>` → `--range`; a `PR #n` prompt names no base, so it
-gets no facts rather than a guessed range), writes `.mikro/runs/facts-<runId>.{json,md}`, and hands
-the Markdown over through **mikro's own MCP `context` argument** (`CONTEXT_PROPERTY` in mikro's
-`src/mcp/server.ts`) — not by appending to the prompt. That is the right channel and not merely the
-available one: mikro externalizes a context file into the REPL as the Python `context` variable
-with only its metadata in the message history, so the agent's `print(context)` satisfies the third
-rule (a path you did not print is a path you may not cite) and the metadata preview is the data
-frame itself. The ledger row carries `facts: {path, candidates, ms}`; the Phoenix span carries
-`metadata.facts_candidates`. Facts are an accelerator, never a gate — a tree they cannot be
-computed over still gets its run.
+gets no facts rather than a guessed range), writes `.mikro/runs/facts-<runId>.{json,md}` under the
+INVOKING checkout, and hands the Markdown over through **mikro's own MCP `context` argument**
+(`CONTEXT_PROPERTY` in mikro's `src/mcp/server.ts`) — not by appending to the prompt. That is the
+right channel and not merely the available one: mikro externalizes a context file into the REPL as
+the Python `context` variable with only its metadata in the message history, so the agent's
+`print(context)` satisfies the third rule (a path you did not print is a path you may not cite) and
+the metadata preview is the data frame itself. The ledger row carries
+`facts: {path, candidates, ms, gh}`; the Phoenix span carries `metadata.facts_candidates`. Facts
+are an accelerator, never a gate — a tree they cannot be computed over still gets its run.
+
+**Where the facts are computed depends on the arm, and only on the arm.** `facts.ts` starts no
+process of its own: every `git` and `gh` goes through an injected `FactsRunner`, and `basis.gh`
+names which one ran, so a short facts file is never mistaken for a wrong one.
+
+| `--boundary` | the facts scan runs | `gh` | `basis.gh` | the context file |
+|---|---|---|---|---|
+| `none` (default) | on the host, `cwd` = `--dir`, exactly as before | on the host, with the host's credential (unless `--no-gh` / `MIKRO_FACTS_NO_GH=1`) | `host` / `off` | read from disk by the host runtime |
+| `bwrap` | inside the sandbox, one `boundary.argv([...])` per command, over the read-only tree | **never spawned** — the sandbox holds no GitHub credential by design, and a host `gh` here would be a credentialed call outside the boundary and outside the egress ledger | `skipped-boundary` | `--ro-bind-try` of that ONE file, read-only: it is the run's audit record, not the agent's scratch space |
+
+The order is the security property: under `bwrap` the boundary opens BEFORE the facts are computed,
+so no facts subprocess ever runs uncontained. The smaller facts file is the designed degrade — the
+same "skipped cleanly, never wrong" path an unauthenticated `gh` already took. Reading files is
+still a host read (`CLAUDE.md`, `AGENTS.md`, `.genie/INDEX.md`, the wish/brainstorm titles): the
+boundary contains execution and credentialed network, and `call.ts` already reads the same tree
+host-side to verify every citation.
 
 **Measured, and not uniformly.** `wish-context` round 8 (facts, reps 2): recall 0.96, precision
 0.93, p90 105 s, retries 0, fabrications 0 — against round 6 (no facts): recall 0.87, p90 126 s,
@@ -328,6 +345,8 @@ sandbox), the host-side egress proxy, and the probes.
 | nothing else of HOME | not mounted | no `~/.config` (so no `~/.config/gh`), no `~/.ssh`, `~/.claude`, `~/.mikro/gate-env.sh` |
 | `/tmp` | `--tmpfs` | scratch the run throws away |
 | writable, deliberately | `<dir>/.mikro/runs` and (under `bench.ts`) the prompt-vector canary root | these are where an executed injection lands: `.mikro/runs/canary-adversarial` is the file-vector canary (`adversarial.ts:34`) and the ledger dir is gitignored. A boundary that hid the canary would blind the bench that measures injection — the council dissent's exact objection. The boundary's job is to stop writes to the SOURCE tree, not to hide what the model attempted |
+| the facts context file | `--ro-bind-try` of that one file, applied AFTER the writable set | the facts live under the INVOKING checkout, so when `--dir` is a worktree they are outside every other bind and the agent would be handed a `context:` path it cannot read. `-try`, because the facts are computed INSIDE this boundary: at preflight the file does not exist yet, and `argv()` builds a fresh invocation per command. Read-only because a facts file is the run's audit record — an agent that could rewrite it could rewrite its own evidence |
+| the facts scan itself | `git` through `boundary.argv([...])`, `gh` not spawned at all | `facts.ts` reads the tree under `--dir` with git and the issue body with `gh`; run before the boundary those were a host git over an untrusted tree and a HOST `gh` WITH HOST CREDENTIALS, outside the sandbox and outside the egress ledger — the exact traffic this boundary exists to contain. `basis.gh: skipped-boundary` says so in the artifact and in the ledger row |
 | the run's scratch dir | `--bind` (read-write) | holds the proxy's unix socket and the generated settings file |
 | network | `--unshare-net` — loopback only, deny by default at the network layer | |
 | the one hole | a host-side HTTP **CONNECT** proxy on a unix socket in the scratch dir; inside, `socat TCP-LISTEN:8118,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:<socket>` runs before `exec mikro mcp`; the child env sets `HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:8118`, `NO_PROXY=` and `NODE_USE_ENV_PROXY=1` | mikro's `openai` client runs on global fetch, and node v26 honours a proxy from the environment only under `NODE_USE_ENV_PROXY`. The probe proves the pair is load-bearing: with the proxy variables cleared, `api.deepseek.com` is unreachable *inside* |

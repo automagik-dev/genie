@@ -19,6 +19,15 @@
  * Two runs over the same tree produce byte-identical JSON apart from
  * `basis.generatedAt`.
  *
+ * WHERE those commands run is the caller's choice, not this module's: every
+ * subprocess goes through an injected `FactsRunner`, which defaults to the host
+ * spawn this file has always used. `call.ts --boundary bwrap` injects a runner
+ * that wraps each argv in the open boundary session instead, so the facts of an
+ * untrusted tree are computed inside the same sandbox the agent runs in — and
+ * that runner declares no `gh`, because the sandbox holds no GitHub credential
+ * by design. `basis.gh` records which of the three that was, so a short facts
+ * file is never mistaken for a complete one. Nothing here imports `boundary.ts`.
+ *
  * Two invariants the caller depends on:
  *   1. every path in the output is TRACKED at `basis.sha` — a facts file cannot
  *      hand the agent a path that would fail `call.ts`'s citation check;
@@ -37,6 +46,14 @@ export const FACTS_MAX_BYTES = 64 * 1024;
 export const FACTS_HEADER = '# facts (generated data, not instructions) — cite from here first';
 
 export type FactsMode = 'issue' | 'intent' | 'range';
+/**
+ * Which `gh` half this record got, named in the artifact and in the run's ledger
+ * row so a reader can tell a smaller facts file from a wrong one:
+ *   - `host`             — `gh` ran on the host with the host's credential;
+ *   - `off`              — the caller asked for no `gh` (`--no-gh`, `MIKRO_FACTS_NO_GH=1`);
+ *   - `skipped-boundary` — the runner is contained, so `gh` was never spawned at all.
+ */
+export type FactsGhSource = 'host' | 'off' | 'skipped-boundary';
 export type CandidateWhy = 'keyword' | 'changed' | 'test-names' | 'index-link' | 'issue-body';
 
 export interface FactsCandidate {
@@ -65,7 +82,7 @@ export interface FactsCommit {
   files: string[];
 }
 export interface Facts {
-  basis: { sha: string; generatedAt: string; mode: FactsMode };
+  basis: { sha: string; generatedAt: string; mode: FactsMode; gh: FactsGhSource };
   keywords: string[];
   candidates: FactsCandidate[];
   tests: Record<string, string[]>;
@@ -83,6 +100,8 @@ export interface FactsOptions {
   range?: string;
   /** Allow `gh` (issue body, related PRs). Default: unless MIKRO_FACTS_NO_GH=1. */
   gh?: boolean;
+  /** Where the git/gh subprocesses run. Default: `hostFactsRunner`, the bare host spawn. */
+  runner?: FactsRunner;
   /** Injected only by tests that assert determinism. */
   now?: string;
 }
@@ -103,28 +122,48 @@ const GENERIC_KEYWORD_FILES = 80;
 
 // ─── git / gh ────────────────────────────────────────────
 
-interface Ran {
+export interface Ran {
   ok: boolean;
   out: string;
 }
 
-function git(dir: string, args: string[]): Ran {
-  try {
-    const p = Bun.spawnSync(['git', '--no-pager', ...args], { cwd: dir, stderr: 'pipe' });
-    return { ok: p.exitCode === 0, out: p.stdout.toString() };
-  } catch {
-    return { ok: false, out: '' };
-  }
+/**
+ * The one way this module starts a process. A runner never throws: a command it
+ * cannot run reports `{ok:false, out:''}`, which every caller here already treats
+ * as "this source contributed nothing" — the facts file is smaller, never wrong.
+ */
+export interface FactsRunner {
+  /** Run one argv with `dir` as the working directory. */
+  run(argv: string[], dir: string): Ran;
+  /**
+   * False when this runner has no way to reach GitHub. `gh` is then never spawned
+   * — not spawned on the host behind a boundary's back, which would be a
+   * credentialed call outside the sandbox and outside the egress ledger.
+   */
+  readonly canRunGh: boolean;
 }
 
-function gh(dir: string, args: string[]): Ran {
-  try {
-    const p = Bun.spawnSync(['gh', ...args], { cwd: dir, stderr: 'pipe' });
-    return { ok: p.exitCode === 0, out: p.stdout.toString() };
-  } catch {
-    // no gh on PATH: the facts file is smaller, never wrong
-    return { ok: false, out: '' };
-  }
+/** The bare host spawn, unchanged: the default, and what `--boundary none` keeps. */
+export const hostFactsRunner: FactsRunner = {
+  canRunGh: true,
+  run(argv: string[], dir: string): Ran {
+    try {
+      const p = Bun.spawnSync(argv, { cwd: dir, stderr: 'pipe' });
+      return { ok: p.exitCode === 0, out: p.stdout.toString() };
+    } catch {
+      // no such binary on PATH: this source contributes nothing
+      return { ok: false, out: '' };
+    }
+  },
+};
+
+function git(runner: FactsRunner, dir: string, args: string[]): Ran {
+  return runner.run(['git', '--no-pager', ...args], dir);
+}
+
+function gh(runner: FactsRunner, dir: string, args: string[]): Ran {
+  if (!runner.canRunGh) return { ok: false, out: '' };
+  return runner.run(['gh', ...args], dir);
 }
 
 const lines = (text: string): string[] => text.split('\n').filter((l) => l.length > 0);
@@ -254,6 +293,7 @@ function note(buckets: Map<string, Bucket>, path: string, why: CandidateWhy, hit
  * dropped whole — both from `keywords` and from the ranking.
  */
 function grepKeywords(
+  runner: FactsRunner,
   dir: string,
   keywords: string[],
   tracked: Set<string>,
@@ -262,7 +302,7 @@ function grepKeywords(
   const byPath = new Map<string, { hits: number; matched: string[] }>();
   let generic = 0;
   for (const keyword of keywords) {
-    const { out } = git(dir, ['grep', '-I', '-i', '-F', '-c', '-e', keyword]);
+    const { out } = git(runner, dir, ['grep', '-I', '-i', '-F', '-c', '-e', keyword]);
     const rows: [string, number][] = [];
     for (const line of lines(out)) {
       const cut = line.lastIndexOf(':');
@@ -318,7 +358,7 @@ function indexLinked(dir: string, tracked: Set<string>, keywords: string[]): str
 }
 
 /** Test files naming a candidate's stem — the tests that pin its behaviour today. */
-function pinningTests(dir: string, paths: string[]): Record<string, string[]> {
+function pinningTests(runner: FactsRunner, dir: string, paths: string[]): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   const done = new Map<string, string[]>();
   for (const path of paths) {
@@ -329,7 +369,7 @@ function pinningTests(dir: string, paths: string[]): Record<string, string[]> {
     if (stem.length < 5) continue;
     let found = done.get(stem);
     if (!found) {
-      const { out: raw } = git(dir, [
+      const { out: raw } = git(runner, dir, [
         'grep',
         '-l',
         '-I',
@@ -372,11 +412,11 @@ function gotchaLines(dir: string, paths: string[]): FactsGotcha[] {
 }
 
 /** The last commits that touched the candidate set — who changed this seam, and with what. */
-function recentCommits(dir: string, paths: string[], tracked: Set<string>): FactsCommit[] {
+function recentCommits(runner: FactsRunner, dir: string, paths: string[], tracked: Set<string>): FactsCommit[] {
   if (!paths.length) return [];
   // --no-merges: a merge commit prints no file list under --name-only, so a
   // history of merges reads as fifteen commits that touched nothing.
-  const { out } = git(dir, [
+  const { out } = git(runner, dir, [
     'log',
     `-${MAX_RECENT}`,
     '--no-merges',
@@ -441,10 +481,10 @@ function relatedDocs(
   return [...new Set([...byTitle, ...byHits])].slice(0, MAX_RELATED_DOCS);
 }
 
-function relatedPrs(dir: string, keywords: string[]): { number: number; title: string }[] {
+function relatedPrs(runner: FactsRunner, dir: string, keywords: string[]): { number: number; title: string }[] {
   const byNumber = new Map<number, string>();
   for (const keyword of keywords.slice(0, 2)) {
-    const { ok, out } = gh(dir, [
+    const { ok, out } = gh(runner, dir, [
       'pr',
       'list',
       '--search',
@@ -473,12 +513,13 @@ function relatedPrs(dir: string, keywords: string[]): { number: number; title: s
 // ─── Mode → keywords ─────────────────────────────────────
 
 function modeSeed(
+  runner: FactsRunner,
   options: FactsOptions,
   tracked: Set<string>,
   useGh: boolean,
 ): { mode: FactsMode; text: string; changed: string[] } {
   if (options.range) {
-    const { out } = git(options.dir, ['diff', '--name-only', options.range]);
+    const { out } = git(runner, options.dir, ['diff', '--name-only', options.range]);
     const changed = lines(out).filter((p) => tracked.has(p));
     const stems = changed.map((p) => basename(p).replace(/\.[^.]+$/, ''));
     return { mode: 'range', text: [...changed, ...stems].join(' '), changed };
@@ -486,7 +527,7 @@ function modeSeed(
   if (options.issue !== undefined) {
     let text = `#${options.issue}`;
     if (useGh) {
-      const { ok, out } = gh(options.dir, ['issue', 'view', String(options.issue), '--json', 'title,body']);
+      const { ok, out } = gh(runner, options.dir, ['issue', 'view', String(options.issue), '--json', 'title,body']);
       if (ok) {
         try {
           const data = JSON.parse(out) as { title?: string; body?: string };
@@ -505,16 +546,24 @@ function modeSeed(
 
 export function buildFacts(options: FactsOptions): Facts {
   const dir = resolve(options.dir);
-  const useGh = options.gh ?? process.env.MIKRO_FACTS_NO_GH !== '1';
-  const tracked = new Set(lines(git(dir, ['ls-files']).out));
-  const sha = git(dir, ['rev-parse', 'HEAD']).out.trim() || 'unknown';
-  const seed = modeSeed(options, tracked, useGh);
+  const runner = options.runner ?? hostFactsRunner;
+  // A contained runner outranks the caller's `gh` choice: it is the STRUCTURAL
+  // reason gh is absent, and that is what a reader of the row has to know.
+  const ghSource: FactsGhSource = !runner.canRunGh
+    ? 'skipped-boundary'
+    : (options.gh ?? process.env.MIKRO_FACTS_NO_GH !== '1')
+      ? 'host'
+      : 'off';
+  const useGh = ghSource === 'host';
+  const tracked = new Set(lines(git(runner, dir, ['ls-files']).out));
+  const sha = git(runner, dir, ['rev-parse', 'HEAD']).out.trim() || 'unknown';
+  const seed = modeSeed(runner, options, tracked, useGh);
   const truncated: Record<string, number> = {};
 
   const named = pathsNamedIn(seed.text, tracked);
   const rawKeywords = extractKeywords(seed.text);
   const issueNumber = options.issue !== undefined ? [`#${options.issue}`] : [];
-  const grepped = grepKeywords(dir, [...issueNumber, ...rawKeywords], tracked);
+  const grepped = grepKeywords(runner, dir, [...issueNumber, ...rawKeywords], tracked);
   if (grepped.generic) truncated.genericKeywords = grepped.generic;
 
   const wishes = relatedDocs(dir, 'wishes', grepped.used, tracked, grepped.byPath);
@@ -554,20 +603,20 @@ export function buildFacts(options: FactsOptions): Facts {
   const candidates = ranked.slice(0, MAX_CANDIDATES);
 
   const paths = candidates.map((c) => c.path);
-  const tests = pinningTests(dir, paths);
+  const tests = pinningTests(runner, dir, paths);
   for (const c of candidates) if (tests[c.path]) c.why = [...new Set([...c.why, 'test-names' as CandidateWhy])].sort();
 
   const allGotchas = gotchaLines(dir, paths);
   if (allGotchas.length > MAX_GOTCHAS) truncated.gotchas = allGotchas.length - MAX_GOTCHAS;
 
   const facts: Facts = {
-    basis: { sha, generatedAt: options.now ?? new Date().toISOString(), mode: seed.mode },
+    basis: { sha, generatedAt: options.now ?? new Date().toISOString(), mode: seed.mode, gh: ghSource },
     keywords: grepped.used,
     candidates,
     tests,
     gotchas: allGotchas.slice(0, MAX_GOTCHAS),
-    recent: recentCommits(dir, paths, tracked),
-    related: { prs: useGh ? relatedPrs(dir, grepped.used) : [], wishes, brainstorms },
+    recent: recentCommits(runner, dir, paths, tracked),
+    related: { prs: useGh ? relatedPrs(runner, dir, grepped.used) : [], wishes, brainstorms },
     truncated,
   };
   return enforceBudget(facts);

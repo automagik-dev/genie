@@ -22,7 +22,11 @@
  * whatever mode the prompt implies (`scripts/mikro/facts.ts`), writes them
  * beside the ledger as `facts-<runId>.{json,md}` and hands the Markdown to the
  * agent through mikro's own MCP `context` argument — so the agent reads and
- * cites instead of re-deriving the same greps on every run.
+ * cites instead of re-deriving the same greps on every run. Under
+ * `--boundary bwrap` those facts are computed INSIDE the sandbox, after it
+ * opens: every `git` runs contained over the read-only tree and `gh` is not run
+ * at all (the sandbox holds no credential — `basis.gh: skipped-boundary` says
+ * so in the artifact and in the ledger row).
  *
  * Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and
  * posted to Phoenix (project cc-mikro) so the bill is visible where the Opus
@@ -34,7 +38,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFil
 import { dirname, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
 import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode, openBoundary } from './boundary';
-import { buildFacts, inferFactsMode, renderFacts } from './facts';
+import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, renderFacts } from './facts';
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
 
@@ -497,6 +501,12 @@ export interface RunOptions {
   boundary?: BoundaryMode;
   /** Extra paths bound READ-WRITE inside the boundary — the bench's canary root, so an executed side effect stays observable. */
   boundaryWritable?: string[];
+  /**
+   * How the boundary is opened. Defaults to `openBoundary`, and exists for one reason:
+   * the ORDER this function establishes — boundary first, facts computed inside it — is
+   * otherwise unprovable without a real bubblewrap host and a real provider key.
+   */
+  openBoundary?: typeof openBoundary;
 }
 
 // ─── Facts ───────────────────────────────────────────────
@@ -508,6 +518,50 @@ export interface FactsHandoff {
   contextPath: string;
   candidates: number;
   ms: number;
+  /**
+   * Which `gh` half these facts got — `host`, `off`, or `skipped-boundary` when they
+   * were computed inside the sandbox, which holds no GitHub credential. Absent for a
+   * caller-supplied `--facts <path>`: this run did not compute that file and has
+   * nothing true to say about how it was built.
+   */
+  gh?: FactsGhSource;
+}
+
+/**
+ * Where the facts context file for this run WILL be, known before the facts exist.
+ * The boundary has to bind that path read-only when it opens, and the facts are
+ * computed after it opens — so the path, not the file, is what the two share.
+ */
+export function factsContextPath(option: string, runsDir: string, runId: string): string {
+  return option === 'auto' ? join(runsDir, `facts-${runId}.md`) : resolve(option);
+}
+
+/**
+ * The runner `buildFacts` gets under a boundary: every argv is wrapped in the open
+ * session, so `git` reads the untrusted tree from inside the read-only sandbox with
+ * no credential and no network of its own. `canRunGh: false` is the whole point —
+ * a host `gh` here would be a credentialed call outside the boundary and outside
+ * the egress ledger, which is exactly what the boundary exists to prevent.
+ *
+ * Spawned SYNCHRONOUSLY, like the host runner it replaces: the egress proxy runs on
+ * this process's event loop, and a contained `git` needs no network at all, so there
+ * is nothing for a blocked accept loop to starve. The runner's `dir` argument is
+ * ignored because the sandbox `--chdir`s to `spec.dir`, which IS the `--dir` these
+ * facts are computed over.
+ */
+export function boundaryFactsRunner(boundary: BoundarySession): FactsRunner {
+  return {
+    canRunGh: false,
+    run(argv) {
+      try {
+        const p = Bun.spawnSync(boundary.argv(argv), { stdout: 'pipe', stderr: 'pipe', env: boundary.env });
+        return { ok: p.exitCode === 0, out: p.stdout.toString() };
+      } catch {
+        // the sandbox could not run it: this source contributes nothing
+        return { ok: false, out: '' };
+      }
+    },
+  };
 }
 
 /**
@@ -532,10 +586,11 @@ export function prepareFacts(
   dir: string,
   runsDir: string,
   runId: string,
+  runner?: FactsRunner,
 ): FactsHandoff | null {
   const t0 = Date.now();
   if (option !== 'auto') {
-    const path = resolve(option);
+    const path = factsContextPath(option, runsDir, runId);
     if (!existsSync(path)) return null;
     let candidates = 0;
     try {
@@ -547,13 +602,13 @@ export function prepareFacts(
   }
   const mode = inferFactsMode(prompt);
   if (!mode) return null; // a `Prepare the review of PR #n` prompt names no base: no facts beats a guessed range
-  const facts = buildFacts({ dir, ...mode });
+  const facts = buildFacts({ dir, ...mode, runner });
   mkdirSync(runsDir, { recursive: true });
   const path = join(runsDir, `facts-${runId}.json`);
-  const contextPath = join(runsDir, `facts-${runId}.md`);
+  const contextPath = factsContextPath(option, runsDir, runId);
   writeFileSync(path, `${JSON.stringify(facts, null, 2)}\n`);
   writeFileSync(contextPath, renderFacts(facts));
-  return { path, contextPath, candidates: facts.candidates.length, ms: Date.now() - t0 };
+  return { path, contextPath, candidates: facts.candidates.length, ms: Date.now() - t0, gh: facts.basis.gh };
 }
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
@@ -728,32 +783,29 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       egress: null,
     };
   }
-  // Computed once, before the loop: a retry re-reads the same facts rather than
-  // paying for a second identical scan.
   const runsDir = join(trustedRoot, '.mikro', 'runs');
   const factsOption = options.facts ?? process.env.MIKRO_FACTS;
-  let facts: FactsHandoff | null = null;
-  if (factsOption) {
-    try {
-      facts = prepareFacts(factsOption, options.prompt, dir, runsDir, runId);
-    } catch (error) {
-      // facts are an accelerator, never a gate: a tree they cannot be computed
-      // over (no git history, an unreadable CLAUDE.md) still gets its run.
-      process.stderr.write(`facts: skipped (${error instanceof Error ? error.message : String(error)})\n`);
-    }
-  }
-  const factsRow = facts ? { path: facts.path, candidates: facts.candidates, ms: facts.ms } : undefined;
-  // The sandbox is opened ONCE for the whole run (both attempts share one proxy and one
-  // egress ledger) and closed on every exit path. A failure to open is fatal by design:
-  // `bwrap` mode never silently downgrades to `none` — the rollback is `--boundary none`.
+  // The sandbox is opened ONCE for the whole run (both attempts and the facts scan share
+  // one proxy and one egress ledger) and closed on every exit path. A failure to open is
+  // fatal by design: `bwrap` mode never silently downgrades to `none` — the rollback is
+  // `--boundary none`.
+  //
+  // It opens BEFORE the facts are computed, and that order is the security property, not a
+  // detail: `facts.ts` runs `git` over the tree under `--dir` and `gh` with the host's
+  // credential, so computing them first put a credentialed GitHub call and a git run over
+  // an untrusted tree on the bare host — outside the sandbox and outside the egress ledger,
+  // which is precisely the traffic the boundary exists to contain.
   const boundary: BoundarySession | null =
     boundaryMode === 'bwrap'
-      ? await openBoundary({
+      ? await (options.openBoundary ?? openBoundary)({
           dir,
           agentsDir,
           runId,
-          ledgerDir: join(trustedRoot, '.mikro', 'runs'),
+          ledgerDir: runsDir,
           writable: options.boundaryWritable,
+          // The facts file lives under the TRUSTED root, which is not `dir` when `--dir` is a
+          // worktree; without this bind the agent is handed a `context:` path it cannot read.
+          readable: factsOption ? [factsContextPath(factsOption, runsDir, runId)] : [],
           env: containedEnv({ timeoutMs, agentsDir }),
         })
       : null;
@@ -763,6 +815,26 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   let cost = 0;
 
   try {
+    // Computed once, inside the boundary when there is one, before the loop: a retry
+    // re-reads the same facts rather than paying for a second identical scan.
+    let facts: FactsHandoff | null = null;
+    if (factsOption) {
+      try {
+        facts = prepareFacts(
+          factsOption,
+          options.prompt,
+          dir,
+          runsDir,
+          runId,
+          boundary ? boundaryFactsRunner(boundary) : undefined,
+        );
+      } catch (error) {
+        // facts are an accelerator, never a gate: a tree they cannot be computed
+        // over (no git history, an unreadable CLAUDE.md) still gets its run.
+        process.stderr.write(`facts: skipped (${error instanceof Error ? error.message : String(error)})\n`);
+      }
+    }
+    const factsRow = facts ? { path: facts.path, candidates: facts.candidates, ms: facts.ms, gh: facts.gh } : undefined;
     for (let attempt = 0; attempt <= retries; attempt++) {
       const t0 = Date.now();
       const errors: string[] = [];

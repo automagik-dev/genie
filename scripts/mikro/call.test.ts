@@ -1,16 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BoundaryError } from './boundary';
+import { BoundaryError, type BoundarySession, type OpenBoundaryOptions } from './boundary';
 import {
   PRICE_BASIS,
   applyResolutions,
+  boundaryFactsRunner,
   containedEnv,
   extractJson,
+  factsContextPath,
   parseBoundaryFlag,
   parseFooter,
   prepareFacts,
+  runAgent,
   serverEnv,
   stripFooter,
   untrustedConfig,
@@ -348,6 +351,131 @@ describe('--boundary', () => {
         expect((error as BoundaryError).failure).toBe('bad-spec');
       }
     }
+  });
+});
+
+describe('facts inside the boundary', () => {
+  /**
+   * A boundary that records what it was asked to run and answers with a command that
+   * fails immediately. No bwrap, no provider key, no network: what is under test is
+   * the ORDER — the boundary opens first, and every facts command is handed to it.
+   */
+  function fakeBoundary(): BoundarySession & { commands: string[][]; closed: boolean } {
+    const session = {
+      mode: 'bwrap' as const,
+      spec: null as unknown as BoundarySession['spec'],
+      commands: [] as string[][],
+      closed: false,
+      argv(command: string[]) {
+        session.commands.push(command);
+        return ['/bin/false'];
+      },
+      env: {} as Record<string, string>,
+      counts: () => ({ allowed: 0, denied: 0 }),
+      close: async () => {
+        session.closed = true;
+      },
+    };
+    return session;
+  }
+
+  function trustedRepo(): { root: string; agentsDir: string } {
+    const root = mkdtempSync(join(tmpdir(), 'mikro-order-'));
+    const agentsDir = join(root, '.mikro', 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    return { root, agentsDir };
+  }
+
+  test('the boundary opens BEFORE the facts, and every facts command runs inside it', async () => {
+    // Both are already cached by the suites above; set them so this test can never
+    // reach the host's gate-env.sh or `gh auth token` on its own.
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    process.env.GH_TOKEN = 'ghp_test';
+    const { root, agentsDir } = trustedRepo();
+    const session = fakeBoundary();
+    let opened: OpenBoundaryOptions | null = null;
+    const result = await runAgent({
+      agent: 'issue-triage',
+      // Issue mode: the one that would otherwise put a credentialed host `gh` call
+      // and a host `git` over the tree under `--dir` outside the sandbox.
+      prompt: 'Triage issue #2942',
+      dir: root,
+      agentsDir,
+      facts: 'auto',
+      boundary: 'bwrap',
+      retries: 1,
+      phoenix: false,
+      ledger: false,
+      openBoundary: async (options) => {
+        opened = options;
+        return session;
+      },
+    });
+
+    const first = session.commands.findIndex((c) => c[0] === 'mikro');
+    expect(first).toBeGreaterThan(0); // something ran inside the boundary before the runtime did
+    expect(session.commands[0][0]).toBe('git'); // and the first of those was the facts scan
+    expect(session.commands.slice(0, first).every((c) => c[0] === 'git')).toBe(true);
+    expect(session.commands.some((c) => c[0] === 'gh')).toBe(false);
+    // Facts are computed ONCE: after the first attempt, nothing but the runtime runs again.
+    expect(session.commands.slice(first).every((c) => c[0] === 'mikro')).toBe(true);
+    expect(session.commands.filter((c) => c[0] === 'mikro')).toHaveLength(2); // retries: 1
+    // The context file lives under the trusted root and is bound read-only from the start.
+    expect((opened as unknown as OpenBoundaryOptions).readable).toEqual([
+      join(root, '.mikro', 'runs', `facts-${result.runId}.md`),
+    ]);
+    expect(existsSync(join(root, '.mikro', 'runs', `facts-${result.runId}.md`))).toBe(true);
+    expect(JSON.parse(readFileSync(join(root, '.mikro', 'runs', `facts-${result.runId}.json`), 'utf8')).basis.gh).toBe(
+      'skipped-boundary',
+    );
+    // The runtime was /bin/false, so the run failed — and the boundary still closed.
+    expect(result.ok).toBe(false);
+    expect(result.boundary).toBe('bwrap');
+    expect(session.closed).toBe(true);
+  });
+
+  test('with no facts option the boundary binds nothing extra', async () => {
+    const { root, agentsDir } = trustedRepo();
+    const session = fakeBoundary();
+    let opened: OpenBoundaryOptions | null = null;
+    await runAgent({
+      agent: 'issue-triage',
+      prompt: 'Triage issue #2942',
+      dir: root,
+      agentsDir,
+      boundary: 'bwrap',
+      retries: 0,
+      phoenix: false,
+      ledger: false,
+      openBoundary: async (options) => {
+        opened = options;
+        return session;
+      },
+    });
+    expect((opened as unknown as OpenBoundaryOptions).readable).toEqual([]);
+    expect(session.commands.every((c) => c[0] === 'mikro')).toBe(true);
+  });
+
+  test('the contained runner wraps every argv in the session and refuses gh', () => {
+    const session = fakeBoundary();
+    const runner = boundaryFactsRunner(session);
+    expect(runner.canRunGh).toBe(false);
+    const ran = runner.run(['git', 'ls-files'], '/anywhere');
+    expect(session.commands).toEqual([['git', 'ls-files']]);
+    expect(ran).toEqual({ ok: false, out: '' }); // /bin/false: no output, not ok
+  });
+
+  test('the context path a boundary binds is the path prepareFacts writes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mikro-ctx-'));
+    const runs = join(dir, '.mikro', 'runs');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: dir });
+    const planned = factsContextPath('auto', runs, 'run-9');
+    expect(prepareFacts('auto', 'Intent: anything at all', dir, runs, 'run-9')?.contextPath).toBe(planned);
+    // A caller-supplied file is bound at the path it already has.
+    const given = join(dir, 'given.json');
+    writeFileSync(given, '{}');
+    expect(factsContextPath(given, runs, 'run-9')).toBe(given);
+    expect(prepareFacts(given, 'x', dir, runs, 'run-9')?.contextPath).toBe(given);
   });
 });
 
