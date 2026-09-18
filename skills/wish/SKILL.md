@@ -17,7 +17,7 @@ Pass `{objective, issue?, context?, slug?, base?, repairBudget?, model?, timesta
 
 ## Admission
 
-The scout is read-only and estimates the work: files, insertions, independent units. The script applies the size band from the wish-duration study — maximum 25 files, 2,000 insertions, 3 units; ideal 10, 800, 2 — and a blind judge that never sees the repository decides the route: `proceed`, `report` (the cause is unknown), `brainstorm` (a product decision is open, or a linked design fails its preflight), or `plan` (too big, or the change touches a trust-boundary path: workflows, hooks, settings, release scripts, permission surfaces). Any route but `proceed` returns `refused` with nothing created.
+The scout is read-only and estimates the work: files, insertions, independent units. The script applies the size band from the wish-duration study — maximum 25 files and 2,000 insertions, the hard maxima; 3 units, advisory; ideal 10, 800, 2 — and a blind judge that never sees the repository decides the route: `proceed`, `report` (the cause is unknown), `brainstorm` (a product decision is open, or a linked design fails its preflight), or `plan` (too big, or the change touches a trust-boundary path: workflows, hooks, settings, release scripts, permission surfaces). Any route but `proceed` returns `refused` with nothing created.
 
 ## Relay
 
