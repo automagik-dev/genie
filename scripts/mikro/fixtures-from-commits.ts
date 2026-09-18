@@ -41,10 +41,10 @@ import type { Fixture } from './bench';
 import { gitProbeEnv } from './trusted-source';
 
 /** The two agents whose ground truth a commit can state. `issue-triage` needs an issue; `mikro-coach` needs a bench. */
-export const COMMIT_FIXTURE_AGENTS = ['wish-context', 'review-prep'] as const;
+const COMMIT_FIXTURE_AGENTS = ['wish-context', 'review-prep'] as const;
 export type CommitFixtureAgent = (typeof COMMIT_FIXTURE_AGENTS)[number];
 
-export const isCommitFixtureAgent = (value: string): value is CommitFixtureAgent =>
+const isCommitFixtureAgent = (value: string): value is CommitFixtureAgent =>
   (COMMIT_FIXTURE_AGENTS as readonly string[]).includes(value);
 
 /** A refusal that costs nothing: the CLI prints `message` and exits 2. */
@@ -136,12 +136,16 @@ export function buildCommitFixtures(options: {
       skipped.push({ sha: id, reason: 'root commit: there is no <sha>^ to review it against' });
       continue;
     }
-    const shown = git(dir, ['show', '--name-only', '--format=', sha]);
+    // `-z`, like the `ls-tree` above: without it git QUOTES any path outside plain ASCII
+    // (`"caf\303\251.txt"`), and every such path compares unequal to the raw set at HEAD —
+    // so the commit was skipped as "no longer exists at HEAD" about a file that is there.
+    // Both sides of that comparison read raw bytes or neither does.
+    const shown = git(dir, ['show', '--name-only', '-z', '--format=', sha]);
     if (!shown.ok) {
       skipped.push({ sha: id, reason: `git show failed: ${shown.err}` });
       continue;
     }
-    const files = [...new Set(shown.out.split('\n').filter(Boolean))].sort();
+    const files = [...new Set(shown.out.split('\0').filter(Boolean))].sort();
     if (!files.length) {
       skipped.push({ sha: id, reason: 'no files changed' });
       continue;

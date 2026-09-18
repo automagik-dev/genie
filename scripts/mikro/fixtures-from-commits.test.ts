@@ -116,6 +116,24 @@ describe('buildCommitFixtures', () => {
     expect(first.prompt).toBe(`Prepare the review of commit ${first.id} against ${first.id}^`);
   });
 
+  test('a quoted path is the path it is, not a commit skipped for a reason that is false', () => {
+    const root = repo();
+    // Under the default `core.quotepath`, `git show --name-only` prints these as
+    // `"caf\303\251.txt"` and `"weird\"quote.txt"` — a spelling that matches nothing in
+    // the raw `ls-tree -z` set, so the commit was skipped as "no longer exists at HEAD"
+    // about a file that is right there. Both readers must be -z.
+    write(root, 'café.txt', 'unicode\n');
+    write(root, 'weird"quote.txt', 'quoted\n');
+    commit(root, 'feat: paths git would quote');
+    const { fixtures, skipped } = buildCommitFixtures({ dir: root, range: 'HEAD~1..HEAD', agent: 'wish-context' });
+    expect(skipped).toEqual([]);
+    expect(fixtures).toHaveLength(1);
+    // Compared against a -z read, never against a second parse of the quoted output.
+    const shown = git(root, ['show', '--name-only', '-z', '--format=', 'HEAD']).split('\0').filter(Boolean).sort();
+    expect(fixtures[0].truth.files).toEqual(shown);
+    expect(fixtures[0].truth.files).toEqual(['café.txt', 'weird"quote.txt']);
+  });
+
   test('--max stops at n fixtures, oldest first', () => {
     const root = repo();
     write(root, 'src/c.ts', 'export const c = 3;\n');
