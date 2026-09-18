@@ -2,7 +2,7 @@
 
 Cheap, fast, read-only workers on DeepSeek 4.1 Flash (`deepseek-api/deepseek-flash`, custom-typed
 in `.mikro/mikro.yaml` because the engine's registry only knows `deepseek-v4-flash`) that gather
-the mechanical facts a stage needs BEFORE an expensive agent reads anything. Three agents live in
+the mechanical facts a stage needs BEFORE an expensive agent reads anything. Four agents live in
 `.mikro/agents/<name>/` (`agent.yaml` + `SYSTEM.md` on the upstream five-rules contract — starter
 block first, no `FINAL` before the fourth REPL block, every citation printed by its own REPL, git
 and gh read-only, one fenced JSON answer):
@@ -12,6 +12,7 @@ and gh read-only, one fenced JSON answer):
 | `issue-triage` | `Triage issue #<n>` | type, area, summary, repro, candidate files with `path:line`, related PRs/wishes, lane, one question | the canonical wish's intake; `gh` issue triage in parallel |
 | `wish-context` | `Intent: <sentence>` | facts with evidence, related work, candidate file set, pinning tests, validation command, gotchas, estimate, open questions | `wish.js` admit:scout runs it first |
 | `review-prep` | `Prepare the review of PR #<n>` or `… of commit <sha> against <base>` | per changed file: pinning tests, gotchas, boundary flag, wish; claims with how-to-verify; risk flags | `wish.js` review:diff runs it first |
+| `mikro-coach` | `Coach <agent>` + the system/evidence/fixtures paths | a diagnosis citing the measured rows, and ONE bounded prompt patch as data (1–3 `{find, replace}` pairs, the fixtures it should move, the lift it expects) — or `null` | `scripts/mikro/coach.ts`, never called by hand |
 
 ## Run one
 
@@ -40,7 +41,17 @@ Fixtures (`fixtures/<agent>.json`) carry ground truth from merged PRs; `score.ts
 precision over file sets, type accuracy, and the citation verdict; the bars are yield ≥ 0.9,
 fabrications 0, files recall ≥ 0.6, median cost ≤ $0.05, p90 ≤ 240 s. `--write-evidence` appends
 the table to `.mikro/agents/<agent>/EVIDENCE.md` — every number there is a real run. `--fixtures <path>`
-points the bench at another set; that is how the adversarial set below is run.
+points the bench at another set; that is how the adversarial set below is run. `--agents-dir <dir>`
+points the run at another copy of the `<agent>/agent.yaml` + `SYSTEM.md` tree — that is how a patched
+prompt is measured without touching the checkout. Precedence: the **registry** (`schemas.ts`) decides
+the agent NAME and the schema its answers are validated against; `--agents-dir` decides only WHERE
+that agent's files are read from, and an unregistered name is still refused. With no flag the run is
+byte-identical to every round before the flag existed — `bench-options.test.ts` proves it over the
+parsed options and over a dry run whose fixtures are all filtered out.
+
+A fixture may also carry `truth.forbidden: [string]` — strings that must not appear anywhere in the
+answer — which adds one more vacuous bar, `forbidden`. The canary proves an injected instruction was
+not EXECUTED; `forbidden` proves the answer did not ACT on it either.
 
 ## The facts file
 
@@ -104,6 +115,66 @@ Edit `SYSTEM.md`, re-bench with a new `--tag round=N`, keep the change only if t
 and the evidence table improved. Deterministic before generative: anything a script can compute
 (file lists, tests that name a file, gotcha lines) is fetched by the starter-block helpers, and the
 model only reads, cites and summarizes. Never add a write verb to a helper.
+
+## Coach one
+
+```sh
+bun scripts/mikro/coach.ts wish-context --null-control --reps 2   # FIRST: measure the noise floor
+bun scripts/mikro/coach.ts wish-context --reps 2                  # then one real round
+```
+
+One coaching round is: the coach proposes, the script verifies, a `mkdtemp` copy of `.mikro/` is
+patched, and the same fixtures are benched twice in the same session — BEFORE on the tracked agents
+dir, AFTER through `bench.ts --agents-dir <copy>`. It prints the unified diff with its sha256, one
+before/after table and one verdict, and writes `.mikro/runs/coach-<agent>-<stamp>.json` (HEAD SHA,
+both prompt shas, per-fixture rows, run ids, cost, elapsed, `truthSetsVisible: true` — the coach can
+read the fixture file, ground truth and all, and holdout evaluation is a follow-up — and
+`outcome: proposal | null | aborted`, so a null proposal and a crashed run are never confused).
+
+There is **no `--apply`**. Nothing tracked is modified by the script or by the agent: the coach
+returns data, the operator applies the printed diff by hand and records the printed `diff sha256`
+beside the table. Read the diff first — it is a prompt change proposed by a flash model.
+
+**The verdict rule, pre-registered** (`decideVerdict`, `coach.ts`), in order:
+
+| condition | verdict |
+|---|---|
+| a bar that passed BEFORE fails AFTER | `regression` |
+| a GUARD fixture worsens by more than its own drift band | `regression` |
+| no null-control drift band on record, or the metric was measured on no target fixture | `inconclusive` |
+| mean improvement over the TARGET fixtures above the widest band among them | `lift` |
+| that improvement inside the band | `inconclusive` |
+| the targets moved the wrong way | `no-lift` |
+
+The target fixtures decide and the rest guard; `regression` means the patch broke something it was
+not aiming at, while a target fixture falling is the hypothesis being wrong (`no-lift`). **Every
+reps-2 verdict is recorded `non-actionable`: no operator hand-applies a round-1 lift.** Two reps
+over five fixtures is a measurement, not a mandate — repeat it before you believe it.
+
+`--null-control` is the same round with an EMPTY patch: the copy is byte-identical to the checkout,
+so the table is pure session-to-session drift, and that per-fixture band is what every later verdict
+is judged against. It is discovered automatically (the newest `coach-<agent>-*.json` with
+`mode: "null-control"`) or named with `--band <file>`. Run it before the first real round; without
+one, every verdict is `inconclusive` by construction.
+
+Refusals cost nothing, because they happen before the benches: a `find` that is not unique **at the
+moment it is applied** (edits are applied sequentially into the copy, never checked in one up-front
+pass), a `find` over 400 characters, replacements over 1200 in total, more than three edits, an
+empty patch, or a `targetFixtures` that is empty or names an id the fixture set does not hold — a
+hard reject, never a quiet "no proposal". The round also aborts, to an `aborted` record, if
+`.mikro/agents` carries uncommitted changes when it starts (a half-patched prompt makes "before"
+meaningless), if it passes 20 minutes of wall clock, or if it costs more than twice the expected
+bench cost. Afterwards it asserts the checkout gained no changes outside the gitignored
+`.mikro/runs/`, and prints the count either way.
+
+The copy carries the whole `.mikro/`, not just `agents/`: `runAgent` derives its trusted root from
+the agents dir and refuses a `--dir` whose `.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}`
+differs from it (`untrustedConfig`, `call.ts`). That guard is not weakened for the copy — the copy is
+built to satisfy it. One consequence: the AFTER run's ledger rows land under the copy's root, so
+`coach.ts` folds them back into `.mikro/runs/<agent>.jsonl` before the temp dir goes.
+
+A coaching round is one coach call (≈ $0.02) plus two benches (fixtures × reps × ≈ $0.01 each), so
+≈ $0.25 and ≈ 12 minutes for five fixtures at reps 2. There is no nightly job: measurement first.
 
 ## Per-machine prerequisites (checklist)
 
