@@ -461,6 +461,13 @@ version_is_newer() {
   return 1
 }
 
+# Whether the second manifest source may be consulted at all. See fetch_latest:
+# the no-jq path of manifest_get cannot tell a manifest from a body that merely
+# contains the words, which only matters once two answers compete.
+api_source_usable() {
+  command -v jq >/dev/null 2>&1
+}
+
 # Read the channel manifest from BOTH published sources and return the NEWER
 # answer. The raw CDN stays the authority: it is the only source that can fail
 # the install, and a tie or an unparsable API version keeps its bytes. The API
@@ -468,7 +475,7 @@ version_is_newer() {
 # curl -f), empty or envelope-shaped answers all degrade silently to the CDN
 # copy. Mirrors fetchLatestManifest in src/genie-commands/update.ts.
 fetch_latest() {
-  local channel="$1" url api_url payload api_payload cdn_version api_version
+  local channel="$1" url api_url payload api_payload="" cdn_version api_version
   url="$(resolve_manifest_url "$channel")"
   api_url="$(resolve_manifest_api_url "$channel")"
   log "manifest=${url##*/}"
@@ -480,7 +487,19 @@ fetch_latest() {
   # fails manifest_channel_matches below and is discarded, so no base64/jq
   # decoder is needed and the prerequisite list is unchanged. --max-time bounds
   # this optional read so a hung API can never stall an install the CDN serves.
-  api_payload="$(curl -fsSL --max-time 5 -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)" || api_payload=""
+  #
+  # Only where the answer can be validated STRICTLY, though: without jq,
+  # manifest_get falls back to a `sed` line match that reads "channel" and
+  # "version" from anywhere in the body — nested inside an error object, or out
+  # of text that is not JSON at all. With one source that was harmless, because
+  # there was nothing to out-rank; with two, a garbled or crafted second answer
+  # out-ranks the real manifest. Verified against this file: on a jq-free host an
+  # error body carrying a higher version and a foreign tarball_base won. The
+  # second source is an optimisation, never a requirement, so a jq-free host
+  # reads the CDN alone and keeps exactly its pre-#2950 behaviour.
+  if api_source_usable; then
+    api_payload="$(curl -fsSL --max-time 5 -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)" || api_payload=""
+  fi
   if [ -n "$api_payload" ] && ! manifest_channel_matches "$api_payload" "$channel"; then
     api_payload=""
   fi
