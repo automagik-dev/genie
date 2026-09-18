@@ -26,8 +26,12 @@ const BARE_NAME_INSTRUCTION = /\b(?:with|run|running|by|under|using) the saved n
 
 /** Assert the front door `skill` states the explicit-script-path rule for `name`. */
 export function expectExplicitScriptPathRule(skill: string, name: string): void {
-  // The project catalog, which stays the single source of truth.
-  expect(skill).toContain(`.claude/workflows/${name}.js`);
+  // The project catalog, which stays the single source of truth. The
+  // `<repository root>` prefix is load-bearing in this assertion, not decoration:
+  // a bare `.claude/workflows/<name>.js` is a SUBSTRING of the user-scope path on
+  // the next line, so it could never fail on its own — a front door that named
+  // only `~/.claude/workflows/<name>.js` would have passed both.
+  expect(skill).toContain(`<repository root>/.claude/workflows/${name}.js`);
   // The user-scope copy the workflows channel installs, named as the fallback.
   expect(skill).toContain(`~/.claude/workflows/${name}.js`);
   // The rule itself, in the words the runtime's operator reads.
