@@ -38,9 +38,22 @@ const AMBIENT_GIT_VARS = [
   'GIT_NAMESPACE',
 ] as const;
 
-/** The caller's environment with {@link AMBIENT_GIT_VARS} removed; everything else (PATH included) survives. */
-export function gitProbeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const stripped = new Set<string>(AMBIENT_GIT_VARS);
+/**
+ * `tar` takes options from `TAR_OPTIONS`, so an exported one would let the environment
+ * decide how an archive is extracted. This module strips ambient environment for exactly
+ * that class of variable.
+ */
+const AMBIENT_TAR_VARS = ['TAR_OPTIONS'] as const;
+
+/**
+ * The caller's environment with {@link AMBIENT_GIT_VARS} (and anything in `alsoStrip`)
+ * removed; everything else (PATH included) survives.
+ */
+export function gitProbeEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  alsoStrip: readonly string[] = [],
+): Record<string, string> {
+  const stripped = new Set<string>([...AMBIENT_GIT_VARS, ...alsoStrip]);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) if (value !== undefined && !stripped.has(key)) out[key] = value;
   return out;
@@ -49,8 +62,43 @@ export function gitProbeEnv(env: NodeJS.ProcessEnv = process.env): Record<string
 /** One directory name, never a path: `<agents>/<agent>/agent.yaml` and the git pathspec are joined from it. */
 export const AGENT_DIR_NAME = /^[a-z0-9][a-z0-9._-]*$/;
 
-/** The four files mikro loads from `<dir>/.mikro/`; `TOOLS.md` is Python injected straight into the REPL. */
-export const MIKRO_CONFIG_FILES = ['mikro.yaml', 'TOOLS.md', 'SYSTEM.md', 'CRITERIA.md'] as const;
+/**
+ * Every file the mikro runtime loads from the directory it is pointed at — the one list
+ * the trust boundary compares, MIRRORED from the runtime's own loader rather than guessed.
+ *
+ * Derived from **mikro 1.260909.1** (the version floor in this README's prerequisites),
+ * `loadConfig` in `~/.mikro/mikro/src/config.ts:814-857`: it reads `<dir>/.mikro/mikro.yaml`
+ * and, when that file is ABSENT, falls back to the pre-rename `<dir>/.rlmx/rlmx.yaml` —
+ * `mikroDir` then becomes `.rlmx` and the auto-loaded `SYSTEM.md`, `CRITERIA.md` and
+ * `TOOLS.md` come from there too (`:821-840`). The legacy directory is not a curiosity: the
+ * repositories the shipped default agents exist for are exactly the ones with no
+ * `.mikro/mikro.yaml`, so for them `.rlmx/` is the branch that FIRES. `TOOLS.md` is Python
+ * injected into the REPL and a `providers:` block outranks the global settings, so an
+ * unmirrored entry here is a hole, not a detail.
+ *
+ * `VALIDATE.md` is deliberately absent from both directories. `loadConfig` does read
+ * `<mikroDir>/VALIDATE.md` (`:839`), but every run this runtime makes is a MICROAGENT run
+ * (`mikro_<agent>`), and `mcp/server.ts:585` assigns `next.validate = agent.validate ?? null`
+ * unconditionally — the agent's own `VALIDATE.md`, loaded from the agent directory
+ * (`mcp/agents.ts:198`), which is our materialized tree. `<dir>`'s copy therefore never
+ * reaches the model. Verified in the installed 1.260909.1 source; it is only the generic
+ * `mikro_query` tool that would see it, and `call.ts` calls no such tool. If that ever
+ * changes, `VALIDATE.md` joins this list.
+ *
+ * STANDING RULE: re-derive this list from `loadConfig` whenever the mikro version floor
+ * moves. It is one constant on purpose — the ref path, the no-ref fail-closed path and the
+ * flag path all read it, so they can never drift apart.
+ */
+export const MIKRO_CONFIG_FILES = [
+  '.mikro/mikro.yaml',
+  '.mikro/TOOLS.md',
+  '.mikro/SYSTEM.md',
+  '.mikro/CRITERIA.md',
+  '.rlmx/rlmx.yaml',
+  '.rlmx/TOOLS.md',
+  '.rlmx/SYSTEM.md',
+  '.rlmx/CRITERIA.md',
+] as const;
 
 /** One git read in the invoking checkout, with the ambient git environment stripped. Bytes, because blobs are compared byte for byte. */
 function gitRead(invokingRoot: string, args: string[]): { ok: boolean; bytes: Buffer } {
@@ -216,6 +264,9 @@ export function materializeAgent(
     if (archive.exitCode !== 0) throw new Error(`git archive ${ref} ${prefix} exited ${archive.exitCode}`);
     const extract = Bun.spawnSync(['tar', '-x', '-f', '-', '-C', root], {
       stdin: archive.stdout,
+      // `TAR_OPTIONS` stripped along with the ambient git variables: how this archive is
+      // extracted is decided here, never by whatever exported an option into the process.
+      env: gitProbeEnv(process.env, AMBIENT_TAR_VARS),
       stdout: 'pipe',
       stderr: 'pipe',
     });

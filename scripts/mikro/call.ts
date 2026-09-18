@@ -41,7 +41,7 @@
  * attempt is ok; exit 1 otherwise (the result JSON still names every error).
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
@@ -844,28 +844,53 @@ export function mikroVersion(): string {
   return cachedMikroVersion;
 }
 
+/** The operator's way out of every refusal below, named in each of them. */
+const AGENTS_DIR_ESCAPE = 'pass --agents-dir <checkout>/.mikro/agents';
+
 /**
- * mikro loads <dir>/.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md} from the directory it is
- * pointed at — a project provider entry beats the global one, and TOOLS.md is Python injected into the
- * REPL. A --dir that is the tree under review (an executor worktree cut from a PR) must therefore
- * never supply that config: it is refused unless every such file is byte-identical to the invoking
- * checkout's, or absent.
+ * What one compared path IS on disk, decided with `lstat` and never by following anything.
  *
- * This is the DIRECTORY comparison, and it is used on exactly two paths: an operator-typed
- * `--agents-dir` (operator trust, semantics unchanged — the same-directory exemption included,
- * because that directory IS the operator's authoring tree), and a run for which no trusted ref
- * could be resolved at all, where there is nothing to compare against and only `--dir` = the
- * invoking checkout is accepted with configuration. Everything else goes through
- * {@link untrustedConfigAtRef}.
+ * A compared path that is not a regular file — a directory named `.mikro/TOOLS.md`, a
+ * symlink (dangling or not) — is neither absent nor comparable: reading it throws (EISDIR)
+ * or reads somewhere else entirely, so it is a refusal of its own. `existsSync` alone
+ * answered `false` for a dangling symlink and `true` for a directory it then tried to read.
+ */
+function comparedFile(path: string): 'absent' | 'file' | 'irregular' {
+  try {
+    return lstatSync(path).isFile() ? 'file' : 'irregular';
+  } catch {
+    return 'absent';
+  }
+}
+
+const irregular = (path: string, why: string): string =>
+  `${path} is not a regular file: refusing to run an agent under configuration that cannot be compared ${why} — ${AGENTS_DIR_ESCAPE}`;
+
+/**
+ * mikro loads its configuration from the directory it is pointed at
+ * ({@link MIKRO_CONFIG_FILES}, mirrored from the runtime's loader) — a project provider
+ * entry beats the global one, and TOOLS.md is Python injected into the REPL. A --dir that
+ * is the tree under review (an executor worktree cut from a PR) must therefore never
+ * supply that config.
+ *
+ * This is the DIRECTORY comparison, and after the fail-closed amendment to Decision 8 it
+ * is used on exactly two paths: an operator-typed `--agents-dir` (operator trust,
+ * semantics unchanged — the same-directory exemption included, because that directory IS
+ * the operator's authoring tree), and Decision 8's explicit non-git carve-out, where the
+ * invoking cwd is no checkout at all and only `--dir` = cwd is accepted with
+ * configuration. A run INSIDE a git repository that resolved no ref does NOT land here —
+ * it fails closed through {@link unverifiableConfig}.
  */
 export function untrustedConfig(dir: string, trustedRoot: string): string | null {
   if (resolve(dir) === resolve(trustedRoot)) return null;
-  for (const name of MIKRO_CONFIG_FILES) {
-    const theirs = join(dir, '.mikro', name);
-    if (!existsSync(theirs)) continue;
-    const ours = join(trustedRoot, '.mikro', name);
-    if (!existsSync(ours) || readFileSync(theirs, 'utf8') !== readFileSync(ours, 'utf8'))
-      return `${theirs} differs from the invoking checkout's .mikro/${name}: refusing to run an agent under configuration taken from the tree under review`;
+  for (const rel of MIKRO_CONFIG_FILES) {
+    const theirs = join(dir, rel);
+    const kind = comparedFile(theirs);
+    if (kind === 'absent') continue;
+    if (kind === 'irregular') return irregular(theirs, 'against the invoking checkout');
+    const ours = join(trustedRoot, rel);
+    if (comparedFile(ours) !== 'file' || readFileSync(theirs, 'utf8') !== readFileSync(ours, 'utf8'))
+      return `${theirs} differs from the invoking checkout's ${rel}: refusing to run an agent under configuration taken from the tree under review`;
   }
   return null;
 }
@@ -878,7 +903,7 @@ export function untrustedConfig(dir: string, trustedRoot: string): string | null
  * There is deliberately no same-directory exemption here: a session started inside a PR
  * checkout must not trust that checkout's `TOOLS.md` just because the process happens to
  * have been launched in it. The consequence is stated rather than hidden — an UNCOMMITTED
- * edit to one of those four files refuses every no-flag call — so the message names the
+ * edit to one of the compared files refuses every no-flag call — so the message names the
  * escape, which is the operator-typed flag whose semantics are unchanged.
  */
 export function untrustedConfigAtRef(
@@ -887,12 +912,37 @@ export function untrustedConfigAtRef(
   ref: string,
   readBlob: typeof readTrustedBlob = readTrustedBlob,
 ): string | null {
-  for (const name of MIKRO_CONFIG_FILES) {
-    const theirs = join(dir, '.mikro', name);
-    if (!existsSync(theirs)) continue;
-    const trusted = readBlob(invokingRoot, ref, `.mikro/${name}`);
+  for (const rel of MIKRO_CONFIG_FILES) {
+    const theirs = join(dir, rel);
+    const kind = comparedFile(theirs);
+    if (kind === 'absent') continue;
+    if (kind === 'irregular') return irregular(theirs, `against ${ref}`);
+    const trusted = readBlob(invokingRoot, ref, rel);
     if (trusted === null || readFileSync(theirs, 'utf8') !== trusted)
-      return `${theirs} ${trusted === null ? 'is absent at' : 'differs from'} ${ref} in the invoking checkout: refusing to run an agent under configuration the trusted ref does not carry — to run with your own working tree instead, pass --agents-dir <checkout>/.mikro/agents`;
+      return `${theirs} ${trusted === null ? 'is absent at' : 'differs from'} ${ref} in the invoking checkout: refusing to run an agent under configuration the trusted ref does not carry — to run with your own working tree instead, ${AGENTS_DIR_ESCAPE}`;
+  }
+  return null;
+}
+
+/**
+ * The fail-closed path: the invoking cwd IS a git repository, and no trusted ref resolved.
+ *
+ * Falling back to the directory comparison here was the hole Decision 8 exists to close —
+ * its same-directory exemption meant a session started inside a PR checkout trusted that
+ * PR's own `TOOLS.md`, and three ordinary states reach it: a checkout with no
+ * `refs/remotes/origin/HEAD` (a CI checkout, a `git init` + `fetch`, a worktree of either),
+ * a STALE `origin/HEAD` after a default-branch rename, and a well-formed `--agents-ref`
+ * that names no commit. The agent degrades to the shipped default in all three (it is
+ * genie's own payload, not the tree under review); the CONFIGURATION cannot degrade,
+ * because nothing can vouch for it. So any compared file present in `--dir` — the invoking
+ * checkout included — refuses the run at zero cost, and the message names all three
+ * remedies. A `--dir` carrying none of them still runs.
+ */
+export function unverifiableConfig(dir: string, refReason: string): string | null {
+  for (const rel of MIKRO_CONFIG_FILES) {
+    const theirs = join(dir, rel);
+    if (comparedFile(theirs) === 'absent') continue;
+    return `${theirs} cannot be verified: the invoking checkout resolved no trusted ref (${refReason}), so nothing can vouch for this configuration — name one with --agents-ref <ref>, give the checkout a base with git remote set-head origin -a, or ${AGENTS_DIR_ESCAPE}`;
   }
   return null;
 }
@@ -944,6 +994,13 @@ export interface ResolvedAgents {
   ref?: string;
   /** Why this source won — reported whenever the repository's own agent was not used. */
   reason?: string;
+  /**
+   * The git toplevel of the invoking cwd, when there is one. Absent means the process was
+   * started outside any checkout — Decision 8's non-git carve-out, and the ONLY state in
+   * which a missing trusted ref falls back to the directory comparison rather than failing
+   * closed. Not set on the flag path, which never consults a ref.
+   */
+  invokingRoot?: string;
   /** Removes materialized temp material. Absent unless something was materialized. */
   dispose?: () => void;
 }
@@ -980,11 +1037,13 @@ export function resolveAgentsDir(options: {
   const trusted = repoRoot
     ? resolveTrustedRef(repoRoot, options.agentsRef)
     : { ref: null, reason: `${trustedRoot} is no git checkout, so it carries no trusted ref` };
+  const invoking = repoRoot ? { invokingRoot: repoRoot } : {};
   let material: MaterializedAgents | null = null;
-  let reason = trusted.reason;
+  /** Why the SHIPPED agent won, if it does: the ref that could not be resolved, or the agent that could not be materialized from it. */
+  let shippedReason = trusted.reason;
   if (repoRoot && trusted.ref) {
     material = materializeAgent(repoRoot, trusted.ref, options.agent, (why) => {
-      reason = why;
+      shippedReason = why;
     });
   }
   if (material)
@@ -994,11 +1053,19 @@ export function resolveAgentsDir(options: {
       source: 'repo',
       ref: trusted.ref ?? undefined,
       reason: trusted.reason,
+      ...invoking,
       dispose: material.dispose,
     };
   const shipped = shippedAgentsRoot(options.genieHome);
   if (hasAgent(shipped, options.agent))
-    return { dir: shipped, trustedRoot, source: 'shipped', ref: trusted.ref ?? undefined, reason };
+    return {
+      dir: shipped,
+      trustedRoot,
+      source: 'shipped',
+      ref: trusted.ref ?? undefined,
+      reason: shippedReason,
+      ...invoking,
+    };
   return null;
 }
 
@@ -1087,39 +1154,6 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   const { dir: agentsDir, trustedRoot, ref: trustedRef, reason: agentSourceReason } = resolvedAgents;
   /** `repo@<ref>` names WHICH ref answered: a repository agent that failed to resolve cannot hide behind a silent fallback. */
   const agentSource = resolvedAgents.source === 'repo' ? `repo@${trustedRef}` : resolvedAgents.source;
-  // The flag is operator trust and keeps the directory comparison (same-directory exemption
-  // included). Everything else compares `<dir>/.mikro/` against the trusted ref, on every
-  // source, for every `--dir` — the invoking checkout included. With no ref resolvable there
-  // is nothing to compare against, so only `--dir` = the invoking checkout is accepted with
-  // configuration, which is what the directory comparison already does.
-  const untrusted =
-    resolvedAgents.source !== 'flag' && trustedRef
-      ? untrustedConfigAtRef(dir, trustedRoot, trustedRef)
-      : untrustedConfig(dir, trustedRoot);
-  if (untrusted) {
-    resolvedAgents.dispose?.();
-    return refused(`config: ${untrusted}`, agentSource, agentSourceReason);
-  }
-  const runsDir = resolveRunsDir(trustedRoot, genieHome);
-  const factsOption = options.facts ?? process.env.MIKRO_FACTS;
-  // The status gate's two proofs, built once per run: the ancestor probe caches per ref
-  // and `verifyCitations` caches the tracked set per dir. `citationOk` re-enters the
-  // citation gate through its own regex — an extension it does not recognize yields no
-  // citation at all, which reads as unverifiable, which is the fail-closed direction.
-  const statusGate: StatusGate = {
-    isAncestor: makeAncestorCheck(dir),
-    citationOk: (path, line) => verifyCitations({ cite: `${path}:${line}` }, dir).some((c) => c.ok && c.line === line),
-  };
-  // The sandbox is opened ONCE for the whole run (both attempts and the facts scan share
-  // one proxy and one egress ledger) and closed on every exit path. A failure to open is
-  // fatal by design: `bwrap` mode never silently downgrades to `none` — the rollback is
-  // `--boundary none`.
-  //
-  // It opens BEFORE the facts are computed, and that order is the security property, not a
-  // detail: `facts.ts` runs `git` over the tree under `--dir` and `gh` with the host's
-  // credential, so computing them first put a credentialed GitHub call and a git run over
-  // an untrusted tree on the bare host — outside the sandbox and outside the egress ledger,
-  // which is precisely the traffic the boundary exists to contain.
   let boundary: BoundarySession | null = null;
   let prompt = options.prompt;
   let answer: unknown;
@@ -1129,8 +1163,47 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   let runtimeMissing = false;
 
   // The materialized agent tree is removed on EVERY exit path — a finished run, a failed
-  // one, and a throw from the boundary — which is why the open is inside this try.
+  // one, a refusal, and a throw from anything below — which is why the CONFIGURATION
+  // COMPARISON and the boundary open are both inside this try. The comparison sat outside
+  // it once: a compared path that was a directory threw EISDIR out of `runAgent` and the
+  // 0700 temp tree leaked.
   try {
+    // Three states, and only three. The flag is operator trust and keeps the directory
+    // comparison, same-directory exemption included. With a trusted ref, `<dir>`'s
+    // configuration is compared against that ref — every `--dir`, the invoking checkout
+    // included, on every source. IN a git checkout with no resolvable ref there is nothing
+    // that can vouch for the configuration, so it fails closed; only Decision 8's non-git
+    // carve-out (no checkout at all) still falls back to the directory comparison.
+    const untrusted =
+      resolvedAgents.source === 'flag'
+        ? untrustedConfig(dir, trustedRoot)
+        : trustedRef
+          ? untrustedConfigAtRef(dir, trustedRoot, trustedRef)
+          : resolvedAgents.invokingRoot
+            ? unverifiableConfig(dir, agentSourceReason ?? 'no ref resolved')
+            : untrustedConfig(dir, trustedRoot);
+    if (untrusted) return refused(`config: ${untrusted}`, agentSource, agentSourceReason);
+    const runsDir = resolveRunsDir(trustedRoot, genieHome);
+    const factsOption = options.facts ?? process.env.MIKRO_FACTS;
+    // The status gate's two proofs, built once per run: the ancestor probe caches per ref
+    // and `verifyCitations` caches the tracked set per dir. `citationOk` re-enters the
+    // citation gate through its own regex — an extension it does not recognize yields no
+    // citation at all, which reads as unverifiable, which is the fail-closed direction.
+    const statusGate: StatusGate = {
+      isAncestor: makeAncestorCheck(dir),
+      citationOk: (path, line) =>
+        verifyCitations({ cite: `${path}:${line}` }, dir).some((c) => c.ok && c.line === line),
+    };
+    // The sandbox is opened ONCE for the whole run (both attempts and the facts scan share
+    // one proxy and one egress ledger) and closed on every exit path. A failure to open is
+    // fatal by design: `bwrap` mode never silently downgrades to `none` — the rollback is
+    // `--boundary none`.
+    //
+    // It opens BEFORE the facts are computed, and that order is the security property, not a
+    // detail: `facts.ts` runs `git` over the tree under `--dir` and `gh` with the host's
+    // credential, so computing them first put a credentialed GitHub call and a git run over
+    // an untrusted tree on the bare host — outside the sandbox and outside the egress ledger,
+    // which is precisely the traffic the boundary exists to contain.
     boundary =
       boundaryMode === 'bwrap'
         ? await (options.openBoundary ?? openBoundary)({

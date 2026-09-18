@@ -83,22 +83,47 @@ it is the command that reviews untrusted content. `bench` and `coach` read the W
 BEFORE bench measured. That means the measuring commands take the flag path, where the synthesized
 trusted root equals `--dir` and the configuration comparison below is skipped by the same-directory
 exemption — including a refusal that existed before this: a no-flag `bench --dir <other repo>` used
-to compare that repository's four configuration files against this checkout's and refuse a differing
+to compare that repository's configuration files against this checkout's and refuse a differing
 `TOOLS.md`. It no longer does. **Point `bench` and `coach` only at a tree you trust** — never at a
 PR checkout or an unaudited clone. Reviewing untrusted content is `genie mikro call`'s job.
 
-**The configuration comparison.** mikro loads `<dir>/.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,
-CRITERIA.md}` from the directory it is pointed at — a project provider entry beats the global one,
-and `TOOLS.md` is Python injected into the REPL. Without `--agents-dir` each of those four files, if
-`<dir>` carries it, must be byte-equal to the blob at the trusted ref: absent from `<dir>` is fine,
-present and differing (or absent at the ref) is refused before anything is spawned or billed. This
-holds for EVERY `--dir` — the invoking checkout included — and on every agent source, `shipped`
-included. There is deliberately no same-directory exemption here: a session started inside a PR
-checkout must not trust that checkout's `TOOLS.md`. The consequence is stated rather than hidden —
-an UNCOMMITTED edit to one of those four files refuses every no-flag call — and the refusal names
-the escape, `--agents-dir <checkout>/.mikro/agents`, whose semantics are unchanged (trusted root two
-levels up, same-directory exemption intact). With `--agents-dir` the trusted root is that directory's
-grandparent, which is the operator's authoring path, and never `<GENIE_HOME>/templates`.
+**The configuration comparison.** mikro loads its configuration from the directory it is pointed at,
+and the compared list MIRRORS that loader rather than guessing at it — `MIKRO_CONFIG_FILES` in
+`scripts/mikro/trusted-source.ts`, derived from `loadConfig` (mikro 1.260909.1,
+`~/.mikro/mikro/src/config.ts:814-857`):
+
+| compared | why |
+|---|---|
+| `.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}` | the primary pack; a project `providers:` entry beats the global one and `TOOLS.md` is Python injected into the REPL |
+| `.rlmx/{rlmx.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}` | the pre-rename LEGACY dir: when `.mikro/mikro.yaml` is absent the loader falls back to `.rlmx/rlmx.yaml` and auto-loads the three `.md` files from there instead. A repository with no `.mikro/mikro.yaml` — which is every repository the shipped defaults exist for — is exactly where this branch fires |
+| `VALIDATE.md`, in neither dir | `loadConfig` reads it, but every run here is a microagent run and `mcp/server.ts:585` assigns `next.validate = agent.validate ?? null` unconditionally, from the agent's own directory (`mcp/agents.ts:198`) — our materialized tree. `<dir>`'s copy never reaches the model. Only the generic `mikro_query` tool would see it, and this runtime calls no such tool |
+
+Re-derive that list whenever the mikro version floor moves; it is one constant so the three paths
+below cannot drift apart.
+
+Without `--agents-dir`, each compared file that `<dir>` carries must be byte-equal to the blob at the
+trusted ref: absent from `<dir>` is fine, present and differing (or absent at the ref) is refused
+before anything is spawned or billed, and a path that is not a regular file (a directory or a
+symlink under one of those names) is refused without being read. This holds for EVERY `--dir` — the
+invoking checkout included — and on every agent source, `shipped` included. There is deliberately no
+same-directory exemption here: a session started inside a PR checkout must not trust that checkout's
+`TOOLS.md`. The consequence is stated rather than hidden — an UNCOMMITTED edit to one of the compared
+files refuses every no-flag call — and the refusal names the escape, `--agents-dir
+<checkout>/.mikro/agents`, whose semantics are unchanged (trusted root two levels up, same-directory
+exemption intact). With `--agents-dir` the trusted root is that directory's grandparent, which is the
+operator's authoring path, and never `<GENIE_HOME>/templates`.
+
+**With NO trusted ref, the configuration fails CLOSED.** A checkout with no
+`refs/remotes/origin/HEAD` (a CI checkout, a `git init` + `fetch`, a worktree of either), a STALE
+`origin/HEAD` after a default-branch rename, and a well-formed `--agents-ref` that names no commit
+all reach the same state: nothing can vouch for `<dir>`'s configuration. The AGENT degrades to the
+shipped default, because that is genie's own payload rather than the tree under review; the
+CONFIGURATION does not degrade. Any compared file present in `<dir>` — the invoking checkout included
+— refuses the run at zero cost, naming the ref reason and all three remedies (`--agents-ref <ref>`,
+`git remote set-head origin -a`, or `--agents-dir <checkout>/.mikro/agents`). A `<dir>` carrying none
+of them still runs. The ONE place the directory comparison still stands in without a ref is Decision
+8's explicit carve-out: a process started outside any git checkout, where only `--dir` = the cwd is
+accepted with configuration.
 
 `MIKRO_AGENTS_DIR` is NOT an input: this runtime only WRITES it into the child environment
 (`call.ts`), so a contaminated shell cannot redirect the reviewer's prompt. It is what overrides

@@ -644,6 +644,9 @@ describe('agent resolution and the run ledger', () => {
       source: 'shipped',
       ref: 'refs/heads/main',
       reason: 'refs/heads/main carries no .mikro/agents/wish-context/agent.yaml',
+      // Present because the cwd IS a checkout: what decides between the fail-closed
+      // configuration rule and Decision 8's non-git carve-out.
+      invokingRoot: repo,
     });
   });
 

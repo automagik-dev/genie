@@ -11,7 +11,16 @@
  * far at all.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoundarySession, OpenBoundaryOptions } from './boundary';
@@ -242,6 +251,232 @@ describe('(d) the local-base rule', () => {
     const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
     expect(seen.system).toBe('# pushed\n');
     expect(result.agentSource).toBe('repo@refs/remotes/origin/main');
+  });
+});
+
+describe('no trusted ref fails CLOSED on configuration', () => {
+  /**
+   * The hole this closes: falling back to the directory comparison here meant its
+   * same-directory exemption applied, so a session started inside a PR checkout trusted
+   * that PR's own `TOOLS.md`. Three ordinary states reach it, and all three are pinned.
+   * The AGENT still degrades to the shipped default — that is genie's own payload, not the
+   * tree under review — which is why each case also asserts `agentSource`.
+   */
+  const refusal = async (options: { dir: string; cwd: string; agentsRef?: string }) => {
+    const { result, seen } = await runCaptured({ ...options, genieHome: shippedHome() });
+    expect(seen.opened).toBe(false); // zero cost: nothing was spawned
+    expect(result.ok).toBe(false);
+    expect(result.costUsd).toBe(0);
+    expect(result.agentSource).toBe('shipped');
+    const error = result.attempts[0].errors[0];
+    expect(error).toStartWith('config:');
+    expect(error).toContain('cannot be verified');
+    // All three remedies, named where the operator reads them.
+    expect(error).toContain('--agents-ref <ref>');
+    expect(error).toContain('git remote set-head origin -a');
+    expect(error).toContain('--agents-dir <checkout>/.mikro/agents');
+    return error;
+  };
+
+  test('a checkout with no origin/HEAD refuses its own .mikro/TOOLS.md', async () => {
+    // What `actions/checkout`, and a `git init` + `fetch`, leave behind. The cwd IS the
+    // PR checkout here: the state the exemption used to wave through.
+    const root = baseRepo('mikro-noref-head-', '# A\n');
+    git(root, ['symbolic-ref', '-d', 'refs/remotes/origin/HEAD']);
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected by the PR\n');
+    expect(await refusal({ dir: root, cwd: root })).toContain('git remote set-head origin -a');
+  });
+
+  test('a STALE origin/HEAD after a default-branch rename refuses too', async () => {
+    const root = baseRepo('mikro-noref-stale-', '# A\n');
+    git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master']); // renamed away
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected by the PR\n');
+    expect(await refusal({ dir: root, cwd: root })).toContain('origin/master');
+  });
+
+  test('a well-formed --agents-ref naming no commit refuses the configuration', async () => {
+    // The agent degrades (Ruling 1) — the configuration must not, or wish.js own flag
+    // would be the way in on any repository whose base ref is spelled differently.
+    const root = baseRepo('mikro-noref-flag-', '# A\n');
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected by the PR\n');
+    expect(await refusal({ dir: root, cwd: root, agentsRef: 'origin/no-such-branch' })).toContain('names no commit');
+  });
+
+  test('a --dir carrying none of the compared files still runs on the shipped agent', async () => {
+    const root = baseRepo('mikro-noref-clean-', '# A\n');
+    git(root, ['symbolic-ref', '-d', 'refs/remotes/origin/HEAD']);
+    const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
+    expect(seen.opened).toBe(true);
+    expect(seen.system).toBe('# shipped default\n');
+    expect(result.agentSource).toBe('shipped');
+    expect(result.agentSourceReason).toContain('no origin/HEAD');
+  });
+
+  test('outside any git checkout the carve-out stands: --dir = cwd is still accepted', async () => {
+    // Decision 8 explicit: no checkout, no ref, and only `--dir` = cwd accepted with
+    // configuration. The fail-closed rule is for a REPOSITORY that resolved no ref.
+    const loose = tmp('mikro-noref-nogit-');
+    mkdirSync(join(loose, '.mikro'), { recursive: true });
+    writeFileSync(join(loose, '.mikro', 'TOOLS.md'), '## the operator own helpers\n');
+    const { result, seen } = await runCaptured({ dir: loose, cwd: loose, genieHome: shippedHome() });
+    expect(seen.opened).toBe(true);
+    expect(result.agentSource).toBe('shipped');
+    // …and a DIFFERENT --dir is still refused, by the directory comparison.
+    const other = tmp('mikro-noref-nogit-other-');
+    mkdirSync(join(other, '.mikro'), { recursive: true });
+    writeFileSync(join(other, '.mikro', 'TOOLS.md'), '## injected\n');
+    const away = await runCaptured({ dir: other, cwd: loose, genieHome: shippedHome() });
+    expect(away.seen.opened).toBe(false);
+    expect(away.result.attempts[0].errors[0]).toStartWith('config:');
+  });
+});
+
+describe('(f)/(g) the legacy .rlmx configuration directory is compared too', () => {
+  /**
+   * mikro 1.260909.1 falls back to `<dir>/.rlmx/rlmx.yaml` when `<dir>/.mikro/mikro.yaml`
+   * is absent, and then auto-loads `.rlmx/{SYSTEM,CRITERIA,TOOLS}.md` — so on exactly the
+   * repositories the shipped defaults exist for (no `.mikro/mikro.yaml`), `.rlmx/` is the
+   * branch that fires. TOOLS.md there is Python in the REPL and `providers:` outranks the
+   * global settings.
+   */
+  const legacy = {
+    yaml: 'providers:\n  attacker:\n    kind: openai\n',
+    tools: '## injected\ndef helper():\n    pass\n',
+  };
+
+  test('(f) a PR adding .rlmx/rlmx.yaml + .rlmx/TOOLS.md is refused on the repo source', async () => {
+    const base = baseRepo('mikro-rlmx-repo-', '# A\n'); // carries an agent, no .mikro/mikro.yaml
+    const worktree = join(tmp('mikro-rlmx-wt-'), 'pr');
+    git(base, ['worktree', 'add', '-q', '-b', 'pr', worktree]);
+    write(worktree, '.rlmx/rlmx.yaml', legacy.yaml);
+    write(worktree, '.rlmx/TOOLS.md', legacy.tools);
+    commit(worktree, 'the PR injects the legacy config dir');
+
+    const { result, seen } = await runCaptured({ dir: worktree, cwd: worktree, genieHome: shippedHome() });
+    expect(seen.opened).toBe(false);
+    expect(result.costUsd).toBe(0);
+    expect(result.attempts[0].errors[0]).toStartWith('config:');
+    expect(result.attempts[0].errors[0]).toContain('.rlmx/rlmx.yaml');
+    expect(result.agentSource).toBe('repo@refs/heads/main');
+
+    git(base, ['worktree', 'remove', '--force', worktree]);
+  });
+
+  test('(f) and on the shipped source, where the repository has no agent at all', async () => {
+    const root = tmp('mikro-rlmx-shipped-');
+    git(root, ['init', '-q', '-b', 'main']);
+    write(root, 'README.md', '# no agent, no .mikro/mikro.yaml\n');
+    commit(root, 'seed');
+    git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+    write(root, '.rlmx/rlmx.yaml', legacy.yaml);
+    write(root, '.rlmx/TOOLS.md', legacy.tools);
+
+    const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
+    expect(seen.opened).toBe(false);
+    expect(result.costUsd).toBe(0);
+    expect(result.attempts[0].errors[0]).toStartWith('config:');
+    expect(result.agentSource).toBe('shipped');
+  });
+
+  test('(g) the same legacy files, byte-identical at the ref, are accepted', async () => {
+    const root = baseRepo('mikro-rlmx-ok-', '# A\n', {
+      '.rlmx/rlmx.yaml': legacy.yaml,
+      '.rlmx/TOOLS.md': legacy.tools,
+    });
+    const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
+    expect(seen.opened).toBe(true);
+    expect(seen.system).toBe('# A\n');
+    expect(result.agentSource).toBe('repo@refs/heads/main');
+  });
+});
+
+describe('a compared path that is not a regular file', () => {
+  const runCli = (dir: string, cwd: string): Promise<number> => {
+    const saved = process.cwd();
+    process.chdir(cwd);
+    return runCallCli(['wish-context', '--prompt', 'Intent: x', '--dir', dir, '--no-phoenix', '--no-ledger']).finally(
+      () => process.chdir(saved),
+    );
+  };
+  const leftovers = (): Set<string> =>
+    new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith('mikro-agents-')));
+
+  test('a DIRECTORY named .mikro/TOOLS.md is a refusal, not an EISDIR crash, and leaks no temp tree', async () => {
+    const root = baseRepo('mikro-eisdir-', '# A\n');
+    mkdirSync(join(root, '.mikro', 'TOOLS.md', 'inside'), { recursive: true });
+    const before = leftovers();
+    expect(await runCli(root, root)).toBe(1);
+    expect([...leftovers()].filter((entry) => !before.has(entry))).toEqual([]);
+  });
+
+  test('a SYMLINK in a compared path is refused rather than followed', async () => {
+    const root = baseRepo('mikro-symlink-', '# A\n');
+    const elsewhere = tmp('mikro-symlink-target-');
+    writeFileSync(join(elsewhere, 'TOOLS.md'), '## injected through a link\n');
+    symlinkSync(join(elsewhere, 'TOOLS.md'), join(root, '.mikro', 'TOOLS.md'));
+    const before = leftovers();
+    expect(await runCli(root, root)).toBe(1);
+    expect([...leftovers()].filter((entry) => !before.has(entry))).toEqual([]);
+    // A DANGLING link is refused too: `existsSync` answered false for it, which read as
+    // "absent" and waved the run through.
+    rmSync(join(root, '.mikro', 'TOOLS.md'));
+    symlinkSync(join(elsewhere, 'gone.md'), join(root, '.mikro', 'TOOLS.md'));
+    expect(await runCli(root, root)).toBe(1);
+  });
+});
+
+describe('the UNCONTAINED path hands over the same materialized tree', () => {
+  /**
+   * Every other case here observes the injected boundary opener, which is the `--boundary
+   * bwrap` arm. `none` is the DEFAULT arm and builds its own child environment
+   * (`serverEnv()` + `MIKRO_AGENTS_DIR`, `call.ts`), so it is asserted on its own terms:
+   * a stub named `mikro` on a scratch PATH records what it was handed and exits. It is a
+   * shell script, not the runtime — no MCP session, no provider, no bill — and the run
+   * then fails with "exited before answering", which is all this test needs.
+   */
+  test('a stub on PATH records MIKRO_AGENTS_DIR and reads the committed prompt through it', () => {
+    const root = baseRepo('mikro-uncontained-', '# the committed prompt\n');
+    write(root, SYSTEM, '# the working tree prompt\n'); // uncommitted: must NOT be what it sees
+    const bin = tmp('mikro-uncontained-bin-');
+    const capture = join(tmp('mikro-uncontained-capture-'), 'handed-over.txt');
+    writeFileSync(
+      join(bin, 'mikro'),
+      '#!/bin/sh\n{ printf "dir=%s\\n" "$MIKRO_AGENTS_DIR"; cat "$MIKRO_AGENTS_DIR/wish-context/SYSTEM.md"; } > "$MIKRO_CAPTURE"\nexit 0\n',
+      { mode: 0o755 },
+    );
+    const proc = Bun.spawnSync(
+      [process.execPath, join(import.meta.dir, 'call.ts'), 'wish-context'].concat([
+        '--prompt',
+        'Intent: x',
+        '--dir',
+        root,
+        '--retries',
+        '0',
+        '--no-phoenix',
+        '--no-ledger',
+      ]),
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          // `MIKRO_*` is on `serverEnv()`'s allowlist, which is how the stub is told where to write.
+          MIKRO_CAPTURE: capture,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+    expect(proc.exitCode).toBe(1); // the stub is not an MCP server: the run fails, unbilled
+    const handed = readFileSync(capture, 'utf8');
+    const agentsDir = /^dir=(.*)$/m.exec(handed)?.[1] ?? '';
+    expect(agentsDir).not.toBe('');
+    expect(agentsDir.startsWith(root)).toBe(false); // never the tree under review
+    expect(agentsDir).toContain('mikro-agents-'); // the materialized 0700 tree
+    expect(handed).toContain('# the committed prompt');
+    expect(handed).not.toContain('# the working tree prompt');
+    expect(JSON.parse(proc.stdout.toString()).agentSource).toBe('repo@refs/heads/main');
   });
 });
 

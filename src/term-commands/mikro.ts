@@ -62,9 +62,10 @@ Without --agents-dir the agent files come from the INVOKING checkout's
 tree and never from --dir, which is the tree under review — and otherwise from
 the shipped defaults under <GENIE_HOME>/templates/mikro/agents/. The answer names
 which source won in "agentSource" (flag, repo@<ref>, shipped) and why in
-"agentSourceReason". The same ref decides whether --dir's own .mikro/ config is
-trusted; an uncommitted edit to those four files is refused, and --agents-dir is
-the operator's way to run with a working tree instead.
+"agentSourceReason". The same ref decides whether --dir's own .mikro/ (and legacy
+.rlmx/) configuration is trusted; an uncommitted edit to one of those files is
+refused, a checkout that resolves no ref at all refuses them outright, and
+--agents-dir is the operator's way to run with a working tree instead.
 
 Genie's own global options win anywhere in the tail: -V/--version, -h/--help and
 --no-interactive are consumed before the tail reaches the runtime, so a flag
