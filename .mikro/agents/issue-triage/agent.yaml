@@ -1,0 +1,20 @@
+# issue-triage — one GitHub issue of this repository → a routed, cited triage record.
+# Runs only through `mikro mcp` (tool `mikro_issue-triage`); genie calls it with
+# `bun scripts/mikro/call.ts issue-triage --prompt "Triage issue #<n>"`, which
+# validates the JSON it returns against scripts/mikro/schemas.ts (IssueTriage)
+# and verifies every cited path:line against the tree before anything trusts it.
+schema_version: 1
+tools_api: 1
+shape: loop
+model: deepseek-api/deepseek-flash   # DeepSeek 4.1 Flash, declared in .mikro/mikro.yaml
+thinking: low                        # unset would mean reasoning OFF (pi/ai default)
+description: >-
+  Triages one GitHub issue of this repository: reads the issue, locates the code it
+  names, finds related PRs/wishes/commits, and returns a JSON record — type, area,
+  candidate files with path:line evidence, lane, one question for the operator —
+  with every citation verified in its own REPL. Prompt: "Triage issue #<number>".
+system: SYSTEM.md
+budget:
+  max_iterations: 12
+  max_cost: 0.25
+  max_depth: 0

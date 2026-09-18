@@ -1,0 +1,23 @@
+# wish-context — one intent sentence → the facts a wish scout needs, cited.
+# The cheap first pass of the canonical wish's triage: related wishes/brainstorms/PRs,
+# the candidate file set with the line that proves each, the pinning tests and the
+# validation command, the CLAUDE.md gotchas that name those paths, an a-priori
+# size estimate, and the decisions the intent leaves open. Runs only through
+# `mikro mcp`; genie calls it with `bun scripts/mikro/call.ts wish-context --prompt "Intent: ..."`
+# and validates the JSON (schemas.ts WishContext) plus every citation before use.
+schema_version: 1
+tools_api: 1
+shape: loop
+model: deepseek-api/deepseek-flash
+thinking: low
+description: >-
+  Discovers the repository context for one intent sentence: related wishes,
+  brainstorms and PRs, the candidate file set with path:line evidence, the tests
+  that pin those files and the command that validates them, the CLAUDE.md gotchas
+  that name them, a files/insertions estimate and the open decisions — every
+  citation verified in its own REPL. Prompt: "Intent: <the operator's sentence>".
+system: SYSTEM.md
+budget:
+  max_iterations: 14
+  max_cost: 0.30
+  max_depth: 0

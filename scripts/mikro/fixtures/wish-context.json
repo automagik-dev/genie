@@ -1,0 +1,89 @@
+{
+  "agent": "wish-context",
+  "notes": "Ground truth = the file set the delivered PR touched (or, for the bundle, the WISH.md file list). Recall on plan.files.",
+  "fixtures": [
+    {
+      "id": "issue-2921",
+      "prompt": "Intent: fix GitHub issue #2921 — the workfly overwrite guard rests on the reader's existingNames and the model default contradicts the authoring rule; make the guard check the catalog on disk and drop the opus default from the saved workflows.",
+      "truth": {
+        "files": [
+          ".claude/workflows/docs-audit.js",
+          ".claude/workflows/research-sweep.js",
+          ".claude/workflows/skill-audit-sweep.js",
+          ".claude/workflows/workfly.js",
+          "scripts/workflows-model-policy.test.ts"
+        ],
+        "notes": "PR #2932"
+      }
+    },
+    {
+      "id": "observability-fold-in",
+      "prompt": "Intent: fold the Claude Code observability tooling (Phoenix backfill of session transcripts, the nightly annotator, the weekly review workflow) from the private claude-observability repo into repo-local scripts under scripts/observability with tests, and register the observability-review workflow in the .claude/workflows catalog.",
+      "truth": {
+        "files": [
+          ".claude/workflows/README.md",
+          ".claude/workflows/observability-review.js",
+          "scripts/claude-settings-hooks.test.ts",
+          "scripts/observability-review-workflow-parity.test.ts",
+          "scripts/observability/README.md",
+          "scripts/observability/annotate.test.ts",
+          "scripts/observability/annotate.ts",
+          "scripts/observability/backfill.test.ts",
+          "scripts/observability/backfill.ts",
+          "scripts/observability/px-queries.sh",
+          "scripts/workflows-meta.test.ts"
+        ],
+        "notes": "PR #2936"
+      }
+    },
+    {
+      "id": "wish-run-learnings",
+      "prompt": "Intent: in the wish workflow, share one work-discipline brief across the executor, gate, reviewer and fixer agents, and render the gate-measured real diff size next to the estimate in the report; keep the wish skill front door in parity.",
+      "truth": {
+        "files": [
+          ".claude/workflows/wish.js",
+          "scripts/wish-workflow-behavior.test.ts",
+          "scripts/wish-workflow-parity.test.ts",
+          "skills/wish/SKILL.md"
+        ],
+        "notes": "PR #2937"
+      }
+    },
+    {
+      "id": "observe-bundle",
+      "prompt": "Intent: lets fix the gaps, make workable for anyone that use phoenix locally, theres no need to document other than a readme on the workflow folder itself, its useful to have that bundled, so that any genie user that also uses phoenix can use it",
+      "truth": {
+        "files": [
+          "scripts/observability/backfill.ts",
+          "scripts/observability/backfill.test.ts",
+          "scripts/observability/annotate.ts",
+          "scripts/observability/annotate.test.ts",
+          "scripts/observability/px-queries.sh",
+          "scripts/observability/README.md",
+          "skills/observe/SKILL.md",
+          "skills/observe/agents/openai.yaml",
+          "skills/README.md",
+          "scripts/release-docs.test.ts",
+          ".claude/workflows/observability-review.js",
+          ".claude/workflows/README.md",
+          "scripts/observability-review-workflow-parity.test.ts"
+        ],
+        "notes": "observe-skill-bundle WISH.md file list (Felipe's run-4 sentence verbatim)"
+      }
+    },
+    {
+      "id": "slice-0",
+      "prompt": "Intent: in .claude/workflows/wish.js narrow the scripts/release-* denylist rule so it never matches *.test.ts (with a behavior test), make the units estimate advisory so files and insertions are the only hard maxima, and add the measured runs 2–5 to the workflows README measured-runs table.",
+      "truth": {
+        "files": [
+          ".claude/workflows/wish.js",
+          "scripts/wish-workflow-behavior.test.ts",
+          "scripts/wish-workflow-parity.test.ts",
+          "skills/wish/SKILL.md",
+          ".claude/workflows/README.md"
+        ],
+        "notes": "wish-v7 slice 0 as designed"
+      }
+    }
+  ]
+}
