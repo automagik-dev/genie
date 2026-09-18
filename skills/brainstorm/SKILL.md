@@ -49,7 +49,7 @@ Stamp the actual verdict, including FIX-FIRST or BLOCKED; the example shows SHIP
 
 ## Planning index
 
-`.genie/INDEX.md` is the single intake index. Keep one index and one entry per slug; never maintain a second index or a duplicate entry.
+`.genie/INDEX.md` is the single intake index. Reconcile a legacy `.genie/brainstorm.md` idempotently into it when encountered; do not maintain two indexes or duplicate entries.
 
 - Raw: captured idea.
 - Simmering: draft with unresolved decisions.

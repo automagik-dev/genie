@@ -7,7 +7,7 @@ mutates: none
 
 # Verify
 
-Evidence before claims, always. This skill runs commands and reads their output; it changes nothing, so a failure it finds routes to fix, never to a quiet repair here.
+Evidence before claims, always. This skill runs commands and reads their output; it changes nothing, so a failure it finds routes to fix, never to a quiet repair here. Reading a write back is still reading: the write belonged to whoever was authorized to make it, and this skill never originates one.
 
 ## The rule
 
@@ -30,15 +30,23 @@ Skipping a step is not a faster verification, it is a different activity.
 
 | Claim | Proof | Not proof |
 |-------|-------|-----------|
-| The repository is green | `bun run check` exits zero, read in this turn | a previous run, a passing subset, "should pass" |
+| The repository is green | the repository's own aggregate gate, its current stage chain read from the manifest rather than recalled, run whole and exiting zero in this turn | a previous run, a passing subset, "should pass" |
 | Types are clean | the typecheck stage inside that gate | the linter passing |
 | A test suite passes | the suite's own output with a failure count of zero | one file re-run, a cached result |
 | A bug is fixed | the original symptom re-exercised and now passing | the code changed and the reasoning looks right |
+| A mutation landed | the stored state read back afterwards through a different path than the write took | the writing call's own success return, or a response that echoes what was sent |
+| Text sent through a CLI arrived intact | the stored body read back from the system that received it and compared against the source text | the exit code, or a receipt that counts bytes accepted |
 | A regression test works | it fails with the fix reverted and passes with it restored | it passes once |
 | A worker did the work | `git status` and `git diff` over the owned scope | the worker's success report |
 | A branch is mergeable | the remote's checks read back from the pull request | a local gate alone |
 | A group is shippable | a reviewer's returned verdict of SHIP | FIX-FIRST treated as "close enough", or your own read of your own work |
 | Requirements are met | each wish criterion walked one by one against evidence | the gate being green |
+
+## Before a check counts
+
+A check nobody has watched fail is machinery, not evidence. Break the condition it guards, read the failure, and confirm the message names that condition rather than a typo, an unresolved import, or a selection that matched nothing; restore the condition and watch it pass. Ask the same question of every check you cite: what would it say against a target that never existed, or one it could not reach? A check that passes when the thing it guards is absent or unreachable is fail-open — an empty read-back treated as clean, a suite that skipped, a probe that reads "not found" as success — and it proves nothing about the claim it was offered for.
+
+On a gate that was already failing before the change, a raw failure count decides nothing. Take the failing set on the base you started from, take the failing set now, and claim only what the comparison supports: which failures are new and yours, and which were already there and are still there. The claim of no regression needs an empty new-failure set, stated beside the pre-existing ones by name.
 
 ## Delegated work
 

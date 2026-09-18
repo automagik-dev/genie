@@ -33,6 +33,7 @@ Dispatch one worker subagent per wish in the layer through the runtime's native 
 - Run `review` per group against acceptance criteria.
 - Run CI; on failure fix and retry (max 3 attempts; poll CI status, never sleep-loop), then report blocked.
 - Only after CI is green and PR creation is authorized: open a PR targeting `dev`, preferring the GitHub connector.
+- Send a PR body or a card comment through a file or standard input, never interpolated into a double-quoted shell argument where backticks and `$(…)` still expand, and read the stored body back from the forge or the card before calling it delivered.
 - Final message, every claim audited against tool output: `done — PR <url>, CI green, groups N/N` or `blocked — <reason>, groups N/N`.
 
 A worker's final message is a claim, never evidence. Before any wish in the layer counts as complete, fill every row of this gate from tool output taken now:
