@@ -61,6 +61,7 @@ import {
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   isGhUnavailable,
+  manifestApiUrlForChannel,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -1038,6 +1039,67 @@ describe('fetchLatestManifest (G5)', () => {
       manifestBytes: raw,
       manifestSha256: createHash('sha256').update(raw).digest('hex'),
     });
+  });
+
+  // Issue #2947: raw.githubusercontent.com caches independently of the repository,
+  // so for minutes after a release publishes it still serves the PREVIOUS manifest.
+  // Both sources are read and the newer answer wins, so the stale copy cannot
+  // decide the update. `by` lets a case answer differently per source.
+  const manifestJson = (version: string): string =>
+    JSON.stringify({
+      ...validManifest,
+      version,
+      manifestBytes: undefined,
+      manifestSha256: undefined,
+    });
+  const bySource =
+    (cdn: string | null, api: string | null) =>
+    async (url: string): Promise<string | null> =>
+      url.startsWith('https://api.github.com/') ? api : cdn;
+
+  test('the API answer wins while the CDN copy is still stale', async () => {
+    const fresh = manifestJson('4.260509.6');
+    const manifest = await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), fresh),
+    });
+    expect(manifest?.version).toBe('4.260509.6');
+    // The digest must describe the bytes that won, not the ones that lost.
+    expect(manifest?.manifestBytes).toBe(fresh);
+    expect(manifest?.manifestSha256).toBe(createHash('sha256').update(fresh).digest('hex'));
+  });
+
+  test('the CDN answer is kept when it is the newer one, and on a tie', async () => {
+    const ahead = await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.7'), manifestJson('4.260509.6')),
+    });
+    expect(ahead?.version).toBe('4.260509.7');
+    const cdnBytes = manifestJson('4.260509.5');
+    const tie = await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, manifestJson('4.260509.5')) });
+    expect(tie?.manifestBytes).toBe(cdnBytes);
+  });
+
+  test('either source alone still answers', async () => {
+    const cdnOnly = await fetchLatestManifest('stable', { fetcher: bySource(manifestJson('4.260509.5'), null) });
+    expect(cdnOnly?.version).toBe('4.260509.5');
+    const apiOnly = await fetchLatestManifest('stable', { fetcher: bySource(null, manifestJson('4.260509.6')) });
+    expect(apiOnly?.version).toBe('4.260509.6');
+    const neither = await fetchLatestManifest('stable', { fetcher: bySource('<html>', 'nope') });
+    expect(neither).toBeNull();
+  });
+
+  test('the API URL names the same file on main, and the fetcher asks for its raw bytes', () => {
+    expect(manifestApiUrlForChannel('stable')).toBe(
+      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/latest.json?ref=main',
+    );
+    expect(manifestApiUrlForChannel('dev')).toBe(
+      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/dev.json?ref=main',
+    );
+    // Without the raw Accept header the API answers with a JSON envelope whose
+    // digest is not the manifest's, which would break the byte binding above.
+    const body = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fetcherBody = body.slice(body.indexOf('async function defaultManifestFetcher'));
+    expect(fetcherBody).toContain("'Accept: application/vnd.github.raw'");
+    expect(fetcherBody).toContain('url.startsWith(`${API_BASE_URL}/`)');
   });
 
   test('returns null when fetcher resolves null (network failure)', async () => {
