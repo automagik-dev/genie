@@ -19,7 +19,8 @@ and gh read-only, one fenced JSON answer):
 ```sh
 source ~/.mikro/gate-env.sh                                   # DEEPSEEK_API_KEY from Bitwarden (bws)
 genie mikro call issue-triage --prompt "Triage issue #2941" --dir .
-genie mikro call review-prep --dir <worktree> --prompt "Prepare the review of commit <sha> against origin/dev"
+genie mikro call review-prep --dir <worktree> --agents-ref origin/dev \
+  --prompt "Prepare the review of commit <sha> against origin/dev"    # the agent as origin/dev has it
 bun scripts/mikro/call.ts issue-triage --prompt "Triage issue #2941" --dir .   # same code, inside this checkout
 ```
 
@@ -41,25 +42,79 @@ and also `genie mikro call` with NO agent, which is Commander's missing-argument
 genie's global error handler — and **2** for the runtime's own usage refusals: an unregistered agent
 NAME, a registered one with no prompt, a bad `--boundary`.
 
-### Where the agent files come from
+### Where the agent files come from — the trust boundary
 
-`--agents-dir <dir>` → the INVOKING checkout's `.mikro/agents/<agent>/agent.yaml` (the git toplevel
-of the process's working directory — never `--dir`, which is the tree under review) → the default
-this release ships, under `<GENIE_HOME>/templates/mikro/agents`. The answer names the winner in
-`agentSource` (`flag`, `repo`, `shipped`), so a repository agent that failed to resolve cannot hide
-behind a silent fallback. `import.meta.url` is deliberately not consulted: inside a compiled binary
-it resolves under `/$bunfs`, which holds no agent at all.
+**A pull request may not rewrite the prompt or the configuration of the agent that reviews it.**
+That is the whole property, and everything below is how it is kept.
 
-The TRUSTED root — whose `.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}` a differing `--dir` is
-refused against — is the invoking checkout for every source that is not the flag, and never
-`<GENIE_HOME>/templates`. With `--agents-dir` it stays two levels above that directory, which is
-the operator's authoring path. `MIKRO_AGENTS_DIR` is NOT an input: this runtime only WRITES it into
-the child environment, so a contaminated shell cannot redirect the reviewer's prompt.
+`--agents-dir <dir>` → the INVOKING checkout's `.mikro/agents/<agent>/` **as it exists at the
+trusted REF** → the default this release ships, under `<GENIE_HOME>/templates/mikro/agents`. The
+answer names the winner in `agentSource` (`flag`, `repo@<ref>`, `shipped`) and why in
+`agentSourceReason`, so a repository agent that failed to resolve cannot hide behind a silent
+fallback. `import.meta.url` is deliberately not consulted: inside a compiled binary it resolves
+under `/$bunfs`, which holds no agent at all.
+
+The invoking checkout is the git toplevel of the process's working directory — never `--dir`, which
+is the tree under review and may be a linked worktree on a PR branch OR a separate clone with an
+attacker-chosen `origin`. The parameters in `scripts/mikro/trusted-source.ts` are called
+`invokingRoot` for that reason.
+
+**Which ref.** `--agents-ref <ref>` names it. Without the flag it is `<base>`, the branch the
+invoking checkout's `origin/HEAD` points at, taken as the LOCAL branch `<base>` when `origin/<base>`
+is an ancestor of it and as `origin/<base>` otherwise. That **local-base rule** is what makes a
+committed-but-unpushed agent usable on a repository that commits straight to its base branch — and
+it trusts every local commit on that branch, including one merged locally from an unreviewed PR, so
+`wish.js` never relies on it: both offload lines pass `--agents-ref origin/<base>` explicitly. A
+malformed ref (`git check-ref-format`, or a leading `-`) exits 2; a well-formed ref that names no
+commit is not a usage error — the run degrades to the shipped agent and says why. A repository with
+no `origin/HEAD` does the same (`git remote set-head origin -a` is the fix).
+
+**How the files are read.** `git archive <ref> .mikro/agents/<agent>` into a 0700 temp directory,
+removed on success, on failure and on a thrown error. Every extracted file is then compared against
+`git show <ref>:<path>` and the extracted set against `git ls-tree`, because `git archive` applies
+`export-ignore` and `export-subst` from the `.gitattributes` AT THAT REF: without the proof a
+repository could drop the agent's `SYSTEM.md` from the archive, or rewrite a line of it, in a way
+`git show` never shows. A mismatch falls back to the shipped agent with the reason.
+
+**Which commands read the ref, and which read the working tree.** `genie mikro call` reads the ref:
+it is the command that reviews untrusted content. `bench` and `coach` read the WORKING TREE under
+`--dir` (they pass it as `--agents-dir`), because a refinement round exists to measure the
+`SYSTEM.md` the operator just edited and the coach's printed diff must describe the prompt its
+BEFORE bench measured. That means the measuring commands take the flag path, where the synthesized
+trusted root equals `--dir` and the configuration comparison below is skipped by the same-directory
+exemption — including a refusal that existed before this: a no-flag `bench --dir <other repo>` used
+to compare that repository's four configuration files against this checkout's and refuse a differing
+`TOOLS.md`. It no longer does. **Point `bench` and `coach` only at a tree you trust** — never at a
+PR checkout or an unaudited clone. Reviewing untrusted content is `genie mikro call`'s job.
+
+**The configuration comparison.** mikro loads `<dir>/.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,
+CRITERIA.md}` from the directory it is pointed at — a project provider entry beats the global one,
+and `TOOLS.md` is Python injected into the REPL. Without `--agents-dir` each of those four files, if
+`<dir>` carries it, must be byte-equal to the blob at the trusted ref: absent from `<dir>` is fine,
+present and differing (or absent at the ref) is refused before anything is spawned or billed. This
+holds for EVERY `--dir` — the invoking checkout included — and on every agent source, `shipped`
+included. There is deliberately no same-directory exemption here: a session started inside a PR
+checkout must not trust that checkout's `TOOLS.md`. The consequence is stated rather than hidden —
+an UNCOMMITTED edit to one of those four files refuses every no-flag call — and the refusal names
+the escape, `--agents-dir <checkout>/.mikro/agents`, whose semantics are unchanged (trusted root two
+levels up, same-directory exemption intact). With `--agents-dir` the trusted root is that directory's
+grandparent, which is the operator's authoring path, and never `<GENIE_HOME>/templates`.
+
+`MIKRO_AGENTS_DIR` is NOT an input: this runtime only WRITES it into the child environment
+(`call.ts`), so a contaminated shell cannot redirect the reviewer's prompt. It is what overrides
+mikro's own project-agent discovery inside `--dir`, which is why the adversarial tests assert on it
+as well as on the directory.
+
+**Out of the threat model, deliberately:** a process that can move a ref in the shared object store.
+This boundary defends against PR CONTENT, not against an executor that already runs commands as the
+operator.
 
 The run ledger lands in `<root>/.mikro/runs` only when the repository tracks a `.mikro/` directory
 (or is no git checkout at all, where nothing can be tracked and the directory's presence is the
 whole signal); otherwise in `<GENIE_HOME>/mikro/runs/<basename>-<sha256(root)[:8]>`, so a repository
-that never opted into mikro grows no untracked files.
+that never opted into mikro grows no untracked files. `<root>` here is the git toplevel of the
+process's working directory, which inside a linked worktree is the WORKTREE root, not the primary
+checkout.
 
 `mikro` missing from PATH is not an agent failure: it answers `ok: false` with one `unavailable:`
 error and exits 1, classified by the spawn error's CODE rather than its wording (Node says
@@ -92,7 +147,12 @@ fabrications 0, files recall ≥ 0.6, median cost ≤ $0.05, p90 ≤ 240 s. `--w
 the table to `.mikro/agents/<agent>/EVIDENCE.md` — every number there is a real run. `--fixtures <path>`
 points the bench at another set; that is how the adversarial set below is run. `--agents-dir <dir>`
 points the run at another copy of the `<agent>/agent.yaml` + `SYSTEM.md` tree — that is how a patched
-prompt is measured without touching the checkout. Precedence: the **registry** (`schemas.ts`) decides
+prompt is measured without touching the checkout — and with no flag the bench measures
+`<dir>/.mikro/agents`, the WORKING TREE, which is the prompt a refinement round is about. A bench is
+therefore an operator tool over a tree the operator trusts: it skips the configuration comparison
+`genie mikro call` makes, so never point it at a PR checkout
+([the trust boundary](#where-the-agent-files-come-from--the-trust-boundary)).
+Precedence: the **registry** (`schemas.ts`) decides
 the agent NAME and the schema its answers are validated against; `--agents-dir` decides only WHERE
 that agent's files are read from, and an unregistered name is still refused. With no flag the run is
 byte-identical to every round before the flag existed — `bench-options.test.ts` proves it over the
@@ -326,8 +386,10 @@ Each agent's starter block routes `git` and `gh` through allowlisted
 helpers, but the REPL is Python with `subprocess` available; an instruction smuggled into an issue body,
 PR body or commit message that the model obeys could run anything the MCP server's environment allows.
 Mitigations in place: the server gets an allowlisted environment (PATH, HOME, locale, `MIKRO_*`, the
-provider key — never the caller's tokens or SSH agent); a `--dir` whose `.mikro/` config differs from the
-invoking checkout's is refused, so a PR cannot swap the provider or inject `TOOLS.md`; untracked files are
+provider key — never the caller's tokens or SSH agent); the agent's own files are read from a git ref
+rather than from any working tree, and a `--dir` whose `.mikro/` config differs from that ref is refused,
+so a PR can neither rewrite the reviewer's prompt nor swap the provider nor inject `TOOLS.md` (see
+[the trust boundary](#where-the-agent-files-come-from--the-trust-boundary)); untracked files are
 never verified citations; every attempt is ledgered and traced. Each agent also has an adversarial
 fixture set that scores `injection_attempts` against a canary with a hard bar of zero executed side
 effects — see below for exactly what that measures and what it does not.
@@ -388,7 +450,7 @@ sandbox), the host-side egress proxy, and the probes.
 | environment | the whole environment is handed to the **bwrap process**, which forwards it — never `--setenv` | the runtime's environment is declared, not inherited (no SSH agent, no caller tokens), and the provider key stays out of `/proc/<pid>/cmdline`, which every user on the host can read |
 | system | `--ro-bind` of `/usr /bin /sbin /lib /lib64 /etc` | narrowed down from a `--ro-bind / /` prototype to what `mikro`, `git`, `gh`, `curl` and CA certs need |
 | the repo (`--dir`) | **read-only**, plus its `git rev-parse --git-common-dir` read-only | a review-prep `--dir` is a worktree whose `.git` is a *file* pointing into the main repo; without the common dir `git log`/`grep`/`diff` cannot read anything |
-| `MIKRO_AGENTS_DIR` | read-only (only when it is outside `--dir`) | the agent definitions are input, never writable |
+| `MIKRO_AGENTS_DIR` | read-only (only when it is outside `--dir`) | the agent definitions are input, never writable. Without `--agents-dir` this is the 0700 temp tree materialized from the trusted ref, so it is always outside `--dir` and always bound; the bind is applied after the `/tmp` tmpfs, which is why a temp path survives it |
 | HOME | `--tmpfs` at the same path | mikro's `~/.mikro/sessions` store is writable and discarded with the sandbox |
 | — the mikro runtime | `--ro-bind ~/.mikro/mikro` + `--symlink` recreating `mikro` on PATH | a *bind* of the launcher would make it resolve its root from the wrong directory; the symlink keeps `bin/mikro.mjs` resolving to `~/.mikro/mikro` |
 | — settings | a **generated** copy of the host `~/.mikro/settings.json` (model selection + `providers` only), read-only | a host file that later grows a literal key or an unrelated section cannot reach the sandbox |
