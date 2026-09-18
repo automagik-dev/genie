@@ -11,9 +11,12 @@ in each clone. No source was adapted without a permissive licence on disk.
 
 ## Collision policy
 
-`research` and `merge` are generic names. A host may already own a skill under
-either name in one of its agent skill homes, installed by another catalogue or
-by the user. When genie's skills.sh pass installs over such a directory, it
+`research`, `merge` and `deslop` are generic names. A host may already own a
+skill under any of them in one of its agent skill homes, installed by another
+catalogue or by the user. `deslop` in particular is a term several personal
+catalogues already use as a prefix; genie ships the bare word only, so a
+directory named `deslop-writing`, `deslop-code` or `deslop-design` is a
+different path and is never touched. When genie's skills.sh pass installs over such a directory, it
 backs the previous contents up first and reports the replacement, restricted to
 the homes it can name in advance: the known agent-home table, every directory
 the previous install record proves genie wrote, and any other discovered home
