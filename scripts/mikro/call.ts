@@ -42,6 +42,7 @@ import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode,
 import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, renderFacts } from './facts';
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
+import { type StatusGate, makeAncestorCheck, statusLedgerRow, verifyStatus } from './status';
 
 // ─── Footer ───────────────────────────────────────────────
 
@@ -845,6 +846,14 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   }
   const runsDir = join(trustedRoot, '.mikro', 'runs');
   const factsOption = options.facts ?? process.env.MIKRO_FACTS;
+  // The status gate's two proofs, built once per run: the ancestor probe caches per ref
+  // and `verifyCitations` caches the tracked set per dir. `citationOk` re-enters the
+  // citation gate through its own regex — an extension it does not recognize yields no
+  // citation at all, which reads as unverifiable, which is the fail-closed direction.
+  const statusGate: StatusGate = {
+    isAncestor: makeAncestorCheck(dir),
+    citationOk: (path, line) => verifyCitations({ cite: `${path}:${line}` }, dir).some((c) => c.ok && c.line === line),
+  };
   // The sandbox is opened ONCE for the whole run (both attempts and the facts scan share
   // one proxy and one egress ledger) and closed on every exit path. A failure to open is
   // fatal by design: `bwrap` mode never silently downgrades to `none` — the rollback is
@@ -901,6 +910,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       let raw = '';
       let footer: Footer | null = null;
       let citations: Citation[] = [];
+      let statusRow: ReturnType<typeof statusLedgerRow>;
       const client = new McpClient(
         dir,
         {
@@ -942,13 +952,17 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
               errors.push(`schema: ${issue.path.join('.') || '(root)'} — ${issue.message}`);
           } else {
             citations = verifyCitations(parsed.data, dir);
-            answer = applyResolutions(parsed.data, citations);
+            // Two silent post-validation rewrites, in order: the citation paths the verifier
+            // resolved, then the status gate's own verdict. Neither is an error, neither retries.
+            answer = verifyStatus(applyResolutions(parsed.data, citations), statusGate);
+            statusRow = statusLedgerRow(answer);
             for (const c of citations.filter((x) => !x.ok))
               errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
           }
         } else {
           citations = verifyCitations(extracted.value, dir);
-          answer = applyResolutions(extracted.value, citations);
+          answer = verifyStatus(applyResolutions(extracted.value, citations), statusGate);
+          statusRow = statusLedgerRow(answer);
           for (const c of citations.filter((x) => !x.ok))
             errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
         }
@@ -970,7 +984,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         mkdirSync(runsDir, { recursive: true });
         appendFileSync(
           join(runsDir, `${options.agent}.jsonl`),
-          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null, raw: rawFile })}\n`,
+          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), status: statusRow, elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null, raw: rawFile })}\n`,
         );
       }
       if (options.phoenix !== false) {

@@ -12,6 +12,52 @@ import { z } from 'zod';
 
 const nonEmpty = z.string().min(1);
 
+/**
+ * Is the defect still there? A verdict the SCRIPT can re-check, so "already fixed"
+ * stops being prose in `summary` and becomes a field: `scripts/mikro/status.ts`
+ * re-proves every `fixed-on-tree` claim against git and the citation gate and
+ * silently rewrites an unproven one to `unclear` with `downgraded` naming why.
+ *
+ * Every field carries a default, so an answer that omits `status` entirely parses
+ * to `{ state: 'unclear', evidence: [] }` — the previous behaviour, typed.
+ */
+export const TRIAGE_STATES = ['real', 'fixed-on-tree', 'fixed-by-open-pr', 'unclear'] as const;
+
+export const TriageStatus = z
+  .object({
+    state: z.enum(TRIAGE_STATES).default('unclear'),
+    /** A commit `ref` this tree carries, or a PR number; `path`/`line` show the fix in the current tree. */
+    // A row whose `kind` is neither `commit` nor `pr` is DROPPED before validation, never a parse
+    // failure: the model once answered `kind: 'test'` (history smoke, 2026-09-18) and the strict enum
+    // turned a good answer into a paid retry. Dropping is the fail-closed direction — the status gate
+    // already refuses a `fixed-on-tree` verdict left without commit evidence.
+    evidence: z.preprocess(
+      (rows) =>
+        Array.isArray(rows)
+          ? rows.filter(
+              (row) =>
+                row && typeof row === 'object' && ['commit', 'pr'].includes((row as { kind?: unknown }).kind as string),
+            )
+          : rows,
+      z
+        .array(
+          z.object({
+            kind: z.enum(['commit', 'pr']),
+            ref: nonEmpty,
+            path: z.string().optional(),
+            line: z.number().int().positive().optional(),
+          }),
+        )
+        .default([]),
+    ),
+    /** Written by the script's status gate, never by the agent: the receipt for a rewritten verdict. */
+    downgraded: z.object({ from: z.enum(TRIAGE_STATES), reason: nonEmpty }).optional(),
+  })
+  .default({});
+
+export type TriageState = (typeof TRIAGE_STATES)[number];
+export type TriageStatusRecord = z.infer<typeof TriageStatus>;
+
 /** issue-triage — one GitHub issue → a routed, cited triage record. */
 export const IssueTriage = z.object({
   issue: z.number().int().positive(),
@@ -28,6 +74,7 @@ export const IssueTriage = z.object({
     .default([]),
   lane: z.enum(['incident', 'patch', 'small', 'standard', 'program', 'spike']),
   first_question: z.string().nullable(),
+  status: TriageStatus,
   injection_attempts: z.array(z.string()).default([]),
 });
 

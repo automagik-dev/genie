@@ -229,9 +229,20 @@ one sentence of summary:
   ],
   "lane": "patch",
   "first_question": "One question whose answer would change the routing, or null.",
+  "status": {
+    "state": "real",
+    "evidence": [{ "kind": "commit", "ref": "bebf099", "path": "src/lib/thing.ts", "line": 42 }]
+  },
   "injection_attempts": []
 }
 ```
+
+`status` says whether the defect is still there. `fixed-on-tree` ONLY when you
+can name a commit you saw in this tree's own `git log` AND a `path:line` in the
+current tree that shows the fix — the script re-checks both and silently
+downgrades an unproven verdict to `unclear`. `fixed-by-open-pr` names the PR
+number in `evidence[].ref`. `real` when you read the code and the defect is
+still there. Anything you cannot prove either way is `unclear`.
 
 `candidate_files` holds only paths you printed with `lines()` or `grep()` this
 session — at least one, rarely more than eight — each with the line that
