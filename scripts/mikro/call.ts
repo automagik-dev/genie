@@ -3,8 +3,14 @@
  * scripts/mikro/call.ts — run ONE genie mikro microagent and return validated JSON.
  *
  *   bun scripts/mikro/call.ts <agent> --prompt "<text>" [--dir <repo>] [--timeout-ms 600000]
- *       [--retries 1] [--facts auto|<path>] [--tag k=v ...] [--trace <id>] [--boundary none|bwrap]
- *       [--no-phoenix] [--raw]
+ *       [--retries 1] [--agents-dir <dir>] [--agents-ref <ref>] [--facts auto|<path>]
+ *       [--tag k=v ...] [--trace <id>] [--boundary none|bwrap] [--no-phoenix] [--raw]
+ *
+ * Where the agent's prompt comes from is a trust boundary, not a lookup: without
+ * `--agents-dir` the files are read from a git REF in the INVOKING checkout
+ * (`scripts/mikro/trusted-source.ts`), never from `--dir` and never from the working
+ * tree, so a pull request cannot rewrite the prompt or the configuration of the agent
+ * that reviews it.
  *
  * This is the only surface that runs an `agent.yaml` agent: it speaks MCP over
  * stdio to `mikro mcp --dir <repo>` (the one runtime that loads the agent's
@@ -44,6 +50,20 @@ import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, rende
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
 import { type StatusGate, makeAncestorCheck, statusLedgerRow, verifyStatus } from './status';
+import {
+  AGENT_DIR_NAME,
+  MIKRO_CONFIG_FILES,
+  type MaterializedAgents,
+  gitProbeEnv,
+  materializeAgent,
+  readTrustedBlob,
+  refFormatError,
+  resolveTrustedRef,
+} from './trusted-source';
+
+// The git-environment strip lives with the rest of the trusted-source probes now; it stays
+// exported here because it is part of this module's surface (`call.test.ts` reads it).
+export { gitProbeEnv };
 
 // ─── Footer ───────────────────────────────────────────────
 
@@ -153,7 +173,12 @@ const historyCache = new Map<string, Map<string, boolean>>();
 function isTracked(dir: string, path: string): boolean {
   let set = trackedCache.get(dir);
   if (!set) {
-    set = new Set(Bun.spawnSync(['git', 'ls-files'], { cwd: dir }).stdout.toString().split('\n').filter(Boolean));
+    set = new Set(
+      Bun.spawnSync(['git', 'ls-files'], { cwd: dir, env: gitProbeEnv() })
+        .stdout.toString()
+        .split('\n')
+        .filter(Boolean),
+    );
     trackedCache.set(dir, set);
   }
   if (set.size === 0) return true; // not a git checkout: nothing to compare against
@@ -182,6 +207,7 @@ function everExisted(dir: string, path: string): boolean {
   // other file, and a glob in a deleted `path` field proves a file that never existed.
   const probe = Bun.spawnSync(['git', '--literal-pathspecs', 'rev-list', '--max-count=1', 'HEAD', '--', path], {
     cwd: dir,
+    env: gitProbeEnv(),
   });
   const answered = probe.exitCode === 0;
   const result = !answered || probe.stdout.toString().trim().length > 0;
@@ -206,7 +232,7 @@ export function applyResolutions<T>(value: T, citations: Citation[]): T {
 function trackedByBasename(dir: string): Map<string, string[]> {
   const index = new Map<string, string[]>();
   try {
-    const out = Bun.spawnSync(['git', 'ls-files'], { cwd: dir }).stdout.toString();
+    const out = Bun.spawnSync(['git', 'ls-files'], { cwd: dir, env: gitProbeEnv() }).stdout.toString();
     for (const p of out.split('\n')) {
       if (!p) continue;
       const base = p.slice(p.lastIndexOf('/') + 1);
@@ -487,11 +513,17 @@ export interface RunResult {
   /** CONNECT attempts the boundary's proxy saw, allowed and denied; null when the run was uncontained. */
   egress: { allowed: number; denied: number } | null;
   /**
-   * Which source won the agent files — `flag`, `repo`, or `shipped`. Reported so a
+   * Which source won the agent files — `flag`, `repo@<ref>`, or `shipped`. Reported so a
    * silent fallback cannot hide a repository agent that failed to resolve. Absent
    * only when no source resolved at all.
    */
   agentSource?: string;
+  /**
+   * Why that source won: which ref was trusted, or why the repository's own agent could
+   * not be used (no `origin/HEAD`, no agent at the ref, an archive that did not match the
+   * ref). Absent on the flag path, where the operator named the directory.
+   */
+  agentSourceReason?: string;
 }
 
 export interface RunOptions {
@@ -505,6 +537,12 @@ export interface RunOptions {
    * the tree under review.
    */
   agentsDir?: string;
+  /**
+   * The ref in the INVOKING checkout whose `.mikro/` content this run trusts. Omitted, it
+   * is the base branch that checkout's `origin/HEAD` names (Decision 8). Never resolved
+   * in `dir`, which is the tree under review.
+   */
+  agentsRef?: string;
   /** The invoking checkout to resolve agents and the trusted root from; defaults to `process.cwd()`. Never `dir`. */
   cwd?: string;
   /** Where the shipped default agents live; defaults to `$GENIE_HOME` or `~/.genie`. */
@@ -812,15 +850,49 @@ export function mikroVersion(): string {
  * REPL. A --dir that is the tree under review (an executor worktree cut from a PR) must therefore
  * never supply that config: it is refused unless every such file is byte-identical to the invoking
  * checkout's, or absent.
+ *
+ * This is the DIRECTORY comparison, and it is used on exactly two paths: an operator-typed
+ * `--agents-dir` (operator trust, semantics unchanged — the same-directory exemption included,
+ * because that directory IS the operator's authoring tree), and a run for which no trusted ref
+ * could be resolved at all, where there is nothing to compare against and only `--dir` = the
+ * invoking checkout is accepted with configuration. Everything else goes through
+ * {@link untrustedConfigAtRef}.
  */
 export function untrustedConfig(dir: string, trustedRoot: string): string | null {
   if (resolve(dir) === resolve(trustedRoot)) return null;
-  for (const name of ['mikro.yaml', 'TOOLS.md', 'SYSTEM.md', 'CRITERIA.md']) {
+  for (const name of MIKRO_CONFIG_FILES) {
     const theirs = join(dir, '.mikro', name);
     if (!existsSync(theirs)) continue;
     const ours = join(trustedRoot, '.mikro', name);
     if (!existsSync(ours) || readFileSync(theirs, 'utf8') !== readFileSync(ours, 'utf8'))
       return `${theirs} differs from the invoking checkout's .mikro/${name}: refusing to run an agent under configuration taken from the tree under review`;
+  }
+  return null;
+}
+
+/**
+ * The same rule against the TRUSTED REF instead of a directory — the no-flag path, for
+ * EVERY `--dir` (the invoking checkout included) and on every agent source (`shipped`
+ * included).
+ *
+ * There is deliberately no same-directory exemption here: a session started inside a PR
+ * checkout must not trust that checkout's `TOOLS.md` just because the process happens to
+ * have been launched in it. The consequence is stated rather than hidden — an UNCOMMITTED
+ * edit to one of those four files refuses every no-flag call — so the message names the
+ * escape, which is the operator-typed flag whose semantics are unchanged.
+ */
+export function untrustedConfigAtRef(
+  dir: string,
+  invokingRoot: string,
+  ref: string,
+  readBlob: typeof readTrustedBlob = readTrustedBlob,
+): string | null {
+  for (const name of MIKRO_CONFIG_FILES) {
+    const theirs = join(dir, '.mikro', name);
+    if (!existsSync(theirs)) continue;
+    const trusted = readBlob(invokingRoot, ref, `.mikro/${name}`);
+    if (trusted === null || readFileSync(theirs, 'utf8') !== trusted)
+      return `${theirs} ${trusted === null ? 'is absent at' : 'differs from'} ${ref} in the invoking checkout: refusing to run an agent under configuration the trusted ref does not carry — to run with your own working tree instead, pass --agents-dir <checkout>/.mikro/agents`;
   }
   return null;
 }
@@ -842,30 +914,6 @@ export function shippedAgentsRoot(genieHome: string): string {
   return join(genieHome, 'templates', 'mikro', 'agents');
 }
 
-/**
- * Environment variables that make `git` answer for a repository OTHER than the one
- * `-C <dir>` names. A git hook — or any parent that exported them — sets `GIT_DIR`,
- * `GIT_WORK_TREE` and `GIT_INDEX_FILE`, and `-C` does NOT override them: the probes
- * below would then resolve a toplevel, and therefore a TRUSTED ROOT, chosen by
- * ambient environment rather than by the operator's working directory.
- */
-const AMBIENT_GIT_VARS = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_COMMON_DIR',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_NAMESPACE',
-] as const;
-
-/** The caller's environment with {@link AMBIENT_GIT_VARS} removed; everything else (PATH included) survives. */
-export function gitProbeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const stripped = new Set<string>(AMBIENT_GIT_VARS);
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) if (value !== undefined && !stripped.has(key)) out[key] = value;
-  return out;
-}
-
 /** stdout of one git probe, or null when git did not answer — no git binary, no repository, an unreadable index. */
 function gitProbe(args: string[]): string | null {
   try {
@@ -882,24 +930,34 @@ export function gitToplevel(cwd: string): string | null {
   return out ? resolve(out) : null;
 }
 
-/** One directory name, never a path: `<agents>/<agent>/agent.yaml` is joined from it. */
-const AGENT_DIR_NAME = /^[a-z0-9][a-z0-9._-]*$/;
 const hasAgent = (root: string, agent: string): boolean => existsSync(join(root, agent, 'agent.yaml'));
 
 export interface ResolvedAgents {
   dir: string;
   trustedRoot: string;
   source: 'flag' | 'repo' | 'shipped';
+  /**
+   * The trusted ref this run compares `<dir>/.mikro/` against, and the ref a `repo`
+   * agent was materialized from. Absent on the flag path (where the operator's
+   * directory is the trust) and when no ref could be resolved at all.
+   */
+  ref?: string;
+  /** Why this source won — reported whenever the repository's own agent was not used. */
+  reason?: string;
+  /** Removes materialized temp material. Absent unless something was materialized. */
+  dispose?: () => void;
 }
 
 /**
- * Where this agent's files are read from, and which root its `.mikro/` configuration
- * is trusted from. The registry decides the NAME (`schemas.ts`); this decides only WHERE.
+ * Where this agent's files are read from, and what its `.mikro/` configuration is
+ * trusted against. The registry decides the NAME (`schemas.ts`); this decides only WHERE.
  *
  * Order: the operator-typed `--agents-dir` → the invoking checkout's own
- * `.mikro/agents/<agent>` → the shipped default under `<GENIE_HOME>/templates`.
- * `import.meta.url` is deliberately not consulted: inside a compiled binary it
- * resolves under `/$bunfs`, which holds no agent at all.
+ * `.mikro/agents/<agent>` AT THE TRUSTED REF → the shipped default under
+ * `<GENIE_HOME>/templates`. The repository's WORKING TREE is never consulted on the
+ * no-flag path: that tree is what a pull request controls, and this is the one lookup a
+ * pull request must not be able to reach. `import.meta.url` is not consulted either —
+ * inside a compiled binary it resolves under `/$bunfs`, which holds no agent at all.
  *
  * The trusted root is the invoking checkout for every source that is not the flag —
  * never `<GENIE_HOME>/templates`, which is genie's payload rather than a repository.
@@ -907,6 +965,7 @@ export interface ResolvedAgents {
  */
 export function resolveAgentsDir(options: {
   agentsDir?: string;
+  agentsRef?: string;
   cwd: string;
   genieHome: string;
   agent: string;
@@ -918,10 +977,28 @@ export function resolveAgentsDir(options: {
   if (!AGENT_DIR_NAME.test(options.agent)) return null;
   const repoRoot = gitToplevel(options.cwd);
   const trustedRoot = repoRoot ?? resolve(options.cwd);
-  const repoAgents = join(trustedRoot, '.mikro', 'agents');
-  if (repoRoot && hasAgent(repoAgents, options.agent)) return { dir: repoAgents, trustedRoot, source: 'repo' };
+  const trusted = repoRoot
+    ? resolveTrustedRef(repoRoot, options.agentsRef)
+    : { ref: null, reason: `${trustedRoot} is no git checkout, so it carries no trusted ref` };
+  let material: MaterializedAgents | null = null;
+  let reason = trusted.reason;
+  if (repoRoot && trusted.ref) {
+    material = materializeAgent(repoRoot, trusted.ref, options.agent, (why) => {
+      reason = why;
+    });
+  }
+  if (material)
+    return {
+      dir: material.agentsDir,
+      trustedRoot,
+      source: 'repo',
+      ref: trusted.ref ?? undefined,
+      reason: trusted.reason,
+      dispose: material.dispose,
+    };
   const shipped = shippedAgentsRoot(options.genieHome);
-  if (hasAgent(shipped, options.agent)) return { dir: shipped, trustedRoot, source: 'shipped' };
+  if (hasAgent(shipped, options.agent))
+    return { dir: shipped, trustedRoot, source: 'shipped', ref: trusted.ref ?? undefined, reason };
   return null;
 }
 
@@ -971,6 +1048,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   const genieHome = options.genieHome ?? resolveMikroGenieHome();
   const resolvedAgents = resolveAgentsDir({
     agentsDir: options.agentsDir,
+    agentsRef: options.agentsRef,
     cwd: resolve(options.cwd ?? process.cwd()),
     genieHome,
     agent: options.agent,
@@ -986,7 +1064,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   const started = Date.now();
   const boundaryMode: BoundaryMode = options.boundary ?? 'none';
   /** One refusal, before anything is spawned or billed: the run never started. */
-  const refused = (error: string, agentSource?: string): RunResult => ({
+  const refused = (error: string, agentSource?: string, agentSourceReason?: string): RunResult => ({
     ok: false,
     agent: options.agent,
     runId,
@@ -1000,14 +1078,28 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     boundary: boundaryMode,
     egress: null,
     agentSource,
+    agentSourceReason,
   });
   if (!resolvedAgents)
     return refused(
-      `no agent: ${options.agent} is in neither this checkout's .mikro/agents nor ${shippedAgentsRoot(genieHome)} — run genie update, or pass --agents-dir`,
+      `no agent: ${options.agent} is at neither the invoking checkout's trusted ref nor ${shippedAgentsRoot(genieHome)} — run genie update, or pass --agents-dir`,
     );
-  const { dir: agentsDir, trustedRoot, source: agentSource } = resolvedAgents;
-  const untrusted = untrustedConfig(dir, trustedRoot);
-  if (untrusted) return refused(`config: ${untrusted}`, agentSource);
+  const { dir: agentsDir, trustedRoot, ref: trustedRef, reason: agentSourceReason } = resolvedAgents;
+  /** `repo@<ref>` names WHICH ref answered: a repository agent that failed to resolve cannot hide behind a silent fallback. */
+  const agentSource = resolvedAgents.source === 'repo' ? `repo@${trustedRef}` : resolvedAgents.source;
+  // The flag is operator trust and keeps the directory comparison (same-directory exemption
+  // included). Everything else compares `<dir>/.mikro/` against the trusted ref, on every
+  // source, for every `--dir` — the invoking checkout included. With no ref resolvable there
+  // is nothing to compare against, so only `--dir` = the invoking checkout is accepted with
+  // configuration, which is what the directory comparison already does.
+  const untrusted =
+    resolvedAgents.source !== 'flag' && trustedRef
+      ? untrustedConfigAtRef(dir, trustedRoot, trustedRef)
+      : untrustedConfig(dir, trustedRoot);
+  if (untrusted) {
+    resolvedAgents.dispose?.();
+    return refused(`config: ${untrusted}`, agentSource, agentSourceReason);
+  }
   const runsDir = resolveRunsDir(trustedRoot, genieHome);
   const factsOption = options.facts ?? process.env.MIKRO_FACTS;
   // The status gate's two proofs, built once per run: the ancestor probe caches per ref
@@ -1028,20 +1120,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   // credential, so computing them first put a credentialed GitHub call and a git run over
   // an untrusted tree on the bare host — outside the sandbox and outside the egress ledger,
   // which is precisely the traffic the boundary exists to contain.
-  const boundary: BoundarySession | null =
-    boundaryMode === 'bwrap'
-      ? await (options.openBoundary ?? openBoundary)({
-          dir,
-          agentsDir,
-          runId,
-          ledgerDir: runsDir,
-          writable: options.boundaryWritable,
-          // The facts file lives under the TRUSTED root, which is not `dir` when `--dir` is a
-          // worktree; without this bind the agent is handed a `context:` path it cannot read.
-          readable: factsOption ? [factsContextPath(factsOption, runsDir, runId)] : [],
-          env: containedEnv({ timeoutMs, agentsDir }),
-        })
-      : null;
+  let boundary: BoundarySession | null = null;
   let prompt = options.prompt;
   let answer: unknown;
   let ok = false;
@@ -1049,7 +1128,23 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   /** A runtime that is not installed will not appear between two attempts: retrying it buys nothing. */
   let runtimeMissing = false;
 
+  // The materialized agent tree is removed on EVERY exit path — a finished run, a failed
+  // one, and a throw from the boundary — which is why the open is inside this try.
   try {
+    boundary =
+      boundaryMode === 'bwrap'
+        ? await (options.openBoundary ?? openBoundary)({
+            dir,
+            agentsDir,
+            runId,
+            ledgerDir: runsDir,
+            writable: options.boundaryWritable,
+            // The facts file lives under the TRUSTED root, which is not `dir` when `--dir` is a
+            // worktree; without this bind the agent is handed a `context:` path it cannot read.
+            readable: factsOption ? [factsContextPath(factsOption, runsDir, runId)] : [],
+            env: containedEnv({ timeoutMs, agentsDir }),
+          })
+        : null;
     // Computed once, inside the boundary when there is one, before the loop: a retry
     // re-reads the same facts rather than paying for a second identical scan.
     let facts: FactsHandoff | null = null;
@@ -1195,25 +1290,26 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         prompt = `${options.prompt}\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Do the work again from the starter block and return the complete JSON, fixing every point below:\n${errors.map((e) => `- ${e}`).join('\n')}`;
       }
     }
+    return {
+      ok,
+      agent: options.agent,
+      runId,
+      traceId,
+      dir,
+      answer,
+      attempts,
+      elapsedMs: Date.now() - started,
+      costUsd: cost,
+      tags,
+      boundary: boundaryMode,
+      egress: boundary ? boundary.counts() : null,
+      agentSource,
+      agentSourceReason,
+    };
   } finally {
     await boundary?.close();
+    resolvedAgents.dispose?.();
   }
-
-  return {
-    ok,
-    agent: options.agent,
-    runId,
-    traceId,
-    dir,
-    answer,
-    attempts,
-    elapsedMs: Date.now() - started,
-    costUsd: cost,
-    tags,
-    boundary: boundaryMode,
-    egress: boundary ? boundary.counts() : null,
-    agentSource,
-  };
 }
 
 // ─── CLI ─────────────────────────────────────────────────
@@ -1231,7 +1327,7 @@ export function parseBoundaryFlag(argv: string[]): BoundaryMode {
   return value;
 }
 
-export const CALL_USAGE = `usage: genie mikro call <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]
+export const CALL_USAGE = `usage: genie mikro call <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--agents-ref ref] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]
        (inside this checkout the same code runs as: bun scripts/mikro/call.ts <agent> …)
 `;
 
@@ -1273,6 +1369,15 @@ export async function runCallCli(argv: string[]): Promise<number> {
   const promptFile = opt('--prompt-file');
   const prompt = promptFile ? readFileSync(promptFile, 'utf8') : opt('--prompt');
   if (!prompt) return usage('--prompt or --prompt-file is required');
+  // A malformed ref is a usage refusal, checked before anything is spawned: the token is
+  // joined into a git command line, so `-anything` never reaches git as an argument. A
+  // well-formed ref that names no commit is NOT refused here — it degrades to the shipped
+  // agents with its reason, so a repository with no `origin/<base>` still gets a run.
+  const agentsRef = opt('--agents-ref');
+  if (agentsRef !== undefined) {
+    const bad = refFormatError(agentsRef);
+    if (bad) return usage(`--agents-ref ${bad}`);
+  }
   let boundary: ReturnType<typeof parseBoundaryFlag>;
   try {
     boundary = parseBoundaryFlag(argv);
@@ -1288,6 +1393,7 @@ export async function runCallCli(argv: string[]): Promise<number> {
       boundary,
       dir: opt('--dir'),
       agentsDir: opt('--agents-dir'),
+      agentsRef,
       facts: opt('--facts'),
       timeoutMs: opt('--timeout-ms') ? Number(opt('--timeout-ms')) : undefined,
       retries: opt('--retries') ? Number(opt('--retries')) : undefined,

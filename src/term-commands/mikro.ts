@@ -16,9 +16,10 @@
  * `enablePositionalOptions()` on this group shields the tail from the group's own
  * options, not from the program's, and turning it on for the PROGRAM would change
  * how every other command parses — a much larger blast radius than the three
- * spellings above. Quote or rename such a value (`--prompt " -V"`), or use
- * `--prompt-file`. `src/term-commands/mikro.test.ts` pins the behaviour so the
- * exception stays documented rather than folklore.
+ * spellings above. Shell quoting alone does not change the argv token the program
+ * sees: prefix the value with a space (`--prompt " -V"`) or use `--prompt-file`.
+ * `src/term-commands/mikro.test.ts` pins the behaviour so the exception stays
+ * documented rather than folklore.
  *
  * Exit codes: 0 ok, 1 not ok (including a `mikro` that is not on PATH, which
  * answers `ok: false` with an `unavailable:` error, and including `mikro call`
@@ -45,6 +46,8 @@ Flags (parsed by the mikro runtime, forwarded as typed):
   --prompt-file <path>       Read the prompt from a file
   --dir <repo>               The tree the agent reads; defaults to the working directory
   --agents-dir <dir>         Read agent files from here (operator trust: it sets the trusted root too)
+  --agents-ref <ref>         The ref in the INVOKING checkout whose agent files and .mikro/
+                             config are trusted (default: the base branch origin/HEAD names)
   --facts auto|<path>        Precompute the mechanical facts and hand them over as MCP context
   --timeout-ms <n>           Wall clock for one attempt (default 600000)
   --retries <n>              Retries after a failed validation (default 1)
@@ -54,15 +57,20 @@ Flags (parsed by the mikro runtime, forwarded as typed):
   --no-phoenix, --no-ledger  Turn off the span or the run ledger
   --raw                      Print each attempt's raw answer instead of the JSON result
 
-Without --agents-dir the agent files come from the invoking checkout's
-.mikro/agents/<agent>/, and otherwise from the shipped defaults under
-<GENIE_HOME>/templates/mikro/agents/. The answer names which source won in
-"agentSource".
+Without --agents-dir the agent files come from the INVOKING checkout's
+.mikro/agents/<agent>/ as it exists at the trusted ref — never from its working
+tree and never from --dir, which is the tree under review — and otherwise from
+the shipped defaults under <GENIE_HOME>/templates/mikro/agents/. The answer names
+which source won in "agentSource" (flag, repo@<ref>, shipped) and why in
+"agentSourceReason". The same ref decides whether --dir's own .mikro/ config is
+trusted; an uncommitted edit to those four files is refused, and --agents-dir is
+the operator's way to run with a working tree instead.
 
 Genie's own global options win anywhere in the tail: -V/--version, -h/--help and
 --no-interactive are consumed before the tail reaches the runtime, so a flag
 VALUE that is one of them (--prompt -V) prints the version and runs nothing.
-Quote it (--prompt " -V") or use --prompt-file.
+Shell quoting does not change the argv token: prefix the value with a space
+(--prompt " -V") or use --prompt-file.
 
 ${CALL_USAGE}`;
 

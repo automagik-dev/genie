@@ -76,8 +76,9 @@ describe('genie mikro call', () => {
    * appear, including as the VALUE of a runtime flag. `enablePositionalOptions()`
    * on the `mikro` group shields the tail from the group's own options, not from
    * the program's, and moving it to the program would change how every other
-   * command parses. Documented by this test rather than by folklore; the escape
-   * is to quote the value or use --prompt-file.
+   * command parses. Documented by this test rather than by folklore; the escape is
+   * to prefix the value with a space (`--prompt " -V"`) or to use --prompt-file —
+   * shell quoting alone does not change the argv token the program sees.
    */
   test("genie's three global options win anywhere in the tail, and run no agent", () => {
     for (const spelling of ['-V', '--version']) {
@@ -96,24 +97,19 @@ describe('genie mikro call', () => {
     const interactive = runCli(['mikro', 'call', 'wish-context', '--prompt', '--no-interactive']);
     expect(interactive.code).toBe(2);
     expect(interactive.stderr).toContain('--prompt or --prompt-file is required');
-    // The escape: a quoted value is ONE argv token and is forwarded. Proven at zero
-    // cost — `--dir` carries a `.mikro/TOOLS.md` the invoking checkout does not have,
-    // so the run is refused before any runtime is spawned, and reaching that refusal
-    // is itself the proof that the prompt was accepted rather than eaten.
+    // The escape: prefixing the value with a space makes it ONE argv token that is no
+    // longer a global option, and it is forwarded. Proven at zero cost — `--dir` carries
+    // a `.mikro/TOOLS.md` the trusted ref does not, so the run is refused before any
+    // runtime is spawned, and reaching that refusal is itself the proof that the prompt
+    // was accepted rather than eaten.
     const other = tmp('genie-mikro-other-');
     mkdirSync(join(other, '.mikro'), { recursive: true });
     writeFileSync(join(other, '.mikro', 'TOOLS.md'), '## injected\n');
-    const quoted = runCli([
-      'mikro',
-      'call',
-      'wish-context',
-      '--prompt',
-      ' -V',
-      '--dir',
-      other,
-      '--no-phoenix',
-      '--no-ledger',
-    ]);
+    const home = shippedHome(['wish-context']);
+    const quoted = runCli(
+      ['mikro', 'call', 'wish-context', '--prompt', ' -V', '--dir', other, '--no-phoenix', '--no-ledger'],
+      { env: { GENIE_HOME: home } },
+    );
     expect(quoted.code).toBe(1);
     expect(quoted.stdout).not.toMatch(/^\d+\.\d+\.\d+/);
     const answer = JSON.parse(quoted.stdout) as { ok: boolean; attempts: { errors: string[] }[] };
