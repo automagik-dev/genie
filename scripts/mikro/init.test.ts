@@ -101,6 +101,23 @@ describe('seedAgents', () => {
     expect(readdirSync(elsewhere)).toEqual([]);
   });
 
+  test('a symlinked .gitignore is left alone — the line would land outside the repository', () => {
+    const outside = tmp('mikro-init-outside-');
+    const target = join(outside, 'someone-elses.gitignore');
+    writeFileSync(target, 'node_modules\n');
+    const dir = tmp('mikro-init-ignorelink-');
+    symlinkSync(target, join(dir, '.gitignore'));
+
+    const seeded = seedAgents({ dir, genieHome: shippedHome() });
+    // The agents are still seeded — one ignore line is not worth refusing the whole seed…
+    expect(seeded.written.length).toBeGreaterThan(0);
+    expect(seeded.gitignore).toBe('skipped');
+    // …and the file outside the repository is byte-for-byte what it was.
+    expect(readFileSync(target, 'utf8')).toBe('node_modules\n');
+    expect(ensureRunsIgnored(dir)).toBe('skipped');
+    expect(readFileSync(target, 'utf8')).toBe('node_modules\n');
+  });
+
   test('a release that ships no agents is a refusal naming genie update', () => {
     const dir = tmp('mikro-init-empty-');
     expect(() => seedAgents({ dir, genieHome: tmp('mikro-init-nohome-') })).toThrow(/genie update/);

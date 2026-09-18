@@ -49,7 +49,7 @@ const RUNS_IGNORE_EQUIVALENTS = ['.mikro/runs', '.mikro/runs/', '/.mikro/runs', 
 /** A refusal that leaves the repository exactly as it was found; the CLI prints it and exits 1. */
 export class InitError extends Error {}
 
-export type GitignoreAction = 'created' | 'added' | 'present';
+export type GitignoreAction = 'created' | 'added' | 'present' | 'skipped';
 
 export interface SeedResult {
   /** Paths written, absolute, every one of them inside `<dir>`. */
@@ -69,17 +69,34 @@ function isSymlink(path: string): boolean {
   }
 }
 
+/** True only for a real file at that path: `lstat` again, so a symlink is never mistaken for one. */
+function isRegularFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * `.mikro/runs/` in `.gitignore`, exactly once. A repository that already ignores the
  * directory under any of the spellings that mean the same thing is left alone: a
  * duplicated ignore line is the kind of noise that makes an operator distrust a tool.
+ *
+ * A `.gitignore` that is a SYMLINK — or anything else that is not a regular file — is
+ * not written through, and that is the same rule as `.mikro`/`.mikro/agents` above for
+ * the same reason: writing through it appends to a file OUTSIDE `<repo>`, which is
+ * exactly what this command promises never to do. It is reported (`skipped`) rather
+ * than fatal, because the agents are seeded and one line is something an operator can
+ * add by hand.
  */
 export function ensureRunsIgnored(dir: string): GitignoreAction {
   const path = join(dir, '.gitignore');
-  if (!existsSync(path)) {
+  if (!existsSync(path) && !isSymlink(path)) {
     writeFileSync(path, `${RUNS_IGNORE_LINE}\n`);
     return 'created';
   }
+  if (!isRegularFile(path)) return 'skipped';
   const body = readFileSync(path, 'utf8');
   const lines = body.split('\n').map((line) => line.trim());
   if (lines.some((line) => RUNS_IGNORE_EQUIVALENTS.includes(line))) return 'present';
@@ -174,11 +191,13 @@ export function runInitCli(argv: string[]): number {
   for (const path of seeded.written) process.stdout.write(`seeded ${path}\n`);
   for (const agent of seeded.refused)
     process.stdout.write(`kept ${join(dir, '.mikro', 'agents', agent)} — it already exists, nothing was overwritten\n`);
-  process.stdout.write(
-    seeded.gitignore === 'present'
-      ? `.gitignore already ignores ${RUNS_IGNORE_LINE}\n`
-      : `${seeded.gitignore} ${join(dir, '.gitignore')} with ${RUNS_IGNORE_LINE}\n`,
-  );
+  if (seeded.gitignore === 'present') process.stdout.write(`.gitignore already ignores ${RUNS_IGNORE_LINE}\n`);
+  else if (seeded.gitignore === 'skipped')
+    process.stdout.write(
+      `left ${join(dir, '.gitignore')} alone — it is not a regular file (a symlink?), and writing through it would write outside ${dir}\n` +
+        `  add this line to the file it points at, by hand: ${RUNS_IGNORE_LINE}\n`,
+    );
+  else process.stdout.write(`${seeded.gitignore} ${join(dir, '.gitignore')} with ${RUNS_IGNORE_LINE}\n`);
   process.stdout.write(`
 next, in order:
 
