@@ -113,6 +113,36 @@ describe('verifyCitations', () => {
     expect(cites.find((c) => c.line === 9)?.ok).toBe(false);
     expect(applyResolutions(value, cites).facts[0].evidence).toBe('scripts/build-binary.sh:2');
   });
+  test('a plan may name a file that does not exist yet, and only a plan', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-new-'));
+    mkdirSync(join(repo, 'scripts', 'mikro'), { recursive: true });
+    writeFileSync(join(repo, 'scripts', 'mikro', 'call.ts'), 'a\nb\n');
+    mkdirSync(join(repo, 'scratch'), { recursive: true }); // on disk, holds nothing tracked
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', 'scripts'], { cwd: repo });
+    const file = (path: string, reason: string) => verifyCitations({ plan: { files: [{ path, reason }] } }, repo)[0];
+    // The shape every planning intent returned on 2026-09-18 and the gate refused: the
+    // prompt allows it, so the answer was right and the run was billed twice for nothing.
+    const planned = file('scripts/mikro/triage.ts', 'NEW: the triage scout; parent scripts/mikro/ is tracked');
+    expect(planned.ok).toBe(true);
+    expect(planned.reason).toBe('new file (declared NEW: under a tracked directory)');
+    // Without the marker a missing file is still a failed citation.
+    expect(file('scripts/mikro/triage.ts', 'the triage scout').ok).toBe(false);
+    // A directory that does not exist, or holds nothing tracked, anchors nothing.
+    expect(file('scripts/nowhere/triage.ts', 'NEW: invented parent').ok).toBe(false);
+    expect(file('scratch/triage.ts', 'NEW: untracked parent').ok).toBe(false);
+    // NEW: is a plan marker, never evidence: the same path cited with a line still fails.
+    const cited = verifyCitations(
+      {
+        facts: [{ evidence: 'scripts/mikro/triage.ts:12' }],
+        plan: { files: [{ path: 'scripts/mikro/triage.ts', reason: 'NEW: x' }] },
+      },
+      repo,
+    );
+    expect(cited.find((c) => c.line === 12)?.ok).toBe(false);
+    // An existing file gains nothing from the marker: it is checked as any other path.
+    expect(file('scripts/mikro/call.ts', 'NEW: not new at all').reason).toBeUndefined();
+  });
   test('a deleted file in review-prep is not a failed citation', () => {
     const cites = verifyCitations({ files: [{ path: 'gone.ts', change: 'deleted' }] }, dir);
     expect(cites[0].ok).toBe(true); // no git history here at all: nothing can disprove the claim
