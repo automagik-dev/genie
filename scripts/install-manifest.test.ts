@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,54 @@ import { join } from 'node:path';
 // the shim records its argv so the raw Accept header is asserted from what was sent.
 
 const INSTALL_SH = join(import.meta.dir, '..', 'install.sh');
+
+// Every case here reads the SECOND source, which fetch_latest consults only where jq
+// can validate the answer (see install-manifest-nojq.test.ts for why). Inheriting the
+// host's PATH therefore made each assertion below conditional on this machine having
+// jq: on a host without it these would quietly become no-second-source cases and fail
+// for a reason that looks exactly like a broken gate. The PATH is built instead, and
+// asserted to hold jq before anything is scored.
+const TOOLS = [
+  'bash',
+  'sh',
+  'env',
+  'sed',
+  'tr',
+  'head',
+  'tail',
+  'cat',
+  'cut',
+  'grep',
+  'mktemp',
+  'uname',
+  'id',
+  'mkdir',
+  'rm',
+  'chmod',
+  'ln',
+  'date',
+  'dirname',
+  'basename',
+  'sort',
+  'wc',
+  'stat',
+  'tar',
+  'awk',
+  'jq',
+];
+
+/** See install-manifest-nojq.test.ts: without jq there is no second source to test. */
+const HAS_JQ = Bun.which('jq') !== null;
+
+function jqBin(dir: string): string {
+  const bin = join(dir, 'jq-bin');
+  mkdirSync(bin, { recursive: true });
+  for (const tool of TOOLS) {
+    const real = Bun.which(tool);
+    if (real) symlinkSync(real, join(bin, tool));
+  }
+  return bin;
+}
 
 const manifest = (version: string, channel = 'dev'): string =>
   JSON.stringify({
@@ -59,7 +107,7 @@ function fetchLatest(answers: Answers): { code: number; out: string; err: string
   );
   const run = Bun.spawnSync(['bash', '-c', 'source "$1"; fetch_latest dev', 'bash', INSTALL_SH], {
     env: {
-      PATH: `${dir}:${process.env.PATH ?? ''}`,
+      PATH: `${dir}:${jqBin(dir)}`,
       HOME: dir,
       GENIE_HOME: join(dir, 'genie-home'),
       GENIE_INSTALL_SOURCE_ONLY: '1',
@@ -75,13 +123,13 @@ function fetchLatest(answers: Answers): { code: number; out: string; err: string
 }
 
 describe('install.sh fetch_latest dual-source manifest edges (#2950)', () => {
-  test('the CDN answer is kept when it leads, and on a tie', () => {
+  test.skipIf(!HAS_JQ)('the CDN answer is kept when it leads, and on a tie', () => {
     expect(fetchLatest({ cdn: manifest('5.260918.9'), api: manifest('5.260918.4') }).out).toContain('5.260918.9');
     const tie = fetchLatest({ cdn: manifest('5.260918.4'), api: manifest('5.260918.4') });
     expect(tie.out).toContain('5.260918.4');
   });
 
-  test('neither an envelope nor an error body can displace the CDN answer', () => {
+  test.skipIf(!HAS_JQ)('neither an envelope nor an error body can displace the CDN answer', () => {
     // Both carry no `channel`, so a stale-but-valid CDN answer survives junk that
     // happens to be newer-looking inside.
     const enveloped = fetchLatest({ cdn: manifest('5.260918.2'), api: envelope(manifest('9.260918.9')) });
@@ -92,30 +140,39 @@ describe('install.sh fetch_latest dual-source manifest edges (#2950)', () => {
     expect(limited.out).toContain('5.260918.2');
   });
 
-  test('either source alone still installs; neither is a hard failure with the original exit code', () => {
-    expect(fetchLatest({ cdn: manifest('5.260918.2') }).out).toContain('5.260918.2');
-    const apiOnly = fetchLatest({ api: manifest('5.260918.4') });
-    expect(apiOnly.code).toBe(0);
-    expect(apiOnly.out).toContain('5.260918.4');
-    // Both unreachable keeps the pre-existing contract: exit 5, naming the CDN url.
-    const neither = fetchLatest({});
-    expect(neither.code).toBe(5);
-    expect(neither.err).toContain('could not fetch');
-    // Both answered but for another channel keeps the other pre-existing contract.
-    const wrongChannel = fetchLatest({ cdn: manifest('5.260918.2', 'stable'), api: manifest('5.260918.4', 'stable') });
-    expect(wrongChannel.code).toBe(1);
-    expect(wrongChannel.err).toContain('manifest channel mismatch');
-  });
+  test.skipIf(!HAS_JQ)(
+    'either source alone still installs; neither is a hard failure with the original exit code',
+    () => {
+      expect(fetchLatest({ cdn: manifest('5.260918.2') }).out).toContain('5.260918.2');
+      const apiOnly = fetchLatest({ api: manifest('5.260918.4') });
+      expect(apiOnly.code).toBe(0);
+      expect(apiOnly.out).toContain('5.260918.4');
+      // Both unreachable keeps the pre-existing contract: exit 5, naming the CDN url.
+      const neither = fetchLatest({});
+      expect(neither.code).toBe(5);
+      expect(neither.err).toContain('could not fetch');
+      // Both answered but for another channel keeps the other pre-existing contract.
+      const wrongChannel = fetchLatest({
+        cdn: manifest('5.260918.2', 'stable'),
+        api: manifest('5.260918.4', 'stable'),
+      });
+      expect(wrongChannel.code).toBe(1);
+      expect(wrongChannel.err).toContain('manifest channel mismatch');
+    },
+  );
 
-  test('the API is asked for the file its own bytes, on main, and the CDN is asked without that header', () => {
-    const r = fetchLatest({ cdn: manifest('5.260918.2'), api: manifest('5.260918.4') });
-    const lines = r.argv.trim().split('\n');
-    const apiCall = lines.find((l) => l.includes('api.github.com')) ?? '';
-    const cdnCall = lines.find((l) => l.includes('raw.githubusercontent.com')) ?? '';
-    expect(apiCall).toContain('Accept: application/vnd.github.raw');
-    expect(apiCall).toContain('/contents/.well-known/dev.json?ref=main');
-    // Without the header the API answers with the envelope the test above rejects.
-    expect(cdnCall).not.toContain('Accept:');
-    expect(cdnCall).toContain('/main/.well-known/dev.json');
-  });
+  test.skipIf(!HAS_JQ)(
+    'the API is asked for the file its own bytes, on main, and the CDN is asked without that header',
+    () => {
+      const r = fetchLatest({ cdn: manifest('5.260918.2'), api: manifest('5.260918.4') });
+      const lines = r.argv.trim().split('\n');
+      const apiCall = lines.find((l) => l.includes('api.github.com')) ?? '';
+      const cdnCall = lines.find((l) => l.includes('raw.githubusercontent.com')) ?? '';
+      expect(apiCall).toContain('Accept: application/vnd.github.raw');
+      expect(apiCall).toContain('/contents/.well-known/dev.json?ref=main');
+      // Without the header the API answers with the envelope the test above rejects.
+      expect(cdnCall).not.toContain('Accept:');
+      expect(cdnCall).toContain('/main/.well-known/dev.json');
+    },
+  );
 });
