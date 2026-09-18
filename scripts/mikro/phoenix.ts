@@ -30,6 +30,8 @@ export interface RunSpanInput {
   tags: Record<string, string>;
   prompt: string;
   answer: string;
+  /** Candidate count of the deterministic facts file this attempt was handed, when it was handed one. */
+  factsCandidates?: number;
 }
 
 const hex = (seed: string, chars: number) => createHash('sha256').update(seed).digest('hex').slice(0, chars);
@@ -62,6 +64,7 @@ export function buildRunSpan(input: RunSpanInput) {
       'metadata.cost_usd': input.costUsd,
       'metadata.ok': input.ok,
       'metadata.errors': input.errors.join(' | ').slice(0, 2000),
+      ...(input.factsCandidates === undefined ? {} : { 'metadata.facts_candidates': input.factsCandidates }),
       ...Object.fromEntries(Object.entries(input.tags).map(([k, v]) => [`metadata.tag.${k}`, v])),
     },
   };
