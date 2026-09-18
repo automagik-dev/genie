@@ -143,6 +143,8 @@ describe('hardening', () => {
     expect(env.GH_TOKEN).toBeUndefined();
     expect(env.MIKRO_TEST_FLAG).toBe('1');
     expect(env.PATH).toBeDefined();
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    expect(serverEnv().DEEPSEEK_API_KEY).toBe('sk-test'); // the provider key the caller holds must reach the server
   });
   test('a --dir whose .mikro config differs from the invoking checkout is refused', () => {
     const trusted = mkdtempSync(join(tmpdir(), 'mikro-trusted-'));

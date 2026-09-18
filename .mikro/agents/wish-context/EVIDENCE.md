@@ -42,3 +42,32 @@ model: deepseek-api/deepseek-flash · fixtures: issue-2921, observe-bundle · re
 | observe-bundle | 1 | ✔ | 1 | 0.0099 | 75 | 15 | 0.38 | 1.00 | — | 20 (0) |  |
 
 runs 4 · yield 1.00 · fabrications 0 · recall 0.58 · precision 0.84 · type 0.00 · $ median 0.0099 mean 0.0095 · s p50 75 p90 86 · retries 0 · bars yield:✔ fabrication:✔ recall:✖ cost:✔ latency:✔ → FAIL
+
+## 2026-09-18T01:22Z — round 4 — final-prompt-hardened-runner-pr-truth
+
+model: deepseek-api/deepseek-flash · fixtures: issue-2921, observability-fold-in, wish-run-learnings, slice-0, issue-2927 · reps 1 · trace `bench:wish-context:2026-09-18T01:22:35.027Z`
+
+| fixture | rep | ok | att | $ | s | iter | recall | prec | tests | type | cites (dropped) | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| issue-2921 | 0 | ✖ | 2 | 0.0000 | 2 | 6 | 0.00 | 0.00 | — | — | 0 (0) | tool error: Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.
+
+---
+mikro · ag |
+| issue-2927 | 0 | ✖ | 2 | 0.0000 | 1 | 6 | 0.00 | 0.00 | — | — | 0 (0) | tool error: Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.
+
+---
+mikro · ag |
+| observability-fold-in | 0 | ✖ | 2 | 0.0000 | 2 | 6 | 0.00 | 0.00 | — | — | 0 (0) | tool error: Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.
+
+---
+mikro · ag |
+| slice-0 | 0 | ✖ | 2 | 0.0000 | 1 | 6 | 0.00 | 0.00 | — | — | 0 (0) | tool error: Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.
+
+---
+mikro · ag |
+| wish-run-learnings | 0 | ✖ | 2 | 0.0000 | 1 | 6 | 0.00 | 0.00 | — | — | 0 (0) | tool error: Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.
+
+---
+mikro · ag |
+
+runs 5 · yield 0.00 · fabrications 0 · recall 0.00 · precision 0.00 · tests 0.00 · type 0.00 · $ median 0.0000 mean 0.0000 · s p50 1 p90 2 · retries 5 · bars yield:✖ fabrication:✔ recall:✖ cost:✔ latency:✔ → FAIL

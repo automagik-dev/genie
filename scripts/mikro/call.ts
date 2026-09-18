@@ -430,7 +430,7 @@ export function serverEnv(): Record<string, string> {
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     if (
-      ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM', 'USER', 'SHELL'].includes(k) ||
+      ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM', 'USER', 'SHELL', 'DEEPSEEK_API_KEY'].includes(k) ||
       k.startsWith('LC_') ||
       k.startsWith('MIKRO_')
     )
