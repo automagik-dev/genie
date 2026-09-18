@@ -23,8 +23,10 @@ const INSTALL_SH = join(import.meta.dir, '..', 'install.sh');
 // can validate the answer (see install-manifest-nojq.test.ts for why). Inheriting the
 // host's PATH therefore made each assertion below conditional on this machine having
 // jq: on a host without it these would quietly become no-second-source cases and fail
-// for a reason that looks exactly like a broken gate. The PATH is built instead, and
-// asserted to hold jq before anything is scored.
+// for a reason that looks exactly like a broken gate. The PATH is built instead, from
+// a farm that links jq in by name, and the cases skip where the host has no jq to link.
+// (The two-sided proof that such a farm is what it claims lives in
+// install-manifest-nojq.test.ts, against the same builder.)
 const TOOLS = [
   'bash',
   'sh',
