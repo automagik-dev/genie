@@ -41,7 +41,7 @@ Copy this out as your **first** repl block, whole.
 import subprocess, json, re, os
 
 READ_ONLY_GIT = {"log", "show", "diff", "blame", "grep", "ls-files", "rev-parse", "shortlog", "rev-list", "name-rev", "cat-file", "branch", "status", "fetch"}
-BOUNDARIES = [".github/", ".husky/", ".claude/hooks/", ".claude/settings", "package.json", "biome.json", "commitlint.config.ts", "scripts/release-", "scripts/mikro/boundary", "release-guard.sh", "version.yml", "delivery-evidence-verify.ts", "auth", "secret", "permission"]
+BOUNDARIES = [".github/", ".husky/", ".claude/hooks/", ".claude/settings", "package.json", "biome.json", "commitlint.config.ts", "scripts/release-", "scripts/mikro/boundary", "install.sh", ".claude/workflows/wish.js", "release-guard.sh", "version.yml", "delivery-evidence-verify.ts", "auth", "secret", "permission"]
 
 def run(argv, limit=6000):
     p = subprocess.run(argv, capture_output=True, text=True)
