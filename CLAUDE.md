@@ -62,7 +62,9 @@ src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightw
   TAXONOMY.md                   The docs-in-git / state-in-SQLite contract
 src/lib/skills-installer.ts     The skills.sh channel — pinned CLI, local delivered source, install record
 src/lib/legacy-integration-retirement.ts  Marker-owned, backup-first retirement of plugin-era host assets
-src/term-commands/              CLI command handlers (board, context, init, omni, shortcuts, task, ...)
+src/term-commands/              CLI command handlers (board, context, init, mikro, omni, shortcuts, task, ...)
+src/term-commands/mikro.ts      `genie mikro call` — registration over scripts/mikro/call.ts, imported in place
+scripts/mikro/                  The mikro microagent runtime (call/bench/coach/facts/boundary); NOT relocated under src/
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
 .genie/                         Per-repo state: git-tracked wishes/INDEX.md/brainstorms/*/DESIGN.md; brainstorm notes + genie.db gitignored
 ```
@@ -166,7 +168,7 @@ Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-commo
 
 ## Build
 
-Single-file bundle: `bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun` inlines all four runtime deps (`commander`, `@inquirer/prompts`, `nats`, `zod`) into `dist/genie.js` (~1.9MB). Only the `bun` builtin is external. The shebang `#!/usr/bin/env bun` makes it executable; `chmod +x` is applied after build.
+Single-file bundle: `bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun` inlines all four runtime deps (`commander`, `@inquirer/prompts`, `nats`, `zod`) into `dist/genie.js` (~2MB). Only the `bun` builtin is external. The shebang `#!/usr/bin/env bun` makes it executable; `chmod +x` is applied after build.
 
 ## Testing
 
