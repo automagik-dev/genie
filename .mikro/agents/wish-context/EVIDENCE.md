@@ -29,3 +29,16 @@ model: deepseek-api/deepseek-flash · fixtures: issue-2921, observability-fold-i
 | wish-run-learnings | 0 | ✔ | 1 | 0.0091 | 67 | 16 | 1.00 | 1.00 | — | 19 (0) |  |
 
 runs 5 · yield 1.00 · fabrications 0 · recall 0.69 · precision 0.83 · type 0.00 · $ median 0.0095 mean 0.0112 · s p50 67 p90 165 · retries 2 · bars yield:✔ fabrication:✔ recall:✔ cost:✔ latency:✔ → PASS
+
+## 2026-09-18T00:33Z — round 3 — coverage-guidance-kinds
+
+model: deepseek-api/deepseek-flash · fixtures: issue-2921, observe-bundle · reps 2 · trace `bench:wish-context:2026-09-18T00:31:59.790Z`
+
+| fixture | rep | ok | att | $ | s | iter | recall | prec | type | cites (dropped) | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| issue-2921 | 0 | ✔ | 1 | 0.0093 | 73 | 16 | 0.40 | 0.67 | — | 11 (0) |  |
+| issue-2921 | 1 | ✔ | 1 | 0.0100 | 86 | 16 | 1.00 | 1.00 | — | 12 (0) |  |
+| observe-bundle | 0 | ✔ | 1 | 0.0087 | 72 | 16 | 0.54 | 0.70 | — | 23 (0) |  |
+| observe-bundle | 1 | ✔ | 1 | 0.0099 | 75 | 15 | 0.38 | 1.00 | — | 20 (0) |  |
+
+runs 4 · yield 1.00 · fabrications 0 · recall 0.58 · precision 0.84 · type 0.00 · $ median 0.0099 mean 0.0095 · s p50 75 p90 86 · retries 0 · bars yield:✔ fabrication:✔ recall:✖ cost:✔ latency:✔ → FAIL

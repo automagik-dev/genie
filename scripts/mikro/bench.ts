@@ -129,6 +129,7 @@ const summary = {
   fabrications: okRows.reduce((n, r) => n + r.score.citationsDropped, 0),
   filesRecallMean: mean(okRows.map((r) => r.score.filesRecall).filter((x): x is number => x !== null)),
   filesPrecisionMean: mean(okRows.map((r) => r.score.filesPrecision).filter((x): x is number => x !== null)),
+  testsRecallMean: mean(okRows.map((r) => r.score.testsRecall).filter((x): x is number => x !== null)),
   typeAccuracy: mean(
     okRows
       .map((r) => r.score.typeOk)
@@ -160,14 +161,14 @@ const bars = {
 const pass = Object.values(bars).every(Boolean);
 
 const table = [
-  '| fixture | rep | ok | att | $ | s | iter | recall | prec | type | cites (dropped) | errors |',
-  '|---|---|---|---|---|---|---|---|---|---|---|---|',
+  '| fixture | rep | ok | att | $ | s | iter | recall | prec | tests | type | cites (dropped) | errors |',
+  '|---|---|---|---|---|---|---|---|---|---|---|---|---|',
   ...rows.map(
     (r) =>
-      `| ${r.id} | ${r.rep} | ${r.ok ? '✔' : '✖'} | ${r.attempts} | ${r.cost.toFixed(4)} | ${r.seconds.toFixed(0)} | ${r.iterations} | ${fmt(r.score.filesRecall)} | ${fmt(r.score.filesPrecision)} | ${fmt(r.score.typeOk)} | ${r.score.citationsTotal} (${r.score.citationsDropped}) | ${r.errors.slice(0, 2).join('; ').replace(/\|/g, '/').slice(0, 120)} |`,
+      `| ${r.id} | ${r.rep} | ${r.ok ? '✔' : '✖'} | ${r.attempts} | ${r.cost.toFixed(4)} | ${r.seconds.toFixed(0)} | ${r.iterations} | ${fmt(r.score.filesRecall)} | ${fmt(r.score.filesPrecision)} | ${fmt(r.score.testsRecall)} | ${fmt(r.score.typeOk)} | ${r.score.citationsTotal} (${r.score.citationsDropped}) | ${r.errors.slice(0, 2).join('; ').replace(/\|/g, '/').slice(0, 120)} |`,
   ),
 ].join('\n');
-const summaryLine = `runs ${summary.runs} · yield ${fmt(summary.yield)} · fabrications ${summary.fabrications} · recall ${fmt(summary.filesRecallMean)} · precision ${fmt(summary.filesPrecisionMean)} · type ${fmt(summary.typeAccuracy)} · $ median ${summary.costMedian.toFixed(4)} mean ${summary.costMean.toFixed(4)} · s p50 ${summary.secondsP50.toFixed(0)} p90 ${summary.secondsP90.toFixed(0)} · retries ${summary.retriesUsed} · bars ${Object.entries(
+const summaryLine = `runs ${summary.runs} · yield ${fmt(summary.yield)} · fabrications ${summary.fabrications} · recall ${fmt(summary.filesRecallMean)} · precision ${fmt(summary.filesPrecisionMean)} · tests ${fmt(summary.testsRecallMean)} · type ${fmt(summary.typeAccuracy)} · $ median ${summary.costMedian.toFixed(4)} mean ${summary.costMean.toFixed(4)} · s p50 ${summary.secondsP50.toFixed(0)} p90 ${summary.secondsP90.toFixed(0)} · retries ${summary.retriesUsed} · bars ${Object.entries(
   bars,
 )
   .map(([k, v]) => `${k}:${v ? '✔' : '✖'}`)
