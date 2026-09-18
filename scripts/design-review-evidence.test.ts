@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
@@ -255,6 +255,33 @@ describe('every shipped skill is self-contained', () => {
 
   test('the wish and brainstorm copies of the evidence helper are byte-identical', () => {
     expect(readFileSync(WISH_SCRIPT)).toEqual(readFileSync(EVIDENCE_SCRIPT));
+  });
+
+  test('the gate still refuses an evidence-less design when reached through a symlinked path', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-symlink-entry-'));
+    try {
+      const references = join(root, 'real', 'references');
+      mkdirSync(references, { recursive: true });
+      cpSync(WISH_SCRIPT, join(references, 'design-review-evidence.mjs'));
+      // The script is reached through a SYMLINKED directory, so argv[1] and the
+      // module URL are different spellings of the same file.
+      const linked = join(root, 'linked-references');
+      symlinkSync(references, linked, 'dir');
+
+      const design = join(root, 'DESIGN.md');
+      writeFileSync(design, '# Design\n\nNo design-review evidence block anywhere in here.\n', 'utf8');
+
+      const verify = Bun.spawnSync(['node', join(linked, 'design-review-evidence.mjs'), 'verify', design], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      expect(verify.exitCode).toBe(1);
+      expect(verify.stderr.toString()).toContain(
+        'DESIGN.md must contain exactly one bounded design-review evidence block',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('the wish copy runs with no sibling skill installed', () => {

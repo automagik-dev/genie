@@ -10,7 +10,7 @@
 // copies byte-for-byte, so edit this file and copy it over the other.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -218,7 +218,20 @@ export function runDesignReviewEvidenceCli() {
   process.stdout.write(`${designReviewDigest(stamped)}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function resolvedEntryPath(argvPath) {
+  const resolved = resolve(argvPath);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    // argv[1] need not exist on disk; fall back to the plain resolved path.
+    return resolved;
+  }
+}
+
+// Compare REAL paths on BOTH sides: reached through a symlinked path the two
+// spellings disagree, the CLI body silently never runs, and `verify` exits 0
+// having checked nothing (the gate fails open).
+if (process.argv[1] && resolvedEntryPath(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     runDesignReviewEvidenceCli();
   } catch (error) {
