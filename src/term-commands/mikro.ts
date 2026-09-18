@@ -38,6 +38,7 @@ import { runBenchCli } from '../../scripts/mikro/bench';
 import { BENCH_USAGE } from '../../scripts/mikro/bench-options';
 import { CALL_USAGE, runCallCli } from '../../scripts/mikro/call';
 import { FIXTURES_USAGE, runFixturesCli } from '../../scripts/mikro/fixtures-from-commits';
+import { INIT_USAGE, runInitCli } from '../../scripts/mikro/init';
 
 const MIKRO_GROUP_DESCRIPTION = 'Run and grow genie mikro microagents (call, bench, coach, fixtures, init)';
 
@@ -145,6 +146,30 @@ the command was refused.
 
 ${FIXTURES_USAGE}`;
 
+/**
+ * The first step in a repository that is not genie, and the only command here that
+ * writes to a repository at all — which is why the help says exactly what it writes.
+ */
+const INIT_HELP = `
+Flags (parsed by the mikro runtime, forwarded as typed):
+  --dir <repo>               The repository to seed; defaults to the working directory
+
+Copies this release's default wish-context and review-prep agents from
+<GENIE_HOME>/templates/mikro/agents into <repo>/.mikro/agents/, adds ".mikro/runs/"
+to .gitignore, and writes nothing else and nothing outside <repo>. An agent
+directory that already exists is REFUSED, never overwritten, so a second run changes
+nothing. A symlinked .mikro or .mikro/agents is refused rather than followed.
+
+It then prints the sequence: commit the agents on your base branch, push them (or,
+when the local-base rule applies, why you need not yet), build a fixture set from
+your own commits, bench, refine. mikro-coach is not seeded: it is a tool, resolved
+from the shipped set like any other agent.
+
+Exit codes: 0 seeded (or nothing left to seed), 1 the shipped agents are missing (run
+genie update), 2 the command was refused.
+
+${INIT_USAGE}`;
+
 export function registerMikroCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'mikro');
   // Positional options on the GROUP, not on the program: it is what `call` needs to
@@ -185,5 +210,16 @@ export function registerMikroCommands(program: Command): void {
     .addHelpText('after', FIXTURES_HELP)
     .action((flags: string[]) => {
       process.exitCode = runFixturesCli(flags);
+    });
+
+  mikro
+    .command('init')
+    .description("Seed this release's default agents into a repository and print the next steps")
+    .argument('[flags...]', 'Runtime flags, forwarded as typed (genie global options excepted)')
+    .allowUnknownOption()
+    .passThroughOptions()
+    .addHelpText('after', INIT_HELP)
+    .action((flags: string[]) => {
+      process.exitCode = runInitCli(flags);
     });
 }

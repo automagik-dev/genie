@@ -78,7 +78,13 @@ cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
 # tracked copy in .mikro/agents rather than duplicated in the repository, and
 # the top-level member set below stays frozen. Only the two files the runtime
 # reads are staged: EVIDENCE.md is a bench record, not a payload.
-SHIPPED_AGENTS=(wish-context review-prep)
+#
+# mikro-coach is here and is NOT one of the agents `genie mikro init` seeds
+# (SEEDED_AGENTS, scripts/mikro/init.ts): it is a TOOL that reads another agent's
+# prompt and evidence, so `genie mikro coach` must resolve it on a host whose
+# repository never carried it, while a repository specializes only the two
+# workers. scripts/release-docs.test.ts pins both lists against each other.
+SHIPPED_AGENTS=(wish-context review-prep mikro-coach)
 for agent in "${SHIPPED_AGENTS[@]}"; do
   src="${REPO_ROOT}/.mikro/agents/${agent}"
   dest="${STAGE}/templates/mikro/agents/${agent}"
@@ -145,6 +151,8 @@ for required in \
   "templates/mikro/agents/wish-context/SYSTEM.md" \
   "templates/mikro/agents/review-prep/agent.yaml" \
   "templates/mikro/agents/review-prep/SYSTEM.md" \
+  "templates/mikro/agents/mikro-coach/agent.yaml" \
+  "templates/mikro/agents/mikro-coach/SYSTEM.md" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
   "plugins/dsh-genie-board/package.json" \
