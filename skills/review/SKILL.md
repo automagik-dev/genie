@@ -78,6 +78,8 @@ Return target SHA/path, criteria covered, commands/results, verdict, findings, a
 - Implementation/PR review leaves the wish IN_PROGRESS.
 - Only authorized merge plus required QA/release evidence establishes SHIPPED.
 
+Non-blocking MEDIUM and LOW maintainability findings are not repair work: `fix` takes blocking gaps only, and a cleanup pass that runs itself is scope the caller never authorized. The caller routes them to `deslop` when it wants them addressed, and otherwise records them as accepted.
+
 For repairs, the caller uses `fix`, preserving its budget `B` (default 2), attempts, and cause-specific escalation limits. An unclear cause calls for investigation through `report`; it does not demonstrate model capacity. Preserve opposing review evidence for resolution. A verdict authorizes neither edits nor publication by itself.
 
 ## Orca mode

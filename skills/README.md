@@ -68,6 +68,7 @@ bun scripts/skills-inventory-parity.ts --write
 | Skill | Category | Mutates | Description |
 |---|---|---|---|
 | `brainstorm` | lifecycle | documents | Explore an ambiguous idea with the user, settle scope and success criteria, and produce an independently reviewed design for wish. |
+| `deslop` | lifecycle | repo | Clean up the prose or code already in scope — protect its meaning, voice and behaviour, remove what only adds reading work, and return findings instead of edits when a review was asked for. |
 | `fix` | lifecycle | repo | Resolve blocking review gaps through bounded repairs and independent re-review; diagnose stalled attempts without expanding scope. |
 | `review` | lifecycle | none | Independently assess designs, plans, implementations, PRs, or repository quality; return evidence and SHIP, FIX-FIRST, or BLOCKED without applying fixes. |
 | `wish` | lifecycle | repo | Deliver one decided task end to end — admit it, work it in one worktree, gate, independent review, bounded repair, a merge-ready PR — or plan a multi-group wish when it is bigger than one task. |
