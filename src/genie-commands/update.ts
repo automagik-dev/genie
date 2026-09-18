@@ -105,7 +105,10 @@ const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 // caches independently of the repository, so for minutes after a release publishes it
 // still serves the PREVIOUS manifest and `genie update` offers the previous version as
 // the newest one (issue #2947, reproduced on v5.260918.1 and .2). Neither source needs
-// a credential, so both are tried and the newer answer wins.
+// a credential, so both are tried and the newer answer wins. The API is cached too —
+// measured 2026-09-18: CDN `max-age=300`, API `max-age=60, s-maxage=60` — so this
+// NARROWS the stale window by about five times, it does not close it. A recurrence
+// inside a minute of a publish is still possible and is not evidence against this path.
 const API_BASE_URL = 'https://api.github.com';
 const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
 const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
@@ -367,8 +370,8 @@ export function manifestUrlForChannel(channel: ReleaseChannel): string {
 }
 
 /**
- * The same manifest through the public contents API, which reflects a push
- * immediately. Requested with `Accept: application/vnd.github.raw`, so the
+ * The same manifest through the public contents API, whose cache is a minute deep
+ * rather than five. Requested with `Accept: application/vnd.github.raw`, so the
  * bytes this returns are the file's own bytes and `manifestSha256` still
  * describes the published manifest rather than an API envelope.
  */
@@ -508,6 +511,13 @@ interface FetchManifestOptions {
   /** Test seam: replaces the network round-trip with a synchronous stub. */
   fetcher?: (url: string) => Promise<string | null>;
   timeoutMs?: number;
+  /**
+   * Called when the two sources did not simply agree. Without it the fix is
+   * invisible: the API budget is 60 requests/hour PER IP, so on a CI runner or a
+   * NAT'd office address the API source can be rate-limited away and the command
+   * silently returns to the #2947 symptom with nothing to tell the operator.
+   */
+  onNote?: (message: string) => void;
 }
 
 /**
@@ -528,16 +538,49 @@ export async function fetchLatestManifest(
     fetchManifestFrom(manifestUrlForChannel(channel), channel, fetcher, timeoutMs),
     fetchManifestFrom(manifestApiUrlForChannel(channel), channel, fetcher, timeoutMs),
   ]);
-  return newerManifest(cdn, api);
+  const chosen = newerManifest(cdn, api);
+  if (opts.onNote) noteManifestSources(cdn, api, chosen, opts.onNote);
+  return chosen;
 }
 
-/** The newer of two answers; a tie or an unparseable version keeps the CDN copy. */
+/** Report only what an operator could not otherwise see: a disagreement, or a source that never answered. */
+function noteManifestSources(
+  cdn: LatestManifest | null,
+  api: LatestManifest | null,
+  chosen: LatestManifest | null,
+  note: (message: string) => void,
+): void {
+  if (!chosen) return;
+  if (cdn && api) {
+    if (cdn.version !== api.version) {
+      note(
+        chosen === api
+          ? `manifest: api.github.com has ${api.version}; the CDN copy is still at ${cdn.version} (it caches for ~5 min)`
+          : `manifest: the CDN has ${cdn.version}; api.github.com is still at ${api.version}`,
+      );
+    }
+    return;
+  }
+  note(
+    cdn
+      ? 'manifest: api.github.com did not answer (offline, or the 60/hour unauthenticated budget is spent); using the CDN copy, which can lag a publish by ~5 min'
+      : 'manifest: the CDN did not answer; using api.github.com',
+  );
+}
+
+/**
+ * The newer of two answers; a tie keeps the CDN copy. Both versions parse by
+ * construction — `parseManifest` rejects a manifest whose version does not — so the
+ * two guards below are unreachable today; they are kept pointing at the side that
+ * still parses rather than deleted, because the alternative is an unvalidated answer
+ * winning if that ever stops being true.
+ */
 function newerManifest(cdn: LatestManifest | null, api: LatestManifest | null): LatestManifest | null {
   if (!cdn) return api;
   if (!api) return cdn;
   const cdnVersion = parseGenieVersion(cdn.version);
   const apiVersion = parseGenieVersion(api.version);
-  if (!cdnVersion) return api;
+  if (!cdnVersion) return apiVersion ? api : null;
   if (!apiVersion) return cdn;
   return compareParsedVersions(apiVersion, cdnVersion) > 0 ? api : cdn;
 }
@@ -2486,7 +2529,7 @@ export async function updateCommand(
   // Planning is read-only and deliberately happens before lifecycle lease
   // acquisition. Interactive users can consider the prompt without blocking
   // install/setup/uninstall in another process.
-  const manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel);
+  const manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel, { onNote: log });
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
   const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
   const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
