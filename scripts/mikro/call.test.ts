@@ -7,11 +7,14 @@ import {
   applyResolutions,
   extractJson,
   parseFooter,
+  prepareFacts,
   serverEnv,
   stripFooter,
   untrustedConfig,
   verifyCitations,
 } from './call';
+import { FACTS_HEADER } from './facts';
+import { buildRunSpan } from './phoenix';
 import { IssueTriage, SCHEMAS } from './schemas';
 
 const FOOTER =
@@ -156,6 +159,82 @@ describe('schemas', () => {
       first_question: null,
     });
     expect(ok.success).toBe(true);
+  });
+});
+
+describe('facts handoff', () => {
+  /**
+   * A real repository, because every fact is a git read. `gh` is not stubbed —
+   * a tmpdir repo has no GitHub remote to resolve, so it fails immediately and
+   * contributes nothing, which is exactly the "skip cleanly" path.
+   */
+  function repo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'mikro-facts-call-'));
+    mkdirSync(join(dir, 'src', 'lib'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib', 'sprocket-gate.ts'), 'export const sprocketGate = () => true;\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '- **src/lib/sprocket-gate.ts is the gate** — never bypass it\n');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: dir });
+    Bun.spawnSync(['git', 'add', '.'], { cwd: dir });
+    Bun.spawnSync(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed'], { cwd: dir });
+    return dir;
+  }
+
+  test('auto infers the mode from the prompt and writes both artifacts beside the ledger', () => {
+    const dir = repo();
+    const runs = join(dir, '.mikro', 'runs');
+    const handoff = prepareFacts('auto', 'Intent: harden the sprocketGate in sprocket-gate.ts', dir, runs, 'run-1');
+    expect(handoff?.path).toBe(join(runs, 'facts-run-1.json'));
+    expect(handoff?.contextPath).toBe(join(runs, 'facts-run-1.md'));
+    expect(handoff?.candidates).toBeGreaterThan(0);
+    expect(handoff?.ms).toBeGreaterThanOrEqual(0);
+    const json = JSON.parse(readFileSync(handoff?.path ?? '', 'utf8'));
+    expect(json.basis.mode).toBe('intent');
+    expect(json.candidates.map((c: { path: string }) => c.path)).toContain('src/lib/sprocket-gate.ts');
+    // The context file is what mikro loads, and its first line is the data frame
+    // the metadata preview shows the model.
+    const md = readFileSync(handoff?.contextPath ?? '', 'utf8');
+    expect(md.split('\n')[0]).toBe(FACTS_HEADER);
+    expect(md).toContain('src/lib/sprocket-gate.ts');
+  });
+
+  test('a prompt that implies no mode produces no facts rather than a guess', () => {
+    const dir = repo();
+    expect(
+      prepareFacts('auto', 'Prepare the review of PR #2932', dir, join(dir, '.mikro', 'runs'), 'run-2'),
+    ).toBeNull();
+  });
+
+  test('an explicit path is handed over as-is, and a missing one is skipped', () => {
+    const dir = repo();
+    const path = join(dir, 'given-facts.json');
+    writeFileSync(path, JSON.stringify({ candidates: [{ path: 'a.ts' }, { path: 'b.ts' }] }));
+    const handoff = prepareFacts(path, 'anything at all', dir, join(dir, '.mikro', 'runs'), 'run-3');
+    expect(handoff?.contextPath).toBe(path);
+    expect(handoff?.candidates).toBe(2);
+    expect(prepareFacts(join(dir, 'nope.json'), 'x', dir, join(dir, '.mikro', 'runs'), 'run-4')).toBeNull();
+  });
+
+  test('the span carries the candidate count only when facts were handed over', () => {
+    const base = {
+      agent: 'wish-context',
+      runId: 'r',
+      traceId: 't',
+      attempt: 0,
+      startMs: 0,
+      endMs: 1,
+      model: 'deepseek-api/deepseek-flash',
+      iterations: 1,
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: 0,
+      ok: true,
+      errors: [],
+      tags: {},
+      prompt: 'p',
+      answer: 'a',
+    };
+    expect(buildRunSpan({ ...base, factsCandidates: 27 }).attributes['metadata.facts_candidates']).toBe(27);
+    expect('metadata.facts_candidates' in buildRunSpan(base).attributes).toBe(false);
   });
 });
 

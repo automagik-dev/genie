@@ -3,7 +3,7 @@
  * scripts/mikro/call.ts — run ONE genie mikro microagent and return validated JSON.
  *
  *   bun scripts/mikro/call.ts <agent> --prompt "<text>" [--dir <repo>] [--timeout-ms 600000]
- *       [--retries 1] [--tag k=v ...] [--trace <id>] [--no-phoenix] [--raw]
+ *       [--retries 1] [--facts auto|<path>] [--tag k=v ...] [--trace <id>] [--no-phoenix] [--raw]
  *
  * This is the only surface that runs an `agent.yaml` agent: it speaks MCP over
  * stdio to `mikro mcp --dir <repo>` (the one runtime that loads the agent's
@@ -16,15 +16,24 @@
  *      `path` field must exist on disk — a field that declares itself deleted is
  *      excepted only when git can show the path in HEAD's history;
  * a failure on any of these is retried once with the errors appended to the
- * prompt. Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and
+ * prompt.
+ *
+ * `--facts auto` (or `MIKRO_FACTS=auto`) precomputes the mechanical facts for
+ * whatever mode the prompt implies (`scripts/mikro/facts.ts`), writes them
+ * beside the ledger as `facts-<runId>.{json,md}` and hands the Markdown to the
+ * agent through mikro's own MCP `context` argument — so the agent reads and
+ * cites instead of re-deriving the same greps on every run.
+ *
+ * Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and
  * posted to Phoenix (project cc-mikro) so the bill is visible where the Opus
  * turns it replaces are. Exit 0 with the result JSON on stdout when the final
  * attempt is ok; exit 1 otherwise (the result JSON still names every error).
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
+import { buildFacts, inferFactsMode, renderFacts } from './facts';
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
 
@@ -433,6 +442,70 @@ export interface RunOptions {
   phoenix?: boolean;
   ledger?: boolean;
   schema?: ZodTypeAny | null;
+  /**
+   * `'auto'` precomputes the deterministic facts for whatever mode this prompt
+   * implies; any other value is a path to a facts file to hand over as-is.
+   * Defaults to `MIKRO_FACTS`, which is how `bench.ts` turns facts on without
+   * a flag of its own.
+   */
+  facts?: string;
+}
+
+// ─── Facts ───────────────────────────────────────────────
+
+export interface FactsHandoff {
+  /** The JSON artifact, beside the ledger. */
+  path: string;
+  /** The framed Markdown the MCP `context` argument points at. */
+  contextPath: string;
+  candidates: number;
+  ms: number;
+}
+
+/**
+ * The facts a microagent would otherwise re-discover with grep, computed once
+ * with no model and handed over as MCP `context`.
+ *
+ * mikro's agent tool declares a `context` property (`src/mcp/server.ts`,
+ * `CONTEXT_PROPERTY`) — a path it loads and externalizes into the REPL as the
+ * Python `context` variable, with only its metadata in the message history.
+ * That is the right channel and not merely the available one: the agents' third
+ * rule is that a path they did not print is a path they may not cite, and a
+ * `print(context)` in their own REPL satisfies it. A prompt-appended block
+ * would not.
+ *
+ * The file handed over is Markdown, not the raw JSON, so that the metadata
+ * preview mikro puts in the message history is the data frame itself — the
+ * agent learns the facts exist without spending a REPL block to find out.
+ */
+export function prepareFacts(
+  option: string,
+  prompt: string,
+  dir: string,
+  runsDir: string,
+  runId: string,
+): FactsHandoff | null {
+  const t0 = Date.now();
+  if (option !== 'auto') {
+    const path = resolve(option);
+    if (!existsSync(path)) return null;
+    let candidates = 0;
+    try {
+      candidates = (JSON.parse(readFileSync(path, 'utf8')) as { candidates?: unknown[] }).candidates?.length ?? 0;
+    } catch {
+      // a facts file the caller built by hand does not have to be our JSON
+    }
+    return { path, contextPath: path, candidates, ms: Date.now() - t0 };
+  }
+  const mode = inferFactsMode(prompt);
+  if (!mode) return null; // a `Prepare the review of PR #n` prompt names no base: no facts beats a guessed range
+  const facts = buildFacts({ dir, ...mode });
+  mkdirSync(runsDir, { recursive: true });
+  const path = join(runsDir, `facts-${runId}.json`);
+  const contextPath = join(runsDir, `facts-${runId}.md`);
+  writeFileSync(path, `${JSON.stringify(facts, null, 2)}\n`);
+  writeFileSync(contextPath, renderFacts(facts));
+  return { path, contextPath, candidates: facts.candidates.length, ms: Date.now() - t0 };
 }
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
@@ -553,6 +626,21 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       tags,
     };
   }
+  // Computed once, before the loop: a retry re-reads the same facts rather than
+  // paying for a second identical scan.
+  const runsDir = join(trustedRoot, '.mikro', 'runs');
+  const factsOption = options.facts ?? process.env.MIKRO_FACTS;
+  let facts: FactsHandoff | null = null;
+  if (factsOption) {
+    try {
+      facts = prepareFacts(factsOption, options.prompt, dir, runsDir, runId);
+    } catch (error) {
+      // facts are an accelerator, never a gate: a tree they cannot be computed
+      // over (no git history, an unreadable CLAUDE.md) still gets its run.
+      process.stderr.write(`facts: skipped (${error instanceof Error ? error.message : String(error)})\n`);
+    }
+  }
+  const factsRow = facts ? { path: facts.path, candidates: facts.candidates, ms: facts.ms } : undefined;
   let prompt = options.prompt;
   let answer: unknown;
   let ok = false;
@@ -579,7 +667,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       client.notify('notifications/initialized');
       const result = (await client.request(
         'tools/call',
-        { name: toolName(options.agent), arguments: { prompt } },
+        { name: toolName(options.agent), arguments: facts ? { prompt, context: facts.contextPath } : { prompt } },
         timeoutMs + 15_000,
       )) as { content?: { type: string; text?: string }[]; isError?: boolean };
       raw = (result.content ?? []).map((c) => c.text ?? '').join('\n');
@@ -622,11 +710,10 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     const attemptOk = errors.length === 0;
     attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw });
     if (options.ledger !== false) {
-      const runsDir = join(trustedRoot, '.mikro', 'runs');
       mkdirSync(runsDir, { recursive: true });
       appendFileSync(
         join(runsDir, `${options.agent}.jsonl`),
-        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), tags })}\n`,
+        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags })}\n`,
       );
     }
     if (options.phoenix !== false) {
@@ -644,6 +731,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         costUsd: footer?.cost ?? 0,
         ok: attemptOk,
         errors,
+        factsCandidates: facts?.candidates,
         tags: {
           ...tags,
           prompt_sha: sha(options.prompt),
@@ -682,7 +770,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
 
 function usage(): never {
   process.stderr.write(
-    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--no-phoenix] [--no-ledger] [--raw]\n`,
+    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--no-phoenix] [--no-ledger] [--raw]\n`,
   );
   process.exit(2);
 }
@@ -711,6 +799,7 @@ if (import.meta.main) {
     prompt,
     dir: opt('--dir'),
     agentsDir: opt('--agents-dir'),
+    facts: opt('--facts'),
     timeoutMs: opt('--timeout-ms') ? Number(opt('--timeout-ms')) : undefined,
     retries: opt('--retries') ? Number(opt('--retries')) : undefined,
     tags,
