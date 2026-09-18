@@ -540,6 +540,33 @@ export function serverEnv(): Record<string, string> {
   return out;
 }
 
+/**
+ * What carries over from the host into a CONTAINED runtime. The boundary supplies its own
+ * PATH/HOME/TMPDIR (the host's name paths the sandbox does not have), so only three things
+ * cross: the provider key, a gh token, and `MIKRO_*`.
+ *
+ * Both key sources are consulted on purpose. `providerKeyEnv()` returns `{}` when the caller's
+ * own environment already holds `DEEPSEEK_API_KEY` — on the uncontained path `serverEnv()`
+ * carries it, so nothing is lost; reading only `providerKeyEnv()` here would have dropped the
+ * key for exactly the callers who export it themselves.
+ *
+ * This slice does NOT take credentials out of the REPL. Terminating TLS at the proxy and
+ * injecting them host-side is the next slice, named in the README's residuals.
+ */
+export function containedEnv(args: { timeoutMs: number; agentsDir: string }): Record<string, string> {
+  const host = serverEnv();
+  const carried: Record<string, string> = {};
+  for (const [key, value] of Object.entries(host))
+    if (key.startsWith('MIKRO_') || key === 'DEEPSEEK_API_KEY') carried[key] = value;
+  return {
+    ...carried,
+    ...providerKeyEnv(),
+    ...ghTokenEnv(),
+    MIKRO_MCP_RUN_TIMEOUT_MS: String(args.timeoutMs),
+    MIKRO_AGENTS_DIR: args.agentsDir,
+  };
+}
+
 /** mikro's own version, once per process, for the ledger and the span. */
 let cachedMikroVersion: string | null = null;
 export function mikroVersion(): string {
@@ -617,16 +644,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           runId,
           ledgerDir: join(trustedRoot, '.mikro', 'runs'),
           writable: options.boundaryWritable,
-          env: {
-            ...Object.fromEntries(Object.entries(serverEnv()).filter(([k]) => k.startsWith('MIKRO_'))),
-            ...providerKeyEnv(),
-            // This slice does NOT take credentials out of the REPL: the provider key and a gh
-            // token still live in the contained process. Terminating TLS at the proxy and
-            // injecting credentials host-side is the next slice, named in the README.
-            ...ghTokenEnv(),
-            MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
-            MIKRO_AGENTS_DIR: agentsDir,
-          },
+          env: containedEnv({ timeoutMs, agentsDir }),
         })
       : null;
   let prompt = options.prompt;

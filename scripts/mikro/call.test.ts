@@ -6,6 +6,7 @@ import { BoundaryError } from './boundary';
 import {
   PRICE_BASIS,
   applyResolutions,
+  containedEnv,
   extractJson,
   parseBoundaryFlag,
   parseFooter,
@@ -195,6 +196,22 @@ describe('hardening', () => {
     const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
     expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
     expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
+  });
+});
+
+describe('containedEnv', () => {
+  test('carries the provider key the caller exported, and nothing of the host that the sandbox renames', () => {
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    process.env.SSH_AUTH_SOCK = '/tmp/sock';
+    const env = containedEnv({ timeoutMs: 1000, agentsDir: '/repo/.mikro/agents' });
+    // providerKeyEnv() answers {} when the caller already holds the key: reading only that
+    // source here would have handed the sandbox no key at all for those callers.
+    expect(env.DEEPSEEK_API_KEY).toBe('sk-test');
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.PATH).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.MIKRO_AGENTS_DIR).toBe('/repo/.mikro/agents');
+    expect(env.MIKRO_MCP_RUN_TIMEOUT_MS).toBe('1000');
   });
 });
 

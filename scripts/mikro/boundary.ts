@@ -447,9 +447,9 @@ export interface BoundarySession {
 }
 
 /**
- * The environment inside the sandbox. `--clearenv` empties it first, so this is the
- * WHOLE environment the runtime sees: no caller tokens, no SSH agent, and the proxy
- * pair that makes the one allowed network hole reachable.
+ * The environment inside the sandbox. The spawn replaces the environment wholesale,
+ * so this is the WHOLE environment the runtime sees: no caller tokens, no SSH agent,
+ * and the proxy pair that makes the one allowed network hole reachable.
  */
 export function sandboxEnv(
   paths: { home: string; mikroCommandPath: string; nodeRoot: string; proxyPort: number },
