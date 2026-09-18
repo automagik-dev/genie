@@ -36,7 +36,8 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
 import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode, openBoundary } from './boundary';
 import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, renderFacts } from './facts';
@@ -485,14 +486,29 @@ export interface RunResult {
   boundary: BoundaryMode;
   /** CONNECT attempts the boundary's proxy saw, allowed and denied; null when the run was uncontained. */
   egress: { allowed: number; denied: number } | null;
+  /**
+   * Which source won the agent files — `flag`, `repo`, or `shipped`. Reported so a
+   * silent fallback cannot hide a repository agent that failed to resolve. Absent
+   * only when no source resolved at all.
+   */
+  agentSource?: string;
 }
 
 export interface RunOptions {
   agent: string;
   prompt: string;
   dir?: string;
-  /** Where the agent.yaml folders live; default: this checkout's .mikro/agents, so a --dir cut from origin/<base> still finds them. */
+  /**
+   * Where the agent.yaml folders live. Given, it is operator trust and decides the
+   * trusted root too; omitted, `resolveAgentsDir` decides — the INVOKING checkout's
+   * `.mikro/agents`, then the shipped default. Never derived from `--dir`, which is
+   * the tree under review.
+   */
   agentsDir?: string;
+  /** The invoking checkout to resolve agents and the trusted root from; defaults to `process.cwd()`. Never `dir`. */
+  cwd?: string;
+  /** Where the shipped default agents live; defaults to `$GENIE_HOME` or `~/.genie`. */
+  genieHome?: string;
   timeoutMs?: number;
   retries?: number;
   tags?: Record<string, string>;
@@ -809,11 +825,156 @@ export function untrustedConfig(dir: string, trustedRoot: string): string | null
   return null;
 }
 
+// ─── Where the agent files and the ledger live ───────────
+
+/**
+ * Global genie state root — `$GENIE_HOME` or `~/.genie`, the same rule
+ * `src/lib/genie-home.ts` applies. Restated here rather than imported: this
+ * module is the runtime `src/term-commands/mikro.ts` imports, never the other
+ * way round, and one `join(homedir(), '.genie')` is not worth a cycle.
+ */
+export function resolveMikroGenieHome(): string {
+  return process.env.GENIE_HOME || join(homedir(), '.genie');
+}
+
+/** The default agents this release ships, converged into `<GENIE_HOME>/templates` by install and update. */
+export function shippedAgentsRoot(genieHome: string): string {
+  return join(genieHome, 'templates', 'mikro', 'agents');
+}
+
+/**
+ * Environment variables that make `git` answer for a repository OTHER than the one
+ * `-C <dir>` names. A git hook — or any parent that exported them — sets `GIT_DIR`,
+ * `GIT_WORK_TREE` and `GIT_INDEX_FILE`, and `-C` does NOT override them: the probes
+ * below would then resolve a toplevel, and therefore a TRUSTED ROOT, chosen by
+ * ambient environment rather than by the operator's working directory.
+ */
+const AMBIENT_GIT_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_NAMESPACE',
+] as const;
+
+/** The caller's environment with {@link AMBIENT_GIT_VARS} removed; everything else (PATH included) survives. */
+export function gitProbeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const stripped = new Set<string>(AMBIENT_GIT_VARS);
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) if (value !== undefined && !stripped.has(key)) out[key] = value;
+  return out;
+}
+
+/** stdout of one git probe, or null when git did not answer — no git binary, no repository, an unreadable index. */
+function gitProbe(args: string[]): string | null {
+  try {
+    const probe = Bun.spawnSync(['git', ...args], { env: gitProbeEnv() });
+    return probe.exitCode === 0 ? probe.stdout.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The git toplevel of `cwd`, or null outside a checkout. */
+export function gitToplevel(cwd: string): string | null {
+  const out = gitProbe(['-C', cwd, 'rev-parse', '--show-toplevel'])?.trim() ?? '';
+  return out ? resolve(out) : null;
+}
+
+/** One directory name, never a path: `<agents>/<agent>/agent.yaml` is joined from it. */
+const AGENT_DIR_NAME = /^[a-z0-9][a-z0-9._-]*$/;
+const hasAgent = (root: string, agent: string): boolean => existsSync(join(root, agent, 'agent.yaml'));
+
+export interface ResolvedAgents {
+  dir: string;
+  trustedRoot: string;
+  source: 'flag' | 'repo' | 'shipped';
+}
+
+/**
+ * Where this agent's files are read from, and which root its `.mikro/` configuration
+ * is trusted from. The registry decides the NAME (`schemas.ts`); this decides only WHERE.
+ *
+ * Order: the operator-typed `--agents-dir` → the invoking checkout's own
+ * `.mikro/agents/<agent>` → the shipped default under `<GENIE_HOME>/templates`.
+ * `import.meta.url` is deliberately not consulted: inside a compiled binary it
+ * resolves under `/$bunfs`, which holds no agent at all.
+ *
+ * The trusted root is the invoking checkout for every source that is not the flag —
+ * never `<GENIE_HOME>/templates`, which is genie's payload rather than a repository.
+ * With the flag it stays what it has always been: two levels above the agents dir.
+ */
+export function resolveAgentsDir(options: {
+  agentsDir?: string;
+  cwd: string;
+  genieHome: string;
+  agent: string;
+}): ResolvedAgents | null {
+  if (options.agentsDir) {
+    const dir = resolve(options.agentsDir);
+    return { dir, trustedRoot: resolve(dir, '..', '..'), source: 'flag' };
+  }
+  if (!AGENT_DIR_NAME.test(options.agent)) return null;
+  const repoRoot = gitToplevel(options.cwd);
+  const trustedRoot = repoRoot ?? resolve(options.cwd);
+  const repoAgents = join(trustedRoot, '.mikro', 'agents');
+  if (repoRoot && hasAgent(repoAgents, options.agent)) return { dir: repoAgents, trustedRoot, source: 'repo' };
+  const shipped = shippedAgentsRoot(options.genieHome);
+  if (hasAgent(shipped, options.agent)) return { dir: shipped, trustedRoot, source: 'shipped' };
+  return null;
+}
+
+/**
+ * A repository opted into mikro when it carries a `.mikro/` directory git tracks —
+ * or when it is no git checkout at all, where nothing CAN be tracked and the
+ * directory's presence is the whole signal.
+ *
+ * When `ls-files` cannot answer, the fallback is deliberately asymmetric: a tree that
+ * IS a checkout (a readable toplevel, an unreadable index) gets the `<GENIE_HOME>`
+ * ledger, because growing an untracked directory inside somebody's repository is the
+ * worse failure of the two.
+ */
+function optedIntoMikro(root: string): boolean {
+  if (!existsSync(join(root, '.mikro'))) return false;
+  const tracked = gitProbe(['-C', root, 'ls-files', '--', '.mikro']);
+  if (tracked !== null) return tracked.trim().length > 0;
+  return gitToplevel(root) === null;
+}
+
+/**
+ * Where the run ledger, the facts artifacts and the retained raw answers go.
+ * A repository that never opted into mikro must not grow untracked files, so its
+ * rows live under `<GENIE_HOME>/mikro/runs/<basename>-<sha256(root)[:8]>` instead —
+ * the hash, not the name, is what keeps two checkouts of the same repository apart.
+ */
+export function resolveRunsDir(trustedRoot: string, genieHome: string): string {
+  if (optedIntoMikro(trustedRoot)) return join(trustedRoot, '.mikro', 'runs');
+  const slug = `${basename(trustedRoot) || 'root'}-${createHash('sha256').update(trustedRoot).digest('hex').slice(0, 8)}`;
+  return join(genieHome, 'mikro', 'runs', slug);
+}
+
+/**
+ * The one failure that is not the agent's: the `mikro` runtime is not runnable on
+ * this host. Classified by the spawn error's `code`, never by its message — Node
+ * says `spawn mikro ENOENT` and Bun says `Executable not found in $PATH: "mikro"`,
+ * and only the code is the same under both.
+ */
+export function unavailableReason(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code !== 'ENOENT' && code !== 'EACCES') return null;
+  return `unavailable: the mikro runtime is not runnable on this host (${String(code)}) — install mikro and put it on PATH; nothing was billed`;
+}
+
 export async function runAgent(options: RunOptions): Promise<RunResult> {
   const dir = resolve(options.dir ?? process.cwd());
-  const agentsDir = resolve(
-    options.agentsDir ?? join(dirname(new URL(import.meta.url).pathname), '..', '..', '.mikro', 'agents'),
-  );
+  const genieHome = options.genieHome ?? resolveMikroGenieHome();
+  const resolvedAgents = resolveAgentsDir({
+    agentsDir: options.agentsDir,
+    cwd: resolve(options.cwd ?? process.cwd()),
+    genieHome,
+    agent: options.agent,
+  });
   const timeoutMs = options.timeoutMs ?? 600_000;
   const retries = options.retries ?? 1;
   const tags = options.tags ?? {};
@@ -823,28 +984,31 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     options.schema === undefined ? (isAgentName(options.agent) ? SCHEMAS[options.agent] : null) : options.schema;
   const attempts: Attempt[] = [];
   const started = Date.now();
-  const trustedRoot = resolve(agentsDir, '..', '..');
   const boundaryMode: BoundaryMode = options.boundary ?? 'none';
+  /** One refusal, before anything is spawned or billed: the run never started. */
+  const refused = (error: string, agentSource?: string): RunResult => ({
+    ok: false,
+    agent: options.agent,
+    runId,
+    traceId,
+    dir,
+    answer: undefined,
+    attempts: [{ attempt: 0, ok: false, errors: [error], footer: null, citations: [], elapsedMs: 0, raw: '' }],
+    elapsedMs: 0,
+    costUsd: 0,
+    tags,
+    boundary: boundaryMode,
+    egress: null,
+    agentSource,
+  });
+  if (!resolvedAgents)
+    return refused(
+      `no agent: ${options.agent} is in neither this checkout's .mikro/agents nor ${shippedAgentsRoot(genieHome)} — run genie update, or pass --agents-dir`,
+    );
+  const { dir: agentsDir, trustedRoot, source: agentSource } = resolvedAgents;
   const untrusted = untrustedConfig(dir, trustedRoot);
-  if (untrusted) {
-    return {
-      ok: false,
-      agent: options.agent,
-      runId,
-      traceId,
-      dir,
-      answer: undefined,
-      attempts: [
-        { attempt: 0, ok: false, errors: [`config: ${untrusted}`], footer: null, citations: [], elapsedMs: 0, raw: '' },
-      ],
-      elapsedMs: 0,
-      costUsd: 0,
-      tags,
-      boundary: boundaryMode,
-      egress: null,
-    };
-  }
-  const runsDir = join(trustedRoot, '.mikro', 'runs');
+  if (untrusted) return refused(`config: ${untrusted}`, agentSource);
+  const runsDir = resolveRunsDir(trustedRoot, genieHome);
   const factsOption = options.facts ?? process.env.MIKRO_FACTS;
   // The status gate's two proofs, built once per run: the ancestor probe caches per ref
   // and `verifyCitations` caches the tracked set per dir. `citationOk` re-enters the
@@ -882,6 +1046,8 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   let answer: unknown;
   let ok = false;
   let cost = 0;
+  /** A runtime that is not installed will not appear between two attempts: retrying it buys nothing. */
+  let runtimeMissing = false;
 
   try {
     // Computed once, inside the boundary when there is one, before the loop: a retry
@@ -911,17 +1077,18 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       let footer: Footer | null = null;
       let citations: Citation[] = [];
       let statusRow: ReturnType<typeof statusLedgerRow>;
-      const client = new McpClient(
-        dir,
-        {
-          ...serverEnv(),
-          ...providerKeyEnv(),
-          MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
-          MIKRO_AGENTS_DIR: agentsDir,
-        },
-        boundary,
-      );
+      let client: McpClient | null = null;
       try {
+        client = new McpClient(
+          dir,
+          {
+            ...serverEnv(),
+            ...providerKeyEnv(),
+            MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
+            MIKRO_AGENTS_DIR: agentsDir,
+          },
+          boundary,
+        );
         await client.request(
           'initialize',
           { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'genie-mikro-call', version: '1' } },
@@ -967,11 +1134,15 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
             errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
         }
       } catch (error) {
-        errors.push(`run: ${error instanceof Error ? error.message : String(error)}`);
-        const tail = client.stderr.slice(-3).join(' / ');
+        // A runtime that is not installed is not an agent failure: it is named as
+        // `unavailable:` so a caller can tell "mikro is missing" from "the agent was wrong".
+        const unavailable = unavailableReason(error);
+        if (unavailable) runtimeMissing = true;
+        errors.push(unavailable ?? `run: ${error instanceof Error ? error.message : String(error)}`);
+        const tail = client?.stderr.slice(-3).join(' / ') ?? '';
         if (tail) errors.push(`stderr: ${tail.slice(0, 300)}`);
       } finally {
-        client.close();
+        client?.close();
       }
       const elapsedMs = Date.now() - t0;
       const attemptOk = errors.length === 0;
@@ -984,7 +1155,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         mkdirSync(runsDir, { recursive: true });
         appendFileSync(
           join(runsDir, `${options.agent}.jsonl`),
-          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), status: statusRow, elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null, raw: rawFile })}\n`,
+          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, agentSource, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), status: statusRow, elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null, raw: rawFile })}\n`,
         );
       }
       if (options.phoenix !== false) {
@@ -1019,6 +1190,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         ok = true;
         break;
       }
+      if (runtimeMissing) break;
       if (attempt < retries) {
         prompt = `${options.prompt}\n\nYOUR PREVIOUS ATTEMPT FAILED VALIDATION. Do the work again from the starter block and return the complete JSON, fixing every point below:\n${errors.map((e) => `- ${e}`).join('\n')}`;
       }
@@ -1040,6 +1212,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     tags,
     boundary: boundaryMode,
     egress: boundary ? boundary.counts() : null,
+    agentSource,
   };
 }
 
@@ -1058,17 +1231,33 @@ export function parseBoundaryFlag(argv: string[]): BoundaryMode {
   return value;
 }
 
-function usage(): never {
-  process.stderr.write(
-    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]\n`,
-  );
-  process.exit(2);
+export const CALL_USAGE = `usage: genie mikro call <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]
+       (inside this checkout the same code runs as: bun scripts/mikro/call.ts <agent> …)
+`;
+
+function usage(reason?: string): number {
+  if (reason) process.stderr.write(`${reason}\n`);
+  process.stderr.write(CALL_USAGE);
+  return 2;
 }
 
-if (import.meta.main) {
-  const argv = process.argv.slice(2);
+/**
+ * The `call` CLI, exported so `genie mikro call` and `bun scripts/mikro/call.ts`
+ * are one code path rather than two that drift. It returns the exit code — 0 ok,
+ * 1 not ok, 2 usage — and never calls `process.exit` itself, because inside the
+ * genie binary this runs as one command of a longer-lived process.
+ *
+ * The argv it takes is the flag vocabulary above, forwarded untouched: the
+ * genie command declares no options of its own, so a flag added here needs no
+ * second edit in `src/term-commands/mikro.ts`.
+ */
+export async function runCallCli(argv: string[]): Promise<number> {
   const agent = argv[0];
-  if (!agent || agent.startsWith('--')) usage();
+  if (!agent || agent.startsWith('--')) return usage();
+  // The registry decides the agent NAME; a directory or a ref decides only where its
+  // files are read from. An unregistered name has no answer schema, so it is a usage
+  // error rather than a run that could only fail after it was billed.
+  if (!isAgentName(agent)) return usage(`unknown agent: ${agent}`);
   const opt = (name: string): string | undefined => {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : undefined;
@@ -1083,35 +1272,38 @@ if (import.meta.main) {
   });
   const promptFile = opt('--prompt-file');
   const prompt = promptFile ? readFileSync(promptFile, 'utf8') : opt('--prompt');
-  if (!prompt) usage();
+  if (!prompt) return usage('--prompt or --prompt-file is required');
   let boundary: ReturnType<typeof parseBoundaryFlag>;
   try {
     boundary = parseBoundaryFlag(argv);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(2);
+    return 2;
   }
-  const result = await runAgent({
-    agent,
-    prompt,
-    boundary,
-    dir: opt('--dir'),
-    agentsDir: opt('--agents-dir'),
-    facts: opt('--facts'),
-    timeoutMs: opt('--timeout-ms') ? Number(opt('--timeout-ms')) : undefined,
-    retries: opt('--retries') ? Number(opt('--retries')) : undefined,
-    tags,
-    traceId: opt('--trace'),
-    phoenix: !has('--no-phoenix'),
-    ledger: !has('--no-ledger'),
-  }).catch((error: unknown) => {
+  let result: RunResult;
+  try {
+    result = await runAgent({
+      agent,
+      prompt,
+      boundary,
+      dir: opt('--dir'),
+      agentsDir: opt('--agents-dir'),
+      facts: opt('--facts'),
+      timeoutMs: opt('--timeout-ms') ? Number(opt('--timeout-ms')) : undefined,
+      retries: opt('--retries') ? Number(opt('--retries')) : undefined,
+      tags,
+      traceId: opt('--trace'),
+      phoenix: !has('--no-phoenix'),
+      ledger: !has('--no-ledger'),
+    });
+  } catch (error) {
     // A boundary that cannot be established aborts the run; it never downgrades to `none`.
     if (error instanceof BoundaryError) {
       process.stderr.write(`boundary (${error.failure}): ${error.message}\nrollback: re-run with --boundary none\n`);
-      process.exit(1);
+      return 1;
     }
     throw error;
-  });
+  }
   if (has('--raw')) {
     for (const a of result.attempts)
       process.stdout.write(`--- attempt ${a.attempt} (${a.ok ? 'ok' : 'failed'}) ---\n${a.raw}\n`);
@@ -1121,5 +1313,13 @@ if (import.meta.main) {
       `${JSON.stringify({ ...rest, attempts: attempts.map(({ raw, ...a }) => ({ ...a, rawChars: raw.length })) }, null, 2)}\n`,
     );
   }
-  process.exit(result.ok ? 0 : 1);
+  return result.ok ? 0 : 1;
+}
+
+// No top-level `await`: this module is imported by the genie CLI, where
+// `import.meta.main` is false and nothing below must run.
+if (import.meta.main) {
+  void runCallCli(process.argv.slice(2)).then((code) => {
+    process.exit(code);
+  });
 }

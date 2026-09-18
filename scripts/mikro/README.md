@@ -18,13 +18,55 @@ and gh read-only, one fenced JSON answer):
 
 ```sh
 source ~/.mikro/gate-env.sh                                   # DEEPSEEK_API_KEY from Bitwarden (bws)
-bun scripts/mikro/call.ts issue-triage --prompt "Triage issue #2941" --dir .
-bun scripts/mikro/call.ts review-prep --dir <worktree> --prompt "Prepare the review of commit <sha> against origin/dev"
+genie mikro call issue-triage --prompt "Triage issue #2941" --dir .
+genie mikro call review-prep --dir <worktree> --prompt "Prepare the review of commit <sha> against origin/dev"
+bun scripts/mikro/call.ts issue-triage --prompt "Triage issue #2941" --dir .   # same code, inside this checkout
 ```
 
-`call.ts` is the only runtime: it speaks MCP over stdio to `mikro mcp --dir <repo>` (agents are
-found through `MIKRO_AGENTS_DIR`, defaulting to this checkout's `.mikro/agents`, so a `--dir` cut
-from `origin/dev` still works), then treats the answer as data that has to earn trust — the cost
+`genie mikro call` and `bun scripts/mikro/call.ts` are ONE code path: the command in the installed
+binary declares no options of its own and hands the tail after the agent name to `runCallCli`,
+exported from this file, which the `import.meta.main` guard also calls. Prefer the `genie` form — it
+is the one a repository that is not genie has, and it is what `wish.js` runs.
+
+One exception to "as typed", and it is real: genie's own GLOBAL options win anywhere in the tail.
+`-V`/`--version`, `-h`/`--help` and `--no-interactive` are consumed by the program before the tail
+is assembled, so `genie mikro call wish-context --prompt -V` prints the version and runs no agent,
+and a trailing `--help` prints Commander's help. Quote such a value (`--prompt " -V"`) or use
+`--prompt-file`. Shielding the tail from those three would mean `enablePositionalOptions()` on the
+PROGRAM, which changes how every other genie command parses; `bun scripts/mikro/call.ts` has no
+such layer and forwards everything. `src/term-commands/mikro.test.ts` pins the behaviour.
+
+Exit codes: **0** ok, **1** not ok — an agent that failed validation, a `mikro` missing from PATH,
+and also `genie mikro call` with NO agent, which is Commander's missing-argument path through
+genie's global error handler — and **2** for the runtime's own usage refusals: an unregistered agent
+NAME, a registered one with no prompt, a bad `--boundary`.
+
+### Where the agent files come from
+
+`--agents-dir <dir>` → the INVOKING checkout's `.mikro/agents/<agent>/agent.yaml` (the git toplevel
+of the process's working directory — never `--dir`, which is the tree under review) → the default
+this release ships, under `<GENIE_HOME>/templates/mikro/agents`. The answer names the winner in
+`agentSource` (`flag`, `repo`, `shipped`), so a repository agent that failed to resolve cannot hide
+behind a silent fallback. `import.meta.url` is deliberately not consulted: inside a compiled binary
+it resolves under `/$bunfs`, which holds no agent at all.
+
+The TRUSTED root — whose `.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}` a differing `--dir` is
+refused against — is the invoking checkout for every source that is not the flag, and never
+`<GENIE_HOME>/templates`. With `--agents-dir` it stays two levels above that directory, which is
+the operator's authoring path. `MIKRO_AGENTS_DIR` is NOT an input: this runtime only WRITES it into
+the child environment, so a contaminated shell cannot redirect the reviewer's prompt.
+
+The run ledger lands in `<root>/.mikro/runs` only when the repository tracks a `.mikro/` directory
+(or is no git checkout at all, where nothing can be tracked and the directory's presence is the
+whole signal); otherwise in `<GENIE_HOME>/mikro/runs/<basename>-<sha256(root)[:8]>`, so a repository
+that never opted into mikro grows no untracked files.
+
+`mikro` missing from PATH is not an agent failure: it answers `ok: false` with one `unavailable:`
+error and exits 1, classified by the spawn error's CODE rather than its wording (Node says
+`spawn mikro ENOENT`, Bun says `Executable not found in $PATH`), and is never retried.
+
+It speaks MCP over stdio to `mikro mcp --dir <repo>`, then treats the answer as data that has to
+earn trust — the cost
 footer must parse, the JSON must validate against `schemas.ts`, every `path:line` must exist at that
 line (an unambiguous bare file name is resolved to its tracked path and rewritten; an ambiguous one
 gets a did-you-mean hint), and a failure is retried once with the errors appended. Every attempt is

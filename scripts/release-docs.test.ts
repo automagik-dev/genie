@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -514,6 +514,10 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build-binary.sh'",
       "'scripts/json-top-level-string.js'",
       "'scripts/orca-bundle-parity.ts'",
+      // The mikro runtime ships inside the binary and its default agents are
+      // staged into templates/: both are release-payload inputs like any other.
+      "'scripts/mikro/**'",
+      "'.mikro/agents/**'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
@@ -525,6 +529,29 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('agents/openai.yaml');
     expect(buildHelperInputs()).toContain('scripts/skills-lint.ts');
     for (const helper of buildHelperInputs()) expect(workflow).toContain(`- '${helper}'`);
+  });
+
+  test('the default mikro agents ship inside templates/, from the one tracked copy', () => {
+    // Decision 3 of `global-workflows-local-mikro`: the tarball's top-level member
+    // set is frozen (the 5.260901.1 incident), and `templates/` already converges to
+    // <GENIE_HOME>/templates on install and update — so the shipped agents are staged
+    // INTO it rather than added as a ninth member or duplicated in the repository.
+    const script = read('scripts/build-binary.sh');
+    expect(script).toContain('${STAGE}/templates/mikro/agents/${agent}');
+    expect(script).toContain('SHIPPED_AGENTS=(wish-context review-prep)');
+    for (const agent of ['wish-context', 'review-prep']) {
+      expect(script).toContain(`"templates/mikro/agents/${agent}/agent.yaml"`);
+      expect(script).toContain(`"templates/mikro/agents/${agent}/SYSTEM.md"`);
+      for (const file of ['agent.yaml', 'SYSTEM.md']) {
+        expect(existsSync(join(ROOT, '.mikro', 'agents', agent, file))).toBe(true);
+      }
+    }
+    // Nothing staged under templates/ may be a symlink or a special file.
+    for (const agent of ['wish-context', 'review-prep']) {
+      for (const file of ['agent.yaml', 'SYSTEM.md']) {
+        expect(lstatSync(join(ROOT, '.mikro', 'agents', agent, file)).isFile()).toBe(true);
+      }
+    }
   });
 
   test('every native release-binary smoke proves the hidden installer transaction syscall', () => {

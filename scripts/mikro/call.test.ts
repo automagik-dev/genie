@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { BoundaryError, type BoundarySession, type OpenBoundaryOptions } from './boundary';
 import {
   PRICE_BASIS,
@@ -13,12 +13,17 @@ import {
   containedEnv,
   extractJson,
   factsContextPath,
+  gitProbeEnv,
+  gitToplevel,
   parseBoundaryFlag,
   parseFooter,
   persistFailedRaw,
   prepareFacts,
+  resolveAgentsDir,
+  resolveRunsDir,
   runAgent,
   serverEnv,
+  shippedAgentsRoot,
   stripFooter,
   untrustedConfig,
   verifyCitations,
@@ -518,6 +523,209 @@ describe('facts inside the boundary', () => {
     writeFileSync(given, '{}');
     expect(factsContextPath(given, runs, 'run-9')).toBe(given);
     expect(prepareFacts(given, 'x', dir, runs, 'run-9')?.contextPath).toBe(given);
+  });
+});
+
+describe('agent resolution and the run ledger', () => {
+  const gitRepo = (prefix: string): string => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    Bun.spawnSync(['git', '-C', dir, 'init', '-q']);
+    return dir;
+  };
+  const withAgent = (agentsDir: string, agent: string): string => {
+    mkdirSync(join(agentsDir, agent), { recursive: true });
+    writeFileSync(join(agentsDir, agent, 'agent.yaml'), 'model: deepseek-api/deepseek-flash\n');
+    writeFileSync(join(agentsDir, agent, 'SYSTEM.md'), '# prompt\n');
+    return agentsDir;
+  };
+  const shippedHome = (agents: string[]): string => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-home-')));
+    for (const agent of agents) withAgent(shippedAgentsRoot(home), agent);
+    return home;
+  };
+
+  test('an explicit --agents-dir wins and keeps the trusted root two levels above it', () => {
+    const repo = gitRepo('mikro-flag-');
+    const home = shippedHome(['wish-context']);
+    const flagRoot = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-flagroot-')));
+    withAgent(join(flagRoot, '.mikro', 'agents'), 'wish-context');
+    expect(
+      resolveAgentsDir({
+        agentsDir: join(flagRoot, '.mikro', 'agents'),
+        cwd: repo,
+        genieHome: home,
+        agent: 'wish-context',
+      }),
+    ).toEqual({
+      dir: join(flagRoot, '.mikro', 'agents'),
+      trustedRoot: flagRoot,
+      source: 'flag',
+    });
+  });
+
+  test("the invoking checkout's own agent beats the shipped default, and the checkout is the trusted root", () => {
+    const repo = gitRepo('mikro-repo-');
+    withAgent(join(repo, '.mikro', 'agents'), 'wish-context');
+    const home = shippedHome(['wish-context']);
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'wish-context' })).toEqual({
+      dir: join(repo, '.mikro', 'agents'),
+      trustedRoot: repo,
+      source: 'repo',
+    });
+    // Resolution follows the CHECKOUT, not the working directory, so a subdirectory answers the same.
+    mkdirSync(join(repo, 'deep', 'dir'), { recursive: true });
+    expect(resolveAgentsDir({ cwd: join(repo, 'deep', 'dir'), genieHome: home, agent: 'wish-context' })?.source).toBe(
+      'repo',
+    );
+  });
+
+  test('a repository with no agent of that name falls back to the shipped one, and never trusts GENIE_HOME', () => {
+    const repo = gitRepo('mikro-fallback-');
+    withAgent(join(repo, '.mikro', 'agents'), 'review-prep'); // a different agent: no help here
+    const home = shippedHome(['wish-context']);
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'wish-context' })).toEqual({
+      dir: shippedAgentsRoot(home),
+      trustedRoot: repo,
+      source: 'shipped',
+    });
+  });
+
+  test('an agent no source carries resolves to nothing', () => {
+    const repo = gitRepo('mikro-none-');
+    const home = shippedHome([]);
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'wish-context' })).toBeNull();
+  });
+
+  test('a name that traverses out of the agents root is refused even when a real agent waits there', () => {
+    const repo = gitRepo('mikro-traverse-');
+    const home = shippedHome([]);
+    // A REAL agent planted one level above the shipped agents root, and a second one
+    // above the repository's. Both are reachable by joining a traversing name, so the
+    // name guard is the only thing that can refuse them: without it `hasAgent` is true
+    // and the traversal resolves. Asserting on an EMPTY traversal target would pass for
+    // the wrong reason (no agent.yaml) and would survive deleting the guard.
+    withAgent(join(home, 'templates', 'mikro'), 'evil');
+    withAgent(join(repo, '.mikro'), 'evil');
+    expect(existsSync(join(home, 'templates', 'mikro', 'agents', '..', 'evil', 'agent.yaml'))).toBe(true);
+    expect(existsSync(join(repo, '.mikro', 'agents', '..', 'evil', 'agent.yaml'))).toBe(true);
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '../evil' })).toBeNull();
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '../../../etc' })).toBeNull();
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: '.ssh' })).toBeNull();
+    // The same agent, named and placed legally, resolves: the refusal is about the NAME.
+    withAgent(shippedAgentsRoot(home), 'evil');
+    expect(resolveAgentsDir({ cwd: repo, genieHome: home, agent: 'evil' })).toEqual({
+      dir: shippedAgentsRoot(home),
+      trustedRoot: repo,
+      source: 'shipped',
+    });
+  });
+
+  test('outside any git checkout the trusted root is the cwd and the agents are the shipped ones', () => {
+    const loose = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-nogit-')));
+    withAgent(join(loose, '.mikro', 'agents'), 'wish-context'); // present, but nothing proves it
+    const home = shippedHome(['wish-context']);
+    expect(resolveAgentsDir({ cwd: loose, genieHome: home, agent: 'wish-context' })).toEqual({
+      dir: shippedAgentsRoot(home),
+      trustedRoot: loose,
+      source: 'shipped',
+    });
+  });
+
+  test('the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise', () => {
+    const home = shippedHome([]);
+    const opted = gitRepo('mikro-opted-');
+    withAgent(join(opted, '.mikro', 'agents'), 'wish-context');
+    Bun.spawnSync(['git', '-C', opted, 'add', '.mikro']);
+    expect(resolveRunsDir(opted, home)).toBe(join(opted, '.mikro', 'runs'));
+
+    // A repository that never opted into mikro must not grow untracked files. The
+    // shape is asserted concretely, not against a second call of the same function.
+    const clean = gitRepo('mikro-clean-');
+    const away = resolveRunsDir(clean, home);
+    const slug = (root: string) => `${basename(root)}-${createHash('sha256').update(root).digest('hex').slice(0, 8)}`;
+    expect(away).toBe(join(home, 'mikro', 'runs', slug(clean)));
+    expect(slug(clean)).toMatch(/-[0-9a-f]{8}$/);
+    // The hash, not the name, keeps two checkouts of the same repository apart.
+    const twin = gitRepo('mikro-clean-');
+    expect(resolveRunsDir(twin, home)).toBe(join(home, 'mikro', 'runs', slug(twin)));
+    expect(resolveRunsDir(twin, home)).not.toBe(away);
+
+    // A `.mikro/` directory git does NOT track is not an opt-in either: an untracked
+    // file in it is exactly what an earlier run would have left behind.
+    const untracked = gitRepo('mikro-untracked-');
+    mkdirSync(join(untracked, '.mikro', 'runs'), { recursive: true });
+    writeFileSync(join(untracked, '.mikro', 'runs', 'wish-context.jsonl'), '{}\n');
+    expect(existsSync(join(untracked, '.mikro'))).toBe(true);
+    expect(resolveRunsDir(untracked, home)).toBe(join(home, 'mikro', 'runs', slug(untracked)));
+
+    // No git at all: the directory's presence is the whole signal.
+    const loose = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-loose-')));
+    mkdirSync(join(loose, '.mikro'), { recursive: true });
+    expect(resolveRunsDir(loose, home)).toBe(join(loose, '.mikro', 'runs'));
+  });
+
+  test('the git probes ignore an ambient GIT_DIR, so a hook cannot move the trusted root', () => {
+    expect(
+      gitProbeEnv({ PATH: '/bin', GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/i', KEEP: '1' }),
+    ).toEqual({ PATH: '/bin', KEEP: '1' });
+    const mine = gitRepo('mikro-env-mine-');
+    const theirs = gitRepo('mikro-env-theirs-');
+    const saved = { dir: process.env.GIT_DIR, work: process.env.GIT_WORK_TREE };
+    try {
+      // What a git hook exports. `git -C <dir>` does NOT override it, so without the
+      // strip the toplevel — and with it the trusted root — is chosen by the environment.
+      process.env.GIT_DIR = join(theirs, '.git');
+      process.env.GIT_WORK_TREE = theirs;
+      expect(gitToplevel(mine)).toBe(mine);
+      expect(resolveAgentsDir({ cwd: mine, genieHome: shippedHome([]), agent: 'wish-context' })).toBeNull();
+      withAgent(join(mine, '.mikro', 'agents'), 'wish-context');
+      expect(resolveAgentsDir({ cwd: mine, genieHome: shippedHome([]), agent: 'wish-context' })?.trustedRoot).toBe(
+        mine,
+      );
+    } finally {
+      if (saved.dir === undefined) process.env.GIT_DIR = undefined;
+      else process.env.GIT_DIR = saved.dir;
+      if (saved.work === undefined) process.env.GIT_WORK_TREE = undefined;
+      else process.env.GIT_WORK_TREE = saved.work;
+    }
+  });
+
+  test('a repository with no .mikro runs the shipped agent and writes nothing into the payload', async () => {
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    const repo = gitRepo('mikro-shipped-run-');
+    const home = shippedHome(['wish-context']);
+    const session = {
+      mode: 'bwrap' as const,
+      spec: null as unknown as BoundarySession['spec'],
+      argv: () => ['/bin/false'],
+      env: {} as Record<string, string>,
+      counts: () => ({ allowed: 0, denied: 0 }),
+      close: async () => undefined,
+    };
+    let opened: OpenBoundaryOptions | null = null;
+    const result = await runAgent({
+      agent: 'wish-context',
+      prompt: 'Intent: anything at all',
+      dir: repo,
+      cwd: repo,
+      genieHome: home,
+      boundary: 'bwrap',
+      retries: 0,
+      phoenix: false,
+      openBoundary: async (options) => {
+        opened = options;
+        return session;
+      },
+    });
+    expect(result.ok).toBe(false); // /bin/false is not a runtime: what is under test is WHERE it looked
+    expect(result.agentSource).toBe('shipped');
+    const seen = opened as unknown as OpenBoundaryOptions;
+    expect(seen.agentsDir).toBe(shippedAgentsRoot(home));
+    // The trusted root is the CHECKOUT, so the ledger is keyed by it — never by the payload.
+    expect(seen.ledgerDir).toBe(resolveRunsDir(repo, home));
+    expect(existsSync(join(repo, '.mikro'))).toBe(false);
+    expect(readdirSync(join(shippedAgentsRoot(home), 'wish-context')).sort()).toEqual(['SYSTEM.md', 'agent.yaml']);
+    expect(existsSync(join(home, 'templates', 'mikro', 'runs'))).toBe(false);
   });
 });
 

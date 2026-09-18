@@ -72,6 +72,22 @@ bun run --cwd "${REPO_ROOT}/plugins/dsh-genie-board" build "${VERSION}" "${STAGE
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
+
+# The default mikro agents ship INSIDE templates/, which already converges to
+# <GENIE_HOME>/templates on install and update. They are staged from the one
+# tracked copy in .mikro/agents rather than duplicated in the repository, and
+# the top-level member set below stays frozen. Only the two files the runtime
+# reads are staged: EVIDENCE.md is a bench record, not a payload.
+SHIPPED_AGENTS=(wish-context review-prep)
+for agent in "${SHIPPED_AGENTS[@]}"; do
+  src="${REPO_ROOT}/.mikro/agents/${agent}"
+  dest="${STAGE}/templates/mikro/agents/${agent}"
+  mkdir -p "${dest}"
+  for file in agent.yaml SYSTEM.md; do
+    [[ -f "${src}/${file}" ]] || { echo "error: shipped mikro agent missing ${agent}/${file}" >&2; exit 1; }
+    cp "${src}/${file}" "${dest}/${file}"
+  done
+done
 # Empty compatibility members. The promoter baked into every previously
 # installed binary validates the downloaded payload against an *exact*
 # top-level allowlist (src/lib/install-promotion.ts INSTALL_PAYLOAD_MEMBERS),
@@ -125,6 +141,10 @@ bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERS
 
 for required in \
   "LICENSE" \
+  "templates/mikro/agents/wish-context/agent.yaml" \
+  "templates/mikro/agents/wish-context/SYSTEM.md" \
+  "templates/mikro/agents/review-prep/agent.yaml" \
+  "templates/mikro/agents/review-prep/SYSTEM.md" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
   "plugins/dsh-genie-board/package.json" \

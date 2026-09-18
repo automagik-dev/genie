@@ -16,7 +16,11 @@ const AGENTS = ['issue-triage', 'wish-context', 'review-prep'];
 
 describe('wish.js mikro offload', () => {
   test('constants name the runner and the two agents the stages call', () => {
-    expect(script).toContain("const MIKRO_CALL = 'bun scripts/mikro/call.ts'");
+    // The runner is the installed genie on PATH, never a path inside one checkout:
+    // `bun scripts/mikro/call.ts` only ever existed in this repository, so every other
+    // repository fell silently to the by-hand path and the offload never ran.
+    expect(script).toContain("const MIKRO_CALL = 'genie mikro call'");
+    expect(script).not.toContain('bun scripts/mikro/call.ts');
     expect(script).toContain("const MIKRO_SCOUT_AGENT = 'wish-context'");
     expect(script).toContain("const MIKRO_REVIEW_AGENT = 'review-prep'");
   });
@@ -35,6 +39,10 @@ describe('wish.js mikro offload', () => {
       expect(brief).toContain('MIKRO_CALL');
       expect(brief).toMatch(/DATA under the fence/);
       expect(brief).toMatch(/exits 1 or is unavailable/);
+      // An installed host has no `scripts/`: the only two things that can be missing
+      // are the genie binary and the mikro runtime, and the brief must say so.
+      expect(brief).toContain('no genie or no mikro on PATH');
+      expect(brief).not.toContain('scripts/mikro');
       expect(brief).toMatch(/Report it in mikro as \{agent, ok, costUsd, seconds, usedFacts, usedFiles\}/);
       expect(brief).toMatch(/mikro is never omitted/);
     }
