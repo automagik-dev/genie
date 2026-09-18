@@ -29,7 +29,7 @@ import {
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
-import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
+import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
@@ -40,9 +40,11 @@ import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  type SkillsWorkflowsInstall,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
+  isSafeWorkflowFileName,
   releaseTag,
 } from '../lib/skills-installer.js';
 import { writeErr, writeOut } from '../lib/term-output.js';
@@ -54,6 +56,7 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import { classifyWorkflowFile, inspectOnDiskWorkflow } from '../lib/workflows-installer.js';
 import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
@@ -830,6 +833,77 @@ export function checkSkillsChannel(
   const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
   if (backups !== null) results.push(backups);
   return results;
+}
+
+// ============================================================================
+// Workflows channel (wish `global-workflows-local-mikro`, group 3)
+// ============================================================================
+
+const WORKFLOWS_CHANNEL_SUGGESTION = 'Run `genie update` to reinstall the workflow catalog';
+
+/** The one name every workflows-channel line carries, in the `skills: …` family. */
+const WORKFLOWS_CHECK_NAME = 'workflows: catalog';
+
+/**
+ * Every recorded workflow file whose bytes no longer prove the recorded
+ * install, named with its state. `replace` is the ONLY verdict that proves the
+ * file on disk is still byte-for-byte what genie installed.
+ */
+function describeWorkflowDrift(recorded: SkillsWorkflowsInstall): { present: number; drift: string[] } {
+  let present = 0;
+  const drift: string[] = [];
+  for (const [name, digest] of Object.entries(recorded.files)) {
+    // The same traversal floor every other consumer of the record uses.
+    if (!isSafeWorkflowFileName(name)) continue;
+    const state = inspectOnDiskWorkflow(join(recorded.dir, name));
+    if (state.kind === 'other') {
+      drift.push(`${name} (not a regular file)`);
+      continue;
+    }
+    const verdict = classifyWorkflowFile({ recorded: digest, onDisk: state.digest });
+    if (verdict === 'replace') present += 1;
+    else drift.push(`${name} (${verdict === 'missing' ? 'missing' : 'modified'})`);
+  }
+  return { present, drift };
+}
+
+/**
+ * ONE line for the user-scope workflow catalog, read straight off the install
+ * record the workflows channel wrote — the same authority `genie uninstall`
+ * removes by, so the two can never disagree about what genie owns.
+ *
+ * Read-only, like every other doctor check and including under `--fix`: it
+ * lstats and digests, and repairs nothing. `genie update` is the only repair.
+ */
+export function checkWorkflowsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+  const genieHome = options.genieHome ?? resolveGlobalGenieHome();
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is ONE fault with ONE remedy, and `checkSkillsChannel`
+  // already names the offending field and the repair. Doctor says it once.
+  if (read.status === 'invalid') return [];
+  const recorded = read.status === 'ok' ? read.record.workflows : undefined;
+  if (recorded === undefined) {
+    const claudeDir = options.home === undefined ? resolveClaudeDir() : join(options.home, '.claude');
+    // Never a warning: nothing here distinguishes "never installed" from
+    // "consent: none", and a host with no record at all is already warned about
+    // by `skills: channel`. The line still states which of the two it saw.
+    return [
+      {
+        name: WORKFLOWS_CHECK_NAME,
+        status: 'pass',
+        detail: isDirectory(claudeDir) ? '(unrecorded)' : 'not detected',
+      },
+    ];
+  }
+  const { present, drift } = describeWorkflowDrift(recorded);
+  const binaryTag = releaseTag(VERSION);
+  const stale = recorded.ref !== binaryTag;
+  const total = Object.keys(recorded.files).length;
+  const staleSuffix = stale ? ` (stale, binary is ${binaryTag})` : '';
+  const driftSuffix = drift.length === 0 ? '' : `; ${namedWithRemainder(drift)}`;
+  const detail = `${present}/${total} in ${recorded.dir} @ ${recorded.ref}${staleSuffix}${driftSuffix}`;
+  if (drift.length === 0 && !stale) return [{ name: WORKFLOWS_CHECK_NAME, status: 'pass', detail }];
+  return [{ name: WORKFLOWS_CHECK_NAME, status: 'warn', detail, suggestion: WORKFLOWS_CHANNEL_SUGGESTION }];
 }
 
 // ============================================================================
@@ -1939,6 +2013,7 @@ export async function doctorCommand(
     ...checkGlobalDbContamination(),
     ...checkSkills(root),
     ...checkSkillsChannel(),
+    ...checkWorkflowsChannel(),
     ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...(await checkBudgets()),

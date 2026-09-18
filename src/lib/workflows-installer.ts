@@ -393,13 +393,20 @@ function readDeliveredCatalog(root: string): Map<string, string> {
   return catalog;
 }
 
-type OnDiskWorkflow =
+export type OnDiskWorkflow =
   | { kind: 'absent'; digest: null }
   | { kind: 'file'; digest: string }
   | { kind: 'other'; digest: null };
 
-/** Fail-closed: anything that is not a physical regular file is `other`. */
-function inspectOnDiskWorkflow(path: string): OnDiskWorkflow {
+/**
+ * Fail-closed: anything that is not a physical regular file is `other`.
+ *
+ * Exported because the installer, `genie doctor` and `genie uninstall` must all
+ * decide "is this genie's file?" the same way. A second lstat/digest pair in
+ * either observer is exactly how a symlink ends up followed on one path and
+ * refused on another.
+ */
+export function inspectOnDiskWorkflow(path: string): OnDiskWorkflow {
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(path);
