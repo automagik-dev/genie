@@ -106,6 +106,20 @@ describe('wish skill fronts the wish workflow', () => {
     }
   });
 
+  test('the plan entry quotes work\u2019s two clauses verbatim, so work cannot drift away from them', () => {
+    // These are plan-side rules the wish skill borrows rather than owns: they have no mechanism in
+    // wish.js to pin them against, so the source skill is the only thing that can hold them still.
+    const pins = [
+      'Parallel writers need disjoint file ownership or dedicated worktrees; otherwise sequence them.',
+      'preserve repository-required aggregate gates',
+    ];
+    const work = normalize(read('skills/work/SKILL.md'));
+    for (const clause of pins) {
+      expect(work).toContain(clause);
+      expect(normalize(skill)).toContain(clause);
+    }
+  });
+
   test('the script pins no model, reads no clock, and keeps the denylist the skill describes', () => {
     expect(script).not.toMatch(/model: 'opus'|DEFAULT_MODEL/);
     expect(script).not.toMatch(/Date\.now|Math\.random/);

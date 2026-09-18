@@ -213,10 +213,12 @@ function printHumanReport(result: InitResult): void {
   out('');
   out('Next steps — Claude uses /<skill>; the Codex plugin uses owner-qualified $genie:<skill>:');
   out('  1. /brainstorm or $genie:brainstorm   Explore a fuzzy idea into a DESIGN.md');
-  out('  2. /wish or $genie:wish               Turn the design into an executable wish plan');
-  out('  3. /review or $genie:review           Validate and persist an APPROVED plan');
+  out('  2. /wish or $genie:wish               Deliver one task end to end; plan a bigger one');
+  out('  3. /review or $genie:review           Validate the plan; the caller records APPROVED');
   out('  4. /work or $genie:work               Execute the approved plan in dispatched waves');
   out('  5. /review or $genie:review           Validate the implementation against its criteria');
+  out('');
+  out('  Steps 3-5 are the plan path; a task delivered at step 2 ends there.');
   out('');
   out('Track progress any time with:  genie board');
 }

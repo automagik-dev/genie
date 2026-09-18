@@ -13,7 +13,7 @@ Workfly is a saved workflow, not a procedure this skill performs inline. The sin
 
 ## Invoke
 
-Pass `{objective, sources?, name?, catalogDir?, model?, maxRepairs?, timestamp?}` through args. Sources are repository-relative paths to whatever already describes the procedure — a runbook, a workflow README, or the review skill's own SKILL.md as it sits in this repository. `name` is kebab and the workflow checks it against every name already taken; `catalogDir` defaults to `.claude/workflows` and is the only directory the contract suite covers, so any other value comes back as a recorded coverage gap rather than a pass; `maxRepairs` is the repair budget; `timestamp` is the provenance stamp for the drafted script's header comment, and the workflow has no clock, so the caller is its only source. Everything else keeps its default.
+Pass `{objective, sources?, name?, catalogDir?, model?, maxRepairs?, timestamp?}` through args. Sources are repository-relative paths to whatever already describes the procedure — a runbook, a workflow README, or the review skill's own SKILL.md as it sits in this repository. `name` is kebab and the workflow checks it against every name already taken; `catalogDir` defaults to `.claude/workflows` and is the only directory the contract suite covers, so any other value comes back as a recorded coverage gap rather than a pass; `maxRepairs` is the repair budget — 2 when unset or not an integer, otherwise clamped to 0-3, so a larger value buys nothing; `timestamp` is the provenance stamp for the drafted script's header comment, and the workflow has no clock, so the caller is its only source. Everything else keeps its default.
 
 ```text
 args: {
