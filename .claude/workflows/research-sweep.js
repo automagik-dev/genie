@@ -37,8 +37,10 @@ export const meta = {
 // stage re-asks, narrows or widens either; writing the notes and any decision stay in the
 // research front door. Every agent is read-only and this script performs no IO.
 // `notConvened[]` carries agent LABELS as `agent({label})` spells them — `plan:shard`,
-// `read:shard-<n>`, `synthesize:merge`, `attribute:recite` — pinned by
-// scripts/research-sweep-workflow-parity.test.ts. Success returns {ok: true, report,
+// `read:shard-<n>`, `synthesize:merge`, `attribute:recite`. What
+// scripts/research-sweep-workflow-parity.test.ts pins is the injection fence against the
+// skill paragraph, the reader schema's required keys and the phase roster — not those
+// labels. Success returns {ok: true, report,
 // findings[], conflicts[], unknowns[], unreadSources[], injectionAttempts[],
 // malformedInjectionReaders[], uncitedClaims[], droppedCitations[],
 // agreementCountsCorrected[], recitedCount, droppedSources[], droppedFindings[], shards[],
@@ -202,7 +204,7 @@ function planPrompt(job, refs, readersExpected) {
     section('Sources (frozen; add none, remove none)', refs),
     `Group several small sources into one shard so every reader clears its own break-even — a reader convened for a single short source pays the full prompt cost for one finding. Aim for at least ${MIN_SOURCES_PER_READER} source(s) per shard wherever the list allows it, and order primary sources ahead of secondary ones inside each shard.`,
     'Classify every entry: primary (the source that owns the fact — the specification, the first-party reference, the implementation itself), secondary (a pointer at a primary source), or unknown. For a secondary entry, the `why` names the primary source it points at.',
-    'You open no source. Retrieving or reading a source is outside your brief: you are partitioning a list, and any claim about what a source says would be invented. Assign each source to exactly one shard, and put anything you will not assign in droppedSources[] with the reason — the list is frozen, so a plan that drops more than half of it is refused outright.',
+    'You open no source. Retrieving or reading a source is outside your brief: you are partitioning a list, and any claim about what a source says would be invented. Assign each source to exactly one shard, and put anything you will not assign in droppedSources[] with the reason — the list is frozen, so a plan that drops even one entry is refused outright and nothing is dispatched.',
     READ_ONLY,
   ])
 }
@@ -462,7 +464,9 @@ if (!plan) {
     if (sources.length) shards.push({ index: shards.length + 1, sources })
   }
   // The frozen list is enforced by the script, not by the planner's discretion: a plan that
-  // narrows it by more than half asks a different question and is refused, not answered.
+  // omits ANY of it asks a different question and is refused, not answered. One source the
+  // planner talks itself out of is one source the report never read, under a question the
+  // caller froze — so the refusal names every omitted ref and nothing is dispatched.
   const plannerDrops = []
   for (const entry of list(plan.droppedSources)) {
     const ref = text(objectOf(entry).ref)
@@ -470,16 +474,12 @@ if (!plan) {
     claimed.add(ref)
     plannerDrops.push({ ref, reason: `the planner dropped it: ${text(objectOf(entry).reason) || 'no reason given'}` })
   }
-  if (plannerDrops.length * 2 > kept.length)
+  if (plannerDrops.length)
     return {
       ok: false,
-      error: `The planner dropped ${plannerDrops.length} of ${kept.length} frozen source(s) — more than half the list it was told not to narrow. Nothing was dispatched; re-run with the sources the caller means to ask about.`,
+      error: `The planner dropped ${plannerDrops.length} of ${kept.length} frozen source(s) from the list it was told not to narrow: ${refsOf(plannerDrops)}. Nothing was dispatched; re-run with the sources the caller means to ask about.`,
       droppedSources: [...droppedSources, ...plannerDrops], shards: [], planFallback, planUnderPartitioned, notConvened,
     }
-  for (const drop of plannerDrops) {
-    droppedSources.push(drop)
-    log(`The planner dropped ${drop.ref}; it is reported and never dispatched.`)
-  }
   if (droppedRefs.length) log(`Dropped ${droppedRefs.length} planned assignment(s) naming no frozen source: ${droppedRefs.join(', ')}.`)
   if (duplicateAssignments.length) log(`Dropped ${duplicateAssignments.length} duplicate shard assignment(s) — a source is dispatched once: ${duplicateAssignments.join(', ')}.`)
   // The union assertion: every normalised source is either in a shard or in droppedSources.
@@ -507,7 +507,7 @@ if (shards.length > readersExpected) {
 // The symmetric floor: one shard holding everything would collapse the fan-out to a single
 // reader with no log and a quorum of 1. Split the largest shards back up, and report only
 // what happened — when nothing was large enough to split, the honest line says so.
-if (shards.length && shards.length < readersExpected && kept.length >= readersExpected * MIN_SOURCES_PER_READER) {
+if (shards.length && shards.length < readersExpected) {
   const returned = shards.length
   while (shards.length < readersExpected) {
     let largest = -1
@@ -776,14 +776,14 @@ for (const raw of list(synth.conflicts)) {
     const source = text(position.source)
     const locator = text(position.locator)
     const slot = corpus.get(citeKey(source, locator))
-    const backing = slot && slot.findings.find((finding) => text(finding.quote))
+    const backing = slot && slot.findings.find((finding) => text(finding.quote) && claimsOverlap(finding.claim, claim))
     if (backing) positions.push({ source, locator, quote: backing.quote, reader: backing.reader })
     else rejected.push({ source, locator })
   }
   if (positions.length >= 2) {
     conflicts.push({ claim, positions })
     for (const position of rejected)
-      uncitedClaims.push({ claim, citations: [position], confidence: 'low', defect: 'conflict position cites no quoted reader finding on both source and locator; the position was dropped and the conflict kept' })
+      uncitedClaims.push({ claim, citations: [position], confidence: 'low', defect: 'conflict position cites no quoted reader finding on this source and locator that is talking about the same claim; the position was dropped and the conflict kept' })
   } else
     uncitedClaims.push({
       claim, citations: [...positions, ...rejected], confidence: 'low',
