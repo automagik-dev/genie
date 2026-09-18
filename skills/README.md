@@ -11,16 +11,19 @@ Shared skill bodies name semantic routes without a host-specific prefix. Skills 
 
 The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating any selector — a bare `$<name>` included — inside that card could redirect execution to a different physical copy of the skill. Manual invocation uses the discovery forms above.
 
-The lifecycle is:
+The lifecycle has two entries:
 
 ```text
-brainstorm → design review → wish → plan review → work → implementation review
+wish → merge-ready PR                                                            (one decided task)
+brainstorm → design review → wish → plan review → work → implementation review   (bigger than one task)
 ```
 
-For non-trivial work, `brainstorm` automatically sends the completed design through read-only design review before
-handoff to `wish`. The resulting WISH must then pass a distinct plan review before `work`; implementation receives its
-own independent review after execution. These are mandatory artifact gates, not interchangeable uses of one generic
-review step.
+One decided task goes straight to `wish`, which admits it, works it in a worktree, gates it, has it independently
+reviewed and returns a merge-ready PR; it writes no WISH.md, so no plan review stands between it and the PR. Work
+bigger than one task takes the second line. For non-trivial work, `brainstorm` automatically sends the completed
+design through read-only design review before handoff to `wish`. The resulting WISH must then pass a distinct plan
+review before `work`; implementation receives its own independent review after execution. These are mandatory artifact
+gates, not interchangeable uses of one generic review step.
 
 The design gate is durable: DESIGN.md carries reviewer identity, UTC timestamp, verdict, and the SHA-256 of its exact reviewed content (excluding only the bounded evidence block). Editing the design invalidates that evidence; `wish` and lint require a current SHIP digest for linked designs.
 
