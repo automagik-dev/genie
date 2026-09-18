@@ -450,8 +450,11 @@ describe('D5 — lanes are judged, never computed here', () => {
     expect(SOURCE).not.toContain('LANES');
   });
 
-  test('the record is not a fourth microagent', () => {
-    expect(Object.keys(SCHEMAS)).toEqual(['issue-triage', 'wish-context', 'review-prep']);
+  test('the record is not a microagent of its own', () => {
+    // The claim is about `triage`, never about the registry's size: `mikro-coach`
+    // (#2958) is a registered microagent, so pinning the whole list here would
+    // fail on a sibling's landing rather than on the thing this test guards.
+    expect(Object.keys(SCHEMAS)).toEqual(expect.arrayContaining(['issue-triage', 'wish-context', 'review-prep']));
     expect(SCHEMAS).not.toHaveProperty('triage');
     expect(AGENT_NAMES).not.toContain('triage' as never);
   });
