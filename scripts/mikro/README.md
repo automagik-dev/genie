@@ -98,6 +98,67 @@ OPT-IN and off by default, and the `wish.js` offload should pass `--facts auto` 
 `wish-context` call only until an issue-triage round earns it. Every number above is a real run in
 each agent's `EVIDENCE.md`.
 
+## triage.ts (provisional)
+
+```sh
+bun scripts/mikro/triage.ts --intent "make genie doctor print the resolved orchestration mode as one read-only line"
+bun scripts/mikro/triage.ts --issue 2963 --dir . --timeout-ms 300000
+```
+
+The read-only triage scout of `.genie/brainstorms/wish-v7/DESIGN.md` ("Triage, inline and always
+first"), slice 1a. It is a **composition**, not a fourth microagent: `--issue` runs `issue-triage`
+and then `wish-context` over a sentence built from the issue's own `title` + `summary`; `--intent`
+runs `wish-context` alone (`--facts auto`). Sequential, one process, one trace id across both
+spans, no new dependencies. `TriageRecord` therefore lives in `triage.ts` and is deliberately NOT
+in `SCHEMAS` — `schemas.ts` is one entry per `agent.yaml` agent and `call.ts` looks agents up
+there by name.
+
+One JSON record goes to stdout and the same record to `<dir>/.mikro/runs/triage-<stamp>.json`.
+Nothing else is written, on success or on failure — no DRAFT.md, no WISH.md, no `wish.js` edit;
+`triage.test.ts` audits `git status --porcelain` in a temp repo on both paths. The record carries
+`intent`, `facts[]`, `related[]`, `candidateFiles[]` (wish-context's `plan.files` ∪ issue-triage's
+`candidate_files`, `isNew` from the `NEW:` reason prefix), `estimate`, `band`, `boundaryHits`,
+`injectionAttempts[]`, `wrs`, `lane`, every open `questions[]` untruncated, `costUsd`, `elapsedMs`
+and the two `runIds`.
+
+Three properties are the point:
+
+- **No lane is derived.** D5 of the design — boundaries and routing are policy judged by LLMs,
+  mechanized only after a measured miss — so `lane` is `{value: <issue-triage's lane>, source:
+  'issue-triage'}` when that agent ran and `{value: null, source: 'none'}` otherwise. Nothing maps
+  an estimate to a lane, and a test reads the shipped source to keep it that way.
+- **No WRS number is published.** D13 asks for a DERIVED score, and the 60/100 thresholds are
+  uncalibrated, so `wrs` is `{calibration: 'pending', actionable: false, dimensions, metCount}`:
+  five dimensions, each `{met, evidence}`, and no total. **Nothing may gate on it.** Problem =
+  a non-empty intent; Scope = ≥1 candidate file and a band under the maximum; Decisions = zero
+  open questions over the untruncated set; Risks = boundary hits computed and zero; Criteria =
+  a pinning test or validation command narrower than `bun run check`. A dimension whose agent
+  degraded reads `unknown: <class>`, never a clean "none".
+- **Boundary hits fail closed.** `.claude/workflows/wish.js` is executed by the harness and cannot
+  be imported, so its `DENYLIST` and band constants are parsed out of the shipped text at run
+  time and the matcher mirrors `denylistRule` exactly; the prose entries no path shape can reach
+  are listed under `boundaryHits.unmatchable`. A missing, empty or garbled denylist gives
+  `{status: 'unknown', reason}` — never a clean zero. A parity test runs both matchers over one
+  table of paths.
+
+A failed agent degrades the record rather than killing the run: `status: 'degraded'`, the class in
+`degraded[]` (`citation-gate`, `schema`, `timeout`, `empty`, `runner`), whatever the answer
+VERIFIED kept — an `ok:false` citation-gate answer still carries the facts whose own citation
+passed — and exit 0. Exit 1 is for a usage error or a run that never started.
+
+**Cost and latency.** ≈$0.02–0.06 and 60–150 s per agent call (`call.ts` still retries once on a
+failed gate, so a bad run doubles both). Measured 2026-09-18 on this host, `PHOENIX_ENDPOINT` on
+loopback: `--intent` (one agent) $0.02 / 53 s, band `ideal`, 4 candidate files, 4 questions,
+metCount 4/5; `--issue 2963` (two agents) $0.05 / 142 s, band `ideal`, 7 candidate files, lane
+`patch` from issue-triage, metCount 4/5. Both `status: 'ok'`, zero boundary hits.
+
+**What it is not, yet.** It is NOT wired into `skills/wish/SKILL.md` or `.claude/workflows/wish.js`,
+and it is NOT "inline and always first" until its p90 latency is measured over more than two runs.
+In slice 1a the consumer is the operator or the orchestrator session, by hand.
+
+**Retention.** A record holds the operator's verbatim intent and, on the issue path, text derived
+from the issue. Records live only under the gitignored `.mikro/runs/` and are never committed.
+
 ## Refine one
 
 Edit `SYSTEM.md`, re-bench with a new `--tag round=N`, keep the change only if the bars still pass
