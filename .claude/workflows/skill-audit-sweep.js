@@ -186,6 +186,10 @@ function normalizeInput(raw) {
   return {
     focus: text(input.focus),
     requested: Array.isArray(input.skills) ? input.skills.map(String) : [],
+    // Supplied-ness is decided here, on the raw intake, and carried out whole:
+    // read later from the KEPT names it cannot tell "no list" from "a list whose
+    // every entry was invalid", and the second silently becomes a full sweep.
+    rosterSupplied: Array.isArray(input.skills) && input.skills.length > 0,
     searchPass: input.searchPass && typeof input.searchPass === 'object' && !Array.isArray(input.searchPass) ? input.searchPass : null,
     skillsDir,
     droppedSkillsDir: repoRelative(askedDir) ? '' : askedDir,
@@ -217,7 +221,7 @@ const signalsPrompt = (job) =>
     'Gather the three mechanical readings exactly once each, then return the summary object rather than the raw output.',
     bullets([
       `Run: ${LINT_CHECK}`,
-      `Run: ${PARITY_CHECK}`,
+      `Run: ${PARITY_CHECK} — exactly that command, read-only. Never pass --write: that flag regenerates the catalogue block inside the repository, and this sweep mutates nothing.`,
       `Then read ${DOCTOR_LINES}, read-only — never with the repair flag — and keep only the lines beginning "skills:".`,
     ]),
     `Report all three exit codes verbatim — lint, parity and doctor — including a non-zero one. Attribute every lint and parity finding to the bare skill directory name — \`review\`, never \`${job.skillsDir}/review/\` and never \`${job.skillsDir}/review/SKILL.md\` — or list it under unattributable[] rather than guessing an owner.`,
@@ -447,11 +451,27 @@ function collectNames(entries, what) {
 // reader derived from the tree — and nothing else. parity.repo[] is a second reading of
 // the same catalogue and is reported as a disagreement only: pushing its names into the
 // roster fabricates audit gaps for directories that may not exist.
+// `job.rosterSupplied`, never the kept-name count, decides which of the two is read: a
+// supplied list every one of whose entries was dropped (`{skills: ['reveiw']}`) is a
+// scope the caller got wrong, not an absent scope, and it ends the run here rather than
+// falling through to the inventory reading and auditing the whole catalogue.
+const rosterSupplied = job.rosterSupplied
 const requestedNames = collectNames(job.requested, 'roster entr(ies)')
-const inventoryNames = requestedNames.length || !signals ? [] : collectNames(list(signals.inventory), 'inventory name(s)')
-const rosterSource = requestedNames.length ? 'args' : 'inventory'
+if (rosterSupplied && !requestedNames.length) {
+  log(`A roster of ${job.requested.length} entr(ies) was supplied and none survived validation; the sweep stops rather than widening to the whole catalogue.`)
+  return {
+    ok: false,
+    error: `A skills list was supplied but no entry reduced to a skill directory name inside the repository: ${job.requested.join(', ')}. The sweep stops rather than silently auditing the whole catalogue from the inventory reading.`,
+    notConvened,
+    rosterSource: 'args',
+    rosterDisagreement: [],
+    signals: signals || null,
+  }
+}
+const inventoryNames = rosterSupplied || !signals ? [] : collectNames(list(signals.inventory), 'inventory name(s)')
+const rosterSource = rosterSupplied ? 'args' : 'inventory'
 const rosterDisagreement = []
-if (!requestedNames.length && signals) {
+if (!rosterSupplied && signals) {
   const parityRepoNames = list(objectOf(signals.parity).repo).map(rosterCandidate).filter(Boolean)
   if (!parityRepoNames.length) log('The parity reading named no skill directory this run, so the inventory reading stands alone and no second reading cross-checks it.')
   else {
@@ -464,7 +484,7 @@ if (!requestedNames.length && signals) {
   }
 }
 
-const roster = [...new Set(requestedNames.length ? requestedNames : inventoryNames)].sort()
+const roster = [...new Set(rosterSupplied ? requestedNames : inventoryNames)].sort()
 if (!roster.length) {
   return {
     ok: false,
