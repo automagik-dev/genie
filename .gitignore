@@ -68,7 +68,7 @@ yarn-error.log*
 .worktrees/
 
 # In v5, .genie/ follows documents-in-git / state-in-sqlite: planning documents
-# (INDEX.md, wishes/, brainstorms/) are genie's own taxonomy — tracked and
+# (INDEX.md, wishes/, brainstorms/*/DESIGN.md) are genie's own taxonomy — tracked and
 # reviewed in PRs. Runtime state is never git-versioned: the SQLite engine
 # (genie.db + sidecars) plus the legacy v4 state paths listed below.
 
@@ -86,6 +86,13 @@ yarn-error.log*
 
 # Machine-local roadmap sync baseline (pairs genie.db with roadmap.json)
 .genie/roadmap-sync
+
+# Brainstorm working notes (DRAFT.md, COUNCIL.md, REVIEW.md, …) are machine-local.
+# Only the reviewed DESIGN.md a wish links stays tracked: wishes:lint resolves that
+# link in CI and the wish preflight verifies its digest. Files tracked before this
+# rule stay tracked.
+.genie/brainstorms/*/*
+!.genie/brainstorms/*/DESIGN.md
 
 # Legacy residue protection: kickoff prompts emitted by `genie launch` before
 # its removal stay ignored (nothing writes here anymore)
@@ -132,7 +139,12 @@ core
 .dash/
 .empryo
 .mcp.json
-.rlmx/
+# mikro microagents and config are genie assets (tracked); only run ledgers are machine-local
+.mikro/runs/
 .warp/
 
 # Local type declarations for the DSH plugin typecheck (fetched, not tracked)
+
+# Added by px setup — local Phoenix credentials
+.env.phoenix
+.mcp.json.genie-backup-*

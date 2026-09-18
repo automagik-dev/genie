@@ -1,0 +1,97 @@
+{
+  "agent": "issue-triage",
+  "notes": "Ground truth = the files the merged fix touched (PR), or for open issues the files that own the reported behaviour. Recall is scored on `files`; `type` exactly.",
+  "fixtures": [
+    {
+      "id": "2921",
+      "prompt": "Triage issue #2921",
+      "truth": {
+        "type": "bug",
+        "files": [
+          ".claude/workflows/workfly.js",
+          ".claude/workflows/docs-audit.js",
+          ".claude/workflows/research-sweep.js",
+          ".claude/workflows/skill-audit-sweep.js",
+          "scripts/workflows-model-policy.test.ts"
+        ],
+        "notes": "Fixed by PR #2932 (5 files)."
+      }
+    },
+    {
+      "id": "2927",
+      "prompt": "Triage issue #2927",
+      "truth": {
+        "type": "bug",
+        "files": [
+          "src/lib/skills-installer.ts",
+          "src/lib/skills-installer.test.ts",
+          "src/genie-commands/doctor.ts",
+          "src/genie-commands/doctor.test.ts",
+          "src/lib/legacy-skills.ts",
+          "src/lib/legacy-skills.test.ts",
+          "src/lib/legacy-skills-catalog.ts",
+          "scripts/legacy-skills-catalog.ts",
+          "src/lib/codex-project-mcp.ts",
+          "src/lib/codex-project-mcp.test.ts",
+          "CLAUDE.md"
+        ],
+        "notes": "Fixed by PR #2928 (11 files)."
+      }
+    },
+    {
+      "id": "2926",
+      "prompt": "Triage issue #2926",
+      "truth": {
+        "type": "bug",
+        "files": [
+          "src/lib/orca-orchestration-adapter.test.ts",
+          "src/genie-commands/doctor.test.ts",
+          "src/genie-commands/__tests__/update.test.ts",
+          "scripts/release-archive-safety.test.ts",
+          "scripts/skills-retirement-restore.test.ts",
+          "scripts/design-review-evidence.test.ts"
+        ],
+        "notes": "Open. The six darwin-only failing tests named in the issue and in wish.js DARWIN_TOLERATED."
+      }
+    },
+    {
+      "id": "2941",
+      "prompt": "Triage issue #2941",
+      "truth": {
+        "type": "bug",
+        "files": [
+          "skills/wish/references/design-review-evidence.mjs",
+          "skills/brainstorm/references/design-review-evidence.mjs"
+        ],
+        "notes": "Open. Entry-point check compares argv[1] unresolved with import.meta.url resolved; both twins."
+      }
+    },
+    {
+      "id": "2942",
+      "prompt": "Triage issue #2942",
+      "truth": {
+        "type": "chore",
+        "files": [
+          "scripts/legacy-skills-catalog.ts",
+          "src/lib/legacy-skills-catalog.ts",
+          "src/lib/legacy-skills.ts",
+          "package.json"
+        ],
+        "notes": "Open. --check gated by nothing (package.json check script), additive union untested."
+      }
+    },
+    {
+      "id": "2924",
+      "prompt": "Triage issue #2924",
+      "truth": {
+        "type": "docs",
+        "files": [
+          ".github/workflows/release.yml",
+          ".github/workflows/sign-attest.yml",
+          ".github/workflows/release-publish.yml"
+        ],
+        "notes": "Open. The runbook lives in the docs submodule (absent here); the workflows it misdescribes are in-tree. An honest answer says the runbook is not in this checkout."
+      }
+    }
+  ]
+}

@@ -64,7 +64,7 @@ src/lib/skills-installer.ts     The skills.sh channel — pinned CLI, local deli
 src/lib/legacy-integration-retirement.ts  Marker-owned, backup-first retirement of plugin-era host assets
 src/term-commands/              CLI command handlers (board, context, init, omni, shortcuts, task, ...)
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
-.genie/                         Per-repo state: git-tracked wishes/brainstorms/INDEX.md + genie.db (gitignored)
+.genie/                         Per-repo state: git-tracked wishes/INDEX.md/brainstorms/*/DESIGN.md; brainstorm notes + genie.db gitignored
 ```
 
 ## CLI Commands
@@ -133,7 +133,7 @@ genie omni test-approval [--live]     # Drive one approval round-trip (fake tran
 |-------|----------|-------|--------|
 | Task / board / wish state | `<repo>/.genie/genie.db` | Per-repo, shared across worktrees | SQLite (bun:sqlite) |
 | Omni approvals + inbox | `~/.genie/genie.db` | Global (machine-wide) | SQLite (bun:sqlite) |
-| Wishes / brainstorms / INDEX | `<repo>/.genie/{wishes,brainstorms,INDEX.md}` | Per-repo, git-tracked | Markdown |
+| Wishes / reviewed designs / INDEX | `<repo>/.genie/{wishes,brainstorms/*/DESIGN.md,INDEX.md}` | Per-repo, git-tracked (other brainstorm notes are gitignored, machine-local) | Markdown |
 | Board snapshot (CANONICAL roadmap) | `<repo>/.genie/roadmap.json` | Per-repo, git-tracked | JSON — genie.db materializes from it via three-way `task sync` (git hooks: post-merge/post-rewrite/pre-commit; baseline in gitignored `.genie/roadmap-sync`; excludes machine-local `hire_roster`) |
 
 Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-common-dir`. The two `genie.db` files are wholly separate databases: different paths, different schemas, independent `PRAGMA user_version` — `global-db.ts` deliberately imports NONE of `genie-db.ts`'s path constants; the only shared code is the open primitive in `sqlite-open.ts`. Both use WAL. Documents live in git; operational state lives in SQLite.
