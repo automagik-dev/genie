@@ -170,6 +170,31 @@ describe('genie mikro call', () => {
   });
 });
 
+describe('genie mikro bench', () => {
+  test('--help lists the flags and says the bench reads the working tree', () => {
+    const { code, stdout } = runCli(['mikro', 'bench', '--help']);
+    expect(code).toBe(0);
+    for (const flag of ['--dir', '--fixtures', '--agents-dir', '--reps', '--only', '--boundary', '--write-evidence']) {
+      expect(stdout).toContain(flag);
+    }
+    expect(stdout).toContain('WORKING TREE');
+    expect(stdout).toContain('a tree you trust');
+  });
+
+  test('the tail reaches the runtime: a repository with no fixture set is refused with exit 2', () => {
+    const repo = tmp('genie-mikro-bench-');
+    const { code, stderr, stdout } = runCli(['mikro', 'bench', 'wish-context', '--dir', repo, '--no-phoenix'], {
+      cwd: repo,
+    });
+    expect(code).toBe(2);
+    expect(stderr).toContain('no fixture set at');
+    expect(stderr).toContain('genie mikro fixtures --from-commits');
+    expect(stdout).toBe('');
+    // Refused before anything ran: no ledger, no record, no `.mikro/` grown in the repository.
+    expect(existsSync(join(repo, '.mikro'))).toBe(false);
+  });
+});
+
 describe('the built bundle', () => {
   /** `dist/genie.js` when the build already ran, else a throwaway build of the same entry point. */
   function bundle(): string {

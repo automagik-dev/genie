@@ -2,10 +2,15 @@
  * genie mikro — the mikro microagent runtime, on PATH.
  *
  *   mikro call <agent> --prompt "<text>" [flags]
+ *   mikro bench <agent> [flags]            # measure one agent over its fixture set
+ *   mikro coach <agent> [flags]            # one coaching round over its prompt
+ *   mikro fixtures --from-commits <range> --agent <agent>
+ *   mikro init [--dir <repo>]              # seed the shipped agents into a repository
  *
  * The runtime itself stays in `scripts/mikro/`: this file is a registration
- * surface over `runCallCli`, so `genie mikro call` and `bun scripts/mikro/call.ts`
- * are one code path. That is why the command declares no options of its own
+ * surface over `runCallCli`, `runBenchCli`, `runCoachCli`, `runFixturesCli` and
+ * `runInitCli`, so `genie mikro <verb>` and `bun scripts/mikro/<file>.ts` are one
+ * code path each. That is why the commands declare no options of their own
  * (`allowUnknownOption` + `passThroughOptions`): a flag added to the runtime
  * needs no edit here.
  *
@@ -29,9 +34,11 @@
  */
 
 import type { Command } from 'commander';
+import { runBenchCli } from '../../scripts/mikro/bench';
+import { BENCH_USAGE } from '../../scripts/mikro/bench-options';
 import { CALL_USAGE, runCallCli } from '../../scripts/mikro/call';
 
-const MIKRO_GROUP_DESCRIPTION = 'Run genie mikro microagents (call)';
+const MIKRO_GROUP_DESCRIPTION = 'Run and grow genie mikro microagents (call, bench, coach, fixtures, init)';
 
 /**
  * The flags are shown as help text rather than declared as Commander options on
@@ -75,6 +82,40 @@ Shell quoting does not change the argv token: prefix the value with a space
 
 ${CALL_USAGE}`;
 
+/**
+ * `bench` and `coach` are the measuring tools, and they read the WORKING TREE under
+ * `--dir` rather than a git ref — the opposite of `call`, deliberately, because a
+ * refinement round exists to measure the prompt the operator just edited. The help
+ * says so where an operator will read it: point them at a tree you trust.
+ */
+const BENCH_HELP = `
+Flags (parsed by the mikro runtime, forwarded as typed):
+  --dir <repo>               The repository whose agents are measured and whose
+                             citations are verified; defaults to the working directory
+  --fixtures <path>          The fixture set; default <dir>/.mikro/fixtures/<agent>.json,
+                             else <dir>/scripts/mikro/fixtures/<agent>.json
+  --agents-dir <dir>         Read agent files from here instead of <dir>/.mikro/agents
+  --reps <n>                 Runs per fixture (default 1)
+  --concurrency <n>          Fixtures in flight (default 3)
+  --only a,b                 Run these fixture ids only
+  --tag k=v                  Ledger/Phoenix/evidence tag; repeatable (--tag round=N)
+  --timeout-ms <n>           Wall clock for one attempt (default 600000)
+  --boundary none|bwrap      Where each run runs (default none)
+  --no-phoenix               Turn off the span
+  --write-evidence           Append the table to <dir>/.mikro/agents/<agent>/EVIDENCE.md
+
+Unlike "call", the bench measures the WORKING TREE: <dir>/.mikro/agents/<agent>/,
+or the tree --agents-dir names. It therefore skips the .mikro/ configuration
+comparison that "call" makes, so point it only at a tree you trust — never at a PR
+checkout or an unaudited clone. A missing fixture set or a missing
+<agent>/agent.yaml refuses the round upfront, at zero cost, naming the remedy
+("genie mikro init", "genie mikro fixtures --from-commits").
+
+Exit codes: 0 every bar passed, 1 a bar failed, 2 the round was refused before any
+run.
+
+${BENCH_USAGE}`;
+
 export function registerMikroCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'mikro');
   // Positional options on the GROUP, not on the program: it is what `call` needs to
@@ -92,5 +133,17 @@ export function registerMikroCommands(program: Command): void {
     .addHelpText('after', CALL_HELP)
     .action(async (agent: string, flags: string[]) => {
       process.exitCode = await runCallCli([agent, ...flags]);
+    });
+
+  mikro
+    .command('bench')
+    .description('Measure one microagent over its fixture set and score it mechanically')
+    .argument('<agent>', 'Registered agent name (issue-triage, wish-context, review-prep, mikro-coach)')
+    .argument('[flags...]', 'Runtime flags, forwarded as typed (genie global options excepted)')
+    .allowUnknownOption()
+    .passThroughOptions()
+    .addHelpText('after', BENCH_HELP)
+    .action(async (agent: string, flags: string[]) => {
+      process.exitCode = await runBenchCli([agent, ...flags]);
     });
 }
