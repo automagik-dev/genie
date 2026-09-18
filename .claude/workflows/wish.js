@@ -52,7 +52,8 @@ export const meta = {
 // the free name `wish-v6` and intended to land as `wish` (the `wish` skill becomes its front
 // door, council pattern — landing renames the file, `meta.name` and the front-door strings
 // together). Authored 2026-09-16T20:13:47Z from .genie/brainstorms/wish-v6/DESIGN.md (design
-// review SHIP, digest d23d7ff9…), .genie/brainstorms/wish-v6/FRAMEWORK-BRIEF.md,
+// review SHIP, digest 25af2eae… at the revision this landed against),
+// .genie/brainstorms/wish-v6/FRAMEWORK-BRIEF.md,
 // .genie/brainstorms/wish-v6/WISH-DURATION-STUDY.md, .genie/brainstorms/wish-v6/COUNCIL.md,
 // skills/quick/SKILL.md, skills/wish/SKILL.md, skills/review/SKILL.md, skills/fix/SKILL.md,
 // skills/work/SKILL.md and .claude/workflows/research-sweep.js.
@@ -100,16 +101,37 @@ const DENYLIST = [
   'delivery-evidence-verify.ts',
 ]
 
-// The six darwin-only failures of issue #2926 (FRAMEWORK-BRIEF.md §4). Held ONCE, interpolated
-// into the gate prompt, and re-checked script-side: a tolerated set must be a SUBSET of these.
+// The six darwin-only failures of issue #2926 (FRAMEWORK-BRIEF.md §4), each held as its FILE and
+// its EXACT test name. Held ONCE, interpolated into the gate prompt, and re-checked script-side: a
+// tolerated set must be a subset of these BY NAME. Matching by file was the bug: `doctor.test.ts`
+// carries one known failure and a hundred other tests, so a file-level comparison tolerated any NEW
+// failure inside it — the gate passed the commit that broke it and the run published a red branch.
 // Ubuntu CI stays the authority at read-back. These names never appear in the front door.
 const DARWIN_TOLERATED = [
-  'src/lib/orca-orchestration-adapter.test.ts',
-  'src/genie-commands/doctor.test.ts',
-  'src/genie-commands/__tests__/update.test.ts',
-  'scripts/release-archive-safety.test.ts',
-  'scripts/skills-retirement-restore.test.ts',
-  'scripts/design-review-evidence.test.ts',
+  {
+    file: 'src/lib/orca-orchestration-adapter.test.ts',
+    test: 'runtime and executor boundary > does not spawn on invalid input and owns all process controls',
+  },
+  {
+    file: 'src/genie-commands/doctor.test.ts',
+    test: 'global db contamination (r2 #6 / M7 operator half) > --fix-global-db backs up a database with a live WAL completely',
+  },
+  {
+    file: 'src/genie-commands/__tests__/update.test.ts',
+    test: 'downloadAndVerifyTarball (G5) > aborts when the signed release name is for another platform, without a credential to hide behind',
+  },
+  {
+    file: 'scripts/release-archive-safety.test.ts',
+    test: 'an escaping member name is rejected before extraction',
+  },
+  {
+    file: 'scripts/skills-retirement-restore.test.ts',
+    test: 'documented retirement-backup restore > documented command 0 restores the tree and leaves existing modes alone',
+  },
+  {
+    file: 'scripts/design-review-evidence.test.ts',
+    test: 'every shipped skill is self-contained > the wish copy runs with no sibling skill installed',
+  },
 ]
 
 // The study's PR columns (DESIGN.md Decision 2). Script-side arithmetic ONLY: no prompt is
@@ -139,7 +161,17 @@ const SHA = /^[0-9a-f]{40}$/
 const INTAKE_ERROR =
   'Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, timestamp} — objective is required and every key arrives frozen.'
 const BASE_ERROR =
-  'base must be an integration branch, never main or master: this workflow opens a PR against the base and never pushes to a protected branch.'
+  'base must be an integration branch, never main or master in ANY spelling (main, master, refs/heads/main, origin/master): this workflow opens a PR against the base and never pushes to a protected branch.'
+const BASE_SHAPE_ERROR =
+  'base must be a plain branch name — letters, digits, dot, dash, underscore and slash only, no refs/ prefix, no `..`, no shell metacharacter: every stage interpolates it into a git or gh command, so anything else would reach a shell as command text.'
+// A branch name a git or gh command may carry verbatim, and the protected names no run may target.
+// Only the exact strings `main` and `master` were refused before, so `refs/heads/main`,
+// `origin/main` and `dev; touch /tmp/x` all reached the executor and the publisher as command text.
+// `HEAD` is protected too: `origin/HEAD` resolves to the default branch on an ordinary clone, so a
+// base of `HEAD` cuts the wish branch from main and measures every size against it. The match is
+// case-insensitive because the error promises "any spelling", and `MAIN` is a valid branch name.
+const BRANCH_NAME = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/
+const PROTECTED_BASE = /(^|\/)(main|master|head)$/i
 
 // The research skill's own injection paragraph, verbatim and held ONCE so a parity test can
 // compare it character for character against .claude/workflows/research-sweep.js and against
@@ -250,12 +282,16 @@ const GATE_SCHEMA = obj(['hooksLive', 'exitCode', 'pass', 'problems', 'summaryLi
   hooksReason: note('what you checked and what you found, in one line'),
   exitCode: int,
   failCount: int,
-  failingTests: notes('the test names or file paths that failed, one per entry'),
+  failingTests: notes(
+    'one entry per failing test, each the full test name in the shape <describe> > <test> — the result marker and the duration the runner prints around it are ignored, and a bare file path names no test and is matched against nothing',
+  ),
   problems: notes('every failing line, quoted verbatim from the output — a summary sentence is not a quoted line'),
   summaryLine: note('the run summary line of the check output, verbatim'),
   pass: bool,
   darwinTolerated: bool,
-  baseReconfirmed: notes('the tolerated failing test files that ALSO fail at the merge-base with the base branch, re-run there in a temp worktree'),
+  baseReconfirmed: notes(
+    'the failing TEST NAMES that ALSO fail at the merge-base with the base branch, re-run there in a temp worktree — spelled exactly as in failingTests, never file paths',
+  ),
   changedFiles: intNote(`the files-changed count ${SHORTSTAT_COMMAND} printed against the merge-base; omitted when it was not measured`),
   insertions: intNote(`the insertions count ${SHORTSTAT_COMMAND} printed against the merge-base (0 when it names none); omitted when it was not measured`),
 })
@@ -382,9 +418,16 @@ const denylistHits = (paths) =>
 const DESTRUCTIVE_CLEANUP = /worktree\s+remove|worktree\s+prune|branch\s+-[dD]|push\s+[^\n]*--delete|\bgit\s+push\s+[^\n]*\s:|--force|\brm\s+-[rf]/
 const safeDiagnostic = (offered, fallback) => (offered && !DESTRUCTIVE_CLEANUP.test(offered) ? offered : fallback)
 
+// `''` when the base may be used, `'shape'` when it is not a plain branch name, `'protected'` when
+// it names main or master in any spelling. A refusal here happens before any agent is dispatched.
+function baseRefusal(base) {
+  if (!BRANCH_NAME.test(base) || base.includes('..') || base.includes('//') || base.endsWith('.lock')) return 'shape'
+  return PROTECTED_BASE.test(base) ? 'protected' : ''
+}
+
 // Accept an object or a JSON-encoded string (some invocation paths stringify args); a bare
 // string degrades to the objective. `rejection` carries a refusal the caller must see with
-// its own wording — main/master is decided here, before any agent is dispatched.
+// its own wording — the base is decided here, before any agent is dispatched.
 function normalizeInput(raw) {
   let input = raw
   if (typeof input === 'string') {
@@ -400,7 +443,8 @@ function normalizeInput(raw) {
   const objective = text(input.objective)
   if (!objective) return null
   const base = text(input.base) || DEFAULT_BASE
-  const rejection = base === 'main' || base === 'master' ? BASE_ERROR : ''
+  const refusal = baseRefusal(base)
+  const rejection = refusal === 'shape' ? BASE_SHAPE_ERROR : refusal === 'protected' ? BASE_ERROR : ''
   const asked = slugify(text(input.slug) || objective)
   const slug = asked.slice(0, SLUG_CAP).replace(/-$/, '')
   return {
@@ -590,12 +634,15 @@ function gatePrompt(job, worktree, branch, headSha) {
       'git config core.hooksPath and git rev-parse --git-path hooks — the configured hooks path must resolve inside this worktree',
       `${CHECK_COMMAND} in the worktree, once`,
       `git merge-base HEAD origin/${job.base}, then ${SHORTSTAT_COMMAND} <that merge-base sha> HEAD in the worktree — the size measurement, read-only`,
-      `Only when the failing set is a subset of the six darwin names below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <exactly the failing test files> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
+      `Only when every failing TEST is one of the six named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
     ]),
     'Assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
     `Then run ${CHECK_COMMAND} exactly once in the worktree, in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 ${CHECK_COMMAND} > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground) — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
-    section('On darwin only, these six test names are known to fail for platform reasons', DARWIN_TOLERATED),
-    'If the failing set is a SUBSET of those six names, re-confirm each failing file at the base of this branch with the temp-worktree command above and list in baseReconfirmed every file that ALSO fails there; a file that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing file is in baseReconfirmed, and say so in one line of problems naming them. A seventh name, or any non-test failure, is red regardless of the subset. The script re-checks both the subset and the re-confirmation itself, so a tolerated set that fails either will simply be counted as red.',
+    section(
+      'On darwin only, these six TESTS are known to fail for platform reasons — the file is where each one lives, and only the test name after it is tolerated',
+      DARWIN_TOLERATED.map((known) => `${known.file} > ${known.test}`),
+    ),
+    'Report every failing test in failingTests, and make failCount equal that list: a count larger than the list says something failed that you did not name, and the script counts the whole set as red rather than tolerate an unnamed failure. If every failing test is one of those six BY NAME, re-confirm them at the base of this branch with the temp-worktree command above and list in baseReconfirmed the exact name of every test that ALSO fails there, spelled as you spelled it in failingTests. A test that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing test name is in baseReconfirmed, and say so in one line of problems naming them. A seventh test, ANOTHER test inside one of those six files, or any non-test failure is red regardless — the file is not the unit, the test is. The script re-checks both halves by exact name, so a set that fails either is simply counted as red.',
     `Then measure the committed diff with exactly ${SHORTSTAT_COMMAND} <merge-base sha> HEAD, the merge-base taken with origin/${job.base}, and return the files-changed count in changedFiles and the insertions count in insertions as integers copied from that one line (insertions 0 when the line names none). If the command fails, omit both fields: never estimate them, never copy a count from anywhere else.`,
     'The check output never leaves you: return the summary line, the failing names and the quoted failing lines, not the stream.',
     READ_ONLY,
@@ -1014,17 +1061,55 @@ log(`Work committed ${headSha.slice(0, 12)} on ${branch} (${work.adopted ? 'adop
 diffOutsideDeclared = changed.filter((path) => !contract.files.includes(path)).concat(changedPaths.outside)
 if (diffOutsideDeclared.length) log(`The commit changed ${diffOutsideDeclared.length} path(s) outside the declared set: ${diffOutsideDeclared.join(', ')}. The review will block on it.`)
 
+// The runner prints `(fail) <describe> > <test> [12.34ms]`. A gate told to copy the name it printed
+// copies that whole line, so the result marker and the duration are both stripped before any
+// comparison — matching the bare name only would have made the tolerance never fire at all.
+const withoutTiming = (value) =>
+  text(value)
+    .replace(/^\((?:fail|pass|skip|todo)\)\s*/i, '')
+    .replace(/\s*\[\d+(?:\.\d+)?\s*(?:ms|s|m)\]$/i, '')
+    .trim()
+
+// The index of the known darwin failure an entry names, or -1. Identity is the EXACT test name,
+// alone or prefixed by its file in the spellings a gate copies out of a log. A bare file path
+// matches nothing: a file is not a test, and tolerating one tolerates every test inside it.
+function toleratedIndex(entry) {
+  const name = withoutTiming(entry)
+  if (!name) return -1
+  return DARWIN_TOLERATED.findIndex(
+    (known) =>
+      name === known.test ||
+      name === `${known.file} > ${known.test}` ||
+      name === `${known.file}: ${known.test}` ||
+      name === `${known.file} ${known.test}`,
+  )
+}
+
+// Tolerance needs BOTH halves, by exact test identity: every failing test is one of the six known
+// darwin failures, and THAT SAME test was re-confirmed failing at the branch's base. A known test
+// that passes at the base was broken by this commit and stays red.
+// `failCount` is the run's own count of failures. When it exceeds the names the gate enumerated,
+// something failed that this list does not describe, and tolerating the list would tolerate the
+// unnamed failure with it — the very hole the by-name matching closes, re-opened by an
+// under-enumerated answer instead of by a substring.
+function darwinTolerable(failingTests, baseReconfirmed, failCount) {
+  // Identities, counted DISTINCTLY: a list that repeats one known test — the same test in two
+  // spellings is what reading a log twice produces — would otherwise pad its own length until it
+  // equalled a larger failCount, and the unnamed failure would ride along tolerated.
+  const ids = failingTests.map(toleratedIndex)
+  if (ids.length === 0 || ids.includes(-1)) return false
+  if (new Set(ids).size !== ids.length || failCount !== ids.length) return false
+  const reconfirmed = new Set(baseReconfirmed.map(toleratedIndex).filter((index) => index >= 0))
+  return ids.every((index) => reconfirmed.has(index))
+}
+
 function normalizeGate(raw) {
   const value = objectOf(raw)
   const failingTests = texts(value.failingTests)
   const baseReconfirmed = texts(value.baseReconfirmed)
-  // Tolerance needs BOTH halves: a known darwin name AND the same file failing at the base of the
-  // branch. A known name that passes at the base was broken by this commit and stays red.
   const tolerated =
     Boolean(value.darwinTolerated) &&
-    failingTests.length > 0 &&
-    failingTests.every((name) => DARWIN_TOLERATED.some((known) => name === known || name.includes(known))) &&
-    failingTests.every((name) => baseReconfirmed.some((base) => base === name || base.includes(name) || name.includes(base)))
+    darwinTolerable(failingTests, baseReconfirmed, intOf(value.failCount, failingTests.length))
   const clean = intOf(value.exitCode, 1) === 0 && intOf(value.failCount, failingTests.length) === 0
   return {
     hooksLive: Boolean(value.hooksLive),
@@ -1212,7 +1297,11 @@ if (review.verdict === 'BLOCKED')
   })
 if (!gate.pass || review.verdict === 'FIX-FIRST')
   return finish('missed', false, {
-    blockedReason: `The repair budget (${job.repairBudget}) is spent with ${gate.pass ? 'a standing FIX-FIRST verdict' : 'a red gate'}. The branch and the commit stand; nothing was pushed, and nothing was removed.`,
+    blockedReason: `${
+      repairs >= job.repairBudget
+        ? `The repair budget (${job.repairBudget}) is spent`
+        : `The repair loop ended after ${repairs} of ${job.repairBudget} round(s) — the fixer returned nothing, or reported it could not close the problems inside the declared file set`
+    } with ${gate.pass ? 'a standing FIX-FIRST verdict' : 'a red gate'}. The branch and the commit stand; nothing was pushed, and nothing was removed.`,
   })
 
 phase('Publish')
