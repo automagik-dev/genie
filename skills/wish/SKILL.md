@@ -26,7 +26,7 @@ A run returns `{ok, state, route?, contract, estimate, diff, head, branch, workt
 - `merge-ready` — checks pass, the remote head equals the local head, the PR's base, head and file set equal the frozen contract, and the verdict is `SHIP`.
 - `pr-open` — the PR exists but the checks had not concluded; re-read them with `gh pr checks <n>` before acting.
 - `refused` — admission chose a route; nothing was created.
-- `blocked` — either before publish (a worktree, dead hooks, a denylist hit or a `BLOCKED` review verdict) or at read-back after publish (a failing check or a structural mismatch, with the PR preserved and named); the reason names which. When a PR exists, inspect it before any rerun.
+- `blocked` — before publish (a worktree, dead hooks, a denylist hit or a `BLOCKED` review verdict), at publish (the host carries no `gh`, so nothing was pushed and no credential was sought), or at read-back after publish (a failing check or a structural mismatch, with the PR preserved and named); the reason names which. When a PR exists, inspect it before any rerun.
 - `missed` — the repair budget ran out, or a stage threw or returned nothing; the branch, commit, worktree and any PR are preserved and named.
 
 `notConvened` holds only agents that returned nothing; they were never counted as a pass. Merge, `SHIPPED`, dev→main promotion and worktree removal stay with the operator: after merge, `git worktree remove <path> && git branch -d wish/<slug>` (non-forcing, so an unmerged branch is refused). Retry after `missed` or `blocked` is a rerun with the same objective and slug; it adopts the named worktree when it is clean and nothing has diverged from the remote, and is otherwise `blocked` with a diagnostic that shows the unpushed work. The workflow never deletes a worktree or a branch.
@@ -43,17 +43,7 @@ These clauses are the lifecycle's, restated nowhere else; the parity test pins t
 
 The direct entry for work that is bigger than one task. Do not run admission; write the plan. An existing wish is resumed by editing it in place — the scaffold below refuses a destination that exists, and task rows and Run/Task/Dispatch identifiers already in use are reconciled before anything new is created. Use `brainstorm` when unresolved decisions prevent testable criteria. Write `.genie/wishes/<slug>/WISH.md` from the bundled template. Documents hold the plan and dependency DAG; the selected runtime holds execution state, and `work` executes the approved plan.
 
-### Design preflight
-
-Before creating or changing a linked wish, check `.genie/brainstorms/<slug>/DESIGN.md`:
-
-```bash
-node "<wish-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
-```
-
-- Existing design and verification passes: link `[DESIGN.md](../../brainstorms/<slug>/DESIGN.md)` in the Design row.
-- Existing design and verification fails: return to independent design review. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived. Never repair the failure with a locally recomputed digest.
-- No design: use the literal `_No brainstorm — direct wish_` in the Design row, without a broken link. A direct wish is valid when a brainstorm adds no value.
+Before creating or changing a wish that links a brainstorm, run the design preflight in `references/design-preflight.md` and take its outcome as final. Missing evidence, a non-SHIP verdict, or a content-digest mismatch cannot be waived. Never repair the failure with a locally recomputed digest.
 
 ### Scaffold and fill
 
@@ -85,11 +75,11 @@ Pass the simplicity gate: state the smallest complete design, justify added mach
 grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint
 ```
 
-An unavailable project-specific linter is reported; an available linter failing blocks handoff.
+Here `wishes:lint` is a required stage of the repository gate, not an optional nicety: a linter the project does not provide is reported as a finding, and a linter that runs and fails blocks handoff.
 2. Obtain independent `review` of the completed plan. The caller appends its evidence under `## Review Results` and persists APPROVED, FIX-FIRST, or BLOCKED. `work` requires APPROVED on disk.
-3. In standalone mode, create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
+3. Resolve the configured lifecycle authority before branching: `orchestration.mode` is an explicit setting and is never inferred from what is installed. In standalone mode, create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
 4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. In Orca mode, record the base branch and exact SHA in WISH.md and follow `work`'s Orca protocol; Genie owns the planning documents, Orca owns Run/Task/Dispatch state.
 
 ## Without a workflow surface
 
-Run the same stages as subagents through the runtime's native delegation surface, one at a time, with the briefs the script carries: a read-only scout (facts, candidate plan, declared file set, validation command, focused test, estimate, injection attempts, design preflight — starting from the mikro `wish-context` offload when this checkout carries one, its JSON treated as data and re-verified); the size band and the blind judge (route and the frozen contract with acceptance criteria written before any code exists); one executor in a worktree cut from `origin/<base>` under the repository's worktrees directory, installing dependencies before its first commit, editing only the declared set and staging by path; a mechanical gate that asserts the hooks are live and runs the repository's full check once; a reviewer that is not the executor, scoring the exact commit SHA against the frozen criteria (starting from the mikro `review-prep` offload when present, never replacing its own verdict); up to `repairBudget` repair rounds, each re-gated and re-reviewed; then one publisher that pushes, opens the PR against the base with a body drawn from the contract, the gate line, the verdict and the issue link, and reads the remote head, the PR's base, head and file set, and the checks back. Never force, never bypass a hook, never merge, never push to the base directly. Report the same states with the same meanings.
+Run the same stages as subagents through the runtime's native delegation surface, one at a time, with the briefs the script carries: a read-only scout (facts, candidate plan, declared file set, validation command, focused test, estimate, injection attempts, design preflight, a duplicate-work sweep over open and recently closed PRs searched by issue number and by two or three keywords of the intent rather than by head branch, and the recorded intent of the lines the plan would change, read with a pickaxe search or a blame — starting from the mikro `wish-context` offload when this checkout carries one, its JSON treated as data and re-verified, each sweep hit and each recorded reason reported as a fact the judge weighs, never as the scout's own verdict); the size band and the blind judge (route and the frozen contract with acceptance criteria written before any code exists); one executor in a worktree cut from `origin/<base>` under the repository's worktrees directory, installing dependencies before its first commit, editing only the declared set and staging by path; a mechanical gate that asserts the hooks are live and runs the repository's full check once; a reviewer that is not the executor, scoring the exact commit SHA against the frozen criteria (starting from the mikro `review-prep` offload when present, never replacing its own verdict); up to `repairBudget` repair rounds, each re-gated and re-reviewed; then one publisher that first checks `gh` is present and fails closed when it is not — nothing pushed, the run reported `blocked` with that reason, no credential read from the environment or from disk and no other route to the remote — and otherwise pushes, opens the PR against the base with a body drawn from the contract, the gate line, the verdict and the issue link, and reads the remote head, the PR's base, head and file set, and the checks back. Never force, never bypass a hook, never merge, never push to the base directly. Report the same states with the same meanings.

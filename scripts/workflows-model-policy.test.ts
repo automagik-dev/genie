@@ -13,7 +13,7 @@ const CATALOG = join(ROOT, '.claude', 'workflows');
 const SCRIPTS = readdirSync(CATALOG)
   .filter((name) => name.endsWith('.js'))
   .sort();
-const CALLER_PINNED = ['workfly.js', 'docs-audit.js', 'research-sweep.js', 'skill-audit-sweep.js'];
+const CALLER_PINNED = ['workfly.js', 'docs-audit.js', 'research-sweep.js', 'skill-audit-sweep.js', 'skill-intake.js'];
 const SPREAD = '...(MODEL ? { model: MODEL } : {})';
 // wish.js goes further than one caller-pinned model: its two MECHANICAL stages (the gate, which
 // runs the repository check and reads an exit code, and the publisher, which runs an allowlisted
