@@ -308,6 +308,15 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'cp .git/config /tmp/config.backup',
       // The -i veto is aimed at sed/perl, not at grep's case-insensitive flag.
       "grep -i 'gh pr merge' skills/wish/SKILL.md",
+      // A substitution computing a title or a head does not make a single-quoted body executable —
+      // this is the publisher's own shape, a frozen contract quoting the rule it obeys.
+      'gh pr create --base dev --title t --body \'never runs gh pr merge\' --head "$(git rev-parse --abbrev-ref HEAD)"',
+      'git commit -m "docs: never run gh pr merge" && echo "$(date)"',
+      // Mixed value: the substitution stays visible, the prose around it stops being judged.
+      'git commit -m "chore: bump to $(cat VERSION), still no --no-verify"',
+      // An escaped backtick is literal — that is how a code span is written inside double quotes.
+      'gh pr create --base dev --title t --body "never runs \\`gh pr merge\\`"',
+      "grep -rn '`gh pr merge`' skills/",
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
     }

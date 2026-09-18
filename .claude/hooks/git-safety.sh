@@ -53,12 +53,20 @@ TEXTFLAG='(-m|--message|--body|--title|--description|--search|-S)'
 # A SINGLE-quoted value is inert to the shell, so a backticked `gh pr merge` in a PR body — which is
 # what this repository's own contract text looks like — is prose. Inside DOUBLE quotes the same
 # backtick is command substitution and the shell would run it, so that value is judged, not blanked.
-if ! printf '%s' "$command" | grep -qE '\$\('; then
-  runnable=$(echo "$runnable" | sed -E \
-    "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^']*'/\1\2 TEXT/g; \
-     s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\"[^\"\`]*\"/\1\2 TEXT/g; \
-     s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=('[^']*'|\"[^\"\`]*\"|[^[:space:]\`]*)/\1\2 \3=TEXT/g")
-fi
+# The exclusion is PER VALUE, not per command: a substitution computing a title or a head does not
+# make a single-quoted body executable, and gating the whole command on it refused the publisher's
+# own shape — a frozen contract quoting `gh pr merge` in `--body '…'` beside `--head "$(git …)"`.
+# Single-quoted: always prose, nothing inside can run. Double-quoted: a bare `$` is fine (`$VAR`),
+# `$(` and an unescaped backtick are not, an escaped backtick is (that is a Markdown code span).
+runnable=$(echo "$runnable" |
+  sed -E "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^']*'/\1\2 TEXT/g" |
+  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"([^"`$]|[$][^(]|\\`)*"/\1\2 TEXT/g' |
+  # A value that MIXES prose with a substitution keeps the substitution and loses the prose: the
+  # shell runs `$(…)` wherever it sits, so that text stays visible, while `chore: bump to $(cat
+  # VERSION), still no --no-verify` stops being read as a flag.
+  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"[^"]*(\$\([^)]*\))[^"]*"/\1\2 TEXT \3/g' |
+  sed -E "s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)='[^']*'/\1\2 \3=TEXT/g" |
+  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=("([^"`$]|[$][^(]|\\`)*"|[^[:space:]`$]*)/\1\2 \3=TEXT/g')
 
 # A pure read-only search for a forbidden form is a search, not an act — including one handed to a
 # shell, which is how an agent greps from inside a wrapper. Only when it is the WHOLE command, so
@@ -68,7 +76,8 @@ fi
 # executes is not.
 search=$(echo "$runnable" | sed -E "s/^[[:space:]]*(([^[:space:]]*\/)?(ba|z|k|d[a]?)?sh|eval)[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-?c?[[:space:]]*['\"]?//; s/['\"][[:space:]]*$//")
 if echo "$search" | grep -qE '^[[:space:]]*(grep|rg|ag|ack|git[[:space:]]+(grep|log|show-ref)|cat|sed|awk|head|tail)\b[^;&|]*$' &&
-  ! printf '%s' "$command" | grep -qE '\$\(|`|<\(|(^|[[:space:]])--pre([[:space:]]|=|$)|(sed|perl)[[:space:]]+(-[a-zA-Z]*[[:space:]]+)*-[a-zA-Z]*i|system[[:space:]]*\('; then
+  ! printf '%s' "$command" | sed -E "s/'[^']*'//g" | grep -qE '\$\(|`' &&
+  ! printf '%s' "$command" | grep -qE '<\(|(^|[[:space:]])--pre([[:space:]]|=|$)|(sed|perl)[[:space:]]+(-[a-zA-Z]*[[:space:]]+)*-[a-zA-Z]*i|system[[:space:]]*\('; then
   exit 0
 fi
 
