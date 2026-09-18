@@ -24,11 +24,23 @@ describe('wish.js mikro offload', () => {
     expect(script).toContain("const MIKRO_SCOUT_AGENT = 'wish-context'");
     expect(script).toContain("const MIKRO_REVIEW_AGENT = 'review-prep'");
   });
+  test('both offload lines pin the trusted ref to origin/<base>, and pass nothing else', () => {
+    // The agent that reviews a pull request must not be readable from that pull request.
+    // `origin/<base>` is the one ref the PR cannot move, and it is deliberately narrower
+    // than the runtime's own default, which would also trust a LOCAL base branch.
+    // Over the CODE, not the commentary that explains it.
+    const code = script.replace(/^\s*\/\/.*$/gm, '');
+    const refs = [...code.matchAll(/--agents-ref (\S+)/g)].map((m) => m[1]);
+    expect(refs.length).toBe(2);
+    expect(new Set(refs)).toEqual(new Set(['origin/${job.base}']));
+    for (const agent of ['MIKRO_SCOUT_AGENT', 'MIKRO_REVIEW_AGENT'])
+      expect(script).toMatch(new RegExp(`\\$\\{${agent}\\}[^\\n]*--agents-ref origin/\\$\\{job\\.base\\}`));
+  });
   test('the scout offload asks for the deterministic facts file; the review offload does not (opt-in per agent)', () => {
     // #2956 measured wish-context recall 0.87 -> 0.96 with `--facts auto` and issue-triage WORSE with it, so the
     // flag is per agent: the scout line carries it, the review line stays bare until review-prep is measured.
     expect(script).toContain(
-      '${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --facts auto --trace ${job.slug}',
+      '${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --agents-ref origin/${job.base} --facts auto --trace ${job.slug}',
     );
     expect(script).not.toMatch(/MIKRO_REVIEW_AGENT[^\n]*--facts/);
   });
