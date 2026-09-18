@@ -178,6 +178,24 @@ describe('wish.js guards that must not drift', () => {
     expect(script).not.toContain('--required');
   });
 
+  test('each labelled agent call carries the stage variable its label names', () => {
+    // The 6/2/1 split above still passes with the spreads on the WRONG stages. Pin the mapping by
+    // label: every `gate:` call carries GATE_MODEL, the `publish:` call carries PUBLISH_MODEL, and
+    // every other stage carries MODEL — read from the option object that follows each label.
+    const spreadOf = (name: string): string => `...(${name} ? { model: ${name} } : {})`;
+    const calls = script
+      .split(/\bagent\(/)
+      .slice(1)
+      .filter((chunk) => /\blabel: ['`]/.test(chunk));
+    expect(calls).toHaveLength(9);
+    for (const call of calls) {
+      const label = /\blabel: ['`]([a-z]+):/.exec(call)?.[1];
+      const expected = label === 'gate' ? 'GATE_MODEL' : label === 'publish' ? 'PUBLISH_MODEL' : 'MODEL';
+      const carried = ['MODEL', 'GATE_MODEL', 'PUBLISH_MODEL'].filter((name) => call.includes(spreadOf(name)));
+      expect({ label, carried }).toEqual({ label, carried: [expected] });
+    }
+  });
+
   test('gateModel and publishModel are optional and fall back to job.model, so unset inherits', () => {
     // `text()` normalizes an absent key to '', so the fallback must be `||` — `??` would keep the
     // empty string, the spread would drop out, and an unset key would silently STOP inheriting.
