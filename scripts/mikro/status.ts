@@ -21,6 +21,7 @@
  * so it passes through exactly as answered.
  */
 import type { TriageState, TriageStatusRecord } from './schemas';
+import { gitProbeEnv } from './trusted-source';
 
 /** The two proofs the gate needs, injected so the rule itself stays pure and testable. */
 export interface StatusGate {
@@ -33,9 +34,23 @@ export interface StatusGate {
 /** Exit code 0 from one git read, or false — a git that cannot answer proves nothing. */
 export type GitRun = (dir: string, args: string[]) => boolean;
 
+/**
+ * The ambient git environment is STRIPPED (`gitProbeEnv`): `GIT_DIR`, `GIT_WORK_TREE`
+ * and their siblings make git answer for a repository other than the one `cwd` names,
+ * and this probe's whole job is to prove a commit is in HEAD's history *in the analysed
+ * tree*. An exported `GIT_DIR` would let an unrelated repository — or a git hook that
+ * happened to launch this process — vouch for a sha the analysed tree has never seen.
+ */
 export const gitExitZero: GitRun = (dir, args) => {
   try {
-    return Bun.spawnSync(['git', '--no-pager', ...args], { cwd: dir, stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
+    return (
+      Bun.spawnSync(['git', '--no-pager', ...args], {
+        cwd: dir,
+        env: gitProbeEnv(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      }).exitCode === 0
+    );
   } catch {
     // no git on PATH, no repository: nothing here can prove an ancestor either.
     return false;

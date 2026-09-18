@@ -252,3 +252,57 @@ describe('the ledger row', () => {
     expect(statusLedgerRow(answer('real', []))).toEqual({ state: 'real', downgraded: undefined });
   });
 });
+
+/**
+ * The ambient git environment decides which repository `git` answers for, and `cwd`
+ * does NOT override it: `GIT_DIR=<other>/.git git merge-base --is-ancestor <sha> HEAD`
+ * run inside this tree answers for `<other>`. Both remaining host spawns in this
+ * runtime — `status.ts`'s ancestor probe and `facts.ts`'s host runner — therefore run
+ * on the stripped environment (`gitProbeEnv`).
+ *
+ * The probe runs in a CHILD process with `GIT_DIR` in its environment, because a
+ * `process.env` assignment inside this one does not reach a `Bun.spawnSync` that
+ * inherits: the in-process version of this test passes with the strip removed, which
+ * makes it no test at all.
+ */
+describe('the host git and facts probes ignore an ambient GIT_DIR', () => {
+  test('a commit only ANOTHER repository carries is not an ancestor here', () => {
+    const analysed = repo();
+    const elsewhere = repo();
+    // A commit only `elsewhere` carries. (The two seeded repos hold identical content and
+    // messages, so their first commits can hash identically; this one cannot.)
+    writeFileSync(join(elsewhere.dir, 'src', 'only-here.ts'), 'y\n');
+    git(elsewhere.dir, 'add', '.');
+    git(elsewhere.dir, 'commit', '-qm', 'only in the other repository');
+    const onlyElsewhere = git(elsewhere.dir, 'rev-parse', 'HEAD');
+
+    const probe = join(analysed.dir, 'probe.ts');
+    writeFileSync(
+      probe,
+      `import { makeAncestorCheck } from ${JSON.stringify(join(import.meta.dir, 'status.ts'))};
+import { hostFactsRunner } from ${JSON.stringify(join(import.meta.dir, 'facts.ts'))};
+const [dir, sha, head] = process.argv.slice(2);
+process.stdout.write(
+  JSON.stringify({
+    foreign: makeAncestorCheck(dir)(sha),
+    own: makeAncestorCheck(dir)(head),
+    gitDir: hostFactsRunner.run(['git', 'rev-parse', '--absolute-git-dir'], dir).out.trim(),
+  }),
+);
+`,
+    );
+    const ran = Bun.spawnSync([process.execPath, probe, analysed.dir, onlyElsewhere, analysed.head], {
+      env: { ...process.env, GIT_DIR: join(elsewhere.dir, '.git') },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    expect(ran.exitCode).toBe(0);
+    const seen = JSON.parse(ran.stdout.toString()) as { foreign: boolean; own: boolean; gitDir: string };
+    // With the ambient GIT_DIR honoured, git answers for `elsewhere` and calls it an
+    // ancestor — a "fixed-on-tree" verdict vouched for by a repository nobody named.
+    expect(seen.foreign).toBe(false);
+    expect(seen.own).toBe(true);
+    // …and the facts scan reads the tree it was pointed at, not the exported one.
+    expect(seen.gitDir).toStartWith(analysed.dir);
+  });
+});

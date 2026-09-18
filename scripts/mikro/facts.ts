@@ -38,6 +38,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { gitProbeEnv } from './trusted-source';
 
 // ─── Shape ───────────────────────────────────────────────
 
@@ -143,12 +144,20 @@ export interface FactsRunner {
   readonly canRunGh: boolean;
 }
 
-/** The bare host spawn, unchanged: the default, and what `--boundary none` keeps. */
+/**
+ * The bare host spawn: the default, and what `--boundary none` keeps.
+ *
+ * On the STRIPPED ambient git environment (`gitProbeEnv`), because `cwd` does not
+ * override an exported `GIT_DIR`/`GIT_WORK_TREE`: a facts scan that answered for
+ * another repository would put another tree's paths into the context file, and
+ * `call.ts`'s citation gate verifies against `--dir`. Everything else — PATH, the
+ * `gh` credential — survives.
+ */
 export const hostFactsRunner: FactsRunner = {
   canRunGh: true,
   run(argv: string[], dir: string): Ran {
     try {
-      const p = Bun.spawnSync(argv, { cwd: dir, stderr: 'pipe' });
+      const p = Bun.spawnSync(argv, { cwd: dir, env: gitProbeEnv(), stderr: 'pipe' });
       return { ok: p.exitCode === 0, out: p.stdout.toString() };
     } catch {
       // no such binary on PATH: this source contributes nothing
