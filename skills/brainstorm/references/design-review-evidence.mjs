@@ -10,7 +10,7 @@
 // copies byte-for-byte, so edit this file and copy it over the other.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -218,7 +218,26 @@ export function runDesignReviewEvidenceCli() {
   process.stdout.write(`${designReviewDigest(stamped)}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * Entry-point detection compares REAL paths. `skills.sh` delivers this file
+ * into agent homes that are routinely reached through a symlink (a linked
+ * `references/` directory, a shared `~/.agents/skills`), and Node resolves the
+ * main module to its real path while leaving `process.argv[1]` exactly as it
+ * was typed. Comparing those two spellings meant the CLI body never ran on a
+ * symlinked invocation: `verify` exited 0 having checked nothing, so the design
+ * gate failed open (#2941).
+ */
+function realPathOrSelf(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    // An argv[1] that cannot be realpath'd (never existed, unreadable) keeps
+    // the resolved path, so this guard behaves exactly as it did before.
+    return path;
+  }
+}
+
+if (process.argv[1] && realPathOrSelf(resolve(process.argv[1])) === realPathOrSelf(fileURLToPath(import.meta.url))) {
   try {
     runDesignReviewEvidenceCli();
   } catch (error) {

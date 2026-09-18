@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
@@ -277,6 +277,39 @@ describe('every shipped skill is self-contained', () => {
       expect(verify.exitCode).toBe(1);
       expect(verify.stderr.toString()).not.toContain('ERR_MODULE_NOT_FOUND');
       expect(verify.stderr.toString()).toContain('design review verdict must be SHIP');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * #2941: the entry-point guard compared `resolve(process.argv[1])` with
+   * `fileURLToPath(import.meta.url)`. Node resolves the main module to its real
+   * path but leaves argv[1] as typed, so reaching the script through a symlink
+   * made the two differ, the CLI body never ran, and `verify` exited 0 having
+   * checked nothing — a design gate that fails open on exactly the installs
+   * skills.sh produces.
+   */
+  test('the wish copy refuses through a symlinked path instead of exiting 0', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-symlink-skill-'));
+    try {
+      const references = join(root, 'real', 'references');
+      mkdirSync(references, { recursive: true });
+      cpSync(WISH_SCRIPT, join(references, 'design-review-evidence.mjs'));
+      // argv[1] reaches the script through a symlinked directory; import.meta.url
+      // still names the real one.
+      const linked = join(root, 'linked-references');
+      symlinkSync(references, linked, 'dir');
+      const linkedScript = join(linked, 'design-review-evidence.mjs');
+
+      const design = join(root, 'DESIGN.md');
+      writeFileSync(design, '# Design without evidence\n', 'utf8');
+
+      const verify = Bun.spawnSync(['node', linkedScript, 'verify', design], { stdout: 'pipe', stderr: 'pipe' });
+      expect(verify.stderr.toString()).toContain(
+        'DESIGN.md must contain exactly one bounded design-review evidence block',
+      );
+      expect(verify.exitCode).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
