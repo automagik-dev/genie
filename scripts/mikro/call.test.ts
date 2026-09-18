@@ -1,15 +1,19 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BoundaryError } from './boundary';
 import {
   PRICE_BASIS,
+  RAW_CAP_BYTES,
+  RAW_TRUNCATION_MARKER,
   applyResolutions,
   containedEnv,
   extractJson,
   parseBoundaryFlag,
   parseFooter,
+  persistFailedRaw,
   prepareFacts,
   serverEnv,
   stripFooter,
@@ -273,6 +277,44 @@ describe('facts handoff', () => {
     };
     expect(buildRunSpan({ ...base, factsCandidates: 27 }).attributes['metadata.facts_candidates']).toBe(27);
     expect('metadata.facts_candidates' in buildRunSpan(base).attributes).toBe(false);
+  });
+});
+
+describe('retained raw', () => {
+  const runs = () => join(mkdtempSync(join(tmpdir(), 'mikro-raw-')), '.mikro', 'runs');
+
+  test('a failed attempt keeps the exact bytes, and the row verifies them', () => {
+    const dir = runs();
+    const raw = 'I could not produce JSON.\nmikro · q · m/m · 1 iteration · 1 in / 2 out · $0.00 · 1.0s · session s';
+    const row = persistFailedRaw(dir, 'run-9', 1, raw);
+    expect(row?.path).toBe(join(dir, 'raw-run-9-1.txt'));
+    expect(row?.truncated).toBe(false);
+    expect(row?.bytes).toBe(Buffer.byteLength(raw));
+    expect(readFileSync(row?.path ?? '', 'utf8')).toBe(raw);
+    expect(row?.sha256).toBe(
+      createHash('sha256')
+        .update(readFileSync(row?.path ?? ''))
+        .digest('hex'),
+    );
+  });
+
+  test('an empty answer writes nothing', () => {
+    expect(persistFailedRaw(runs(), 'run-9', 0, '')).toBeUndefined();
+  });
+
+  test('a very long answer is capped, marked, and says so in the row', () => {
+    const row = persistFailedRaw(runs(), 'run-9', 0, 'x'.repeat(RAW_CAP_BYTES + 5000));
+    expect(row?.truncated).toBe(true);
+    expect(row?.bytes).toBe(RAW_CAP_BYTES);
+    const text = readFileSync(row?.path ?? '', 'utf8');
+    expect(text.endsWith(RAW_TRUNCATION_MARKER)).toBe(true);
+    expect(text.startsWith('xxx')).toBe(true);
+  });
+
+  test('a write that cannot land is reported, not thrown — the run is never gated on it', () => {
+    const blocked = join(mkdtempSync(join(tmpdir(), 'mikro-raw-fail-')), 'runs');
+    writeFileSync(blocked, 'not a directory\n');
+    expect(persistFailedRaw(blocked, 'run-9', 0, 'something worth keeping')).toBeUndefined();
   });
 });
 
