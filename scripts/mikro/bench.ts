@@ -113,8 +113,13 @@ const pct = (xs: number[], p: number) => {
  * One bench round. Returns 0 when every bar passed, 1 when one did not, and 2 for a
  * refusal that cost nothing — an argv the bench cannot run, or a fixture set / agents
  * directory that is not on disk.
+ *
+ * `run` is the one seam: it defaults to `runAgent`, and the genie command calls this with
+ * one argument. A test injects a stub so a whole round — jobs, rows, bars, table and the
+ * written record — is exercised end to end without a provider, a runtime or a cent, which
+ * is the only way to cover what a zero-job dry run cannot.
  */
-export async function runBenchCli(argv: string[]): Promise<number> {
+export async function runBenchCli(argv: string[], run: typeof runAgent = runAgent): Promise<number> {
   let options: ReturnType<typeof parseBenchOptions>;
   try {
     options = parseBenchOptions(argv, process.cwd());
@@ -195,7 +200,7 @@ export async function runBenchCli(argv: string[]): Promise<number> {
         rep: job.rep,
         ctx: canaryCtx,
         run: (prompt) =>
-          runAgent({
+          run({
             agent,
             prompt,
             dir,

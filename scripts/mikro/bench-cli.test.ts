@@ -7,11 +7,13 @@
  * nothing), which is also why the agents-dir check is gated on there being a job at all.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runBenchCli } from './bench';
 import { resolveFixturesPath } from './bench-options';
+import type { RunOptions, RunResult, runAgent } from './call';
+import { runFixturesCli } from './fixtures-from-commits';
 
 const trash: string[] = [];
 afterEach(() => {
@@ -30,7 +32,7 @@ function write(root: string, path: string, body: string): void {
 }
 
 /** One round, with both streams captured rather than printed into the test transcript. */
-async function bench(argv: string[]): Promise<{ code: number; out: string; err: string }> {
+async function bench(argv: string[], run?: typeof runAgent): Promise<{ code: number; out: string; err: string }> {
   const captured = { out: '', err: '' };
   const stdout = process.stdout.write;
   const stderr = process.stderr.write;
@@ -43,7 +45,7 @@ async function bench(argv: string[]): Promise<{ code: number; out: string; err: 
     return true;
   }) as typeof process.stderr.write;
   try {
-    const code = await runBenchCli(argv);
+    const code = run ? await runBenchCli(argv, run) : await runBenchCli(argv);
     return { code, ...captured };
   } finally {
     process.stdout.write = stdout;
@@ -104,6 +106,78 @@ describe('the round is refused upfront, at zero cost', () => {
     expect(code).toBe(2);
     expect(err).toContain('usage: genie mikro bench');
     expect(err).not.toContain('genie mikro init');
+  });
+});
+
+describe('a whole round over another repository, against an injected runner', () => {
+  test('commit-built fixtures in repo A bench repo B: one row each, its agents dir, its ledger', async () => {
+    // A: the repository whose history states the ground truth.
+    const a = tmp('mikro-bench-src-');
+    const git = (root: string, args: string[]) =>
+      Bun.spawnSync(['git', '-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    git(a, ['init', '-q', '-b', 'main']);
+    for (const n of [1, 2]) {
+      write(a, `src/mod${n}.ts`, `export const v${n} = ${n};\n`);
+      git(a, ['add', '-A']);
+      git(a, ['commit', '-qm', `feat: add mod${n}`]);
+    }
+    const built = join(a, '.mikro', 'fixtures', 'wish-context.json');
+    expect(runFixturesCli(['--from-commits', 'HEAD', '--agent', 'wish-context', '--dir', a])).toBe(0);
+
+    // B: a different repository, with its own agents — the tree actually measured.
+    const b = tmp('mikro-bench-target-');
+    write(b, '.mikro/agents/wish-context/agent.yaml', 'model: deepseek-api/deepseek-flash\nsystem: SYSTEM.md\n');
+    write(b, '.mikro/agents/wish-context/SYSTEM.md', '# the prompt under measurement\n');
+
+    const seen: { prompt: string; dir?: string; agentsDir?: string }[] = [];
+    const stub = (async (options: RunOptions): Promise<RunResult> => {
+      seen.push({ prompt: options.prompt, dir: options.dir, agentsDir: options.agentsDir });
+      return {
+        ok: true,
+        agent: options.agent,
+        runId: `stub-${seen.length}`,
+        traceId: options.traceId ?? 'stub',
+        dir: options.dir ?? '',
+        // The answer a perfect agent would give: the file the intent names. Scoring is
+        // therefore exercised for real — recall, precision and the bars that read them.
+        answer: { plan: { files: [{ path: `src/${/mod\d/.exec(options.prompt)?.[0]}.ts` }] } },
+        attempts: [],
+        elapsedMs: 1,
+        costUsd: 0.001,
+        tags: options.tags ?? {},
+        boundary: 'none',
+        egress: null,
+        agentSource: 'flag',
+      };
+    }) as typeof runAgent;
+
+    const { code, out } = await bench(['wish-context', '--dir', b, '--fixtures', built, '--no-phoenix'], stub);
+
+    // One run per fixture, each carrying the commit subject as its prompt…
+    expect(seen).toHaveLength(2);
+    expect(seen.map((s) => s.prompt).sort()).toEqual(['Intent: feat: add mod1', 'Intent: feat: add mod2']);
+    // …measuring B's WORKING TREE and reading B as the tree under test, never A.
+    for (const call of seen) {
+      expect(call.agentsDir).toBe(join(b, '.mikro', 'agents'));
+      expect(call.dir).toBe(b);
+    }
+    // The table carries one row per fixture and the bars were computed over them.
+    expect(out).toContain('runs 2 · yield 1.00');
+    expect(code).toBe(0);
+    // The record lands in B's ledger, not A's, and carries both rows.
+    const records = readdirSync(join(b, '.mikro', 'runs')).filter((f) => f.startsWith('bench-'));
+    expect(records).toHaveLength(1);
+    const record = JSON.parse(readFileSync(join(b, '.mikro', 'runs', records[0]), 'utf8')) as {
+      rows: { id: string }[];
+      agentsDir?: string;
+    };
+    expect(record.rows).toHaveLength(2);
+    // No `--agents-dir` was typed, so the record still carries no such key.
+    expect('agentsDir' in record).toBe(false);
+    expect(existsSync(join(a, '.mikro', 'runs'))).toBe(false);
   });
 });
 
