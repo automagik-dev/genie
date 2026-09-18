@@ -377,6 +377,29 @@ export interface RunOptions {
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
 
+/**
+ * The provider key the agents need, for a caller whose environment lacks it (a
+ * workflow agent, a launchd job): sourced from the operator's ~/.mikro/gate-env.sh
+ * — which resolves it from Bitwarden at source time — and handed to the MCP
+ * server's environment only. Nothing is written anywhere.
+ */
+let cachedKeyEnv: Record<string, string> | null = null;
+export function providerKeyEnv(): Record<string, string> {
+  if (cachedKeyEnv) return cachedKeyEnv;
+  cachedKeyEnv = {};
+  if (process.env.DEEPSEEK_API_KEY) return cachedKeyEnv;
+  const gate = join(process.env.HOME ?? '', '.mikro', 'gate-env.sh');
+  if (!existsSync(gate)) return cachedKeyEnv;
+  try {
+    const script = `source "${gate.replace(/"/g, '\\"')}" >/dev/null 2>&1; printf %s "$DEEPSEEK_API_KEY"`;
+    const out = Bun.spawnSync(['bash', '-lc', script], { env: process.env }).stdout.toString().trim();
+    if (out) cachedKeyEnv = { DEEPSEEK_API_KEY: out };
+  } catch {
+    // no key: the run fails loudly at the provider, never silently
+  }
+  return cachedKeyEnv;
+}
+
 function toolName(agent: string): string {
   return `mikro_${agent.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}`;
 }
@@ -408,6 +431,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     let citations: Citation[] = [];
     const client = new McpClient(dir, {
       ...process.env,
+      ...providerKeyEnv(),
       MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
       MIKRO_AGENTS_DIR: agentsDir,
     });
