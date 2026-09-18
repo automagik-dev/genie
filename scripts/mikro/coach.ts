@@ -336,10 +336,28 @@ export function benchCommand(
 ): string[] {
   const local = join(repo, 'scripts', 'mikro', 'bench.ts');
   if (exists(local)) return ['bun', local];
-  const sibling = main.endsWith(`${sep}coach.ts`) ? join(dirname(main), 'bench.ts') : '';
-  if (sibling && exists(sibling)) return ['bun', sibling];
-  if (exists(main)) return [execPath, main, 'mikro', 'bench'];
+  if (!isEmbeddedPath(main)) {
+    const sibling = main.endsWith(`${sep}coach.ts`) ? join(dirname(main), 'bench.ts') : '';
+    if (sibling && exists(sibling)) return ['bun', sibling];
+    if (exists(main)) return [execPath, main, 'mikro', 'bench'];
+  }
   return [execPath, 'mikro', 'bench'];
+}
+
+/**
+ * True for a path inside a Bun standalone binary's embedded filesystem: `/$bunfs/root/…`
+ * on Unix, `B:\~BUN\root\…` on Windows.
+ *
+ * The check cannot be `existsSync`, and that is the whole point of this function. Inside
+ * the running binary the embedded file IS there — `existsSync('/$bunfs/root/genie')` is
+ * TRUE — so a "does it exist" test says "script" about a path no OTHER process can open.
+ * Handing it on produces `genie /$bunfs/root/genie mikro bench`, which exits 1 with
+ * `unknown command`, which leaves the round with no bench record to find. Verified by
+ * compiling a probe binary against this file; the unit fixture that answered false for
+ * the embedded path was describing a host that does not exist.
+ */
+function isEmbeddedPath(path: string): boolean {
+  return path.startsWith('/$bunfs') || path.includes('/$bunfs/') || path.includes('~BUN');
 }
 
 /**

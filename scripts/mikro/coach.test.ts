@@ -4,8 +4,13 @@
  * runs afterwards. Nothing here calls a model, spawns a bench or touches
  * `.mikro/` — that is the point. The generative half is measured in
  * `.mikro/agents/mikro-coach/EVIDENCE.md`.
+ *
+ * The one process this file starts is a compiled probe binary, which runs no agent.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   type CoachEdit,
   CoachRefusal,
@@ -19,6 +24,11 @@ import {
   verifyProposal,
 } from './coach';
 import { Coach } from './schemas';
+
+const trash: string[] = [];
+afterAll(() => {
+  for (const dir of trash.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const SYSTEM = [
   '# agent',
@@ -363,11 +373,83 @@ describe('benchCommand', () => {
       'mikro',
       'bench',
     ]);
-    // The compiled binary: `Bun.main` resolves under /$bunfs and must never be passed on.
-    expect(benchCommand(other, '/$bunfs/root/genie.ts', '/usr/local/bin/genie', has([]))).toEqual([
+  });
+
+  /**
+   * The compiled binary, with the fixture the RUNTIME gives: inside a Bun standalone
+   * binary `existsSync(Bun.main)` is TRUE — the embedded file really is there, for this
+   * process — so an `exists` stub that answered false was testing a host that does not
+   * exist. The embedded path is meaningless to any other process (`genie
+   * /$bunfs/root/genie mikro bench` exits 1 on `unknown command`), which would leave the
+   * round with no bench record at all. Same class as the `gh ENOENT` precedent: never
+   * assert a runtime's own vocabulary against a fixture that contradicts it.
+   */
+  test('an embedded main is not a script, however real it looks from inside', () => {
+    const embeddedMain = '/$bunfs/root/genie';
+    expect(benchCommand(other, embeddedMain, '/usr/local/bin/genie', has([embeddedMain]))).toEqual([
       '/usr/local/bin/genie',
       'mikro',
       'bench',
     ]);
+    // …including when the binary was compiled FROM coach.ts, where the sibling branch
+    // would otherwise hand `bun` an embedded `bench.ts` of another process.
+    expect(
+      benchCommand(other, '/$bunfs/root/coach.ts', '/usr/local/bin/genie', has(['/$bunfs/root/bench.ts'])),
+    ).toEqual(['/usr/local/bin/genie', 'mikro', 'bench']);
+    // Windows spells the same thing `B:\~BUN\root\…`.
+    expect(benchCommand(other, 'B:\\~BUN\\root\\genie', 'C:\\genie.exe', has(['B:\\~BUN\\root\\genie']))).toEqual([
+      'C:\\genie.exe',
+      'mikro',
+      'bench',
+    ]);
+    // A repository that DOES carry the script still wins, compiled binary or not.
+    expect(
+      benchCommand(
+        genieCheckout,
+        embeddedMain,
+        '/usr/local/bin/genie',
+        has([embeddedMain, '/genie/scripts/mikro/bench.ts']),
+      ),
+    ).toEqual(['bun', '/genie/scripts/mikro/bench.ts']);
+  });
+
+  /**
+   * The same claim against a REAL standalone binary rather than a fixture, because the
+   * fixture is exactly what was wrong: this compiles a probe that imports this module
+   * and prints what `benchCommand` answers from inside `/$bunfs`. Slow (a compile), and
+   * softly skipped on a host where `bun build --compile` cannot run — the unit cases
+   * above still pin the rule there.
+   */
+  test('inside a REAL compiled binary, no embedded path reaches the argv', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mikro-bunfs-'));
+    trash.push(dir);
+    writeFileSync(
+      join(dir, 'probe.ts'),
+      `import { existsSync } from 'node:fs';
+import { benchCommand } from ${JSON.stringify(join(import.meta.dir, 'coach.ts'))};
+process.stdout.write(
+  JSON.stringify({ main: Bun.main, mainExists: existsSync(Bun.main), cmd: benchCommand('/no/such/repo') }),
+);
+`,
+    );
+    const bin = join(dir, 'probe-bin');
+    const build = Bun.spawnSync([process.execPath, 'build', '--compile', join(dir, 'probe.ts'), '--outfile', bin], {
+      cwd: dir,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    if (build.exitCode !== 0) {
+      process.stderr.write(`· skipped: bun build --compile is unavailable here (${build.stderr.toString().trim()})\n`);
+      return;
+    }
+    const ran = Bun.spawnSync([bin], { stdout: 'pipe', stderr: 'pipe' });
+    expect(ran.exitCode).toBe(0);
+    const seen = JSON.parse(ran.stdout.toString()) as { main: string; mainExists: boolean; cmd: string[] };
+    // The fact the old fixture denied: inside the binary, the embedded main DOES exist.
+    expect(seen.main).toContain('$bunfs');
+    expect(seen.mainExists).toBe(true);
+    // …and it is still nowhere in the command the round would spawn.
+    expect(seen.cmd).toEqual([bin, 'mikro', 'bench']);
+    for (const token of seen.cmd) expect(token).not.toContain('$bunfs');
   });
 });
