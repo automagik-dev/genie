@@ -101,6 +101,12 @@ const FETCH_LATEST_TIMEOUT_MS = 5_000;
 const RELEASES_OWNER = 'automagik-dev';
 const RELEASES_REPO = 'genie';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
+// The same published bytes, read through the public API. raw.githubusercontent.com
+// caches independently of the repository, so for minutes after a release publishes it
+// still serves the PREVIOUS manifest and `genie update` offers the previous version as
+// the newest one (issue #2947, reproduced on v5.260918.1 and .2). Neither source needs
+// a credential, so both are tried and the newer answer wins.
+const API_BASE_URL = 'https://api.github.com';
 const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
 const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
@@ -357,8 +363,21 @@ export interface LatestManifest {
  * Lives at `.well-known/` on the repo's `main` branch — see release-publish.yml.
  */
 export function manifestUrlForChannel(channel: ReleaseChannel): string {
-  const fileName = channel === 'stable' ? 'latest.json' : `${channel}.json`;
-  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${fileName}`;
+  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${manifestFileName(channel)}`;
+}
+
+/**
+ * The same manifest through the public contents API, which reflects a push
+ * immediately. Requested with `Accept: application/vnd.github.raw`, so the
+ * bytes this returns are the file's own bytes and `manifestSha256` still
+ * describes the published manifest rather than an API envelope.
+ */
+export function manifestApiUrlForChannel(channel: ReleaseChannel): string {
+  return `${API_BASE_URL}/repos/${RELEASES_OWNER}/${RELEASES_REPO}/contents/.well-known/${manifestFileName(channel)}?ref=main`;
+}
+
+function manifestFileName(channel: ReleaseChannel): string {
+  return channel === 'stable' ? 'latest.json' : `${channel}.json`;
 }
 
 /**
@@ -500,9 +519,35 @@ export async function fetchLatestManifest(
   channel: ReleaseChannel,
   opts: FetchManifestOptions = {},
 ): Promise<LatestManifest | null> {
-  const url = manifestUrlForChannel(channel);
   const fetcher = opts.fetcher ?? defaultManifestFetcher;
   const timeoutMs = opts.timeoutMs ?? FETCH_LATEST_TIMEOUT_MS;
+  // Both sources publish the same file; the CDN copy can be minutes stale, so a
+  // stale-but-valid answer must not win over a fresher one. One seam serves both
+  // URLs, so a test that stubs `fetcher` never reaches the network for either.
+  const [cdn, api] = await Promise.all([
+    fetchManifestFrom(manifestUrlForChannel(channel), channel, fetcher, timeoutMs),
+    fetchManifestFrom(manifestApiUrlForChannel(channel), channel, fetcher, timeoutMs),
+  ]);
+  return newerManifest(cdn, api);
+}
+
+/** The newer of two answers; a tie or an unparseable version keeps the CDN copy. */
+function newerManifest(cdn: LatestManifest | null, api: LatestManifest | null): LatestManifest | null {
+  if (!cdn) return api;
+  if (!api) return cdn;
+  const cdnVersion = parseGenieVersion(cdn.version);
+  const apiVersion = parseGenieVersion(api.version);
+  if (!cdnVersion) return api;
+  if (!apiVersion) return cdn;
+  return compareParsedVersions(apiVersion, cdnVersion) > 0 ? api : cdn;
+}
+
+async function fetchManifestFrom(
+  url: string,
+  channel: ReleaseChannel,
+  fetcher: (url: string) => Promise<string | null>,
+  timeoutMs: number,
+): Promise<LatestManifest | null> {
   let raw: string | null = null;
   try {
     raw = await Promise.race([
@@ -513,6 +558,11 @@ export async function fetchLatestManifest(
     return null;
   }
   if (!raw) return null;
+  return parseManifest(raw, channel);
+}
+
+/** Validate the fetched bytes and bind the digest to them, before any reconstruction. */
+function parseManifest(raw: string, channel: ReleaseChannel): LatestManifest | null {
   try {
     const parsed = JSON.parse(raw) as Partial<LatestManifest>;
     if (
@@ -546,7 +596,12 @@ export async function fetchLatestManifest(
 async function defaultManifestFetcher(url: string): Promise<string | null> {
   // Use curl rather than fetch for parity with install.sh and to keep the
   // network surface obvious in offline-debugging traces (single -fsSL call).
-  const result = await runCommandSilent('curl', ['-fsSL', '--max-time', '5', url], undefined, FETCH_LATEST_TIMEOUT_MS);
+  // The API needs one header to answer with the file's own bytes; without it
+  // the response is a JSON envelope whose digest is not the manifest's.
+  const args = url.startsWith(`${API_BASE_URL}/`)
+    ? ['-fsSL', '--max-time', '5', '-H', 'Accept: application/vnd.github.raw', url]
+    : ['-fsSL', '--max-time', '5', url];
+  const result = await runCommandSilent('curl', args, undefined, FETCH_LATEST_TIMEOUT_MS);
   if (!result.success) return null;
   return result.output;
 }
