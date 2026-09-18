@@ -129,7 +129,7 @@ sandbox), the host-side egress proxy, and the probes.
 | surface | policy | why |
 |---|---|---|
 | namespaces | `--unshare-all --die-with-parent --new-session`, unprivileged user namespace | caps are dropped by construction; the sandbox cannot outlive the runner, and `--new-session` denies TIOCSTI |
-| environment | `--clearenv` + explicit `--setenv` | the runtime's whole environment is declared, not inherited: no SSH agent, no caller tokens |
+| environment | the whole environment is handed to the **bwrap process**, which forwards it — never `--setenv` | the runtime's environment is declared, not inherited (no SSH agent, no caller tokens), and the provider key stays out of `/proc/<pid>/cmdline`, which every user on the host can read |
 | system | `--ro-bind` of `/usr /bin /sbin /lib /lib64 /etc` | narrowed down from a `--ro-bind / /` prototype to what `mikro`, `git`, `gh`, `curl` and CA certs need |
 | the repo (`--dir`) | **read-only**, plus its `git rev-parse --git-common-dir` read-only | a review-prep `--dir` is a worktree whose `.git` is a *file* pointing into the main repo; without the common dir `git log`/`grep`/`diff` cannot read anything |
 | `MIKRO_AGENTS_DIR` | read-only (only when it is outside `--dir`) | the agent definitions are input, never writable |

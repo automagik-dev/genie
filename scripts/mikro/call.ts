@@ -317,9 +317,10 @@ export class McpClient {
   constructor(dir: string, env: Record<string, string | undefined>, boundary?: BoundarySession | null) {
     const command = ['mikro', 'mcp', '--dir', dir];
     const argv = boundary ? boundary.argv(command) : command;
-    // Under a boundary the sandbox's own environment is set by `--clearenv --setenv`, so the
-    // bwrap process itself gets nothing but the PATH it needs to be found and to exec.
-    const spawnEnv = boundary ? { PATH: process.env.PATH ?? '/usr/bin:/bin' } : env;
+    // Under a boundary the environment comes from the builder and is handed to the bwrap
+    // PROCESS, which forwards it to the sandbox. It is never passed as `--setenv`: that would
+    // put the provider key and the gh token in a world-readable `/proc/<pid>/cmdline`.
+    const spawnEnv = boundary ? boundary.env : env;
     this.proc = Bun.spawn(argv, { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe', env: spawnEnv });
     void this.pump(this.proc.stdout as ReadableStream<Uint8Array>);
     void this.drain(this.proc.stderr as ReadableStream<Uint8Array>);

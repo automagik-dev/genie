@@ -5,12 +5,12 @@ estimated. The `boundary` arm runs inside bubblewrap, the `control` arm runs the
 uncontained (against a throwaway git repo for the write probe — never the real checkout), so a row is
 only evidence when its control arm shows the check would otherwise have passed.
 
-## 2026-09-18T05:55Z — bwrap bubblewrap 0.11.1 · dir `/home/genie/workspace/repos/genie/.claude/worktrees/agent-a12889cd8beab5763`
+## 2026-09-18T05:59Z — bubblewrap 0.11.1 · dir `/home/genie/workspace/repos/genie/.claude/worktrees/agent-a12889cd8beab5763`
 
 | probe | arm | expected | observed | verdict |
 |---|---|---|---|---|
 | write-to-repo | boundary | write refused, EROFS | exit 2: sh: 1: cannot create /home/genie/workspace/repos/genie/.claude/worktrees/agent-a12889cd8beab5763/.boundary-probe | ✔ |
-| write-to-repo | boundary | tree digest unchanged (dcaf96268e668c49) | dcaf96268e668c49 | ✔ |
+| write-to-repo | boundary | tree digest unchanged (d587453cf0485c3e) | d587453cf0485c3e | ✔ |
 | write-to-repo | control | write succeeds uncontained | exit 0, file created | ✔ |
 | egress-direct | boundary | unreachable with the proxy env cleared | exit 6: 000curl: (6) Could not resolve host: example.com | ✔ |
 | egress-needs-proxy-env | boundary | api.deepseek.com unreachable without the proxy env | exit 6: 000curl: (6) Could not resolve host: api.deepseek.com | ✔ |

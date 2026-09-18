@@ -20,6 +20,7 @@ import {
   SYSTEM_RO_BINDS,
   appendBoundaryEvidence,
   bindArgs,
+  boundaryEnv,
   bwrapArgv,
   egressLogLine,
   hostHeaderTarget,
@@ -69,6 +70,7 @@ function spec(overrides: Partial<BoundarySpec> = {}): BoundarySpec {
     maxVirtualKb: 4_194_304,
     socatPath: '/usr/bin/socat',
     shellPath: '/bin/bash',
+    bwrapPath: '/usr/bin/bwrap',
     ...overrides,
   };
 }
@@ -80,11 +82,10 @@ function indexOfBind(argv: string[], flag: string, source: string): number {
 }
 
 describe('bwrapArgv: isolation flags', () => {
-  test('unshares everything, dies with its parent and starts from an empty environment', () => {
+  test('unshares everything, dies with its parent, and is invoked by absolute path', () => {
     const argv = bwrapArgv(spec());
-    expect(argv[0]).toBe('bwrap');
-    for (const flag of ['--unshare-all', '--die-with-parent', '--new-session', '--clearenv'])
-      expect(argv).toContain(flag);
+    expect(argv[0]).toBe('/usr/bin/bwrap');
+    for (const flag of ['--unshare-all', '--die-with-parent', '--new-session']) expect(argv).toContain(flag);
   });
 
   test('the network namespace is private: no bwrap flag ever re-shares it', () => {
@@ -185,12 +186,23 @@ describe('sandboxEnv', () => {
     expect(env.TMPDIR).toBe('/tmp');
   });
 
-  test('every --setenv in the argv is exactly what the spec declared', () => {
+  test('the environment is handed to the bwrap process, never spelled into its argv', () => {
     const s = spec();
     const argv = bwrapArgv(s);
-    const seen: Record<string, string> = {};
-    for (let i = 0; i < argv.length - 2; i++) if (argv[i] === '--setenv') seen[argv[i + 1]] = argv[i + 2];
-    expect(seen).toEqual(s.env);
+    // /proc/<pid>/cmdline is world-readable: one --setenv here would publish the provider
+    // key to every user on the host for as long as the run lasts.
+    expect(argv).not.toContain('--setenv');
+    expect(argv).not.toContain('--clearenv');
+    expect(argv.join('\u0000')).not.toContain('sk-test');
+    expect(boundaryEnv(s)).toEqual(s.env);
+    expect(boundaryEnv(s).DEEPSEEK_API_KEY).toBe('sk-test');
+  });
+
+  test('boundaryEnv is a copy, so a caller cannot mutate the spec through it', () => {
+    const s = spec();
+    const env = boundaryEnv(s);
+    env.DEEPSEEK_API_KEY = 'tampered';
+    expect(s.env.DEEPSEEK_API_KEY).toBe('sk-test');
   });
 });
 

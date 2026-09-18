@@ -27,6 +27,11 @@
  *
  * Fail-closed by construction: every resolution failure throws `BoundaryError`
  * with a named cause and the run aborts. `bwrap` mode never downgrades to `none`.
+ *
+ * Credentials never reach argv: the sandbox environment is handed to the bwrap
+ * PROCESS (`boundaryEnv`), not written as `--setenv`, because `/proc/<pid>/cmdline`
+ * is world-readable and `--setenv DEEPSEEK_API_KEY …` would publish the key to
+ * every user on the host for the life of the run.
  */
 import { createHash } from 'node:crypto';
 import {
@@ -127,6 +132,8 @@ export interface BoundarySpec {
   maxVirtualKb: number;
   socatPath: string;
   shellPath: string;
+  /** Absolute path to bwrap, resolved once on the host: argv[0] is never left to a PATH lookup. */
+  bwrapPath: string;
 }
 
 /** POSIX single-quote quoting: the only escaping the inner `sh -c` payload needs. */
@@ -141,25 +148,25 @@ function requireAbsolute(label: string, value: string): string {
 }
 
 /**
- * The mount and environment policy, in the order bwrap applies it — ordering is
- * load-bearing: the HOME tmpfs must land before anything bound underneath it,
- * and a read-write bind must land after the read-only bind it punches through.
+ * The MOUNT policy, in the order bwrap applies it — ordering is load-bearing: the
+ * HOME tmpfs must land before anything bound underneath it, and a read-write bind
+ * must land after the read-only bind it punches through.
+ *
+ * No `--setenv` and no `--clearenv` appear here, deliberately. `--setenv` would put
+ * `DEEPSEEK_API_KEY` and `GH_TOKEN` in bwrap's own argv, and `/proc/<pid>/cmdline`
+ * is world-readable — every other user on the host would be able to read the key
+ * out of `ps` for as long as the run lasts. The sandbox environment is instead
+ * handed to the bwrap PROCESS (`boundaryEnv`), which forwards it to the child, so
+ * the secret lives in `/proc/<pid>/environ` (owner-only) exactly as it already does
+ * on the uncontained path. The guarantee is unchanged — the environment is declared
+ * in full, never inherited — because the spawn replaces the whole environment.
  */
 export function bindArgs(spec: BoundarySpec): string[] {
   requireAbsolute('home', spec.home);
   requireAbsolute('dir', spec.dir);
   requireAbsolute('scratch', spec.scratch);
   requireAbsolute('socket', spec.socket);
-  const argv = [
-    '--unshare-all',
-    '--die-with-parent',
-    '--new-session',
-    '--clearenv',
-    '--proc',
-    '/proc',
-    '--dev',
-    '/dev',
-  ];
+  const argv = ['--unshare-all', '--die-with-parent', '--new-session', '--proc', '/proc', '--dev', '/dev'];
   for (const path of spec.systemRo) argv.push('--ro-bind', requireAbsolute('systemRo', path), path);
   argv.push('--tmpfs', '/tmp');
   // HOME is a tmpfs at the same path: mikro's ~/.mikro/sessions store is writable and discarded
@@ -183,9 +190,15 @@ export function bindArgs(spec: BoundarySpec): string[] {
   for (const path of spec.writable) argv.push('--bind', requireAbsolute('writable', path), path);
   argv.push('--bind', spec.scratch, spec.scratch);
   argv.push('--chdir', spec.dir);
-  for (const [key, value] of Object.entries(spec.env).sort(([a], [b]) => a.localeCompare(b)))
-    argv.push('--setenv', key, value);
   return argv;
+}
+
+/**
+ * The environment the bwrap PROCESS is spawned with, and therefore the whole
+ * environment the contained runtime sees. Never `--setenv` (see `bindArgs`).
+ */
+export function boundaryEnv(spec: BoundarySpec): Record<string, string> {
+  return { ...spec.env };
 }
 
 /**
@@ -208,12 +221,12 @@ export function innerCommand(spec: BoundarySpec): string {
 
 /** The full sandbox argv. The ONE place a contained child's command line is assembled. */
 export function bwrapArgv(spec: BoundarySpec): string[] {
-  return ['bwrap', ...bindArgs(spec), '--', spec.shellPath, '-c', innerCommand(spec)];
+  return [spec.bwrapPath, ...bindArgs(spec), '--', spec.shellPath, '-c', innerCommand(spec)];
 }
 
 /** The same mounts with no proxy and no payload: `bwrap … -- /bin/true`, the launch that must succeed before anything is spawned. */
 export function preflightArgv(spec: BoundarySpec): string[] {
-  return ['bwrap', ...bindArgs(spec), '--', '/bin/true'];
+  return [spec.bwrapPath, ...bindArgs(spec), '--', '/bin/true'];
 }
 
 // ─── The egress proxy ────────────────────────────────────
@@ -427,6 +440,8 @@ export interface BoundarySession {
   readonly spec: BoundarySpec;
   /** The full argv for one contained command; the caller never assembles one itself. */
   argv(command: string[]): string[];
+  /** The environment the bwrap process is spawned with — the credentials go here, never into argv. */
+  readonly env: Record<string, string>;
   counts(): { allowed: number; denied: number };
   close(): Promise<void>;
 }
@@ -463,7 +478,7 @@ export function sandboxEnv(
  * the mounts work — in that order, so a failure aborts before anything is spawned.
  */
 export async function openBoundary(options: OpenBoundaryOptions): Promise<BoundarySession> {
-  which('bwrap', 'bwrap-missing');
+  const bwrapPath = which('bwrap', 'bwrap-missing');
   const socatPath = which('socat', 'socat-missing');
   const home = options.home ?? process.env.HOME ?? '';
   requireAbsolute('home', home);
@@ -509,6 +524,7 @@ export async function openBoundary(options: OpenBoundaryOptions): Promise<Bounda
     maxVirtualKb: DEFAULT_MAX_VIRTUAL_KB,
     socatPath,
     shellPath: '/bin/bash',
+    bwrapPath,
   };
   const proxy = await startEgressProxy({
     socketPath: socket,
@@ -516,7 +532,7 @@ export async function openBoundary(options: OpenBoundaryOptions): Promise<Bounda
     runId: options.runId,
     allow: options.allow,
   });
-  const preflight = Bun.spawnSync(preflightArgv(spec), { stdout: 'pipe', stderr: 'pipe' });
+  const preflight = Bun.spawnSync(preflightArgv(spec), { stdout: 'pipe', stderr: 'pipe', env: boundaryEnv(spec) });
   if (preflight.exitCode !== 0) {
     await proxy.close();
     rmSync(scratch, { recursive: true, force: true });
@@ -529,6 +545,7 @@ export async function openBoundary(options: OpenBoundaryOptions): Promise<Bounda
     mode: 'bwrap',
     spec,
     argv: (command) => bwrapArgv({ ...spec, command }),
+    env: boundaryEnv(spec),
     counts: () => proxy.counts(),
     close: async () => {
       await proxy.close();
@@ -560,7 +577,7 @@ export function treeDigest(dir: string): string {
  * time out against a proxy that was simply never scheduled.
  */
 async function runContained(session: BoundarySession, command: string[]): Promise<{ code: number; out: string }> {
-  const proc = Bun.spawn(session.argv(command), { stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn(session.argv(command), { stdout: 'pipe', stderr: 'pipe', env: session.env });
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -826,7 +843,7 @@ async function runProbes(dir: string, writeEvidence: boolean): Promise<number> {
     appendBoundaryEvidence(
       join(dirname(new URL(import.meta.url).pathname), 'EVIDENCE-boundary.md'),
       rows,
-      `bwrap ${Bun.spawnSync(['bwrap', '--version']).stdout.toString().trim() || 'unknown'} · dir \`${dir}\``,
+      `${Bun.spawnSync(['bwrap', '--version']).stdout.toString().trim() || 'bwrap unknown'} · dir \`${dir}\``,
     );
   return failures.length === 0 ? 0 : 1;
 }
