@@ -47,3 +47,33 @@ Edit `SYSTEM.md`, re-bench with a new `--tag round=N`, keep the change only if t
 and the evidence table improved. Deterministic before generative: anything a script can compute
 (file lists, tests that name a file, gotcha lines) is fetched by the starter-block helpers, and the
 model only reads, cites and summarizes. Never add a write verb to a helper.
+
+## Per-machine prerequisites (checklist)
+
+- `mikro` ≥ 1.260909.1 on PATH (`mikro --version`), run by a working node — on this host Homebrew's node 25
+  cannot load `libllhttp`, so the `mikro` MCP wrapper registered with `claude mcp` pins
+  `~/.nvm/versions/node/v24.13.1/bin` first in PATH.
+- `~/.mikro/settings.json` mirroring the `providers:` block of `.mikro/mikro.yaml` (api-key-env only, no
+  literal key), so a `--dir` outside this checkout still resolves `deepseek-api/deepseek-flash`.
+- `~/.mikro/gate-env.sh` exporting `DEEPSEEK_API_KEY` by resolving it from Bitwarden (`bws secret get …`)
+  at source time. It is never backed up with a literal value; `call.ts` sources it only when the caller's
+  environment lacks the key and hands the key to the MCP server's environment alone.
+
+## What "read-only" means here
+
+Prompt discipline, not a sandbox. Each agent's starter block routes `git` and `gh` through allowlisted
+helpers, but the REPL is Python with `subprocess` available; an instruction smuggled into an issue body,
+PR body or commit message that the model obeys could run anything the MCP server's environment allows.
+Mitigations in place: the server gets an allowlisted environment (PATH, HOME, locale, `MIKRO_*`, the
+provider key — never the caller's tokens or SSH agent); a `--dir` whose `.mikro/` config differs from the
+invoking checkout's is refused, so a PR cannot swap the provider or inject `TOOLS.md`; untracked files are
+never verified citations; every attempt is ledgered and traced. Not yet in place: an adversarial fixture
+per agent scoring `injection_attempts` with a bar of zero executed side effects — required before an
+agent is pointed at issues or PRs authored outside the team.
+
+## Prices
+
+USD figures come from the per-million prices declared for the provider (`cost:` in `.mikro/mikro.yaml`),
+which are the registry's V4 Flash placeholders until DeepSeek publishes 4.1 Flash's; token counts,
+iterations and wall clock are measured. Each ledger row and Phoenix span carries `mikro_version` and
+`price_basis` so a later reprice is mechanical.

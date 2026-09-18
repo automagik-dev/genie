@@ -34,9 +34,9 @@ context:
 # max-tokens: maximum total tokens (input + output) per run
 # max-depth: maximum recursive rlm_query depth
 budget:
-  max-cost: null
-  max-tokens: null
-  max-depth: null
+  max-cost: 0.50            # every ambient run, including the generic mikro_query tool over MCP
+  max-tokens: 400000
+  max-depth: 1
 
 # ─── Tools Level ──────────────────────────────────────────
 # Controls which built-in functions are available in the REPL.

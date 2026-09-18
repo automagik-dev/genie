@@ -2,7 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyResolutions, extractJson, parseFooter, stripFooter, verifyCitations } from './call';
+import {
+  applyResolutions,
+  extractJson,
+  parseFooter,
+  serverEnv,
+  stripFooter,
+  untrustedConfig,
+  verifyCitations,
+} from './call';
 import { IssueTriage, SCHEMAS } from './schemas';
 
 const FOOTER =
@@ -122,5 +130,40 @@ describe('schemas', () => {
       first_question: null,
     });
     expect(ok.success).toBe(true);
+  });
+});
+
+describe('hardening', () => {
+  test('the MCP server gets an allowlisted environment, never the whole one', () => {
+    process.env.SSH_AUTH_SOCK = '/tmp/sock';
+    process.env.GH_TOKEN = 'ghp_secret';
+    process.env.MIKRO_TEST_FLAG = '1';
+    const env = serverEnv();
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(env.MIKRO_TEST_FLAG).toBe('1');
+    expect(env.PATH).toBeDefined();
+  });
+  test('a --dir whose .mikro config differs from the invoking checkout is refused', () => {
+    const trusted = mkdtempSync(join(tmpdir(), 'mikro-trusted-'));
+    const other = mkdtempSync(join(tmpdir(), 'mikro-other-'));
+    mkdirSync(join(trusted, '.mikro'), { recursive: true });
+    mkdirSync(join(other, '.mikro'), { recursive: true });
+    writeFileSync(join(trusted, '.mikro', 'mikro.yaml'), 'model: a\n');
+    writeFileSync(join(other, '.mikro', 'mikro.yaml'), 'model: a\n');
+    expect(untrustedConfig(other, trusted)).toBeNull();
+    writeFileSync(join(other, '.mikro', 'TOOLS.md'), '## evil\n');
+    expect(untrustedConfig(other, trusted)).toMatch(/TOOLS.md differs/);
+    expect(untrustedConfig(trusted, trusted)).toBeNull();
+  });
+  test('an untracked file is never a verified citation', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-untracked-'));
+    writeFileSync(join(repo, 'tracked.ts'), 'a\n');
+    writeFileSync(join(repo, 'local.ts'), 'a\n');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', 'tracked.ts'], { cwd: repo });
+    const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
+    expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
+    expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
   });
 });

@@ -1,6 +1,6 @@
 {
   "agent": "wish-context",
-  "notes": "Ground truth = the file set the delivered PR touched (or, for the bundle, the WISH.md file list). Recall on plan.files.",
+  "notes": "Ground truth = the file set the delivered PR touched (or, for the bundle, the WISH.md file list). Recall on plan.files. Every truth file must exist on dev: the verifier scores the tree.",
   "fixtures": [
     {
       "id": "issue-2921",
@@ -50,28 +50,6 @@
       }
     },
     {
-      "id": "observe-bundle",
-      "prompt": "Intent: lets fix the gaps, make workable for anyone that use phoenix locally, theres no need to document other than a readme on the workflow folder itself, its useful to have that bundled, so that any genie user that also uses phoenix can use it",
-      "truth": {
-        "files": [
-          "scripts/observability/backfill.ts",
-          "scripts/observability/backfill.test.ts",
-          "scripts/observability/annotate.ts",
-          "scripts/observability/annotate.test.ts",
-          "scripts/observability/px-queries.sh",
-          "scripts/observability/README.md",
-          "skills/observe/SKILL.md",
-          "skills/observe/agents/openai.yaml",
-          "skills/README.md",
-          "scripts/release-docs.test.ts",
-          ".claude/workflows/observability-review.js",
-          ".claude/workflows/README.md",
-          "scripts/observability-review-workflow-parity.test.ts"
-        ],
-        "notes": "observe-skill-bundle WISH.md file list (Felipe's run-4 sentence verbatim)"
-      }
-    },
-    {
       "id": "slice-0",
       "prompt": "Intent: in .claude/workflows/wish.js narrow the scripts/release-* denylist rule so it never matches *.test.ts (with a behavior test), make the units estimate advisory so files and insertions are the only hard maxima, and add the measured runs 2–5 to the workflows README measured-runs table.",
       "truth": {
@@ -83,6 +61,26 @@
           ".claude/workflows/README.md"
         ],
         "notes": "wish-v7 slice 0 as designed"
+      }
+    },
+    {
+      "id": "issue-2927",
+      "prompt": "Intent: fix GitHub issue #2927 — genie update and genie doctor are blind to pre-record genie skill dirs (genie-review, pm, wizard, the codex-fallback transaction dir) left in agent homes; retire the proven ones on update, backup-first, and make doctor warn about them.",
+      "truth": {
+        "files": [
+          "CLAUDE.md",
+          "scripts/legacy-skills-catalog.ts",
+          "src/genie-commands/doctor.test.ts",
+          "src/genie-commands/doctor.ts",
+          "src/lib/codex-project-mcp.test.ts",
+          "src/lib/codex-project-mcp.ts",
+          "src/lib/legacy-skills-catalog.ts",
+          "src/lib/legacy-skills.test.ts",
+          "src/lib/legacy-skills.ts",
+          "src/lib/skills-installer.test.ts",
+          "src/lib/skills-installer.ts"
+        ],
+        "notes": "PR #2928 files still present on dev; replaces observe-bundle, whose truth came from a plan with files not in the tree"
       }
     }
   ]

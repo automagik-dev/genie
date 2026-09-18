@@ -46,8 +46,9 @@ describe('wish.js mikro offload', () => {
   test('the report renders one offload line per stage that reported one', () => {
     expect(script).toContain('offloadLine(view.scoutMikro)');
     expect(script).toContain('offloadLine(review.mikro)');
-    expect(script).toContain('scoutMikro: objectOf(scout.mikro)');
-    expect(script).toContain('mikro: objectOf(value.mikro)');
+    expect(script).toContain('scoutMikro: offloadOrAbsent(scout.mikro, MIKRO_SCOUT_AGENT)');
+    expect(script).toContain('mikro: offloadOrAbsent(value.mikro, MIKRO_REVIEW_AGENT)');
+    expect(script).toContain('not reported by the stage');
   });
 });
 

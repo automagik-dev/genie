@@ -130,6 +130,17 @@ function walk(
   }
 }
 
+const trackedCache = new Map<string, Set<string>>();
+function isTracked(dir: string, path: string): boolean {
+  let set = trackedCache.get(dir);
+  if (!set) {
+    set = new Set(Bun.spawnSync(['git', 'ls-files'], { cwd: dir }).stdout.toString().split('\n').filter(Boolean));
+    trackedCache.set(dir, set);
+  }
+  if (set.size === 0) return true; // not a git checkout: nothing to compare against
+  return set.has(path) || [...set].some((p) => p.startsWith(`${path.replace(/\/$/, '')}/`));
+}
+
 /** Rewrite every citation the verifier resolved from a bare name to its full path, so the answer carries what was verified. */
 export function applyResolutions<T>(value: T, citations: Citation[]): T {
   const fixes = citations.filter((c) => c.resolvedTo);
@@ -190,6 +201,15 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
       return;
     }
     const abs = resolve(dir, clean);
+    if (existsSync(abs) && !isTracked(dir, clean) && !deletedOk) {
+      seen.set(key, {
+        path,
+        line,
+        ok: false,
+        reason: 'not a tracked file (untracked or ignored content is never evidence)',
+      });
+      return;
+    }
     if (!existsSync(abs)) {
       if (!clean.includes('/')) {
         byBase ??= trackedByBasename(dir);
@@ -404,6 +424,52 @@ function toolName(agent: string): string {
   return `mikro_${agent.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}`;
 }
 
+/** The environment the MCP server gets: an allowlist, never the caller's whole environment (no SSH agent, no tokens the agents were never granted). */
+export function serverEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined) continue;
+    if (
+      ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM', 'USER', 'SHELL'].includes(k) ||
+      k.startsWith('LC_') ||
+      k.startsWith('MIKRO_')
+    )
+      out[k] = v;
+  }
+  return out;
+}
+
+/** mikro's own version, once per process, for the ledger and the span. */
+let cachedMikroVersion: string | null = null;
+export function mikroVersion(): string {
+  if (cachedMikroVersion) return cachedMikroVersion;
+  try {
+    cachedMikroVersion = Bun.spawnSync(['mikro', '--version']).stdout.toString().trim() || 'unknown';
+  } catch {
+    cachedMikroVersion = 'unknown';
+  }
+  return cachedMikroVersion;
+}
+
+/**
+ * mikro loads <dir>/.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md} from the directory it is
+ * pointed at — a project provider entry beats the global one, and TOOLS.md is Python injected into the
+ * REPL. A --dir that is the tree under review (an executor worktree cut from a PR) must therefore
+ * never supply that config: it is refused unless every such file is byte-identical to the invoking
+ * checkout's, or absent.
+ */
+export function untrustedConfig(dir: string, trustedRoot: string): string | null {
+  if (resolve(dir) === resolve(trustedRoot)) return null;
+  for (const name of ['mikro.yaml', 'TOOLS.md', 'SYSTEM.md', 'CRITERIA.md']) {
+    const theirs = join(dir, '.mikro', name);
+    if (!existsSync(theirs)) continue;
+    const ours = join(trustedRoot, '.mikro', name);
+    if (!existsSync(ours) || readFileSync(theirs, 'utf8') !== readFileSync(ours, 'utf8'))
+      return `${theirs} differs from the invoking checkout's .mikro/${name}: refusing to run an agent under configuration taken from the tree under review`;
+  }
+  return null;
+}
+
 export async function runAgent(options: RunOptions): Promise<RunResult> {
   const dir = resolve(options.dir ?? process.cwd());
   const agentsDir = resolve(
@@ -418,6 +484,24 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     options.schema === undefined ? (isAgentName(options.agent) ? SCHEMAS[options.agent] : null) : options.schema;
   const attempts: Attempt[] = [];
   const started = Date.now();
+  const trustedRoot = resolve(agentsDir, '..', '..');
+  const untrusted = untrustedConfig(dir, trustedRoot);
+  if (untrusted) {
+    return {
+      ok: false,
+      agent: options.agent,
+      runId,
+      traceId,
+      dir,
+      answer: undefined,
+      attempts: [
+        { attempt: 0, ok: false, errors: [`config: ${untrusted}`], footer: null, citations: [], elapsedMs: 0, raw: '' },
+      ],
+      elapsedMs: 0,
+      costUsd: 0,
+      tags,
+    };
+  }
   let prompt = options.prompt;
   let answer: unknown;
   let ok = false;
@@ -430,7 +514,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     let footer: Footer | null = null;
     let citations: Citation[] = [];
     const client = new McpClient(dir, {
-      ...process.env,
+      ...serverEnv(),
       ...providerKeyEnv(),
       MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
       MIKRO_AGENTS_DIR: agentsDir,
@@ -487,11 +571,11 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     const attemptOk = errors.length === 0;
     attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw });
     if (options.ledger !== false) {
-      const runsDir = join(dir, '.mikro', 'runs');
+      const runsDir = join(trustedRoot, '.mikro', 'runs');
       mkdirSync(runsDir, { recursive: true });
       appendFileSync(
         join(runsDir, `${options.agent}.jsonl`),
-        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), tags })}\n`,
+        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: 'config-declared per-million placeholder', attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), tags })}\n`,
       );
     }
     if (options.phoenix !== false) {
@@ -509,7 +593,13 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         costUsd: footer?.cost ?? 0,
         ok: attemptOk,
         errors,
-        tags: { ...tags, prompt_sha: sha(options.prompt) },
+        tags: {
+          ...tags,
+          prompt_sha: sha(options.prompt),
+          mikro_version: mikroVersion(),
+          price_basis: 'config-declared placeholder',
+          dir,
+        },
         prompt,
         answer: raw,
       });
