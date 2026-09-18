@@ -1,5 +1,7 @@
 # issue-triage — evidence
 
+Rounds dated before 2026-09-18T05:00Z were priced at the placeholder basis (0.14 in / 0.28 out per M); list prices are 0.30 / 1.20 peak — see README "Prices".
+
 Every row below is a real run recorded by `scripts/mikro/bench.ts`; nothing is estimated. Bars: yield ≥ 0.9, fabrications 0, recall ≥ 0.6, median cost ≤ $0.05, p90 ≤ 240 s.
 
 ## 2026-09-18T00:20Z — round 1 — first-draft
