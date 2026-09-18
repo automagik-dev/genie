@@ -29,6 +29,7 @@ import { type IntegrationSelection, persistIntegrationConsent } from '../lib/run
 import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from '../lib/skills-installer.js';
 import { printErr, printOut } from '../lib/term-output.js';
 import { VERSION } from '../lib/version.js';
+import { type WorkflowsChannelConvergenceResult, runWorkflowsChannelConvergence } from '../lib/workflows-installer.js';
 import { type AuxiliaryTreeOperations, type AuxiliaryTreeOutcome, convergeAuxiliaryTree } from './auxiliary-trees.js';
 import { cleanupV4 } from './legacy-v4.js';
 
@@ -65,6 +66,8 @@ type V4CleanupRunner = typeof cleanupV4;
 type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | undefined;
 /** The skills.sh channel step; production pins it to the running binary's VERSION. */
 type SkillsChannelRunner = (selection: IntegrationSelection) => SkillsChannelConvergenceResult;
+/** The workflows channel step, which runs after the skills channel wrote the record. */
+type WorkflowsChannelRunner = (selection: IntegrationSelection) => WorkflowsChannelConvergenceResult;
 type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
 type ConsentWriter = (selection: IntegrationSelection) => void;
 type InstallMarkerRetirer = () => void;
@@ -188,6 +191,8 @@ export async function installCommand(
   retireMarker: InstallMarkerRetirer = () => retireInstallVersionMarker(GENIE_HOME),
   runSkills: SkillsChannelRunner = (selection) =>
     runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
+  runWorkflows: WorkflowsChannelRunner = (selection) =>
+    runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
 ): Promise<void> {
   const selection = resolveIntegrationSelection(options);
   // The bounded wait wraps the acquirer actually in play (injected seam
@@ -219,13 +224,17 @@ export async function installCommand(
     }
 
     const skills = runPermittedPostDeliveryIntegrations(selection, runSkills);
+    // AFTER the skills channel, always: the workflows channel writes its field
+    // into the record that channel just rewrote, and installs nothing at all
+    // when there is no readable record to write into (wish decision 4).
+    const workflows = runWorkflows(selection);
     // Decision 14: marker retirement is the LAST successful finisher. A later
     // consent or legacy-cleanup failure must leave the marker intact so the
     // whole install remains retryable.
     retireInstallMarkerSafe(retireMarker);
-    // A failed skills install is a FAILURE: the delivered bytes stay committed,
-    // and the operator gets exit 1 with the remedy command.
-    if (skills.status === 'failed') process.exitCode = 1;
+    // A failed skills or workflows install is a FAILURE: the delivered bytes
+    // stay committed, and the operator gets exit 1 with the remedy command.
+    if (skills.status === 'failed' || workflows.status === 'failed') process.exitCode = 1;
   } finally {
     releaseOrderedLifecycleLeases(lease);
   }

@@ -66,6 +66,7 @@ import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from
 import { printOut, writeErr, writeOut } from '../lib/term-output.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
+import { type WorkflowsChannelConvergenceResult, runWorkflowsChannelConvergence } from '../lib/workflows-installer.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
   type AuxiliaryTreeOperations,
@@ -1914,7 +1915,7 @@ function applyDowngradeGuard(
 
 /**
  * Map a convergence outcome to the process exit code:
- *   - a failed skills.sh install → exit 1 (retry)
+ *   - a failed skills.sh or workflows install → exit 1 (retry)
  *   - else success (exit 0), caller prints its own success line.
  *
  * The former action-required exit-2 arm left with the Codex plugin activation
@@ -1923,7 +1924,7 @@ function applyDowngradeGuard(
  * convergence either succeeds or is retryable.
  */
 export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult): void {
-  if (convergence.skills?.status === 'failed') {
+  if (convergence.skills?.status === 'failed' || convergence.workflows?.status === 'failed') {
     process.exitCode = 1;
   }
 }
@@ -2644,6 +2645,8 @@ export interface ManualUpdateConvergenceOptions {
   selection?: IntegrationSelection;
   /** Test seam for the skills.sh channel step (production uses the pinned CLI). */
   runSkills?: SkillsChannelRunner;
+  /** Test seam for the workflows channel step (production writes `~/.claude/workflows`). */
+  runWorkflows?: WorkflowsChannelRunner;
   /**
    * Agent-home overrides for the plugin-era retirement step. Production resolves
    * the real `$HOME` / `$GENIE_HOME`; tests point every root at one fixture home.
@@ -2668,6 +2671,24 @@ export function runUpdateSkillsChannel(
   return runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
 }
 
+export type WorkflowsChannelRunner = (
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+) => WorkflowsChannelConvergenceResult;
+
+/**
+ * The workflows channel as `genie update` runs it. `<GENIE_HOME>/templates` is
+ * already converged by the time this executes — the OLD binary syncs the
+ * auxiliary trees before it spawns `update --post-delivery-converge` — so the
+ * catalog this reads is the freshly delivered one.
+ */
+export function runUpdateWorkflowsChannel(
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+): WorkflowsChannelConvergenceResult {
+  return runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
+}
+
 export interface ManualUpdateConvergenceResult {
   /**
    * The skills.sh channel outcome, or `null` when the channel never ran
@@ -2676,6 +2697,12 @@ export interface ManualUpdateConvergenceResult {
    * see {@link applyConvergenceExitSignal}.
    */
   skills: SkillsChannelConvergenceResult | null;
+  /**
+   * The workflows channel outcome, or `null` when the channel never ran
+   * (consent `none`). Surfaced for the same reason as `skills`: a failed
+   * workflows install must reach the exit code rather than be discarded.
+   */
+  workflows: WorkflowsChannelConvergenceResult | null;
   /**
    * The plugin-era integration retirement outcome, or `null` when it did not run
    * — which is every case except a FRESH skills-channel install (see below).
@@ -2686,7 +2713,7 @@ export interface ManualUpdateConvergenceResult {
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { skills: null, retirement: null };
+  if (selection === 'none') return { skills: null, workflows: null, retirement: null };
   // Skills FIRST: a host must never pass through a state with neither the
   // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2714,7 +2741,17 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
           log: (line) => emit(`integrations: ${line}`),
         })
       : null;
-  return { skills, retirement };
+  // The workflows channel runs after the skills channel (it writes its field
+  // into the record that channel just rewrote, and installs nothing at all when
+  // no readable record survives — wish decision 4) and after the plugin-era
+  // retirement, which owns the ONE file both touch: a `managed-clean`
+  // `~/.claude/workflows/council.js` and its `.genie-sync.json` sidecar are
+  // genie's own plugin-era asset, proven by digest and removed backup-first.
+  // Installing over it first would archive it as "not installed by genie" —
+  // false, and the exact mis-attribution the modified/foreign split exists to
+  // prevent — and would leave the sidecar reported `managed-modified` for ever.
+  const workflows = (options.runWorkflows ?? runUpdateWorkflowsChannel)(selection, emit);
+  return { skills, workflows, retirement };
 }
 
 /**

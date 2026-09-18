@@ -40,6 +40,7 @@ import {
   writeSkillsInstallRecord,
 } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
+import type { WorkflowsChannelConvergenceResult } from '../../lib/workflows-installer.js';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   DeliveryPublicationError,
@@ -92,6 +93,14 @@ import {
  * `src/lib/skills-installer.test.ts`.
  */
 const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
+
+/**
+ * And this: the production default writes the operator's real
+ * `~/.claude/workflows`. Group 2's own behavior lives in
+ * `src/lib/workflows-installer.test.ts`; every convergence test here injects the
+ * seam so no unit test can touch a real product home.
+ */
+const noWorkflowsChannel = (): WorkflowsChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -2419,6 +2428,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
   test('runs the canonical convergence APIs and returns the structured channel outcome', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: '5.260711.3',
       runSkills: (selection) => {
         calls.push(`parent-skills:${selection}`);
@@ -2431,13 +2441,35 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     });
     expect(calls[0]).toBe('parent-skills:all');
     expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+    // The workflows channel is a leg of its own, so a caller can give a failed
+    // workflows install the same exit precedence a failed skills install gets.
+    expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
     expect(result.retirement).toBeNull();
+  });
+
+  test('a failed workflows install reaches the exit code, exactly as a failed skills install does', () => {
+    const savedExitCode = process.exitCode;
+    try {
+      const result = runManualUpdateConvergence({
+        runWorkflows: () => ({ status: 'failed', warnings: [] }),
+        expectedVersion: '5.260711.3',
+        selection: 'all',
+        runSkills: noSkillsChannel,
+        log: () => {},
+      });
+      expect(result.workflows).toEqual({ status: 'failed', warnings: [] });
+      applyConvergenceExitSignal(result);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = savedExitCode ?? 0;
+    }
   });
 
   test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
     const savedExitCode = process.exitCode;
     try {
       const result = runManualUpdateConvergence({
+        runWorkflows: noWorkflowsChannel,
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
@@ -2459,15 +2491,23 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     for (const selection of ['codex', 'auto', 'all', 'claude'] as const) {
       expect(
         runManualUpdateConvergence({
+          runWorkflows: noWorkflowsChannel,
           expectedVersion: VERSION,
           selection,
           runSkills: noSkillsChannel,
           log: () => {},
         }),
-      ).toEqual({ skills: { status: 'skipped', reason: 'test fixture' }, retirement: null });
+      ).toEqual({
+        skills: { status: 'skipped', reason: 'test fixture' },
+        workflows: { status: 'skipped', warnings: [] },
+        retirement: null,
+      });
     }
+    // Consent `none` reaches NO channel: the workflows leg is null too, and the
+    // production default is never invoked, so nothing can touch `~/.claude`.
     expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
       skills: null,
+      workflows: null,
       retirement: null,
     });
 
@@ -2632,6 +2672,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {
     const calls: string[] = [];
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'all',
       runSkills: (selection) => {
@@ -2653,6 +2694,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     const seen: string[] = [];
     for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {
       runManualUpdateConvergence({
+        runWorkflows: noWorkflowsChannel,
         expectedVersion: VERSION,
         selection,
         runSkills: (received) => {
@@ -2668,6 +2710,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('consent none skips the channel with the rest of the convergence', () => {
     let skills = 0;
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'none',
       runSkills: () => {
@@ -2682,6 +2725,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('the channel logs through the convergence emitter', () => {
     const lines: string[] = [];
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'claude',
       runSkills: (_selection, emit) => {
@@ -2696,6 +2740,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('a skills failure never aborts the convergence — the promoted binary stays committed', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'all',
       runSkills: () => {
@@ -3078,6 +3123,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
   } {
     const lines: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: '9.9.9',
       selection: 'all',
       runSkills: () => skills,
