@@ -53,6 +53,27 @@ describe('research skill fronts the research-sweep workflow', () => {
     expect(flat(lines.join('\n'))).toBe(flat(fence[1] as string));
   });
 
+  test('the two source-handling rules reach the reader prompt and the skill alike', () => {
+    // Unlike the injection fence, these two are authored as house prose in the skill and as a
+    // reader instruction in the script, so the pinned unit is the CLAUSE that carries the rule:
+    // a headline plus the sentence a reader has to act on. Edit either side alone and this fails.
+    const shared = [
+      'Cite from the retrieval, never from memory of the source',
+      'transcribed from the retrieval that produced it in this run, with its retrieval-time provenance — what was fetched or opened, and when',
+      'Validate the body, not the status code',
+      'a source counts as read only when its body carries the content you went there for',
+    ];
+    for (const clause of shared) {
+      expect(SKILL).toContain(clause);
+      expect(JS).toContain(clause);
+    }
+    // A constant the reader prompt never stamps is a rule nobody reads.
+    const reader = /function readPrompt\(job, shard\) \{([\s\S]*?)\n\}/.exec(JS);
+    if (!reader) throw new Error('research-sweep.js: readPrompt not found');
+    expect(reader[1]).toContain('RETRIEVAL_RULE');
+    expect(reader[1]).toContain('BODY_RULE');
+  });
+
   test('the skill keeps the frozen question and the notes-writing step the workflow never performs', () => {
     expect(SKILL).toContain(
       'the workflow never re-asks, narrows or widens the question, and never adds a source of its own',
