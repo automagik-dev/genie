@@ -1732,11 +1732,76 @@ describe('doctor: workflows channel', () => {
     });
 
     mkdirSync(join(isolatedHome, '.claude'), { recursive: true });
+    // No shipped catalog under this GENIE_HOME, so the channel could not run
+    // even if asked: the line states the fact and offers no remedy it cannot keep.
     expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
       name: WORKFLOWS_LINE,
       status: 'pass',
       detail: '(unrecorded)',
     });
+  });
+
+  /** `<GENIE_HOME>/templates/workflows/<name>` for each name — the release's catalog. */
+  function seedShippedCatalog(names: string[]): void {
+    const root = join(process.env.GENIE_HOME as string, 'templates', 'workflows');
+    mkdirSync(root, { recursive: true });
+    for (const name of names) writeFileSync(join(root, name), `export const meta = { name: '${name}' }\n`);
+  }
+
+  test('an unrecorded stale file at a catalog name is named, with a remedy', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js');
+    expect(result.suggestion).toContain('genie update');
+    expect(result.suggestion).toContain('state-backups');
+  });
+
+  test('an unrecorded scope holding only names this release does not ship stays a pass', () => {
+    seedShippedCatalog(['council.js']);
+    seedWorkflowFile('someone-elses.js', '// not genie namespace\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // A catalog NAME is the whole claim: doctor never lists the user's dir, so a
+    // workflow outside genie's namespace is structurally invisible here.
+    expect(result.status).toBe('pass');
+    expect(result.detail).toBe('(unrecorded)');
+    // The channel could run, so the pass still carries the remedy.
+    expect(result.suggestion).toContain('genie update');
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('an unrecorded symlink at a catalog name is named, never followed', () => {
+    seedShippedCatalog(['council.js']);
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(isolatedHome, 'elsewhere.js'), "export const meta = { name: 'council' }\n");
+    symlinkSync(join(isolatedHome, 'elsewhere.js'), join(workflowsDir(), 'council.js'));
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js (not a regular file)');
+    // Read-only, and the link is still a link pointing where it pointed.
+    expect(readFileSync(join(isolatedHome, 'elsewhere.js'), 'utf8')).toBe("export const meta = { name: 'council' }\n");
+  });
+
+  test('with no install record at all the unrecorded scan still runs and writes nothing', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedWorkflowFile('wish.js', '// another one\n');
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // The host that carries pre-record leftovers is exactly the host with no
+    // record, so the scan must not sit behind a record that exists.
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 2 file(s) genie did not record: council.js; wish.js');
+    expect(snapshot(isolatedHome)).toEqual(before);
   });
 
   test('a malformed record prints no workflows line — the skills check owns that one remedy', () => {

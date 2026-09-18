@@ -45,7 +45,11 @@ Drift between the two scopes is observed rather than guessed. `genie doctor` rea
 the `workflows` field of `<GENIE_HOME>/skills-install.json` — file name → the sha256
 genie installed — and reports every recorded file that was hand-edited, deleted,
 replaced by something that is not a regular file, or left by another release, as one
-read-only `workflows: catalog` line. It repairs nothing, including under `--fix`.
+read-only `workflows: catalog` line. On a host the channel has not run on yet, where
+no record names anything, it instead names the files already sitting in the user
+scope under a catalog name — the stale `council.js` shape — taking those names from
+the catalog this release ships, never from a list written down anywhere. It repairs
+nothing, including under `--fix`.
 Repair is `genie update`'s: it archives a user copy it cannot prove under
 `<GENIE_HOME>/state-backups/workflows-collision-<timestamp>/`, names it in the
 transcript, and replaces it. So a hand edit under `~/.claude/workflows/` is a local

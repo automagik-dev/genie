@@ -377,19 +377,33 @@ function createArchiveSink(context: WorkflowsApplyContext): ArchiveSink {
   };
 }
 
-/** The delivered catalog: top-level `*.js` regular files, name → sha256. */
-function readDeliveredCatalog(root: string): Map<string, string> {
-  const catalog = new Map<string, string>();
+/**
+ * The names this release's catalog is made of: top-level `*.js` regular files
+ * under `root`, sorted, and an empty list when the directory cannot be read.
+ *
+ * Exported because `genie doctor` needs the NAMES without the bytes — to say
+ * which files in a user scope it has no record for, it must know what a catalog
+ * name is, and a hardcoded list there would go stale the first time this release
+ * added a workflow. One definition, used by the installer below and by doctor.
+ * `entry.isFile()` reflects `lstat`, so a symlink is not a delivered name.
+ */
+export function shippedWorkflowNames(root: string): string[] {
   let entries: Dirent[];
   try {
     entries = readdirSync(root, { withFileTypes: true });
   } catch {
-    return catalog;
+    return [];
   }
-  for (const entry of entries.sort((left, right) => (left.name < right.name ? -1 : 1))) {
-    if (!entry.isFile() || !isSafeWorkflowFileName(entry.name)) continue;
-    catalog.set(entry.name, fileDigest(join(root, entry.name)));
-  }
+  return entries
+    .filter((entry) => entry.isFile() && isSafeWorkflowFileName(entry.name))
+    .map((entry) => entry.name)
+    .sort((left, right) => (left < right ? -1 : 1));
+}
+
+/** The delivered catalog: top-level `*.js` regular files, name → sha256. */
+function readDeliveredCatalog(root: string): Map<string, string> {
+  const catalog = new Map<string, string>();
+  for (const name of shippedWorkflowNames(root)) catalog.set(name, fileDigest(join(root, name)));
   return catalog;
 }
 

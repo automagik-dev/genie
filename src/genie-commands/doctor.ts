@@ -56,7 +56,12 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
-import { classifyWorkflowFile, inspectOnDiskWorkflow } from '../lib/workflows-installer.js';
+import {
+  classifyWorkflowFile,
+  inspectOnDiskWorkflow,
+  shippedWorkflowNames,
+  shippedWorkflowsRoot,
+} from '../lib/workflows-installer.js';
 import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
@@ -841,6 +846,14 @@ export function checkSkillsChannel(
 
 const WORKFLOWS_CHANNEL_SUGGESTION = 'Run `genie update` to reinstall the workflow catalog';
 
+/**
+ * ONE remedy for both unrecorded shapes, because both are answered by the same
+ * run: it must be true when files are named AND when none are, so it states the
+ * install and the backup rather than only the replacement.
+ */
+const WORKFLOWS_UNRECORDED_SUGGESTION =
+  'Run `genie update` to install and record the workflow catalog; a file already there is backed up under `<GENIE_HOME>/state-backups/` before it is replaced';
+
 /** The one name every workflows-channel line carries, in the `skills: …` family. */
 const WORKFLOWS_CHECK_NAME = 'workflows: catalog';
 
@@ -868,6 +881,60 @@ function describeWorkflowDrift(recorded: SkillsWorkflowsInstall): { present: num
 }
 
 /**
+ * Catalog names sitting in a user scope that NO record accounts for — the
+ * 2026-09-15 incident shape, on a host where the channel has not run yet.
+ *
+ * It walks the SHIPPED names and lstats each one, rather than listing the user
+ * directory: a workflow that is not genie's namespace is then structurally
+ * invisible here, and a symlink is named rather than resolved.
+ */
+function describeUnrecordedWorkflows(workflowsDir: string, catalog: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const name of catalog) {
+    const state = inspectOnDiskWorkflow(join(workflowsDir, name));
+    if (state.kind === 'absent') continue;
+    found.push(state.kind === 'other' ? `${name} (not a regular file)` : name);
+  }
+  return found;
+}
+
+/**
+ * The line for a host whose record carries no `workflows` field at all.
+ *
+ * `(unrecorded)` alone used to be the whole answer, and it was the one place
+ * this check was quieter than the skills leg, which lists pre-record leftovers
+ * BEFORE its no-record return. A stale `~/.claude/workflows/council.js` from
+ * the retired stamped install — exactly what shadowed the project copy on
+ * 2026-09-15 — sat in a user scope unnamed, because no record named it.
+ */
+function unrecordedWorkflowsResult(claudeDir: string, genieHome: string): CheckResult {
+  if (!isDirectory(claudeDir)) {
+    // No product home: genie creates none, so there is nothing to say and
+    // nothing `genie update` would do here.
+    return { name: WORKFLOWS_CHECK_NAME, status: 'pass', detail: 'not detected' };
+  }
+  // The names come from what THIS release ships, never a list written down
+  // here: a hardcoded one goes stale the first time the catalog grows. With no
+  // shipped catalog on disk the channel cannot run, so nothing is claimed.
+  const catalog = shippedWorkflowNames(shippedWorkflowsRoot(genieHome));
+  const leftovers = describeUnrecordedWorkflows(join(claudeDir, 'workflows'), catalog);
+  if (leftovers.length > 0) {
+    return {
+      name: WORKFLOWS_CHECK_NAME,
+      status: 'warn',
+      detail: `(unrecorded) ${leftovers.length} file(s) genie did not record: ${namedWithRemainder(leftovers)}`,
+      suggestion: WORKFLOWS_UNRECORDED_SUGGESTION,
+    };
+  }
+  return {
+    name: WORKFLOWS_CHECK_NAME,
+    status: 'pass',
+    detail: '(unrecorded)',
+    ...(catalog.length > 0 ? { suggestion: WORKFLOWS_UNRECORDED_SUGGESTION } : {}),
+  };
+}
+
+/**
  * ONE line for the user-scope workflow catalog, read straight off the install
  * record the workflows channel wrote — the same authority `genie uninstall`
  * removes by, so the two can never disagree about what genie owns.
@@ -884,16 +951,7 @@ export function checkWorkflowsChannel(options: { home?: string; genieHome?: stri
   const recorded = read.status === 'ok' ? read.record.workflows : undefined;
   if (recorded === undefined) {
     const claudeDir = options.home === undefined ? resolveClaudeDir() : join(options.home, '.claude');
-    // Never a warning: nothing here distinguishes "never installed" from
-    // "consent: none", and a host with no record at all is already warned about
-    // by `skills: channel`. The line still states which of the two it saw.
-    return [
-      {
-        name: WORKFLOWS_CHECK_NAME,
-        status: 'pass',
-        detail: isDirectory(claudeDir) ? '(unrecorded)' : 'not detected',
-      },
-    ];
+    return [unrecordedWorkflowsResult(claudeDir, genieHome)];
   }
   const { present, drift } = describeWorkflowDrift(recorded);
   const binaryTag = releaseTag(VERSION);
