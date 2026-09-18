@@ -10,7 +10,7 @@
 // copies byte-for-byte, so edit this file and copy it over the other.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -218,7 +218,21 @@ export function runDesignReviewEvidenceCli() {
   process.stdout.write(`${designReviewDigest(stamped)}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Both sides are compared as REAL paths: reached through a symlinked directory
+// (or a symlinked launcher), the raw resolved argv[1] never equals the module's
+// own file URL, the CLI body never runs, and `verify` exits 0 having checked
+// nothing — the gate fails open. `realpathSync` can throw (argv[1] naming a
+// path that no longer exists, or an unresolvable link), so it falls back to the
+// path as given rather than escaping the module.
+function realPathOrGiven(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+if (process.argv[1] && realPathOrGiven(resolve(process.argv[1])) === realPathOrGiven(fileURLToPath(import.meta.url))) {
   try {
     runDesignReviewEvidenceCli();
   } catch (error) {
