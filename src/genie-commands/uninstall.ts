@@ -59,8 +59,10 @@ import {
   deleteSkillsInstallRecord,
   inspectSkillsInstallRecord,
   isSafeSkillName,
+  isSafeWorkflowFileName,
 } from '../lib/skills-installer.js';
 import { printErr, printOut } from '../lib/term-output.js';
+import { classifyWorkflowFile, inspectOnDiskWorkflow } from '../lib/workflows-installer.js';
 import { detectV4Install } from './legacy-v4.js';
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
@@ -481,6 +483,9 @@ function assertUninstallBatchLocation(genieHome: string, journalPath: string): v
   const cleanupRoots = [
     canonicalHome,
     join(resolveClaudeDir(), 'skills'),
+    // The workflows channel sweeps this dir and may rmdir it when it empties,
+    // so the batch journal must never live inside it either.
+    join(resolveClaudeDir(), 'workflows'),
     join(resolveCodexDir(), 'agents'),
     join(resolveHermesHome(), 'plugins'),
     resolvePiExtensionsDir(),
@@ -2161,7 +2166,10 @@ function removeVerifiedSkillDir(target: string, expected: string | undefined, si
   }
 }
 
-export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemoval {
+export function removeSkillsChannelInstall(
+  genieHome: string,
+  options: { keepRecord?: boolean } = {},
+): SkillsChannelRemoval {
   const read = inspectSkillsInstallRecord(genieHome);
   if (read.status === 'invalid') {
     return {
@@ -2208,8 +2216,11 @@ export function removeSkillsChannelInstall(genieHome: string): SkillsChannelRemo
   const { removed, failures, preserved } = sink;
   const removedRetired = removed.slice(inventorySweepCount);
   // The record is the receipt for retrying an incomplete removal, so it is
-  // deleted only after a fully clean sweep of every recorded directory.
-  if (failures.length > 0 || preserved.length > 0) {
+  // deleted only after a fully clean sweep of every recorded directory — and
+  // `keepRecord` extends that to the OTHER channel this one record now carries:
+  // a preserved workflow file whose receipt is deleted here can never be found
+  // again, by `genie uninstall` or by `genie doctor`.
+  if (failures.length > 0 || preserved.length > 0 || options.keepRecord === true) {
     return { record, malformed: null, removed, failures, preserved, removedRetired, recordRemoved: false };
   }
   return {
@@ -2245,6 +2256,99 @@ function reportSkillsChannelRemoval(removal: SkillsChannelRemoval): void {
   }
 }
 
+/**
+ * The user-scope workflow catalog `genie install` / `genie update` wrote, as
+ * `genie uninstall` sees it.
+ *
+ * Same contract as the skills sweep, one directory instead of many: the record
+ * is the removal authority, a recorded digest is the proof, and anything genie
+ * cannot prove is left on disk and reported rather than deleted.
+ */
+export interface WorkflowsChannelRemoval {
+  /** Absolute paths of the recorded files whose digest still proved them. */
+  removed: string[];
+  /**
+   * Recorded files that were NOT deleted: hand-edited since the install, no
+   * longer a regular file, or an unlink that failed. Each keeps the record
+   * alive, so the next `genie uninstall` still names it.
+   */
+  preserved: { file: string; reason: string }[];
+  /** True when the workflows dir itself was removed because it ended up empty. */
+  dirRemoved: boolean;
+}
+
+/** ONE wording for a preserved workflow file: the report and the failure list share it. */
+export function preservedWorkflowFileDetail(entry: { file: string; reason: string }): string {
+  return `preserved ${entry.file} (${entry.reason}); remove it manually, then rerun \`genie uninstall\``;
+}
+
+/**
+ * Remove the recorded workflow files whose bytes still prove genie installed
+ * them, and nothing else.
+ *
+ * An unreadable or absent record removes NOTHING and reports nothing: the
+ * skills sweep owns that one fault and its one remedy, and
+ * `performFreshUninstallPlan` aborts on it before this result is ever used.
+ */
+export function removeWorkflowsChannelInstall(genieHome: string): WorkflowsChannelRemoval {
+  const empty: WorkflowsChannelRemoval = { removed: [], preserved: [], dirRemoved: false };
+  const read = inspectSkillsInstallRecord(genieHome);
+  if (read.status !== 'ok') return empty;
+  const workflows = read.record.workflows;
+  // A traversal-free absolute dir is a schema invariant; re-checked here because
+  // this is the line that joins a recorded name onto it and then deletes.
+  if (workflows === undefined || !isAbsolute(workflows.dir)) return empty;
+  const removed: string[] = [];
+  const preserved: { file: string; reason: string }[] = [];
+  for (const [name, digest] of Object.entries(workflows.files)) {
+    if (!isSafeWorkflowFileName(name)) continue;
+    const target = join(workflows.dir, name);
+    const state = inspectOnDiskWorkflow(target);
+    // Already gone: nothing to remove, and nothing an operator has to act on.
+    if (state.kind === 'absent') continue;
+    if (state.kind === 'other') {
+      // A symlink or a directory at a recorded name was never written by the
+      // channel, and genie will not resolve it to find out what it points at.
+      preserved.push({ file: target, reason: 'not a regular file, so genie cannot prove it installed it' });
+      continue;
+    }
+    if (classifyWorkflowFile({ recorded: digest, onDisk: state.digest }) !== 'replace') {
+      preserved.push({ file: target, reason: 'content differs from the recorded install' });
+      continue;
+    }
+    try {
+      unlinkSync(target);
+      removed.push(target);
+    } catch (error) {
+      preserved.push({ file: target, reason: errorMessage(error) });
+    }
+  }
+  return { removed, preserved, dirRemoved: removeWorkflowsDirIfEmpty(workflows.dir) };
+}
+
+/**
+ * `rmdir`, never `rm -r`: the directory is Claude Code's, not genie's, and it
+ * may hold workflows genie never installed. An `ENOTEMPTY` is the answer, not
+ * a failure.
+ */
+function removeWorkflowsDirIfEmpty(dir: string): boolean {
+  try {
+    rmdirSync(dir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function reportWorkflowsChannelRemoval(removal: WorkflowsChannelRemoval): void {
+  if (removal.removed.length === 0 && removal.preserved.length === 0) return;
+  printOut(`  \x1b[32m+\x1b[0m workflows channel: removed ${removal.removed.length} recorded workflow file(s)`);
+  if (removal.dirRemoved) printOut('  \x1b[32m+\x1b[0m workflows channel: removed the now-empty workflows dir');
+  for (const entry of removal.preserved) {
+    printOut(`  \x1b[33m~\x1b[0m workflows channel: ${preservedWorkflowFileDetail(entry)}`);
+  }
+}
+
 export function performFreshUninstallPlan(
   genieDir: string,
   removeMarketplace: boolean,
@@ -2253,10 +2357,18 @@ export function performFreshUninstallPlan(
   execution: UninstallPlan;
   result: UninstallResult;
 } {
-  // Record-driven and outside GENIE_HOME, so it must run before the batch
-  // deletes the home that holds the record.
-  const skillsRemoval = removeSkillsChannelInstall(genieDir);
+  // Both sweeps are record-driven and act outside GENIE_HOME, so both must run
+  // before the batch deletes the home that holds the record — and the workflows
+  // sweep runs FIRST, because a fully clean skills sweep deletes that record and
+  // would take the workflow catalog's only receipt with it.
+  const workflowsRemoval = removeWorkflowsChannelInstall(genieDir);
+  const skillsRemoval = removeSkillsChannelInstall(genieDir, {
+    keepRecord: workflowsRemoval.preserved.length > 0,
+  });
   reportSkillsChannelRemoval(skillsRemoval);
+  // On a malformed record neither sweep touched anything; the skills leg above
+  // reports that one fault and its one remedy, so this stays silent.
+  if (skillsRemoval.malformed === null) reportWorkflowsChannelRemoval(workflowsRemoval);
   if (skillsRemoval.malformed !== null) {
     // Fail closed: nothing was removed and nothing will be. GENIE_HOME (and the
     // record inside it) stays put so the operator can repair it and retry.
@@ -2275,26 +2387,33 @@ export function performFreshUninstallPlan(
       },
     };
   }
-  if (skillsRemoval.failures.length > 0 || skillsRemoval.preserved.length > 0) {
-    // Anything not cleanly removed keeps its receipt: the skills install record
-    // lives inside GENIE_HOME, so the plan must stop before the batch deletes
-    // the home. The failures surface through the ordinary incomplete-uninstall
-    // report (exit 1, GENIE_HOME kept), and the user retries `genie uninstall`
-    // after removing the preserved directories manually.
+  // Anything not cleanly removed by EITHER channel keeps its receipt: the one
+  // install record lives inside GENIE_HOME, so the plan must stop before the
+  // batch deletes the home. The failures surface through the ordinary
+  // incomplete-uninstall report (exit 1, GENIE_HOME kept), and the user retries
+  // `genie uninstall` after removing the preserved paths manually.
+  const channelFailures: UninstallFailure[] = [
+    ...skillsRemoval.failures.map((detail): UninstallFailure => ({ step: 'skills.sh channel', detail })),
+    ...skillsRemoval.preserved.map(
+      (dir): UninstallFailure => ({
+        step: 'skills.sh channel',
+        detail: preservedSkillDirDetail(dir),
+      }),
+    ),
+    ...workflowsRemoval.preserved.map(
+      (entry): UninstallFailure => ({
+        step: 'workflows channel',
+        detail: preservedWorkflowFileDetail(entry),
+      }),
+    ),
+  ];
+  if (channelFailures.length > 0) {
     return {
       execution: inspectUninstallPlan(genieDir, removeMarketplace),
       result: {
-        failures: [
-          ...skillsRemoval.failures.map((detail): UninstallFailure => ({ step: 'skills.sh channel', detail })),
-          ...skillsRemoval.preserved.map(
-            (dir): UninstallFailure => ({
-              step: 'skills.sh channel',
-              detail: preservedSkillDirDetail(dir),
-            }),
-          ),
-        ],
+        failures: channelFailures,
         notes: [
-          'skills.sh channel removal was incomplete; kept GENIE_HOME and the install record so the uninstall stays retryable.',
+          'channel removal was incomplete; kept GENIE_HOME and the install record so the uninstall stays retryable.',
         ],
       },
     };

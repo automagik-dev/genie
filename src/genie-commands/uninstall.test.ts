@@ -52,6 +52,7 @@ import {
   isSameOrContainedPath,
   performFreshUninstallPlan,
   preservedSkillDirDetail,
+  preservedWorkflowFileDetail,
   readUninstallBatchDecision,
   recordUninstallBatchDecision,
   removeProvenV4Rules,
@@ -59,6 +60,7 @@ import {
   removeSkillsChannelInstall,
   removeSymlinkMembers,
   removeSymlinks,
+  removeWorkflowsChannelInstall,
   reportUninstallResidue,
   settleRuntimeIntegrationProgress,
   sweepUninstallResidue,
@@ -1966,5 +1968,247 @@ describe('genie uninstall — non-interactive CLI contract (B1)', () => {
     expect(res.exitCode).toBe(2);
     expect(existsSync(genieHome)).toBe(true);
     expect(readFileSync(join(genieHome, 'config.json'), 'utf8')).toBe('{"keep":true}\n');
+  });
+});
+
+// ============================================================================
+// Workflows channel removal (wish `global-workflows-local-mikro`, group 3)
+// ============================================================================
+
+describe('workflows channel removal', () => {
+  let root: string;
+  let genieHome: string;
+  let workflowsDir: string;
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+  /** Write `<workflowsDir>/<name>` and return its digest. */
+  function seedWorkflowFile(name: string, body: string): string {
+    writeFileSync(join(workflowsDir, name), body, 'utf8');
+    return sha256(body);
+  }
+
+  function seedWorkflowsRecord(files: Record<string, string>): void {
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260918.12',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(root, 'home', '.claude', 'skills')],
+      workflows: { dir: workflowsDir, ref: 'v5.260918.12', files },
+      installedAt: '2026-09-18T12:00:00.000Z',
+    });
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-uninstall-workflows-'));
+    genieHome = join(root, '.genie');
+    workflowsDir = join(root, 'home', '.claude', 'workflows');
+    mkdirSync(genieHome, { recursive: true });
+    mkdirSync(workflowsDir, { recursive: true });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  test('removes only the digest-matching recorded files and keeps a dir that still holds others', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    writeFileSync(join(workflowsDir, 'someone-elses.js'), "export const meta = { name: 'theirs' }\n", 'utf8');
+    seedWorkflowsRecord(files);
+
+    const removal = removeWorkflowsChannelInstall(genieHome);
+
+    expect(removal.removed.sort()).toEqual([join(workflowsDir, 'council.js'), join(workflowsDir, 'wish.js')]);
+    expect(removal.preserved).toEqual([]);
+    // `rmdir`, never `rm -r`: a workflow genie never installed keeps the dir alive.
+    expect(removal.dirRemoved).toBe(false);
+    expect(existsSync(join(workflowsDir, 'someone-elses.js'))).toBe(true);
+  });
+
+  test('removes the workflows dir once it is empty', () => {
+    seedWorkflowsRecord({ 'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'c' }\n") });
+
+    const removal = removeWorkflowsChannelInstall(genieHome);
+
+    expect(removal.dirRemoved).toBe(true);
+    expect(existsSync(workflowsDir)).toBe(false);
+  });
+
+  test('a hand-edited file survives, is reported, and its reason names the recorded install', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    writeFileSync(join(workflowsDir, 'council.js'), '// my own edit\n', 'utf8');
+
+    const removal = removeWorkflowsChannelInstall(genieHome);
+
+    expect(removal.removed).toEqual([join(workflowsDir, 'wish.js')]);
+    expect(removal.preserved).toEqual([
+      { file: join(workflowsDir, 'council.js'), reason: 'content differs from the recorded install' },
+    ]);
+    expect(readFileSync(join(workflowsDir, 'council.js'), 'utf8')).toBe('// my own edit\n');
+    expect(removal.dirRemoved).toBe(false);
+  });
+
+  test('a symlink at a recorded name is preserved, never followed and never unlinked', () => {
+    const body = "export const meta = { name: 'council' }\n";
+    writeFileSync(join(root, 'elsewhere.js'), body, 'utf8');
+    symlinkSync(join(root, 'elsewhere.js'), join(workflowsDir, 'council.js'));
+    seedWorkflowsRecord({ 'council.js': sha256(body) });
+
+    const removal = removeWorkflowsChannelInstall(genieHome);
+
+    // The target hashes to the recorded digest; resolving the link would have
+    // deleted a path genie never installed.
+    expect(removal.removed).toEqual([]);
+    expect(removal.preserved).toEqual([
+      {
+        file: join(workflowsDir, 'council.js'),
+        reason: 'not a regular file, so genie cannot prove it installed it',
+      },
+    ]);
+    expect(lstatSync(join(workflowsDir, 'council.js')).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, 'elsewhere.js'))).toBe(true);
+  });
+
+  test('a recorded file the operator already deleted is neither removed nor reported', () => {
+    seedWorkflowsRecord({ 'council.js': sha256("export const meta = { name: 'council' }\n") });
+
+    expect(removeWorkflowsChannelInstall(genieHome)).toEqual({ removed: [], preserved: [], dirRemoved: true });
+  });
+
+  test('a malformed record fails closed: nothing is removed', () => {
+    seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n");
+    writeFileSync(skillsInstallRecordPath(genieHome), '{"ref":"v1"}', 'utf8');
+
+    expect(removeWorkflowsChannelInstall(genieHome)).toEqual({ removed: [], preserved: [], dirRemoved: false });
+    expect(existsSync(join(workflowsDir, 'council.js'))).toBe(true);
+  });
+
+  test('a record with no workflows field is a no-op, and so is no record at all', () => {
+    seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n");
+    const empty = { removed: [], preserved: [], dirRemoved: false };
+    expect(removeWorkflowsChannelInstall(genieHome)).toEqual(empty);
+
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260918.12',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(root, 'home', '.claude', 'skills')],
+      installedAt: '2026-09-18T12:00:00.000Z',
+    });
+    expect(removeWorkflowsChannelInstall(genieHome)).toEqual(empty);
+    expect(existsSync(join(workflowsDir, 'council.js'))).toBe(true);
+  });
+});
+
+describe('workflows channel removal inside the fresh uninstall plan', () => {
+  let root: string;
+  let genieHome: string;
+  let claudeSkills: string;
+  let workflowsDir: string;
+  let output: string[];
+  let logSpy: ReturnType<typeof spyOn>;
+  const savedExitCode = process.exitCode;
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+  function withIsolatedEnv<T>(run: () => T): T {
+    const overrides = {
+      GENIE_HOME: genieHome,
+      CLAUDE_CONFIG_DIR: join(root, 'home', '.claude'),
+      CODEX_HOME: join(root, 'home', '.codex'),
+      HERMES_HOME: join(root, 'home', '.hermes'),
+    };
+    const prior = Object.fromEntries(Object.keys(overrides).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, overrides);
+    try {
+      return run();
+    } finally {
+      for (const [name, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  /** A clean skills half, so every assertion below is about the workflows half. */
+  function seedRecord(workflowFiles: Record<string, string>): void {
+    const wish = join(claudeSkills, 'wish');
+    mkdirSync(wish, { recursive: true });
+    writeFileSync(join(wish, 'SKILL.md'), '# wish\n', 'utf8');
+    mkdirSync(join(genieHome, 'plugins', 'genie'), { recursive: true });
+    writeFileSync(join(genieHome, 'plugins', 'genie', 'payload.txt'), 'delivered\n', 'utf8');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260918.12',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: computeSkillDirDigest(wish) as string },
+      workflows: { dir: workflowsDir, ref: 'v5.260918.12', files: workflowFiles },
+      installedAt: '2026-09-18T12:00:00.000Z',
+    });
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'genie-uninstall-workflows-plan-'));
+    genieHome = join(root, 'genie');
+    claudeSkills = join(root, 'home', '.claude', 'skills');
+    workflowsDir = join(root, 'home', '.claude', 'workflows');
+    mkdirSync(claudeSkills, { recursive: true });
+    mkdirSync(workflowsDir, { recursive: true });
+    output = [];
+    process.exitCode = 0;
+    logSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: unknown) => {
+      output.push(String(chunk).replace(/\n$/, ''));
+      return true;
+    }) as never);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    process.exitCode = savedExitCode;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('a preserved workflow file aborts the plan and keeps GENIE_HOME and the record', () => {
+    const council = join(workflowsDir, 'council.js');
+    writeFileSync(council, '// hand-edited\n', 'utf8');
+    seedRecord({ 'council.js': sha256("export const meta = { name: 'council' }\n") });
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toHaveLength(1);
+    expect(outcome.result.failures[0]?.step).toBe('workflows channel');
+    expect(outcome.result.failures[0]?.detail).toBe(
+      preservedWorkflowFileDetail({ file: council, reason: 'content differs from the recorded install' }),
+    );
+    // The one sentence appears verbatim on stdout too.
+    expect(
+      output.some((line) =>
+        line.includes(
+          preservedWorkflowFileDetail({ file: council, reason: 'content differs from the recorded install' }),
+        ),
+      ),
+    ).toBe(true);
+    // The receipt survives: the record is the only way the next run finds this file.
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
+    expect(existsSync(genieHome)).toBe(true);
+    expect(readFileSync(council, 'utf8')).toBe('// hand-edited\n');
+  });
+
+  test('a clean sweep of both channels removes the files and then the record', () => {
+    const body = "export const meta = { name: 'council' }\n";
+    writeFileSync(join(workflowsDir, 'council.js'), body, 'utf8');
+    seedRecord({ 'council.js': sha256(body) });
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(join(workflowsDir, 'council.js'))).toBe(false);
+    expect(existsSync(workflowsDir)).toBe(false);
+    expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
+    expect(output.some((line) => line.includes('workflows channel: removed 1 recorded workflow file(s)'))).toBe(true);
   });
 });
