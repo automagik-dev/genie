@@ -23,7 +23,9 @@ describe('wish.js mikro offload', () => {
   test('the scout offload asks for the deterministic facts file; the review offload does not (opt-in per agent)', () => {
     // #2956 measured wish-context recall 0.87 -> 0.96 with `--facts auto` and issue-triage WORSE with it, so the
     // flag is per agent: the scout line carries it, the review line stays bare until review-prep is measured.
-    expect(script).toContain('${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --facts auto --trace ${job.slug}');
+    expect(script).toContain(
+      '${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --facts auto --trace ${job.slug}',
+    );
     expect(script).not.toMatch(/MIKRO_REVIEW_AGENT[^\n]*--facts/);
   });
   test('the scout and the reviewer briefs run the offload first, as data under the fence, and survive its absence', () => {
