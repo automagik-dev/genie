@@ -73,7 +73,26 @@ agent is pointed at issues or PRs authored outside the team.
 
 ## Prices
 
-USD figures come from the per-million prices declared for the provider (`cost:` in `.mikro/mikro.yaml`),
-which are the registry's V4 Flash placeholders until DeepSeek publishes 4.1 Flash's; token counts,
-iterations and wall clock are measured. Each ledger row and Phoenix span carries `mikro_version` and
-`price_basis` so a later reprice is mechanical.
+USD figures come from the per-million prices declared for the provider (`cost:` in `.mikro/mikro.yaml`);
+token counts, iterations and wall clock are measured. Since 2026-09-18 those are DeepSeek's published
+list prices, read from <https://api-docs.deepseek.com/quick_start/pricing> (USD per million tokens):
+
+| model | input, cache miss | input, cache hit | output |
+|---|---|---|---|
+| `deepseek-flash` (4.1 Flash; legacy `deepseek-v4-flash` bills at Flash rates) | 0.30 peak / 0.15 off-peak | 0.006 / 0.003 | 1.20 / 0.60 |
+| `deepseek-v4-pro` | 1.32 / 0.66 | 0.044 / 0.022 | 3.96 / 1.98 |
+
+The config declares the **peak cache-miss** column, deliberately: off-peak is exactly half, and mikro's
+cost footer reports one input figure without separating cached prompt tokens, so a reported cost is an
+upper bound on the bill — never below it. DeepSeek documents 1M context for both models; the declared
+`context-window: 128000` is left as a conservative cap (nothing in `scripts/mikro/` reads it, and a low
+cap can only refuse a run). The per-machine `~/.mikro/settings.json` mirrors the `providers:` block of
+`.mikro/mikro.yaml` by hand and is not in the repo, so reprice it there too.
+
+Each ledger row and Phoenix span carries `mikro_version` and `price_basis`, which is now
+`deepseek-list-2026-09-18-peak` (`PRICE_BASIS` in `call.ts` — the one constant both the ledger and the
+span read), so a later reprice stays mechanical: rows are filtered by basis, never rewritten. Rounds
+dated before 2026-09-18T05:00Z in `.mikro/agents/*/EVIDENCE.md` were billed at the placeholder basis
+(0.14 in / 0.28 out per million) and their USD is therefore understated — roughly 4.3x on output and
+2.1x on input against the peak list price. Those numbers are left alone: every row is a real run at the
+basis of its time, and the basis on each row is what makes it re-priceable.

@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  PRICE_BASIS,
   applyResolutions,
   extractJson,
   parseFooter,
@@ -192,5 +193,24 @@ describe('hardening', () => {
     const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
     expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
     expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
+  });
+});
+
+describe('prices', () => {
+  const yaml = readFileSync(join(import.meta.dir, '..', '..', '.mikro', 'mikro.yaml'), 'utf8');
+  const COST = /^ {8}cost: \{ input: ([0-9.]+), output: ([0-9.]+) \}$/m;
+  const declaredCost = (model: string): { input: number; output: number } | null => {
+    const at = yaml.indexOf(`\n      ${model}:\n`);
+    const m = at === -1 ? null : COST.exec(yaml.slice(at));
+    return m ? { input: Number(m[1]), output: Number(m[2]) } : null;
+  };
+
+  test('the basis stamped on every ledger row and Phoenix span names the priced list', () => {
+    expect(PRICE_BASIS).toBe('deepseek-list-2026-09-18-peak');
+  });
+
+  test("mikro.yaml declares DeepSeek's peak cache-miss list price per million", () => {
+    expect(declaredCost('deepseek-flash')).toEqual({ input: 0.3, output: 1.2 });
+    expect(declaredCost('deepseek-v4-pro')).toEqual({ input: 1.32, output: 3.96 });
   });
 });

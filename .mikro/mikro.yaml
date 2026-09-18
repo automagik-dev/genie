@@ -113,11 +113,32 @@ gemini:
 # DeepSeek 4.1 Flash is served as the rolling id `deepseek-flash`; the pi-ai
 # registry only knows `deepseek-v4-flash`, so it is declared here. Verified
 # 2026-09-17: GET /models lists deepseek-flash and deepseek-v4-pro; a probe
-# completion returned reasoning_content. context-window and max-tokens are
-# conservative placeholders until DeepSeek's 4.1 limits are confirmed; cost is
-# the registry's V4 Flash price (USD per million) until the 4.1 price is.
+# completion returned reasoning_content.
+#
+# cost — DeepSeek's published list prices, USD per million tokens, read from
+# https://api-docs.deepseek.com/quick_start/pricing on 2026-09-18:
+#
+#   model            input (cache miss)   input (cache hit)   output
+#   deepseek-flash   0.30 peak / 0.15     0.006 / 0.003       1.20 / 0.60
+#   deepseek-v4-pro  1.32 peak / 0.66     0.044 / 0.022       3.96 / 1.98
+#
+# The PEAK cache-miss price is declared, deliberately, as a conservative upper
+# bound: off-peak is exactly half, so a run billed off-peak costs half what the
+# footer reports, never more. Cache hits are NOT modelled — mikro's cost footer
+# reports one input figure and does not separate cached from uncached prompt
+# tokens, so a cache-heavy run is over-reported too. `price_basis` on every
+# ledger row and Phoenix span names this basis
+# (`deepseek-list-2026-09-18-peak`) so a later reprice stays mechanical.
+#
+# context-window stays 128000 although DeepSeek documents 1M for both models:
+# nothing in scripts/mikro/ reads it, mikro uses it only to bound a prompt, and
+# a low cap can only refuse a run — never overrun one. max-tokens is the same
+# kind of conservative cap.
+#
 # The key comes from Bitwarden Secrets Manager via ~/.mikro/gate-env.sh
 # (`source` it before a run); mikro reads it from the env var only.
+# ~/.mikro/settings.json is per-machine and mirrors this block by hand — it is
+# not in the repo, so reprice it there too (see scripts/mikro/README.md).
 providers:
   deepseek-api:
     api: openai-completions
@@ -129,10 +150,10 @@ providers:
         max-tokens: 16000
         reasoning: true
         input: [text]
-        cost: { input: 0.14, output: 0.28 }
+        cost: { input: 0.30, output: 1.20 }
       deepseek-v4-pro:
         context-window: 128000
         max-tokens: 16000
         reasoning: true
         input: [text]
-        cost: { input: 0.14, output: 0.28 }
+        cost: { input: 1.32, output: 3.96 }

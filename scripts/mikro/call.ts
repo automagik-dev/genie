@@ -438,6 +438,17 @@ export interface RunOptions {
 const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
 
 /**
+ * The pricing basis every ledger row and Phoenix span is stamped with, so a
+ * reprice is mechanical: rows carrying an older basis keep the USD they were
+ * billed at and are never rewritten. `deepseek-list-2026-09-18-peak` is
+ * DeepSeek's published per-million list price read on 2026-09-18 from
+ * https://api-docs.deepseek.com/quick_start/pricing, declared in
+ * `.mikro/mikro.yaml` at the PEAK cache-miss rate (off-peak is half, cache
+ * hits are not modelled), so a reported cost is an upper bound.
+ */
+export const PRICE_BASIS = 'deepseek-list-2026-09-18-peak';
+
+/**
  * The provider key the agents need, for a caller whose environment lacks it (a
  * workflow agent, a launchd job): sourced from the operator's ~/.mikro/gate-env.sh
  * — which resolves it from Bitwarden at source time — and handed to the MCP
@@ -615,7 +626,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       mkdirSync(runsDir, { recursive: true });
       appendFileSync(
         join(runsDir, `${options.agent}.jsonl`),
-        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: 'config-declared per-million placeholder', attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), tags })}\n`,
+        `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), tags })}\n`,
       );
     }
     if (options.phoenix !== false) {
@@ -637,7 +648,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           ...tags,
           prompt_sha: sha(options.prompt),
           mikro_version: mikroVersion(),
-          price_basis: 'config-declared placeholder',
+          price_basis: PRICE_BASIS,
           dir,
         },
         prompt,
