@@ -42,6 +42,62 @@ fabrications 0, files recall ≥ 0.6, median cost ≤ $0.05, p90 ≤ 240 s. `--w
 the table to `.mikro/agents/<agent>/EVIDENCE.md` — every number there is a real run. `--fixtures <path>`
 points the bench at another set; that is how the adversarial set below is run.
 
+## The facts file
+
+Round 6 of the wish-context bench had yield 1.00 and recall 0.87 — but per-fixture recall swung
+0.45 / 0.91 / 0.91 on one intent and 1.00 / 0.40 / 1.00 on another. That is DISCOVERY variance
+(which greps the model happened to run), and everything it discovers is computable, so
+`scripts/mikro/facts.ts` computes it once with no model:
+
+```sh
+bun scripts/mikro/facts.ts --dir . --intent "narrow the denylist so it never matches a test"
+bun scripts/mikro/facts.ts --dir . --issue 2927 --out /tmp/facts.json
+bun scripts/mikro/facts.ts --dir <worktree> --range origin/dev..HEAD --no-gh
+```
+
+One JSON record: `basis` (sha, mode), `keywords`, ranked `candidates` (`path`, `why`, `hits`,
+`matched`), `tests` (the pinning test per candidate), `gotchas` (CLAUDE.md / AGENTS.md lines with
+their line numbers), `recent` commits, `related` PRs / wishes / brainstorms, and `truncated`.
+Sources are `git ls-files`, `git grep`, `git log`, `git diff` and the working tree, plus `gh` for
+the issue body and related PRs — the only network, skipped cleanly when `gh` is absent. Two
+invariants the agents depend on: every path is TRACKED at `basis.sha` (so a cited fact can never
+fail `call.ts`'s citation check), and the record is bounded at 64 KB with every drop counted.
+Ranking is keyword COVERAGE first, locator keywords double-weighted, matching lines as the
+tie-break. Tests, `.genie/` planning documents, lockfiles, `.mikro/` and — deliberately —
+`scripts/mikro/fixtures/` are never candidates: the fixtures carry each bench prompt next to its
+ground-truth file list, and ranked by coverage that file came FIRST on both intents tried.
+
+Run an agent over it with `--facts auto`, or set `MIKRO_FACTS=auto` for a whole bench (chosen over
+a `bench.ts` flag because it is the smaller change — zero lines in `bench.ts`):
+
+```sh
+bun scripts/mikro/call.ts wish-context --facts auto --prompt "Intent: …"
+MIKRO_FACTS=auto bun scripts/mikro/bench.ts wish-context --reps 2 --tag round=7
+```
+
+`call.ts` infers the mode from the prompt (`Triage issue #N` → `--issue`, `Intent: …` →
+`--intent`, `… commit <sha> against <base>` → `--range`; a `PR #n` prompt names no base, so it
+gets no facts rather than a guessed range), writes `.mikro/runs/facts-<runId>.{json,md}`, and hands
+the Markdown over through **mikro's own MCP `context` argument** (`CONTEXT_PROPERTY` in mikro's
+`src/mcp/server.ts`) — not by appending to the prompt. That is the right channel and not merely the
+available one: mikro externalizes a context file into the REPL as the Python `context` variable
+with only its metadata in the message history, so the agent's `print(context)` satisfies the third
+rule (a path you did not print is a path you may not cite) and the metadata preview is the data
+frame itself. The ledger row carries `facts: {path, candidates, ms}`; the Phoenix span carries
+`metadata.facts_candidates`. Facts are an accelerator, never a gate — a tree they cannot be
+computed over still gets its run.
+
+**Measured, and not uniformly.** `wish-context` round 8 (facts, reps 2): recall 0.96, precision
+0.93, p90 105 s, retries 0, fabrications 0 — against round 6 (no facts): recall 0.87, p90 126 s,
+with per-fixture recall swinging 0.45/0.91/0.91 and 1.00/0.40/1.00 on the two issue intents. Under
+facts both of those read 0.91/0.91 and 1.00/1.00: the spread is what collapsed, which is what the
+facts file was built to do. `issue-triage` is the other answer — reps 1, facts 0.71 recall / 92 s
+p50 / $0.0082 median against a same-prompt no-facts control at 0.77 / 56 s / $0.0059. The recall gap
+is inside the noise of six runs; the 64% latency and 39% cost penalties are not. So the flag stays
+OPT-IN and off by default, and the `wish.js` offload should pass `--facts auto` on the
+`wish-context` call only until an issue-triage round earns it. Every number above is a real run in
+each agent's `EVIDENCE.md`.
+
 ## Refine one
 
 Edit `SYSTEM.md`, re-bench with a new `--tag round=N`, keep the change only if the bars still pass
