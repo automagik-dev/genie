@@ -137,6 +137,11 @@ describe('verifyCitations', () => {
       repo,
     );
     expect(cited.find((c) => c.line === 12)?.ok).toBe(false);
+    // The marker belongs to `plan.files` alone: the same record anywhere else is prose.
+    const elsewhere = verifyCitations({ files: [{ path: 'scripts/mikro/triage.ts', reason: 'NEW: x' }] }, repo);
+    expect(elsewhere[0].ok).toBe(false);
+    // The repository root is a tracked directory like any other.
+    expect(file('TRIAGE.md', 'NEW: a root-level note').ok).toBe(true);
     // An existing file gains nothing from the marker: it is checked as any other path.
     expect(file('scripts/mikro/call.ts', 'NEW: not new at all').reason).toBeUndefined();
   });

@@ -303,10 +303,14 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
   };
   const text = JSON.stringify(parsed);
   for (const m of text.matchAll(CITE_RE)) check(m[1], Number(m[2]), false);
+  // Only a `plan.files` record may carry the marker: a `NEW:` reason anywhere else is prose.
+  const plan = (parsed as { plan?: { files?: unknown } } | null)?.plan?.files;
+  const planned = new Set<unknown>(Array.isArray(plan) ? plan : []);
   walk(parsed, (p, ctx) => {
     const bare = p.split(':')[0];
     if (/\s/.test(bare)) return; // a command or a sentence, not a path
-    check(bare, null, ctx.change === 'deleted', typeof ctx.reason === 'string' && /^NEW:/.test(ctx.reason));
+    const declaredNew = planned.has(ctx) && typeof ctx.reason === 'string' && ctx.reason.startsWith('NEW:');
+    check(bare, null, ctx.change === 'deleted', declaredNew);
   });
   return [...seen.values()];
 }
