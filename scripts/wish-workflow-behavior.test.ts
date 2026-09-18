@@ -300,6 +300,48 @@ describe('wish.js stage prompts', () => {
   });
 });
 
+// Admission narrowing (wish-v7 slice 0): the `scripts/release-*` denylist rule never matches a
+// colocated `*.test.ts`, and the units estimate is advice the report carries, never a refusal.
+const declaring = (files: string[]): Canned => {
+  const base = canned();
+  const scout = structuredClone(base['admit:scout']) as { plan: { files: string[] } };
+  const judge = structuredClone(base['admit:judge']) as { contract: { files: string[] } };
+  scout.plan.files = [...files];
+  judge.contract.files = [...files];
+  return {
+    'admit:scout': scout,
+    'admit:judge': judge,
+    'work:executor': { ...(base['work:executor'] as object), filesChanged: [...files] },
+    'review:diff': { ...reviewResult(), diffFiles: [...files] },
+    'publish:pr': publishResult('pass', HEAD, files),
+  };
+};
+
+describe('wish.js admission narrowing', () => {
+  test('(12) a declared scripts/release-docs.test.ts falls through the scripts/release-* rule -> merge-ready', async () => {
+    const { result, logs } = await clean(canned('pass', declaring([FILES[0], 'scripts/release-docs.test.ts'])));
+    expect(result.state).toBe('merge-ready');
+    expect(logs.some((line) => line.includes('Route overridden to plan'))).toBe(false);
+  });
+
+  test('(13) a declared scripts/release-guard.sh still hits scripts/release-* -> refused, route plan', async () => {
+    const { result, logs } = await clean(canned('pass', declaring([FILES[0], 'scripts/release-guard.sh'])));
+    expect(result.state).toBe('refused');
+    expect(result.route).toBe('plan');
+    const hit = logs.find((line) => line.includes('scripts/release-guard.sh') && line.includes('scripts/release-*'));
+    expect(hit).toContain('Route overridden to plan');
+  });
+
+  test('(14) units over the maximum is advice, never a refusal -> merge-ready with the advice logged', async () => {
+    const scout = { ...(canned()['admit:scout'] as object), estimate: { files: 2, insertions: 40, units: 9 } };
+    const { result, logs } = await clean(canned('pass', { 'admit:scout': scout }));
+    expect(result.state).toBe('merge-ready');
+    expect(logs.some((line) => line.includes('Route overridden to plan'))).toBe(false);
+    const advice = logs.find((line) => line.includes('Size advice (not a refusal)'));
+    expect(advice).toContain('units 9');
+  });
+});
+
 function briefSection(prompt: string): string {
   const start = prompt.indexOf('Tool and token discipline:');
   if (start < 0) return '';

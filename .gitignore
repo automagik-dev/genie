@@ -140,6 +140,8 @@ core
 .empryo
 .mcp.json
 .mikro/
+# mikro microagents and config are genie assets (tracked); only run ledgers are machine-local
+.mikro/runs/
 .warp/
 
 # Local type declarations for the DSH plugin typecheck (fetched, not tracked)

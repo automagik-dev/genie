@@ -27,6 +27,23 @@ function byHandSection(): string {
 }
 
 describe('workfly skill fronts the workfly workflow', () => {
+  test('the skill states the repair budget the script actually applies', () => {
+    // The clamp's own behaviour — its bounds and its non-integer fallback — is already proven in
+    // scripts/workflows-model-policy.test.ts. What nothing covered is the link from the script's
+    // constants to the sentence this front door prints, and DEFAULT_MAX_REPAIRS by its name: the
+    // model-policy test only ever sees that constant as an argument inside the clamp call.
+    const constant = (name: string): number => {
+      const match = new RegExp(`const ${name} = (\\d+)`).exec(JS);
+      if (!match) throw new Error(`workfly.js: ${name} not found`);
+      return Number(match[1]);
+    };
+    const floor = /clampInt\(input\.maxRepairs, (\d+), /.exec(JS);
+    if (!floor) throw new Error('workfly.js: the maxRepairs clamp call was not found');
+    expect(SKILL.replace(/\s+/g, ' ')).toContain(
+      `${constant('DEFAULT_MAX_REPAIRS')} when unset or not an integer, otherwise clamped to ${floor[1]}-${constant('MAX_REPAIRS')}`,
+    );
+  });
+
   test('the skill names the script path and the saved name', () => {
     expect(SKILL).toContain('.claude/workflows/workfly.js');
     expect(SKILL).toContain('saved name `workfly`');

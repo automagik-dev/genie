@@ -3067,7 +3067,10 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
 
     const second = converge(fixture, installedSkills());
     expect(second.retirement?.removed).toEqual([]);
-    expect(second.lines).toContain('nothing to retire');
+    // Scoped: the skills channel owns the `skills:` lines in this same transcript, and an
+    // unqualified `nothing to retire` read as a verdict on those too (issue #2927).
+    expect(second.lines).toContain('integrations: nothing to retire');
+    expect(second.lines).not.toContain('nothing to retire');
     expect(treeHash(fixture.home)).toBe(afterFirst);
   });
 
@@ -3077,7 +3080,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
 
     const run = converge(fixture, { status: 'failed', reason: 'skills CLI exited 1: boom' });
     expect(run.retirement).toBeNull();
-    expect(run.lines).not.toContain('nothing to retire');
+    expect(run.lines).not.toContain('integrations: nothing to retire');
 
     // Nothing was retired: every plugin-era asset is still exactly where it was.
     expect(readFileSync(join(fixture.codexHome, 'config.toml'), 'utf8')).toContain('[plugins."genie@automagik"]');

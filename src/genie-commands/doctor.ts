@@ -645,7 +645,7 @@ function evaluatePreservedRetirements(record: SkillsInstallRecord | null): Check
 }
 
 const SKILLS_LEGACY_LEFTOVERS_SUGGESTION =
-  'Run `genie update` — it archives proven pre-record genie dirs under state-backups; review any name-only match by hand';
+  'Run `genie update` — it archives the proven ones under state-backups and moves nothing else; an unproven dir is a name-or-description match genie does not claim, and stays listed until you remove it or it stops matching';
 
 /**
  * Genie skill directories that predate the install record (see
@@ -663,10 +663,15 @@ function evaluateLegacyLeftovers(
   const leftovers = findLegacySkillLeftovers(legacyScanHomes(home, record?.agentDirs ?? []), inventory);
   if (leftovers.length === 0) return null;
   const named = leftovers.map((entry) => `${join(entry.agentDir, entry.entry)} (${entry.kind})`);
+  // `proven` and `marker` are genie's own; `unproven` is a dir that matches a retired genie NAME or
+  // a retired genie DESCRIPTION and not both — `~/.claude/skills/brain` is a live third-party
+  // product that shares a name genie once shipped. Calling every row a genie skill dir told the
+  // operator their own product was genie's, about a dir genie will never touch.
+  const claimed = leftovers.filter((entry) => entry.kind !== 'unproven').length;
   return {
     name: 'skills: legacy leftovers',
     status: 'warn',
-    detail: `${leftovers.length} genie skill dir(s) predate the install record: ${namedWithRemainder(named)}`,
+    detail: `${leftovers.length} dir(s) predate the install record — ${claimed} genie's own, ${leftovers.length - claimed} unproven (a retired genie name or description, not both; genie claims none of these): ${namedWithRemainder(named)}`,
     suggestion: SKILLS_LEGACY_LEFTOVERS_SUGGESTION,
   };
 }

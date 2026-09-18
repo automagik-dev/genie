@@ -2609,7 +2609,11 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
     skills.status === 'installed'
       ? runLegacyIntegrationRetirement({
           homes: options.retirementHomes ?? { home: homedir(), genieHome: GENIE_HOME },
-          log: emit,
+          // Scoped like every `skills:` line above it. Unprefixed, this module's `nothing to retire`
+          // sat in the same transcript as the skills channel's own retirement lines and read as a
+          // verdict on them — which is exactly what hid the pre-record leftovers of issue #2927:
+          // the run had just archived nothing there either, and one unqualified line covered both.
+          log: (line) => emit(`integrations: ${line}`),
         })
       : null;
   return { skills, retirement };
