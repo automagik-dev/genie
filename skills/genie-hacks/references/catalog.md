@@ -23,7 +23,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Title:** Provider Switching — Right Model for the Job
 - **Category:** providers
 - **Problem:** One model and reasoning level serves every task, although exploration, implementation, and adversarial review have different needs.
-- **Solution:** Choose the client per wish through the dispatch role, then set model, effort, and permissions in that client's named-agent surface (Codex: `~/.codex/agents/*.toml`; Claude and Hermes: their native role configuration). Use a fast read-heavy configuration for exploration and the strongest justified configuration for demanding review. Keep host-specific routing out of shared `SKILL.md` frontmatter.
+- **Solution:** Choose the client per wish through the dispatch role, then set model, effort, and permissions in that client's named-agent surface (Codex: `~/.codex/agents/*.toml`; every other client: whatever named-role configuration it ships). Use a fast read-heavy configuration for exploration and the strongest justified configuration for demanding review. Keep host-specific routing out of shared `SKILL.md` frontmatter.
 - **Code:**
   ```bash
   genie task checkout <task-id> --worker engineer   # standalone claim, then dispatch via the client's named role

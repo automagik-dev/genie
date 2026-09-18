@@ -16,6 +16,7 @@ const SHIPPED_SKILLS = [
   'authoring',
   'brainstorm',
   'council',
+  'deslop',
   'docs',
   'dream',
   'fix',
