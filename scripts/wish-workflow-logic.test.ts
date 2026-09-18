@@ -156,6 +156,16 @@ describe('darwin tolerance is decided by test name, never by file', () => {
     expect(SCRIPT).not.toContain('exactly as the runner printed it');
     expect(SCRIPT).toContain('make failCount equal that list');
   });
+
+  test('the gate prompt bounds the check twice: inside the command and on the tool call itself', () => {
+    // Run wf_7b62c69f-433 (2026-09-18): the gate ran the documented command but left the shell tool's
+    // own timeout at its 120 s default, the harness moved the six-minute check to the background, and
+    // the gate spent 51 calls polling the log (5-9 in every other run). The in-command `timeout 1500`
+    // cannot prevent that; the tool-call timeout has to be asked for by name.
+    expect(SCRIPT).toContain('in the FOREGROUND under a bounded timeout');
+    expect(SCRIPT).toContain("also set the shell tool's OWN timeout parameter to its maximum");
+    expect(SCRIPT).toContain('never as a background task, never through a monitor, wait or sleep loop');
+  });
 });
 
 describe('the gate answer becomes a pass only where the script allows it', () => {
