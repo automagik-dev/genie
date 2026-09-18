@@ -2,11 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Two script-side guards of `.claude/workflows/wish.js` decide whether a run publishes: the darwin
-// tolerance (issue #2926) and the base refusal. No module can import them — the runtime executes the
-// script — so, as `scripts/workflows-model-policy.test.ts` already does with workfly's clamp, each
-// declaration is lifted out of the shipped source and evaluated here. The behaviour under test is
-// therefore the text that ships, never a copy of it.
+// Three script-side decisions of `.claude/workflows/wish.js` are tested here: the darwin tolerance
+// (issue #2926), the base refusal, and what `normalizeInput` makes of the caller's args — including
+// the per-stage model keys, where an unset key must keep inheriting. No module can import them — the
+// runtime executes the script — so, as `scripts/workflows-model-policy.test.ts` already does with
+// workfly's clamp, each declaration is lifted out of the shipped source and evaluated here. The
+// behaviour under test is therefore the text that ships, never a copy of it.
 
 const ROOT = join(import.meta.dir, '..');
 const SCRIPT = readFileSync(join(ROOT, '.claude', 'workflows', 'wish.js'), 'utf8');
@@ -263,5 +264,92 @@ describe('a run that stopped early never reports a budget it did not spend', () 
     expect(SCRIPT).toContain('repairs >= job.repairBudget');
     expect(SCRIPT).toMatch(/The repair budget \(\$\{job\.repairBudget\}\) is spent/);
     expect(SCRIPT).toMatch(/The repair loop ended after \$\{repairs\} of \$\{job\.repairBudget\} round\(s\)/);
+  });
+});
+
+// `normalizeInput` is the whole args contract: it decides what every later stage reads, and the
+// per-stage model keys are resolved from what it returns. Lifted with its own helpers so a caller
+// shape can be handed to the shipped function directly.
+const INTAKE_DECLARATIONS = [
+  lift(/^const DEFAULT_BASE = .*$/m),
+  lift(/^const DEFAULT_REPAIR_BUDGET = .*$/m),
+  lift(/^const MAX_REPAIR_BUDGET = .*$/m),
+  lift(/^const SLUG_CAP = .*$/m),
+  lift(/^const BASE_ERROR =\n {2}'.*'$/m),
+  lift(/^const BASE_SHAPE_ERROR =\n {2}'.*'$/m),
+  lift(/^const text = .*$/m),
+  lift(/^const clampInt = [\s\S]*?: fallback$/m),
+  lift(/^const BRANCH_NAME = .*$/m),
+  lift(/^const PROTECTED_BASE = .*$/m),
+  lift(/^function baseRefusal\(base\) \{[\s\S]*?^\}$/m),
+  lift(/^function slugify\(value\) \{[\s\S]*?^\}$/m),
+  lift(/^function normalizeInput\(raw\) \{[\s\S]*?^\}$/m),
+].join('\n');
+
+interface Job {
+  objective: string;
+  model: string;
+  gateModel: string;
+  publishModel: string;
+  repairBudget: number;
+}
+
+const normalizeInput = new Function(`${INTAKE_DECLARATIONS}\nreturn normalizeInput`)() as (raw: unknown) => Job | null;
+
+/** The stage models the script resolves from a normalized job, spelled exactly as wish.js does. */
+const stageModels = (job: Job): { session: string; gate: string; publish: string } => ({
+  session: job.model,
+  gate: job.gateModel || job.model,
+  publish: job.publishModel || job.model,
+});
+
+describe('per-stage models resolve from the caller args, and an unset key inherits', () => {
+  test('no model key at all leaves every stage inheriting the session model', () => {
+    const job = normalizeInput({ objective: 'do one thing' });
+    if (!job) throw new Error('normalizeInput refused a valid objective');
+    expect(job.model).toBe('');
+    expect(job.gateModel).toBe('');
+    expect(job.publishModel).toBe('');
+    // Empty at every stage is what makes the conditional spread drop out, which is how an
+    // unpinned run inherits the session model — the behaviour that must not change.
+    expect(stageModels(job)).toEqual({ session: '', gate: '', publish: '' });
+  });
+
+  test('model alone still pins all three stages, so an existing caller sees no change', () => {
+    const job = normalizeInput({ objective: 'do one thing', model: 'opus' });
+    if (!job) throw new Error('normalizeInput refused a valid objective');
+    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'opus', publish: 'opus' });
+  });
+
+  test('gateModel and publishModel override only their own stages', () => {
+    const job = normalizeInput({
+      objective: 'do one thing',
+      model: 'opus',
+      gateModel: 'haiku',
+      publishModel: 'sonnet',
+    });
+    if (!job) throw new Error('normalizeInput refused a valid objective');
+    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'haiku', publish: 'sonnet' });
+  });
+
+  test('one stage key without model pins that stage and leaves the rest inheriting', () => {
+    const job = normalizeInput({ objective: 'do one thing', gateModel: 'haiku' });
+    if (!job) throw new Error('normalizeInput refused a valid objective');
+    expect(stageModels(job)).toEqual({ session: '', gate: 'haiku', publish: '' });
+  });
+
+  test('a whitespace or non-string stage key normalizes to unset rather than to a pinned blank', () => {
+    const job = normalizeInput({ objective: 'do one thing', model: 'opus', gateModel: '   ', publishModel: 7 });
+    if (!job) throw new Error('normalizeInput refused a valid objective');
+    expect(job.gateModel).toBe('');
+    expect(job.publishModel).toBe('');
+    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'opus', publish: 'opus' });
+  });
+
+  test('the stage keys change nothing else about intake', () => {
+    const plain = normalizeInput({ objective: 'do one thing', repairBudget: 3 });
+    const staged = normalizeInput({ objective: 'do one thing', repairBudget: 3, gateModel: 'haiku' });
+    if (!plain || !staged) throw new Error('normalizeInput refused a valid objective');
+    expect({ ...staged, gateModel: '' }).toEqual(plain);
   });
 });

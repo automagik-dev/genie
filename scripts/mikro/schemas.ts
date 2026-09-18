@@ -78,10 +78,48 @@ export const ReviewPrep = z.object({
   injection_attempts: z.array(z.string()).default([]),
 });
 
+/**
+ * The bounds a coach proposal is verified against — stated here so the model is
+ * told them by the retry, and re-checked in `coach.ts` so the model is never the
+ * thing enforcing them.
+ */
+export const COACH_LIMITS = { maxEdits: 3, maxFindChars: 400, maxReplaceCharsTotal: 1200 } as const;
+
+/**
+ * mikro-coach — one sibling microagent's prompt + evidence → ONE bounded patch,
+ * as DATA. The coach never writes: `scripts/mikro/coach.ts` verifies this object
+ * mechanically, applies it to a `mkdtemp` copy of the agents dir, and benches
+ * before/after. `proposal: null` is a first-class answer — "nothing here earns a
+ * patch" is the correct output for an agent whose bars all pass.
+ */
+export const Coach = z.object({
+  agent: nonEmpty,
+  diagnosis: z.array(z.object({ observation: nonEmpty, evidence: nonEmpty })).min(1),
+  proposal: z
+    .object({
+      hypothesis: nonEmpty,
+      /** Each `find` is an exact, unique substring of the target SYSTEM.md; `coach.ts` proves uniqueness at application time. */
+      edits: z
+        .array(z.object({ find: nonEmpty.max(COACH_LIMITS.maxFindChars), replace: z.string() }))
+        .min(1)
+        .max(COACH_LIMITS.maxEdits)
+        .refine(
+          (edits) => edits.reduce((n, e) => n + e.replace.length, 0) <= COACH_LIMITS.maxReplaceCharsTotal,
+          `the replacements total more than ${COACH_LIMITS.maxReplaceCharsTotal} characters`,
+        ),
+      /** Fixture ids from the target agent's set. Empty or unknown is a hard reject, never a null proposal. */
+      targetFixtures: z.array(nonEmpty).min(1),
+      expectedLift: z.object({ metric: z.enum(['recall', 'yield', 'cost']), from: z.number(), to: z.number() }),
+    })
+    .nullable(),
+  injection_attempts: z.array(z.string()).default([]),
+});
+
 export const SCHEMAS = {
   'issue-triage': IssueTriage,
   'wish-context': WishContext,
   'review-prep': ReviewPrep,
+  'mikro-coach': Coach,
 } as const;
 
 export type AgentName = keyof typeof SCHEMAS;

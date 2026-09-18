@@ -2,16 +2,22 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BoundaryError } from './boundary';
 import {
   PRICE_BASIS,
   applyResolutions,
+  containedEnv,
   extractJson,
+  parseBoundaryFlag,
   parseFooter,
+  prepareFacts,
   serverEnv,
   stripFooter,
   untrustedConfig,
   verifyCitations,
 } from './call';
+import { FACTS_HEADER } from './facts';
+import { buildRunSpan } from './phoenix';
 import { IssueTriage, SCHEMAS } from './schemas';
 
 const FOOTER =
@@ -110,6 +116,41 @@ describe('verifyCitations', () => {
     expect(cites.find((c) => c.line === 9)?.ok).toBe(false);
     expect(applyResolutions(value, cites).facts[0].evidence).toBe('scripts/build-binary.sh:2');
   });
+  test('a plan may name a file that does not exist yet, and only a plan', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-new-'));
+    mkdirSync(join(repo, 'scripts', 'mikro'), { recursive: true });
+    writeFileSync(join(repo, 'scripts', 'mikro', 'call.ts'), 'a\nb\n');
+    mkdirSync(join(repo, 'scratch'), { recursive: true }); // on disk, holds nothing tracked
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', 'scripts'], { cwd: repo });
+    const file = (path: string, reason: string) => verifyCitations({ plan: { files: [{ path, reason }] } }, repo)[0];
+    // The shape every planning intent returned on 2026-09-18 and the gate refused: the
+    // prompt allows it, so the answer was right and the run was billed twice for nothing.
+    const planned = file('scripts/mikro/triage.ts', 'NEW: the triage scout; parent scripts/mikro/ is tracked');
+    expect(planned.ok).toBe(true);
+    expect(planned.reason).toBe('new file (declared NEW: under a tracked directory)');
+    // Without the marker a missing file is still a failed citation.
+    expect(file('scripts/mikro/triage.ts', 'the triage scout').ok).toBe(false);
+    // A directory that does not exist, or holds nothing tracked, anchors nothing.
+    expect(file('scripts/nowhere/triage.ts', 'NEW: invented parent').ok).toBe(false);
+    expect(file('scratch/triage.ts', 'NEW: untracked parent').ok).toBe(false);
+    // NEW: is a plan marker, never evidence: the same path cited with a line still fails.
+    const cited = verifyCitations(
+      {
+        facts: [{ evidence: 'scripts/mikro/triage.ts:12' }],
+        plan: { files: [{ path: 'scripts/mikro/triage.ts', reason: 'NEW: x' }] },
+      },
+      repo,
+    );
+    expect(cited.find((c) => c.line === 12)?.ok).toBe(false);
+    // The marker belongs to `plan.files` alone: the same record anywhere else is prose.
+    const elsewhere = verifyCitations({ files: [{ path: 'scripts/mikro/triage.ts', reason: 'NEW: x' }] }, repo);
+    expect(elsewhere[0].ok).toBe(false);
+    // The repository root is a tracked directory like any other.
+    expect(file('TRIAGE.md', 'NEW: a root-level note').ok).toBe(true);
+    // An existing file gains nothing from the marker: it is checked as any other path.
+    expect(file('scripts/mikro/call.ts', 'NEW: not new at all').reason).toBeUndefined();
+  });
   test('a deleted file in review-prep is not a failed citation', () => {
     const cites = verifyCitations({ files: [{ path: 'gone.ts', change: 'deleted' }] }, dir);
     expect(cites[0].ok).toBe(true); // no git history here at all: nothing can disprove the claim
@@ -159,6 +200,82 @@ describe('schemas', () => {
   });
 });
 
+describe('facts handoff', () => {
+  /**
+   * A real repository, because every fact is a git read. `gh` is not stubbed —
+   * a tmpdir repo has no GitHub remote to resolve, so it fails immediately and
+   * contributes nothing, which is exactly the "skip cleanly" path.
+   */
+  function repo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'mikro-facts-call-'));
+    mkdirSync(join(dir, 'src', 'lib'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib', 'sprocket-gate.ts'), 'export const sprocketGate = () => true;\n');
+    writeFileSync(join(dir, 'CLAUDE.md'), '- **src/lib/sprocket-gate.ts is the gate** — never bypass it\n');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: dir });
+    Bun.spawnSync(['git', 'add', '.'], { cwd: dir });
+    Bun.spawnSync(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed'], { cwd: dir });
+    return dir;
+  }
+
+  test('auto infers the mode from the prompt and writes both artifacts beside the ledger', () => {
+    const dir = repo();
+    const runs = join(dir, '.mikro', 'runs');
+    const handoff = prepareFacts('auto', 'Intent: harden the sprocketGate in sprocket-gate.ts', dir, runs, 'run-1');
+    expect(handoff?.path).toBe(join(runs, 'facts-run-1.json'));
+    expect(handoff?.contextPath).toBe(join(runs, 'facts-run-1.md'));
+    expect(handoff?.candidates).toBeGreaterThan(0);
+    expect(handoff?.ms).toBeGreaterThanOrEqual(0);
+    const json = JSON.parse(readFileSync(handoff?.path ?? '', 'utf8'));
+    expect(json.basis.mode).toBe('intent');
+    expect(json.candidates.map((c: { path: string }) => c.path)).toContain('src/lib/sprocket-gate.ts');
+    // The context file is what mikro loads, and its first line is the data frame
+    // the metadata preview shows the model.
+    const md = readFileSync(handoff?.contextPath ?? '', 'utf8');
+    expect(md.split('\n')[0]).toBe(FACTS_HEADER);
+    expect(md).toContain('src/lib/sprocket-gate.ts');
+  });
+
+  test('a prompt that implies no mode produces no facts rather than a guess', () => {
+    const dir = repo();
+    expect(
+      prepareFacts('auto', 'Prepare the review of PR #2932', dir, join(dir, '.mikro', 'runs'), 'run-2'),
+    ).toBeNull();
+  });
+
+  test('an explicit path is handed over as-is, and a missing one is skipped', () => {
+    const dir = repo();
+    const path = join(dir, 'given-facts.json');
+    writeFileSync(path, JSON.stringify({ candidates: [{ path: 'a.ts' }, { path: 'b.ts' }] }));
+    const handoff = prepareFacts(path, 'anything at all', dir, join(dir, '.mikro', 'runs'), 'run-3');
+    expect(handoff?.contextPath).toBe(path);
+    expect(handoff?.candidates).toBe(2);
+    expect(prepareFacts(join(dir, 'nope.json'), 'x', dir, join(dir, '.mikro', 'runs'), 'run-4')).toBeNull();
+  });
+
+  test('the span carries the candidate count only when facts were handed over', () => {
+    const base = {
+      agent: 'wish-context',
+      runId: 'r',
+      traceId: 't',
+      attempt: 0,
+      startMs: 0,
+      endMs: 1,
+      model: 'deepseek-api/deepseek-flash',
+      iterations: 1,
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: 0,
+      ok: true,
+      errors: [],
+      tags: {},
+      prompt: 'p',
+      answer: 'a',
+    };
+    expect(buildRunSpan({ ...base, factsCandidates: 27 }).attributes['metadata.facts_candidates']).toBe(27);
+    expect('metadata.facts_candidates' in buildRunSpan(base).attributes).toBe(false);
+  });
+});
+
 describe('hardening', () => {
   test('the MCP server gets an allowlisted environment, never the whole one', () => {
     process.env.SSH_AUTH_SOCK = '/tmp/sock';
@@ -193,6 +310,44 @@ describe('hardening', () => {
     const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
     expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
     expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
+  });
+});
+
+describe('containedEnv', () => {
+  test('carries the provider key the caller exported, and nothing of the host that the sandbox renames', () => {
+    process.env.DEEPSEEK_API_KEY = 'sk-test';
+    process.env.SSH_AUTH_SOCK = '/tmp/sock';
+    const env = containedEnv({ timeoutMs: 1000, agentsDir: '/repo/.mikro/agents' });
+    // providerKeyEnv() answers {} when the caller already holds the key: reading only that
+    // source here would have handed the sandbox no key at all for those callers.
+    expect(env.DEEPSEEK_API_KEY).toBe('sk-test');
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.PATH).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.MIKRO_AGENTS_DIR).toBe('/repo/.mikro/agents');
+    expect(env.MIKRO_MCP_RUN_TIMEOUT_MS).toBe('1000');
+  });
+});
+
+describe('--boundary', () => {
+  test('defaults to none: the uncontained path stays the default and the control arm', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--prompt', 'x'])).toBe('none');
+  });
+
+  test('selects the sandbox when asked for it', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--boundary', 'bwrap', '--dir', '.'])).toBe('bwrap');
+    expect(parseBoundaryFlag(['--boundary', 'none'])).toBe('none');
+  });
+
+  test('a typo is refused, never treated as off — a boundary that reports itself on must be on', () => {
+    for (const bad of [['--boundary', 'bwarp'], ['--boundary', 'docker'], ['--boundary']]) {
+      expect(() => parseBoundaryFlag(bad)).toThrow(BoundaryError);
+      try {
+        parseBoundaryFlag(bad);
+      } catch (error) {
+        expect((error as BoundaryError).failure).toBe('bad-spec');
+      }
+    }
   });
 });
 

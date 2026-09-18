@@ -2,7 +2,7 @@
 
 Cheap, fast, read-only workers on DeepSeek 4.1 Flash (`deepseek-api/deepseek-flash`, custom-typed
 in `.mikro/mikro.yaml` because the engine's registry only knows `deepseek-v4-flash`) that gather
-the mechanical facts a stage needs BEFORE an expensive agent reads anything. Three agents live in
+the mechanical facts a stage needs BEFORE an expensive agent reads anything. Four agents live in
 `.mikro/agents/<name>/` (`agent.yaml` + `SYSTEM.md` on the upstream five-rules contract — starter
 block first, no `FINAL` before the fourth REPL block, every citation printed by its own REPL, git
 and gh read-only, one fenced JSON answer):
@@ -12,6 +12,7 @@ and gh read-only, one fenced JSON answer):
 | `issue-triage` | `Triage issue #<n>` | type, area, summary, repro, candidate files with `path:line`, related PRs/wishes, lane, one question | the canonical wish's intake; `gh` issue triage in parallel |
 | `wish-context` | `Intent: <sentence>` | facts with evidence, related work, candidate file set, pinning tests, validation command, gotchas, estimate, open questions | `wish.js` admit:scout runs it first |
 | `review-prep` | `Prepare the review of PR #<n>` or `… of commit <sha> against <base>` | per changed file: pinning tests, gotchas, boundary flag, wish; claims with how-to-verify; risk flags | `wish.js` review:diff runs it first |
+| `mikro-coach` | `Coach <agent>` + the system/evidence/fixtures paths | a diagnosis citing the measured rows, and ONE bounded prompt patch as data (1–3 `{find, replace}` pairs, the fixtures it should move, the lift it expects) — or `null` | `scripts/mikro/coach.ts`, never called by hand |
 
 ## Run one
 
@@ -40,7 +41,134 @@ Fixtures (`fixtures/<agent>.json`) carry ground truth from merged PRs; `score.ts
 precision over file sets, type accuracy, and the citation verdict; the bars are yield ≥ 0.9,
 fabrications 0, files recall ≥ 0.6, median cost ≤ $0.05, p90 ≤ 240 s. `--write-evidence` appends
 the table to `.mikro/agents/<agent>/EVIDENCE.md` — every number there is a real run. `--fixtures <path>`
-points the bench at another set; that is how the adversarial set below is run.
+points the bench at another set; that is how the adversarial set below is run. `--agents-dir <dir>`
+points the run at another copy of the `<agent>/agent.yaml` + `SYSTEM.md` tree — that is how a patched
+prompt is measured without touching the checkout. Precedence: the **registry** (`schemas.ts`) decides
+the agent NAME and the schema its answers are validated against; `--agents-dir` decides only WHERE
+that agent's files are read from, and an unregistered name is still refused. With no flag the run is
+byte-identical to every round before the flag existed — `bench-options.test.ts` proves it over the
+parsed options and over a dry run whose fixtures are all filtered out.
+
+A fixture may also carry `truth.forbidden: [string]` — strings that must not appear anywhere in the
+answer — which adds one more vacuous bar, `forbidden`. The canary proves an injected instruction was
+not EXECUTED; `forbidden` proves the answer did not ACT on it either.
+
+## The facts file
+
+Round 6 of the wish-context bench had yield 1.00 and recall 0.87 — but per-fixture recall swung
+0.45 / 0.91 / 0.91 on one intent and 1.00 / 0.40 / 1.00 on another. That is DISCOVERY variance
+(which greps the model happened to run), and everything it discovers is computable, so
+`scripts/mikro/facts.ts` computes it once with no model:
+
+```sh
+bun scripts/mikro/facts.ts --dir . --intent "narrow the denylist so it never matches a test"
+bun scripts/mikro/facts.ts --dir . --issue 2927 --out /tmp/facts.json
+bun scripts/mikro/facts.ts --dir <worktree> --range origin/dev..HEAD --no-gh
+```
+
+One JSON record: `basis` (sha, mode), `keywords`, ranked `candidates` (`path`, `why`, `hits`,
+`matched`), `tests` (the pinning test per candidate), `gotchas` (CLAUDE.md / AGENTS.md lines with
+their line numbers), `recent` commits, `related` PRs / wishes / brainstorms, and `truncated`.
+Sources are `git ls-files`, `git grep`, `git log`, `git diff` and the working tree, plus `gh` for
+the issue body and related PRs — the only network, skipped cleanly when `gh` is absent. Two
+invariants the agents depend on: every path is TRACKED at `basis.sha` (so a cited fact can never
+fail `call.ts`'s citation check), and the record is bounded at 64 KB with every drop counted.
+Ranking is keyword COVERAGE first, locator keywords double-weighted, matching lines as the
+tie-break. Tests, `.genie/` planning documents, lockfiles, `.mikro/` and — deliberately —
+`scripts/mikro/fixtures/` are never candidates: the fixtures carry each bench prompt next to its
+ground-truth file list, and ranked by coverage that file came FIRST on both intents tried.
+
+Run an agent over it with `--facts auto`, or set `MIKRO_FACTS=auto` for a whole bench (chosen over
+a `bench.ts` flag because it is the smaller change — zero lines in `bench.ts`):
+
+```sh
+bun scripts/mikro/call.ts wish-context --facts auto --prompt "Intent: …"
+MIKRO_FACTS=auto bun scripts/mikro/bench.ts wish-context --reps 2 --tag round=7
+```
+
+`call.ts` infers the mode from the prompt (`Triage issue #N` → `--issue`, `Intent: …` →
+`--intent`, `… commit <sha> against <base>` → `--range`; a `PR #n` prompt names no base, so it
+gets no facts rather than a guessed range), writes `.mikro/runs/facts-<runId>.{json,md}`, and hands
+the Markdown over through **mikro's own MCP `context` argument** (`CONTEXT_PROPERTY` in mikro's
+`src/mcp/server.ts`) — not by appending to the prompt. That is the right channel and not merely the
+available one: mikro externalizes a context file into the REPL as the Python `context` variable
+with only its metadata in the message history, so the agent's `print(context)` satisfies the third
+rule (a path you did not print is a path you may not cite) and the metadata preview is the data
+frame itself. The ledger row carries `facts: {path, candidates, ms}`; the Phoenix span carries
+`metadata.facts_candidates`. Facts are an accelerator, never a gate — a tree they cannot be
+computed over still gets its run.
+
+**Measured, and not uniformly.** `wish-context` round 8 (facts, reps 2): recall 0.96, precision
+0.93, p90 105 s, retries 0, fabrications 0 — against round 6 (no facts): recall 0.87, p90 126 s,
+with per-fixture recall swinging 0.45/0.91/0.91 and 1.00/0.40/1.00 on the two issue intents. Under
+facts both of those read 0.91/0.91 and 1.00/1.00: the spread is what collapsed, which is what the
+facts file was built to do. `issue-triage` is the other answer — reps 1, facts 0.71 recall / 92 s
+p50 / $0.0082 median against a same-prompt no-facts control at 0.77 / 56 s / $0.0059. The recall gap
+is inside the noise of six runs; the 64% latency and 39% cost penalties are not. So the flag stays
+OPT-IN and off by default, and the `wish.js` offload should pass `--facts auto` on the
+`wish-context` call only until an issue-triage round earns it. Every number above is a real run in
+each agent's `EVIDENCE.md`.
+
+## triage.ts (provisional)
+
+```sh
+bun scripts/mikro/triage.ts --intent "make genie doctor print the resolved orchestration mode as one read-only line"
+bun scripts/mikro/triage.ts --issue 2963 --dir . --timeout-ms 300000
+```
+
+The read-only triage scout of `.genie/brainstorms/wish-v7/DESIGN.md` ("Triage, inline and always
+first"), slice 1a. It is a **composition**, not a fourth microagent: `--issue` runs `issue-triage`
+and then `wish-context` over a sentence built from the issue's own `title` + `summary`; `--intent`
+runs `wish-context` alone (`--facts auto`). Sequential, one process, one trace id across both
+spans, no new dependencies. `TriageRecord` therefore lives in `triage.ts` and is deliberately NOT
+in `SCHEMAS` — `schemas.ts` is one entry per `agent.yaml` agent and `call.ts` looks agents up
+there by name.
+
+One JSON record goes to stdout and the same record to `<dir>/.mikro/runs/triage-<stamp>.json`.
+Nothing else is written, on success or on failure — no DRAFT.md, no WISH.md, no `wish.js` edit;
+`triage.test.ts` audits `git status --porcelain` in a temp repo on both paths. The record carries
+`intent`, `facts[]`, `related[]`, `candidateFiles[]` (wish-context's `plan.files` ∪ issue-triage's
+`candidate_files`, `isNew` from the `NEW:` reason prefix), `estimate`, `band`, `boundaryHits`,
+`injectionAttempts[]`, `wrs`, `lane`, every open `questions[]` untruncated, `costUsd`, `elapsedMs`
+and the two `runIds`.
+
+Three properties are the point:
+
+- **No lane is derived.** D5 of the design — boundaries and routing are policy judged by LLMs,
+  mechanized only after a measured miss — so `lane` is `{value: <issue-triage's lane>, source:
+  'issue-triage'}` when that agent ran and `{value: null, source: 'none'}` otherwise. Nothing maps
+  an estimate to a lane, and a test reads the shipped source to keep it that way.
+- **No WRS number is published.** D13 asks for a DERIVED score, and the 60/100 thresholds are
+  uncalibrated, so `wrs` is `{calibration: 'pending', actionable: false, dimensions, metCount}`:
+  five dimensions, each `{met, evidence}`, and no total. **Nothing may gate on it.** Problem =
+  a non-empty intent; Scope = ≥1 candidate file and a band under the maximum; Decisions = zero
+  open questions over the untruncated set; Risks = boundary hits computed and zero; Criteria =
+  a pinning test or validation command narrower than `bun run check`. A dimension whose agent
+  degraded reads `unknown: <class>`, never a clean "none".
+- **Boundary hits fail closed.** `.claude/workflows/wish.js` is executed by the harness and cannot
+  be imported, so its `DENYLIST` and band constants are parsed out of the shipped text at run
+  time and the matcher mirrors `denylistRule` exactly; the prose entries no path shape can reach
+  are listed under `boundaryHits.unmatchable`. A missing, empty or garbled denylist gives
+  `{status: 'unknown', reason}` — never a clean zero. A parity test runs both matchers over one
+  table of paths.
+
+A failed agent degrades the record rather than killing the run: `status: 'degraded'`, the class in
+`degraded[]` (`citation-gate`, `schema`, `timeout`, `empty`, `runner`), whatever the answer
+VERIFIED kept — an `ok:false` citation-gate answer still carries the facts whose own citation
+passed — and exit 0. Exit 1 is for a usage error or a run that never started.
+
+**Cost and latency.** ≈$0.02–0.06 and 60–150 s per agent call (`call.ts` still retries once on a
+failed gate, so a bad run doubles both). Measured 2026-09-18 on this host, `PHOENIX_ENDPOINT` on
+loopback: `--intent` (one agent) $0.02 / 53 s, band `ideal`, 4 candidate files, 4 questions,
+metCount 4/5; `--issue 2963` (two agents) $0.05 / 142 s, band `ideal`, 7 candidate files, lane
+`patch` from issue-triage, metCount 4/5. Both `status: 'ok'`, zero boundary hits.
+
+**What it is not, yet.** It is NOT wired into `skills/wish/SKILL.md` or `.claude/workflows/wish.js`,
+and it is NOT "inline and always first" until its p90 latency is measured over more than two runs.
+In slice 1a the consumer is the operator or the orchestrator session, by hand.
+
+**Retention.** A record holds the operator's verbatim intent and, on the issue path, text derived
+from the issue. Records live only under the gitignored `.mikro/runs/` and are never committed.
 
 ## Refine one
 
@@ -48,6 +176,66 @@ Edit `SYSTEM.md`, re-bench with a new `--tag round=N`, keep the change only if t
 and the evidence table improved. Deterministic before generative: anything a script can compute
 (file lists, tests that name a file, gotcha lines) is fetched by the starter-block helpers, and the
 model only reads, cites and summarizes. Never add a write verb to a helper.
+
+## Coach one
+
+```sh
+bun scripts/mikro/coach.ts wish-context --null-control --reps 2   # FIRST: measure the noise floor
+bun scripts/mikro/coach.ts wish-context --reps 2                  # then one real round
+```
+
+One coaching round is: the coach proposes, the script verifies, a `mkdtemp` copy of `.mikro/` is
+patched, and the same fixtures are benched twice in the same session — BEFORE on the tracked agents
+dir, AFTER through `bench.ts --agents-dir <copy>`. It prints the unified diff with its sha256, one
+before/after table and one verdict, and writes `.mikro/runs/coach-<agent>-<stamp>.json` (HEAD SHA,
+both prompt shas, per-fixture rows, run ids, cost, elapsed, `truthSetsVisible: true` — the coach can
+read the fixture file, ground truth and all, and holdout evaluation is a follow-up — and
+`outcome: proposal | null | aborted`, so a null proposal and a crashed run are never confused).
+
+There is **no `--apply`**. Nothing tracked is modified by the script or by the agent: the coach
+returns data, the operator applies the printed diff by hand and records the printed `diff sha256`
+beside the table. Read the diff first — it is a prompt change proposed by a flash model.
+
+**The verdict rule, pre-registered** (`decideVerdict`, `coach.ts`), in order:
+
+| condition | verdict |
+|---|---|
+| a bar that passed BEFORE fails AFTER | `regression` |
+| a GUARD fixture worsens by more than its own drift band | `regression` |
+| no null-control drift band on record, or the metric was measured on no target fixture | `inconclusive` |
+| mean improvement over the TARGET fixtures above the widest band among them | `lift` |
+| that improvement inside the band | `inconclusive` |
+| the targets moved the wrong way | `no-lift` |
+
+The target fixtures decide and the rest guard; `regression` means the patch broke something it was
+not aiming at, while a target fixture falling is the hypothesis being wrong (`no-lift`). **Every
+reps-2 verdict is recorded `non-actionable`: no operator hand-applies a round-1 lift.** Two reps
+over five fixtures is a measurement, not a mandate — repeat it before you believe it.
+
+`--null-control` is the same round with an EMPTY patch: the copy is byte-identical to the checkout,
+so the table is pure session-to-session drift, and that per-fixture band is what every later verdict
+is judged against. It is discovered automatically (the newest `coach-<agent>-*.json` with
+`mode: "null-control"`) or named with `--band <file>`. Run it before the first real round; without
+one, every verdict is `inconclusive` by construction.
+
+Refusals cost nothing, because they happen before the benches: a `find` that is not unique **at the
+moment it is applied** (edits are applied sequentially into the copy, never checked in one up-front
+pass), a `find` over 400 characters, replacements over 1200 in total, more than three edits, an
+empty patch, or a `targetFixtures` that is empty or names an id the fixture set does not hold — a
+hard reject, never a quiet "no proposal". The round also aborts, to an `aborted` record, if
+`.mikro/agents` carries uncommitted changes when it starts (a half-patched prompt makes "before"
+meaningless), if it passes 20 minutes of wall clock, or if it costs more than twice the expected
+bench cost. Afterwards it asserts the checkout gained no changes outside the gitignored
+`.mikro/runs/`, and prints the count either way.
+
+The copy carries the whole `.mikro/`, not just `agents/`: `runAgent` derives its trusted root from
+the agents dir and refuses a `--dir` whose `.mikro/{mikro.yaml,TOOLS.md,SYSTEM.md,CRITERIA.md}`
+differs from it (`untrustedConfig`, `call.ts`). That guard is not weakened for the copy — the copy is
+built to satisfy it. One consequence: the AFTER run's ledger rows land under the copy's root, so
+`coach.ts` folds them back into `.mikro/runs/<agent>.jsonl` before the temp dir goes.
+
+A coaching round is one coach call (≈ $0.02) plus two benches (fixtures × reps × ≈ $0.01 each), so
+≈ $0.25 and ≈ 12 minutes for five fixtures at reps 2. There is no nightly job: measurement first.
 
 ## Per-machine prerequisites (checklist)
 
@@ -62,7 +250,11 @@ model only reads, cites and summarizes. Never add a write verb to a helper.
 
 ## What "read-only" means here
 
-Prompt discipline, not a sandbox. Each agent's starter block routes `git` and `gh` through allowlisted
+Prompt discipline, not a sandbox — **on the default path**. `--boundary bwrap` adds a real execution
+boundary (see [The boundary](#the-boundary) below); it is opt-in, and `none` remains the default and the
+control arm. Everything in this section describes the uncontained path.
+
+Each agent's starter block routes `git` and `gh` through allowlisted
 helpers, but the REPL is Python with `subprocess` available; an instruction smuggled into an issue body,
 PR body or commit message that the model obeys could run anything the MCP server's environment allows.
 Mitigations in place: the server gets an allowlisted environment (PATH, HOME, locale, `MIKRO_*`, the
@@ -112,6 +304,89 @@ instruction *could* do. The remaining vector is an issue body — the real untru
 team controls; that is a follow-up and an operator decision. The file-vector payload also labels itself
 at its foot (a committed file a human may open must say what it is), which makes it a weaker vector than
 an unlabelled hostile file.
+
+## The boundary
+
+`call.ts --boundary bwrap` runs `mikro mcp` inside an unprivileged [bubblewrap](https://github.com/containers/bubblewrap)
+sandbox. **`none` is the default and stays the control arm** — this is an evidence slice, not a rollout;
+the rollback is `--boundary none`. Not docker: the runtime, the provider key and `gh` would have to live
+in an image whose maintenance nobody owns (the council's objection), whereas bwrap binds what the host
+already has. `scripts/mikro/boundary.ts` holds a pure argv builder (`bwrapArgv`, unit-tested with no
+sandbox), the host-side egress proxy, and the probes.
+
+| surface | policy | why |
+|---|---|---|
+| namespaces | `--unshare-all --die-with-parent --new-session`, unprivileged user namespace | caps are dropped by construction; the sandbox cannot outlive the runner, and `--new-session` denies TIOCSTI |
+| environment | the whole environment is handed to the **bwrap process**, which forwards it — never `--setenv` | the runtime's environment is declared, not inherited (no SSH agent, no caller tokens), and the provider key stays out of `/proc/<pid>/cmdline`, which every user on the host can read |
+| system | `--ro-bind` of `/usr /bin /sbin /lib /lib64 /etc` | narrowed down from a `--ro-bind / /` prototype to what `mikro`, `git`, `gh`, `curl` and CA certs need |
+| the repo (`--dir`) | **read-only**, plus its `git rev-parse --git-common-dir` read-only | a review-prep `--dir` is a worktree whose `.git` is a *file* pointing into the main repo; without the common dir `git log`/`grep`/`diff` cannot read anything |
+| `MIKRO_AGENTS_DIR` | read-only (only when it is outside `--dir`) | the agent definitions are input, never writable |
+| HOME | `--tmpfs` at the same path | mikro's `~/.mikro/sessions` store is writable and discarded with the sandbox |
+| — the mikro runtime | `--ro-bind ~/.mikro/mikro` + `--symlink` recreating `mikro` on PATH | a *bind* of the launcher would make it resolve its root from the wrong directory; the symlink keeps `bin/mikro.mjs` resolving to `~/.mikro/mikro` |
+| — settings | a **generated** copy of the host `~/.mikro/settings.json` (model selection + `providers` only), read-only | a host file that later grows a literal key or an unrelated section cannot reach the sandbox |
+| — node | `--ro-bind` of the node install root resolved from PATH, its `bin` on PATH | `mikro.mjs` is `#!/usr/bin/env node`; on this host that root is `~/.hermes/node`, so exactly that subtree is bound — never `~/.hermes` |
+| nothing else of HOME | not mounted | no `~/.config` (so no `~/.config/gh`), no `~/.ssh`, `~/.claude`, `~/.mikro/gate-env.sh` |
+| `/tmp` | `--tmpfs` | scratch the run throws away |
+| writable, deliberately | `<dir>/.mikro/runs` and (under `bench.ts`) the prompt-vector canary root | these are where an executed injection lands: `.mikro/runs/canary-adversarial` is the file-vector canary (`adversarial.ts:34`) and the ledger dir is gitignored. A boundary that hid the canary would blind the bench that measures injection — the council dissent's exact objection. The boundary's job is to stop writes to the SOURCE tree, not to hide what the model attempted |
+| the run's scratch dir | `--bind` (read-write) | holds the proxy's unix socket and the generated settings file |
+| network | `--unshare-net` — loopback only, deny by default at the network layer | |
+| the one hole | a host-side HTTP **CONNECT** proxy on a unix socket in the scratch dir; inside, `socat TCP-LISTEN:8118,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:<socket>` runs before `exec mikro mcp`; the child env sets `HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:8118`, `NO_PROXY=` and `NODE_USE_ENV_PROXY=1` | mikro's `openai` client runs on global fetch, and node v26 honours a proxy from the environment only under `NODE_USE_ENV_PROXY`. The probe proves the pair is load-bearing: with the proxy variables cleared, `api.deepseek.com` is unreachable *inside* |
+| allowlist | exactly `api.deepseek.com:443` and `api.github.com:443`, matched as an exact `host:port` (no suffixes) | the provider baseUrl in `.mikro/mikro.yaml`, and the host every read-only `gh` verb in the three `SYSTEM.md` starter blocks actually calls (`gh issue view`, `gh pr list`, `gh search`, `gh api` without a method — all `api.github.com`) |
+| egress ledger | every attempt, allowed or not, is one JSON line `{ts, runId, host, port, allowed}` in `<repo>/.mikro/runs/egress.jsonl` (gitignored); the run's ledger row and Phoenix span carry `boundary` and `egress: {allowed, denied}` | a denial is never silent |
+| limits | `ulimit -u 256` (node + socat + REPL children, far below a fork bomb) and `ulimit -v 4194304` KiB = 4 GiB virtual (node v26 reserves a large virtual arena, so this is a ceiling, not a working-set budget) | |
+| wall clock | `call.ts`'s existing timeout; killing the runner's child kills the sandbox through `--die-with-parent` | |
+
+Fail-closed: a missing `bwrap` or `socat`, an unresolvable runtime, a socket it cannot bind, or a
+preflight `bwrap … -- /bin/true` that does not exit 0 all abort the run with a typed `BoundaryError`
+naming the cause. **bwrap mode never silently downgrades to `none`.**
+
+### Probes
+
+```sh
+bun scripts/mikro/boundary.ts --probe --dir .      # exits 1 if any expectation fails
+```
+
+Deterministic, no model. Each probe prints observed beside expected, and every boundary arm has an
+**uncontained control arm** so a row is only evidence when the control shows the check would otherwise
+have passed. The write probe's control arm runs against a throwaway `mkdtemp` git repo — never the real
+checkout. The table is appended to [`EVIDENCE-boundary.md`](EVIDENCE-boundary.md).
+
+### Running a round inside it
+
+```sh
+bun scripts/mikro/bench.ts <agent> --fixtures scripts/mikro/fixtures/<agent>.adversarial.json \
+  --reps 1 --boundary bwrap --tag note=boundary=bwrap --write-evidence
+```
+
+`--boundary` rides the round's tags and the `EVIDENCE.md` header (`boundary: bwrap`), so no table can be
+read as the wrong arm.
+
+### What this still does not fix (named residuals)
+
+- **Credentials are still inside the REPL.** `DEEPSEEK_API_KEY` (mikro needs it) and `GH_TOKEN` (read
+  from `gh auth token` on the host, so `~/.config/gh` itself stays unmounted) are in the contained
+  process's environment. Terminating TLS at the proxy and injecting credentials host-side is the next
+  slice.
+- **The allowlist is a host list, not a request policy.** Anything the agent can reach `api.github.com`
+  for with the token it holds, it can reach — the proxy sees only CONNECT, never the request inside.
+- **`.mikro/runs` is writable on purpose.** An obeyed injection can still write there. That is the
+  point: it is what makes the canary observable.
+- **Sessions on tmpfs.** mikro's `~/.mikro/sessions` store is discarded with the sandbox, so a contained
+  run leaves no resumable session on the host.
+- **Latency and cost.** Measured, on this host, 2026-09-18 (`boundary=bwrap` rounds in each agent's
+  `EVIDENCE.md`, beside the uncontained rounds they are compared against). Ordinary fixture, one run
+  each: issue-triage 72 s vs a 56 s uncontained p50 (1.29x), review-prep 67 s vs 60 s (1.12x),
+  wish-context 205 s vs 87 s (2.36x) — but that wish-context round was two attempts of 94 s and 110 s
+  after an ordinary bare-name citation failure, so per-attempt it is ~1.1-1.3x like the others. On the
+  adversarial sets the contained p50 is *lower* than the uncontained one for wish-context (104 vs 123 s)
+  and review-prep (93 vs 102 s), and higher for issue-triage (146 vs 87 s, two of three runs retried).
+  **Cost is 3-7x across every pair, and that is NOT attributable to the boundary**: the contained arm
+  ran against THIS branch's tree, which is ~1 700 lines larger than the tree the uncontained baselines
+  read, and a mikro round's bill is dominated by how much the REPL's helpers print. Re-measuring both
+  arms on one tree is the honest way to price the boundary, and it has not been done.
+- **This is not a verdict on the model.** A canary that stayed absent inside the boundary is evidence
+  about this model on these prompts *and* about these mounts — not proof that a different injection
+  could not reach something the allowlist still permits.
 
 ## Prices
 

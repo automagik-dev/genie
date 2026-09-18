@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
@@ -255,6 +255,38 @@ describe('every shipped skill is self-contained', () => {
 
   test('the wish and brainstorm copies of the evidence helper are byte-identical', () => {
     expect(readFileSync(WISH_SCRIPT)).toEqual(readFileSync(EVIDENCE_SCRIPT));
+  });
+
+  test('the entry-point guard survives a symlinked path: verify still refuses, exit 1', () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-symlink-skill-'));
+    try {
+      // Real tree: skills/wish/references/design-review-evidence.mjs
+      const references = join(root, 'real', 'skills', 'wish', 'references');
+      mkdirSync(references, { recursive: true });
+      cpSync(WISH_SCRIPT, join(references, 'design-review-evidence.mjs'));
+      // The launch path traverses a symlink to that references directory —
+      // exactly what an agent-home skills install looks like on disk.
+      const link = join(root, 'linked-references');
+      symlinkSync(references, link);
+
+      // A DESIGN.md with NO evidence block at all: the gate's own refusal.
+      const design = join(root, 'DESIGN.md');
+      writeFileSync(design, '# Design\n\nNo review evidence block here.\n', 'utf8');
+
+      const verify = Bun.spawnSync(['node', join(link, 'design-review-evidence.mjs'), 'verify', design], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      // Before the real-path comparison this exited 0 with empty stderr: the
+      // guard did not recognise itself as the entry point, so the CLI body
+      // never ran and the gate failed open.
+      expect(verify.stderr.toString()).toContain(
+        'DESIGN.md must contain exactly one bounded design-review evidence block',
+      );
+      expect(verify.exitCode).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('the wish copy runs with no sibling skill installed', () => {
