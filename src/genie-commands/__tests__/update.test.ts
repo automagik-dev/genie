@@ -1087,6 +1087,57 @@ describe('fetchLatestManifest (G5)', () => {
     expect(neither).toBeNull();
   });
 
+  test('a JSON envelope from the API cannot displace the CDN answer', () => {
+    // What the contents API returns WITHOUT the raw Accept header. Its bytes are not the
+    // manifest's, so if it ever won, manifestSha256 would describe the envelope.
+    const envelope = JSON.stringify({
+      name: 'latest.json',
+      path: '.well-known/latest.json',
+      sha: 'd015d2a4',
+      size: 312,
+      type: 'file',
+      content: Buffer.from(manifestJson('9.260918.9')).toString('base64'),
+      encoding: 'base64',
+    });
+    const cdnBytes = manifestJson('4.260509.5');
+    return fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, envelope) }).then((manifest) => {
+      expect(manifest?.version).toBe('4.260509.5');
+      expect(manifest?.manifestBytes).toBe(cdnBytes);
+    });
+  });
+
+  test('an API error body cannot displace the CDN answer', async () => {
+    const rateLimited = JSON.stringify({
+      message: 'API rate limit exceeded for 203.0.113.7.',
+      documentation_url: 'https://docs.github.com/rest/overview/rate-limits',
+      status: '403',
+    });
+    const cdnBytes = manifestJson('4.260509.5');
+    const manifest = await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, rateLimited) });
+    expect(manifest?.manifestBytes).toBe(cdnBytes);
+    // And the operator is told, because a silent rate limit is the #2947 symptom again.
+    const notes: string[] = [];
+    await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, rateLimited), onNote: (m) => notes.push(m) });
+    expect(notes.join(' ')).toContain('api.github.com did not answer');
+  });
+
+  test('a disagreement is reported with both versions, and agreement is silent', async () => {
+    const notes: string[] = [];
+    const note = (m: string) => notes.push(m);
+    await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), manifestJson('4.260509.6')),
+      onNote: note,
+    });
+    expect(notes[0]).toContain('api.github.com has 4.260509.6');
+    expect(notes[0]).toContain('still at 4.260509.5');
+    notes.length = 0;
+    await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), manifestJson('4.260509.5')),
+      onNote: note,
+    });
+    expect(notes).toEqual([]);
+  });
+
   test('the API URL names the same file on main, and the fetcher asks for its raw bytes', () => {
     expect(manifestApiUrlForChannel('stable')).toBe(
       'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/latest.json?ref=main',
@@ -1097,7 +1148,10 @@ describe('fetchLatestManifest (G5)', () => {
     // Without the raw Accept header the API answers with a JSON envelope whose
     // digest is not the manifest's, which would break the byte binding above.
     const body = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const fetcherBody = body.slice(body.indexOf('async function defaultManifestFetcher'));
+    const fetcherStart = body.indexOf('async function defaultManifestFetcher');
+    expect(fetcherStart).toBeGreaterThan(-1);
+    const afterStart = body.slice(fetcherStart);
+    const fetcherBody = afterStart.slice(0, afterStart.indexOf('\ninterface '));
     expect(fetcherBody).toContain("'Accept: application/vnd.github.raw'");
     expect(fetcherBody).toContain('url.startsWith(`${API_BASE_URL}/`)');
   });
