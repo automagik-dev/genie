@@ -58,6 +58,20 @@ const NAME_ROW_INDENT = 4;
 /** `<rule><indent><value>` with trailing padding tolerated. */
 const LIST_ROW_PATTERN = new RegExp(`^${BOX_RULE}( +)(\\S.*?) *$`);
 
+/**
+ * The banner the pinned CLI prints in place of its `intro()` box whenever it
+ * detects an agent session — a Claude Code session is one, so every in-workflow
+ * run carries it (issue #2919). It is chrome: it is printed before the
+ * `Available Skills` header and it carries no box rule, so anything the CLI
+ * glues onto its line — a spinner redraw erases with `ESC[1G ESC[J` and no
+ * newline, which `stripAnsi` collapses — stops being line-anchored and
+ * disappears from the row match, header and all. Cutting the banner together
+ * with whatever precedes it on its line restores both the header slice and the
+ * row that followed it. The dash is matched as either spelling so a CLI that
+ * downgrades the em dash on a non-UTF-8 stream is still recognised.
+ */
+const AGENT_BANNER_PATTERN = /^.*?Agent detected [-—] installing non-interactively/gm;
+
 /** Recursion ceiling for the `skills/` walk — a real tree is two or three deep. */
 const MAX_WALK_DEPTH = 12;
 
@@ -120,10 +134,12 @@ export function stripAnsi(text: string): string {
  *   `│    architecture`            <- name, indent 4
  *   `│      Use when reviewing…`   <- description, indent 6
  * Only the `Available Skills` section is considered when that header is
- * present, so header/summary chrome can never be read as a skill name.
+ * present, so header/summary chrome can never be read as a skill name. The
+ * agent-detection banner is removed first, so its presence changes nothing:
+ * the same transcript parses to the same names with or without it.
  */
 export function parseSkillsListOutput(rawText: string): SkillsListParse {
-  const text = stripAnsi(rawText);
+  const text = stripAnsi(rawText).replace(AGENT_BANNER_PATTERN, '');
   const declaredMatch = text.match(/Found\s+(\d+)\s+skills?\b/);
   const declaredCount = declaredMatch === null ? null : Number.parseInt(declaredMatch[1] as string, 10);
   const headerIndex = text.indexOf('Available Skills');

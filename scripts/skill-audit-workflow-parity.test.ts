@@ -50,3 +50,21 @@ describe('skill-audit skill fronts the skill-audit-sweep workflow', () => {
     expect(SKILL).toContain('Confirm every retirement and merge with the caller before any file moves.');
   });
 });
+
+// Issue #2919. Two refusals the script owns and no other surface states: an all-invalid
+// caller `skills` list is a typo in the scope, not a full sweep; and the parity command
+// the signals reader is told to run has a mutating flag it must never reach for.
+describe('the sweep refuses an invalid scope and forbids the mutating parity flag', () => {
+  test('an all-invalid skills list is refused before any agent is convened', () => {
+    expect(JS).toContain('A supplied skills list that keeps no valid entry is a typo in the scope');
+    const guard = JS.indexOf('A supplied skills list that keeps no valid entry is a typo in the scope');
+    const signalsAgent = JS.indexOf("label: 'signals:catalogue'");
+    expect(signalsAgent).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(signalsAgent);
+  });
+
+  test('the signals prompt forbids --write on the parity check and keeps the doctor repair ban', () => {
+    expect(JS).toContain('The --write flag is forbidden here');
+    expect(JS).toContain('read-only — never with the repair flag');
+  });
+});

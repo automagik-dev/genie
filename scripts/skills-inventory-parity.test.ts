@@ -98,6 +98,34 @@ describe('parseSkillsListOutput', () => {
     expect(parseSkillsListOutput(text).names).toEqual(['wish']);
   });
 
+  test('reads the name rows when the skills CLI printed the agent-detection banner', () => {
+    // Issue #2919: inside a Claude Code session the CLI detects the agent and prints
+    // this banner instead of its `intro()` box. Captured from `skills@1.5.23 add <repo>
+    // --list` under CLAUDECODE=1 on 2026-09-18. The banner must change nothing.
+    const banner = `${ESC}[34m◆${ESC}[39m   claude-code_2-1-276_agent  Agent detected — installing non-interactively`;
+    const clean = listOutput(['architecture', 'wish', 'work']);
+    const withBanner = `\n│\n${banner}\n${clean}`;
+    expect(withBanner).toContain('Agent detected — installing non-interactively');
+    const parsed = parseSkillsListOutput(withBanner);
+    expect(parsed.names).toEqual(parseSkillsListOutput(clean).names);
+    expect(parsed.names).toEqual(['architecture', 'wish', 'work']);
+    expect(parsed.declaredCount).toBe(3);
+  });
+
+  test('reads a row the banner was glued onto, header or no header', () => {
+    // A spinner redraw erases with `ESC[1G ESC[J` and no newline, so the line that
+    // follows the banner can arrive glued to it; stripAnsi then leaves one long line
+    // and the box rule stops being line-anchored. The banner is cut with it.
+    const text = [
+      `${ESC}[?25l◆  Agent detected — installing non-interactively│    architecture`,
+      '│',
+      '│      Description for architecture.',
+      '│    wish',
+      '│',
+    ].join('\n');
+    expect(parseSkillsListOutput(text).names).toEqual(['architecture', 'wish']);
+  });
+
   test('reports a null declared count when the CLI printed none', () => {
     expect(parseSkillsListOutput(listOutput(['wish'], { declared: null })).declaredCount).toBeNull();
   });

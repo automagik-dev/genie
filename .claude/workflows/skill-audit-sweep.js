@@ -217,7 +217,7 @@ const signalsPrompt = (job) =>
     'Gather the three mechanical readings exactly once each, then return the summary object rather than the raw output.',
     bullets([
       `Run: ${LINT_CHECK}`,
-      `Run: ${PARITY_CHECK}`,
+      `Run: ${PARITY_CHECK} — exactly that form. The --write flag is forbidden here: it makes that same script rewrite the catalogue block in the skills README, and this sweep changes no file.`,
       `Then read ${DOCTOR_LINES}, read-only — never with the repair flag — and keep only the lines beginning "skills:".`,
     ]),
     `Report all three exit codes verbatim — lint, parity and doctor — including a non-zero one. Attribute every lint and parity finding to the bare skill directory name — \`review\`, never \`${job.skillsDir}/review/\` and never \`${job.skillsDir}/review/SKILL.md\` — or list it under unattributable[] rather than guessing an owner.`,
@@ -416,13 +416,6 @@ const notConvened = []
 log(`skill-audit-sweep over ${job.skillsDir}/: ${job.focus ? job.focus.slice(0, 120) : 'no focus given'}`)
 if (job.droppedSkillsDir) log(`Skills directory ${job.droppedSkillsDir} does not resolve inside the repository; using ${job.skillsDir}.`)
 
-phase('Signals')
-const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
-if (!signals) {
-  notConvened.push('signals:catalogue')
-  log('No response from signals:catalogue; the run continues with empty per-shard findings and nothing is inferred.')
-}
-
 // A name is a roster candidate only when it reduces to a skill directory inside the
 // repository; the caller list and the inventory reading are validated by this one rule.
 function rosterCandidate(entry) {
@@ -443,11 +436,33 @@ function collectNames(entries, what) {
   return kept
 }
 
+// The caller list is validated BEFORE any agent is convened, because the two ways it can
+// end up empty mean opposite things. No list at all is the documented full sweep; a list
+// whose every entry is dropped is a misspelled scope, and letting it fall through to the
+// inventory reading spends a whole catalogue fan-out on something nobody asked for.
+const requestedNames = collectNames(job.requested, 'roster entr(ies)')
+if (job.requested.length && !requestedNames.length) {
+  return {
+    ok: false,
+    error: `The supplied skills list contained no valid entry: none of its ${job.requested.length} name(s) — ${job.requested.map(String).join(', ')} — reduces to a skill directory inside ${job.skillsDir}/. A supplied skills list that keeps no valid entry is a typo in the scope, never a request to audit the whole catalogue, so no agent was convened and nothing was read.`,
+    notConvened,
+    rosterSource: 'args',
+    rosterDisagreement: [],
+    signals: null,
+  }
+}
+
+phase('Signals')
+const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
+if (!signals) {
+  notConvened.push('signals:catalogue')
+  log('No response from signals:catalogue; the run continues with empty per-shard findings and nothing is inferred.')
+}
+
 // Roster: the caller list when one was passed, otherwise the inventory[] the signals
 // reader derived from the tree — and nothing else. parity.repo[] is a second reading of
 // the same catalogue and is reported as a disagreement only: pushing its names into the
 // roster fabricates audit gaps for directories that may not exist.
-const requestedNames = collectNames(job.requested, 'roster entr(ies)')
 const inventoryNames = requestedNames.length || !signals ? [] : collectNames(list(signals.inventory), 'inventory name(s)')
 const rosterSource = requestedNames.length ? 'args' : 'inventory'
 const rosterDisagreement = []
