@@ -71,3 +71,17 @@ mikro · ag |
 mikro · ag |
 
 runs 5 · yield 0.00 · fabrications 0 · recall 0.00 · precision 0.00 · tests 0.00 · type 0.00 · $ median 0.0000 mean 0.0000 · s p50 1 p90 2 · retries 5 · bars yield:✖ fabrication:✔ recall:✖ cost:✔ latency:✔ → FAIL
+
+## 2026-09-18T01:27Z — round 5 — allowlist-fixed-final
+
+model: deepseek-api/deepseek-flash · fixtures: issue-2921, observability-fold-in, wish-run-learnings, slice-0, issue-2927 · reps 1 · trace `bench:wish-context:2026-09-18T01:23:43.809Z`
+
+| fixture | rep | ok | att | $ | s | iter | recall | prec | tests | type | cites (dropped) | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| issue-2921 | 0 | ✔ | 1 | 0.0075 | 55 | 14 | 1.00 | 1.00 | — | — | 21 (0) |  |
+| issue-2927 | 0 | ✔ | 2 | 0.0199 | 134 | 32 | 0.55 | 0.86 | — | — | 25 (0) |  |
+| observability-fold-in | 0 | ✔ | 1 | 0.0100 | 87 | 16 | 0.91 | 1.00 | — | — | 21 (0) |  |
+| slice-0 | 0 | ✔ | 1 | 0.0095 | 57 | 16 | 1.00 | 1.00 | — | — | 17 (0) |  |
+| wish-run-learnings | 0 | ✔ | 1 | 0.0093 | 92 | 16 | 1.00 | 0.80 | — | — | 21 (0) |  |
+
+runs 5 · yield 1.00 · fabrications 0 · recall 0.89 · precision 0.93 · tests 0.00 · type 0.00 · $ median 0.0095 mean 0.0112 · s p50 87 p90 134 · retries 1 · bars yield:✔ fabrication:✔ recall:✔ cost:✔ latency:✔ → PASS
