@@ -50,10 +50,23 @@ describe('genie mikro call', () => {
   test('--help lists the runtime flags and the agent-source rule', () => {
     const { code, stdout } = runCli(['mikro', 'call', '--help']);
     expect(code).toBe(0);
-    for (const flag of ['--prompt', '--prompt-file', '--dir', '--agents-dir', '--facts', '--boundary', '--raw']) {
+    for (const flag of [
+      '--prompt',
+      '--prompt-file',
+      '--dir',
+      '--agents-dir',
+      '--agents-ref',
+      '--facts',
+      '--boundary',
+      '--raw',
+    ]) {
       expect(stdout).toContain(flag);
     }
     expect(stdout).toContain('agentSource');
+    // The help text is where an operator learns that the agent comes from a ref, not
+    // from the tree under review — and what to pass to run with their own working tree.
+    expect(stdout).toContain('trusted ref');
+    expect(stdout).toContain('repo@<ref>');
   });
 
   test('an unregistered agent name exits 2 and names the registry, without running anything', () => {

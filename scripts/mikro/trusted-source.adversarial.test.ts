@@ -11,7 +11,7 @@
  * far at all.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoundarySession, OpenBoundaryOptions } from './boundary';
@@ -242,6 +242,46 @@ describe('(d) the local-base rule', () => {
     const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
     expect(seen.system).toBe('# pushed\n');
     expect(result.agentSource).toBe('repo@refs/remotes/origin/main');
+  });
+});
+
+describe('the materialized tree does not outlive the run', () => {
+  /** Temp roots this module's materialization could have left behind, by name. */
+  const materialized = (): Set<string> =>
+    new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith('mikro-agents-')));
+
+  test('a throw from the boundary disposes it too', async () => {
+    const root = baseRepo('mikro-adv-throw-', '# A\n');
+    let agentsDir = '';
+    await expect(
+      runAgent({
+        agent: 'wish-context',
+        prompt: 'Intent: anything at all',
+        dir: root,
+        cwd: root,
+        genieHome: shippedHome(),
+        boundary: 'bwrap',
+        retries: 0,
+        phoenix: false,
+        ledger: false,
+        openBoundary: async (opened: OpenBoundaryOptions) => {
+          agentsDir = opened.agentsDir ?? '';
+          throw new Error('the sandbox could not be opened');
+        },
+      }),
+    ).rejects.toThrow('the sandbox could not be opened');
+    expect(agentsDir).not.toBe('');
+    expect(existsSync(agentsDir)).toBe(false);
+  });
+
+  test('a configuration refusal leaves nothing behind either', async () => {
+    const root = baseRepo('mikro-adv-refuse-', '# A\n');
+    writeFileSync(join(root, '.mikro', 'TOOLS.md'), '## injected\n'); // uncommitted: refused
+    const before = materialized();
+    const { result, seen } = await runCaptured({ dir: root, cwd: root, genieHome: shippedHome() });
+    expect(seen.opened).toBe(false);
+    expect(result.attempts[0].errors[0]).toStartWith('config:');
+    expect([...materialized()].filter((entry) => !before.has(entry))).toEqual([]);
   });
 });
 
