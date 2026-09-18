@@ -12,10 +12,45 @@ const SKILL = readFileSync(join(ROOT, 'skills', 'docs', 'SKILL.md'), 'utf8');
 const STAGES = ['Locate', 'Audit', 'Consolidate', 'Render'];
 const SURFACES = ['readme', 'agent-instructions', 'docs-architecture', 'runtime-dx'];
 
+// The runtime-DX auditor is the only agent that executes anything. Its probe set is an
+// allowlist, closed by exact equality: a seventh shape is as much a failure as a missing one,
+// and a mutating verb named as a permitted probe is the failure this guard exists for.
+const PROBE_SHAPES = [
+  'bun src/genie.ts <command> --help, for any command the documented surfaces name',
+  'a missing-argument error: a documented read command invoked with a required argument omitted, and nothing else omitted',
+  'the retired genie mcp stub, which only writes its retirement diagnostic to stderr and exits non-zero',
+  'the retired genie ui-bridge stub, which only writes its retirement diagnostic to stderr and exits non-zero',
+  'genie config get <unknown key>, which only reads the resolved config',
+  'genie --version',
+];
+const FORBIDDEN_VERBS = [
+  'install',
+  'update',
+  'uninstall',
+  'init',
+  'setup',
+  'task create',
+  'task move',
+  'task done',
+  'task delete',
+  'task import',
+  'task sync',
+  'omni serve',
+  'omni handshake',
+  'doctor --fix-global-db',
+];
+const ENTRY = /^ {2}'(.+)',$/gm;
+
 function capture(block: RegExp, token: RegExp, what: string): string[] {
   const found = block.exec(JS);
   if (!found) throw new Error(`docs-audit.js: ${what} not found`);
   return [...(found[1] as string).matchAll(token)].map((m) => m[1] as string);
+}
+
+function section(block: RegExp, what: string): string {
+  const found = block.exec(JS);
+  if (!found) throw new Error(`docs-audit.js: ${what} not found`);
+  return found[1] as string;
 }
 
 function byHandSection(): string {
@@ -43,6 +78,39 @@ describe('docs skill fronts the docs-audit workflow', () => {
     const fromSkill = [...SKILL.matchAll(/^\|[^|\n]+\| `([a-z-]+)` \|/gm)].map((m) => m[1] as string);
     expect(fromSkill).toEqual(SURFACES);
     expect(capture(/const SURFACES = \[([\s\S]*?)\n\]/, /^ {4}key: '([a-z-]+)',$/gm, 'SURFACES')).toEqual(SURFACES);
+  });
+
+  test('the runtime-dx probe allowlist is fail-closed', () => {
+    // Both constants resolve through capture(), so a deleted block throws rather than
+    // matching nothing: an absent allowlist is a failure, never a vacuous pass.
+    expect(capture(/const PROBE_ALLOWLIST = \[([\s\S]*?)\n\]/, ENTRY, 'PROBE_ALLOWLIST')).toEqual(PROBE_SHAPES);
+    expect(capture(/const FORBIDDEN_PROBE_VERBS = \[([\s\S]*?)\n\]/, ENTRY, 'FORBIDDEN_PROBE_VERBS')).toEqual(
+      FORBIDDEN_VERBS,
+    );
+
+    // The brief and the auditPrompt branch both interpolate the allowlist and the same
+    // fail-closed rule, and the open-ended phrase they replaced is gone from each.
+    const runtimeBrief = section(/key: 'runtime-dx',([\s\S]*?)\n {2}\},/, 'the runtime-dx surface row');
+    const probeBranch = section(
+      /surface\.key === 'runtime-dx'\n([\s\S]*?)\n {6}: /,
+      'the auditPrompt runtime-dx branch',
+    );
+    for (const region of [runtimeBrief, probeBranch]) {
+      expect(region).toContain('${PROBE_ALLOWLIST_BLOCK}');
+      expect(region).toContain('${PROBE_FAIL_CLOSED_RULE}');
+      expect(region).not.toContain('a handful of documented failing invocations');
+    }
+    expect(capture(/const PROBE_FAIL_CLOSED_RULE = \[([\s\S]*?)\n\]/, /(FORBIDDEN_PROBE_VERBS)/g, 'the rule')).toEqual([
+      'FORBIDDEN_PROBE_VERBS',
+    ]);
+
+    // Negative half: no mutating verb may be named as something to invoke, in the allowlist
+    // or in either runtime-dx prompt region. Adding `genie task create` here must fail.
+    const allowlist = section(/const PROBE_ALLOWLIST = \[([\s\S]*?)\n\]/, 'PROBE_ALLOWLIST');
+    for (const verb of FORBIDDEN_VERBS) {
+      const invocation = new RegExp(`genie(?:\\.ts)?\\s+${verb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+      for (const region of [allowlist, runtimeBrief, probeBranch]) expect(region).not.toMatch(invocation);
+    }
   });
 
   test('the skill keeps the contributor test and the write half the workflow never performs', () => {
