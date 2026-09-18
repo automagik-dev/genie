@@ -15,3 +15,17 @@ model: deepseek-api/deepseek-flash · fixtures: issue-2921, observability-fold-i
 | wish-run-learnings | 0 | ✔ | 2 | 0.0193 | 145 | 32 | 1.00 | 1.00 | — | 16 (0) |  |
 
 runs 5 · yield 0.80 · fabrications 0 · recall 0.90 · precision 1.00 · type 0.00 · $ median 0.0159 mean 0.0140 · s p50 122 p90 146 · retries 3 · bars yield:✖ fabrication:✔ recall:✔ cost:✔ latency:✔ → FAIL
+
+## 2026-09-18T00:30Z — round 2 — exact-path-rule-plus-resolver
+
+model: deepseek-api/deepseek-flash · fixtures: issue-2921, observability-fold-in, wish-run-learnings, observe-bundle, slice-0 · reps 1 · trace `bench:wish-context:2026-09-18T00:27:01.162Z`
+
+| fixture | rep | ok | att | $ | s | iter | recall | prec | type | cites (dropped) | errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| issue-2921 | 0 | ✔ | 1 | 0.0095 | 62 | 9 | 0.40 | 0.67 | — | 16 (0) |  |
+| observability-fold-in | 0 | ✔ | 1 | 0.0053 | 38 | 10 | 0.91 | 1.00 | — | 21 (0) |  |
+| observe-bundle | 0 | ✔ | 2 | 0.0180 | 165 | 31 | 0.15 | 0.50 | — | 15 (0) |  |
+| slice-0 | 0 | ✔ | 2 | 0.0143 | 116 | 32 | 1.00 | 1.00 | — | 17 (0) |  |
+| wish-run-learnings | 0 | ✔ | 1 | 0.0091 | 67 | 16 | 1.00 | 1.00 | — | 19 (0) |  |
+
+runs 5 · yield 1.00 · fabrications 0 · recall 0.69 · precision 0.83 · type 0.00 · $ median 0.0095 mean 0.0112 · s p50 67 p90 165 · retries 2 · bars yield:✔ fabrication:✔ recall:✔ cost:✔ latency:✔ → PASS

@@ -36,7 +36,13 @@ export const WishContext = z.object({
   intent: nonEmpty,
   facts: z.array(z.object({ claim: nonEmpty, evidence: nonEmpty })).min(1),
   related: z
-    .array(z.object({ kind: z.enum(['wish', 'brainstorm', 'pr', 'issue', 'commit']), ref: nonEmpty, why: nonEmpty }))
+    .array(
+      z.object({
+        kind: z.enum(['wish', 'brainstorm', 'design', 'doc', 'pr', 'issue', 'commit']),
+        ref: nonEmpty,
+        why: nonEmpty,
+      }),
+    )
     .default([]),
   plan: z.object({
     approach: nonEmpty,

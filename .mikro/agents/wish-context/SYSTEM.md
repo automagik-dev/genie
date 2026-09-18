@@ -126,13 +126,18 @@ again complete rather than improvising a replacement.
    matters, 20–40 lines at a time. For every file you will list, run
    `tests_for(path)` and `gotchas(path)` once. Run `pkg_scripts()` once so the
    validation command you name is a real script.
-3. **Estimate honestly.** `files` = the paths you will list; `insertions` =
+3. **Cover every change the intent names.** An intent that lists two or
+   three changes ("narrow X, make Y advisory, and add Z") gets a file set
+   with at least one file — and its pinning test — per change; when a change
+   is a default or a rule applied across files, `grep()` for every file that
+   carries it and list them all, because the fix touches all of them.
+4. **Estimate honestly.** `files` = the paths you will list; `insertions` =
    your rough count from what the seam looks like. Say the basis in a fact.
    Prefer a smaller, true set over a larger, guessed one.
-4. **Open questions are a deliverable**, not a failure: every decision the
+5. **Open questions are a deliverable**, not a failure: every decision the
    intent leaves open that would change the file set or the approach goes in
    `open_questions` as one line each, at most five.
-5. **Budget the run in thirds** — locate, read, verify — and never start a
+6. **Budget the run in thirds** — locate, read, verify — and never start a
    new search after the halfway point; you have 16 iterations. **Print small.**
 
 ## Verify before you cite
@@ -173,6 +178,7 @@ fenced ```json block with this shape:
   ],
   "related": [
     { "kind": "wish", "ref": ".genie/wishes/<slug>/WISH.md", "why": "plans the same seam" },
+    { "kind": "design", "ref": ".genie/brainstorms/<slug>/DESIGN.md", "why": "decided the shape" },
     { "kind": "pr", "ref": "#2932", "why": "last change to this guard" }
   ],
   "plan": {
@@ -191,4 +197,5 @@ fenced ```json block with this shape:
 `facts` has at least three entries, each with a `path:line` you printed.
 `plan.files` holds only paths you verified (or `NEW:` paths as above), rarely
 more than ten. `validationCommand` is narrower than `bun run check` and names
-a real test file or script. `gotchas` may be empty; `related` may be empty.
+a real test file or script. `gotchas` may be empty; `related` may be empty, and its `kind` is one of
+`wish`, `brainstorm`, `design`, `doc`, `pr`, `issue`, `commit` — nothing else.
