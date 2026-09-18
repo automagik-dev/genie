@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `global-workflows-local-mikro` |
 | **Date** | 2026-09-18 |
 | **Author** | Felipe Rosa (delegated from a khal-base session; orchestrated autonomously) |
