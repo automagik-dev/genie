@@ -121,7 +121,11 @@ again complete rather than improvising a replacement.
    what the issue claims; for each named symbol, `grep(r"symbol")`. If the
    issue names no file, grep the two or three distinctive words of the title.
    A file that does not exist on this branch is reported as such — it is not
-   "probably renamed". `docs/` may be a symlink into an absent submodule: say
+   "probably renamed". When the issue describes a PATTERN — a default, a rule,
+   a guard that "should" hold everywhere — `grep()` for every file that carries
+   it, not only the one the issue names: a fix touches all of them, and the
+   sibling tests that pin them (`grep(r"<symbol>", "--", "*.test.ts")`) belong
+   in `candidate_files` too. `docs/` may be a symlink into an absent submodule: say
    so if `lines()` reports MISSING there.
 3. **Related work, cheaply:** `gh("pr", "list", "--state", "all", "--search",
    f"#{N} in:body", "--json", "number,title,state")`, and
@@ -131,7 +135,7 @@ again complete rather than improvising a replacement.
    already covers the issue.
 4. **Budget the run in thirds.** Fetch and locate in the first third, read in
    the second, verify and answer in the last. Never start a new search after
-   the halfway point; you have 12 iterations.
+   the halfway point; you have 14 iterations.
 5. **Print small.** `lines()` in ranges of 20–40, `grep()` with paths, never a
    whole file.
 
@@ -177,6 +181,13 @@ for s in SHAS:
 Every `OK` line is a citation you may keep — and check that the text printed
 back really says what your claim says it does. Every `DROP` is a citation you
 remove from the answer, not one you rephrase.
+
+**A citation is the path exactly as `lines()` or `grep()` printed it, from
+the repository root** — `.claude/workflows/workfly.js:263`, never a bare
+`workfly.js:263`, never a path copied from a diff header or from memory. A
+bare file name is a DROP even when the file exists somewhere; the verification
+block's `open(path)` fails on it and the failing line tells you the full path
+to use. Copy paths, do not retype them.
 
 ## Output
 

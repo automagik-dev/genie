@@ -18,6 +18,6 @@ description: >-
   citation verified in its own REPL. Prompt: "Intent: <the operator's sentence>".
 system: SYSTEM.md
 budget:
-  max_iterations: 14
+  max_iterations: 16
   max_cost: 0.30
   max_depth: 0

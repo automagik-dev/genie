@@ -22,7 +22,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
 import { postRunSpan } from './phoenix';
 import { AGENT_NAMES, SCHEMAS, isAgentName } from './schemas';
@@ -102,6 +102,8 @@ export interface Citation {
   line: number | null;
   ok: boolean;
   reason?: string;
+  /** Set when a bare file name resolved to exactly one tracked path (and the line exists there): the answer is rewritten to it. */
+  resolvedTo?: string;
 }
 
 const CITE_RE = /(?<![\w/@-])((?:[\w.@-]+\/)*[\w.-]+\.(?:tsx?|m?[cj]s|mdx?|ya?ml|json|sh|toml|py)):(\d{1,6})\b/g;
@@ -128,8 +130,48 @@ function walk(
   }
 }
 
+/** Rewrite every citation the verifier resolved from a bare name to its full path, so the answer carries what was verified. */
+export function applyResolutions<T>(value: T, citations: Citation[]): T {
+  const fixes = citations.filter((c) => c.resolvedTo);
+  if (!fixes.length) return value;
+  let text = JSON.stringify(value);
+  for (const c of fixes) {
+    const from = c.line === null ? c.path : `${c.path}:${c.line}`;
+    const to = c.line === null ? (c.resolvedTo as string) : `${c.resolvedTo}:${c.line}`;
+    text = text.split(JSON.stringify(from).slice(1, -1)).join(JSON.stringify(to).slice(1, -1));
+  }
+  return JSON.parse(text) as T;
+}
+
+/** Tracked paths ending in /<basename> — the hint that turns a bare-name citation into a converging retry. */
+function trackedByBasename(dir: string): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  try {
+    const out = Bun.spawnSync(['git', 'ls-files'], { cwd: dir }).stdout.toString();
+    for (const p of out.split('\n')) {
+      if (!p) continue;
+      const base = p.slice(p.lastIndexOf('/') + 1);
+      const list = index.get(base) ?? [];
+      list.push(p);
+      index.set(base, list);
+    }
+  } catch {
+    // not a git checkout: no hints
+  }
+  return index;
+}
+
 export function verifyCitations(parsed: unknown, dir: string): Citation[] {
   const seen = new Map<string, Citation>();
+  let byBase: Map<string, string[]> | null = null;
+  const hint = (path: string): string => {
+    byBase ??= trackedByBasename(dir);
+    const base = path.slice(path.lastIndexOf('/') + 1);
+    const candidates = (byBase.get(base) ?? []).filter((p) => p !== path).slice(0, 3);
+    return candidates.length
+      ? ` (did you mean ${candidates.join(' or ')}? cite the path exactly as printed, from the repository root)`
+      : '';
+  };
   const lineCounts = new Map<string, number>();
   const countLines = (abs: string): number => {
     let n = lineCounts.get(abs);
@@ -149,7 +191,23 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
     }
     const abs = resolve(dir, clean);
     if (!existsSync(abs)) {
-      seen.set(key, { path, line, ok: deletedOk, reason: deletedOk ? 'absent (deleted)' : 'no such file' });
+      if (!clean.includes('/')) {
+        byBase ??= trackedByBasename(dir);
+        const unique = byBase.get(clean) ?? [];
+        if (unique.length === 1) {
+          const target = resolve(dir, unique[0]);
+          if (line === null || line <= countLines(target)) {
+            seen.set(key, { path, line, ok: true, reason: 'resolved from a bare file name', resolvedTo: unique[0] });
+            return;
+          }
+        }
+      }
+      seen.set(key, {
+        path,
+        line,
+        ok: deletedOk,
+        reason: deletedOk ? 'absent (deleted)' : `no such file${hint(clean)}`,
+      });
       return;
     }
     if (line !== null) {
@@ -306,6 +364,8 @@ export interface RunOptions {
   agent: string;
   prompt: string;
   dir?: string;
+  /** Where the agent.yaml folders live; default: this checkout's .mikro/agents, so a --dir cut from origin/<base> still finds them. */
+  agentsDir?: string;
   timeoutMs?: number;
   retries?: number;
   tags?: Record<string, string>;
@@ -323,6 +383,9 @@ function toolName(agent: string): string {
 
 export async function runAgent(options: RunOptions): Promise<RunResult> {
   const dir = resolve(options.dir ?? process.cwd());
+  const agentsDir = resolve(
+    options.agentsDir ?? join(dirname(new URL(import.meta.url).pathname), '..', '..', '.mikro', 'agents'),
+  );
   const timeoutMs = options.timeoutMs ?? 600_000;
   const retries = options.retries ?? 1;
   const tags = options.tags ?? {};
@@ -343,7 +406,11 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
     let raw = '';
     let footer: Footer | null = null;
     let citations: Citation[] = [];
-    const client = new McpClient(dir, { ...process.env, MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs) });
+    const client = new McpClient(dir, {
+      ...process.env,
+      MIKRO_MCP_RUN_TIMEOUT_MS: String(timeoutMs),
+      MIKRO_AGENTS_DIR: agentsDir,
+    });
     try {
       await client.request(
         'initialize',
@@ -374,14 +441,14 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
           for (const issue of parsed.error.issues.slice(0, 12))
             errors.push(`schema: ${issue.path.join('.') || '(root)'} — ${issue.message}`);
         } else {
-          answer = parsed.data;
           citations = verifyCitations(parsed.data, dir);
+          answer = applyResolutions(parsed.data, citations);
           for (const c of citations.filter((x) => !x.ok))
             errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
         }
       } else {
-        answer = extracted.value;
         citations = verifyCitations(extracted.value, dir);
+        answer = applyResolutions(extracted.value, citations);
         for (const c of citations.filter((x) => !x.ok))
           errors.push(`citation: ${c.path}${c.line ? `:${c.line}` : ''} — ${c.reason}`);
       }
@@ -450,7 +517,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
 
 function usage(): never {
   process.stderr.write(
-    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--no-phoenix] [--no-ledger] [--raw]\n`,
+    `usage: bun scripts/mikro/call.ts <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--no-phoenix] [--no-ledger] [--raw]\n`,
   );
   process.exit(2);
 }
@@ -478,6 +545,7 @@ if (import.meta.main) {
     agent,
     prompt,
     dir: opt('--dir'),
+    agentsDir: opt('--agents-dir'),
     timeoutMs: opt('--timeout-ms') ? Number(opt('--timeout-ms')) : undefined,
     retries: opt('--retries') ? Number(opt('--retries')) : undefined,
     tags,

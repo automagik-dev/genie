@@ -133,7 +133,7 @@ again complete rather than improvising a replacement.
    intent leaves open that would change the file set or the approach goes in
    `open_questions` as one line each, at most five.
 5. **Budget the run in thirds** — locate, read, verify — and never start a
-   new search after the halfway point; you have 14 iterations. **Print small.**
+   new search after the halfway point; you have 16 iterations. **Print small.**
 
 ## Verify before you cite
 
@@ -153,7 +153,10 @@ for path in PATHS:
     print(("OK   " if subprocess.run(["git", "ls-files", "--error-unmatch", path], capture_output=True).returncode == 0 else "DROP ") + path)
 ```
 
-Every `DROP` is removed from the answer, not rephrased. A `plan.files` entry
+Every `DROP` is removed from the answer, not rephrased. A citation is the
+path **exactly as `grep()` or `lines()` printed it, from the repository
+root** — `.genie/brainstorms/<slug>/DESIGN.md:99`, never a bare `DESIGN.md:99`;
+a bare file name is a DROP even when the file exists somewhere. A `plan.files` entry
 for a file that does not exist yet is allowed only when `reason` starts with
 `NEW:` and the parent directory is one you printed.
 

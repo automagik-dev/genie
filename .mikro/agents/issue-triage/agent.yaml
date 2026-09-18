@@ -15,6 +15,6 @@ description: >-
   with every citation verified in its own REPL. Prompt: "Triage issue #<number>".
 system: SYSTEM.md
 budget:
-  max_iterations: 12
+  max_iterations: 14
   max_cost: 0.25
   max_depth: 0

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extractJson, parseFooter, stripFooter, verifyCitations } from './call';
+import { applyResolutions, extractJson, parseFooter, stripFooter, verifyCitations } from './call';
 import { IssueTriage, SCHEMAS } from './schemas';
 
 const FOOTER =
@@ -75,6 +75,31 @@ describe('verifyCitations', () => {
     expect(byKey['src/missing.ts:1'].ok).toBe(false);
     expect(byKey['src/a.ts:'].ok).toBe(true);
     expect(byKey['../etc/passwd:'].ok).toBe(false);
+  });
+  test('a bare basename that exists elsewhere gets a did-you-mean hint', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-hint-'));
+    mkdirSync(join(repo, 'deep', 'dir'), { recursive: true });
+    writeFileSync(join(repo, 'deep', 'dir', 'DESIGN.md'), 'a\nb\n');
+    mkdirSync(join(repo, 'other'), { recursive: true });
+    writeFileSync(join(repo, 'other', 'DESIGN.md'), 'a\nb\n'); // two candidates: ambiguous, so a hint, not a resolution
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', '.'], { cwd: repo });
+    const [c] = verifyCitations({ facts: [{ evidence: 'DESIGN.md:2' }] }, repo);
+    expect(c.ok).toBe(false);
+    expect(c.reason).toContain('did you mean');
+    expect(c.reason).toContain('deep/dir/DESIGN.md');
+  });
+  test('a bare name that resolves to exactly one tracked file is accepted and rewritten', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-resolve-'));
+    mkdirSync(join(repo, 'scripts'), { recursive: true });
+    writeFileSync(join(repo, 'scripts', 'build-binary.sh'), 'a\nb\nc\n');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', '.'], { cwd: repo });
+    const value = { facts: [{ evidence: 'build-binary.sh:2' }, { evidence: 'build-binary.sh:9' }] };
+    const cites = verifyCitations(value, repo);
+    expect(cites.find((c) => c.line === 2)?.resolvedTo).toBe('scripts/build-binary.sh');
+    expect(cites.find((c) => c.line === 9)?.ok).toBe(false);
+    expect(applyResolutions(value, cites).facts[0].evidence).toBe('scripts/build-binary.sh:2');
   });
   test('a deleted file in review-prep is not a failed citation', () => {
     const cites = verifyCitations({ files: [{ path: 'gone.ts', change: 'deleted' }] }, dir);

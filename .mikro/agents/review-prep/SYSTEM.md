@@ -149,6 +149,9 @@ again complete rather than improvising a replacement.
    `diff_of(base, head, path)` (range mode) and `lines()` on the changed region
    so a claim can point at a line. In range mode the "PR body" is the commit
    messages `changes()` printed: their promises are the claims.
+   A diff hunk is NOT a citation: after reading a diff, `lines(path, a, b)` on
+   the region with the path as `pr()` / `changes()` printed it, and cite the
+   `path:line` that `lines()` prints.
 3. **Claims.** Read the PR body as a list of promises ("X now does Y", "keeps
    Z unchanged", "tests cover W"). For each, write `how` — a command narrower
    than `bun run check` or a `path:line` to read — and `evidence`: the line you
@@ -180,6 +183,13 @@ for path in PATHS + TESTS:
 ```
 
 Every `DROP` is removed from the answer, not rephrased.
+
+**A citation is the path exactly as `lines()` or `grep()` printed it, from
+the repository root** — `.claude/workflows/workfly.js:263`, never a bare
+`workfly.js:263`, never a path copied from a diff header or from memory. A
+bare file name is a DROP even when the file exists somewhere; the verification
+block's `open(path)` fails on it and the failing line tells you the full path
+to use. Copy paths, do not retype them.
 
 ## Output
 
