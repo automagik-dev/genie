@@ -111,7 +111,25 @@ describe('verifyCitations', () => {
   });
   test('a deleted file in review-prep is not a failed citation', () => {
     const cites = verifyCitations({ files: [{ path: 'gone.ts', change: 'deleted' }] }, dir);
-    expect(cites[0].ok).toBe(true);
+    expect(cites[0].ok).toBe(true); // no git history here at all: nothing can disprove the claim
+  });
+  test('git decides which deletion claims are real', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-deleted-'));
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'gone.ts'), 'a\nb\n');
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+    Bun.spawnSync(['git', 'add', '.'], { cwd: repo });
+    Bun.spawnSync(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed'], { cwd: repo });
+    Bun.spawnSync(['git', 'rm', '-q', 'src/gone.ts'], { cwd: repo });
+    // The file was really there and is really gone: the citation stands.
+    const real = verifyCitations({ files: [{ path: 'src/gone.ts', change: 'deleted' }] }, repo);
+    expect(real[0].ok).toBe(true);
+    expect(real[0].reason).toBe('absent (deleted)');
+    // A path git never recorded cannot have been deleted, whatever the answer says.
+    // Without this, any fabricated path passes as evidence by declaring itself deleted.
+    const invented = verifyCitations({ files: [{ path: 'src/never-existed.ts', change: 'deleted' }] }, repo);
+    expect(invented[0].ok).toBe(false);
+    expect(invented[0].reason).toContain('git has no record of this path');
   });
 });
 

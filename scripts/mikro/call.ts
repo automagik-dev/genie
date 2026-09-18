@@ -131,6 +131,7 @@ function walk(
 }
 
 const trackedCache = new Map<string, Set<string>>();
+const historyCache = new Map<string, Map<string, boolean>>();
 function isTracked(dir: string, path: string): boolean {
   let set = trackedCache.get(dir);
   if (!set) {
@@ -139,6 +140,27 @@ function isTracked(dir: string, path: string): boolean {
   }
   if (set.size === 0) return true; // not a git checkout: nothing to compare against
   return set.has(path) || [...set].some((p) => p.startsWith(`${path.replace(/\/$/, '')}/`));
+}
+
+/**
+ * True when git has this path in HEAD's history — the proof behind a citation that
+ * says a file was deleted. Absent from history means the path never existed, whatever
+ * the answer declared. A checkout with no history at all cannot disprove anything, so
+ * it answers true and the `deletedOk` claim stands as before.
+ */
+function everExisted(dir: string, path: string): boolean {
+  let known = historyCache.get(dir);
+  if (!known) {
+    known = new Map();
+    historyCache.set(dir, known);
+  }
+  const hit = known.get(path);
+  if (hit !== undefined) return hit;
+  const probe = Bun.spawnSync(['git', 'rev-list', '--max-count=1', 'HEAD', '--', path], { cwd: dir });
+  const answered = probe.exitCode === 0;
+  const result = !answered || probe.stdout.toString().trim().length > 0;
+  known.set(path, result);
+  return result;
 }
 
 /** Rewrite every citation the verifier resolved from a bare name to its full path, so the answer carries what was verified. */
@@ -222,11 +244,20 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
           }
         }
       }
+      // `deletedOk` is the ANSWER's own claim that it deleted this file, so on its
+      // own it lets a fabricated path pass as evidence by calling itself deleted —
+      // the one hole in the rule that citations must be provable. git decides
+      // instead: a path it has never recorded was never there to delete.
+      const deleted = deletedOk && everExisted(dir, clean);
       seen.set(key, {
         path,
         line,
-        ok: deletedOk,
-        reason: deletedOk ? 'absent (deleted)' : `no such file${hint(clean)}`,
+        ok: deleted,
+        reason: deleted
+          ? 'absent (deleted)'
+          : deletedOk
+            ? `declared deleted, but git has no record of this path${hint(clean)}`
+            : `no such file${hint(clean)}`,
       });
       return;
     }
