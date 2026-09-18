@@ -390,6 +390,91 @@ built to satisfy it. One consequence: the AFTER run's ledger rows land under the
 A coaching round is one coach call (≈ $0.02) plus two benches (fixtures × reps × ≈ $0.01 each), so
 ≈ $0.25 and ≈ 12 minutes for five fixtures at reps 2. There is no nightly job: measurement first.
 
+## Growing agents in another repository
+
+Everything above is genie's own loop, run from this checkout. The same loop runs in any
+repository on a host with genie installed, with no `scripts/mikro/` anywhere in it — the
+runtime is inside the binary and the five verbs are `genie mikro call|bench|coach|fixtures|init`.
+The motivating case is a repository with no pull requests at all, which commits straight to
+its base branch: nothing here derives anything from a PR.
+
+```sh
+cd ~/code/some-repo
+genie mikro init                                             # 1. seed
+git add .mikro/agents .gitignore && git commit -m "chore(mikro): seed the agents"
+git push                                                     # 2. see below — init says which applies
+genie mikro fixtures --from-commits HEAD~20..HEAD --agent wish-context   # 3. ground truth
+genie mikro bench wish-context --reps 1 --write-evidence      # 4. the first number
+$EDITOR .mikro/agents/wish-context/SYSTEM.md                  # 5. refine, re-bench with --tag round=N
+genie mikro coach wish-context                               #    …or have the coach propose one patch
+```
+
+**1. Seed.** `genie mikro init [--dir <repo>]` copies this release's `wish-context` and
+`review-prep` out of `<GENIE_HOME>/templates/mikro/agents` into `<repo>/.mikro/agents/`,
+adds `.mikro/runs/` to `.gitignore`, and writes nothing else and nothing outside `<repo>`.
+An agent directory that already exists is REFUSED, never overwritten, so a second run
+changes nothing and a prompt you specialized is safe. A symlinked `.mikro` or
+`.mikro/agents` is refused rather than followed. `mikro-coach` is NOT seeded: it is the
+tool a coaching round runs, and it resolves from the shipped set like any other agent.
+`init` prints the rest of this sequence, because an installed host has no README.
+
+**2. Commit it, and usually push it.** An agent that is not committed is not used, and on
+most repositories one that is not PUSHED is not used either: `genie mikro call` reads the
+agent from the trusted REF, never from the working tree
+([the trust boundary](#where-the-agent-files-come-from--the-trust-boundary)). The one
+exception is Decision 8's local-base rule — when `origin/<base>` is an ancestor of the
+local `<base>`, the LOCAL branch is the trusted ref, so a committed-but-unpushed agent on
+a commit-to-base repository IS used. `genie mikro init` probes `resolveTrustedRef` for the
+repository and prints which of the two applies, and prints `git remote set-head origin -a`
+when the checkout names no base at all (until then, the shipped default agent is used and
+yours is ignored, with the reason in `agentSourceReason`).
+
+So: an UNCOMMITTED edit is invisible to `call`, and an agent that exists only on a PR
+branch is invisible by construction — that is the property, not a limitation. Iterate with
+`bench` and `coach`, which read the working tree on purpose, and commit when the numbers
+earn it.
+
+**3. Fixtures from commits.** `genie mikro fixtures --from-commits <range> --agent
+<wish-context|review-prep> [--dir <repo>] [--out <path>] [--max <n>] [--force]` derives
+ground truth mechanically, which is what makes it re-runnable and arguable:
+
+| field | rule |
+|---|---|
+| `truth.files` | `git show --name-only` of the commit; a rename contributes the NEW path |
+| `prompt` | `Intent: <commit subject>` (wish-context) or `Prepare the review of commit <sha> against <sha>^` (review-prep) |
+| `id` | the first 12 characters of the sha — not `git rev-parse --short`, whose length follows `core.abbrev` |
+
+Skipped, each with its reason printed: a merge commit (its `--name-only` is a combined
+diff), a root commit for review-prep (no `<sha>^`), a commit with no files, and any commit
+one of whose files no longer exists at HEAD — the verifier scores the TREE, not the commit,
+so a fixture naming a deleted file would score a correct agent down. The output is
+byte-stable across runs of the same argv, so a rebuilt set is a real diff; it lands at
+`<repo>/.mikro/fixtures/<agent>.json` and is not replaced without `--force`. Aim for five
+to ten fixtures whose file sets you would defend in review; a range like `HEAD~40..HEAD`
+with `--max 10` usually gets there.
+
+**4. Bench, 5. refine, coach.** `genie mikro bench <agent> [--dir <repo>]` resolves fixtures
+`--fixtures` → `<dir>/.mikro/fixtures/<agent>.json` → `<dir>/scripts/mikro/fixtures/<agent>.json`
+(the last is genie's own legacy location, unchanged), and measures the WORKING TREE under
+`--dir`. A missing fixture set or a missing `<agent>/agent.yaml` refuses the round upfront,
+at zero cost, naming the remedy. `genie mikro coach <agent>` runs one coaching round the
+same way: a freshly seeded agent has no `EVIDENCE.md`, which is not an error — the coach
+prompt says so and asks for `null` rather than citing a file that is not there.
+
+**The measuring tools may only be pointed at a tree you trust.** `bench` and `coach` read
+the working tree and therefore skip the `.mikro/` configuration comparison `genie mikro
+call` makes (`--dir` equals the synthesized trusted root, so the same-directory exemption
+applies). `TOOLS.md` is Python injected into the REPL, so pointing a bench at a PR checkout
+or an unaudited clone runs that tree's configuration. Reviewing untrusted content is `genie
+mikro call`'s job; measuring is an operator tool over the operator's own tree.
+
+**Host prerequisites, which genie does not ship:** `mikro` ≥ 1.260909.1 on PATH
+(`mikro --version`), a `~/.mikro/settings.json` declaring a `deepseek-api` provider with
+the `deepseek-flash` model (the shipped agents name it, and a repository with no
+`.mikro/mikro.yaml` depends on the global settings for it), and `DEEPSEEK_API_KEY` in the
+environment. Without them every run answers `ok: false` with one `unavailable:` error and
+exits 1 — nothing written, nothing billed. `genie mikro init` prints this list too.
+
 ## Per-machine prerequisites (checklist)
 
 - `mikro` ≥ 1.260909.1 on PATH (`mikro --version`), run by a working node — on this host Homebrew's node 25
