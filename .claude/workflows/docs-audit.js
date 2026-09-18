@@ -70,6 +70,23 @@ const DEFAULT_DOCS_HOME = 'docs'
 const MAX_PROBES = 12
 const HELP_COMMAND = 'bun src/genie.ts <command> --help'
 
+// The runtime-DX auditor is the only agent in this workflow that executes anything, and
+// "read-only" alone never bounded it: a documented claim about `genie init` or `genie update`
+// reads as an invitation to run the verb that proves it, on the operator's own host. The bound
+// is therefore an ALLOWLIST of safe probe SHAPES, closed by a sentence that forbids everything
+// else, stamped into both prompt sites that instruct that auditor to probe (issue #2920).
+const PROBE_ALLOWLIST = [
+  'PROBE ALLOWLIST — fail-closed. Exactly these six invocation shapes are permitted, and nothing else:',
+  `  1. \`--help\` on any command or subcommand, including the bare top-level help (${HELP_COMMAND}).`,
+  '  2. A documented missing-argument error: a documented command invoked with a required argument or flag omitted, so it fails in its own argument parsing and exits before doing any work.',
+  '  3. `genie mcp` — the retired MCP stub, which only writes its retirement diagnostic to stderr and exits non-zero.',
+  '  4. `genie ui-bridge` — the retired UI-bridge stub, the same shape of stable diagnostic and non-zero exit.',
+  '  5. `genie config get <key>` with an unknown or unrecognized key, which reads the resolved config and writes nothing.',
+  '  6. `genie --version`.',
+  'Every other genie invocation is FORBIDDEN. This is an allowlist, not a set of examples: a probe that is not one of the six shapes above is not run at all, whatever a documented claim seems to ask for — record the claim under unprobed[] with the command you did not run and move on.',
+  'A verb that mutates a real host is never a probe, not even with a flag that looks read-only and not under any temporary environment: `genie install`, `genie update`, `genie uninstall`, `genie init`, `genie setup`, `genie task create`, `genie task move`, `genie task done`, `genie task delete`, `genie task import`, `genie task sync`, `genie omni serve`, `genie omni handshake`, `genie doctor --fix-global-db`.',
+].join('\n')
+
 const SEVERITIES = ['onboarding-blocker', 'drift', 'misfiling', 'polish']
 
 // The roster is the docs skill Surfaces table, one read-only auditor per row, closed:
@@ -110,7 +127,8 @@ const SURFACES = [
     label: 'Runtime DX',
     where: 'help text, error messages and exit codes, plus the onboarding path stated in README or CONTRIBUTING',
     brief:
-      'You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make: run the read-only help command for the commands the docs name, then a handful of documented failing invocations, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full sixteen-command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.',
+      'You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make: run the read-only help command for the commands the docs name, then a handful of documented failing invocations, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full sixteen-command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.\n' +
+      PROBE_ALLOWLIST,
     effort: 'medium',
     minChecks: 6,
     minimum: 'help text, exit code and stderr each graded on every failing invocation you probe',
@@ -323,7 +341,7 @@ function auditPrompt(job, surface, docs) {
     docsBlock(docs),
     'You hold one surface of four. No other auditor answer is visible to you, and you must not re-read a surface you do not own: cite it instead and let the consolidator collapse the overlap. The roster is closed, so a claim you leave unchecked is a gap nobody else fills.',
     surface.key === 'runtime-dx'
-      ? `Probe read-only only: ${HELP_COMMAND} for the commands the documented surfaces actually claim, plus documented failing invocations whose exit code and stderr you report verbatim. Keep the whole probe matrix to roughly ${MAX_PROBES} invocations — an advisory bound on the bill, not a licence to stop mid-claim. No probe installs, clones, writes or mutates anything.`
+      ? `Probe read-only only: ${HELP_COMMAND} for the commands the documented surfaces actually claim, plus documented failing invocations whose exit code and stderr you report verbatim. Keep the whole probe matrix to roughly ${MAX_PROBES} invocations — an advisory bound on the bill, not a licence to stop mid-claim. No probe installs, clones, writes or mutates anything.\n${PROBE_ALLOWLIST}`
       : 'Verify claims against the live product with read-only commands and reads. You execute nothing that changes state.',
     EVIDENCE_RULE,
     SEVERITY_RULE,
