@@ -356,7 +356,7 @@ release_lifecycle_lock() {
 manifest_get() {
   local payload="$1" key="$2"
   if command -v jq >/dev/null 2>&1; then
-    printf '%s\n' "$payload" | jq -r --arg k "$key" '.[$k] // empty'
+    printf '%s\n' "$payload" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null
   else
     printf '%s\n' "$payload" | sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n 1
   fi
@@ -460,30 +460,59 @@ version_is_newer() {
   [ "$((10#$a3))" -gt "$((10#$b3))" ]
 }
 
-# A manifest is usable only when it names the channel we asked for and carries a
-# version. A rate-limit body, an API envelope and an error page all fail that,
-# so a stale-but-valid CDN answer is never displaced by junk.
+# A manifest is usable only when it names the channel we asked for and carries
+# every field the installer will read from it. A rate-limit body, an API envelope
+# and an error page all fail that, so a stale-but-valid CDN answer is never
+# displaced by junk, and never by an answer that would fail later for a missing
+# tarball_base.
 manifest_is_usable() {
   local payload="$1" channel="$2"
   [ -n "$payload" ] || return 1
   manifest_channel_matches "$payload" "$channel" || return 1
-  [ -n "$(manifest_get "$payload" version)" ]
+  [ -n "$(manifest_get "$payload" version)" ] || return 1
+  [ -n "$(manifest_get "$payload" tarball_base)" ]
+}
+
+# Whether the second source may be consulted at all. manifest_get's no-jq
+# fallback is a `sed` line match, so it reads a "channel"/"version" pair out of
+# an error object, or out of a body that is not JSON — enough for a junk answer
+# to out-rank the real manifest once two sources compete. The CDN alone was never
+# exposed to that (one answer, no ranking), so on a host without jq this reads
+# the CDN only and behaves exactly as it did before this was added.
+api_source_usable() {
+  command -v jq >/dev/null 2>&1
 }
 
 fetch_latest() {
-  local channel="$1" url api_url cdn api cdn_v api_v
+  local channel="$1" url api_url cdn="" api="" cdn_v api_v cdn_err="" answered=0
   url="$(resolve_manifest_url "$channel")"
   api_url="$(resolve_manifest_api_url "$channel")"
   log "manifest=${url##*/}"
-  cdn="$(curl -fsSL "$url" 2>/dev/null)" || cdn=""
-  api="$(curl -fsSL -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)" || api=""
-  if [ -z "$cdn" ] && [ -z "$api" ]; then
-    die "could not fetch $url" 5
+  # Whether curl ANSWERED is tracked apart from whether the body is usable, so an
+  # empty 200 still reaches the mismatch path (exit 1) it always did, and only a
+  # genuine fetch failure is exit 5.
+  if cdn="$(curl -fsSL "$url" 2>"$TMP_DIR/manifest-cdn.err")"; then
+    answered=1
+  else
+    cdn=""
+    cdn_err="$(tr -d '\r' <"$TMP_DIR/manifest-cdn.err" | tail -n 1)"
+  fi
+  if api_source_usable; then
+    # -m bounds the SECOND source: a network that blackholes api.github.com must
+    # not add its own stall to an install the CDN could already have served.
+    if api="$(curl -fsSL -m 5 -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)"; then
+      answered=1
+    else
+      api=""
+    fi
+  fi
+  if [ "$answered" -eq 0 ]; then
+    die "could not fetch $url${cdn_err:+ ($cdn_err)}" 5
   fi
   manifest_is_usable "$cdn" "$channel" || cdn=""
   manifest_is_usable "$api" "$channel" || api=""
   if [ -z "$cdn" ] && [ -z "$api" ]; then
-    die "manifest channel mismatch (wanted $channel)" 1
+    die "manifest is not usable for channel $channel (wrong channel, or missing version/tarball_base)" 1
   fi
   if [ -z "$api" ]; then
     printf '%s\n' "$cdn"
