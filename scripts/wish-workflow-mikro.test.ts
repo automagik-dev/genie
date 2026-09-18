@@ -28,11 +28,12 @@ describe('wish.js mikro offload', () => {
       expect(brief).toMatch(/DATA under the fence/);
       expect(brief).toMatch(/exits 1 or is unavailable/);
       expect(brief).toMatch(/Report it in mikro as \{agent, ok, costUsd, seconds, usedFacts, usedFiles\}/);
+      expect(brief).toMatch(/mikro is never omitted/);
     }
     expect(scout).toContain('MIKRO_SCOUT_AGENT');
     expect(review).toContain('MIKRO_REVIEW_AGENT');
   });
-  test('mikro is an optional key on the scout and review schemas', () => {
+  test('mikro stays an optional schema key (the fake-agent scenarios omit it) while the briefs say it is never omitted', () => {
     const required = (name: string) => {
       const m = new RegExp(`const ${name} = obj\\(\\[([^\\]]*)\\]`).exec(script);
       if (!m) throw new Error(`${name} not found`);
