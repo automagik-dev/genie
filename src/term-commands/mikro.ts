@@ -37,6 +37,7 @@ import type { Command } from 'commander';
 import { runBenchCli } from '../../scripts/mikro/bench';
 import { BENCH_USAGE } from '../../scripts/mikro/bench-options';
 import { CALL_USAGE, runCallCli } from '../../scripts/mikro/call';
+import { FIXTURES_USAGE, runFixturesCli } from '../../scripts/mikro/fixtures-from-commits';
 
 const MIKRO_GROUP_DESCRIPTION = 'Run and grow genie mikro microagents (call, bench, coach, fixtures, init)';
 
@@ -116,6 +117,34 @@ run.
 
 ${BENCH_USAGE}`;
 
+/**
+ * The builder a repository with no pull requests needs: its own commits already carry
+ * an intent and the file set an agent should have named. Every rule is mechanical, so
+ * the help states them rather than describing them.
+ */
+const FIXTURES_HELP = `
+Flags (parsed by the mikro runtime, forwarded as typed):
+  --from-commits <range>     The commit range, e.g. HEAD~20..HEAD or v1.2.0..HEAD
+  --agent <name>             wish-context or review-prep
+  --dir <repo>               The repository whose history is read; defaults to the
+                             working directory
+  --out <path>               Where to write; default <dir>/.mikro/fixtures/<agent>.json
+  --max <n>                  Stop after n fixtures (oldest first)
+  --force                    Replace an existing file (refused without it)
+
+Ground truth is mechanical: files = "git show --name-only" of the commit (a rename
+contributes the NEW path), prompt = "Intent: <subject>" for wish-context and
+"Prepare the review of commit <sha> against <sha>^" for review-prep, id = the first
+12 characters of the sha. A merge commit, a root commit (review-prep), a commit with
+no files, and a commit any of whose files no longer exists at HEAD are skipped with
+the reason printed — the verifier scores the TREE, not the commit. The output is
+byte-stable across runs of the same argv.
+
+Exit codes: 0 a set was written, 1 the range stated no fixture (nothing written), 2
+the command was refused.
+
+${FIXTURES_USAGE}`;
+
 export function registerMikroCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'mikro');
   // Positional options on the GROUP, not on the program: it is what `call` needs to
@@ -145,5 +174,16 @@ export function registerMikroCommands(program: Command): void {
     .addHelpText('after', BENCH_HELP)
     .action(async (agent: string, flags: string[]) => {
       process.exitCode = await runBenchCli([agent, ...flags]);
+    });
+
+  mikro
+    .command('fixtures')
+    .description("Build a fixture set from a repository's own commits (no PRs needed)")
+    .argument('[flags...]', 'Runtime flags, forwarded as typed (genie global options excepted)')
+    .allowUnknownOption()
+    .passThroughOptions()
+    .addHelpText('after', FIXTURES_HELP)
+    .action((flags: string[]) => {
+      process.exitCode = runFixturesCli(flags);
     });
 }
