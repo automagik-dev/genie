@@ -33,7 +33,7 @@ A run returns `{ok, state, route?, contract, estimate, diff, head, branch, workt
 
 ## Contracts it inherits
 
-These clauses are the lifecycle's, restated nowhere else; the parity test pins them to the skills they come from.
+These clauses are the lifecycle's, restated nowhere else; the parity test pins them to the skills they come from, as it does the two rules the plan entry borrows from `work` and quotes there.
 
 - From `review`: "The reviewer is different from the author and remains read-only."
 - From `fix`: the repair budget is "default 2 when the key is unset".
