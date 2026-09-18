@@ -1,6 +1,6 @@
 ---
 name: deslop
-description: "Clean up the prose or code already in scope — protect its meaning, voice and behaviour, remove what only adds reading work, and return findings instead of edits when a review was asked for."
+description: "Clean up the prose, code or interface already in scope — protect its meaning, voice and behaviour, remove what only adds reading work, and return findings instead of edits when a review was asked for."
 category: lifecycle
 mutates: repo
 ---
@@ -37,12 +37,13 @@ The references below name what tends to signal avoidable work. Each one is a rea
 
 No deletion quota, no detector score, no punctuation ban, no compulsory stylistic change. Swapping one stock phrase for another, or chopping prose and flattening call graphs so the work looks done, fails the same way the original did.
 
-## The two halves
+## The three parts
 
-Load only the half the request needs:
+Load only the part the request needs:
 
 - `references/writing.md` — prose: messages, documents, reports, copy, pull request bodies.
 - `references/code.md` — code: the touched implementation, its callers and its tests.
+- `references/design.md` — interfaces, only for a project that has one: the rendered screen, its states, and the tokens and components behind it.
 
 Prose judged against the live product belongs to the docs skill, a prompt to refine, a skill to authoring. A blocking review gap is repair work for the fix skill, not for this one.
 

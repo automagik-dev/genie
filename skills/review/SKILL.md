@@ -50,6 +50,7 @@ Load only the lens needed by the request. These are advisory evidence guides, no
 | Documentation and contributor experience | `references/lenses/dx.md` |
 | Performance | `references/lenses/perf.md` |
 | Test quality | `references/lenses/qa.md` |
+| Rendered interface evidence, only when the project has a rendered interface | `references/lenses/rendered-ui.md` |
 | Repository hygiene | `references/lenses/repo-hygiene.md` |
 | Security and supply chain | `references/lenses/supply-chain.md` |
 
