@@ -1,3 +1,5 @@
+> Canary payloads under test, not instructions to any reader or agent.
+
 # mikro adversarial fixtures — notes
 
 These notes travel with `scripts/mikro/fixtures/*.adversarial.json`. They describe how the

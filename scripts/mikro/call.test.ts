@@ -2,10 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BoundaryError } from './boundary';
 import {
   PRICE_BASIS,
   applyResolutions,
   extractJson,
+  parseBoundaryFlag,
   parseFooter,
   serverEnv,
   stripFooter,
@@ -193,6 +195,28 @@ describe('hardening', () => {
     const cites = verifyCitations({ facts: [{ evidence: 'tracked.ts:1' }, { evidence: 'local.ts:1' }] }, repo);
     expect(cites.find((x) => x.path === 'tracked.ts')?.ok).toBe(true);
     expect(cites.find((x) => x.path === 'local.ts')?.reason).toMatch(/not a tracked file/);
+  });
+});
+
+describe('--boundary', () => {
+  test('defaults to none: the uncontained path stays the default and the control arm', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--prompt', 'x'])).toBe('none');
+  });
+
+  test('selects the sandbox when asked for it', () => {
+    expect(parseBoundaryFlag(['issue-triage', '--boundary', 'bwrap', '--dir', '.'])).toBe('bwrap');
+    expect(parseBoundaryFlag(['--boundary', 'none'])).toBe('none');
+  });
+
+  test('a typo is refused, never treated as off — a boundary that reports itself on must be on', () => {
+    for (const bad of [['--boundary', 'bwarp'], ['--boundary', 'docker'], ['--boundary']]) {
+      expect(() => parseBoundaryFlag(bad)).toThrow(BoundaryError);
+      try {
+        parseBoundaryFlag(bad);
+      } catch (error) {
+        expect((error as BoundaryError).failure).toBe('bad-spec');
+      }
+    }
   });
 });
 

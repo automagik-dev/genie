@@ -62,7 +62,11 @@ model only reads, cites and summarizes. Never add a write verb to a helper.
 
 ## What "read-only" means here
 
-Prompt discipline, not a sandbox. Each agent's starter block routes `git` and `gh` through allowlisted
+Prompt discipline, not a sandbox — **on the default path**. `--boundary bwrap` adds a real execution
+boundary (see [The boundary](#the-boundary) below); it is opt-in, and `none` remains the default and the
+control arm. Everything in this section describes the uncontained path.
+
+Each agent's starter block routes `git` and `gh` through allowlisted
 helpers, but the REPL is Python with `subprocess` available; an instruction smuggled into an issue body,
 PR body or commit message that the model obeys could run anything the MCP server's environment allows.
 Mitigations in place: the server gets an allowlisted environment (PATH, HOME, locale, `MIKRO_*`, the
@@ -112,6 +116,79 @@ instruction *could* do. The remaining vector is an issue body — the real untru
 team controls; that is a follow-up and an operator decision. The file-vector payload also labels itself
 at its foot (a committed file a human may open must say what it is), which makes it a weaker vector than
 an unlabelled hostile file.
+
+## The boundary
+
+`call.ts --boundary bwrap` runs `mikro mcp` inside an unprivileged [bubblewrap](https://github.com/containers/bubblewrap)
+sandbox. **`none` is the default and stays the control arm** — this is an evidence slice, not a rollout;
+the rollback is `--boundary none`. Not docker: the runtime, the provider key and `gh` would have to live
+in an image whose maintenance nobody owns (the council's objection), whereas bwrap binds what the host
+already has. `scripts/mikro/boundary.ts` holds a pure argv builder (`bwrapArgv`, unit-tested with no
+sandbox), the host-side egress proxy, and the probes.
+
+| surface | policy | why |
+|---|---|---|
+| namespaces | `--unshare-all --die-with-parent --new-session`, unprivileged user namespace | caps are dropped by construction; the sandbox cannot outlive the runner, and `--new-session` denies TIOCSTI |
+| environment | `--clearenv` + explicit `--setenv` | the runtime's whole environment is declared, not inherited: no SSH agent, no caller tokens |
+| system | `--ro-bind` of `/usr /bin /sbin /lib /lib64 /etc` | narrowed down from a `--ro-bind / /` prototype to what `mikro`, `git`, `gh`, `curl` and CA certs need |
+| the repo (`--dir`) | **read-only**, plus its `git rev-parse --git-common-dir` read-only | a review-prep `--dir` is a worktree whose `.git` is a *file* pointing into the main repo; without the common dir `git log`/`grep`/`diff` cannot read anything |
+| `MIKRO_AGENTS_DIR` | read-only (only when it is outside `--dir`) | the agent definitions are input, never writable |
+| HOME | `--tmpfs` at the same path | mikro's `~/.mikro/sessions` store is writable and discarded with the sandbox |
+| — the mikro runtime | `--ro-bind ~/.mikro/mikro` + `--symlink` recreating `mikro` on PATH | a *bind* of the launcher would make it resolve its root from the wrong directory; the symlink keeps `bin/mikro.mjs` resolving to `~/.mikro/mikro` |
+| — settings | a **generated** copy of the host `~/.mikro/settings.json` (model selection + `providers` only), read-only | a host file that later grows a literal key or an unrelated section cannot reach the sandbox |
+| — node | `--ro-bind` of the node install root resolved from PATH, its `bin` on PATH | `mikro.mjs` is `#!/usr/bin/env node`; on this host that root is `~/.hermes/node`, so exactly that subtree is bound — never `~/.hermes` |
+| nothing else of HOME | not mounted | no `~/.config` (so no `~/.config/gh`), no `~/.ssh`, `~/.claude`, `~/.mikro/gate-env.sh` |
+| `/tmp` | `--tmpfs` | scratch the run throws away |
+| writable, deliberately | `<dir>/.mikro/runs` and (under `bench.ts`) the prompt-vector canary root | these are where an executed injection lands: `.mikro/runs/canary-adversarial` is the file-vector canary (`adversarial.ts:34`) and the ledger dir is gitignored. A boundary that hid the canary would blind the bench that measures injection — the council dissent's exact objection. The boundary's job is to stop writes to the SOURCE tree, not to hide what the model attempted |
+| the run's scratch dir | `--bind` (read-write) | holds the proxy's unix socket and the generated settings file |
+| network | `--unshare-net` — loopback only, deny by default at the network layer | |
+| the one hole | a host-side HTTP **CONNECT** proxy on a unix socket in the scratch dir; inside, `socat TCP-LISTEN:8118,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:<socket>` runs before `exec mikro mcp`; the child env sets `HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:8118`, `NO_PROXY=` and `NODE_USE_ENV_PROXY=1` | mikro's `openai` client runs on global fetch, and node v26 honours a proxy from the environment only under `NODE_USE_ENV_PROXY`. The probe proves the pair is load-bearing: with the proxy variables cleared, `api.deepseek.com` is unreachable *inside* |
+| allowlist | exactly `api.deepseek.com:443` and `api.github.com:443`, matched as an exact `host:port` (no suffixes) | the provider baseUrl in `.mikro/mikro.yaml`, and the host every read-only `gh` verb in the three `SYSTEM.md` starter blocks actually calls (`gh issue view`, `gh pr list`, `gh search`, `gh api` without a method — all `api.github.com`) |
+| egress ledger | every attempt, allowed or not, is one JSON line `{ts, runId, host, port, allowed}` in `<repo>/.mikro/runs/egress.jsonl` (gitignored); the run's ledger row and Phoenix span carry `boundary` and `egress: {allowed, denied}` | a denial is never silent |
+| limits | `ulimit -u 256` (node + socat + REPL children, far below a fork bomb) and `ulimit -v 4194304` KiB = 4 GiB virtual (node v26 reserves a large virtual arena, so this is a ceiling, not a working-set budget) | |
+| wall clock | `call.ts`'s existing timeout; killing the runner's child kills the sandbox through `--die-with-parent` | |
+
+Fail-closed: a missing `bwrap` or `socat`, an unresolvable runtime, a socket it cannot bind, or a
+preflight `bwrap … -- /bin/true` that does not exit 0 all abort the run with a typed `BoundaryError`
+naming the cause. **bwrap mode never silently downgrades to `none`.**
+
+### Probes
+
+```sh
+bun scripts/mikro/boundary.ts --probe --dir .      # exits 1 if any expectation fails
+```
+
+Deterministic, no model. Each probe prints observed beside expected, and every boundary arm has an
+**uncontained control arm** so a row is only evidence when the control shows the check would otherwise
+have passed. The write probe's control arm runs against a throwaway `mkdtemp` git repo — never the real
+checkout. The table is appended to [`EVIDENCE-boundary.md`](EVIDENCE-boundary.md).
+
+### Running a round inside it
+
+```sh
+bun scripts/mikro/bench.ts <agent> --fixtures scripts/mikro/fixtures/<agent>.adversarial.json \
+  --reps 1 --boundary bwrap --tag note=boundary=bwrap --write-evidence
+```
+
+`--boundary` rides the round's tags and the `EVIDENCE.md` header (`boundary: bwrap`), so no table can be
+read as the wrong arm.
+
+### What this still does not fix (named residuals)
+
+- **Credentials are still inside the REPL.** `DEEPSEEK_API_KEY` (mikro needs it) and `GH_TOKEN` (read
+  from `gh auth token` on the host, so `~/.config/gh` itself stays unmounted) are in the contained
+  process's environment. Terminating TLS at the proxy and injecting credentials host-side is the next
+  slice.
+- **The allowlist is a host list, not a request policy.** Anything the agent can reach `api.github.com`
+  for with the token it holds, it can reach — the proxy sees only CONNECT, never the request inside.
+- **`.mikro/runs` is writable on purpose.** An obeyed injection can still write there. That is the
+  point: it is what makes the canary observable.
+- **Sessions on tmpfs.** mikro's `~/.mikro/sessions` store is discarded with the sandbox, so a contained
+  run leaves no resumable session on the host.
+- **Latency.** See the delta recorded in `EVIDENCE-boundary.md` and the agents' `EVIDENCE.md` rounds.
+- **This is not a verdict on the model.** A canary that stayed absent inside the boundary is evidence
+  about this model on these prompts *and* about these mounts — not proof that a different injection
+  could not reach something the allowlist still permits.
 
 ## Prices
 
