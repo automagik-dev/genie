@@ -26,6 +26,11 @@ REPO="automagik-dev/genie"
 # `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
 # release-channel-dev (2026-05-11) for the producer-side wiring.
 MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
+# The same manifest through the public, credential-free contents API. The CDN
+# copy above caches for ~5 minutes, so a fresh install inside that window used to
+# land the PREVIOUS release (issue #2950); the API copy is roughly a minute deep.
+# Host, owner and repo are pinned literals — never derived from manifest content.
+MANIFEST_API_BASE="https://api.github.com/repos/${REPO}/contents/.well-known"
 EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 # sign-attest.yml registers the GitHub-native attestation under a CUSTOM
@@ -419,18 +424,89 @@ resolve_channel() {
 # Everything else → <channel>.json. The producer side
 # (release-publish.yml) writes whichever filename matches the channel passed
 # through from version.yml — see wish release-channel-dev.
-resolve_manifest_url() {
-  local channel="$1" file
-  if [ "$channel" = "stable" ]; then file="latest.json"; else file="${channel}.json"; fi
-  echo "${MANIFEST_BASE}/${file}"
+manifest_file_for_channel() {
+  if [ "$1" = "stable" ]; then echo "latest.json"; else echo "${1}.json"; fi
 }
 
+resolve_manifest_url() {
+  echo "${MANIFEST_BASE}/$(manifest_file_for_channel "$1")"
+}
+
+# The same channel file through the contents API, pinned to main. Same
+# channel→filename rule as resolve_manifest_url, by construction.
+resolve_manifest_api_url() {
+  echo "${MANIFEST_API_BASE}/$(manifest_file_for_channel "$1")?ref=main"
+}
+
+# True when $1 is strictly newer than $2, comparing each dotted component as a
+# NUMBER. String ordering would rank 5.260918.10 below 5.260918.9. A component
+# that is not a plain integer (or an empty version) fails closed as "not newer",
+# which keeps the CDN payload.
+version_is_newer() {
+  local left="$1" right="$2" l r i count
+  if [ -z "$left" ] || [ -z "$right" ]; then return 1; fi
+  local IFS=.
+  # shellcheck disable=SC2206 # deliberate split on IFS=. into version components
+  local lparts=($left) rparts=($right)
+  count=${#lparts[@]}
+  if [ "${#rparts[@]}" -gt "$count" ]; then count=${#rparts[@]}; fi
+  for ((i = 0; i < count; i++)); do
+    l="${lparts[i]:-0}"
+    r="${rparts[i]:-0}"
+    case "$l" in ''|*[!0-9]*) return 1 ;; esac
+    case "$r" in ''|*[!0-9]*) return 1 ;; esac
+    if [ "$l" -gt "$r" ]; then return 0; fi
+    if [ "$l" -lt "$r" ]; then return 1; fi
+  done
+  return 1
+}
+
+# Read the channel manifest from BOTH published sources and return the NEWER
+# answer. The raw CDN stays the authority: it is the only source that can fail
+# the install, and a tie or an unparsable API version keeps its bytes. The API
+# read is strictly optional — unreachable, timed out, rate-limited (403/429 under
+# curl -f), empty or envelope-shaped answers all degrade silently to the CDN
+# copy. Mirrors fetchLatestManifest in src/genie-commands/update.ts.
 fetch_latest() {
-  local channel="$1" url payload
+  local channel="$1" url api_url payload api_payload cdn_version api_version
   url="$(resolve_manifest_url "$channel")"
+  api_url="$(resolve_manifest_api_url "$channel")"
   log "manifest=${url##*/}"
-  payload="$(curl -fsSL "$url")" || die "could not fetch $url" 5
+
+  payload="$(curl -fsSL "$url")" || payload=""
+
+  # `Accept: application/vnd.github.raw` asks the API for the file's own bytes
+  # rather than the base64 JSON envelope; an envelope (or any other body) simply
+  # fails manifest_channel_matches below and is discarded, so no base64/jq
+  # decoder is needed and the prerequisite list is unchanged. --max-time bounds
+  # this optional read so a hung API can never stall an install the CDN serves.
+  api_payload="$(curl -fsSL --max-time 5 -H 'Accept: application/vnd.github.raw' "$api_url" 2>/dev/null)" || api_payload=""
+  if [ -n "$api_payload" ] && ! manifest_channel_matches "$api_payload" "$channel"; then
+    api_payload=""
+  fi
+
+  if [ -z "$payload" ]; then
+    [ -n "$api_payload" ] || die "could not fetch $url" 5
+    warn "manifest: the CDN did not answer; using api.github.com"
+    printf '%s\n' "$api_payload"
+    return 0
+  fi
+
   manifest_channel_matches "$payload" "$channel" || die "manifest channel mismatch (wanted $channel)" 1
+
+  if [ -n "$api_payload" ]; then
+    cdn_version="$(manifest_get "$payload" version)"
+    api_version="$(manifest_get "$api_payload" version)"
+    if [ "$api_version" != "$cdn_version" ]; then
+      if version_is_newer "$api_version" "$cdn_version"; then
+        warn "manifest: api.github.com has ${api_version}; the CDN copy is still at ${cdn_version} (it caches for ~5 min)"
+        printf '%s\n' "$api_payload"
+        return 0
+      fi
+      warn "manifest: the CDN has ${cdn_version}; api.github.com is still at ${api_version}"
+    fi
+  fi
+
   printf '%s\n' "$payload"
 }
 
