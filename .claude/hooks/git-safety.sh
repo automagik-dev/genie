@@ -60,11 +60,15 @@ TEXTFLAG='(-m|--message|--body|--title|--description|--search|-S)'
 # `$(` and an unescaped backtick are not, an escaped backtick is (that is a Markdown code span).
 runnable=$(echo "$runnable" |
   sed -E "s/(^|[[:space:]])${TEXTFLAG}[[:space:]]*=?[[:space:]]*\\\$?'[^']*'/\1\2 TEXT/g" |
-  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"([^"`$]|[$][^(]|\\`)*"/\1\2 TEXT/g' |
+  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"([^"`$]|[$][^("]|\\`)*[$]?"/\1\2 TEXT/g' |
   # A value that MIXES prose with a substitution keeps the substitution and loses the prose: the
   # shell runs `$(…)` wherever it sits, so that text stays visible, while `chore: bump to $(cat
   # VERSION), still no --no-verify` stops being read as a flag.
-  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"[^"]*(\$\([^)]*\))[^"]*"/\1\2 TEXT \3/g' |
+  # The prose either side may carry no `$` and no backtick, so the collapse fires only on a value
+  # with exactly ONE substitution: `[^"]*` is greedy, so it kept the LAST one and erased the rest —
+  # appending ` $(date)` to a merge in a message made the merge disappear.
+  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"[^"$`]*(\$\([^)]*\))[^"$`]*"/\1\2 TEXT \3/g' |
+  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)="[^"$`]*(\$\([^)]*\))[^"$`]*"/\1\2 \3=TEXT \4/g' |
   sed -E "s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)='[^']*'/\1\2 \3=TEXT/g" |
   sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=("([^"`$]|[$][^(]|\\`)*"|[^[:space:]`$]*)/\1\2 \3=TEXT/g')
 

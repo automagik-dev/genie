@@ -269,6 +269,13 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'cat "$(gh pr merge 1)"',
       'git commit -m "$(gh pr merge 1)"',
       'gh pr create --body "$(gh pr merge 1)"',
+      // Every pinned case above carries ONE substitution, which is how a greedy collapse hid a
+      // merge behind a second one: these are those same commands with ` $(date)` appended.
+      'git commit -m "$(gh pr merge 1) at $(date)"',
+      'gh pr create --body "$(gh pr merge 1) $(date)"',
+      'git commit -m "$(gh pr merge $(echo 1))"',
+      'git commit -m "`gh pr merge 1` at $(date)"',
+      'git commit -m "$(echo a) $(echo b) $(gh pr merge 1) $(echo c)"',
       'export GIT_CONFIG_KEY_0="core.hooksPath"; export GIT_CONFIG_VALUE_0=/tmp/x; git commit -m x',
       // The plumbing twin of push: the pre-push hook never sees it.
       'git send-pack origin main:refs/heads/main',
@@ -317,6 +324,8 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       // An escaped backtick is literal — that is how a code span is written inside double quotes.
       'gh pr create --base dev --title t --body "never runs \\`gh pr merge\\`"',
       "grep -rn '`gh pr merge`' skills/",
+      'git commit -m "gh pr merge costs $"',
+      'gh api repos/o/r/pulls/1/comments -f body="see $(date): never run gh pr merge"',
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
     }
