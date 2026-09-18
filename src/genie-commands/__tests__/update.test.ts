@@ -2690,6 +2690,46 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     expect(calls).toEqual(['skills:all']);
   });
 
+  test('the convergence runs skills, then the plugin-era retirement, then the workflows channel', () => {
+    // The ordering is load-bearing and was pinned by nothing: the plugin-era
+    // retirement owns `~/.claude/workflows/council.js` and its `.genie-sync.json`
+    // sidecar, so the workflows channel must not install over that file before
+    // the retirement has proven and archived it. Retirement marks its own
+    // position through the `integrations: ` prefix it emits.
+    const steps: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: () => {
+        steps.push('skills');
+        return {
+          status: 'installed',
+          record: {
+            ref: releaseTag(VERSION),
+            cliVersion: SKILLS_CLI_VERSION,
+            inventory: ['alpha'],
+            agentDirs: [],
+            installedAt: new Date('2026-09-18T00:00:00.000Z').toISOString(),
+          },
+        };
+      },
+      runWorkflows: () => {
+        steps.push('workflows');
+        return { status: 'skipped', warnings: [] };
+      },
+      retirementHomes: {
+        home: mkdtempSync(join(tmpdir(), 'genie-converge-order3-home-')),
+        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order3-genie-')),
+      },
+      log: (line) => {
+        if (line.startsWith('integrations: ') && !steps.includes('retirement')) steps.push('retirement');
+      },
+    });
+    expect(steps).toEqual(['skills', 'retirement', 'workflows']);
+    expect(result.retirement).not.toBeNull();
+    expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
+  });
+
   test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
     const seen: string[] = [];
     for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {

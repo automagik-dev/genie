@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -222,7 +231,118 @@ describe('runWorkflowsChannelConvergence — backup-first replacement', () => {
     expect(result.status).toBe('installed');
     expect(lines[0]).toBe('workflows: preserved wish.js — not a regular file; left in place');
     expect(existsSync(join(root, 'elsewhere.js'))).toBe(false);
+    // Genie never recorded this name, so it never enters the record: uninstall
+    // must not name a file genie does not own.
     expect(readSkillsInstallRecord(genieHome)?.workflows?.files).toEqual({});
+  });
+
+  test('a RECORDED name that became a symlink keeps its recorded digest in the record', () => {
+    // The receipt is the whole point: dropping the name here would leave the
+    // file on disk with nothing in the record for doctor to report or for
+    // uninstall to refuse — the one thing decision 4 exists to prevent.
+    const recorded = digest('export const wish = 0;\n');
+    mkdirSync(workflowsDir, { recursive: true });
+    symlinkSync(join(root, 'elsewhere.js'), join(workflowsDir, 'wish.js'));
+    writeRecord({ workflows: { dir: workflowsDir, ref: 'v5.260918.1', files: { 'wish.js': recorded } } });
+    deliver({ 'wish.js': 'export const wish = 1;\n' });
+    const lines: string[] = [];
+
+    const result = converge({ lines });
+
+    expect(result.status).toBe('installed');
+    expect(lines[0]).toBe('workflows: preserved wish.js — not a regular file; left in place');
+    expect(lstatSync(join(workflowsDir, 'wish.js')).isSymbolicLink()).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.workflows?.files).toEqual({ 'wish.js': recorded });
+    expect(backupRoots()).toEqual([]);
+  });
+
+  test('a failed archive replaces nothing, records nothing, and adds no second root', () => {
+    // `take` throws when the copy cannot be proven, and the plan pass is wrapped
+    // in `try/finally` so a root this run created empty is discarded on the way
+    // out instead of being left behind by every retry. Backup-first means the
+    // target file is still untouched when that throw escapes.
+    mkdirSync(workflowsDir, { recursive: true });
+    writeFileSync(join(workflowsDir, 'wish.js'), 'someone else wrote this\n');
+    writeRecord();
+    deliver({ 'wish.js': 'export const wish = 1;\n' });
+    // A DIRECTORY at the archive destination makes copyFileSync throw after the
+    // root exists and before a single byte lands in it.
+    mkdirSync(join(genieHome, 'state-backups', 'workflows-collision-2026-09-18T12-34-56-000Z', 'wish.js'), {
+      recursive: true,
+    });
+    const lines: string[] = [];
+    const saved = process.exitCode;
+    try {
+      expect(converge({ lines }).status).toBe('failed');
+    } finally {
+      process.exitCode = saved ?? 0;
+    }
+    // The pre-seeded root held a directory, so it is NOT this run's to remove:
+    // what matters is that the run created no second one and replaced nothing.
+    expect(readFileSync(join(workflowsDir, 'wish.js'), 'utf8')).toBe('someone else wrote this\n');
+    expect(backupRoots()).toEqual(['workflows-collision-2026-09-18T12-34-56-000Z']);
+    expect(readSkillsInstallRecord(genieHome)?.workflows).toBeUndefined();
+  });
+});
+
+describe('runWorkflowsChannelConvergence — the Claude config dir', () => {
+  test('without an injected home it resolves CLAUDE_CONFIG_DIR, and the skip line names it', () => {
+    const configDir = join(root, 'relocated-claude');
+    const previous = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    try {
+      writeRecord();
+      deliver({ 'wish.js': 'export const wish = 1;\n' });
+      const lines: string[] = [];
+
+      // (a) the product home does not exist: genie creates none, and the line
+      // names the dir it actually resolved rather than a literal `~/.claude`.
+      const skipped = runWorkflowsChannelConvergence({
+        selection: 'auto',
+        version: VERSION,
+        genieHome,
+        log: (line) => lines.push(line),
+      });
+      expect(skipped.status).toBe('skipped');
+      expect(lines).toEqual([`workflows: skipped (no ~/.claude — ${configDir} does not exist)`]);
+      expect(existsSync(configDir)).toBe(false);
+      lines.length = 0;
+
+      // (b) once it exists, that is where the catalog lands.
+      mkdirSync(configDir, { recursive: true });
+      const result = runWorkflowsChannelConvergence({
+        selection: 'auto',
+        version: VERSION,
+        genieHome,
+        log: (line) => lines.push(line),
+      });
+      expect(result.status).toBe('installed');
+      expect(readFileSync(join(configDir, 'workflows', 'wish.js'), 'utf8')).toBe('export const wish = 1;\n');
+      expect(readSkillsInstallRecord(genieHome)?.workflows?.dir).toBe(join(configDir, 'workflows'));
+      expect(lines.at(-1)).toContain(join(configDir, 'workflows'));
+    } finally {
+      if (previous === undefined) process.env.CLAUDE_CONFIG_DIR = undefined;
+      else process.env.CLAUDE_CONFIG_DIR = previous;
+    }
+  });
+
+  test('a record naming a different dir is reported, and nothing there is touched', () => {
+    const previousDir = join(root, 'old-home', '.claude', 'workflows');
+    mkdirSync(previousDir, { recursive: true });
+    writeFileSync(join(previousDir, 'wish.js'), 'export const wish = 0;\n');
+    writeRecord({
+      workflows: { dir: previousDir, ref: 'v5.260918.1', files: { 'wish.js': digest('export const wish = 0;\n') } },
+    });
+    deliver({ 'wish.js': 'export const wish = 1;\n' });
+    const lines: string[] = [];
+
+    expect(converge({ lines }).status).toBe('installed');
+
+    expect(lines[0]).toBe(
+      `workflows: the install record named ${previousDir}; this run installs into ${workflowsDir}, so the files in the previous dir are no longer tracked (nothing there was moved or removed)`,
+    );
+    expect(readFileSync(join(previousDir, 'wish.js'), 'utf8')).toBe('export const wish = 0;\n');
+    expect(readSkillsInstallRecord(genieHome)?.workflows?.dir).toBe(workflowsDir);
   });
 });
 

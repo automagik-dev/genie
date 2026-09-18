@@ -2750,6 +2750,9 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   // Installing over it first would archive it as "not installed by genie" —
   // false, and the exact mis-attribution the modified/foreign split exists to
   // prevent — and would leave the sidecar reported `managed-modified` for ever.
+  // `genie install` runs NO retirement pass (it is an update-only mutation), so
+  // on that seam a plugin-era `council.js` IS archived as foreign — bytes backed
+  // up first, nothing lost: a known, bounded cosmetic on that one path.
   const workflows = (options.runWorkflows ?? runUpdateWorkflowsChannel)(selection, emit);
   return { skills, workflows, retirement };
 }

@@ -139,6 +139,16 @@ export function runWorkflowsChannelConvergence(
   if (delivered.size === 0) return fail(`no delivered workflow catalog at ${deliveredRoot}`);
 
   const workflowsDir = join(claudeDir, 'workflows');
+  const previousDir = read.record.workflows?.dir;
+  if (previousDir !== undefined && previousDir !== workflowsDir) {
+    // `$CLAUDE_CONFIG_DIR` (or `$HOME`) moved between runs. The record can name
+    // exactly one dir, so the files in the old one stop being tracked — and
+    // nothing there is moved or removed, because genie only ever deletes a file
+    // the CURRENT record proves it installed.
+    warnings.push(
+      `workflows: the install record named ${previousDir}; this run installs into ${workflowsDir}, so the files in the previous dir are no longer tracked (nothing there was moved or removed)`,
+    );
+  }
   let outcome: WorkflowsApplyOutcome;
   try {
     outcome = applyWorkflowsPlan({
@@ -206,16 +216,31 @@ interface WorkflowsApplyOutcome {
 function applyWorkflowsPlan(context: WorkflowsApplyContext): WorkflowsApplyOutcome {
   const archive = createArchiveSink(context);
   const outcome: WorkflowsApplyOutcome = { files: {}, written: 0, unchanged: 0, retired: 0, preserved: 0 };
-  installDeliveredWorkflows(context, archive, outcome);
-  retireDroppedWorkflows(context, archive, outcome);
-  // A run that replaced and retired nothing leaves no root behind: the backup
-  // root is created only by the first file that actually needs archiving.
-  archive.discardIfUnused();
+  try {
+    installDeliveredWorkflows(context, archive, outcome);
+    retireDroppedWorkflows(context, archive, outcome);
+  } finally {
+    // A run that replaced and retired nothing leaves no root behind: the backup
+    // root is created only by the first file that actually needs archiving, and
+    // a THROW out of the middle of either pass must not leak one either.
+    archive.discardIfUnused();
+  }
   const root = archive.usedRoot();
   if (root !== null) {
     context.warnings.push(`workflows: collision backup kept at ${root} (${archive.count()} file(s))`);
   }
   return outcome;
+}
+
+/**
+ * The ONE place a name enters the new record, so no disposition can silently
+ * drop one. A name genie never recorded and did not install (`digest`
+ * undefined) is deliberately absent: `genie uninstall` removes only what the
+ * record names, and it must never name a file genie does not own.
+ */
+function keepInRecord(outcome: WorkflowsApplyOutcome, name: string, digest: string | undefined): void {
+  if (digest === undefined) return;
+  outcome.files[name] = digest;
 }
 
 /** Install (or leave alone) every file this release delivers. */
@@ -226,18 +251,21 @@ function installDeliveredWorkflows(
 ): void {
   for (const [name, delivered] of context.delivered) {
     const target = join(context.workflowsDir, name);
+    const recorded = context.recorded[name];
     const state = inspectOnDiskWorkflow(target);
     if (state.kind === 'other') {
       // Not a regular file (a symlink, a directory): genie neither digests nor
-      // replaces it, because it cannot prove what it would be destroying.
+      // replaces it, because it cannot prove what it would be destroying. A name
+      // the record already named KEEPS its recorded digest — dropping it would
+      // erase the only receipt doctor and uninstall have for that file.
       context.warnings.push(`workflows: preserved ${name} — not a regular file; left in place`);
+      keepInRecord(outcome, name, recorded);
       outcome.preserved += 1;
       continue;
     }
-    const recorded = context.recorded[name];
     const verdict = classifyWorkflowFile({ recorded, delivered, onDisk: state.digest });
     if (verdict === 'current') {
-      outcome.files[name] = delivered;
+      keepInRecord(outcome, name, delivered);
       outcome.unchanged += 1;
       continue;
     }
@@ -249,7 +277,7 @@ function installDeliveredWorkflows(
     // The record is only worth as much as the bytes it names: a published file
     // that does not hash to the delivered digest is recorded by nobody.
     if (fileDigest(target) !== delivered) throw new Error(`published ${target} does not match the delivered ${name}`);
-    outcome.files[name] = delivered;
+    keepInRecord(outcome, name, delivered);
     outcome.written += 1;
   }
 }
@@ -275,7 +303,7 @@ function retireDroppedWorkflows(
       context.warnings.push(
         `workflows: preserved ${name} — this release no longer ships it, and it changed since the recorded install; left in place`,
       );
-      outcome.files[name] = recorded;
+      keepInRecord(outcome, name, recorded);
       outcome.preserved += 1;
       continue;
     }
@@ -336,6 +364,10 @@ function createArchiveSink(context: WorkflowsApplyContext): ArchiveSink {
     discardIfUnused() {
       if (root === null || count > 0) return;
       try {
+        // The house rule, byte for byte: only this run's OWN root is ever
+        // removed, and only while it still holds nothing. A partial copy left by
+        // a failed `take` keeps the root — its bytes are named on stdout instead.
+        if (readdirSync(root).length > 0) return;
         rmSync(root, { recursive: true, force: true });
       } catch {
         // Best effort: an unremovable empty staging root never fails an install.
