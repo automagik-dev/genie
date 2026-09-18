@@ -682,6 +682,12 @@ describe('failures', () => {
 
     expect(result.removed).toEqual([]);
     expect(result.failures.map((failure) => failure.surface)).toEqual(['hermes-skills-external-dir']);
+    // The failure line carries no leading whitespace: behind the caller's `integrations: ` prefix
+    // two leading spaces read as `integrations:   retirement failed`, which looked like a wrapped
+    // continuation of the line above rather than the one line an operator has to act on.
+    const failure = result.failures[0] as { path: string; reason: string };
+    expect(lines).toContain(`retirement failed for ${failure.path}: ${failure.reason}`);
+    expect(lines.every((line) => line === line.trimStart())).toBe(true);
     expect(lines).toContain('retirement incomplete: 1 failure(s)');
     expect(lines).not.toContain('nothing to retire');
     // The refused asset is untouched, and its backup is the recovery material.
