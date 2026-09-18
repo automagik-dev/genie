@@ -28,6 +28,7 @@ const GITIGNORE_RULES = [
   '.genie/roadmap-sync',
   '.genie/launch/',
   '.mcp.json.genie-backup-*',
+  '.codex/config.toml.genie-backup-*',
 ];
 
 let dir: string;
@@ -229,7 +230,11 @@ describe('genie init', () => {
 
     const first = JSON.parse(runInit(dir, ['--json']).stdout);
     expect(first.gitignore).toBe('updated');
-    expect(first.rulesAdded).toEqual(['.genie/genie.db-recovery-lock', '.genie/roadmap-sync']);
+    expect(first.rulesAdded).toEqual([
+      '.genie/genie.db-recovery-lock',
+      '.genie/roadmap-sync',
+      '.codex/config.toml.genie-backup-*',
+    ]);
     expect(readFileSync(gitignorePath, 'utf-8')).toContain('node_modules');
 
     const after = readFileSync(gitignorePath);
@@ -450,6 +455,40 @@ describe('init marker-owned Codex retirement', () => {
     expect(code).toBe(0);
     expect(readFileSync(codexPath, 'utf8')).toBe(personal);
     expect(existsSync(join(dir, '.genie', 'INDEX.md'))).toBe(true);
+  });
+
+  /**
+   * A marker-only `.codex/config.toml` is removed backup-first, and the backup it leaves beside it
+   * is an operational artifact of genie's, not project content. Without the ignore rule (which the
+   * contract docs already promised) `genie init` dirtied an otherwise clean worktree with an
+   * untracked `config.toml.genie-backup-<stamp>` — the same class of trash the removal exists to
+   * clear, moved one filename over.
+   */
+  test('the backup a removal leaves behind is ignored, so init leaves the worktree clean', () => {
+    initGitRepo(dir);
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'root'], {
+      cwd: dir,
+      env: { ...process.env, ...GIT_IDENTITY },
+    });
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    writeFileSync(
+      join(dir, '.codex', 'config.toml'),
+      '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/g"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n',
+    );
+
+    expect(runInitWithHome(dir, join(dir, 'home')).code).toBe(0);
+    expect(existsSync(join(dir, '.codex', 'config.toml'))).toBe(false);
+    const backups = readdirSync(join(dir, '.codex')).filter((name) => name.startsWith('config.toml.genie-backup-'));
+    expect(backups).toHaveLength(1);
+
+    const untracked = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+      cwd: dir,
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.slice(3));
+    expect(untracked).not.toContain(join('.codex', backups[0] as string));
   });
 
   test('init.ts never mints an assertion/permit and never touches the lifecycle lease or delivery', () => {

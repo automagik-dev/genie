@@ -2032,8 +2032,11 @@ describe('doctor: pre-record genie leftovers', () => {
 
     const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
     expect(check.status).toBe('warn');
+    // The third row is a live third-party `brain`: it shares a name genie once shipped and nothing
+    // else, so the line counts it apart and says genie claims none of those — calling every row a
+    // genie skill dir told the operator their own product was genie's.
     expect(check.detail).toBe(
-      `3 genie skill dir(s) predate the install record: ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'brain')} (unproven)`,
+      `3 dir(s) predate the install record — 2 genie's own, 1 unproven (a retired genie name or description, not both; genie claims none of these): ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'brain')} (unproven)`,
     );
     expect(check.suggestion).toContain('genie update');
     // Nothing on disk moved: doctor observes, update retires.

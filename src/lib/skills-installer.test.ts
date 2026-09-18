@@ -3033,8 +3033,8 @@ describe('pre-record genie leftovers (issue #2927)', () => {
       'skills: retired pre-record genie skill dir .genie-codex-fallback-retirement from 1 agent dir(s)',
       'skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)',
       `skills: retirement backups under ${backupRoot}`,
-      `skills: ${nameOnly} carries a retired genie skill name or description but not both; review it manually`,
-      'skills: legacy leftovers: 2 archived of 3 pre-record genie dir(s) found in agent homes',
+      `skills: ${nameOnly} carries a retired genie skill name or description but not both, so genie does not claim it; nothing was moved — review it yourself if it is not a product you use`,
+      'skills: legacy leftovers: 2 archived, 0 preserved, 1 unproven (a retired genie name or description, not both) of 3 dir(s) predating the install record',
     ]);
     // A marker dir has a leading dot, which the record schema rejects: it is never recorded.
     expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
@@ -3113,6 +3113,86 @@ describe('pre-record genie leftovers (issue #2927)', () => {
     expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
       { agentDir: claude, skill: 'pm', reason: 'content changed since the recorded install', digest },
     ]);
+  });
+
+  /**
+   * A dir that could not be READ while its contents were being proven carries no digest, so the
+   * recorded-retirement path can only ever answer `no recorded content digest` for it. Before this,
+   * the operator who fixed the permission watched every later update skip it in silence, and the
+   * receipt in the record said `preserved` for ever.
+   */
+  test('a leftover preserved as unreadable is re-proven and archived once it can be read', () => {
+    const source = fixtureSkillsTree(['review']);
+    const { proven } = seedLeftovers();
+    const unreadable = join(proven, 'notes.txt');
+    writeFileSync(unreadable, 'x');
+    chmodSync(unreadable, 0o000);
+    const agents = join(home, '.agents', 'skills');
+    const install = () =>
+      runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: spawnDelivering(source),
+      });
+
+    const first = install();
+    expect(first.ok).toBe(true);
+    expect(existsSync(proven)).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: agents, skill: 'genie-review', reason: 'unreadable while proving its contents' },
+    ]);
+
+    // The operator fixes the permission the reason named.
+    chmodSync(unreadable, 0o644);
+
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect(existsSync(proven)).toBe(false);
+    expect(second.warnings).toContain('skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)');
+    expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
+  });
+
+  /**
+   * The reconciling line is the one line whose job is to add up. Counting a pre-record dir the
+   * legacy pass preserved against the RECORDED targets made it stop: `1 archived, 1 preserved,
+   * 1 already absent of 2 recorded target(s)` describes three dispositions of two targets.
+   */
+  test('the reconciling line counts recorded dispositions, and the legacy line counts its own', () => {
+    const source = fixtureSkillsTree(['review']);
+    const claude = join(home, '.claude', 'skills');
+    const recorded = join(claude, 'trace');
+    mkdirSync(recorded, { recursive: true });
+    writeFileSync(join(recorded, 'SKILL.md'), '# trace\n');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: '1.5.23',
+      inventory: ['review', 'trace'],
+      agentDirs: [claude, join(home, '.agents', 'skills')],
+      dirDigests: { [recorded]: computeSkillDirDigest(recorded) as string },
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const { proven } = seedLeftovers();
+    const unreadable = join(proven, 'notes.txt');
+    writeFileSync(unreadable, 'x');
+    chmodSync(unreadable, 0o000);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toContain(
+      'skills: retirement: 1 archived, 0 preserved, 1 already absent of 2 recorded target(s)',
+    );
+    expect(result.warnings).toContain(
+      'skills: legacy leftovers: 1 archived, 1 preserved, 1 unproven (a retired genie name or description, not both) of 3 dir(s) predating the install record',
+    );
+    chmodSync(unreadable, 0o644);
   });
 
   /** Codex review on PR #2928: the `--all` era wrote registry homes the four-row known table never lists. */

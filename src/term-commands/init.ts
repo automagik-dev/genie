@@ -102,15 +102,23 @@ export const MACHINE_LOCAL_GENIE_PATHS = [
 
 /**
  * Operational artifacts that must never be committed: every machine-local
- * `.genie/` path above, plus `.mcp.json.genie-backup-*` — the backup-first copy
- * `genie init` writes next to a user-owned `.mcp.json` when it retires a legacy
- * `genie mcp` registration; it is an operational artifact, not project content.
+ * `.genie/` path above, plus the backup-first copies `genie init` writes beside
+ * the two project MCP routes it retires — `.mcp.json.genie-backup-*` and
+ * `.codex/config.toml.genie-backup-*`. Both are operational artifacts, not
+ * project content, and the Codex one was missing here while the contract docs
+ * already claimed it: a `genie init` that removed a marker-only
+ * `.codex/config.toml` left its backup as an untracked file in the operator's
+ * otherwise clean worktree.
  *
  * Appended idempotently: `scaffoldGitignore` writes only the rules a repo does
  * not already carry, so an existing repo picks up a newly added rule on its
  * next `genie init` and a second run writes nothing.
  */
-const GITIGNORE_RULES: readonly string[] = [...MACHINE_LOCAL_GENIE_PATHS, '.mcp.json.genie-backup-*'];
+const GITIGNORE_RULES: readonly string[] = [
+  ...MACHINE_LOCAL_GENIE_PATHS,
+  '.mcp.json.genie-backup-*',
+  '.codex/config.toml.genie-backup-*',
+];
 
 // ============================================================================
 // Git repo resolution
