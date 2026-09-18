@@ -15,6 +15,14 @@ const SCRIPTS = readdirSync(CATALOG)
   .sort();
 const CALLER_PINNED = ['workfly.js', 'docs-audit.js', 'research-sweep.js', 'skill-audit-sweep.js'];
 const SPREAD = '...(MODEL ? { model: MODEL } : {})';
+// wish.js goes further than one caller-pinned model: its two MECHANICAL stages (the gate, which
+// runs the repository check and reads an exit code, and the publisher, which runs an allowlisted
+// push/PR sequence) take their own optional key, so a run can put them on a cheaper runtime than
+// the reasoning stages. Each key is still caller-supplied and still reaches agent() only through a
+// conditional spread; unset falls back to `model`, so an unpinned run is unchanged.
+const STAGE_PINNED: Record<string, string[]> = {
+  'wish.js': ['MODEL', 'GATE_MODEL', 'PUBLISH_MODEL'],
+};
 
 const read = (name: string): string => readFileSync(join(CATALOG, name), 'utf8');
 
@@ -45,6 +53,35 @@ describe('the caller-pinned scripts spread the model only when one was pinned', 
       // A `model: MODEL` outside the spread would pin an empty string on an unpinned run.
       expect(code.replaceAll(SPREAD, '')).not.toMatch(/\bmodel: MODEL\b/);
       expect(code).not.toMatch(/\bmodel: '[^']+'/);
+    });
+  }
+});
+
+describe('the stage-pinned scripts keep one caller key per stage group', () => {
+  for (const [name, variables] of Object.entries(STAGE_PINNED)) {
+    const code = read(name);
+
+    test(`${name} is in the catalog and every stage model spreads conditionally`, () => {
+      expect(SCRIPTS).toContain(name);
+      for (const variable of variables) {
+        expect(code).toContain(`...(${variable} ? { model: ${variable} } : {})`);
+      }
+      // Nothing outside those spreads may set `model:` on an options object; a bare key would pin
+      // the empty string on an unpinned run and stop the session model from being inherited.
+      let stripped = code;
+      for (const variable of variables)
+        stripped = stripped.replaceAll(`...(${variable} ? { model: ${variable} } : {})`, '');
+      for (const variable of variables) expect(stripped).not.toMatch(new RegExp(`\\bmodel: ${variable}\\b`));
+      expect(code).not.toMatch(/\bmodel: '[^']+'/);
+    });
+
+    test(`${name} takes every stage model from the caller and inherits when one is unset`, () => {
+      expect(code).toMatch(/model: text\(input\.model\),/);
+      for (const variable of variables.slice(1)) {
+        const key = variable.toLowerCase().replace(/_(.)/g, (_m, c: string) => c.toUpperCase());
+        expect(code).toMatch(new RegExp(`${key}: text\\(input\\.${key}\\),`));
+        expect(code).toMatch(new RegExp(`^const ${variable} = job\\.${key} \\|\\| job\\.model$`, 'm'));
+      }
     });
   }
 });

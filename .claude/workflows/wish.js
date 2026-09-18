@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Deliver ONE task end to end — a read-only scout and a blind judge admit or refuse it, one executor works in a real worktree, a mechanical gate runs the full check, a different read-only agent reviews the exact commit, a bounded repair loop closes gaps, and one allowlisted agent pushes, opens the PR and reads the remote back; merging stays with the operator.',
   whenToUse:
-    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path that replaces quick. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, timestamp} — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
+    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path that replaces quick. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp}, where gateModel/publishModel pick a cheaper runtime for the mechanical stages and unset inherits model — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
   phases: [
     {
       title: 'Admit',
@@ -58,10 +58,10 @@ export const meta = {
 // skills/quick/SKILL.md, skills/wish/SKILL.md, skills/review/SKILL.md, skills/fix/SKILL.md,
 // skills/work/SKILL.md and .claude/workflows/research-sweep.js.
 //
-// FROZEN: objective, issue, context, slug, base, repairBudget, model and timestamp arrive
-// from the caller and no stage re-asks, narrows or widens any of them, and no agent adds a
-// file to the declared set. STAYS WITH THE FRONT DOOR: merge, SHIPPED, dev→main promotion,
-// worktree and branch removal after a merge, the retry decision, the direct `plan` entry
+// FROZEN: objective, issue, context, slug, base, repairBudget, model, gateModel, publishModel and
+// timestamp arrive from the caller and no stage re-asks, narrows or widens any of them, and no
+// agent adds a file to the declared set. STAYS WITH THE FRONT DOOR: merge, SHIPPED, dev→main
+// promotion, worktree and branch removal after a merge, the retry decision, the direct `plan` entry
 // (writing a multi-group WISH.md) and the by-hand fallback. This script performs no IO, reads
 // no clock and generates no entropy; every path it stamps or renders is repository-relative.
 //
@@ -169,7 +169,7 @@ const UNMEASURED = 'unmeasured, treated as over the maximum'
 const SHA = /^[0-9a-f]{40}$/
 
 const INTAKE_ERROR =
-  'Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, timestamp} — objective is required and every key arrives frozen.'
+  'Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp} — objective is required and every key arrives frozen.'
 const BASE_ERROR =
   'base must be an integration branch, never main or master in ANY spelling (main, master, refs/heads/main, origin/master): this workflow opens a PR against the base and never pushes to a protected branch.'
 const BASE_SHAPE_ERROR =
@@ -488,6 +488,8 @@ function normalizeInput(raw) {
     rejection,
     repairBudget: clampInt(input.repairBudget, 0, MAX_REPAIR_BUDGET, DEFAULT_REPAIR_BUDGET),
     model: text(input.model),
+    gateModel: text(input.gateModel),
+    publishModel: text(input.publishModel),
     timestamp: text(input.timestamp),
   }
 }
@@ -876,6 +878,7 @@ function render(view) {
     `Worktree: ${view.worktree || '(none created)'}`,
     `Head: ${view.head || '(no commit)'}`,
     `Repairs: ${view.repairs} of ${view.repairBudget}`,
+    `Models: session=${view.sessionModel || 'inherit'} gate=${view.gateModel || 'inherit'} publish=${view.publishModel || 'inherit'}`,
     view.stageReached ? `Stage reached: ${view.stageReached}` : '',
   ].filter(Boolean))
   const admission = bullets([
@@ -926,6 +929,13 @@ const job = normalizeInput(args)
 if (!job) return { ok: false, error: INTAKE_ERROR, notConvened: [] }
 if (job.rejection) return { ok: false, error: job.rejection, notConvened: [] }
 const MODEL = job.model
+// The mechanical stages may run on a cheaper runtime than the reasoning ones: the gate runs the
+// repository's full check and reads an exit code, the publisher runs an allowlisted push/PR
+// sequence and reads the remote back — neither judges anything. `text()` normalizes an absent key
+// to '', so `||` here is the inherit rule, not a default: pass neither key and every stage runs on
+// exactly the model a caller pins today, and pinning nothing still inherits the session model.
+const GATE_MODEL = job.gateModel || job.model
+const PUBLISH_MODEL = job.publishModel || job.model
 
 const notConvened = []
 const injectionAttempts = []
@@ -1234,7 +1244,7 @@ function measureDiff(when) {
 phase('Gate')
 stageReached = 'Gate'
 const gateStep = await attempt('Gate', () =>
-  agent(gatePrompt(job, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' }),
+  agent(gatePrompt(job, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
 )
 if (!gateStep.ok) return finish('missed', false, { blockedReason: `The Gate stage threw: ${gateStep.reason}.` })
 if (!gateStep.value) {
@@ -1322,7 +1332,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   diffOutsideDeclared = changed.filter((path) => !contract.files.includes(path)).concat(changedPaths.outside)
 
   const roundGateStep = await attempt('Repair', () =>
-    agent(gatePrompt(job, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' }),
+    agent(gatePrompt(job, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
   )
   if (!roundGateStep.ok) return finish('missed', false, { blockedReason: `The gate of repair round ${round} threw: ${roundGateStep.reason}.` })
   if (!roundGateStep.value) {
@@ -1375,7 +1385,7 @@ const publishStep = await attempt('Publish', () =>
     label: 'publish:pr',
     phase: 'Publish',
     schema: PUBLISH_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    ...(PUBLISH_MODEL ? { model: PUBLISH_MODEL } : {}),
     effort: 'low',
   }),
 )
@@ -1451,6 +1461,9 @@ function finish(state, ok, extra) {
   const view = {
     objective: job.objective,
     timestamp: job.timestamp,
+    sessionModel: MODEL,
+    gateModel: GATE_MODEL,
+    publishModel: PUBLISH_MODEL,
     state,
     route,
     routeReason,
