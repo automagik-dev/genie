@@ -326,6 +326,8 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       "grep -rn '`gh pr merge`' skills/",
       'git commit -m "gh pr merge costs $"',
       'gh api repos/o/r/pulls/1/comments -f body="see $(date): never run gh pr merge"',
+      'gh api repos/o/r/pulls/1/comments -f body="never run gh pr merge, costs $"',
+      'git commit -m "docs: \\`gh pr merge\\` is banned, built $(date)"',
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
     }

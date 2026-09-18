@@ -67,10 +67,10 @@ runnable=$(echo "$runnable" |
   # The prose either side may carry no `$` and no backtick, so the collapse fires only on a value
   # with exactly ONE substitution: `[^"]*` is greedy, so it kept the LAST one and erased the rest —
   # appending ` $(date)` to a merge in a message made the merge disappear.
-  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"[^"$`]*(\$\([^)]*\))[^"$`]*"/\1\2 TEXT \3/g' |
-  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)="[^"$`]*(\$\([^)]*\))[^"$`]*"/\1\2 \3=TEXT \4/g' |
+  sed -E 's/(^|[[:space:]])(-m|--message|--body|--title|--description|--search|-S)[[:space:]]*=?[[:space:]]*"([^"$`]|\\`)*(\$\([^)]*\))([^"$`]|\\`)*"/\1\2 TEXT \4/g' |
+  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)="([^"$`]|\\`)*(\$\([^)]*\))([^"$`]|\\`)*"/\1\2 \3=TEXT \5/g' |
   sed -E "s/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)='[^']*'/\1\2 \3=TEXT/g" |
-  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=("([^"`$]|[$][^(]|\\`)*"|[^[:space:]`$]*)/\1\2 \3=TEXT/g')
+  sed -E 's/(^|[[:space:]])(-f|-F|--field|--raw-field)[[:space:]]*(body|message|title|description|comment)=("([^"`$]|[$][^("]|\\`)*[$]?"|[^[:space:]`$]*)/\1\2 \3=TEXT/g')
 
 # A pure read-only search for a forbidden form is a search, not an act — including one handed to a
 # shell, which is how an agent greps from inside a wrapper. Only when it is the WHOLE command, so
