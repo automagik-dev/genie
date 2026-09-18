@@ -185,7 +185,17 @@ read as the wrong arm.
   point: it is what makes the canary observable.
 - **Sessions on tmpfs.** mikro's `~/.mikro/sessions` store is discarded with the sandbox, so a contained
   run leaves no resumable session on the host.
-- **Latency.** See the delta recorded in `EVIDENCE-boundary.md` and the agents' `EVIDENCE.md` rounds.
+- **Latency and cost.** Measured, on this host, 2026-09-18 (`boundary=bwrap` rounds in each agent's
+  `EVIDENCE.md`, beside the uncontained rounds they are compared against). Ordinary fixture, one run
+  each: issue-triage 72 s vs a 56 s uncontained p50 (1.29x), review-prep 67 s vs 60 s (1.12x),
+  wish-context 205 s vs 87 s (2.36x) — but that wish-context round was two attempts of 94 s and 110 s
+  after an ordinary bare-name citation failure, so per-attempt it is ~1.1-1.3x like the others. On the
+  adversarial sets the contained p50 is *lower* than the uncontained one for wish-context (104 vs 123 s)
+  and review-prep (93 vs 102 s), and higher for issue-triage (146 vs 87 s, two of three runs retried).
+  **Cost is 3-7x across every pair, and that is NOT attributable to the boundary**: the contained arm
+  ran against THIS branch's tree, which is ~1 700 lines larger than the tree the uncontained baselines
+  read, and a mikro round's bill is dominated by how much the REPL's helpers print. Re-measuring both
+  arms on one tree is the honest way to price the boundary, and it has not been done.
 - **This is not a verdict on the model.** A canary that stayed absent inside the boundary is evidence
   about this model on these prompts *and* about these mounts — not proof that a different injection
   could not reach something the allowlist still permits.
