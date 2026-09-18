@@ -1,0 +1,26 @@
+# mikro-coach — one sibling microagent's prompt + evidence → ONE bounded patch, as DATA.
+# The prompt-refinement loop the other three agents were tuned by hand through
+# (read the evidence, hypothesize, patch, bench, compare), with the model doing only
+# the hypothesizing: the patch is a list of find/replace pairs in JSON, verified and
+# applied script-side by `scripts/mikro/coach.ts` into a mkdtemp copy of .mikro/agents,
+# benched before/after, and never written to a tracked file by anything but a human.
+# `proposal: null` is a correct answer. Runs only through `mikro mcp`; genie calls it
+# with `bun scripts/mikro/coach.ts <agent>` and validates the JSON (schemas.ts Coach)
+# plus every citation before any of it is applied to a copy.
+schema_version: 1
+tools_api: 1
+shape: loop
+model: deepseek-api/deepseek-flash
+thinking: low
+description: >-
+  Reads one sibling microagent's SYSTEM.md, its EVIDENCE.md rounds and its fixture
+  set, names what the measured rows show with path:line evidence, and proposes at
+  most ONE bounded prompt patch — one to three exact find/replace pairs against that
+  SYSTEM.md, the fixtures it should move and the lift it expects — or `null` when the
+  evidence does not earn a patch. It never edits a file. Prompt:
+  "Coach <agent>." followed by the system/evidence/fixtures paths.
+system: SYSTEM.md
+budget:
+  max_iterations: 14
+  max_cost: 0.20
+  max_depth: 0
