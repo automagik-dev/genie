@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard: the workfly stage roster lives only in .claude/workflows/workfly.js.
 // The workfly skill is that workflow's front door and must not drift from its stages.
@@ -44,9 +45,8 @@ describe('workfly skill fronts the workfly workflow', () => {
     );
   });
 
-  test('the skill names the script path and the saved name', () => {
-    expect(SKILL).toContain('.claude/workflows/workfly.js');
-    expect(SKILL).toContain('saved name `workfly`');
+  test('the skill states the explicit-script-path rule for both scopes', () => {
+    expectExplicitScriptPathRule(SKILL, 'workfly');
   });
 
   test('meta.phases, the phase() calls and the by-hand stages are one roster', () => {

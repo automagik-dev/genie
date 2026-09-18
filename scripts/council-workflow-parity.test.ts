@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard: the council lens roster lives only in .claude/workflows/council.js.
 // The council skill is a front door that runs that workflow and must not carry its own roster.
@@ -23,8 +24,7 @@ describe('council skill fronts the council workflow', () => {
   });
 
   test('the skill points at the workflow and carries no roster of its own', () => {
-    expect(skill).toContain('.claude/workflows/council.js');
-    expect(skill).toContain('saved name `council`');
+    expectExplicitScriptPathRule(skill, 'council');
     expect(/^\d+\. \*\*[A-Za-z]+\*\*/m.test(skill)).toBe(false);
   });
 
