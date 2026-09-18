@@ -2073,10 +2073,14 @@ describe('workflows channel removal', () => {
     expect(existsSync(join(root, 'elsewhere.js'))).toBe(true);
   });
 
-  test('a recorded file the operator already deleted is neither removed nor reported', () => {
+  test('a recorded file the operator already deleted removes nothing, but the empty dir still goes', () => {
     seedWorkflowsRecord({ 'council.js': sha256("export const meta = { name: 'council' }\n") });
 
+    // Nothing to delete, yet the dir empties and is removed — so `dirRemoved` is
+    // the one thing that happened here, and the transcript must say so (the
+    // plan-level test below asserts the line).
     expect(removeWorkflowsChannelInstall(genieHome)).toEqual({ removed: [], preserved: [], dirRemoved: true });
+    expect(existsSync(workflowsDir)).toBe(false);
   });
 
   test('a malformed record fails closed: nothing is removed', () => {
@@ -2196,6 +2200,20 @@ describe('workflows channel removal inside the fresh uninstall plan', () => {
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(true);
     expect(existsSync(genieHome)).toBe(true);
     expect(readFileSync(council, 'utf8')).toBe('// hand-edited\n');
+  });
+
+  test('removing the emptied workflows dir is never silent, even with no file left to delete', () => {
+    const body = "export const meta = { name: 'council' }\n";
+    seedRecord({ 'council.js': sha256(body) });
+    // The operator deleted the recorded file by hand: this run removes nothing
+    // and still mutates a product home by taking the emptied dir with it.
+
+    const outcome = withIsolatedEnv(() => performFreshUninstallPlan(genieHome, false));
+
+    expect(outcome.result.failures).toEqual([]);
+    expect(existsSync(workflowsDir)).toBe(false);
+    expect(output.some((line) => line.includes('workflows channel: removed the now-empty workflows dir'))).toBe(true);
+    expect(output.some((line) => line.includes('workflows channel: removed 0 recorded workflow file(s)'))).toBe(true);
   });
 
   test('a clean sweep of both channels removes the files and then the record', () => {

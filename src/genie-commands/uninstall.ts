@@ -2341,7 +2341,12 @@ function removeWorkflowsDirIfEmpty(dir: string): boolean {
 }
 
 function reportWorkflowsChannelRemoval(removal: WorkflowsChannelRemoval): void {
-  if (removal.removed.length === 0 && removal.preserved.length === 0) return;
+  // `dirRemoved` belongs in the early return: the dir goes when it EMPTIES, and
+  // it can already be empty with nothing for this run to remove (every recorded
+  // file deleted by hand first). Removing a directory in a product home with no
+  // transcript line is exactly the kind of silent mutation this report exists
+  // to prevent.
+  if (removal.removed.length === 0 && removal.preserved.length === 0 && !removal.dirRemoved) return;
   printOut(`  \x1b[32m+\x1b[0m workflows channel: removed ${removal.removed.length} recorded workflow file(s)`);
   if (removal.dirRemoved) printOut('  \x1b[32m+\x1b[0m workflows channel: removed the now-empty workflows dir');
   for (const entry of removal.preserved) {
