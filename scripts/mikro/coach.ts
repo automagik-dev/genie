@@ -2,9 +2,14 @@
 /**
  * scripts/mikro/coach.ts — one coaching round over one microagent's prompt.
  *
- *   bun scripts/mikro/coach.ts <agent> [--reps 2] [--concurrency 3] [--only a,b]
+ *   genie mikro coach <agent> [--reps 2] [--concurrency 3] [--only a,b]
  *       [--fixtures path] [--proposal file.json] [--null-control] [--band file.json]
  *       [--dir repo] [--keep-temp] [--no-phoenix]
+ *   bun scripts/mikro/coach.ts <agent> …          # the same code, inside this checkout
+ *
+ * `genie mikro coach` and `bun scripts/mikro/coach.ts` are ONE code path: both call
+ * {@link runCoachCli}, which returns the exit code and never calls `process.exit`,
+ * because inside the genie binary it is one command of a longer-lived process.
  *
  * The loop the three microagents were tuned by hand through — read the evidence,
  * hypothesize, patch, bench, compare — with the model doing only the
@@ -49,9 +54,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { resolveFixturesPath } from './bench-options';
 import { type RunResult, runAgent } from './call';
 import { COACH_LIMITS, Coach, isAgentName } from './schemas';
+import { gitProbeEnv } from './trusted-source';
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -282,19 +289,82 @@ export function decideVerdict(input: VerdictInput): { verdict: Verdict; reasons:
 const COST_BAR_USD = 0.05; // bench.ts's median-cost bar, the per-run figure an expected cost is built from
 const WALL_CLOCK_CAP_MS = 20 * 60 * 1000;
 
+export const COACH_USAGE = `usage: genie mikro coach <issue-triage|wish-context|review-prep> [--reps 2] [--concurrency 3] [--only a,b] [--fixtures path] [--proposal file.json] [--null-control] [--band file.json] [--dir repo] [--keep-temp] [--no-phoenix]
+       (inside this checkout the same code runs as: bun scripts/mikro/coach.ts <agent> …)
+`;
+
+/** A refusal or an abort, carrying the exit code `runCoachCli` returns. Never a `process.exit`. */
+class CoachExit extends Error {
+  constructor(readonly code: number) {
+    super(`coach exited ${code}`);
+  }
+}
+
 function usage(): never {
-  process.stderr.write(
-    'usage: bun scripts/mikro/coach.ts <issue-triage|wish-context|review-prep> [--reps 2] [--concurrency 3] [--only a,b] [--fixtures path] [--proposal file.json] [--null-control] [--band file.json] [--dir repo] [--keep-temp] [--no-phoenix]\n',
-  );
-  process.exit(2);
+  process.stderr.write(COACH_USAGE);
+  throw new CoachExit(2);
 }
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** `git status --porcelain`, as a set of lines, for the before/after side-effect assertion. */
+/**
+ * `git status --porcelain`, as a set of lines, for the before/after side-effect assertion.
+ * On the stripped ambient environment, because `-C <dir>` does not override an exported
+ * `GIT_DIR` and a status read from another repository would make the gate meaningless.
+ */
 function gitStatus(dir: string, pathspec?: string): string[] {
   const argv = ['git', '-C', dir, 'status', '--porcelain', ...(pathspec ? ['--', pathspec] : [])];
-  return Bun.spawnSync(argv).stdout.toString().split('\n').filter(Boolean);
+  return Bun.spawnSync(argv, { env: gitProbeEnv() }).stdout.toString().split('\n').filter(Boolean);
+}
+
+/**
+ * How this round runs its two benches — the one thing a coaching round cannot do
+ * in-process, because a bench is a whole run of its own with its own record.
+ *
+ * Inside the genie checkout it is still `bun <repo>/scripts/mikro/bench.ts`, so every
+ * recorded round is reproduced by the same command line it always was. In a repository
+ * that is not genie there is no such file, and the answer is whatever is running this
+ * code: a sibling `bench.ts` when the coach was started from a checkout, the bundled
+ * entry when it is `bun dist/genie.js`, and the compiled binary itself otherwise —
+ * where `Bun.main` resolves under `/$bunfs` and must never be passed to anything.
+ */
+export function benchCommand(
+  repo: string,
+  main: string = Bun.main,
+  execPath: string = process.execPath,
+  exists: (path: string) => boolean = existsSync,
+): string[] {
+  const local = join(repo, 'scripts', 'mikro', 'bench.ts');
+  if (exists(local)) return ['bun', local];
+  const sibling = main.endsWith(`${sep}coach.ts`) ? join(dirname(main), 'bench.ts') : '';
+  if (sibling && exists(sibling)) return ['bun', sibling];
+  if (exists(main)) return [execPath, main, 'mikro', 'bench'];
+  return [execPath, 'mikro', 'bench'];
+}
+
+/**
+ * The prompt the coach is given: which prompt to read, which evidence, which fixtures —
+ * all of them paths in the tree under `--dir`, relative to it, because the citation gate
+ * verifies every `path:line` an answer carries against that tree.
+ *
+ * A freshly seeded repository has no `EVIDENCE.md`, which is not an error and must not
+ * be a crash: the prompt then says so and names what there IS to reason from. Citing a
+ * file that does not exist would fail the gate the agent is judged by.
+ */
+export function coachPrompt(args: {
+  agent: string;
+  repo: string;
+  systemPath: string;
+  evidencePath: string;
+  fixturesPath: string;
+  evidenceExists: boolean;
+}): string {
+  const rel = (path: string) => (path.startsWith(`${args.repo}${sep}`) ? path.slice(args.repo.length + 1) : path);
+  const head = `Coach ${args.agent}.\nsystem: ${rel(args.systemPath)}\n`;
+  const fixtures = `fixtures: ${rel(args.fixturesPath)}\n`;
+  return args.evidenceExists
+    ? `${head}evidence: ${rel(args.evidencePath)}\n${fixtures}\nRead the prompt, read the rows of every round in that evidence file, and propose at most one bounded patch to that SYSTEM.md, or null.`
+    : `${head}${fixtures}\nThere is no evidence file yet (${rel(args.evidencePath)} does not exist): this agent has never been benched, so there are no measured rows to diagnose. Read the prompt and the fixture set, and propose a bounded patch ONLY where the prompt plainly cannot answer what the fixtures ask for — otherwise null, which is the right answer before the first round.`;
 }
 
 /** The newest bench record in `.mikro/runs` carrying these tags — the round's own, never a neighbour's. */
@@ -324,8 +394,7 @@ async function runBench(args: {
   deadline: number;
 }): Promise<BenchRecord> {
   const argv = [
-    'bun',
-    join(args.repo, 'scripts', 'mikro', 'bench.ts'),
+    ...benchCommand(args.repo),
     args.agent,
     '--dir',
     args.repo,
@@ -420,8 +489,21 @@ function newestNullControl(dir: string, agent: string): string | null {
   return hits.length ? hits[hits.length - 1] : null;
 }
 
-if (import.meta.main) {
-  const argv = process.argv.slice(2);
+/**
+ * One coaching round. Returns 0 (a proposal measured, or a null answer), 1 (the round
+ * aborted, or left a tracked change behind) or 2 (refused before anything was written).
+ */
+export async function runCoachCli(argv: string[]): Promise<number> {
+  try {
+    return await coachRound(argv);
+  } catch (error) {
+    if (error instanceof CoachExit) return error.code;
+    throw error;
+  }
+}
+
+/** One linear round: refuse, propose, verify, patch a copy, bench twice, judge, report. */
+async function coachRound(argv: string[]): Promise<number> {
   const agent = argv[0];
   if (!agent || !isAgentName(agent) || agent === 'mikro-coach') usage();
   const opt = (name: string): string | undefined => {
@@ -439,15 +521,41 @@ if (import.meta.main) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const started = Date.now();
   const deadline = started + WALL_CLOCK_CAP_MS;
+
+  // Refusals that cost nothing come FIRST, before a run directory or a record exists:
+  // a repository with no agent to coach, or no fixture set to measure it with, is a
+  // mistake to name with its remedy rather than an ENOENT three steps later.
+  const fixturesPath = resolveFixturesPath({ dir: repo, agent, explicit: opt('--fixtures') });
+  const systemPath = join(repo, '.mikro', 'agents', agent, 'SYSTEM.md');
+  const evidencePath = join(repo, '.mikro', 'agents', agent, 'EVIDENCE.md');
+  if (!existsSync(systemPath)) {
+    process.stderr.write(
+      `no ${agent} prompt at ${systemPath}
+  a coaching round measures the WORKING TREE under --dir, never a git ref
+  seed this repository's agents first: genie mikro init --dir ${repo}
+`,
+    );
+    return 2;
+  }
+  if (!existsSync(fixturesPath)) {
+    process.stderr.write(
+      `no fixture set at ${fixturesPath}
+  --fixtures <path>, else <dir>/.mikro/fixtures/${agent}.json, else <dir>/scripts/mikro/fixtures/${agent}.json
+  build one from this repository's own history: genie mikro fixtures --from-commits <range> --agent ${agent}
+`,
+    );
+    return 2;
+  }
+
   const runsDir = join(repo, '.mikro', 'runs');
   mkdirSync(runsDir, { recursive: true });
   const roundPath = join(runsDir, `coach-${agent}-${stamp}.json`);
-  const headSha = Bun.spawnSync(['git', '-C', repo, 'rev-parse', 'HEAD']).stdout.toString().trim();
+  const headSha = Bun.spawnSync(['git', '-C', repo, 'rev-parse', 'HEAD'], { env: gitProbeEnv() })
+    .stdout.toString()
+    .trim();
   const statusBefore = gitStatus(repo);
-  const fixturesPath = opt('--fixtures') ?? join(repo, 'scripts', 'mikro', 'fixtures', `${agent}.json`);
   const fixtureSet = JSON.parse(readFileSync(fixturesPath, 'utf8')) as { fixtures: { id: string }[] };
   const fixtureIds = fixtureSet.fixtures.map((f) => f.id).filter((id) => !only || only.split(',').includes(id));
-  const systemPath = join(repo, '.mikro', 'agents', agent, 'SYSTEM.md');
   const systemText = readFileSync(systemPath, 'utf8');
 
   const round: Record<string, unknown> = {
@@ -472,7 +580,9 @@ if (import.meta.main) {
     process.stderr.write(`\ncoach: ABORTED — ${reason}\ncoach: round recorded at ${roundPath}\n`);
     if (typeof extra.tempRoot === 'string')
       process.stderr.write(`coach: the patched copy was kept at ${extra.tempRoot}\n`);
-    process.exit(1);
+    // Thrown, never exited: inside the genie binary this is one command of a longer-lived
+    // process, and a `finally` still has a temp directory to remove.
+    throw new CoachExit(1);
   };
 
   // Gate 1: the tracked agents dir must be clean. A patched or half-staged prompt makes "before" meaningless.
@@ -498,7 +608,14 @@ if (import.meta.main) {
     proposal = (parsed.success ? parsed.data.proposal : null) as CoachProposal | null;
     round.proposal = proposal;
   } else {
-    const prompt = `Coach ${agent}.\nsystem: .mikro/agents/${agent}/SYSTEM.md\nevidence: .mikro/agents/${agent}/EVIDENCE.md\nfixtures: ${fixturesPath.startsWith(repo) ? fixturesPath.slice(repo.length + 1) : fixturesPath}\n\nRead the prompt, read the rows of every round in that evidence file, and propose at most one bounded patch to that SYSTEM.md, or null.`;
+    const prompt = coachPrompt({
+      agent,
+      repo,
+      systemPath,
+      evidencePath,
+      fixturesPath,
+      evidenceExists: existsSync(evidencePath),
+    });
     process.stderr.write(`coach: calling mikro-coach on ${agent}…\n`);
     coachRun = await runAgent({
       agent: 'mikro-coach',
@@ -534,7 +651,7 @@ if (import.meta.main) {
     process.stdout.write(
       `\ncoach: no patch proposed — the evidence did not earn one. Nothing was benched.\ncoach: round recorded at ${roundPath}\n`,
     );
-    process.exit(0);
+    return 0;
   }
 
   // Step 2: verify, then apply to a COPY. Nothing tracked is touched, in either order.
@@ -589,7 +706,9 @@ if (import.meta.main) {
 
     // Step 3: two benches, sequential, same session.
     const costCap = 2 * (2 * fixtureIds.length * reps * COST_BAR_USD + 0.2);
-    const benchArgs = { repo, agent, stamp, reps, concurrency, only, fixtures: opt('--fixtures'), phoenix, deadline };
+    // The RESOLVED fixtures path, always — both benches must measure the set this round
+    // read its ids from, and a child that resolved again could resolve differently.
+    const benchArgs = { repo, agent, stamp, reps, concurrency, only, fixtures: fixturesPath, phoenix, deadline };
     let before: BenchRecord;
     let after: BenchRecord;
     try {
@@ -713,10 +832,19 @@ if (import.meta.main) {
       process.stderr.write(`coach: SIDE EFFECT — the round left tracked changes behind:\n${added.join('\n')}\n`);
       round.gitStatusAdded = added;
       writeFileSync(roundPath, `${JSON.stringify(round, null, 2)}\n`);
-      process.exit(1);
+      return 1;
     }
+    return 0;
   } finally {
     if (tempKept) process.stderr.write(`coach: the patched copy was kept at ${tempRoot}\n`);
     else rmSync(tempRoot, { recursive: true, force: true });
   }
+}
+
+// No top-level `await`: this module is imported by the genie CLI, where
+// `import.meta.main` is false and nothing below must run.
+if (import.meta.main) {
+  void runCoachCli(process.argv.slice(2)).then((code) => {
+    process.exit(code);
+  });
 }

@@ -11,6 +11,8 @@ import {
   CoachRefusal,
   type FixtureMetrics,
   applyEditsSequentially,
+  benchCommand,
+  coachPrompt,
   decideVerdict,
   fixtureMetrics,
   improvement,
@@ -294,5 +296,78 @@ describe('decideVerdict — the pre-registered rule', () => {
     const d = decideVerdict({ ...base, before: new Map([['t', fm(null)]]), after: new Map([['t', fm(null)]]) });
     expect(d.verdict).toBe('inconclusive');
     expect(d.reasons[0]).toContain('no recall measured');
+  });
+});
+
+/**
+ * What a round reads and what it spawns — the two things that had to become portable
+ * for `genie mikro coach` to work in a repository that has no `scripts/mikro/`.
+ * Both are pure functions here: nothing is spawned, nothing is benched, nothing is
+ * billed.
+ */
+describe('coachPrompt', () => {
+  const paths = {
+    agent: 'wish-context',
+    repo: '/repo',
+    systemPath: '/repo/.mikro/agents/wish-context/SYSTEM.md',
+    evidencePath: '/repo/.mikro/agents/wish-context/EVIDENCE.md',
+    fixturesPath: '/repo/.mikro/fixtures/wish-context.json',
+  };
+
+  test('every path is relative to --dir, because the citation gate scores that tree', () => {
+    const prompt = coachPrompt({ ...paths, evidenceExists: true });
+    expect(prompt).toContain('system: .mikro/agents/wish-context/SYSTEM.md');
+    expect(prompt).toContain('evidence: .mikro/agents/wish-context/EVIDENCE.md');
+    expect(prompt).toContain('fixtures: .mikro/fixtures/wish-context.json');
+    expect(prompt).not.toContain('/repo/');
+    // A fixture set outside the repository is named in full rather than mangled.
+    expect(coachPrompt({ ...paths, fixturesPath: '/elsewhere/set.json', evidenceExists: true })).toContain(
+      'fixtures: /elsewhere/set.json',
+    );
+  });
+
+  test('a freshly seeded agent with no EVIDENCE.md gets a prompt that says so', () => {
+    const prompt = coachPrompt({ ...paths, evidenceExists: false });
+    // It must not ASK for a file that is not there: a cited path the tree lacks fails
+    // the citation gate, and "read the rows of every round" has no rows to read.
+    expect(prompt).not.toContain('evidence: .mikro');
+    expect(prompt).toContain('does not exist');
+    expect(prompt).toContain('never been benched');
+    expect(prompt).toContain('null, which is the right answer before the first round');
+    // …and it still names the prompt and the fixtures, which is what there IS to read.
+    expect(prompt).toContain('system: .mikro/agents/wish-context/SYSTEM.md');
+    expect(prompt).toContain('fixtures: .mikro/fixtures/wish-context.json');
+  });
+});
+
+describe('benchCommand', () => {
+  const genieCheckout = '/genie';
+  const other = '/other';
+  const has = (present: string[]) => (path: string) => present.includes(path);
+
+  test('inside the genie checkout it is still bun scripts/mikro/bench.ts', () => {
+    expect(
+      benchCommand(genieCheckout, '/genie/scripts/mikro/coach.ts', '/bin/bun', has(['/genie/scripts/mikro/bench.ts'])),
+    ).toEqual(['bun', '/genie/scripts/mikro/bench.ts']);
+  });
+
+  test('a repository without one falls back to whatever is running this code', () => {
+    // `bun scripts/mikro/coach.ts --dir /other` from the genie checkout: the sibling.
+    expect(
+      benchCommand(other, '/genie/scripts/mikro/coach.ts', '/bin/bun', has(['/genie/scripts/mikro/bench.ts'])),
+    ).toEqual(['bun', '/genie/scripts/mikro/bench.ts']);
+    // `bun dist/genie.js mikro coach`: the bundle, which is a real file and carries the command.
+    expect(benchCommand(other, '/genie/dist/genie.js', '/bin/bun', has(['/genie/dist/genie.js']))).toEqual([
+      '/bin/bun',
+      '/genie/dist/genie.js',
+      'mikro',
+      'bench',
+    ]);
+    // The compiled binary: `Bun.main` resolves under /$bunfs and must never be passed on.
+    expect(benchCommand(other, '/$bunfs/root/genie.ts', '/usr/local/bin/genie', has([]))).toEqual([
+      '/usr/local/bin/genie',
+      'mikro',
+      'bench',
+    ]);
   });
 });

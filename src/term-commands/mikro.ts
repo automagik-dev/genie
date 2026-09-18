@@ -37,6 +37,7 @@ import type { Command } from 'commander';
 import { runBenchCli } from '../../scripts/mikro/bench';
 import { BENCH_USAGE } from '../../scripts/mikro/bench-options';
 import { CALL_USAGE, runCallCli } from '../../scripts/mikro/call';
+import { COACH_USAGE, runCoachCli } from '../../scripts/mikro/coach';
 import { FIXTURES_USAGE, runFixturesCli } from '../../scripts/mikro/fixtures-from-commits';
 import { INIT_USAGE, runInitCli } from '../../scripts/mikro/init';
 
@@ -119,6 +120,40 @@ run.
 ${BENCH_USAGE}`;
 
 /**
+ * A coaching round spends money in two benches, so the help leads with what it costs
+ * and with the one thing that surprises people: there is no `--apply`.
+ */
+const COACH_HELP = `
+Flags (parsed by the mikro runtime, forwarded as typed):
+  --dir <repo>               The repository whose agent is coached; defaults to the
+                             working directory
+  --fixtures <path>          The fixture set; resolved exactly as "bench" resolves it
+  --reps <n>                 Runs per fixture in each bench (default 2)
+  --concurrency <n>          Fixtures in flight (default 3)
+  --only a,b                 Coach over these fixture ids only
+  --null-control             The same round with an EMPTY patch: the table IS the
+                             drift band every later verdict is judged against. Run it
+                             first.
+  --band <file.json>         Use this null-control round as the drift band
+  --proposal <file.json>     Replay a recorded proposal instead of calling the coach
+  --keep-temp                Keep the patched copy
+  --no-phoenix               Turn off the spans
+
+The coach proposes, the script verifies, a mkdtemp copy of .mikro/ is patched, and
+the same fixtures are benched twice: BEFORE on the working tree, AFTER on the copy.
+There is NO --apply — the unified diff and its sha256 are printed for a human to
+apply. Nothing tracked is written by this command or by the agent.
+
+A round is roughly one coach call plus two benches; with five fixtures at reps 2
+that has measured about $0.25 and twelve minutes. Every reps-2 verdict is recorded
+non-actionable: two reps is a measurement, not a mandate.
+
+Exit codes: 0 a round completed (a measured proposal, or a null answer), 1 the round
+aborted or left a tracked change behind, 2 refused before anything was written.
+
+${COACH_USAGE}`;
+
+/**
  * The builder a repository with no pull requests needs: its own commits already carry
  * an intent and the file set an agent should have named. Every rule is mechanical, so
  * the help states them rather than describing them.
@@ -199,6 +234,18 @@ export function registerMikroCommands(program: Command): void {
     .addHelpText('after', BENCH_HELP)
     .action(async (agent: string, flags: string[]) => {
       process.exitCode = await runBenchCli([agent, ...flags]);
+    });
+
+  mikro
+    .command('coach')
+    .description('Run one coaching round over an agent prompt: propose, patch a copy, bench before/after')
+    .argument('<agent>', 'Registered agent name (issue-triage, wish-context, review-prep)')
+    .argument('[flags...]', 'Runtime flags, forwarded as typed (genie global options excepted)')
+    .allowUnknownOption()
+    .passThroughOptions()
+    .addHelpText('after', COACH_HELP)
+    .action(async (agent: string, flags: string[]) => {
+      process.exitCode = await runCoachCli([agent, ...flags]);
     });
 
   mikro
