@@ -123,6 +123,16 @@ export interface BoundarySpec {
   socket: string;
   /** Extra READ-WRITE binds: the ledger dir and the bench canary root, each justified in the README. */
   writable: string[];
+  /**
+   * Extra READ-ONLY file binds, applied last so they punch through anything above:
+   * today only the run's facts context file, which lives under the trusted root and
+   * is therefore outside `dir` whenever `--dir` is a worktree. Bound with
+   * `--ro-bind-try` because the facts are computed INSIDE this boundary, so at
+   * preflight the file does not exist yet — `argv()` builds a fresh invocation per
+   * command, and by the time the runtime is spawned it does. Read-only on purpose:
+   * a facts file is the run's audit record, not the agent's scratch space.
+   */
+  readable: string[];
   systemRo: string[];
   env: Record<string, string>;
   /** The command exec'd inside, e.g. `['mikro','mcp','--dir',dir]`. */
@@ -188,6 +198,7 @@ export function bindArgs(spec: BoundarySpec): string[] {
   if (spec.gitCommonDir) argv.push('--ro-bind', requireAbsolute('gitCommonDir', spec.gitCommonDir), spec.gitCommonDir);
   if (spec.agentsDir) argv.push('--ro-bind', requireAbsolute('agentsDir', spec.agentsDir), spec.agentsDir);
   for (const path of spec.writable) argv.push('--bind', requireAbsolute('writable', path), path);
+  for (const path of spec.readable) argv.push('--ro-bind-try', requireAbsolute('readable', path), path);
   argv.push('--bind', spec.scratch, spec.scratch);
   argv.push('--chdir', spec.dir);
   return argv;
@@ -429,6 +440,12 @@ export interface OpenBoundaryOptions {
   ledgerDir: string;
   /** Extra read-write binds (the bench's canary root). `<dir>/.mikro/runs` is always added. */
   writable?: string[];
+  /**
+   * Extra read-only binds: files under the TRUSTED root the contained runtime must
+   * be able to read but never write — the run's facts context file when `--dir` is
+   * not the trusted root. A path here may not exist yet when the boundary opens.
+   */
+  readable?: string[];
   allow?: readonly string[];
   /** Credentials and `MIKRO_*` the contained runtime needs; merged into the sandbox environment. */
   env?: Record<string, string>;
@@ -516,6 +533,7 @@ export async function openBoundary(options: OpenBoundaryOptions): Promise<Bounda
     scratch,
     socket,
     writable: [runsDir, ...(options.writable ?? []).map((p) => resolve(p))],
+    readable: (options.readable ?? []).map((p) => resolve(p)),
     systemRo: SYSTEM_RO_BINDS.filter((p) => existsSync(p)),
     env: sandboxEnv({ home, mikroCommandPath, nodeRoot, proxyPort: SANDBOX_PROXY_PORT }, options.env ?? {}),
     command: [],

@@ -8,7 +8,7 @@
  * table in the PR body is the evidence from a host that has it.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +27,7 @@ import {
   innerCommand,
   isBoundaryMode,
   isEgressAllowed,
+  openBoundary,
   parseConnectRequest,
   preflightArgv,
   probeTable,
@@ -54,6 +55,7 @@ function spec(overrides: Partial<BoundarySpec> = {}): BoundarySpec {
     scratch: SCRATCH,
     socket: `${SCRATCH}/egress.sock`,
     writable: [`${dir}/.mikro/runs`],
+    readable: [],
     systemRo: SYSTEM_RO_BINDS,
     env: sandboxEnv(
       {
@@ -139,6 +141,26 @@ describe('bwrapArgv: mounts', () => {
     for (let i = 0; i < argv.length - 1; i++) if (argv[i] === '--bind') writable.push(argv[i + 1]);
     expect(writable.sort()).toEqual([`${s.dir}/.mikro/runs`, s.scratch].sort());
     expect(s.socket.startsWith(`${s.scratch}/`)).toBe(true);
+  });
+
+  test('a readable path is bound read-only AFTER the writable set, and never joins it', () => {
+    // The facts context file lives under the TRUSTED root, which is not `--dir` when
+    // `--dir` is a worktree: without this bind the agent is handed a `context:` path it
+    // cannot read. `--ro-bind-try`, because the facts are computed INSIDE the boundary,
+    // so at preflight the file does not exist yet.
+    const facts = '/home/tester/work/main/.mikro/runs/facts-r1.md';
+    const s = spec({ readable: [facts] });
+    const argv = bwrapArgv(s);
+    const i = indexOfBind(argv, '--ro-bind-try', facts);
+    expect(i).toBeGreaterThan(indexOfBind(argv, '--bind', `${s.dir}/.mikro/runs`));
+    expect(argv[i + 2]).toBe(facts);
+    const writable: string[] = [];
+    for (let j = 0; j < argv.length - 1; j++) if (argv[j] === '--bind') writable.push(argv[j + 1]);
+    expect(writable.sort()).toEqual([`${s.dir}/.mikro/runs`, s.scratch].sort());
+  });
+
+  test('a relative readable path is refused like any other bind', () => {
+    expect(() => bindArgs(spec({ readable: ['runs/facts.md'] }))).toThrow(BoundaryError);
   });
 
   test('nothing else of HOME is mounted: no ~/.config, ~/.ssh, ~/.claude, ~/.mikro/gate-env.sh', () => {
@@ -413,3 +435,83 @@ describe.skipIf(!BWRAP)('live boundary (skipped when bwrap is absent on this hos
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+/**
+ * `openBoundary` needs the real mikro runtime and a host settings file, not just bwrap,
+ * so this suite carries its own guard — a CI runner with bwrap but no mikro skips it.
+ */
+const LIVE_SESSION =
+  BWRAP &&
+  Bun.which('socat') &&
+  Bun.which('mikro') &&
+  Bun.which('node') &&
+  existsSync(join(process.env.HOME ?? '', '.mikro', 'settings.json'));
+
+describe.skipIf(!LIVE_SESSION)(
+  'live boundary: the facts context file (skipped without bwrap + the mikro runtime)',
+  () => {
+    test('a facts file under the trusted root is readable inside the sandbox and cannot be written', async () => {
+      // The case the same-dir runs hid: `--dir` is a worktree, the facts live under the
+      // invoking checkout, and only that one file crosses — read-only, because a facts
+      // file is the run's audit record.
+      const dir = mkdtempSync(join(tmpdir(), 'mikro-live-dir-'));
+      const trusted = mkdtempSync(join(tmpdir(), 'mikro-live-trusted-'));
+      const runs = join(trusted, '.mikro', 'runs');
+      mkdirSync(runs, { recursive: true });
+      const facts = join(runs, 'facts-live.md');
+      const session = await openBoundary({ dir, runId: 'live', ledgerDir: runs, readable: [facts], env: {} });
+      try {
+        // Written AFTER the boundary opened, exactly as `call.ts` writes it.
+        writeFileSync(facts, 'FACTS-CANARY\n');
+        const read = Bun.spawnSync(session.argv(['cat', facts]), {
+          env: session.env,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        expect(read.stdout.toString()).toContain('FACTS-CANARY');
+        const write = Bun.spawnSync(session.argv(['sh', '-c', `echo tampered > ${shellQuote(facts)}`]), {
+          env: session.env,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        expect(write.exitCode).not.toBe(0);
+        expect(readFileSync(facts, 'utf8')).toBe('FACTS-CANARY\n');
+      } finally {
+        await session.close();
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(trusted, { recursive: true, force: true });
+      }
+    });
+
+    test('git runs inside the sandbox over a linked worktree, which is what the facts scan needs', () => {
+      const main = mkdtempSync(join(tmpdir(), 'mikro-live-main-'));
+      Bun.spawnSync(['git', 'init', '-q', main]);
+      writeFileSync(join(main, 'sprocket.ts'), 'export const sprocketize = 1;\n');
+      Bun.spawnSync(['git', '-C', main, 'add', '.']);
+      Bun.spawnSync(['git', '-C', main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+      const tree = join(main, '..', `${main.split('/').pop()}-wt`);
+      Bun.spawnSync(['git', '-C', main, 'worktree', 'add', '-q', '-b', 'probe', tree]);
+      return openBoundary({ dir: tree, runId: 'live-git', ledgerDir: join(tree, '.mikro', 'runs'), env: {} }).then(
+        async (session) => {
+          try {
+            // A linked worktree's `.git` is a FILE pointing into the main repo: without the
+            // git common dir bound, every one of these answers nothing.
+            for (const [command, expected] of [
+              [['git', '--no-pager', 'ls-files'], 'sprocket.ts'],
+              [['git', '--no-pager', 'rev-parse', 'HEAD'], ''],
+              [['git', '--no-pager', 'grep', '-I', '-i', '-F', '-c', '-e', 'sprocketize'], 'sprocket.ts:1'],
+            ] as [string[], string][]) {
+              const ran = Bun.spawnSync(session.argv(command), { env: session.env, stdout: 'pipe', stderr: 'pipe' });
+              expect({ command: command[2], code: ran.exitCode }).toEqual({ command: command[2], code: 0 });
+              expect(ran.stdout.toString()).toContain(expected);
+            }
+          } finally {
+            await session.close();
+            Bun.spawnSync(['git', '-C', main, 'worktree', 'remove', '--force', tree]);
+            rmSync(main, { recursive: true, force: true });
+          }
+        },
+      );
+    });
+  },
+);

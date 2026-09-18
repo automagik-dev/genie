@@ -6,9 +6,11 @@ import {
   FACTS_HEADER,
   FACTS_MAX_BYTES,
   type Facts,
+  type FactsRunner,
   buildFacts,
   enforceBudget,
   extractKeywords,
+  hostFactsRunner,
   inferFactsMode,
   renderFacts,
 } from './facts';
@@ -267,6 +269,62 @@ describe('determinism and bounds', () => {
     expect(bounded.candidates).toHaveLength(1);
     expect(bounded.recent).toHaveLength(0);
     expect(bounded.truncated).toMatchObject({ recent: 1, candidates: 1 });
+  });
+});
+
+describe('the injected runner', () => {
+  /** Records every argv it is asked to run, then answers exactly as the host runner would. */
+  function recording(canRunGh: boolean): FactsRunner & { argvs: string[][] } {
+    const argvs: string[][] = [];
+    return {
+      argvs,
+      canRunGh,
+      run(argv, dir) {
+        argvs.push(argv);
+        return hostFactsRunner.run(argv, dir);
+      },
+    };
+  }
+
+  test('a runner that cannot reach GitHub never issues a gh argv, and the record says why', () => {
+    const dir = seedRepo();
+    // Issue mode is the one that would call `gh` twice — the issue body and the related
+    // PRs. Under `--boundary bwrap` that would be the HOST's gh, with the host's
+    // credential, outside the sandbox and outside the egress ledger.
+    const runner = recording(false);
+    const facts = buildFacts({ dir, issue: 2927, runner });
+    expect(runner.argvs.length).toBeGreaterThan(0);
+    expect(runner.argvs.some((argv) => argv[0] === 'gh')).toBe(false);
+    expect(runner.argvs.every((argv) => argv[0] === 'git')).toBe(true);
+    expect(facts.basis.gh).toBe('skipped-boundary');
+    expect(facts.related.prs).toEqual([]); // skipped, never invented
+  });
+
+  test('the contained record differs from the `--no-gh` host record in nothing but basis.gh', () => {
+    const dir = seedRepo();
+    const options = { dir, intent: 'sprocketize the widget-forge reader', now: 'fixed' };
+    const contained = buildFacts({ ...options, runner: recording(false) });
+    const hostNoGh = buildFacts({ ...options, gh: false });
+    expect(hostNoGh.basis.gh).toBe('off');
+    expect(JSON.stringify({ ...contained, basis: { ...contained.basis, gh: 'x' } })).toBe(
+      JSON.stringify({ ...hostNoGh, basis: { ...hostNoGh.basis, gh: 'x' } }),
+    );
+  });
+
+  test('the default runner is the host spawn, and its gh half is named `host`', () => {
+    const dir = seedRepo();
+    // `gh` in a tmpdir repo has no remote to resolve, so it fails and contributes
+    // nothing — the source is still `host`, because that is where it was tried.
+    expect(buildFacts({ dir, intent: 'the sprocketize forge' }).basis.gh).toBe('host');
+    expect(buildFacts({ dir, intent: 'the sprocketize forge', gh: false }).basis.gh).toBe('off');
+  });
+
+  test('a runner that can run nothing at all yields an empty record, never a throw', () => {
+    const dir = seedRepo();
+    const dead: FactsRunner = { canRunGh: true, run: () => ({ ok: false, out: '' }) };
+    const facts = buildFacts({ dir, intent: 'sprocketize the forge', runner: dead });
+    expect(facts.basis.sha).toBe('unknown');
+    expect(facts.candidates).toEqual([]);
   });
 });
 
