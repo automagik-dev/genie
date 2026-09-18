@@ -17,5 +17,6 @@ The type system is the cheapest reviewer on the team: quality is how much correc
 - Proposing the shared-utils layer the repo's docs forbid between deliberately parallel modules.
 - Flagging test files without checking the lint overrides that relax rules there.
 - Saying "gates pass" from memory or documentation.
+- Reading `set -e` as fail-closed in a shell gate. A Bash function reached from `if`, `||`, `&&`, or `!` runs with errexit disabled and continues past a failed step, so a script that must fail closed checks each command's status explicitly on that path.
 
 Rank gate failures first, then interior type holes by blast radius, then ledger drift, then duplication; distinguish "gate is red" (fact) from "discipline is eroding" (trend with examples).
