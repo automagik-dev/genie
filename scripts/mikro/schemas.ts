@@ -27,16 +27,29 @@ export const TriageStatus = z
   .object({
     state: z.enum(TRIAGE_STATES).default('unclear'),
     /** A commit `ref` this tree carries, or a PR number; `path`/`line` show the fix in the current tree. */
-    evidence: z
-      .array(
-        z.object({
-          kind: z.enum(['commit', 'pr']),
-          ref: nonEmpty,
-          path: z.string().optional(),
-          line: z.number().int().positive().optional(),
-        }),
-      )
-      .default([]),
+    // A row whose `kind` is neither `commit` nor `pr` is DROPPED before validation, never a parse
+    // failure: the model once answered `kind: 'test'` (history smoke, 2026-09-18) and the strict enum
+    // turned a good answer into a paid retry. Dropping is the fail-closed direction — the status gate
+    // already refuses a `fixed-on-tree` verdict left without commit evidence.
+    evidence: z.preprocess(
+      (rows) =>
+        Array.isArray(rows)
+          ? rows.filter(
+              (row) =>
+                row && typeof row === 'object' && ['commit', 'pr'].includes((row as { kind?: unknown }).kind as string),
+            )
+          : rows,
+      z
+        .array(
+          z.object({
+            kind: z.enum(['commit', 'pr']),
+            ref: nonEmpty,
+            path: z.string().optional(),
+            line: z.number().int().positive().optional(),
+          }),
+        )
+        .default([]),
+    ),
     /** Written by the script's status gate, never by the agent: the receipt for a rewritten verdict. */
     downgraded: z.object({ from: z.enum(TRIAGE_STATES), reason: nonEmpty }).optional(),
   })

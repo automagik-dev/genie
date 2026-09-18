@@ -220,6 +220,25 @@ describe('the schema', () => {
     expect(ok.success && ok.data.status.state).toBe('fixed-on-tree');
     expect(IssueTriage.safeParse({ ...minimal, status: { state: 'shipped' } }).success).toBe(false);
   });
+
+  test('an evidence row of unknown kind is dropped, not a parse failure — and the gate then fails closed', () => {
+    const parsed = IssueTriage.safeParse({
+      ...minimal,
+      status: {
+        state: 'fixed-on-tree',
+        evidence: [
+          { kind: 'test', ref: 'scripts/mikro/status.test.ts', path: 'a.ts', line: 1 },
+          { kind: 'pr', ref: '2982' },
+        ],
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.status.evidence).toEqual([{ kind: 'pr', ref: '2982' }]);
+    const gated = verifyStatus(parsed.data, { isAncestor: () => true, citationOk: () => true });
+    expect(gated.status.state).toBe('unclear');
+    expect(gated.status.downgraded?.reason).toContain('no commit evidence');
+  });
 });
 
 describe('the ledger row', () => {
