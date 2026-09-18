@@ -1032,7 +1032,12 @@ export function probeCheckout(cwd: string): CheckoutProbe {
   let stderr = '';
   try {
     const probe = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], {
-      env: gitProbeEnv(),
+      // This is the ONE git call whose MESSAGE is classified, so it is the one that must
+      // not be translated: `LC_ALL=C` with `LANGUAGE` stripped. On a localized host the
+      // carve-out would otherwise never be reached — every plain directory would read as
+      // `unanswered` and fail closed, which is safe but silently disables Decision 8's
+      // non-git carve-out for everyone whose git speaks anything but English.
+      env: { ...gitProbeEnv(process.env, ['LANGUAGE']), LC_ALL: 'C' },
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -1174,12 +1179,19 @@ export function resolveAgentsDir(options: {
  * IS a checkout (a readable toplevel, an unreadable index) gets the `<GENIE_HOME>`
  * ledger, because growing an untracked directory inside somebody's repository is the
  * worse failure of the two.
+ *
+ * That asymmetry only holds if "is a checkout" is the same three-valued question the
+ * trust boundary asks: with the two-valued `gitToplevel`, a checkout whose git cannot
+ * answer AT ALL — a `safe.directory` refusal, a broken gitlink — answered "no checkout"
+ * for both probes at once and dropped an untracked `.mikro/runs` inside a repository that
+ * never opted in, which is exactly what Decision 11 exists to prevent. Only a PROVEN
+ * non-repository keeps the in-tree ledger.
  */
 function optedIntoMikro(root: string): boolean {
   if (!existsSync(join(root, '.mikro'))) return false;
   const tracked = gitProbe(['-C', root, 'ls-files', '--', '.mikro']);
   if (tracked !== null) return tracked.trim().length > 0;
-  return gitToplevel(root) === null;
+  return probeCheckout(root).kind === 'not-a-repository';
 }
 
 /**
