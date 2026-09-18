@@ -4,7 +4,7 @@
  * install.sh downloads, verifies, extracts, links and PATH-wires the binary in
  * bash, then hands off to `genie install` on the freshly linked binary for the
  * finishing steps that belong in TypeScript: canonical payload normalization,
- * v4 cleanup, consent and the skills channel.
+ * v4 cleanup, consent, the skills channel and then the workflows channel.
  *
  * Opt out of the v4 cleanup with `--skip-v4-cleanup` — install.sh forwards its
  * CLI args, so `curl ... | bash -s -- --skip-v4-cleanup` reaches this flag.
