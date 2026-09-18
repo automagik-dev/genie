@@ -3,7 +3,8 @@
  * scripts/mikro/call.ts — run ONE genie mikro microagent and return validated JSON.
  *
  *   bun scripts/mikro/call.ts <agent> --prompt "<text>" [--dir <repo>] [--timeout-ms 600000]
- *       [--retries 1] [--facts auto|<path>] [--tag k=v ...] [--trace <id>] [--no-phoenix] [--raw]
+ *       [--retries 1] [--facts auto|<path>] [--tag k=v ...] [--trace <id>] [--boundary none|bwrap]
+ *       [--no-phoenix] [--raw]
  *
  * This is the only surface that runs an `agent.yaml` agent: it speaks MCP over
  * stdio to `mikro mcp --dir <repo>` (the one runtime that loads the agent's
@@ -458,6 +459,14 @@ export interface Attempt {
   citations: Citation[];
   elapsedMs: number;
   raw: string;
+  /**
+   * Where the raw text of a FAILED attempt was retained, so a caller whose
+   * stdout is gone can still read it. Absent when nothing was written (an ok
+   * attempt, an empty answer, `ledger: false`, or a failed write). Named
+   * `rawFile` because `raw` here is already the text; the ledger row, which
+   * carries no text, calls the same value `raw`.
+   */
+  rawFile?: RawArtifact;
 }
 
 export interface RunResult {
@@ -609,6 +618,57 @@ export function prepareFacts(
   writeFileSync(path, `${JSON.stringify(facts, null, 2)}\n`);
   writeFileSync(contextPath, renderFacts(facts));
   return { path, contextPath, candidates: facts.candidates.length, ms: Date.now() - t0, gh: facts.basis.gh };
+}
+
+// ─── Retained raw ────────────────────────────────────────
+
+/** What a retained raw answer is worth in a row: where it is, how big, and whether it is whole. */
+export interface RawArtifact {
+  path: string;
+  bytes: number;
+  /** sha256 of the bytes ON DISK, so `sha256sum <path>` verifies the row. */
+  sha256: string;
+  truncated: boolean;
+}
+
+/** One answer is never worth more than this on disk; a failing agent can emit a very long one. */
+export const RAW_CAP_BYTES = 1024 * 1024;
+export const RAW_TRUNCATION_MARKER = `\n[truncated by scripts/mikro/call.ts at ${RAW_CAP_BYTES} bytes]\n`;
+
+/**
+ * Keep the raw MCP text of a FAILED attempt beside the ledger.
+ *
+ * Inside a `wish.js` workflow the caller's stdout is gone, so `--raw` retains
+ * nothing and a failure class like "no JSON object in the answer" is
+ * undiagnosable after the fact — the one thing that would name it (what the
+ * model actually said) lived only in memory. This writes it next to the row
+ * that reports the failure.
+ *
+ * The text is UNTRUSTED model output: it is written as bytes and never parsed,
+ * executed, or fed anywhere the loop does not already feed it. A write that
+ * fails is reported and swallowed — the ledger accelerates diagnosis, it is
+ * not a gate on the run.
+ */
+export function persistFailedRaw(
+  runsDir: string,
+  runId: string,
+  attempt: number,
+  raw: string,
+): RawArtifact | undefined {
+  if (!raw) return undefined;
+  try {
+    const marker = Buffer.from(RAW_TRUNCATION_MARKER, 'utf8');
+    const full = Buffer.from(raw, 'utf8');
+    const truncated = full.length > RAW_CAP_BYTES;
+    const bytes = truncated ? Buffer.concat([full.subarray(0, RAW_CAP_BYTES - marker.length), marker]) : full;
+    mkdirSync(runsDir, { recursive: true });
+    const path = join(runsDir, `raw-${runId}-${attempt}.txt`);
+    writeFileSync(path, bytes);
+    return { path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), truncated };
+  } catch (error) {
+    process.stderr.write(`raw: not retained (${error instanceof Error ? error.message : String(error)})\n`);
+    return undefined;
+  }
 }
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 12);
@@ -901,12 +961,16 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       }
       const elapsedMs = Date.now() - t0;
       const attemptOk = errors.length === 0;
-      attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw });
+      // Retained for failures only, and only where the ledger itself is on: the
+      // file is the row's evidence, so the two live and die together.
+      const rawFile =
+        !attemptOk && options.ledger !== false ? persistFailedRaw(runsDir, runId, attempt, raw) : undefined;
+      attempts.push({ attempt, ok: attemptOk, errors, footer, citations, elapsedMs, raw, rawFile });
       if (options.ledger !== false) {
         mkdirSync(runsDir, { recursive: true });
         appendFileSync(
           join(runsDir, `${options.agent}.jsonl`),
-          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null })}\n`,
+          `${JSON.stringify({ runId, traceId, ts: new Date(t0).toISOString(), agent: options.agent, dir, mikro: mikroVersion(), priceBasis: PRICE_BASIS, attempt, ok: attemptOk, errors, footer, citations: citations.filter((c) => !c.ok), elapsedMs, promptSha: sha(options.prompt), facts: factsRow, tags, boundary: boundaryMode, egress: boundary ? boundary.counts() : null, raw: rawFile })}\n`,
         );
       }
       if (options.phoenix !== false) {
