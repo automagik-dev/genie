@@ -255,6 +255,11 @@ describe('every shipped skill is self-contained', () => {
 
   test('the wish and brainstorm copies of the evidence helper are byte-identical', () => {
     expect(readFileSync(WISH_SCRIPT)).toEqual(readFileSync(EVIDENCE_SCRIPT));
+    // The declaration beside each copy is the type boundary `scripts/wishes-lint.ts`
+    // consumes once that script joins the `tsc` program through `genie wish lint`.
+    // It is a second shipped file per reference directory, so it drifts the same way.
+    const declaration = (script: string): Buffer => readFileSync(script.replace(/\.mjs$/, '.d.mts'));
+    expect(declaration(WISH_SCRIPT)).toEqual(declaration(EVIDENCE_SCRIPT));
   });
 
   test('the entry-point guard survives a symlinked path: verify still refuses, exit 1', () => {

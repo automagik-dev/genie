@@ -39,6 +39,7 @@ import { registerMikroCommands } from './term-commands/mikro.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
+import { registerWishCommands } from './term-commands/wish.js';
 
 const program = new Command();
 
@@ -263,6 +264,7 @@ registerContextCommand(program);
 registerConfigCommand(program);
 registerIdeaCommand(program);
 registerMikroCommands(program);
+registerWishCommands(program);
 
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it
