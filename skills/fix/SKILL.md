@@ -38,7 +38,7 @@ If reviewers disagree, record both verdicts, the contested criterion, evidence, 
 
 ## Promotion gate
 
-Recursive confidence is not approval: attempts that converge on the same repair prove consistency, not authorization. A repair touching release machinery, retirement or backup paths, the install record, the tracked roadmap snapshot, or anything outside the worktree stays a dry run or a preview no matter how many attempts agreed, until an independent re-review passes and the coordinator records a human ruling naming the change, its blast radius, the approver, and the timestamp. Under Orca orchestration that human ruling is a promote-gate resolution recorded in the Run, taken from the gate catalogue in `work`'s Orca coordinator reference. Attempt count never substitutes for that ruling, and a converged repair that cannot obtain it is reported as blocked rather than applied.
+Recursive confidence is not approval: attempts that converge on the same repair prove consistency, not authorization. A repair touching release machinery, retirement or backup paths, the install record, the tracked roadmap snapshot, or anything outside the worktree stays a dry run or a preview no matter how many attempts agreed, until an independent re-review passes and the coordinator records a human ruling naming the change, its blast radius, the approver, and the timestamp. Under Orca orchestration that human ruling is a promote-gate resolution recorded in the Run, taken from the gate catalogue in `work`'s Orca coordinator reference, whose question names the change and its blast radius. Attempt count never substitutes for that ruling, and a converged repair that cannot obtain it is reported as blocked rather than applied.
 
 ## Handoff
 

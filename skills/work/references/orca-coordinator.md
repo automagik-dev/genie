@@ -55,10 +55,10 @@ Every question that would otherwise stall the flow in chat is raised as an Orca 
 
 | Moment | Gate question | Options | What each resolution means |
 |---|---|---|---|
-| Plan review returned (`wish`), on the wish-level task, from the wish's coordinator terminal after the `run-create` `work` needs anyway | `Approve wish <slug>? plan review: <verdict>` | `approve, fix-first, blocked` | the persisted Status becomes `APPROVED`, `FIX-FIRST` or `BLOCKED`; record the Run and task ids in WISH.md so `work` resumes them instead of creating duplicates |
+| Plan review returned (`wish`), on the wish-level task — created with the guide's `task-create` right after the `run-create` `work` needs anyway, from the wish's coordinator terminal | `Approve wish <slug>? plan review: <verdict>` | `approve, fix-first, blocked` | the persisted Status becomes `APPROVED`, `FIX-FIRST` or `BLOCKED`; record the Run and task ids in WISH.md so `work` resumes them instead of creating duplicates |
 | A group ends blocked or a repair loop is exhausted (`work`, `fix`), on the group's task | `Group <n> of <slug> is BLOCKED: <cause>. Accept and continue?` | `accept, stop` | `accept`: the blocker is recorded and independent groups continue; `stop`: the wish is `BLOCKED` |
-| The PR is merge-ready (`work` § Delivery), on the group's task | `PR #<n> for <slug> is merge-ready against <base>. Merge?` | `merge, hold` | `merge` is the operator's recorded decision; the coordinator merges only into a non-protected base and never bypasses a hook, and a protected base stays merge-ready for the operator |
-| The wish promotes (`work` § Delivery), on the group's task | `Promote <from> to <to> (<version>)?` | `promote, hold` | the decision is recorded; the promotion itself stays the operator's act |
+| The PR is merge-ready (`work` § Delivery), on the wish-level task | `PR #<n> for <slug> is merge-ready against <base>. Merge?` | `merge, hold` | `merge` is the operator's recorded decision; the coordinator merges only into a non-protected base and never bypasses a hook, and a protected base stays merge-ready for the operator |
+| The wish promotes (`work` § Delivery), or a converged repair reaches outside the worktree (`fix` § Promotion gate), on the wish-level task | `Promote <from> to <to> (<version>)?` — for a repair, `Apply <change> (blast radius: <scope>)?` | `promote, hold` | the decision is recorded with the approver and the timestamp; the promotion or the out-of-worktree apply itself stays the operator's act |
 
 Every gate follows one sequence, run from the Run-bound coordinator terminal in the loaded Orca guide's own vocabulary:
 
