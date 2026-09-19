@@ -560,11 +560,24 @@ async function cliWithMode(cwd: string, config: string, ...args: string[]): Prom
 const ORCA_CONFIG = '{"orchestration":{"mode":"orca"}}';
 
 describe('orca lifecycle authority', () => {
-  // Every form must degrade IDENTICALLY. Before the guard moved ahead of option
-  // resolution the code reported three different things: the wishless form exited
-  // 0 with a standalone payload (it never opens the DB), `--wish` reported
-  // `unreadable-db`, and `--wish --plan` reported `internal`.
-  test.each([[[]], [['--wish', 'foo']], [['--wish', 'foo', '--group', 'g']], [['--wish', 'foo', '--plan']]])(
+  // SPLIT from a single four-form `test.each`, by explicit owner decision
+  // 2026-09-19 (design rev 4, decision 9). This REVERSES PR #2830's rule that
+  // "every form of `genie context` degrades identically".
+  //
+  // #2830 was fixing a real accident: the three forms degraded three DIFFERENT
+  // ways by chance, because the guard sat behind option resolution — the
+  // wishless form exited 0 with a standalone payload (it never opens the DB),
+  // `--wish` reported `unreadable-db`, and `--wish --plan` reported `internal`.
+  // That accident stays fixed: the guard is still resolved before any option
+  // validation, and every form it still covers degrades with the one stable
+  // code, asserted below.
+  //
+  // What the owner reversed is the SCOPE. `--wish <slug> --plan` is read-only
+  // by construction and is the one question a wave base must be able to ask in
+  // orca mode; refusing it was uniformity for its own sake. All four forms
+  // remain asserted here — three refusing, one answering — so neither half can
+  // be lost to a future edit.
+  test.each([[[]], [['--wish', 'foo']], [['--wish', 'foo', '--group', 'g']]])(
     'refuses `genie context %j` with one stable machine-readable line',
     async (args: string[]) => {
       const fx = makeFixture();
@@ -576,6 +589,27 @@ describe('orca lifecycle authority', () => {
       expect(failure.reason.startsWith('local_lifecycle_disabled_in_orca_mode')).toBe(false);
     },
   );
+
+  test('`--wish <slug> --plan` answers read-only in orca mode (the #2830 reversal)', async () => {
+    const fx = makeFixture();
+    seedTasks(fx, 'foo', ['g']);
+    const result = await cliWithMode(fx.root, ORCA_CONFIG, '--wish', 'foo', '--plan');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    const payload = payloadOf(result);
+    expect(payload.wish).toBe('foo');
+    expect(payload.branch).toBe('wish/foo');
+    expect(DEV_SHA_PATTERN.test(str(payload.base))).toBe(true);
+    // Read-only means read-only: `--plan` records no base, so orca mode gains
+    // no local lifecycle state from having answered.
+    expect(metaRow(fx, 'wish_base:foo')).toBeNull();
+  });
+
+  test('a wishless `--plan` still refuses — the carve-out is `--wish` WITH `--plan`', async () => {
+    const fx = makeFixture();
+    const failure = failureOf(await cliWithMode(fx.root, ORCA_CONFIG, '--plan'));
+    expect(failure.error).toBe('local_lifecycle_disabled_in_orca_mode');
+  });
 
   test('the refusal precedes option validation, so a bad option cannot change the code', async () => {
     const fx = makeFixture();

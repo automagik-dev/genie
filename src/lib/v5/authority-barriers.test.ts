@@ -12,7 +12,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openReadonlyHandle } from '../../term-commands/context.js';
-import { InvalidOrchestrationAuthorityError, LocalLifecycleDisabledError } from '../orchestration-mode.js';
+import {
+  InvalidOrchestrationAuthorityError,
+  LocalLifecycleDisabledError,
+  ORCA_REFUSAL_MESSAGE,
+} from '../orchestration-mode.js';
 import { openDb } from './genie-db.js';
 import { writeSnapshotFile } from './roadmap-sync.js';
 
@@ -51,11 +55,49 @@ describe('Orca authority barriers', () => {
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain('local_lifecycle_disabled_in_orca_mode');
+      const [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      // AMENDED (owner decision 2026-09-19): the refusal is no longer the
+      // internal typed-error code leaking through the generic `Error:` printer
+      // at exit 1. It is the `ORCA_FORBIDDEN` gate in `src/genie.ts`: one fixed
+      // operator-facing line naming the remedy, at exit 2 — genie's "the
+      // operator must act" family, the same one the v4 workspace gate and
+      // `mikro call`'s usage refusals use.
+      expect(exitCode).toBe(2);
+      expect(stdout).toBe('');
+      expect(stderr).toBe(`${ORCA_REFUSAL_MESSAGE}\n`);
       expect(existsSync(join(repo, '.genie'))).toBe(false);
     }
+  });
+
+  test('`task sync` is the one carve-out: exit 0, both streams empty, no repository state', async () => {
+    // The git hooks run `task sync` on every commit, merge and rewrite. In orca
+    // mode there is no board and no snapshot to reconcile, so it says nothing
+    // at all — anything else printed `board snapshot not refreshed` on every
+    // single commit. This fixture has NO `.genie`, which is the harder half:
+    // the orca check sits ahead of the workspace guard in `handleSync`.
+    const root = orcaFixture();
+    const repo = join(root, 'repo');
+    mkdirSync(repo);
+
+    const proc = Bun.spawn(['bun', GENIE, 'task', 'sync'], {
+      cwd: repo,
+      env: { ...process.env, GENIE_HOME: process.env.GENIE_HOME as string, NO_COLOR: '1' },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe('');
+    expect(stderr).toBe('');
+    expect(existsSync(join(repo, '.genie'))).toBe(false);
   });
 
   test('direct and indirect writable DB opens fail before SQLite creates any filesystem state', () => {
@@ -167,15 +209,33 @@ describe('Orca authority barriers', () => {
           stdout: 'pipe',
           stderr: 'pipe',
         });
-        const [exitCode, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-        expect(exitCode).toBe(1);
-        expect(stderr).toContain(fixtureCase.code);
+        const [exitCode, stdout, stderr] = await Promise.all([
+          proc.exited,
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ]);
+        // AMENDED (owner decision 2026-09-19): an authority genie cannot parse
+        // proves nothing — least of all standalone — so the CLI gate fails
+        // closed with the SAME fixed line and the same exit 2 as explicit orca.
+        // The remedy is identical, and it repairs a malformed config too. The
+        // typed codes below are still the low-level contract.
+        expect(exitCode).toBe(2);
+        expect(stdout).toBe('');
+        expect(stderr).toBe(`${ORCA_REFUSAL_MESSAGE}\n`);
         expect(existsSync(join(repo, '.genie'))).toBe(false);
       }
 
       expect(() => openDb({ path: dbPath })).toThrow(fixtureCase.error);
       expect(() => openReadonlyHandle(dbPath)).toThrow(fixtureCase.error);
       expect(() => writeSnapshotFile(roadmap, { forbidden: true })).toThrow(fixtureCase.error);
+      // The operator-facing line is one fixed sentence, but the low-level
+      // barriers keep their own stable machine-readable code.
+      try {
+        openDb({ path: dbPath });
+        throw new Error('expected the authority barrier to throw');
+      } catch (error) {
+        expect((error as { code?: string }).code).toBe(fixtureCase.code);
+      }
 
       expect(existsSync(dbPath)).toBe(false);
       expect(existsSync(`${dbPath}-wal`)).toBe(false);

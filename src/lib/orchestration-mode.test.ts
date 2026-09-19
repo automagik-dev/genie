@@ -6,7 +6,11 @@ import { GenieConfigSchema } from '../types/genie-config.js';
 import {
   InvalidOrchestrationAuthorityError,
   LocalLifecycleDisabledError,
+  ORCA_FORBIDDEN,
+  ORCA_REFUSAL_MESSAGE,
   assertLocalLifecycleEnabled,
+  isOrcaForbiddenInvocation,
+  orcaOwnsLifecycle,
   resolveOrchestrationMode,
 } from './orchestration-mode.js';
 
@@ -79,4 +83,58 @@ describe('orchestration authority mode', () => {
       }
     });
   }
+});
+
+// ============================================================================
+// The closed list Orca owns — a verb may not join or leave it silently
+// ============================================================================
+
+describe('ORCA_FORBIDDEN', () => {
+  test('is exactly the three root verbs, by root verb only', () => {
+    // Sorted so the pin is about MEMBERSHIP, not insertion order. Adding a
+    // fourth verb, dropping one, or smuggling a leaf path (`task create`) in
+    // fails here first, which is the point: the list is the contract.
+    expect([...ORCA_FORBIDDEN].sort()).toEqual(['board', 'idea', 'task']);
+    expect(ORCA_FORBIDDEN.size).toBe(3);
+    for (const entry of ORCA_FORBIDDEN) expect(entry).not.toContain(' ');
+  });
+
+  test('`task sync` is the one carve-out; no other subverb is exempt', () => {
+    expect(isOrcaForbiddenInvocation('task', 'sync')).toBe(false);
+    for (const sub of ['create', 'list', 'status', 'export', 'import', 'done', undefined]) {
+      expect(isOrcaForbiddenInvocation('task', sub)).toBe(true);
+    }
+    // The carve-out is `task sync` specifically, not the word `sync`.
+    expect(isOrcaForbiddenInvocation('board', 'sync')).toBe(true);
+    expect(isOrcaForbiddenInvocation('idea', 'sync')).toBe(true);
+    // Verbs outside the list are never gated.
+    for (const root of ['context', 'doctor', 'init', 'setup', 'config', 'mikro', 'update']) {
+      expect(isOrcaForbiddenInvocation(root, undefined)).toBe(false);
+    }
+  });
+
+  test('the one refusal literal names orca and the exact remedy', () => {
+    expect(ORCA_REFUSAL_MESSAGE).toContain('orca');
+    expect(ORCA_REFUSAL_MESSAGE).toContain('genie setup --orchestration-mode standalone');
+  });
+});
+
+describe('orcaOwnsLifecycle', () => {
+  test('is false for standalone and an absent config, true for orca', () => {
+    fixture();
+    expect(orcaOwnsLifecycle()).toBe(false);
+    fixture({ orchestration: { mode: 'standalone' } });
+    expect(orcaOwnsLifecycle()).toBe(false);
+    fixture({ orchestration: { mode: 'orca' } });
+    expect(orcaOwnsLifecycle()).toBe(true);
+  });
+
+  test('fails closed on an authority it cannot parse', () => {
+    // An unreadable `orchestration.mode` proves nothing — least of all
+    // standalone — so the CLI gate refuses rather than guessing.
+    fixture({ orchestration: { mode: 'automatic' } });
+    expect(orcaOwnsLifecycle()).toBe(true);
+    fixture({ orchestration: {} });
+    expect(orcaOwnsLifecycle()).toBe(true);
+  });
 });

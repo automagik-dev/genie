@@ -24,6 +24,7 @@ import type { Database } from 'bun:sqlite';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
+import { orcaOwnsLifecycle } from '../lib/orchestration-mode.js';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
@@ -719,6 +720,14 @@ function snapshotCarriesHires(snapshot: unknown): boolean {
 
 function handleSync(): void {
   run(() => {
+    // The one carve-out from the orca gate in `src/genie.ts` (see
+    // `isOrcaForbiddenInvocation`). Orca owns lifecycle state, so there is no
+    // local board and no snapshot to reconcile and nothing to report about
+    // either: exit 0 with both streams empty. This sits BEFORE the workspace
+    // guard on purpose — an orca-mode repository that was never `genie init`-ed
+    // must be silent too, because `.husky/pre-commit` runs `task sync` on every
+    // commit and any line here is a warning the operator can do nothing about.
+    if (orcaOwnsLifecycle()) return;
     // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
     // very directory being tested. A directory that was never `genie init`-ed
     // has neither side of the pair to reconcile, and reporting it "in sync"
