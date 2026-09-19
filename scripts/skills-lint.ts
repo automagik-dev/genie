@@ -51,7 +51,7 @@ export function isResourceAllowlisted(file: string, skillsDir: string = SKILLS_D
 }
 
 /**
- * BANNED-13 — the retired role/runtime vocabulary, matched as PLAIN SUBSTRINGS
+ * BANNED-15 — the retired role/runtime vocabulary, matched as PLAIN SUBSTRINGS
  * (`String.includes`; no regex, no word boundaries, no "used as an agent name"
  * judgement call) in EVERY file under the scanned skills dir, `.md` and
  * non-`.md` alike: `agents/openai.yaml` starter prompts are shipped skill
@@ -101,6 +101,14 @@ export const BANNED_TOKEN_GUIDANCE: ReadonlyArray<readonly [token: string, guida
     'LENS_ROOT',
     'resolve skill-shipped files from the loaded SKILL.md directory; `LENS_ROOT` is a retired host-specific root',
   ],
+  [
+    'Claude Code',
+    'address the runtime neutrally (`a runtime that runs saved workflows`, `the active runtime`); a shipped skill never names one client tool as the actor',
+  ],
+  [
+    'Workflow tool',
+    'say WHERE the workflow file is and hand it over as the explicit script path; a shipped skill never names the surface of one client tool',
+  ],
 ];
 
 export interface BannedTokenViolation {
@@ -110,7 +118,7 @@ export interface BannedTokenViolation {
   guidance: string;
 }
 
-/** Every BANNED-13 substring hit in `text`, with its 1-indexed line. */
+/** Every BANNED-15 substring hit in `text`, with its 1-indexed line. */
 export function collectBannedTokenViolations(text: string): BannedTokenViolation[] {
   const violations: BannedTokenViolation[] = [];
   const lines = text.split('\n');

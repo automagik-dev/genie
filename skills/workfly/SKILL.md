@@ -9,7 +9,7 @@ mutates: repo
 
 Use workfly when a procedure worth repeating — a skill, a runbook, a review ritual, a migration sweep — should become a saved workflow that any body runs unmodified. A procedure that needs the user in the middle of the run stays a skill; workfly encodes the part that can run on its own.
 
-Workfly is a saved workflow, not a procedure this skill performs inline. The single source of truth is `.claude/workflows/workfly.js` in the genie repository's canonical workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door. On Claude Code, run the script at `<repository root>/.claude/workflows/workfly.js` when that file exists, otherwise `~/.claude/workflows/workfly.js` (delivered by `genie install` / `genie update`); hand the native Workflow tool that explicit script path, never a bare name — both scopes now carry these names and the order a name resolves in is undocumented. The orchestrator — the session model — specifies the objective and relays the result; the script is written by the workflow's own author agent, never drafted inline in the session.
+Workfly is a saved workflow, not a procedure this skill performs inline. The single source of truth is `.claude/workflows/workfly.js` in the genie repository's canonical workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door. On a runtime that runs saved workflows, run the script at `<repository root>/.claude/workflows/workfly.js` when that file exists, otherwise `~/.claude/workflows/workfly.js` (delivered by `genie install` / `genie update`); give the runtime that explicit script path, never a bare name — both scopes now carry these names and the order a name resolves in is undocumented. The orchestrator — the session model — specifies the objective and relays the result; the script is written by the workflow's own author agent, never drafted inline in the session.
 
 ## Invoke
 
@@ -38,7 +38,7 @@ Read `ok: false` twice, because two shapes carry it. A run that stopped early re
 Once `ok` is true and the returned path holds a script:
 
 1. Append `readmeRow` verbatim to the Entries table of `.claude/workflows/README.md`, and check the result: that table names the new script on its own row.
-2. Run `bun test scripts/workflows-meta.test.ts` yourself and read its output: the command exits zero and its summary reports `0 fail` before the work is called done. `bun test` names failing cases only, so there is no per-case pass line to look for.
+2. Run the catalog's own contract suite yourself and read its output: it exits zero and its summary reports `0 fail` before the work is called done — in the genie repository that suite is `bun test scripts/workflows-meta.test.ts`, and a runner that names failing cases only leaves no per-case pass line to look for.
 3. When the objective converts an existing skill, rewrite that skill into a thin front door the way the council skill fronts its workflow: it states the script-path rule — the project file when the repository carries it, the `~/.claude/workflows/` copy otherwise, passed as the explicit script path either way — says what it relays unchanged and what stays with the user, keeps a by-hand fallback for a runtime with no workflow surface, and carries no roster of its own. Add a static parity test that pins that single-source roster, the way the council parity test pins council's.
 4. Report what the SPEC left open and every advisory finding nobody fixed. Silence there reads as "nothing was found", which is a different claim.
 
@@ -48,7 +48,7 @@ Run the same five stages — Discover, Design, Draft, Verify, Repair — as suba
 
 ## Rules
 
-- A saved name has to be free in both namespaces a runtime resolves from one list. The workflow checks the project catalog (`.claude/workflows`) and the skill namespace (`skills/*`) and returns any collision rather than overwriting anything — but a user-scope `~/.claude/workflows` copy of the same name is outside what it can see, so confirm that scope by hand before landing (a stale user copy shadowed the project `council.js` on 2026-09-15).
+- A saved name has to be free in both namespaces a runtime resolves from one list. The workflow checks the project catalog (`.claude/workflows`) and the skill namespace (`skills/*`) and returns any collision rather than overwriting anything — but a user-scope `~/.claude/workflows` copy of the same name is outside what it can see, so confirm that scope by hand before landing (a stale user copy shadowed the genie repository's project `council.js` on 2026-09-15).
 - The workflow decides fan-out and per-agent effort; the front door states the objective and the sources, and may pin one model for the whole run. `model` stays a caller key on purpose — one model for the whole run is a front-door decision, per-agent tiers are not — and a front door that starts naming tiers has become a second source of truth.
 - Every conversion is one roadmap card, so the rewrite of the source skill and its parity test land together and stay reviewable.
 - Token economy is a criterion, not a slogan: a stage whose raw output would flood the orchestrator returns a summary rather than the raw result. That pricing is the economy reader's, and it shapes the SPEC; it is not carried back in the returned object.
