@@ -34,11 +34,19 @@ set -euo pipefail
 # shellcheck source=scripts/gh-retry.sh
 source "$(dirname "$0")/gh-retry.sh"
 
-# Release publication uses Genie's exact numeric 5.YYMMDD.N scheme. Channels
+# Release publication uses Genie's exact numeric 6.YYMMDD.N scheme. Channels
 # carry dev/stable semantics, so suffix-bearing tags are rejected before any
 # asset upload or manifest reconciliation can begin.
-VERSION_RE='^5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
-TAG_REF_RE='^refs/tags/v5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
+#
+# The major moved 5.→6. for the v6 stable cut. This guard is loaded from the
+# CONTROL ref — main — not from `source_sha` (release.yml:91), so while the
+# change sits on dev it binds NOTHING in a real release: it only affects dev's
+# own `scripts/release-guard.test.ts`. It takes effect the moment main carries
+# it, which is why the bump is the last dev change before the promotion merge
+# and why no dev release may fire in between: a 6-major dev tree under a
+# 5-major main would mint a tag that main's guard rejects.
+VERSION_RE='^6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
+TAG_REF_RE='^refs/tags/v6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
 
 fail()   { printf 'release-guard: %s\n' "$*" >&2; exit 3; }
 misuse() { printf 'release-guard: %s\n' "$*" >&2; exit 64; }
@@ -49,7 +57,7 @@ version_from_tag_ref() { printf '%s' "${1#refs/tags/v}"; }
 valid_release_version() {
   local version="$1" date_part year month day max_day counter
   [[ "$version" =~ $VERSION_RE ]] || return 1
-  date_part="${version#5.}"
+  date_part="${version#6.}"
   date_part="${date_part%.*}"
   counter="${version##*.}"
   year=$((2000 + 10#${date_part:0:2}))

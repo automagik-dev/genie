@@ -2,13 +2,13 @@
 
 /**
  * Pre-build script: generates date-based version and updates ALL version files
- * Format: 5.YYMMDD.N (e.g., 5.260201.1 = Feb 1, 2026, first publish of the day)
+ * Format: 6.YYMMDD.N (e.g., 6.260201.1 = Feb 1, 2026, first publish of the day)
  * N increments per day: .1, .2, .3, etc.
  *
- * v5 kept the daily-counter scheme from v4 — only the leading major moved
- * 4.→5.. The counter is derived by counting existing `v5.<date>.*` git tags,
- * so the first v5 build of a day is .1 regardless of how many v4 builds
- * preceded it.
+ * v6 kept the daily-counter scheme, exactly as v5 kept it from v4 — only the
+ * leading major moved, 5.→6.. The counter is derived by counting existing
+ * `v6.<date>.*` git tags, so the first v6 build of a day is .1 regardless of
+ * how many v5 builds preceded it.
  *
  * Syncs versions across:
  * - package.json (root)
@@ -39,7 +39,7 @@ import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 // Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
   try {
-    const output = execSync(`git tag --list "v5.${datePrefix}.*"`, {
+    const output = execSync(`git tag --list "v6.${datePrefix}.*"`, {
       encoding: 'utf-8',
       timeout: 5000,
     });
@@ -49,7 +49,7 @@ function getTodayPublishCount(datePrefix: string): number {
   }
 }
 
-// Generate version: 5.YYMMDD.N where N = daily publish counter
+// Generate version: 6.YYMMDD.N where N = daily publish counter
 function generateVersion(): string {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
@@ -60,7 +60,7 @@ function generateVersion(): string {
   const existing = getTodayPublishCount(datePrefix);
   const n = existing + 1;
 
-  return `5.${datePrefix}.${n}`;
+  return `6.${datePrefix}.${n}`;
 }
 
 export async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {

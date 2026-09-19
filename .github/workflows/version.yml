@@ -108,10 +108,11 @@ jobs:
               exit 1
               ;;
           esac
-          # v5 version scheme: 5.YYMMDD.N (daily counter preserved from v4;
-          # only the leading major moved). Must stay in sync with the local
-          # generator in scripts/version.ts and the v5.<date>.* tag glob below.
-          echo "prefix=5" >> "$GITHUB_OUTPUT"
+          # v6 version scheme: 6.YYMMDD.N (daily counter preserved from v5,
+          # which preserved it from v4; only the leading major moved). Must stay
+          # in sync with the local generator in scripts/version.ts, the
+          # v6.<date>.* tag glob below and VERSION_RE in scripts/release-guard.sh.
+          echo "prefix=6" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -319,13 +320,13 @@ jobs:
           set -euo pipefail
           TODAY="$(date -u +%y%m%d)"
           MAX_COUNTER="$(
-            git tag --list "v5.${TODAY}.*" |
-              sed -nE "s/^v5\\.${TODAY}\\.([1-9][0-9]{0,3})$/\\1/p" |
+            git tag --list "v6.${TODAY}.*" |
+              sed -nE "s/^v6\\.${TODAY}\\.([1-9][0-9]{0,3})$/\\1/p" |
               sort -n |
               tail -1
           )"
           CURRENT_COUNTER="${MAX_COUNTER:-0}"
-          VERSION="5.${TODAY}.$((10#${CURRENT_COUNTER} + 1))"
+          VERSION="6.${TODAY}.$((10#${CURRENT_COUNTER} + 1))"
           [[ "${VERSION##*.}" -le 9999 ]] || {
             echo "::error ::release-trigger.version_exhausted no daily release identities remain for ${TODAY}"
             exit 1
