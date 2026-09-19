@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — approved, never executed (2026-09-19 triage) |
 | **Slug** | `genie-official-roadmap` |
 | **Date** | 2026-07-28 |
 | **Author** | Felipe + orchestrator (Fable 5) |

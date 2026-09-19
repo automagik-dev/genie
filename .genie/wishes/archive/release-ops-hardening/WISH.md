@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — SUPERSEDED as written (2026-09-19 triage) |
+| **Status** | SUPERSEDED — draft, never plan-reviewed (2026-09-19 triage) |
 | **Slug** | `release-ops-hardening` |
 | **Date** | 2026-07-26 |
 | **Author** | Genie (roadmap triage session, from the 2026-07-20→26 outage post-mortem + stable-path study) |

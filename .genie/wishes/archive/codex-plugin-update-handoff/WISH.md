@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |

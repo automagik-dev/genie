@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage) |
 | **Slug** | `genie-ui-bridge` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe (channel/home/timing ratified via explicit picker 2026-07-21) + Fable orchestrator |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage) |
 | **Slug** | `pr-2545-ultra-release-gate` |
 | **Date** | 2026-07-10 |
 | **Author** | Codex PM, from the seven-lane specialist-panel review requested by Felipe |
