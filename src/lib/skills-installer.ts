@@ -187,6 +187,19 @@ export function isSafeSkillName(name: string): boolean {
   return SKILL_NAME_PATTERN.test(name);
 }
 
+/**
+ * A workflow catalog entry is one `<name>.js` file joined onto the recorded
+ * workflows dir by the installer, by doctor and by uninstall — so the same
+ * traversal guard applies, plus the extension the catalog is defined by
+ * (`.claude/workflows/*.js`; the catalog's README is never delivered).
+ */
+export const WORKFLOW_FILE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.js$/;
+
+/** The single traversal guard for recorded workflow file names. */
+export function isSafeWorkflowFileName(name: string): boolean {
+  return WORKFLOW_FILE_NAME_PATTERN.test(name);
+}
+
 /** Absolute and free of `.`/`..` segments, so it can never climb out of itself. */
 function isTraversalFreeAbsolutePath(value: string): boolean {
   if (!isAbsolute(value)) return false;
@@ -354,8 +367,39 @@ const skillsInstallRecordSchema = z.object({
    * silent no-op over the directories those records still authorize.
    */
   agentSelection: z.literal('explicit').optional(),
+  /**
+   * The workflow catalog this host carries in Claude Code's user scope, written
+   * by the workflows channel (`workflows-installer.ts`) after the skills channel
+   * has rewritten everything above it.
+   *
+   * ONE record keeps doctor and uninstall on one authority, and the field is
+   * OPTIONAL for the same decision-2 reason as `source`: a required field would
+   * invalidate every record already on disk — `readSkillsInstallRecord` returns
+   * `null` for a schema-invalid record — and silently turn `genie uninstall`
+   * into a no-op over every skill directory those records still authorize.
+   *
+   * Because this file is rewritten by the SKILLS channel on every run, that
+   * rewrite carries an existing value forward verbatim; dropping it would
+   * orphan every installed workflow file on the next update.
+   */
+  workflows: z
+    .object({
+      /** The absolute directory the files were installed into. */
+      dir: z.string().refine(isTraversalFreeAbsolutePath, 'workflows dir must be a traversal-free absolute path'),
+      /** Release tag whose catalog this is, e.g. `v5.260918.8`. */
+      ref: z.string().min(1),
+      /** File name → sha256 of the bytes genie installed. */
+      files: z.record(
+        z.string().regex(WORKFLOW_FILE_NAME_PATTERN),
+        z.string().regex(/^[0-9a-f]{64}$/, 'digest must be a lowercase sha256 hex string'),
+      ),
+    })
+    .optional(),
   installedAt: z.string().min(1),
 });
+
+/** The recorded user-scope workflow catalog; see the schema's `workflows` field. */
+export type SkillsWorkflowsInstall = NonNullable<z.infer<typeof skillsInstallRecordSchema>['workflows']>;
 
 export type SkillsInstallRecord = z.infer<typeof skillsInstallRecordSchema>;
 
@@ -2257,6 +2301,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       // so it created no product home — the durable fact that stops the next
       // run's prune from handing back the operator's own `~/.claude`.
       agentSelection: 'explicit',
+      // CARRIED FORWARD, never rewritten here: the workflows channel owns this
+      // field and runs AFTER this one. Dropping it would orphan every installed
+      // workflow file — `genie uninstall` removes only what the record names.
+      ...(previous?.workflows === undefined ? {} : { workflows: previous.workflows }),
       installedAt: now().toISOString(),
     };
     writeSkillsInstallRecord(options.genieHome, record);

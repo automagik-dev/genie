@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -32,6 +33,7 @@ import {
   checkSubagentModelOverride,
   checkTrackedMachineState,
   checkV4Residue,
+  checkWorkflowsChannel,
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
@@ -1605,6 +1607,223 @@ describe('doctor: skills.sh channel', () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
     seedSkillsRecord(process.env.GENIE_HOME as string);
     expect(skillsChannelResults().some((result) => result.name === 'skills: collision backups')).toBe(false);
+  });
+});
+
+// ============================================================================
+// Workflows channel (wish `global-workflows-local-mikro`, group 3)
+// ============================================================================
+
+describe('doctor: workflows channel', () => {
+  const WORKFLOWS_LINE = 'workflows: catalog';
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+  function workflowsDir(): string {
+    return join(isolatedHome, '.claude', 'workflows');
+  }
+
+  /** Write `<home>/.claude/workflows/<name>` and return its digest. */
+  function seedWorkflowFile(name: string, body: string): string {
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(workflowsDir(), name), body);
+    return sha256(body);
+  }
+
+  function seedWorkflowsRecord(files: Record<string, string>, ref = releaseTag(VERSION)): void {
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      workflows: { dir: workflowsDir(), ref, files },
+    });
+  }
+
+  function workflowsResults(): CheckResult[] {
+    return checkWorkflowsChannel({ home: isolatedHome, genieHome: process.env.GENIE_HOME as string });
+  }
+
+  /** Every path under `root` with its size and mtime — a doctor run must not move one. */
+  function snapshot(root: string): string[] {
+    const seen: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const path = join(dir, entry.name);
+        const stat = statSync(path);
+        seen.push(`${path} ${stat.size} ${stat.mtimeMs}`);
+        if (entry.isDirectory()) walk(path);
+      }
+    };
+    walk(root);
+    return seen;
+  }
+
+  test('a complete current record reports one pass line and writes nothing', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    const before = snapshot(isolatedHome);
+
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: `2/2 in ${workflowsDir()} @ ${releaseTag(VERSION)}`,
+    });
+    // Read-only observer: not one byte, and not one mtime, moved.
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('a hand-edited file warns as modified and names it', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    writeFileSync(join(workflowsDir(), 'council.js'), '// local edit\n');
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('1/2 ');
+    expect(result.detail).toContain('council.js (modified)');
+    expect(result.suggestion).toBe('Run `genie update` to reinstall the workflow catalog');
+  });
+
+  test('a deleted file warns as missing', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    rmSync(join(workflowsDir(), 'council.js'));
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/1 ');
+    expect(result.detail).toContain('council.js (missing)');
+  });
+
+  test('a symlink at a recorded name is never followed — it reports as not a regular file', () => {
+    const files = { 'council.js': sha256("export const meta = { name: 'council' }\n") };
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(isolatedHome, 'elsewhere.js'), "export const meta = { name: 'council' }\n");
+    symlinkSync(join(isolatedHome, 'elsewhere.js'), join(workflowsDir(), 'council.js'));
+    seedWorkflowsRecord(files);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // The link TARGET hashes to the recorded digest; following it would have
+    // read `1/1`. The check refuses to resolve it, so it stays drift.
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/1 ');
+    expect(result.detail).toContain('council.js (not a regular file)');
+  });
+
+  test('a record from another release is stale even when every file matches', () => {
+    const files = { 'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n") };
+    seedWorkflowsRecord(files, 'v0.000000.1');
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe(`1/1 in ${workflowsDir()} @ v0.000000.1 (stale, binary is ${releaseTag(VERSION)})`);
+  });
+
+  test('a record without the workflows field reads as unrecorded, or not detected without ~/.claude', () => {
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: 'not detected',
+    });
+
+    mkdirSync(join(isolatedHome, '.claude'), { recursive: true });
+    // No shipped catalog under this GENIE_HOME, so the channel could not run
+    // even if asked: the line states the fact and offers no remedy it cannot keep.
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: '(unrecorded)',
+    });
+  });
+
+  /** `<GENIE_HOME>/templates/workflows/<name>` for each name — the release's catalog. */
+  function seedShippedCatalog(names: string[]): void {
+    const root = join(process.env.GENIE_HOME as string, 'templates', 'workflows');
+    mkdirSync(root, { recursive: true });
+    for (const name of names) writeFileSync(join(root, name), `export const meta = { name: '${name}' }\n`);
+  }
+
+  test('an unrecorded stale file at a catalog name is named, with a remedy', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js');
+    expect(result.suggestion).toContain('genie update');
+    expect(result.suggestion).toContain('state-backups');
+  });
+
+  test('an unrecorded scope holding only names this release does not ship stays a pass', () => {
+    seedShippedCatalog(['council.js']);
+    seedWorkflowFile('someone-elses.js', '// not genie namespace\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // A catalog NAME is the whole claim: doctor never lists the user's dir, so a
+    // workflow outside genie's namespace is structurally invisible here.
+    expect(result.status).toBe('pass');
+    expect(result.detail).toBe('(unrecorded)');
+    // The channel could run, so the pass still carries the remedy.
+    expect(result.suggestion).toContain('genie update');
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('an unrecorded symlink at a catalog name is named, never followed', () => {
+    seedShippedCatalog(['council.js']);
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(isolatedHome, 'elsewhere.js'), "export const meta = { name: 'council' }\n");
+    symlinkSync(join(isolatedHome, 'elsewhere.js'), join(workflowsDir(), 'council.js'));
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js (not a regular file)');
+    // Read-only, and the link is still a link pointing where it pointed.
+    expect(readFileSync(join(isolatedHome, 'elsewhere.js'), 'utf8')).toBe("export const meta = { name: 'council' }\n");
+  });
+
+  test('with no install record at all the unrecorded scan still runs and writes nothing', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedWorkflowFile('wish.js', '// another one\n');
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // The host that carries pre-record leftovers is exactly the host with no
+    // record, so the scan must not sit behind a record that exists.
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 2 file(s) genie did not record: council.js; wish.js');
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('a malformed record prints no workflows line — the skills check owns that one remedy', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'skills-install.json'), '{"ref":"v1"}');
+
+    expect(workflowsResults()).toEqual([]);
+    expect(byName(skillsChannelResults(), 'skills: channel').status).toBe('warn');
+  });
+
+  test('more than five drifting files are named up to five with a remainder', () => {
+    const files: Record<string, string> = {};
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      files[`${name}.js`] = sha256(`export const meta = { name: '${name}' }\n`);
+    }
+    seedWorkflowsRecord(files);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/7 ');
+    expect(result.detail).toContain('+2 more');
   });
 });
 

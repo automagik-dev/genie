@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard: the research stage roster and the injection fence live in
 // .claude/workflows/research-sweep.js. The research skill is that workflow's front door,
@@ -25,9 +26,8 @@ function section(heading: string, source: string, what: string): string {
 }
 
 describe('research skill fronts the research-sweep workflow', () => {
-  test('the skill names the script path and the saved name', () => {
-    expect(SKILL).toContain('.claude/workflows/research-sweep.js');
-    expect(SKILL).toContain('saved name `research-sweep`');
+  test('the skill states the explicit-script-path rule for both scopes', () => {
+    expectExplicitScriptPathRule(SKILL, 'research-sweep');
   });
 
   test('meta.phases, the phase() calls and the by-hand stages are one roster', () => {
