@@ -183,8 +183,12 @@ function failClosed(code: string, reason: string): never {
  * the tiny stat→open window can leave a fresh preview slightly stale, never
  * wrong about the resolved base policy.
  */
-export function openReadonlyHandle(dbPath: string): Database | null {
-  assertLocalLifecycleEnabled();
+export function openReadonlyHandle(dbPath: string, opts: { readOnlyPlan?: boolean } = {}): Database | null {
+  // The lifecycle gate is the default for every caller. `--wish <slug> --plan`
+  // is the ONE exception (see `contextCommand`): it answers a read-only
+  // question in orca mode, and this open is the read it needs. Anything that
+  // does not pass the flag still fails closed.
+  if (opts.readOnlyPlan !== true) assertLocalLifecycleEnabled();
   try {
     let walBytes = 0;
     try {
@@ -234,7 +238,7 @@ function openWishDb(options: ContextOptions, deps: ContextDeps, cwd: string): Da
     }
   }
   if (!existsSync(dbPath)) return null;
-  const db = openReadonlyHandle(dbPath);
+  const db = openReadonlyHandle(dbPath, { readOnlyPlan: true });
   if (db === null)
     failClosed('unreadable-db', `Cannot open genie state DB read-only at ${dbPath} (locked or malformed).`);
   let readable = false;
@@ -416,12 +420,25 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
   const write = deps.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const writeErr = deps.writeErr ?? ((line: string) => process.stderr.write(`${line}\n`));
   try {
-    // The lifecycle-authority gate runs BEFORE any option resolution, so every
-    // form of the command degrades identically. Resolving options first made
-    // the guard depend on which code path happened to touch the DB: the
-    // wishless form never opened it (exit 0 with a standalone payload), the
-    // wish form reported `unreadable-db`, and `--plan` reported `internal`.
-    assertLocalLifecycleEnabled();
+    // REVERSAL of PR #2830's "every form of `genie context` degrades
+    // identically", by explicit owner decision 2026-09-19 (design rev 4,
+    // decision 9). #2830 moved this gate ahead of option resolution because the
+    // three forms degraded three different ways by accident — the wishless form
+    // exited 0 with a standalone payload, `--wish` reported `unreadable-db`,
+    // `--plan` reported `internal`. That accident is still fixed: the gate is
+    // still resolved here, before any option validation, and every form it
+    // covers still degrades with the one stable code.
+    //
+    // What changed is WHICH forms it covers. `--wish <slug> --plan` is
+    // read-only by construction (`openWishDb` opens the existing file read-only
+    // or not at all, and `writeWishBase` is unreachable while `plan === true`),
+    // and it is the one question a wave base has to be able to ask in orca
+    // mode. Answering it is honest; refusing it was uniformity for its own
+    // sake. Exactly one form is let through — `--wish` TOGETHER WITH `--plan`.
+    // A wishless `--plan`, a `--wish` without `--plan`, and every other form
+    // keep refusing.
+    const readOnlyPlan = options.wish !== undefined && options.plan === true;
+    if (!readOnlyPlan) assertLocalLifecycleEnabled();
     if (options.group !== undefined && options.wish === undefined) {
       failClosed('group-requires-wish', '--group requires --wish.');
     }

@@ -6,7 +6,12 @@ import { GenieConfigSchema } from '../types/genie-config.js';
 import {
   InvalidOrchestrationAuthorityError,
   LocalLifecycleDisabledError,
+  ORCA_FORBIDDEN,
+  ORCA_INVALID_AUTHORITY_MESSAGE,
+  ORCA_REFUSAL_MESSAGE,
   assertLocalLifecycleEnabled,
+  isOrcaForbiddenInvocation,
+  orcaOwnsLifecycle,
   resolveOrchestrationMode,
 } from './orchestration-mode.js';
 
@@ -79,4 +84,77 @@ describe('orchestration authority mode', () => {
       }
     });
   }
+});
+
+// ============================================================================
+// The closed list Orca owns — a verb may not join or leave it silently
+// ============================================================================
+
+describe('ORCA_FORBIDDEN', () => {
+  test('is exactly the three root verbs, by root verb only', () => {
+    // Sorted so the pin is about MEMBERSHIP, not insertion order. Adding a
+    // fourth verb, dropping one, or smuggling a leaf path (`task create`) in
+    // fails here first, which is the point: the list is the contract.
+    expect([...ORCA_FORBIDDEN].sort()).toEqual(['board', 'idea', 'task']);
+    expect(ORCA_FORBIDDEN.size).toBe(3);
+    for (const entry of ORCA_FORBIDDEN) expect(entry).not.toContain(' ');
+  });
+
+  test('`task sync` is the one carve-out; no other subverb is exempt', () => {
+    expect(isOrcaForbiddenInvocation('task', 'sync')).toBe(false);
+    for (const sub of ['create', 'list', 'status', 'export', 'import', 'done', undefined]) {
+      expect(isOrcaForbiddenInvocation('task', sub)).toBe(true);
+    }
+    // The carve-out is `task sync` specifically, not the word `sync`.
+    expect(isOrcaForbiddenInvocation('board', 'sync')).toBe(true);
+    expect(isOrcaForbiddenInvocation('idea', 'sync')).toBe(true);
+    // Verbs outside the list are never gated.
+    for (const root of ['context', 'doctor', 'init', 'setup', 'config', 'mikro', 'update']) {
+      expect(isOrcaForbiddenInvocation(root, undefined)).toBe(false);
+    }
+  });
+
+  test('the one refusal literal names orca and the exact remedy', () => {
+    expect(ORCA_REFUSAL_MESSAGE).toContain('orca');
+    expect(ORCA_REFUSAL_MESSAGE).toContain('genie setup --orchestration-mode standalone');
+  });
+
+  test('the unparseable-authority literal claims no authority it never read', () => {
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('orchestration.mode');
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('genie doctor');
+    // Same remedy — it rewrites the config, which is what repairs this.
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('genie setup --orchestration-mode standalone');
+    // It must NOT assert that orca owns lifecycle state: genie read nothing,
+    // and Orca may not be installed on this host at all.
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).not.toContain('orca is the lifecycle authority');
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).not.toBe(ORCA_REFUSAL_MESSAGE);
+  });
+});
+
+describe('orcaOwnsLifecycle', () => {
+  test('is false for standalone and an absent config, "orca" for orca', () => {
+    fixture();
+    expect(orcaOwnsLifecycle()).toBe(false);
+    fixture({ orchestration: { mode: 'standalone' } });
+    expect(orcaOwnsLifecycle()).toBe(false);
+    fixture({ orchestration: { mode: 'orca' } });
+    expect(orcaOwnsLifecycle()).toBe('orca');
+  });
+
+  test('fails closed as "invalid" — a distinct verdict, not orca — on an authority it cannot parse', () => {
+    // An unreadable `orchestration.mode` proves nothing, least of all
+    // standalone, so the CLI gate still refuses. But it is a DIFFERENT fact
+    // from "Orca owns this host", and it carries its own line.
+    fixture({ orchestration: { mode: 'automatic' } });
+    expect(orcaOwnsLifecycle()).toBe('invalid');
+    fixture({ orchestration: {} });
+    expect(orcaOwnsLifecycle()).toBe('invalid');
+  });
+
+  // NOTE: the `throw error` branch for a non-authority fault (an unreadable
+  // GENIE_HOME, a `getGenieConfigPath()` failure) is deliberately not exercised
+  // here — every way to provoke it is either root-dependent or already funnelled
+  // into `InvalidOrchestrationAuthorityError` by `resolveOrchestrationMode`. It
+  // stays as defence: a real fault must never be relabelled as a config problem,
+  // which would tell the operator to fix a file that is fine.
 });

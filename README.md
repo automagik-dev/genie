@@ -59,6 +59,27 @@ syncs, and exports before they can create or change local files. Existing local 
 not imported, mirrored, or treated as current. The plugin keeps no fallback database: if Orca is unavailable, the
 operation fails instead of silently returning to standalone.
 
+In Orca mode the CLI is explicit about what it will and will not do, and three rules cover all of it:
+
+- **`genie task`, `genie board` and `genie idea` exit 2** with one fixed line naming the remedy
+  (`genie setup --orchestration-mode standalone`). Exit 2 is Genie's "the operator must act" family — the same code the
+  workspace gate and `genie mikro call`'s usage refusals use — so it is never confused with a command that simply
+  failed. That closed list of three root verbs is the whole list.
+- **An unreadable `orchestration.mode` refuses at exit 2 too**, with its own message, because Genie cannot prove
+  standalone either. That message never claims Orca owns the host — nothing was successfully read, and Orca may not be
+  installed — it names the field, points at `genie doctor`, and gives the same remedy. Running
+  `genie setup --orchestration-mode standalone` repairs a config Genie could not parse: it backs the original bytes up
+  under `~/.genie/backups/orchestration-mode/` first, then writes a valid one, keeping every other key it could read.
+- **`genie task sync` exits 0 and prints nothing**, on stdout or stderr, whether or not the repository has a `.genie`
+  directory. Git hooks run it on every commit, merge and pull; in Orca mode there is no local board and no snapshot to
+  reconcile, so there is nothing to report and no `board snapshot not refreshed` warning on every commit. (An unreadable
+  config is not silenced — that one is worth fixing, so it still reports.)
+- **`genie context --wish <slug> --plan` still answers**, exit 0 with its JSON payload. It is strictly read-only — it
+  opens the database read-only or not at all and records no base — and it is the one question an agent needs answered to
+  cut a worktree. Every other form of `genie context`, including a wishless `--plan`, still refuses.
+
+Standalone mode is unchanged by all three: every one of those verbs behaves exactly as it always has.
+
 Switching back is also deliberate and does not import Orca state:
 
 ```bash
