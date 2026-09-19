@@ -2,7 +2,7 @@
 # Claude Code PreToolUse hook — catches what git hooks CAN'T:
 # 1. --no-verify / -n (bypasses all git hooks entirely)
 # 2. bare --force (git pre-push doesn't receive push flags)
-# 3. merging and core.hooksPath overrides, which no git hook sees at all
+# 3. a merge into a protected branch and core.hooksPath overrides, which no git hook sees at all
 #
 # Everything else (lint, typecheck, commitlint) is enforced by git hooks.
 #
@@ -13,8 +13,11 @@
 # repository's git hooks (husky's pre-push refuses `main`/`master` for every push spelling, because
 # it receives the refs rather than parsing the command line) and GitHub's branch protection.
 #
-# SCOPE (operator decision, 2026-09-17): merging and pushes aimed at main/master are refused;
-# ordinary pushes to `dev` are not (AGENTS.md carries that as operator policy, #2705).
+# SCOPE (operator decision, 2026-09-17, narrowed 2026-09-19): a merge INTO a protected branch and a
+# push aimed at main/master are refused; a merge into any other base (`dev`) and ordinary pushes to
+# `dev` are not (AGENTS.md carries that as operator policy, #2705). The protected merge bases are the
+# operator's list: space-separated `GIT_SAFETY_PROTECTED_BRANCHES` in the hook's OWN environment
+# (never the judged command's), default `main master`.
 
 set -euo pipefail
 
@@ -24,7 +27,7 @@ command=$(echo "$input" | jq -r '.tool_input.command // empty')
 [ -z "$command" ] && exit 0
 
 # Only inspect commands that could reach git or gh.
-echo "$command" | grep -qE 'git|gh' || exit 0
+echo "$command" | grep -qiE 'git|gh' || exit 0
 
 # `gh<TAB>pr<TAB>merge` and a backslash-continued `gh pr \ merge` are the same command as the spaced
 # ones. A bare newline is a SEPARATOR, not a space: joining lines put `git commit -m x` and a
@@ -104,10 +107,92 @@ GH='gh[[:space:]]+([^;&|[:space:]]+[[:space:]]+)*'
 GIT='git[[:space:]]+([^;&|[:space:]]+[[:space:]]+)*'
 Q='["'"'"']?'
 
-# === HARD BLOCK: merging ===
-# Merging is the operator's decision; the wish workflow reports merge-ready and stops there.
-if has "${GH}${Q}pr${Q}[[:space:]]+${Q}merge${Q}\b"; then
-  block "gh pr merge is FORBIDDEN here. Merging is the operator's decision; report merge-ready instead."
+# === HARD BLOCK: merging into a protected branch ===
+# What is refused is a merge INTO a branch the operator protects, so the guard reads the PR's base
+# from the remote instead of refusing the verb. It reads it only for the one shape it can decompose
+# word by word — a top-level `gh [-R owner/repo] pr merge <number|url|branch> [known flags]` — and
+# asks from the directory the payload names as `cwd` (the hook's own directory when the payload
+# carries none), so `gh` answers for the repository the merge would reach. Everything else fails CLOSED: a wrapper (`bash -c`,
+# `node -e`, `$(…)`), no selector or two, quoting, a `#` (bash would drop the rest as a comment and
+# merge the current branch's PR instead), a flag this parser does not know (`-R=x`, `-Rx`, a short
+# cluster such as `-db` whose last letter takes the next word), a `cd`/`GH_REPO`/`GH_HOST` beside
+# it, or a base that could not be read. The wish workflow still reports merge-ready and stops
+# there; this rule decides only what an operator-authorized merge may target.
+PROTECTED_BRANCHES="${GIT_SAFETY_PROTECTED_BRANCHES:-}"
+# A whitespace-only list would protect nothing, silently.
+if [ -z "${PROTECTED_BRANCHES//[[:space:]]/}" ]; then PROTECTED_BRANCHES="main master"; fi
+# Split without globbing: a `*` in the operator's list must stay a name, never become filenames.
+read -ra PROTECTED_LIST <<<"$PROTECTED_BRANCHES"
+HOOK_CWD=$(echo "$input" | jq -r '.cwd // empty')
+MERGE_RE="${GH}${Q}pr${Q}[[:space:]]+${Q}merge${Q}\b"
+refuse_merge() {
+  block "this gh pr merge is refused: $1. A merge into a protected branch (${PROTECTED_BRANCHES}) is the operator's decision; report merge-ready instead."
+}
+# Judges one merge segment: returns when its base is read and unprotected, refuses otherwise. Every
+# word must be one this parser knows; a flag that takes a value is consumed with it, in its
+# separated or `=` form only, so neither a subject nor a body is ever read as the selector. The
+# flag table mirrors the merge help of gh 2.97.0; a flag a later gh adds is refused until it is
+# listed here, and a boolean that ever starts taking a value must move to the value row.
+judge_merge_segment() {
+  local seg="$1" repo="" selector="" expect="" seen_merge=0 word base
+  echo "$seg" | grep -qE '^[[:space:]]*gh[[:space:]]' ||
+    refuse_merge "the merge is not a top-level gh command, so its base cannot be read"
+  echo "$seg" | grep -qE '[]$`"'"'"'(){}<>*?\\#~[]' &&
+    refuse_merge "the command carries quoting, a substitution, a glob or a # comment, so what it would merge cannot be read"
+  # shellcheck disable=SC2086
+  set -- $seg
+  shift
+  for word in "$@"; do
+    if [ -n "$expect" ]; then
+      if [ "$expect" = repo ]; then repo="$word"; fi
+      expect=""
+      continue
+    fi
+    case "$word" in
+    -R | --repo) expect=repo ;;
+    --repo=?*) repo="${word#--repo=}" ;;
+    -b | --body | -F | --body-file | -t | --subject | -A | --author-email | --match-head-commit) expect=value ;;
+    --body=* | --body-file=* | --subject=* | --author-email=* | --match-head-commit=*) ;;
+    -m | --merge | -s | --squash | -r | --rebase | -d | --delete-branch | --auto | --disable-auto | --admin) ;;
+    -*) refuse_merge "the guard cannot decompose the flag ${word}; spell it in its long, separated form" ;;
+    pr) if [ "$seen_merge" = 1 ]; then refuse_merge "a word sits where none belongs"; fi ;;
+    merge)
+      if [ "$seen_merge" = 1 ]; then refuse_merge "a word sits where none belongs"; fi
+      seen_merge=1
+      ;;
+    *)
+      if [ "$seen_merge" != 1 ] || [ -n "$selector" ]; then
+        refuse_merge "more than one PR is named, or a word sits where none belongs"
+      fi
+      selector="$word"
+      ;;
+    esac
+  done
+  [ -z "$expect" ] || refuse_merge "a flag is missing its value"
+  [ -n "$selector" ] || refuse_merge "name the PR by number, URL or branch so its base can be read"
+  # `timeout` is absent on a stock macOS; without it the read is simply unbounded.
+  local bounded=""
+  if command -v timeout >/dev/null 2>&1; then bounded="timeout 20"; fi
+  base=$(
+    if [ -n "$HOOK_CWD" ]; then cd "$HOOK_CWD" 2>/dev/null || exit 1; fi
+    # shellcheck disable=SC2086
+    $bounded gh pr view "$selector" ${repo:+--repo "$repo"} --json baseRefName -q .baseRefName 2>/dev/null
+  ) || base=""
+  # One well-formed branch name or nothing: a stray carriage return must not read as "not main".
+  case "$base" in *$'\n'*) base="" ;; esac
+  echo "$base" | grep -qxE '[A-Za-z0-9._/-]+' || refuse_merge "the base of PR ${selector} could not be read"
+  for word in "${PROTECTED_LIST[@]}"; do
+    if [ "$base" = "$word" ]; then refuse_merge "PR ${selector} targets ${base}"; fi
+  done
+  return 0
+}
+if has "$MERGE_RE"; then
+  if has '(^|[;&|[:space:]])(cd|pushd)[[:space:]]|GH_REPO=|GH_HOST=|--hostname'; then
+    refuse_merge "the command names a cd, pushd, GH_REPO, GH_HOST or --hostname (even inside a trailing comment), so the base it would read may belong to another repository"
+  fi
+  while IFS= read -r merge_segment; do
+    if [ -n "$merge_segment" ]; then judge_merge_segment "$merge_segment"; fi
+  done <<<"$(segment "$MERGE_RE")"
 fi
 
 # `gh api` that merges or moves a protected ref, in every mutating spelling — including the implicit

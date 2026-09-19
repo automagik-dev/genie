@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
@@ -229,10 +230,155 @@ describe('wish.js guards that must not drift', () => {
 
 describe('git-safety hook guards the surfaces the wish publisher is forbidden', () => {
   const hook = join(ROOT, '.claude', 'hooks', 'git-safety.sh');
-  const probe = (command: string): number => {
-    const result = spawnSync('bash', [hook], { input: JSON.stringify({ tool_input: { command } }), encoding: 'utf8' });
+  // The merge rule reads the PR's base through `gh pr view`. A stub `gh` first on PATH answers it,
+  // so no probe reaches the network: STUB_BASE is the base it prints (empty = the read fails), and
+  // every call is appended to STUB_LOG so a test can see what the guard asked.
+  const stubDir = mkdtempSync(join(tmpdir(), 'git-safety-gh-'));
+  const stubLog = join(stubDir, 'calls.log');
+  writeFileSync(
+    join(stubDir, 'gh'),
+    '#!/bin/bash\necho "$*" >> "$STUB_LOG"\nreadlink -f . > "$STUB_LOG.cwd"\n[ -n "$STUB_BASE" ] || exit 1\nprintf "%b\\n" "$STUB_BASE"\n',
+    { mode: 0o755 },
+  );
+  afterAll(() => rmSync(stubDir, { recursive: true, force: true }));
+  const probe = (command: string, base = 'main', extraEnv: Record<string, string> = {}, cwd?: string): number => {
+    const result = spawnSync('bash', [hook], {
+      input: JSON.stringify(cwd ? { cwd, tool_input: { command } } : { tool_input: { command } }),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+        STUB_BASE: base,
+        STUB_LOG: stubLog,
+        GIT_SAFETY_PROTECTED_BRANCHES: '',
+        ...extraEnv,
+      },
+    });
     return result.status ?? -1;
   };
+
+  /**
+   * The operator's rule (2026-09-19): what is refused is a merge INTO a protected branch, not the
+   * verb. Until then every merge was refused, including the dev merges the operator had asked for.
+   */
+  test('allows a merge whose base is not protected and refuses one that targets a protected branch', () => {
+    for (const command of [
+      'gh pr merge 2996 --merge',
+      'gh -R automagik-dev/genie pr merge 2996 --squash',
+      'gh pr merge https://github.com/automagik-dev/genie/pull/2996 --merge',
+      'gh pr merge wish/x --merge --delete-branch',
+      'gh pr merge 2996 --merge 2>&1 | tail -2',
+      'gh pr merge 2996 --merge && gh pr view 2996 --json state',
+    ]) {
+      expect([command, probe(command, 'dev')]).toEqual([command, 0]);
+      expect([command, probe(command, 'main')]).toEqual([command, 2]);
+      expect([command, probe(command, 'master')]).toEqual([command, 2]);
+    }
+  });
+
+  test('the protected merge bases are the list the operator sets', () => {
+    const env = { GIT_SAFETY_PROTECTED_BRANCHES: 'main release' };
+    expect(probe('gh pr merge 7 --merge', 'release', env)).toBe(2);
+    expect(probe('gh pr merge 7 --merge', 'main', env)).toBe(2);
+    expect(probe('gh pr merge 7 --merge', 'master', env)).toBe(0);
+    expect(probe('gh pr merge 7 --merge', 'dev', env)).toBe(0);
+  });
+
+  test('asks the remote for the base of the PR the command names, in the repository it names', () => {
+    writeFileSync(stubLog, '');
+    expect(probe('gh --repo o/r pr merge 41 --subject s --squash', 'dev')).toBe(0);
+    expect(readFileSync(stubLog, 'utf8').trim()).toBe('pr view 41 --repo o/r --json baseRefName -q .baseRefName');
+  });
+
+  /**
+   * The independent review of this rule (2026-09-19) allowed each of these with a `dev` base: the
+   * guard vetted one PR while the shell and gh would have merged another.
+   */
+  test('refuses every spelling where the PR the guard reads is not the PR gh would merge', () => {
+    for (const command of [
+      // bash drops ` #2996` as a comment, so gh merges the CURRENT branch's PR.
+      'gh pr merge --squash #2996',
+      'gh pr merge #2996 --squash',
+      'gh pr merge 2996 --merge # then tidy up',
+      // gh accepts these repo spellings; a parser that does not must refuse, not read another repo.
+      'gh pr merge -R=other/repo 2996 --merge',
+      'gh pr merge -Rother/repo 2996 --merge',
+      'gh -R=other/repo pr merge 2996 --merge',
+      // A short cluster ending in a value flag makes gh read 2996 as the body.
+      'gh pr merge -db 2996',
+      'gh pr merge -sb 2996',
+      'gh pr merge 5 6 --merge',
+      'gh pr merge --unknown-flag 2996',
+      'gh pr merge [ab]c --merge',
+      'gh pr merge ~/x --merge',
+    ]) {
+      expect([command, probe(command, 'dev')]).toEqual([command, 2]);
+    }
+  });
+
+  test('a base that is not exactly one branch name is unread, and a blank protected list keeps the default', () => {
+    expect(probe('gh pr merge 7 --merge', 'main\\r')).toBe(2);
+    expect(probe('gh pr merge 7 --merge', 'main x')).toBe(2);
+    expect(probe('gh pr merge 7 --merge', 'dev\\nmain')).toBe(2);
+    // A glob in the operator's list stays a name: it must not expand to filenames and lose `main`.
+    expect(probe('gh pr merge 7 --merge', 'main', { GIT_SAFETY_PROTECTED_BRANCHES: '* main' })).toBe(2);
+    expect(probe('gh pr merge 7 --merge', 'dev', { GIT_SAFETY_PROTECTED_BRANCHES: '* main' })).toBe(0);
+    for (const blank of [' ', '\t', '  \t ']) {
+      expect(probe('gh pr merge 7 --merge', 'main', { GIT_SAFETY_PROTECTED_BRANCHES: blank })).toBe(2);
+      expect(probe('gh pr merge 7 --merge', 'dev', { GIT_SAFETY_PROTECTED_BRANCHES: blank })).toBe(0);
+    }
+  });
+
+  test('the base is asked for from the directory the command will run in', () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'git-safety-cwd-'));
+    try {
+      expect(probe('gh pr merge 7 --merge', 'dev', {}, elsewhere)).toBe(0);
+      expect(realpathSync(readFileSync(`${stubLog}.cwd`, 'utf8').trim())).toBe(realpathSync(elsewhere));
+      // A cwd that cannot be entered is an unread base, never a read from somewhere else.
+      expect(probe('gh pr merge 7 --merge', 'dev', {}, join(elsewhere, 'gone'))).toBe(2);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test('still allows the value flags in their separated and = forms', () => {
+    for (const command of [
+      'gh pr merge 7 --squash --subject s --body-file notes.md',
+      'gh pr merge 7 --squash --subject=s --match-head-commit=abc123',
+      'gh pr merge 7 -s -d -t s',
+      'gh pr merge --repo=o/r 7 --merge --admin',
+      'gh pr merge 7 --auto --merge',
+    ]) {
+      expect([command, probe(command, 'dev')]).toEqual([command, 0]);
+      expect([command, probe(command, 'main')]).toEqual([command, 2]);
+    }
+  });
+
+  test('a merge whose base cannot be read with certainty fails closed, even when the base would be dev', () => {
+    for (const command of [
+      // No selector: the current-branch PR depends on a cwd the guard does not share.
+      'gh pr merge --merge',
+      'gh pr merge',
+      // A selector the shell computes, or one hidden by quoting.
+      'gh pr merge $PR --merge',
+      'gh pr merge "2996" --merge',
+      'gh pr merge 2996 --subject "ship it"',
+      // Another repository may answer for the same number.
+      'cd /tmp/other && gh pr merge 2996 --merge',
+      'GH_REPO=o/r gh pr merge 2996 --merge',
+      'gh pr merge 2996 --merge -R',
+      // Wrappers stay refused whole: the guard judges only a top-level gh command.
+      'bash -c "gh pr merge 2996 --merge"',
+      'echo "$(gh pr merge 2996 --merge)"',
+      'env gh pr merge 2996 --merge',
+    ]) {
+      expect([command, probe(command, 'dev')]).toEqual([command, 2]);
+    }
+    // The read itself failing (no network, no such PR, no credential) is a refusal too.
+    expect(probe('gh pr merge 2996 --merge', '')).toBe(2);
+    expect(probe('gh pr merge 1 --merge; gh pr merge 2 --merge', 'dev')).toBe(0);
+    expect(probe('gh pr merge 1 --merge; gh pr merge 2 --merge', 'main')).toBe(2);
+  });
 
   test('blocks merge, API mutations, hook bypasses and direct refspecs to protected branches', () => {
     for (const command of [
