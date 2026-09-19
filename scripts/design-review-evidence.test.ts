@@ -255,6 +255,29 @@ describe('every shipped skill is self-contained', () => {
 
   test('the wish and brainstorm copies of the evidence helper are byte-identical', () => {
     expect(readFileSync(WISH_SCRIPT)).toEqual(readFileSync(EVIDENCE_SCRIPT));
+    // The declaration beside each copy is the type boundary `scripts/wishes-lint.ts`
+    // consumes once that script joins the `tsc` program through `genie wish lint`.
+    // It is a second shipped file per reference directory, so it drifts the same way.
+    const declaration = (script: string): Buffer => readFileSync(script.replace(/\.mjs$/, '.d.mts'));
+    expect(declaration(WISH_SCRIPT)).toEqual(declaration(EVIDENCE_SCRIPT));
+  });
+
+  /**
+   * A declaration file is only a contract while it describes the module that is
+   * actually there. `tsc` never reads the `.mjs`, so a renamed or dropped export
+   * would keep typechecking and fail at runtime instead — the exact failure mode
+   * a declaration is supposed to remove.
+   */
+  test('the declaration names exactly the helper module’s real exports', async () => {
+    const declared = [
+      ...readFileSync(EVIDENCE_SCRIPT.replace(/\.mjs$/, '.d.mts'), 'utf8').matchAll(
+        /^export declare (?:async )?(?:function|const|class|let|var) ([A-Za-z0-9_$]+)/gm,
+      ),
+    ]
+      .map((match) => match[1])
+      .sort();
+    const actual = Object.keys(await import(EVIDENCE_SCRIPT)).sort();
+    expect(declared).toEqual(actual);
   });
 
   test('the entry-point guard survives a symlinked path: verify still refuses, exit 1', () => {

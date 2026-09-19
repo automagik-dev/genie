@@ -77,6 +77,12 @@ const WORKSPACE_EXEMPT = new Set([
   // `<GENIE_HOME>/templates`, never `.genie/workspace.json`; gating it would
   // make the offload fail in exactly the repositories this command exists for.
   'mikro',
+  // `wish` fronts the wish-document linter, and its whole point is that it
+  // reports on ANOTHER repository's `.genie/wishes` — the repositories a genie
+  // workspace was never created in. Gating it would prompt for `genie init`
+  // (interactive) or exit 2 (CI, piped output) in exactly the repositories the
+  // verb exists for. `src/lib/interactivity.test.ts` pins this membership.
+  'wish',
   // `mcp` is now a retirement stub: it writes the stable diagnostic to stderr and
   // exits 1. It touches no workspace state, so the legacy workspace gate must not
   // exit 2 and mask the retirement diagnostic callers are told to expect.

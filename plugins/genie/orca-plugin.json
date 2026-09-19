@@ -3,7 +3,7 @@
   "id": "genie",
   "publisher": "automagik",
   "name": "Genie",
-  "version": "5.260919.7",
+  "version": "5.260919.11",
   "description": "Genie's wish, work, review, fix, report and council verbs in Orca's palette and keybindings; genie lifecycle status and review verdicts mirrored onto the existing board cards; human decisions as Orca gates; result notifications.",
   "author": {
     "name": "Namastex Labs",

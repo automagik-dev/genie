@@ -80,13 +80,22 @@ describe('skill-audit-sweep never widens a supplied roster into a full sweep', (
   });
 
   test('the signals prompt runs the parity check read-only and never with --write', () => {
-    expect(JS).toContain("const PARITY_CHECK = 'bun scripts/skills-inventory-parity.ts'");
+    // Issue #2919 item 2: the bare form reads the skills list from stdin, so it exits 1 with
+    // `--list named []` on every sweep. The listing producer must be part of the command.
+    expect(JS).not.toContain("const PARITY_CHECK = 'bun scripts/skills-inventory-parity.ts'");
+    const constant = /const PARITY_CHECK = '([^']*)'/.exec(JS);
+    if (!constant) throw new Error('skill-audit-sweep.js: the PARITY_CHECK constant is missing');
+    const command = constant[1] as string;
+    expect(command).toContain('skills@1.5.23 add "$PWD" --list');
+    expect(command).toContain('bun scripts/skills-inventory-parity.ts');
+    expect(command).toContain('--repo');
+    // The listing must actually reach the script — by pipe, or by a --list-file it captured.
+    expect(/\|\s*bun scripts\/skills-inventory-parity\.ts|--list-file/.test(command)).toBe(true);
+    // Read-only stays: --write regenerates the catalogue block inside the repository.
+    expect(command).not.toContain('--write');
     const bullet = /`Run: \$\{PARITY_CHECK\}([^`]*)`/.exec(JS);
     if (!bullet) throw new Error('skill-audit-sweep.js: the signals parity bullet is missing');
     expect(bullet[1]).toContain('--write');
     expect(bullet[1]).toContain('read-only');
-    // The bare command stays: the CI --list-file form is not what the sweep runs.
-    expect(JS).not.toContain('--list-file');
-    expect(JS).not.toContain('npx');
   });
 });

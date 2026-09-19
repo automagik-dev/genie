@@ -2,7 +2,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { getGenieConfigPath, getGenieDir } from './genie-config.js';
-import { type OrchestrationMode, resolveOrchestrationMode } from './orchestration-mode.js';
+import {
+  InvalidOrchestrationAuthorityError,
+  type OrchestrationMode,
+  resolveOrchestrationMode,
+} from './orchestration-mode.js';
 
 const OWNERSHIP_FILE = '.orca-plugin-ownership.json';
 const BACKUP_DIR = 'backups/orchestration-mode';
@@ -126,12 +130,25 @@ function restore(path: string, bytes: string | null): void {
   else atomicWrite(path, bytes);
 }
 
+/**
+ * The config this switch commits. An original genie cannot parse — invalid
+ * JSON, or a non-object top level — contributes NOTHING rather than aborting:
+ * this switch is the prescribed remedy for exactly that state, so refusing to
+ * run on it left the operator with a refusal and no way out. The original bytes
+ * are not lost; `backupConfig` wrote them verbatim before this is ever called.
+ */
 function nextConfig(original: string | null, mode: OrchestrationMode): string {
   let value: Record<string, unknown> = {};
   if (original !== null) {
-    const parsed = JSON.parse(original) as unknown;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Invalid Genie config');
-    value = parsed as Record<string, unknown>;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(original) as unknown;
+    } catch {
+      parsed = null;
+    }
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      value = parsed as Record<string, unknown>;
+    }
   }
   return `${JSON.stringify({ ...value, orchestration: { mode } }, null, 2)}\n`;
 }
@@ -141,7 +158,19 @@ export async function switchOrchestrationMode(
   mode: OrchestrationMode,
   dependencies: OrcaModeSwitchDependencies = {},
 ): Promise<OrcaModeSwitchResult> {
-  const current = resolveOrchestrationMode();
+  // An authority genie cannot parse resolves to `null`, never a throw. This
+  // switch is the remedy the orca refusal prescribes, and a malformed
+  // `orchestration.mode` is precisely the state it is prescribed for: throwing
+  // here made `genie setup --orchestration-mode standalone` exit 1 on the one
+  // config it exists to repair. `null` equals no mode, so the backup-first
+  // switch always proceeds and always rewrites.
+  let current: OrchestrationMode | null;
+  try {
+    current = resolveOrchestrationMode();
+  } catch (error) {
+    if (!(error instanceof InvalidOrchestrationAuthorityError)) throw error;
+    current = null;
+  }
   if (current === mode) return { changed: false, mode, backupPath: null, compatibility: null };
 
   const target = paths();

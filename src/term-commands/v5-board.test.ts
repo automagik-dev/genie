@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ORCA_REFUSAL_MESSAGE } from '../lib/orchestration-mode.js';
 import { openDb } from '../lib/v5/genie-db.js';
 import {
   BOARD_JSON_EVENT_LIMIT,
@@ -2064,16 +2065,20 @@ describe('orca lifecycle authority', () => {
   });
 
   test.each([[[]], [['--json']], [['list']]])(
-    'renders `genie board %j` as one clean Error line with exit 1',
+    'renders `genie board %j` as the one fixed refusal line with exit 2',
     async (args: string[]) => {
       const result = await boardWithEnv(repo, { GENIE_HOME: orcaHome() }, ...args);
-      expect(result.code).toBe(1);
+      // AMENDED (owner decision 2026-09-19): `board` is on the closed
+      // `ORCA_FORBIDDEN` list, so the gate in `src/genie.ts` refuses it before
+      // the handler runs. Exit 2 is genie's "operator must act" family, and the
+      // line is the one fixed sentence that names the remedy — not the internal
+      // typed code, which told the operator nothing they could act on.
+      expect(result.code).toBe(2);
       expect(result.stdout).toBe('');
-      expect(result.stderr).toBe(
-        'Error: local_lifecycle_disabled_in_orca_mode: local Genie lifecycle state is disabled because orchestration.mode is "orca"\n',
-      );
-      // The regression: the open happened OUTSIDE the handler's try, so bun
-      // printed a raw stack trace and a source excerpt instead.
+      expect(result.stderr).toBe(`${ORCA_REFUSAL_MESSAGE}\n`);
+      // The original regression this case was written for: the open happened
+      // OUTSIDE the handler's try, so bun printed a raw stack trace and a
+      // source excerpt. Still pinned — the gate must not reintroduce it.
       expect(result.stderr).not.toContain('at openDb');
       expect(result.stderr).not.toContain('LocalLifecycleDisabledError:');
     },

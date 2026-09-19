@@ -5,8 +5,19 @@
  *
  * Exit non-zero if any wish has unresolved brainstorm links.
  * Honors a `<!-- wishes-lint:ignore -->` bailout marker to skip a file.
+ *
+ * This module is BOTH the repository gate (`bun run wishes:lint`) and the
+ * runtime behind `genie wish lint`, so it resolves nothing from
+ * `import.meta.url`: in the compiled single-file binary that URL lands under
+ * `/$bunfs` and would name a wishes directory that holds nothing at all. The
+ * wishes root is a parameter — `--dir <repo>` (→ `<repo>/.genie/wishes`),
+ * `--wishes-dir <path>`, or the git toplevel of the working directory — and the
+ * entry point RETURNS an exit code rather than calling `process.exit`, so the
+ * CLI can own the process. The `import.meta.main` guard below is what keeps
+ * `bun scripts/wishes-lint.ts` behaving exactly as it always has.
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
@@ -16,8 +27,7 @@ import { WISH_SLUG_PATTERN, WISH_SLUG_SOURCE } from '../src/lib/wish-status.js';
 // plugin-era original) so a reformat cannot be mistaken for a rule change.
 import { validateWish } from './validate-wish.js';
 
-const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
-const DEFAULT_WISHES_DIR = join(ROOT, '.genie/wishes');
+export const WISH_LINT_USAGE = 'usage: wishes-lint [--dir <repo>] [--wishes-dir <path>]';
 const EXECUTION_STRATEGY_THRESHOLD = '2026-07-09';
 const DESIGN_REVIEW_EVIDENCE_THRESHOLD = '2026-07-11';
 
@@ -36,6 +46,11 @@ const CANONICAL_STATUSES = new Set([
 const LEGACY_TERMINAL_STATUSES = new Set(['DONE', 'EXECUTED']);
 // `<owner-wish>/<slug>` — both halves are ordinary wish slugs.
 const QUALIFIED_SLUG_PATTERN = new RegExp(`^${WISH_SLUG_SOURCE}/${WISH_SLUG_SOURCE}$`);
+
+/** Every `.md` file under a wishes root, in directory order. */
+export function wishFiles(wishesDir: string): string[] {
+  return walk(wishesDir);
+}
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -57,10 +72,20 @@ interface BrokenLink {
   resolved: string;
 }
 
-interface WishStructureIssue {
+/** One finding, before it is tagged with the family it belongs to. */
+interface WishIssue {
   file: string;
   line: number;
   message: string;
+}
+
+/**
+ * One finding as callers outside this module see it. `link` is an unresolved
+ * brainstorm link; `structure` is every other rule (template, metadata,
+ * Execution Strategy routing columns, design-review evidence, wish graph).
+ */
+export interface WishStructureIssue extends WishIssue {
+  kind: 'link' | 'structure';
 }
 
 interface WishRecord {
@@ -71,10 +96,87 @@ interface WishRecord {
   blocks: string[];
 }
 
-function wishesDirFromArgs(args: string[]): string {
-  if (args.length === 0) return DEFAULT_WISHES_DIR;
-  if (args.length === 2 && args[0] === '--wishes-dir' && args[1]) return resolve(process.cwd(), args[1]);
-  throw new Error('usage: wishes-lint [--wishes-dir <path>]');
+/** What a parsed argv resolved to: which tree to lint and what paths to print against. */
+interface WishLintTarget {
+  wishesDir: string;
+  /** The root every reported path is printed relative to. */
+  reportRoot: string;
+  help: boolean;
+}
+
+/**
+ * The git toplevel of `cwd`, or null when it is not a checkout (or `git` is not
+ * on PATH). Never throws: a repository-less directory is an ordinary input here.
+ */
+function gitToplevel(cwd: string): string | null {
+  try {
+    const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
+    if (result.status !== 0) return null;
+    const top = (result.stdout ?? '').trim();
+    return top.length > 0 ? top : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True only for a path that exists AND is a directory (following symlinks). */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve argv to a wishes root. `--dir <repo>` is the operator-facing form
+ * (`<repo>/.genie/wishes`); `--wishes-dir <path>` points straight at a wishes
+ * tree and is what the repository's own tests use. With neither, the root is the
+ * git toplevel of `cwd`, falling back to `cwd` itself — never `import.meta.url`.
+ *
+ * A root an operator TYPED is verified before it is linted: a missing path, a
+ * regular file, or a repository carrying no `.genie/wishes` is refused rather
+ * than scanned. Without that, `--dir /nope` and `--dir ./some-file.md` both
+ * walked nothing and reported `OK (0 files scanned)` — a typo passing as a
+ * clean bill of health, which is the one failure a linter must never have. The
+ * DEFAULT root is deliberately lenient the other way: a repository that simply
+ * has no wishes yet is not a mistake, so it still reports 0 files and exits 0.
+ */
+export function resolveWishLintTarget(argv: string[], cwd: string): WishLintTarget {
+  let repo: string | undefined;
+  let wishesDir: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--help' || arg === '-h') return { wishesDir: '', reportRoot: cwd, help: true };
+    if (arg !== '--dir' && arg !== '--wishes-dir')
+      throw new Error(`unknown argument ${JSON.stringify(arg)}\n${WISH_LINT_USAGE}`);
+    const value = argv[index + 1];
+    if (!value || value.startsWith('-')) throw new Error(`${arg} needs a path\n${WISH_LINT_USAGE}`);
+    index += 1;
+    if (arg === '--dir') repo = resolve(cwd, value);
+    else wishesDir = resolve(cwd, value);
+  }
+  if (repo !== undefined && wishesDir !== undefined) {
+    throw new Error(`--dir and --wishes-dir name the same thing twice; pass one\n${WISH_LINT_USAGE}`);
+  }
+  if (wishesDir !== undefined) {
+    if (!isDirectory(wishesDir)) throw new Error(`--wishes-dir is not a directory: ${wishesDir}\n${WISH_LINT_USAGE}`);
+    return { wishesDir, reportRoot: gitToplevel(cwd) ?? cwd, help: false };
+  }
+  if (repo !== undefined) {
+    if (!isDirectory(repo)) throw new Error(`--dir is not a directory: ${repo}\n${WISH_LINT_USAGE}`);
+    const dir = join(repo, '.genie/wishes');
+    if (!isDirectory(dir)) throw new Error(`--dir names no .genie/wishes: ${repo}\n${WISH_LINT_USAGE}`);
+    return { wishesDir: dir, reportRoot: repo, help: false };
+  }
+  const root = gitToplevel(cwd) ?? cwd;
+  return { wishesDir: join(root, '.genie/wishes'), reportRoot: root, help: false };
+}
+
+/** A path relative to the report root, or the absolute path when it escapes that root. */
+function displayPath(reportRoot: string, file: string): string {
+  const rel = relative(reportRoot, file);
+  return rel.length > 0 && !rel.startsWith('..') ? rel : file;
 }
 
 function stripInlineCode(line: string): string {
@@ -155,7 +257,7 @@ function isTableDelimiter(cells: string[] | null): boolean {
   return cells !== null && cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-function lintExecutionStrategy(file: string): WishStructureIssue[] {
+function lintExecutionStrategy(file: string): WishIssue[] {
   const text = readFileSync(file, 'utf8');
   if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
 
@@ -196,7 +298,7 @@ function lintExecutionStrategy(file: string): WishStructureIssue[] {
     ];
   }
 
-  const issues: WishStructureIssue[] = [];
+  const issues: WishIssue[] = [];
   for (const headerLine of tableHeaders) {
     const headers = tableCells(lines[headerLine]) ?? [];
     const missing = ['Complexity', 'Model'].filter((required) => !headers.includes(required));
@@ -220,7 +322,7 @@ function metadataValue(lines: string[], field: string): { line: number; value: s
   return null;
 }
 
-function lintDesignReviewEvidence(file: string): WishStructureIssue[] {
+function lintDesignReviewEvidence(file: string): WishIssue[] {
   if (basename(file) !== 'WISH.md') return [];
   const text = readFileSync(file, 'utf8');
   if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
@@ -248,7 +350,7 @@ function lintDesignReviewEvidence(file: string): WishStructureIssue[] {
       : [];
   }
 
-  const issues: WishStructureIssue[] = [];
+  const issues: WishIssue[] = [];
   for (const target of links) {
     if (/^https?:\/\//i.test(target)) {
       issues.push({ file, line: design.line, message: 'design-review evidence requires a local DESIGN.md' });
@@ -270,8 +372,8 @@ function dependencyValues(
   file: string,
   lines: string[],
   required: boolean,
-): { record?: Pick<WishRecord, 'dependsOn' | 'blocks'>; issues: WishStructureIssue[] } {
-  const issues: WishStructureIssue[] = [];
+): { record?: Pick<WishRecord, 'dependsOn' | 'blocks'>; issues: WishIssue[] } {
+  const issues: WishIssue[] = [];
   const heading = lines.findIndex((line) => /^##\s+Dependencies\s*$/i.test(line));
   if (heading < 0) {
     if (required) issues.push({ file, line: 1, message: 'canonical wish must contain a ## Dependencies section' });
@@ -311,14 +413,14 @@ function dependencyValues(
   return dependsOn && blocks ? { record: { dependsOn, blocks }, issues } : { issues };
 }
 
-function lintWishMetadata(file: string): { record?: WishRecord; issues: WishStructureIssue[] } {
+function lintWishMetadata(file: string): { record?: WishRecord; issues: WishIssue[] } {
   if (basename(file) !== 'WISH.md') return { issues: [] };
   const text = readFileSync(file, 'utf8');
   if (/^<!-- wishes-lint:ignore -->/m.test(text)) return { issues: [] };
   const lines = text.split('\n');
   const statusField = metadataValue(lines, 'Status');
   const dateField = metadataValue(lines, 'Date');
-  const issues: WishStructureIssue[] = [];
+  const issues: WishIssue[] = [];
   if (!statusField) {
     issues.push({ file, line: 1, message: 'wish metadata must contain a Status field' });
     return { issues };
@@ -363,7 +465,7 @@ function lintWishMetadata(file: string): { record?: WishRecord; issues: WishStru
  * WISH.md. This is the drift gate: when the canonical template changes, the
  * corpus must follow, or every repo carrying wishes fails CI here.
  */
-function lintWishTemplate(file: string, text: string): WishStructureIssue[] {
+function lintWishTemplate(file: string, text: string): WishIssue[] {
   if (basename(file) !== 'WISH.md') return [];
   if (/^<!-- wishes-lint:ignore -->/m.test(text)) return [];
   const result = validateWish(text);
@@ -374,8 +476,8 @@ function lintWishTemplate(file: string, text: string): WishStructureIssue[] {
   }));
 }
 
-function lintWishGraph(records: WishRecord[]): WishStructureIssue[] {
-  const issues: WishStructureIssue[] = [];
+function lintWishGraph(records: WishRecord[]): WishIssue[] {
+  const issues: WishIssue[] = [];
   const bySlug = new Map(records.map((record) => [record.slug, record]));
   const prerequisites = new Map(records.map((record) => [record.slug, new Set<string>()]));
   const addReference = (owner: WishRecord, referenced: string, relation: 'depends-on' | 'blocks'): void => {
@@ -426,49 +528,87 @@ function lintWishGraph(records: WishRecord[]): WishStructureIssue[] {
   return issues;
 }
 
-function main() {
-  let wishesDir: string;
-  try {
-    wishesDir = wishesDirFromArgs(process.argv.slice(2));
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
-  }
-
-  const files = walk(wishesDir);
-  const allBroken: BrokenLink[] = [];
-  const allStructureIssues: WishStructureIssue[] = [];
+/**
+ * Every finding over one wishes tree, links first and then structure, in the
+ * order the report prints them. The root is injected — this function reads no
+ * ambient location, which is what lets the compiled binary lint a tree that is
+ * not the genie checkout.
+ */
+export function lintWishes(options: { wishesDir: string }): WishStructureIssue[] {
+  const files = walk(options.wishesDir);
+  const links: WishStructureIssue[] = [];
+  const structure: WishStructureIssue[] = [];
   const wishRecords: WishRecord[] = [];
+  const add = (issues: WishIssue[]): void => {
+    for (const issue of issues) structure.push({ ...issue, kind: 'structure' });
+  };
 
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
-    allBroken.push(...lintFile(file));
-    allStructureIssues.push(...lintWishTemplate(file, text));
-    allStructureIssues.push(...lintExecutionStrategy(file));
-    allStructureIssues.push(...lintDesignReviewEvidence(file));
+    for (const broken of lintFile(file)) {
+      links.push({ file: broken.file, line: broken.line, message: `${broken.text} → ${broken.target}`, kind: 'link' });
+    }
+    add(lintWishTemplate(file, text));
+    add(lintExecutionStrategy(file));
+    add(lintDesignReviewEvidence(file));
     const metadata = lintWishMetadata(file);
-    allStructureIssues.push(...metadata.issues);
+    add(metadata.issues);
     if (metadata.record) wishRecords.push(metadata.record);
   }
-  allStructureIssues.push(...lintWishGraph(wishRecords));
-
-  if (allBroken.length > 0 || allStructureIssues.length > 0) {
-    for (const b of allBroken) {
-      console.error(`${relative(ROOT, b.file)}:${b.line}: ${b.text} → ${b.target}`);
-    }
-    if (allBroken.length > 0) {
-      console.error(`\nwishes-lint: ${allBroken.length} broken brainstorm link(s) across ${files.length} wish file(s)`);
-    }
-    for (const issue of allStructureIssues) {
-      console.error(`${relative(ROOT, issue.file)}:${issue.line}: ${issue.message}`);
-    }
-    if (allStructureIssues.length > 0) {
-      console.error(`\nwishes-lint: ${allStructureIssues.length} wish structure/graph issue(s)`);
-    }
-    process.exit(1);
-  }
-
-  console.error(`wishes-lint: OK (${files.length} files scanned, 0 broken brainstorm links, template validator green)`);
+  add(lintWishGraph(wishRecords));
+  return [...links, ...structure];
 }
 
-main();
+/**
+ * The one entry point both `bun run wishes:lint` and `genie wish lint` run.
+ * It RETURNS an exit code — 0 clean, 1 findings, 2 the argv was refused — and
+ * never calls `process.exit`, so the CLI keeps ownership of the process.
+ */
+export async function runWishLintCli(argv: string[]): Promise<number> {
+  let target: WishLintTarget;
+  try {
+    target = resolveWishLintTarget(argv, process.cwd());
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
+  }
+  if (target.help) {
+    console.error(WISH_LINT_USAGE);
+    return 0;
+  }
+
+  // The file count is only in the report line; `lintWishes` owns the walk that
+  // actually reads them, so the root stays its single input.
+  const scanned = wishFiles(target.wishesDir).length;
+  const issues = lintWishes({ wishesDir: target.wishesDir });
+  const broken = issues.filter((issue) => issue.kind === 'link');
+  const structure = issues.filter((issue) => issue.kind === 'structure');
+
+  if (issues.length > 0) {
+    for (const b of broken) {
+      console.error(`${displayPath(target.reportRoot, b.file)}:${b.line}: ${b.message}`);
+    }
+    if (broken.length > 0) {
+      console.error(`\nwishes-lint: ${broken.length} broken brainstorm link(s) across ${scanned} wish file(s)`);
+    }
+    for (const issue of structure) {
+      console.error(`${displayPath(target.reportRoot, issue.file)}:${issue.line}: ${issue.message}`);
+    }
+    if (structure.length > 0) {
+      console.error(`\nwishes-lint: ${structure.length} wish structure/graph issue(s)`);
+    }
+    return 1;
+  }
+
+  console.error(`wishes-lint: OK (${scanned} files scanned, 0 broken brainstorm links, template validator green)`);
+  return 0;
+}
+
+// Imported by `src/term-commands/wish.ts`; when this module is imported rather
+// than run, `import.meta.main` is false and nothing below must run. No top-level
+// await, so the bundled binary's module graph stays synchronous.
+if (import.meta.main) {
+  void runWishLintCli(process.argv.slice(2)).then((code) => {
+    process.exit(code);
+  });
+}

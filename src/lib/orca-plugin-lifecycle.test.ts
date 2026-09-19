@@ -211,6 +211,46 @@ describe('Orca plugin lifecycle transitions', () => {
     }
   });
 
+  // The refusal an orca-mode host prints prescribes exactly this command. If it
+  // cannot run on a config genie failed to parse, the remedy is a dead end: the
+  // operator is told what to run, runs it, and gets exit 1 on the one state the
+  // instruction exists for. Both spellings of "unparseable" are covered — a
+  // value outside the enum, and bytes that are not JSON at all.
+  for (const broken of [
+    { name: 'a mode outside the enum', bytes: '{"orchestration":{"mode":"automatic"}}' },
+    { name: 'bytes that are not JSON', bytes: '{oops' },
+    { name: 'a non-object top level', bytes: '[1,2,3]' },
+  ]) {
+    test(`switching back to standalone repairs ${broken.name}`, async () => {
+      writeFileSync(join(home, 'config.json'), broken.bytes);
+
+      const result = await switchOrchestrationMode('standalone');
+
+      expect(result.changed).toBe(true);
+      expect(result.mode).toBe('standalone');
+      // Backup-first: the bytes genie could not parse are still on disk.
+      expect(result.backupPath).not.toBeNull();
+      expect(readFileSync(result.backupPath as string, 'utf8')).toBe(broken.bytes);
+      // And the config it left behind parses, and resolves.
+      const written = readFileSync(join(home, 'config.json'), 'utf8');
+      expect(JSON.parse(written)).toMatchObject({ orchestration: { mode: 'standalone' } });
+      expect(inspectOrcaPluginLifecycle().mode).toBe('standalone');
+    });
+  }
+
+  test('an unparseable authority is repaired without losing the keys genie CAN read', async () => {
+    // `mode` is invalid but the document is valid JSON, so unrelated settings
+    // survive the rewrite exactly as they do on any other switch.
+    writeFileSync(join(home, 'config.json'), '{"custom":{"kept":true},"orchestration":{"mode":"automatic"}}');
+
+    await switchOrchestrationMode('standalone');
+
+    expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))).toMatchObject({
+      custom: { kept: true },
+      orchestration: { mode: 'standalone' },
+    });
+  });
+
   test('setup mode surface reports success, idempotency, and error exit/stderr', async () => {
     writePayload();
     const output: string[] = [];
