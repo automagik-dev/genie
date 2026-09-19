@@ -267,8 +267,12 @@ const PER_REPO_ONLY_TABLES = [
   'task_events',
   'stage_log',
   'wish_groups',
-  'hire_roster',
 ] as const;
+// `hire_roster` is deliberately absent: the v1 -> v2 migration dropped it, so
+// it is no longer a per-repo table at all. Nothing is lost by leaving it out —
+// contamination is all-or-nothing, because the per-repo opener writes the whole
+// schema through `ensureSchema`, never one table, so any host that could carry
+// a stray `hire_roster` carries the six above it too.
 
 /** The check name, exported so the remedy and the test never drift apart. */
 export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';

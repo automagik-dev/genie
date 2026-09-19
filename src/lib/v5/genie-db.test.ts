@@ -59,39 +59,30 @@ describe('openDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    expect(tables).toEqual([
-      'boards',
-      'hire_roster',
-      'meta',
-      'stage_log',
-      'task_dependencies',
-      'task_events',
-      'tasks',
-      'wish_groups',
-    ]);
+    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
   });
 
-  test('a fresh DB carries hire_roster', () => {
+  test('a fresh DB carries no hire_roster', () => {
     const path = join(dir, 'genie.db');
     const db = openDb({ path });
     const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
     db.close();
-    expect(has).not.toBeNull();
+    expect(has).toBeNull();
   });
 
-  test('adds hire_roster to a pre-existing current DB via the schemaIsCurrent path', () => {
+  test('re-creates a dropped table on a pre-existing current DB via the schemaIsCurrent path', () => {
     const path = join(dir, 'genie.db');
-    // Simulate a DB stamped by an earlier build: already at user_version=1 but
-    // missing the additive hire_roster table. schemaIsCurrent must return false
-    // (hire_roster ∈ EXPECTED_TABLES) so ensureSchema re-runs and creates it —
-    // no user_version bump.
+    // Simulate a DB stamped by an earlier build of THIS version: already at
+    // CURRENT_SCHEMA_VERSION but missing one additive table. schemaIsCurrent
+    // must return false (wish_groups in EXPECTED_TABLES) so ensureSchema
+    // re-runs and creates it — no user_version bump.
     const db1 = openDb({ path });
-    db1.exec('DROP TABLE hire_roster');
+    db1.exec('DROP TABLE wish_groups');
     db1.close();
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
 
     const db2 = openDb({ path });
-    const has = db2.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    const has = db2.query("SELECT name FROM sqlite_master WHERE type='table' AND name='wish_groups'").get();
     db2.close();
     expect(has).not.toBeNull();
     // Additive migration — the schema version is unchanged.
@@ -181,6 +172,124 @@ describe('openDb refusal', () => {
     const db = openDb({ path });
     db.close();
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The v1 -> v2 migration ladder (wish `v6-stable-cut`, design decision 4).
+//
+// v6 drops `hire_roster`, which is a DESTRUCTIVE schema change, so the stamped
+// version moves 1 -> 2. `initOrValidate` throws ForeignDbError on any version
+// it does not recognize, so a bump WITHOUT the ladder would make every operator
+// database on earth refuse to open. Every assertion below fails against a
+// bump-only change — that is the whole point of the group.
+// ---------------------------------------------------------------------------
+describe('v1 -> v2 migration ladder (hire_roster dropped)', () => {
+  /** A database exactly as a 5.x binary left it: stamped 1, carrying hires. */
+  function seedV1Db(path: string): void {
+    const seed = new Database(path);
+    seed.exec(`
+CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, lanes TEXT);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL,
+  claimed_by TEXT, claimed_at INTEGER, wish TEXT, group_name TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, lane TEXT, agent_kind TEXT,
+  heartbeat_at INTEGER, blocked_by TEXT, blocked_reason TEXT, block_kind TEXT,
+  assignment_agent TEXT, assignment_why TEXT, assignment_at INTEGER
+);
+CREATE TABLE task_dependencies (task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL, PRIMARY KEY (task_id, depends_on_id));
+CREATE TABLE stage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, stage TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, kind TEXT NOT NULL,
+  note TEXT, author_kind TEXT, author TEXT, created_at INTEGER NOT NULL
+);
+CREATE TABLE wish_groups (
+  wish TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  depends_on TEXT NOT NULL DEFAULT '[]', assignee TEXT, started_at INTEGER, completed_at INTEGER,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (wish, name)
+);
+CREATE TABLE hire_roster (
+  wish TEXT NOT NULL, agent_adapter_id TEXT NOT NULL, profile TEXT, worktree TEXT NOT NULL,
+  hired_at INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (wish, agent_adapter_id)
+);
+`);
+    seed
+      .query(
+        "INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES ('t1', 'carried over', 'ready', 1, 1)",
+      )
+      .run();
+    seed.query("INSERT INTO boards (id, name, created_at) VALUES ('b1', 'roadmap', 1)").run();
+    seed
+      .query(
+        "INSERT INTO hire_roster (wish, agent_adapter_id, worktree, hired_at, state) VALUES ('w1', 'claude', '/tmp/wt', 1, 'hired')",
+      )
+      .run();
+    seed.exec('PRAGMA user_version = 1');
+    seed.close();
+  }
+
+  test('a v1 DB carrying hire_roster rows opens, migrates to 2, and loses only that table', () => {
+    const path = join(dir, 'v1.db');
+    seedV1Db(path);
+    expect(userVersion(path)).toBe(1);
+
+    const db = openDb({ path });
+    const tables = db
+      .query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    const tasks = db.query('SELECT id, title FROM tasks').all() as Array<{ id: string; title: string }>;
+    const boards = db.query('SELECT id FROM boards').all() as Array<{ id: string }>;
+    db.close();
+
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    expect(tables).not.toContain('hire_roster');
+    // Every other table survives the ladder untouched, rows and all.
+    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
+    expect(tasks).toEqual([{ id: 't1', title: 'carried over' }]);
+    expect(boards).toEqual([{ id: 'b1' }]);
+  });
+
+  test('a second open of a just-migrated DB is a no-op', () => {
+    const path = join(dir, 'v1-twice.db');
+    seedV1Db(path);
+    openDb({ path }).close();
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+    const db = openDb({ path });
+    const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    db.close();
+    expect(has).toBeNull();
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  test('the ladder falls through to the current-version branch, so additive backfills still apply', () => {
+    // A v1 DB the ladder brings to 2 must ALSO get whatever ensureSchema adds
+    // within version 2 — here the stage_log -> task_events backfill marker,
+    // which only the current-version branch writes. If the ladder returned
+    // early after re-stamping, a migrated DB would be permanently unbackfilled.
+    const path = join(dir, 'v1-backfill.db');
+    seedV1Db(path);
+    const seed = new Database(path);
+    seed.query("INSERT INTO stage_log (task_id, stage, note, created_at) VALUES ('t1', 'planned', 'kickoff', 1)").run();
+    seed.close();
+
+    const db = openDb({ path });
+    const mirrored = db.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
+    const marker = db.query('SELECT value FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY);
+    db.close();
+    expect(mirrored.n).toBeGreaterThan(0);
+    expect(marker).not.toBeNull();
+  });
+
+  test('a version the ladder cannot bridge still throws ForeignDbError', () => {
+    const path = join(dir, 'unbridgeable.db');
+    const seed = new Database(path);
+    seed.exec('PRAGMA user_version = 7');
+    seed.exec('CREATE TABLE widgets (id INTEGER PRIMARY KEY)');
+    seed.close();
+    expect(() => openDb({ path })).toThrow(ForeignDbError);
   });
 });
 

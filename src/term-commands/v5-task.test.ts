@@ -11,7 +11,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ORCA_REFUSAL_MESSAGE } from '../lib/orchestration-mode.js';
-import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
+import { CURRENT_SCHEMA_VERSION, openDb, resolveDbPath } from '../lib/v5/genie-db.js';
 import { serializeSnapshot } from '../lib/v5/roadmap-sync.js';
 import {
   DEFAULT_LIFECYCLE_LANES,
@@ -24,7 +24,6 @@ import {
   getTaskCard,
   getTaskEvents,
   getTaskLane,
-  hireAgent,
   listTasks,
 } from '../lib/v5/task-state.js';
 
@@ -1018,7 +1017,7 @@ describe('task export round-trip', () => {
 
     const state = JSON.parse(r.stdout) as StateExport;
     // All 6 tables represented.
-    expect(state.schemaVersion).toBe(1);
+    expect(state.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(state.boards.map((x) => x.name)).toContain('main-board');
     expect(state.tasks.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
     expect(state.task_dependencies).toEqual([{ task_id: b.id, depends_on_id: a.id }]);
@@ -1124,7 +1123,6 @@ describe('task import', () => {
       stage_log: [],
       task_events: [],
       wish_groups: [],
-      hire_roster: [],
     };
     writeFileSync(join(repo, '.genie', 'roadmap.json'), JSON.stringify(empty));
     const mismatch = await cli(repo, 'import');
@@ -1271,110 +1269,28 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('snapshot excludes hire_roster; canonical import preserves local hires', async () => {
+  test('explicit relative canonical path behaves like the default on both export and import', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
-    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
     db.close();
 
-    const w = await cli(repo, 'export', '--write');
-    expect(w.code).toBe(0);
-    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
-    expect(snap.hire_roster).toEqual([]);
-    expect(snap.tasks).toHaveLength(1);
-
-    const r = await cli(repo, 'import', '--replace');
-    expect(r.code).toBe(0);
-    const db2 = openDb({ cwd: repo });
-    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
-      wish: string;
-      worktree: string;
-    }>;
-    db2.close();
-    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
-  });
-
-  test('a hire before the first sync does not wedge a fresh clone into diverged', async () => {
-    const db = openDb({ cwd: repo });
-    createTask(db, { title: 'canonical card' });
-    db.close();
-    const published = await cli(repo, 'sync');
-    expect(published.code).toBe(0);
-    expect(published.stdout).toContain('Published board snapshot');
-
-    const clone = mkdtempSync(join(tmpdir(), 'genie-v5-sync-'));
-    try {
-      git(clone, 'init', '-b', 'main');
-      git(clone, 'commit', '--allow-empty', '-m', 'init');
-      await plantSnapshot(clone, snapshotOf(repo));
-
-      // Local hire BEFORE any baseline sync: hires are machine-local and never
-      // travel, so they must not count as unpublished board state — the board
-      // still materializes instead of reporting divergence.
-      const cloneDb = openDb({ cwd: clone });
-      hireAgent(cloneDb, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
-      cloneDb.close();
-
-      const synced = await cli(clone, 'sync');
-      expect(synced.code).toBe(0);
-      expect(synced.stdout).toContain('Board refreshed');
-      const r = await cli(clone, 'list');
-      expect(r.stdout).toContain('canonical card');
-      // And the local hire survived the canonical import untouched.
-      const db2 = openDb({ cwd: clone });
-      const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
-        wish: string;
-        worktree: string;
-      }>;
-      db2.close();
-      expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
-    } finally {
-      rmSync(clone, { recursive: true, force: true });
-    }
-  });
-
-  test('explicit relative canonical path behaves like the default; no export path leaks hires', async () => {
-    const db = openDb({ cwd: repo });
-    createTask(db, { title: 'card' });
-    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/wt' });
-    db.close();
-
-    // m10: a snapshot is publishable wherever it is written, so the
-    // machine-local hire_roster never travels — not on a custom --write path
-    // either. The rows stay in the db, and the backup still round-trips because
-    // an import that brings no hires leaves the local roster alone.
+    // Every export path emits the same publishable snapshot, whatever the
+    // destination spelling, and a backup written off-canonical round-trips.
     const backup = await cli(repo, 'export', '--write', 'backup.json');
     expect(backup.code).toBe(0);
     const backupState = JSON.parse(readFileSync(join(repo, 'backup.json'), 'utf-8')) as StateExport;
-    expect(backupState.hire_roster).toEqual([]);
     expect(backupState.tasks).toHaveLength(1);
 
     const restored = await cli(repo, 'import', 'backup.json', '--replace');
     expect(restored.code).toBe(0);
-    const afterBackupImport = openDb({ cwd: repo });
-    const survivingHires = afterBackupImport.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
-      wish: string;
-      worktree: string;
-    }>;
-    afterBackupImport.close();
-    expect(survivingHires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
 
-    // The canonical path spelled explicitly (relative) still emits the roadmap
-    // slice and still counts as canonical on import: local hires preserved.
+    // The canonical path spelled explicitly (relative) still counts as canonical.
     const w = await cli(repo, 'export', '--write', '.genie/roadmap.json');
     expect(w.code).toBe(0);
-    const snap = JSON.parse(snapshotOf(repo)) as StateExport;
-    expect(snap.hire_roster).toEqual([]);
+    expect((JSON.parse(snapshotOf(repo)) as StateExport).tasks).toHaveLength(1);
 
     const r = await cli(repo, 'import', '.genie/roadmap.json', '--replace');
     expect(r.code).toBe(0);
-    const db2 = openDb({ cwd: repo });
-    const hires = db2.query('SELECT wish, worktree FROM hire_roster').all() as Array<{
-      wish: string;
-      worktree: string;
-    }>;
-    db2.close();
-    expect(hires).toEqual([{ wish: 'w', worktree: '/tmp/wt' }]);
 
     // The explicit spelling also recorded the sync baseline: no divergence.
     const settled = await cli(repo, 'sync');
@@ -1444,22 +1360,19 @@ describe('roadmap.json canonical sync', () => {
     }
   });
 
-  test('a subdirectory spelling of roadmap.json is roadmap-sliced, and is not the canonical baseline', async () => {
+  test('a subdirectory spelling of roadmap.json is written, but is not the canonical baseline', async () => {
     const db = openDb({ cwd: repo });
     createTask(db, { title: 'card' });
-    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/tmp/machine-local-wt' });
     db.close();
     await mkdir(join(repo, 'src', '.genie'), { recursive: true });
 
     // Same relative spelling, different cwd: it resolves to src/.genie/roadmap.json,
-    // NOT the canonical repo-root file. It is still a git-trackable file named
-    // roadmap.json, so the machine-local hire_roster must not travel in it.
+    // NOT the canonical repo-root file.
     const w = await cli(join(repo, 'src'), 'export', '--write', '.genie/roadmap.json');
     expect(w.code).toBe(0);
     expect(w.stderr).toBe('');
     const written = readFileSync(join(repo, 'src', '.genie', 'roadmap.json'), 'utf-8');
-    expect(written).not.toContain('/tmp/machine-local-wt');
-    expect((JSON.parse(written) as StateExport).hire_roster).toEqual([]);
+    expect((JSON.parse(written) as StateExport).tasks).toHaveLength(1);
 
     // And it did not stamp the sync baseline: the canonical file is still
     // unpublished, so sync publishes it instead of reporting an in-sync pair.
@@ -2008,40 +1921,6 @@ describe('task checkout liveness seeding', () => {
     after.close();
     expect(row.heartbeat_at).not.toBeNull();
     expect(row.heartbeat_at).toBe(row.claimed_at as number);
-  });
-});
-
-/**
- * m10 — `hire_roster` rows carry machine-local worktree paths. A snapshot is a
- * publishable artifact wherever it is written, so NO export path may emit them.
- */
-describe('task export never publishes hire_roster', () => {
-  test('stdout and an off-canonical --write both emit an empty roster', async () => {
-    const db = openDb({ cwd: repo });
-    createTask(db, { title: 'card' });
-    hireAgent(db, { wish: 'w', agentAdapterId: 'claude', worktree: '/home/someone/private/wt' });
-    db.close();
-
-    const dumped = await cli(repo, 'export');
-    expect(dumped.code).toBe(0);
-    expect(dumped.stdout).not.toContain('/home/someone/private/wt');
-    expect((JSON.parse(dumped.stdout) as StateExport).hire_roster).toEqual([]);
-
-    const offPath = join(repo, 'off.json');
-    const written = await cli(repo, 'export', '--write', offPath);
-    expect(written.code).toBe(0);
-    const offText = readFileSync(offPath, 'utf-8');
-    expect(offText).not.toContain('/home/someone/private/wt');
-    expect((JSON.parse(offText) as StateExport).hire_roster).toEqual([]);
-
-    // One database is one byte sequence on every export path.
-    expect(offText).toBe(dumped.stdout);
-
-    // The rows are sliced from the snapshot, never deleted from the database.
-    const after = openDb({ cwd: repo });
-    const hires = after.query('SELECT worktree FROM hire_roster').all() as Array<{ worktree: string }>;
-    after.close();
-    expect(hires).toEqual([{ worktree: '/home/someone/private/wt' }]);
   });
 });
 

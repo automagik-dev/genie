@@ -160,6 +160,22 @@ export interface OpenSqliteOptions {
    * without contending on the schema write lock. Omit to always run ensureSchema.
    */
   schemaIsCurrent?: (db: Database) => boolean;
+  /**
+   * Forward-only migration ladder for a database stamped BELOW
+   * `schemaVersion`. Without it, {@link initOrValidate} refuses every version it
+   * does not recognize, so bumping `schemaVersion` alone bricks every database
+   * already on disk. Steps are applied in ascending `from` order, each inside
+   * one transaction, and `PRAGMA user_version` is re-stamped once the chain
+   * reaches `schemaVersion`.
+   *
+   * A gap in the chain is NOT bridged silently: if no step starts at the
+   * stamped version, or the chain stops short of `schemaVersion`, the open
+   * still throws {@link ForeignDbError}. After the ladder runs the database
+   * falls through to the current-version branch — `schemaIsCurrent` then
+   * `ensureSchema` — so additive backfills apply to a just-migrated database
+   * exactly as they do to one already at `schemaVersion`.
+   */
+  migrations?: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }>;
 }
 
 /**
@@ -578,11 +594,38 @@ export function hasUserTables(db: Database): boolean {
 }
 
 /**
+ * Apply the forward-only ladder from `version` up to `schemaVersion`.
+ *
+ * Each step runs inside its own transaction, so a step that throws leaves the
+ * database at the version it started from rather than half-migrated. The
+ * `user_version` is re-stamped only once the whole chain arrives, and the caller
+ * then falls through to the current-version branch. Returns false when the chain
+ * cannot be completed, which the caller turns into a {@link ForeignDbError}: a
+ * partial ladder is a foreign database, never a silent best effort.
+ */
+function runMigrationLadder(db: Database, version: number, opts: OpenSqliteOptions): boolean {
+  const steps = opts.migrations ?? [];
+  let at = version;
+  for (const step of [...steps].sort((left, right) => left.from - right.from)) {
+    if (step.from !== at) continue;
+    db.transaction(() => step.apply(db))();
+    at = step.to;
+    if (at === opts.schemaVersion) break;
+  }
+  if (at !== opts.schemaVersion) return false;
+  db.exec(`PRAGMA user_version = ${opts.schemaVersion}`);
+  return true;
+}
+
+/**
  * Validate the stamped `user_version` and bring the schema up to date:
  *   - at `schemaVersion`: skip DDL when `schemaIsCurrent` confirms completeness,
  *     otherwise run `ensureSchema` (additive backfills stay within this version),
  *   - at 0: adopt an empty file as fresh, but refuse one already carrying foreign
  *     tables; ensure the schema and stamp the version,
+ *   - BELOW `schemaVersion` with a ladder that reaches it: migrate, re-stamp,
+ *     then fall through to the current-version branch so additive backfills
+ *     still apply,
  *   - anything else: a foreign database — refuse.
  */
 function initOrValidate(db: Database, version: number, opts: OpenSqliteOptions): void {
@@ -599,6 +642,14 @@ function initOrValidate(db: Database, version: number, opts: OpenSqliteOptions):
     }
     ensureSchema(db);
     db.exec(`PRAGMA user_version = ${schemaVersion}`);
+    return;
+  }
+  if (version > 0 && version < schemaVersion && runMigrationLadder(db, version, opts)) {
+    // Deliberate fall-through, not a second open: a database the ladder just
+    // brought to `schemaVersion` must receive the same additive backfills as
+    // one that was already there. Returning here instead left a migrated
+    // database permanently short of them.
+    if (!schemaIsCurrent || !schemaIsCurrent(db)) ensureSchema(db);
     return;
   }
   throw new ForeignDbError(path, version, schemaVersion, 'unrecognized schema version');

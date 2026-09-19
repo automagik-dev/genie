@@ -39,8 +39,14 @@ export {
   MalformedDbError,
 } from './sqlite-open.js';
 
-/** Schema revision stamped into `PRAGMA user_version`. Bump on breaking change. */
-export const CURRENT_SCHEMA_VERSION = 1;
+/**
+ * Schema revision stamped into `PRAGMA user_version`. Bump on breaking change,
+ * and add the matching {@link SCHEMA_MIGRATIONS} step in the same commit — a
+ * bump alone makes `initOrValidate` refuse every database already on disk.
+ *
+ * 1 -> 2 (wish `v6-stable-cut`): `hire_roster` dropped.
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 // ============================================================================
 // Path resolution (worktree-aware)
@@ -470,13 +476,34 @@ export function openDb(opts: OpenOptions = {}): Database {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     ensureSchema,
     schemaIsCurrent,
+    migrations: SCHEMA_MIGRATIONS,
   });
 }
+
+/**
+ * The forward-only ladder every stamped version below {@link
+ * CURRENT_SCHEMA_VERSION} climbs. Each step is destructive-change-only: an
+ * ADDITIVE change needs no step at all, because `ensureSchema` + the
+ * `schemaIsCurrent` shape check already backfill it within one version.
+ *
+ * 1 -> 2: drop `hire_roster`. It held machine-local worktree paths for the
+ * retired `genie ui-bridge` hire surface, was excluded from every snapshot
+ * genie ever published (`hire_roster: []`), and had no reader left. Dropping
+ * it is what made the 1 -> 2 bump — and therefore this ladder — necessary.
+ */
+const SCHEMA_MIGRATIONS: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }> = [
+  {
+    from: 1,
+    to: 2,
+    apply: (db) => {
+      db.exec('DROP TABLE IF EXISTS hire_roster');
+    },
+  },
+];
 
 /** Required table/column shape of a fully-initialized per-repo Genie database. */
 const EXPECTED_SCHEMA = {
   boards: ['id', 'name', 'created_at', 'lanes'],
-  hire_roster: ['wish', 'agent_adapter_id', 'profile', 'worktree', 'hired_at', 'state'],
   meta: ['key', 'value'],
   stage_log: ['id', 'task_id', 'stage', 'note', 'created_at'],
   task_dependencies: ['task_id', 'depends_on_id'],
@@ -652,16 +679,6 @@ CREATE TABLE IF NOT EXISTS wish_groups (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (wish, name)
-);
-
-CREATE TABLE IF NOT EXISTS hire_roster (
-  wish             TEXT NOT NULL,
-  agent_adapter_id TEXT NOT NULL,
-  profile          TEXT,
-  worktree         TEXT NOT NULL,
-  hired_at         INTEGER NOT NULL,
-  state            TEXT NOT NULL,
-  PRIMARY KEY (wish, agent_adapter_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_dependencies(depends_on_id);

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
+import { CURRENT_SCHEMA_VERSION, ensureSchema, isCurrentGenieDb, openDb } from './genie-db.js';
 import { roadmapSnapshot, serializeSnapshot, syncRoadmap } from './roadmap-sync.js';
 import {
   AssignmentReasonRequiredError,
@@ -49,18 +49,15 @@ import {
   formatWishRef,
   getBoardByName,
   getDependencies,
-  getHire,
   getStageLog,
   getTask,
   getTaskCard,
   getTaskEvents,
   getTaskLane,
-  hireAgent,
   importState,
   isRosterAgent,
   linkTaskToWish,
   listBoards,
-  listHires,
   listTasks,
   listTasksWithLane,
   livenessFromHeartbeat,
@@ -72,7 +69,6 @@ import {
   resolveBoard,
   setTaskWish,
   unblockTask,
-  unhireAgent,
 } from './task-state.js';
 
 const HUMAN = { author: 'felipe', authorKind: 'human' };
@@ -873,13 +869,14 @@ describe('lane projection carries enforcedBlock', () => {
   });
 });
 
-describe('block_kind is an additive v1 column', () => {
-  test('a v1 DB predating the column regains it on open, with no user_version change', () => {
+describe('block_kind is an additive column', () => {
+  test('a DB predating the column regains it on open, with no user_version change', () => {
     const path = join(dir, 'pre-kind.db');
     const seed = openDb({ path });
     const a = createTask(seed, { title: 'a' });
     blockTask(seed, a.id, 'r', HUMAN, 'hold');
-    // Roll the file back to a v1 DB written before the column existed.
+    // Roll the file back to a DB written, at this same schema version, before
+    // the column existed — an additive change, so no ladder step is involved.
     seed.exec('ALTER TABLE tasks DROP COLUMN block_kind');
     expect(isCurrentGenieDb(seed)).toBe(false); // schemaIsCurrent stays in lockstep
     seed.close();
@@ -896,7 +893,7 @@ describe('block_kind is an additive v1 column', () => {
     ).length;
     reopened.close();
 
-    expect(version).toBe(1);
+    expect(version).toBe(CURRENT_SCHEMA_VERSION);
     expect(columns).toContain('block_kind');
     expect(card?.enforcedBlock).toEqual({ reason: 'r', kind: 'work' });
     expect(stillOnce).toBe(1);
@@ -1488,164 +1485,16 @@ describe('stage_log → task_events one-time backfill (idempotent)', () => {
   });
 });
 
-describe('hire roster (single-row upsert / delete)', () => {
-  test('hireAgent creates a row and round-trips', () => {
-    const hired = hireAgent(db, {
-      wish: 'genie-ui-bridge',
-      agentAdapterId: 'claude',
-      profile: 'opus',
-      worktree: '/wt/g1',
-    });
-    expect(hired).toEqual({
-      wish: 'genie-ui-bridge',
-      agentAdapterId: 'claude',
-      profile: 'opus',
-      worktree: '/wt/g1',
-      hiredAt: hired.hiredAt,
-      state: 'hired',
-    });
-    expect(getHire(db, 'genie-ui-bridge', 'claude')).toEqual(hired);
-  });
-
-  test('profile is nullable', () => {
-    const hired = hireAgent(db, { wish: 'w', agentAdapterId: 'codex', worktree: '/wt/x' });
-    expect(hired.profile).toBeNull();
-  });
-
-  test('hireAgent is idempotent — re-hire keeps one row and preserves hired_at', () => {
-    const first = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/1', state: 'hired' });
-    // Re-hire with changed fields: still exactly one row, original hired_at preserved.
-    const second = hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/2', state: 'active' });
-    expect(listHires(db, 'w').length).toBe(1);
-    expect(second.hiredAt).toBe(first.hiredAt);
-    expect(second.worktree).toBe('/wt/2');
-    expect(second.state).toBe('active');
-  });
-
-  test('unhireAgent removes the row and is idempotent', () => {
-    hireAgent(db, { wish: 'w', agentAdapterId: 'a', worktree: '/wt/1' });
-    expect(unhireAgent(db, 'w', 'a')).toBe(true);
-    expect(getHire(db, 'w', 'a')).toBeNull();
-    // Deleting an absent hire is a no-op returning false, never an error.
-    expect(unhireAgent(db, 'w', 'a')).toBe(false);
-  });
-
-  test('listHires scopes by wish and orders stably', () => {
-    hireAgent(db, { wish: 'w1', agentAdapterId: 'b', worktree: '/wt/b' });
-    hireAgent(db, { wish: 'w1', agentAdapterId: 'a', worktree: '/wt/a' });
-    hireAgent(db, { wish: 'w2', agentAdapterId: 'c', worktree: '/wt/c' });
-    expect(listHires(db, 'w1').map((h) => h.agentAdapterId)).toEqual(['a', 'b']);
-    expect(listHires(db).map((h) => `${h.wish}:${h.agentAdapterId}`)).toEqual(['w1:a', 'w1:b', 'w2:c']);
-  });
-
-  test('exportState includes hire_roster rows', () => {
-    hireAgent(db, { wish: 'w', agentAdapterId: 'a', profile: 'p', worktree: '/wt/a', state: 'hired' });
-    const snapshot = exportState(db);
-    expect(snapshot.hire_roster).toEqual([
-      {
-        wish: 'w',
-        agent_adapter_id: 'a',
-        profile: 'p',
-        worktree: '/wt/a',
-        hired_at: snapshot.hire_roster[0].hired_at,
-        state: 'hired',
-      },
-    ]);
-  });
-});
-
-describe('multi-process hire/unhire return race', () => {
-  test('every hire returns its complete row even when another process unhires it', async () => {
-    const dbPath = join(dir, 'hire-unhire.db');
-    const seed = openDb({ path: dbPath });
-    hireAgent(seed, { wish: 'race', agentAdapterId: 'adapter', worktree: '/wt/seed' });
-    seed.close();
-    const workerPath = join(dir, 'hire-unhire-worker.ts');
-    writeFileSync(
-      workerPath,
-      `
-import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
-import { hireAgent, unhireAgent } from ${JSON.stringify(join(import.meta.dir, 'task-state.ts'))};
-const [dbPath, op] = process.argv.slice(2);
-const db = openDb({ path: dbPath });
-process.stdout.write('ready');
-await Bun.stdin.text();
-let invalid = 0;
-let removed = 0;
-try {
-  for (let i = 0; i < 3000; i++) {
-    if (op === 'unhire') {
-      if (unhireAgent(db, 'race', 'adapter')) removed++;
-    } else {
-      const row = hireAgent(db, {
-        wish: 'race', agentAdapterId: 'adapter', profile: 'profile-' + i,
-        worktree: '/wt/' + i, state: 'active',
-      });
-      if (!row || row.wish !== 'race' || row.agentAdapterId !== 'adapter' ||
-          row.profile !== 'profile-' + i || row.worktree !== '/wt/' + i ||
-          row.state !== 'active' || !Number.isInteger(row.hiredAt) || row.hiredAt <= 0) invalid++;
-    }
-  }
-  process.stdout.write(JSON.stringify({ invalid, removed }));
-} finally {
-  db.close();
-}
-`,
-    );
-    const workers = ['hire', 'unhire'].map((op) =>
-      Bun.spawn(['bun', 'run', workerPath, dbPath, op], {
-        stdin: 'pipe',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
-      }),
-    );
-    try {
-      // Both handles are open before either loop begins, so startup cannot
-      // serialize away the race. The child waits for stdin EOF after readiness.
-      await Promise.all(
-        workers.map(async (worker) => {
-          const reader = worker.stdout.getReader();
-          const ready = await reader.read();
-          reader.releaseLock();
-          expect(new TextDecoder().decode(ready.value)).toBe('ready');
-        }),
-      );
-      for (const worker of workers) worker.stdin.end();
-      const results = await Promise.all(
-        workers.map(async (worker) => {
-          const reader = worker.stdout.getReader();
-          let output = '';
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            output += new TextDecoder().decode(value);
-          }
-          return { output, stderr: await new Response(worker.stderr).text(), code: await worker.exited };
-        }),
-      );
-      for (const result of results) {
-        expect(result.code).toBe(0);
-        expect(result.stderr).toBe('');
-      }
-      expect(JSON.parse(results[0].output).invalid).toBe(0);
-      expect(JSON.parse(results[1].output).removed).toBeGreaterThan(0);
-    } finally {
-      for (const worker of workers) worker.kill();
-      await Promise.all(workers.map((worker) => worker.exited));
-    }
-  }, 30_000);
-});
-
 // ---------------------------------------------------------------------------
-// Multi-PROCESS roster write vs task-create race: concurrent bun processes hire
-// agents and create tasks against the same on-disk WAL database. Every writer
-// must succeed cleanly — WAL + busy_timeout serialize them into ordered commits,
-// never a SQLITE_BUSY failure or a corrupt row. Proves the single-statement
-// roster upsert inherits the handle's concurrency contract (sqlite-open.ts).
+// Multi-PROCESS timeline-append vs task-create race: concurrent bun processes
+// append events and create tasks against the same on-disk WAL database. Every
+// writer must succeed cleanly — WAL + busy_timeout serialize them into ordered
+// commits, never a SQLITE_BUSY failure or a corrupt row. Proves a
+// single-statement write inherits the handle's concurrency contract
+// (sqlite-open.ts). The hire upsert this covered until v6 went with the table.
 // ---------------------------------------------------------------------------
-describe('multi-process roster write vs task-create concurrency', () => {
-  test('concurrent hires and task-creates all commit with no busy-failure', async () => {
+describe('multi-process event-append vs task-create concurrency', () => {
+  test('concurrent appends and task-creates all commit with no busy-failure', async () => {
     const dbPath = join(dir, 'roster-race.db');
     const seed = openDb({ path: dbPath });
     seed.close(); // checkpoint so child processes see a committed, current schema
@@ -1657,12 +1506,12 @@ describe('multi-process roster write vs task-create concurrency', () => {
       workerPath,
       `
 import { openDb } from ${JSON.stringify(gdbPath)};
-import { hireAgent, createTask } from ${JSON.stringify(tsPath)};
+import { appendTaskEvent, createTask } from ${JSON.stringify(tsPath)};
 const [dbPath, op, idx] = process.argv.slice(2);
 const db = openDb({ path: dbPath });
 try {
-  if (op === 'hire') hireAgent(db, { wish: 'race', agentAdapterId: 'a' + idx, worktree: '/wt/' + idx });
-  else createTask(db, { title: 'task-' + idx, wish: 'race' });
+  const created = createTask(db, { title: 'task-' + idx, wish: 'race' });
+  if (op === 'append') appendTaskEvent(db, created.id, { kind: 'comment', note: 'n' + idx });
   process.stdout.write('OK');
 } catch (e) {
   process.stdout.write('ERR:' + (e && e.message));
@@ -1675,7 +1524,7 @@ try {
 
     const N = 8;
     const runs = Array.from({ length: N }, (_, i) => {
-      const op = i % 2 === 0 ? 'hire' : 'create';
+      const op = i % 2 === 0 ? 'append' : 'create';
       const proc = Bun.spawn(['bun', 'run', workerPath, dbPath, op, String(i)], { stdout: 'pipe', stderr: 'pipe' });
       return (async () => {
         const out = await new Response(proc.stdout).text();
@@ -1701,13 +1550,13 @@ try {
     expect(ok).toBe(N);
     expect(outcomes.some((o) => o.includes('SQLITE_BUSY'))).toBe(false);
 
-    // Final state is consistent: 4 hires + 4 tasks, all under the 'race' wish.
+    // Final state is consistent: N tasks, half of them carrying one event.
     const verify = openDb({ path: dbPath });
     const snapshot = exportState(verify);
     verify.close();
-    expect(snapshot.hire_roster.length).toBe(N / 2);
-    expect(snapshot.tasks.length).toBe(N / 2);
-    expect(snapshot.hire_roster.every((h) => h.wish === 'race')).toBe(true);
+    expect(snapshot.tasks.length).toBe(N);
+    expect(snapshot.tasks.every((t) => t.wish === 'race')).toBe(true);
+    expect(snapshot.task_events.filter((e) => e.kind === 'comment').length).toBe(N / 2);
   }, 30_000);
 });
 

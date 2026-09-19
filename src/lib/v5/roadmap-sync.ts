@@ -137,13 +137,15 @@ function baselineHolds(version: MarkerHashVersion, recorded: string, canonical: 
 }
 
 /**
- * The published slice of the database: everything EXCEPT hire_roster, whose
- * rows carry machine-local worktree paths that must never travel between
- * machines. This is what roadmap.json holds and what sync hashes compare —
- * local hires can neither dirty the snapshot nor be destroyed by an import.
+ * The published slice of the database. It is the WHOLE database since v6: the
+ * one table this ever excluded was `hire_roster`, whose rows carried
+ * machine-local worktree paths, and the v1 -> v2 migration dropped it. The
+ * function stays as the named seam roadmap.json and the sync hashes are
+ * defined against, so a future machine-local table has one place to be
+ * excluded rather than three call sites to remember.
  */
 export function roadmapSnapshot(db: Database): StateExport {
-  return { ...exportState(db), hire_roster: [] };
+  return exportState(db);
 }
 
 interface SyncMarker {
@@ -287,9 +289,7 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const dbHash = canonicalHash(dbState);
 
   if (!existsSync(filePath)) {
-    // Roadmap-scoped: hires are machine-local and never publish, so a hire-only
-    // db has nothing to publish and must not create an empty snapshot.
-    if (!hasOperationalState(db, { includeHireRoster: false })) return { action: 'none' };
+    if (!hasOperationalState(db)) return { action: 'none' };
     writeSnapshotFile(filePath, dbState);
     writeMarker(markerPath, { fileHash: dbHash, dbHash });
     return { action: 'exported', message: `Published board snapshot to ${filePath}.` };
@@ -326,13 +326,9 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
   const resolution =
     'Resolve with `genie task import --replace` (take the snapshot) or `genie task export --write` (keep the local board).';
 
-  // Roadmap-scoped decision: hires never travel in the snapshot, so a local
-  // hire alone must not count as unpublished board state — otherwise a fresh
-  // clone that hired an agent before its first sync would read as "both moved"
-  // and wedge permanently into diverged.
-  if (fileChanged && (!dbChanged || !hasOperationalState(db, { includeHireRoster: false }))) {
+  if (fileChanged && (!dbChanged || !hasOperationalState(db))) {
     try {
-      importState(db, parsed, { replace: true, preserveHireRoster: true });
+      importState(db, parsed, { replace: true });
     } catch (err) {
       // Schema skew (or a structurally unimportable snapshot) is exactly the
       // "I cannot reconcile these two" class this function must surface as a
@@ -400,7 +396,13 @@ function mergeTimelines(db: Database, dbState: StateExport, parsed: unknown): nu
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
   const file = parsed as Partial<StateExport>;
   if (!Array.isArray(file.task_events)) return null;
-  const stripped = (state: Partial<StateExport>) => ({ ...state, task_events: [], hire_roster: [] });
+  // `hire_roster` is dropped from BOTH sides rather than zeroed: a pre-v6
+  // roadmap.json still carries the key (always `[]`), the database no longer
+  // has it at all, and an absent key does not hash like an empty array.
+  const stripped = (state: Partial<StateExport>) => {
+    const { hire_roster: _retiredInV6, ...rest } = state as Partial<StateExport> & { hire_roster?: unknown };
+    return { ...rest, task_events: [] };
+  };
   if (canonicalHash(stripped(dbState)) !== canonicalHash(stripped(file))) return null;
   const known = new Set(dbState.task_events.map(eventKey));
   const knownTasks = new Set(dbState.tasks.map((t) => t.id));
