@@ -24,7 +24,6 @@ const SHIPPED_SKILLS = [
   'genie',
   'genie-hacks',
   'merge',
-  'quick',
   'refine',
   'report',
   'research',
@@ -1026,9 +1025,8 @@ describe('Group E release and documentation contracts', () => {
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
-  test('ships wish as the one-task delivery front door, quick as a deprecation stub, and no pm', () => {
+  test('ships wish as the one-task delivery front door, with quick and pm both gone', () => {
     const wish = read('skills/wish/SKILL.md');
-    const quick = read('skills/quick/SKILL.md');
     const router = read('skills/genie/SKILL.md');
     const lifecycle = read('skills/genie/reference/lifecycle.md');
     const overview = read('skills/README.md');
@@ -1037,15 +1035,13 @@ describe('Group E release and documentation contracts', () => {
     expect(wish).toContain('.claude/workflows/wish.js');
     expect(wish).toContain('`merge-ready`');
     expect(wish).toContain('The workflow never deletes a worktree or a branch.');
-    expect(quick).toContain('Retired: `quick` is superseded by `wish`');
-    expect(quick).not.toContain('60 minutes');
-    expect(skillNames).toContain('quick');
+    expect(skillNames).not.toContain('quick');
     expect(skillNames).not.toContain('pm');
     expect(router).toContain('| `wish` or `dream` |');
     expect(router).not.toContain('"pm"');
     expect(lifecycle).toContain('`wish` delivers one admitted task');
     expect(lifecycle).not.toContain('| `pm` |');
-    expect(overview).toContain('| `quick` | delivery | none | Retired');
+    expect(overview).not.toContain('| `quick` |');
     expect(overview).not.toContain('`pm`');
   });
 

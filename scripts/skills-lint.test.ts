@@ -818,24 +818,30 @@ describe('house size — every shipped SKILL.md is 40-90 lines', () => {
     expect(violation?.detail).toContain('fixture/references/');
   });
 
-  test('the waiver table holds exactly quick, with a real ceiling and a reason', () => {
-    expect([...SKILL_SIZE_WAIVERS.keys()]).toEqual(['quick']);
+  test('the shipped waiver table is empty, and every row it may ever hold is bounded', () => {
+    // v6 deleted `skills/quick/`, the last waived skill. Every skill this repo
+    // ships is now held to the plain house window with no exception at all.
+    expect([...SKILL_SIZE_WAIVERS.keys()]).toEqual([]);
     for (const [, waiver] of SKILL_SIZE_WAIVERS) {
       expect(Number.isFinite(waiver.max)).toBe(true);
       expect(waiver.max).toBeLessThanOrEqual(SKILL_MAX_LINES);
       expect(waiver.reason.length).toBeGreaterThan(20);
     }
-    expect(SKILL_SIZE_WAIVERS.get('quick')?.max).toBe(8);
   });
 
-  test('the quick waiver lets the retirement stub shrink but never grow', () => {
-    expect(checkSkillSize('quick', skillOf(8))).toBeNull();
-    expect(checkSkillSize('quick', skillOf(5))).toBeNull();
-    const grown = checkSkillSize('quick', skillOf(9));
+  test('a waiver still narrows the window in both directions — the mechanism outlives its last row', () => {
+    // Injected, not shipped: an empty table must not make the waiver path
+    // untested, or the next row lands with no coverage behind it.
+    const waivers = new Map([['stub', { min: 0, max: 8, reason: 'retirement stub, deleted after three runs' }]]);
+    expect(checkSkillSize('stub', skillOf(8), waivers)).toBeNull();
+    expect(checkSkillSize('stub', skillOf(5), waivers)).toBeNull();
+    const grown = checkSkillSize('stub', skillOf(9), waivers);
     expect(grown?.lines).toBe(9);
     expect(grown?.detail).toContain('trim to 8 line(s) or fewer');
     expect(grown?.detail).toContain('waived window 0-8');
     expect(grown?.detail).toContain('retirement stub');
+    // Without the waiver the same file is a floor violation, not a pass.
+    expect(checkSkillSize('stub', skillOf(8))?.detail).toContain('grow to at least');
   });
 
   test('wish is held to the plain house window — its waiver was retired once it fit', () => {

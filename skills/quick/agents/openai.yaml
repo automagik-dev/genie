@@ -1,4 +1,0 @@
-interface:
-  display_name: "Quick (retired)"
-  short_description: "Retired — use wish to deliver one task end to end"
-  default_prompt: "This skill is retired; run wish with the same objective."
