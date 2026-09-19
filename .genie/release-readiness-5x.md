@@ -47,7 +47,7 @@ stamp path (execDir/VERSION) works for compiled binaries. ✅
   idempotent on second run (exit 0). `genie task list` and `genie board` both work. ✅
 
 ### Release-workflow chain — coherent ✅
-`version.yml` (derives `<major>.YYMMDD.N`, `bun run version` syncs all 4 JSONs, commits +
+`version.yml` (derives `<major>.YYMMDD.N`, `bun run version` syncs the version JSONs, commits +
 pushes tag `v<version>`) → tag `v*` fires `release.yml` orchestrator → `build-tarballs.yml`
 (matrix, native runners) → `sign-attest.yml` (cosign keyless + SLSA L3) →
 `release-publish.yml` (gh release + 12 assets + `.well-known/*.json`). Single run via
@@ -121,11 +121,13 @@ Root `package.json`=**5.260702.1**, but:
 The **shipped tarball** carries `plugins/genie/.claude-plugin/plugin.json` = 4.260702.10
 inside it (verified in the extracted darwin tarball). Cause: commit `e92ad2f1`
 ("chore(v5)!: 5.x version scheme…") hand-set the root version without running
-`bun run version` — `scripts/version.ts` is the thing that syncs all four files (lines
-80-101) and it wasn't run.
+`bun run version` — `scripts/version.ts` is the thing that syncs the version files (lines
+80-101) and it wasn't run. (That set was four at the time of this audit; `version.yml`'s
+`JSON_FILES` names **three** today: `package.json`, `plugins/genie/orca-plugin.json`,
+`plugins/genie/package.json`.)
 Severity depends on the release route:
 - **Normal dev-bump route (auto-heals):** a real release is derived on a dev CI push
-  where `version.yml` runs `bun run version` → all 4 files rewritten to `<major>.YYMMDD.N`
+  where `version.yml` runs `bun run version` → every version file rewritten to `<major>.YYMMDD.N`
   (`5.YYMMDD.N` on the day of this audit), committed, tagged. The drift disappears.
   Cosmetic.
 - **Direct tag from this commit (real mismatch):** the release ships a plugin advertising

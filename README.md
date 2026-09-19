@@ -32,7 +32,7 @@ The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the
 Genie ships exactly three surfaces, and nothing else:
 
 1. **The signed binary** — installed and updated by `install.sh` and `genie update`.
-2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which creates a product home for every one of the skills CLI's 77 registered agents).
+2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — about 53 of them actually materialized on the 2026-09-01 dogfood host, and a later `--all`-era record named 57).
 3. **The Orca plugin** — an optional lifecycle integration you register with Orca yourself (see below).
 
 There is no Claude marketplace plugin, no Codex plugin, no Genie-installed hooks, and no role-agent profiles.
