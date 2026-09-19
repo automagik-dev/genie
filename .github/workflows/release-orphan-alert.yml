@@ -114,13 +114,35 @@ jobs:
           # #2211–#2410 era had 664 release-incident issues open at once, and
           # a truncated page would starve the oldest incidents forever — they
           # are exactly the ones whose tags have long since been released.
-          RESOLUTION_PREFIX='Resolved automatically by Release Orphan Alert'
+          # The one-shot receipt is a LABEL written AFTER the close, never the
+          # resolution comment: a close that fails once the comment is already
+          # posted must not strand the incident open for good (the next fire
+          # would read its own comment as "already auto-resolved" and skip it
+          # forever). With the label, a failed close leaves no receipt — the
+          # next fire retries and the worst case is one duplicate comment —
+          # while a failed label edit leaves the issue closed, which is the
+          # outcome that mattered. Creating it is idempotent and covered by
+          # `issues: write`.
+          RESOLVED_LABEL=release-auto-resolved
+          gh label create "$RESOLVED_LABEL" --repo "$REPO" --force \
+            --description 'Closed automatically by Release Orphan Alert once the tag gained a published Release' \
+            --color 0E8A16
           OPEN_INCIDENTS=$(gh issue list --repo "$REPO" \
             --label release-incident --state open --limit 1000 \
-            --json number,title --jq '.[] | [.number, .title] | @tsv')
+            --json number,title,labels \
+            --jq '.[] | [.number, .title, ([.labels[].name] | join(","))] | @tsv')
           CLOSED_COUNT=0
-          while IFS=$'\t' read -r INCIDENT_NUMBER INCIDENT_TITLE; do
+          while IFS=$'\t' read -r INCIDENT_NUMBER INCIDENT_TITLE INCIDENT_LABELS; do
             [[ -n "$INCIDENT_NUMBER" && -n "$INCIDENT_TITLE" ]] || continue
+            # One shot per issue, read from the listing already fetched — no
+            # per-incident API call. Reopening an auto-closed incident is a
+            # deliberate operator act (the Release exists but something about
+            # it is still wrong); re-commenting and re-closing it every 30
+            # minutes would override that human decision forever.
+            if [[ ",${INCIDENT_LABELS}," == *",${RESOLVED_LABEL},"* ]]; then
+              echo "issue #${INCIDENT_NUMBER} was already auto-resolved once (reopened deliberately); leaving open"
+              continue
+            fi
             # Recover the tag from the title this workflow itself writes.
             # Anything else carrying the label is left alone.
             INCIDENT_TAG="${INCIDENT_TITLE#release-incident: }"
@@ -137,27 +159,26 @@ jobs:
             if [[ -z "$RELEASE_URL" ]]; then
               continue
             fi
-            # One shot per issue. Reopening an auto-closed incident is a
-            # deliberate operator act (the Release exists but something about
-            # it is still wrong); re-commenting and re-closing it every 30
-            # minutes would override that human decision forever. The
-            # resolution comment this pass writes is the receipt: if it is
-            # already there, this issue has had its automatic close and is
-            # never touched again.
-            PRIOR_RESOLUTIONS=$(gh issue view "$INCIDENT_NUMBER" --repo "$REPO" \
-              --json comments \
-              --jq "[.comments[].body | select(startswith(\"${RESOLUTION_PREFIX}\"))] | length" </dev/null)
-            if [[ "$PRIOR_RESOLUTIONS" -gt 0 ]]; then
-              echo "issue #${INCIDENT_NUMBER} was already auto-resolved once (reopened deliberately); leaving open"
-              continue
-            fi
-            # Comment first: the close must carry its evidence even if the
-            # close call itself is what fails. `</dev/null` on both calls so
-            # neither can consume the incident list this loop is reading.
+            # Strict order: comment (the evidence) → close (the outcome that
+            # matters) → label (the receipt that makes it one-shot). Each
+            # failure mode then degrades to something recoverable, and
+            # `</dev/null` on every call so none can consume the incident list
+            # this loop is reading.
             gh issue comment "$INCIDENT_NUMBER" --repo "$REPO" \
-              --body "${RESOLUTION_PREFIX}: \`${INCIDENT_TAG}\` now has a published GitHub Release — ${RELEASE_URL}" </dev/null
+              --body "Resolved automatically by Release Orphan Alert: \`${INCIDENT_TAG}\` now has a published GitHub Release — ${RELEASE_URL}" </dev/null
             gh issue close "$INCIDENT_NUMBER" --repo "$REPO" --reason completed </dev/null
+            gh issue edit "$INCIDENT_NUMBER" --repo "$REPO" --add-label "$RESOLVED_LABEL" </dev/null
             CLOSED_COUNT=$((CLOSED_COUNT + 1))
+            # Backlog drain guard. GITHUB_TOKEN is capped at 1,000 REST writes
+            # per hour per repository, and the #2211–#2410 era left 664
+            # incidents open at once: three writes each would burn the whole
+            # budget in one fire and take the orphan filing below down with
+            # it. Fifty per fire (150 writes) drains that backlog in a day of
+            # cron and leaves the rest of the hour's budget alone.
+            if [[ "$CLOSED_COUNT" -ge 50 ]]; then
+              echo "::notice::auto-close budget reached (50 issues this fire); the remaining healed incidents close on the next fire"
+              break
+            fi
           done <<<"$OPEN_INCIDENTS"
           echo "auto-closed ${CLOSED_COUNT} healed release-incident issue(s)"
           # ---------------------------------------------------------------

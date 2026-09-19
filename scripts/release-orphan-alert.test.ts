@@ -102,16 +102,45 @@ describe('release-orphan-alert workflow', () => {
     });
 
     test('auto-closes an issue at most once, so a deliberate reopen stands', () => {
-      expect(workflow).toContain("RESOLUTION_PREFIX='Resolved automatically by Release Orphan Alert'");
-      expect(workflow).toContain('PRIOR_RESOLUTIONS=$(gh issue view "$INCIDENT_NUMBER" --repo "$REPO"');
-      expect(workflow).toContain('select(startswith(\\"${RESOLUTION_PREFIX}\\"))] | length');
-      const guardIndex = workflow.indexOf('if [[ "$PRIOR_RESOLUTIONS" -gt 0 ]]; then');
+      // The receipt is a LABEL, read from the listing already fetched.
+      expect(workflow).toContain('RESOLVED_LABEL=release-auto-resolved');
+      expect(workflow).toContain('gh label create "$RESOLVED_LABEL" --repo "$REPO" --force');
+      expect(workflow).toContain('--json number,title,labels');
+      expect(workflow).toContain('[.number, .title, ([.labels[].name] | join(","))] | @tsv\'');
+      expect(workflow).toContain('read -r INCIDENT_NUMBER INCIDENT_TITLE INCIDENT_LABELS');
+      const guardIndex = workflow.indexOf('if [[ ",${INCIDENT_LABELS}," == *",${RESOLVED_LABEL},"* ]]; then');
       const commentIndex = workflow.indexOf('gh issue comment "$INCIDENT_NUMBER"');
       expect(guardIndex).toBeGreaterThan(-1);
       expect(commentIndex).toBeGreaterThan(guardIndex);
       expect(workflow.slice(guardIndex, commentIndex)).toContain('continue');
-      // The comment this pass writes is the receipt the guard looks for.
-      expect(workflow).toContain('--body "${RESOLUTION_PREFIX}:');
+      // No per-incident lookup, and no comment-derived receipt.
+      expect(workflow).not.toContain('gh issue view');
+      expect(workflow).not.toContain('RESOLUTION_PREFIX');
+    });
+
+    test('the receipt label is written AFTER the close, so a failed close strands nothing', () => {
+      // Comment (evidence) → close (the outcome) → label (the receipt). A
+      // close that fails after the comment landed must leave NO receipt, so
+      // the next fire retries instead of reading its own comment as "already
+      // auto-resolved" and skipping the issue forever.
+      const commentIndex = workflow.indexOf('gh issue comment "$INCIDENT_NUMBER"');
+      const closeIndex = workflow.indexOf('gh issue close "$INCIDENT_NUMBER"');
+      const labelIndex = workflow.indexOf(
+        'gh issue edit "$INCIDENT_NUMBER" --repo "$REPO" --add-label "$RESOLVED_LABEL"',
+      );
+      expect(commentIndex).toBeGreaterThan(-1);
+      expect(closeIndex).toBeGreaterThan(commentIndex);
+      expect(labelIndex).toBeGreaterThan(closeIndex);
+    });
+
+    test('the close pass is bounded per fire so a backlog drain cannot burn the write budget', () => {
+      const incrementIndex = workflow.indexOf('CLOSED_COUNT=$((CLOSED_COUNT + 1))');
+      const breakGuardIndex = workflow.indexOf('if [[ "$CLOSED_COUNT" -ge 50 ]]; then');
+      expect(incrementIndex).toBeGreaterThan(-1);
+      expect(breakGuardIndex).toBeGreaterThan(incrementIndex);
+      const loopEnd = workflow.indexOf('done <<<"$OPEN_INCIDENTS"');
+      expect(loopEnd).toBeGreaterThan(breakGuardIndex);
+      expect(workflow.slice(breakGuardIndex, loopEnd)).toContain('break');
     });
 
     test('the open-incident listing is not truncated at 100', () => {
