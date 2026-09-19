@@ -7,6 +7,7 @@ import {
   InvalidOrchestrationAuthorityError,
   LocalLifecycleDisabledError,
   ORCA_FORBIDDEN,
+  ORCA_INVALID_AUTHORITY_MESSAGE,
   ORCA_REFUSAL_MESSAGE,
   assertLocalLifecycleEnabled,
   isOrcaForbiddenInvocation,
@@ -117,24 +118,43 @@ describe('ORCA_FORBIDDEN', () => {
     expect(ORCA_REFUSAL_MESSAGE).toContain('orca');
     expect(ORCA_REFUSAL_MESSAGE).toContain('genie setup --orchestration-mode standalone');
   });
+
+  test('the unparseable-authority literal claims no authority it never read', () => {
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('orchestration.mode');
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('genie doctor');
+    // Same remedy — it rewrites the config, which is what repairs this.
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).toContain('genie setup --orchestration-mode standalone');
+    // It must NOT assert that orca owns lifecycle state: genie read nothing,
+    // and Orca may not be installed on this host at all.
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).not.toContain('orca is the lifecycle authority');
+    expect(ORCA_INVALID_AUTHORITY_MESSAGE).not.toBe(ORCA_REFUSAL_MESSAGE);
+  });
 });
 
 describe('orcaOwnsLifecycle', () => {
-  test('is false for standalone and an absent config, true for orca', () => {
+  test('is false for standalone and an absent config, "orca" for orca', () => {
     fixture();
     expect(orcaOwnsLifecycle()).toBe(false);
     fixture({ orchestration: { mode: 'standalone' } });
     expect(orcaOwnsLifecycle()).toBe(false);
     fixture({ orchestration: { mode: 'orca' } });
-    expect(orcaOwnsLifecycle()).toBe(true);
+    expect(orcaOwnsLifecycle()).toBe('orca');
   });
 
-  test('fails closed on an authority it cannot parse', () => {
-    // An unreadable `orchestration.mode` proves nothing — least of all
-    // standalone — so the CLI gate refuses rather than guessing.
+  test('fails closed as "invalid" — a distinct verdict, not orca — on an authority it cannot parse', () => {
+    // An unreadable `orchestration.mode` proves nothing, least of all
+    // standalone, so the CLI gate still refuses. But it is a DIFFERENT fact
+    // from "Orca owns this host", and it carries its own line.
     fixture({ orchestration: { mode: 'automatic' } });
-    expect(orcaOwnsLifecycle()).toBe(true);
+    expect(orcaOwnsLifecycle()).toBe('invalid');
     fixture({ orchestration: {} });
-    expect(orcaOwnsLifecycle()).toBe(true);
+    expect(orcaOwnsLifecycle()).toBe('invalid');
   });
+
+  // NOTE: the `throw error` branch for a non-authority fault (an unreadable
+  // GENIE_HOME, a `getGenieConfigPath()` failure) is deliberately not exercised
+  // here — every way to provoke it is either root-dependent or already funnelled
+  // into `InvalidOrchestrationAuthorityError` by `resolveOrchestrationMode`. It
+  // stays as defence: a real fault must never be relabelled as a config problem,
+  // which would tell the operator to fix a file that is fine.
 });

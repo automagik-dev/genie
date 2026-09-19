@@ -27,7 +27,12 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
-import { ORCA_REFUSAL_MESSAGE, isOrcaForbiddenInvocation, orcaOwnsLifecycle } from './lib/orchestration-mode.js';
+import {
+  ORCA_INVALID_AUTHORITY_MESSAGE,
+  ORCA_REFUSAL_MESSAGE,
+  isOrcaForbiddenInvocation,
+  orcaOwnsLifecycle,
+} from './lib/orchestration-mode.js';
 import { colorizeFor } from './lib/term-color.js';
 import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
@@ -297,8 +302,11 @@ function invocationPath(actionCommand: Command): [string, string | undefined] {
 program.hook('preAction', (_thisCommand, actionCommand) => {
   const [root, sub] = invocationPath(actionCommand);
   if (!isOrcaForbiddenInvocation(root, sub)) return;
-  if (!orcaOwnsLifecycle()) return;
-  printErr(ORCA_REFUSAL_MESSAGE);
+  const verdict = orcaOwnsLifecycle();
+  if (verdict === false) return;
+  // Two reasons to refuse, two fixed lines, one exit code. Both are "the
+  // operator must act"; they differ in what genie can honestly claim to know.
+  printErr(verdict === 'orca' ? ORCA_REFUSAL_MESSAGE : ORCA_INVALID_AUTHORITY_MESSAGE);
   process.exit(2);
 });
 

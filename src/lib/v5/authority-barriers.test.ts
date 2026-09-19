@@ -15,6 +15,7 @@ import { openReadonlyHandle } from '../../term-commands/context.js';
 import {
   InvalidOrchestrationAuthorityError,
   LocalLifecycleDisabledError,
+  ORCA_INVALID_AUTHORITY_MESSAGE,
   ORCA_REFUSAL_MESSAGE,
 } from '../orchestration-mode.js';
 import { openDb } from './genie-db.js';
@@ -169,30 +170,37 @@ describe('Orca authority barriers', () => {
       config: { orchestration: { mode: 'orca' }, runtime: { defaultAgent: 'invalid' } },
       error: LocalLifecycleDisabledError,
       code: 'local_lifecycle_disabled_in_orca_mode',
+      // Orca WAS read successfully here — the invalid field is unrelated — so
+      // this case keeps the orca line. Only the four below are unparseable.
+      message: ORCA_REFUSAL_MESSAGE,
     },
     {
       name: 'malformed authority field',
       config: { orchestration: { mode: 'automatic' } },
       error: InvalidOrchestrationAuthorityError,
       code: 'invalid_orchestration_authority',
+      message: ORCA_INVALID_AUTHORITY_MESSAGE,
     },
     {
       name: 'missing authority mode',
       config: { orchestration: {} },
       error: InvalidOrchestrationAuthorityError,
       code: 'invalid_orchestration_authority',
+      message: ORCA_INVALID_AUTHORITY_MESSAGE,
     },
     {
       name: 'misspelled authority field',
       config: { orchestration: { mod: 'orca' } },
       error: InvalidOrchestrationAuthorityError,
       code: 'invalid_orchestration_authority',
+      message: ORCA_INVALID_AUTHORITY_MESSAGE,
     },
     {
       name: 'extra authority field',
       config: { orchestration: { mode: 'orca', extra: true } },
       error: InvalidOrchestrationAuthorityError,
       code: 'invalid_orchestration_authority',
+      message: ORCA_INVALID_AUTHORITY_MESSAGE,
     },
   ] as const) {
     test(`${fixtureCase.name} refuses CLI and low-level operations without lifecycle mutations`, async () => {
@@ -216,12 +224,15 @@ describe('Orca authority barriers', () => {
         ]);
         // AMENDED (owner decision 2026-09-19): an authority genie cannot parse
         // proves nothing — least of all standalone — so the CLI gate fails
-        // closed with the SAME fixed line and the same exit 2 as explicit orca.
-        // The remedy is identical, and it repairs a malformed config too. The
-        // typed codes below are still the low-level contract.
+        // closed at the same exit 2 as explicit orca. It gets its OWN line,
+        // though: claiming "orca is the lifecycle authority" about a config
+        // that was never successfully read is a claim genie cannot support,
+        // and it sent an operator with a corrupt `config.json` hunting for an
+        // Orca install that need not exist. The typed codes below are still the
+        // low-level contract.
         expect(exitCode).toBe(2);
         expect(stdout).toBe('');
-        expect(stderr).toBe(`${ORCA_REFUSAL_MESSAGE}\n`);
+        expect(stderr).toBe(`${fixtureCase.message}\n`);
         expect(existsSync(join(repo, '.genie'))).toBe(false);
       }
 

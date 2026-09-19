@@ -59,16 +59,29 @@ export function assertLocalLifecycleEnabled(): void {
 }
 
 /**
- * True when this host cannot prove Genie still owns lifecycle state — Orca is
- * the selected authority, OR the authority itself is unreadable. An
- * `orchestration.mode` genie cannot parse proves nothing, least of all
- * `standalone`, so the CLI gate fails closed; the one remedy below repairs both.
+ * Why the CLI gate may not let a lifecycle verb run: Orca is the selected
+ * authority, or the authority itself is unparseable. `false` is the only answer
+ * that proves Genie still owns lifecycle state.
+ *
+ * The two refusing answers are kept DISTINCT rather than collapsed into one
+ * boolean, because they are different facts and each has its own operator-facing
+ * line. Telling someone with a corrupt `config.json` that "orca is the lifecycle
+ * authority for this host" is a claim genie cannot support — nothing was
+ * successfully read — and it sends them looking for an Orca install that may not
+ * exist. Both still fail closed at exit 2: an `orchestration.mode` genie cannot
+ * parse proves nothing, least of all `standalone`.
  */
-export function orcaOwnsLifecycle(): boolean {
+export type OrcaLifecycleVerdict = 'orca' | 'invalid' | false;
+
+export function orcaOwnsLifecycle(): OrcaLifecycleVerdict {
   try {
-    return resolveOrchestrationMode() === 'orca';
-  } catch {
-    return true;
+    return resolveOrchestrationMode() === 'orca' ? 'orca' : false;
+  } catch (error) {
+    // ONLY the authority's own typed failure is a verdict. An IO error, an
+    // EACCES on the config, or any other throw is a real fault and must not be
+    // silently relabelled as a configuration problem.
+    if (error instanceof InvalidOrchestrationAuthorityError) return 'invalid';
+    throw error;
   }
 }
 
@@ -95,6 +108,18 @@ export const ORCA_FORBIDDEN: ReadonlySet<string> = new Set(['task', 'board', 'id
  */
 export const ORCA_REFUSAL_MESSAGE =
   'Refused: this verb is disabled while orca is the lifecycle authority for this host. Run `genie setup --orchestration-mode standalone` to give lifecycle state back to Genie.';
+
+/**
+ * The SECOND fixed literal, for the other reason the gate refuses: genie could
+ * not parse `orchestration.mode` at all, so it cannot prove standalone and
+ * fails closed at the same exit 2. It must NOT claim orca is the authority —
+ * nothing was read, orca may not even be installed, and the first message sent
+ * an operator with a corrupt `config.json` hunting for an Orca that was not
+ * there. It names the unparseable field, points at the verb that reports the
+ * state, and gives the same remedy, which rewrites the config and repairs it.
+ */
+export const ORCA_INVALID_AUTHORITY_MESSAGE =
+  'Refused: `orchestration.mode` in the Genie config cannot be read, so genie cannot prove it still owns lifecycle state for this repository (it must be exactly "standalone" or "orca"). `genie doctor` reports the resolved authority. Run `genie setup --orchestration-mode standalone` to rewrite it — the previous config is backed up first.';
 
 /**
  * Does this invocation hit the orca gate? `rootVerb` is the first verb under

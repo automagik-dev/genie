@@ -611,6 +611,24 @@ describe('orca lifecycle authority', () => {
     expect(failure.error).toBe('local_lifecycle_disabled_in_orca_mode');
   });
 
+  // The carve-out is `--wish` + `--plan`, so these two ride through it today.
+  // Pinned because `--plan` is what makes them safe: `--group` only narrows the
+  // task list, and `--re-resolve` names a WRITE that `--plan` must keep
+  // unreachable. If either ever recorded a base in orca mode, the whole reason
+  // the reversal was acceptable would be gone.
+  test.each([[['--wish', 'foo', '--group', 'g', '--plan']], [['--wish', 'foo', '--plan', '--re-resolve']]])(
+    '`genie context %j` stays read-only in orca mode',
+    async (args: string[]) => {
+      const fx = makeFixture();
+      seedTasks(fx, 'foo', ['g']);
+      const result = await cliWithMode(fx.root, ORCA_CONFIG, ...args);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(DEV_SHA_PATTERN.test(str(payloadOf(result).base))).toBe(true);
+      expect(metaRow(fx, 'wish_base:foo')).toBeNull();
+    },
+  );
+
   test('the refusal precedes option validation, so a bad option cannot change the code', async () => {
     const fx = makeFixture();
     // `--group` without `--wish` is normally `group-requires-wish`.

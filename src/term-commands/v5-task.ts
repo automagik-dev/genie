@@ -727,7 +727,12 @@ function handleSync(): void {
     // guard on purpose — an orca-mode repository that was never `genie init`-ed
     // must be silent too, because `.husky/pre-commit` runs `task sync` on every
     // commit and any line here is a warning the operator can do nothing about.
-    if (orcaOwnsLifecycle()) return;
+    // `=== 'orca'` on purpose, not truthiness. Silence is right when Orca
+    // genuinely owns the state, because there is then nothing to reconcile and
+    // nothing the operator can act on. An authority genie could not PARSE is a
+    // real, repairable fault: it keeps the pre-existing typed refusal so it is
+    // seen and fixed, rather than being hidden behind a clean exit 0 forever.
+    if (orcaOwnsLifecycle() === 'orca') return;
     // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
     // very directory being tested. A directory that was never `genie init`-ed
     // has neither side of the pair to reconcile, and reporting it "in sync"
