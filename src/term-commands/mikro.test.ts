@@ -170,6 +170,76 @@ describe('genie mikro call', () => {
   });
 });
 
+describe('genie mikro bench', () => {
+  test('--help lists the flags and says the bench reads the working tree', () => {
+    const { code, stdout } = runCli(['mikro', 'bench', '--help']);
+    expect(code).toBe(0);
+    for (const flag of ['--dir', '--fixtures', '--agents-dir', '--reps', '--only', '--boundary', '--write-evidence']) {
+      expect(stdout).toContain(flag);
+    }
+    expect(stdout).toContain('WORKING TREE');
+    expect(stdout).toContain('a tree you trust');
+  });
+
+  test('the tail reaches the runtime: a repository with no fixture set is refused with exit 2', () => {
+    const repo = tmp('genie-mikro-bench-');
+    const { code, stderr, stdout } = runCli(['mikro', 'bench', 'wish-context', '--dir', repo, '--no-phoenix'], {
+      cwd: repo,
+    });
+    expect(code).toBe(2);
+    expect(stderr).toContain('no fixture set at');
+    expect(stderr).toContain('genie mikro fixtures --from-commits');
+    expect(stdout).toBe('');
+    // Refused before anything ran: no ledger, no record, no `.mikro/` grown in the repository.
+    expect(existsSync(join(repo, '.mikro'))).toBe(false);
+  });
+});
+
+describe('genie mikro coach, fixtures and init', () => {
+  test('coach refuses a repository with no agent, naming init, before any round is recorded', () => {
+    const repo = tmp('genie-mikro-coach-');
+    const { code, stderr } = runCli(['mikro', 'coach', 'wish-context', '--dir', repo], { cwd: repo });
+    expect(code).toBe(2);
+    expect(stderr).toContain('genie mikro init --dir');
+    expect(existsSync(join(repo, '.mikro'))).toBe(false);
+  });
+
+  test('init seeds the shipped agents, and the second run keeps what is there', () => {
+    const repo = tmp('genie-mikro-init-');
+    const home = shippedHome(['wish-context', 'review-prep']);
+    const first = runCli(['mikro', 'init', '--dir', repo], { env: { GENIE_HOME: home } });
+    expect(first.code).toBe(0);
+    expect(first.stdout).toContain('seeded');
+    expect(first.stdout).toContain('DEEPSEEK_API_KEY');
+    expect(readdirSync(join(repo, '.mikro', 'agents')).sort()).toEqual(['review-prep', 'wish-context']);
+
+    const second = runCli(['mikro', 'init', '--dir', repo], { env: { GENIE_HOME: home } });
+    expect(second.code).toBe(0);
+    expect(second.stdout).toContain('nothing was overwritten');
+  });
+
+  test('fixtures builds a set from commits and bench then accepts it end to end', () => {
+    const repo = tmp('genie-mikro-fixtures-');
+    const run = (args: string[]) =>
+      Bun.spawnSync(['git', '-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
+    run(['init', '-q', '-b', 'main']);
+    writeFileSync(join(repo, 'a.txt'), 'a\n');
+    run(['add', '-A']);
+    run(['commit', '-qm', 'feat: add a']);
+
+    const built = runCli(['mikro', 'fixtures', '--from-commits', 'HEAD', '--agent', 'wish-context', '--dir', repo]);
+    expect(built.code).toBe(0);
+    expect(built.stdout).toContain('wrote 1 fixture(s)');
+    expect(existsSync(join(repo, '.mikro', 'fixtures', 'wish-context.json'))).toBe(true);
+
+    // The bench now resolves that set (Decision 12) and stops on the agents dir instead,
+    // which is the proof the two commands compose: one refusal moved on to the next step.
+    const benched = runCli(['mikro', 'bench', 'wish-context', '--dir', repo, '--no-phoenix'], { cwd: repo });
+    expect(benched.code).toBe(2);
+    expect(benched.stderr).toContain('no wish-context/agent.yaml');
+  });
+});
+
 describe('the built bundle', () => {
   /** `dist/genie.js` when the build already ran, else a throwaway build of the same entry point. */
   function bundle(): string {

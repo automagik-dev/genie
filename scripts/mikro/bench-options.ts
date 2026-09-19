@@ -1,10 +1,11 @@
 /**
  * argv → the options `bench.ts` runs on.
  *
- * Pure by construction: it reads no file, spawns nothing and starts no run, so a
- * test can assert what a flag does without paying for a provider call. It exists
- * because `bench.ts` executes on import — there is no way to import it and look
- * at what it parsed.
+ * Spawns nothing and starts no run, so a test can assert what a flag does without
+ * paying for a provider call; the one thing it touches on disk is the single
+ * `existsSync` fixture resolution below, which takes an injectable prober for
+ * exactly that reason. It exists because `runBenchCli` is one long workflow —
+ * there is no other way to look at what a round parsed.
  *
  * Precedence, the one rule worth stating twice: the **registry** (`schemas.ts`)
  * decides the agent NAME and therefore the output schema it is validated
@@ -13,10 +14,13 @@
  * pointing `--agents-dir` at a tree holding a differently-named agent does not
  * register it.
  */
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AGENT_NAMES, type AgentName, isAgentName } from './schemas';
 
-export const BENCH_USAGE = `usage: bun scripts/mikro/bench.ts <${AGENT_NAMES.join('|')}> [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--boundary none|bwrap] [--no-phoenix] [--write-evidence]\n`;
+export const BENCH_USAGE = `usage: genie mikro bench <${AGENT_NAMES.join('|')}> [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--boundary none|bwrap] [--no-phoenix] [--write-evidence]
+       (inside this checkout the same code runs as: bun scripts/mikro/bench.ts <agent> …)
+`;
 
 /** Thrown for an argv the bench cannot run; the CLI prints `message` and exits 2. */
 export class BenchUsageError extends Error {}
@@ -65,6 +69,28 @@ export function benchAgentsDir(options: { dir: string; agentsDir?: string }): st
   return options.agentsDir ?? join(options.dir, '.mikro', 'agents');
 }
 
+/**
+ * Where one agent's fixture set lives (Decision 12), in order:
+ *
+ *   `--fixtures <path>` → `<dir>/.mikro/fixtures/<agent>.json` → `<dir>/scripts/mikro/fixtures/<agent>.json`
+ *
+ * The last entry is genie's own legacy location and is deliberately unchanged, so a
+ * no-flag round inside this checkout resolves exactly what it always did. The middle
+ * one is what a repository that is not genie gets: `genie mikro fixtures
+ * --from-commits` writes there by default, and `genie mikro init` seeds beside it.
+ *
+ * The prober is injectable because this is the one place the parser touches disk.
+ */
+export function resolveFixturesPath(
+  args: { dir: string; agent: string; explicit?: string },
+  exists: (path: string) => boolean = existsSync,
+): string {
+  if (args.explicit !== undefined) return resolve(args.explicit);
+  const repoLocal = join(args.dir, '.mikro', 'fixtures', `${args.agent}.json`);
+  if (exists(repoLocal)) return repoLocal;
+  return join(args.dir, 'scripts', 'mikro', 'fixtures', `${args.agent}.json`);
+}
+
 export function parseBenchOptions(argv: string[], cwd: string): BenchOptions {
   const agent = argv[0];
   if (!agent || !isAgentName(agent)) throw new BenchUsageError(BENCH_USAGE);
@@ -91,7 +117,7 @@ export function parseBenchOptions(argv: string[], cwd: string): BenchOptions {
     concurrency: Number(opt('--concurrency') ?? 3),
     only: opt('--only')?.split(',').filter(Boolean),
     tags,
-    fixturesPath: opt('--fixtures') ?? join(dir, 'scripts', 'mikro', 'fixtures', `${agent}.json`),
+    fixturesPath: resolveFixturesPath({ dir, agent, explicit: opt('--fixtures') }),
     ...(timeoutMs === undefined ? {} : { timeoutMs: Number(timeoutMs) }),
     phoenix: !has('--no-phoenix'),
     writeEvidence: has('--write-evidence'),

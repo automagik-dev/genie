@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { SEEDED_AGENTS } from './mikro/init';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -541,20 +542,24 @@ describe('Group E release and documentation contracts', () => {
     // INTO it rather than added as a ninth member or duplicated in the repository.
     const script = read('scripts/build-binary.sh');
     expect(script).toContain('${STAGE}/templates/mikro/agents/${agent}');
-    expect(script).toContain('SHIPPED_AGENTS=(wish-context review-prep)');
-    for (const agent of ['wish-context', 'review-prep']) {
+    // `mikro-coach` ships too, and is deliberately NOT one of the agents `genie mikro
+    // init` seeds: it is the TOOL a coaching round runs, so `genie mikro coach` has to
+    // resolve it on a host whose repository never carried it, while a repository
+    // specializes only the two workers. The two lists are pinned against each other
+    // here so neither can drift alone.
+    expect(script).toContain('SHIPPED_AGENTS=(wish-context review-prep mikro-coach)');
+    const shipped = ['wish-context', 'review-prep', 'mikro-coach'];
+    for (const agent of shipped) {
       expect(script).toContain(`"templates/mikro/agents/${agent}/agent.yaml"`);
       expect(script).toContain(`"templates/mikro/agents/${agent}/SYSTEM.md"`);
       for (const file of ['agent.yaml', 'SYSTEM.md']) {
         expect(existsSync(join(ROOT, '.mikro', 'agents', agent, file))).toBe(true);
-      }
-    }
-    // Nothing staged under templates/ may be a symlink or a special file.
-    for (const agent of ['wish-context', 'review-prep']) {
-      for (const file of ['agent.yaml', 'SYSTEM.md']) {
+        // Nothing staged under templates/ may be a symlink or a special file.
         expect(lstatSync(join(ROOT, '.mikro', 'agents', agent, file)).isFile()).toBe(true);
       }
     }
+    expect([...SEEDED_AGENTS].every((agent) => shipped.includes(agent))).toBe(true);
+    expect([...SEEDED_AGENTS]).not.toContain('mikro-coach');
   });
 
   test('the workflow catalog ships whole inside templates/, .js only', () => {
