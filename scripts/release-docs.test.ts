@@ -818,7 +818,13 @@ describe('Group E release and documentation contracts', () => {
         .sort(),
     ).toEqual(['lint:complexity-budget', 'lint:docs-links', 'lint:docs-markdown', 'lint:fix', 'lint:orca-bundle']);
     expect(Object.keys(pkg.scripts).some((name) => name.startsWith('hooks:'))).toBe(false);
-    const workflowGates = [...workflow.matchAll(/^ +run: bun run (\S+)$/gm)].map((match) => match[1]).sort();
+    // DISTINCT gates: the workflow runs the platform-dependent third of the
+    // gate twice, once per OS (`unit` on linux, `unit-darwin` on macOS, #2926),
+    // so `build` and `typecheck` legitimately appear more than once. What must
+    // not drift is WHICH gates CI runs, not how many runners run them.
+    const workflowGates = [
+      ...new Set([...workflow.matchAll(/^ +run: bun run (\S+)$/gm)].map((match) => match[1] as string)),
+    ].sort();
     expect(workflowGates).toEqual([
       'build',
       'lint:complexity-budget',

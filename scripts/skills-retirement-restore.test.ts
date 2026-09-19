@@ -61,8 +61,14 @@ describe('documented retirement-backup restore', () => {
     expect(commands.filter((command) => command.startsWith('cp '))).toHaveLength(1);
     expect(commands.filter((command) => command.startsWith('rsync '))).toHaveLength(1);
     for (const command of commands) {
-      if (command.startsWith('cp ')) expect(command).toContain('--no-preserve=mode');
-      else expect(command).toContain('--no-perms');
+      if (command.startsWith('cp ')) {
+        // Never `-a` or `-p`: both copy the backup root's 0700 onto homes that
+        // already exist. GNU's `--no-preserve=mode` undid that, but it is a GNU
+        // flag and the `cp` macOS ships rejects it outright (#2926), so the
+        // documented form simply never asks for modes in the first place.
+        expect(command).not.toMatch(/\s-[A-Za-z]*[ap]/);
+        expect(command).toMatch(/\s-[A-Za-z]*R/);
+      } else expect(command).toContain('--no-perms');
     }
   });
 
