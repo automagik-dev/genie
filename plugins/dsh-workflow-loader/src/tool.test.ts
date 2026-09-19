@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveLoaderConfig } from './config';
-import { apply, workflowRunTool } from './index';
+import { apply, inject, workflowRunTool } from './index';
 import { journalDirectory } from './run';
 
 const REPO = join(import.meta.dir, '..', '..', '..');
@@ -292,6 +292,13 @@ describe('the workflow_run row', () => {
     });
     expect(config.journalDir).toBe('');
     expect(journalDirectory(config.journalDir)).toMatch(/workflow-runs$/);
+  });
+
+  test('declares every service the row reads', () => {
+    // Regression: the row read `ctx.workflowEngine` without declaring it, and
+    // cordis refuses an undeclared service read AT CALL TIME — invisible to a
+    // stub-engine test, found by a live headless run.
+    expect(inject).toEqual(['tools', 'workflowEngine']);
   });
 
   test('apply() registers exactly one tool and returns its disposer', () => {

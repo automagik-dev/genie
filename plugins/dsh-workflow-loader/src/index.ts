@@ -25,7 +25,12 @@ import { DialectError, scanUnsupported, stripDeferredOptions } from './dialect';
 import { journalDirectory, previewValue, render, writeJournal } from './run';
 
 export const name = 'genie-dsh-workflow-loader';
-export const inject = ['tools'];
+// Both services are read by the row: `tools` to register the tool, and
+// `workflowEngine` to start a run. Cordis refuses a service read that was not
+// declared — `cannot get property "workflowEngine" without inject` — and that
+// refusal only appears when the tool is CALLED, so a stub-engine test cannot see
+// it; the live headless proof did.
+export const inject = ['tools', 'workflowEngine'];
 export const Config = schemaOf(resolveLoaderConfig);
 
 interface ToolExec {
@@ -111,13 +116,14 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
       ) => {
         if (!value?.ok) return [{ type: 'text', text: `workflow "${value?.name ?? 'unknown'}" did not complete` }];
         const agents = value.agentsStarted ?? 0;
-        const truncation = value.truncated
-          ? `\n\n(This projection is bounded; the full return value is at ${value.journalPath}.)`
-          : '';
+        // The journal path is always rendered: a live run showed the model
+        // hunting the filesystem for it, because the projection only mentioned
+        // it when the value was too big to show.
+        const bounded = value.truncated ? ' (bounded projection)' : '';
         return [
           {
             type: 'text',
-            text: `workflow "${value.name}" completed (${agents} agent${agents === 1 ? '' : 's'}).\nReturn value:\n${value.preview ?? ''}${truncation}`,
+            text: `workflow "${value.name}" completed (${agents} agent${agents === 1 ? '' : 's'}).\nFull result in the journal: ${value.journalPath}${bounded}\nReturn value:\n${value.preview ?? ''}`,
           },
         ];
       },
