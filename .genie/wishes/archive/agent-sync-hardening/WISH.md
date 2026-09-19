@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — SUPERSEDED criterion-by-criterion by the PR #2545 remediation ledger; its mapped gates closed with [pr-2545-ultra-release-gate](../pr-2545-ultra-release-gate/WISH.md) (DONE 2026-07-24) except F02 (no independent APPROVED review — recorded unmet, not waived). Nothing in this wish blocks the stable pointer anymore. Historical PR #2546 plan and blocker details remain recorded below. Header reconciled to INDEX 2026-07-26 (was BLOCKED) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `agent-sync-hardening` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |
 | **Appetite** | small (1 day — fix wave, not a redesign) |
 | **Branch** | `takeover/codex-first-class` (PR #2546) |
 | **Design** | Ultracode review dossier 2026-07-10 (stable-bound delta 2fe685f1..origin/dev): PR-comment triage #2540–#2544 + 26 independent findings through 2-skeptic adversarial verification |
+
+> **Truth (2026-09-19):** A fix wave (PRs #2545/#2546) for a subsystem that no longer exists — every B1–B7 anchor died with the hook runtime and the Claude/Kimi plugin payload in `e250b9463` and with the Codex plugin subsystem in `5109bf0fb`.
 
 ## Summary
 

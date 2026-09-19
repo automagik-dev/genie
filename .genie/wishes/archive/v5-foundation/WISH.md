@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 4 groups + final whole-wish review SHIP (2026-07-02) |
+| **Status** | SHIPPED |
 | **Slug** | `v5-foundation` |
 | **Date** | 2026-07-01 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `v5` (bootstrapped from `dev` by this wish; groups land as PRs into `v5`) |
 | **Design** | genie-v5-lightweight-body DESIGN (brainstorm deleted in the 2026-09-19 triage) |
 | **Umbrella** | genie-v5-lightweight-body — seed Groups 1+2 of 8 (revised for D2: genie.db) |
+
+> **Truth (2026-09-19):** Landed with PR #2499 (2026-07-02); `src/lib/v5/{genie-db,task-state,sqlite-open}.ts` is the state engine every later wish builds on, with the `genie v5 …` namespace it names transferred to bare command names the same week.
 
 ## Summary
 
@@ -47,6 +49,13 @@ Lay the foundation of Genie v5 "lightweight body": operational state (tasks, dep
 | 5 | Skills may invoke the daemon-less `genie v5` CLI for state; they must not invoke any v4 runtime command | "Runtime-independent" means no PG/spawn/registry — not CLI-abstinence. Direct sqlite writes from prompts would be fragile; the CLI is the contract. This makes Group 3 depend on Group 2 |
 | 6 | Add `v5` to branch-guard's `ALLOWED_MERGE_BASES` (Group 1 deliverable, extending the existing 23-case test suite) so agents can merge group PRs into `v5`; `main` stays human-only | Standing law §19 currently allows agent merges into `dev` only, which would block this wish's own PR flow |
 | 7 | Worktree state sharing via `git rev-parse --git-common-dir` resolution of `.genie/genie.db` | Proven v4 mechanism; all worktrees of a repo share one DB with no daemon |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

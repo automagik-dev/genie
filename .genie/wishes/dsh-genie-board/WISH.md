@@ -11,6 +11,8 @@
 | **Repos touched** | genie |
 | **Design** | [DESIGN.md](../../brainstorms/dsh-genie-board/DESIGN.md) |
 
+> **Truth (2026-09-19):** Built, gated and already riding the release payload (PRs #2895/#2897/#2903/#2908; 34 tracked files under `plugins/dsh-genie-board/`, the frozen `schemaVersion: 1` board aggregate at `v5-board.ts:490`); the only tail is running `scripts/verify-dsh-genie-board-release.ts` against published stable assets, which the v6 cut produces anyway.
+
 ## Summary
 
 Ship a dual-face DSH Web plugin that displays and operates the authoritative Genie board through supported Genie CLI commands. The plugin lives with Genie, never opens `genie.db`, and keeps browser state subordinate to Host-confirmed snapshots.

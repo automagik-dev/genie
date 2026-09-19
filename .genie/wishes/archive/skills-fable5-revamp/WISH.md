@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — merged PR #2518; execution review **SHIP** (2026-07-10, HIGH 0 / MEDIUM 0 / 3 LOW observations; genie side independently re-verified, omni G5/G6 attested via `verification.md`) — [reports/execution-review-20260710.md](reports/execution-review-20260710.md). Merged PR #2518 (merge `1308e4c6`); plan review SHIP on full scope G1–G8 (2026-07-04, 2 rounds); G7 verification complete (`verification.md`). LOW follow-ups: omni-side confirm of G5/G6 numbers, `verification.md` diff-count one commit stale (cosmetic), and a "superseded by later wishes" note for `learn`/`council` (both since removed by other wishes). Header reconciled to INDEX 2026-07-26 (was EXECUTED) |
+| **Status** | SHIPPED |
 | **Slug** | `skills-fable5-revamp` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/skills-fable5-revamp` (one per repo) |
 | **Repos touched** | `automagik-dev/genie` → `/home/feliperosa/vm-home/workspace/repos/genie`; `automagik-dev/omni` → `/home/feliperosa/vm-home/workspace/repos/omni` |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PR #2518 merged 2026-07-04; only the G8 v4-legacy cleanup engine survives (`src/genie-commands/legacy-v4.ts`, wired into `genie install`) — the skill rewrite was redone wholesale by skills-everywhere-c and the omni half left this repo with `plugins/omni`.
 
 ## Summary
 
@@ -53,6 +55,13 @@ Revamp all 36 agent-facing prompt surfaces of the genie plugin (17 skills, 4,185
 | 8 | Per-group validation uses a dead-namespace grep on the group's own files; repo-wide `skills:lint` green is the Group 7 gate | skills:lint walks the whole tree, so no Wave-1 group can turn it green alone; scoped greps keep parallel groups independently verifiable |
 | 9 | v4 cleanup is conservative by construction: exact known genie-installed paths only, content-marker check on the rules file, backup to `~/.genie/state-backups/v4-cleanup-<ts>/` before removal, every removal logged | Deleting from a user's `~/.claude` is the one destructive surface in this wish; marker-gating + backup makes it reversible and provably scoped to genie's own artifacts |
 | 10 | Default verdict for v4-era rules is DELETE, not rewrite (user-confirmed: "mostly old… even deleted too"); the legacy path list lives in ONE shared module consumed by both `genie uninstall` and the install-time cleanup | v5 plugin skills carry orchestration guidance now; a rewritten global rules file would duplicate them and drift again. One path list prevents install/uninstall disagreeing |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

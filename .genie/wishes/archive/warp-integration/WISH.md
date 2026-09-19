@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 4 groups SHIP-reviewed (2026-07-02); real-Warp smoke recorded, pane-render checklist awaiting Felipe |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `warp-integration` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/warp-integration` (from `dev` — now v5 mainline; PR back to `dev`) |
 | **Design** | genie-v5-lightweight-body DESIGN (brainstorm deleted in the 2026-09-19 triage) — umbrella Group 3 |
 | **Depends on** | wishes `v5-foundation`, `v5-demolition`, `taxonomy-rehoming` (all DONE, merged to dev) |
+
+> **Truth (2026-09-19):** Executed 2026-07-02, then the Warp-cockpit thesis was retired: `src/term-commands/launch.ts` and the Warp launch-config emitter were deleted by #2789 (`782a34397`) and `genie launch` is now a forbidden fossil string in `claude-md-drift.test.ts`.
 
 ## Summary
 
@@ -46,6 +48,13 @@ The original v5 thesis: stop controlling agents, let Warp be the multi-session c
 | 4 | `install` no-op stub removed; net 11 top-level commands | A stub that prints "no-op" is surface without substance; the managed-install reservation belongs to the distribution wish; README count updated honestly |
 | 5 | Pane command is `claude "$(cat <prompt-file>)"` — prompt written to `<worktree>/.genie/launch/<group>.prompt`, YAML carries only the path | Keeps genie out of the agent-control business; sidesteps YAML-escaping of long prompts entirely; the prompt stays inspectable on disk. One pane per GROUP; the prompt enumerates all the group's ready task ids with per-task checkout instructions |
 | 6 | /work multi-session is opt-in, native teams default | Native dispatch works everywhere with zero setup; Warp mode needs Warp + human eyes on panes — the orchestrator can't await pane-session completion programmatically, so it's for interactive supervision |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

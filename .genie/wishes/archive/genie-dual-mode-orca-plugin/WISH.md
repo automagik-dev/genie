@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS — A1–A7 merged to `dev` (#2808–#2820); rolling promotion #2817 (dev→main) reviewed **FIX-FIRST** at `2026-08-30` on `eccf0ae4a`; fix PRs in flight, re-review pending |
+| **Status** | SHIPPED |
 | **Slug** | `genie-dual-mode-orca-plugin` |
 | **Date** | 2026-08-29 |
 | **Author** | Codex wish author |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/genie-dual-mode-orca-plugin` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | [DESIGN.md](../../../brainstorms/genie-dual-mode-orca-plugin/DESIGN.md) |
+
+> **Truth (2026-09-19):** Every named PR is merged (#2808, #2817, #2820, #2822, #2834, #2838) and re-review #2 at `0d0641f97` was SHIP; `src/lib/orchestration-mode.ts` is the lifecycle-authority barrier `genie-db.ts` imports, and ~20 dev releases plus two stable cuts have run this code.
 
 ## Summary
 

@@ -11,6 +11,8 @@
 | **Repos touched** | automagik-dev/genie (base `dev`) + automagik-dev/docs (via the `.docs-vendor` submodule) |
 | **Design** | [DESIGN.md](../../../brainstorms/skills-everywhere/DESIGN.md) |
 
+> **Truth (2026-09-19):** PR #2888 merged; the 13-token `BANNED_TOKEN_GUIDANCE` in `scripts/skills-lint.ts` (84 pass) and `src/__tests__/claude-md-drift.test.ts` enforce the post-plugin vocabulary, so the words cannot drift back.
+
 ## Summary
 
 Third and last wish of the `skills-everywhere` umbrella (A → B → C). Wish A shipped the skills.sh channel and the host-side retirement; Wish B (`skills-everywhere-b`) repairs the install channel (local-path source, honest `agentDirs` recording, collision snapshot) and then deletes the Codex/Claude/Kimi/Hermes/pi integrations, all six hook handlers and `agent-sync.ts`. Wish C makes the *words* match that repo: it teaches `scripts/skills-lint.ts` to reject plugin-only agent names and undiscoverable skill directories, fixes the five skill files that still carry those tokens, rewrites `CLAUDE.md`/`AGENTS.md`/`README.md` down to "signed binary + `npx skills add automagik-dev/genie` + the Orca plugin", rewrites the public docs in the `.docs-vendor` submodule (installation bootstrap, doctor surface, uninstall semantics), and publishes a release-notes page naming the four capabilities the deletion accepts (design Risks 3–6). This wish satisfies design criteria C5 and C10; it deliberately changes no release workflow (C7 stays owned by Wish B).

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE |
+| **Status** | SHIPPED |
 | **Completed** | 2026-07-04 — @latest published as v2.260704.7, release pipeline dispatched |
 | **Slug** | `omni-branch-drift-sync` |
 | **Date** | 2026-07-04 |
@@ -11,6 +11,8 @@
 | **Branch** | n/a — ops task on `automagik-dev/omni` branches directly |
 | **Design** | _No brainstorm — direct ops wish, grounded in a completed live investigation_ |
 | **Repo** | `automagik-dev/omni` (local: `/Users/feliperosa/workspace/omni`) |
+
+> **Truth (2026-09-19):** A finished one-shot ops task in automagik-dev/omni (PRs #770/#773 merged 2026-07-04) with zero footprint in this repository; its loss-proof invariant still holds — `main` carries no unique commits.
 
 ## Summary
 
@@ -48,6 +50,13 @@ Verified live via GitHub API on 2026-07-04:
 | 2 | Version-file conflicts always resolve to the **newer/superset** side (dev/homolog) | dev is canonical; versions are monotonic; keeps the higher version |
 | 3 | homolog & main merges are **human clicks** (§19 hook blocks agent merges to non-dev bases) | Policy; verbal approval does not lift the mechanical hook |
 | 4 | Re-trigger CodeRabbit rather than admin-bypass | It's likely hung, not failing; a re-fire usually clears it |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

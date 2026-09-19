@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `global-workflows-local-mikro` |
 | **Date** | 2026-09-18 |
 | **Author** | Felipe Rosa (delegated from a khal-base session; orchestrated autonomously) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/global-workflows-local-mikro` (one stacked branch per group: `wish/global-workflows-local-mikro-g<n>`) |
 | **Repos touched** | automagik-dev/genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** All five groups merged to dev (#2993, #2995, #2996, #2997, #2998) with the G5 review head an ancestor of origin/dev; `genie mikro call` and `src/lib/workflows-installer.ts` are the shipped delivery of the mikro runtime and the nine-script workflow catalog.
 
 ## Summary
 

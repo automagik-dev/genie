@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `mcp-write-tools` |
 | **Date** | 2026-08-11 |
 | **Author** | Felipe |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/mcp-write-tools` |
 | **Repos touched** | automagik-dev/genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PR #2773 merged 2026-08-13, then `f45d634b8` (#2834) deleted `src/lib/v5/mcp-tools.ts` and `mcp-server.ts` with the whole UI-owned stdio bridge; `git grep MCP_WRITE_TOOLS` now matches only this document.
 
 ## Summary
 

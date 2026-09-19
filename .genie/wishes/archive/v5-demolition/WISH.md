@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 6 groups + final whole-wish review SHIP (2026-07-02); PR #2499 open, merge = Felipe |
+| **Status** | SHIPPED |
 | **Slug** | `v5-demolition` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `v5` (continues from v5-foundation; final group opens the PR to `dev`) |
 | **Design** | genie-v5-lightweight-body DESIGN (brainstorm deleted in the 2026-09-19 triage) — umbrella Group 6, pulled forward per D8 |
 | **Depends on** | wish `v5-foundation` (DONE) |
+
+> **Truth (2026-09-19):** PR #2499 merged 2026-07-02 (the header's "PR #2499 open" was stale by fourteen months); one criterion is superseded by design — `nats` came back as one of the four inlined runtime deps for the omni runner this wish handed to.
 
 ## Summary
 
@@ -45,6 +47,13 @@ Delete the v4 harness from the `v5` branch — pgserve/Postgres, tmux orchestrat
 | 5 | Deferred skills get `skills-lint:ignore`, not deletion or rewrite | skills-lint fail-closes on first-tokens absent from `--help`; 12 skills reference namespaces this wish deletes; ignore markers (pattern already used by skills/omni) keep `bun run check` meaningful without expanding scope into skill ports |
 | 6 | Keep minimal hook dispatch + branch-guard; delete PG-dependent handlers and the emit-spine wiring in hooks/index.ts | branch-guard imports only node builtins (verified); it is the standing merge law |
 | 7 | Deletion in staged groups, each leaving the build green | A mega-commit that breaks mid-review is unbisectable |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

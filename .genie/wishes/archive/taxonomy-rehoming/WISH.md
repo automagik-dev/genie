@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — both groups SHIP-reviewed (2026-07-02); one user action pending: PATH line in ~/.zshrc |
+| **Status** | SHIPPED |
 | **Slug** | `taxonomy-rehoming` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `v5` (rides into the housekeeping PR #2500 or a follow-up) |
 | **Design** | follows [genie-v5-lightweight-body] decisions; resolves PR #2500 Codex P2 + Gemini MEDIUMs |
 | **Depends on** | wish `v5-housekeeping` (DONE, PR #2500 open) |
+
+> **Truth (2026-09-19):** PR #2500 merged 2026-07-02; `.genie/{wishes,brainstorms}` is the shipped, git-tracked layout documented in `src/lib/v5/TAXONOMY.md`, and its one open item (a PATH line in a `~/.zshrc`) is obsolete since `install.sh` owns `~/.genie/bin`.
 
 ## Summary
 
@@ -40,6 +42,13 @@ Genie's planning documents belong in genie's own taxonomy: `.genie/wishes/` and 
 | 3 | User-level skills prefer genie state when available, degrade to native tasks | Felipe's skills run in non-genie repos too; hard-requiring genie would break them there |
 | 4 | Validation blocks use `git rev-parse --show-toplevel`, never absolute paths | Gemini review; portability for CI and other machines |
 | 5 | Global genie binary refreshed into `~/.genie/bin` (the update-managed home), stale bun shim removed | A stale v4 binary answering `genie task` is a live hazard; overwriting the bun shim would break future `genie update`, which only swaps binaries under `~/.genie/bin` |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

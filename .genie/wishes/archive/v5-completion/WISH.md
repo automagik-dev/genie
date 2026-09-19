@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 3 groups SHIP-reviewed (2026-07-02); 3 commits |
+| **Status** | SHIPPED |
 | **Slug** | `v5-completion` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/v5-completion` (from `dev`; PR back to `dev`) |
 | **Design** | _No brainstorm — direct wish; three independent tracks bundled by request_ |
 | **Depends on** | warp-integration, omni-runner-port, dispatch-inproc-default (all merged to dev) |
+
+> **Truth (2026-09-19):** G1 and G3 are live and guarded (`src/__tests__/claude-md-drift.test.ts` RETIRED_FOSSILS, the 5.YYMMDD.N scheme); G2's Codex `genie launch --agent` target was deliberately retired with the command itself in #2789 (`782a34397`), which made `genie launch` a forbidden fossil string.
 
 ## Summary
 
@@ -41,6 +43,13 @@ Close out the v5 lightweight body with the three remaining independent tracks, b
 | 5 | G2 must not alter the Claude launch path | Warp-integration shipped and is reviewed; adding a target dimension is additive — the default `--agent claude` output stays byte-identical |
 | 6 | Decision docs live under `.genie/`, never `docs/` | `docs/` is a `.docs-vendor` submodule symlink — a file written there lands in the submodule (needs the docs-PR + pointer-bump flow), NOT the genie PR. `.genie/` is in the genie repo |
 | 7 | Bundled as one wish (user request) but landed as 3 commits | Three unrelated concerns = a mixed-concerns PR by CLAUDE.md discipline; separate commits keep each track independently reviewable and revertible |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

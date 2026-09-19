@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `pr-2545-ultra-release-gate` |
 | **Date** | 2026-07-10 |
 | **Author** | Codex PM, from the seven-lane specialist-panel review requested by Felipe |
@@ -11,6 +11,8 @@
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | Seven Ultra specialist lanes plus native Codex review of PR #2545 at `42c11eeb`; follow-up rebased onto `dev` `5101fd35` |
 | **Promotion state** | PR #2545 merged via `6f682e2b` from promoted source `10ceb2c0`; follow-up PR [#2556](https://github.com/automagik-dev/genie/pull/2556) merged into `dev` at `a7c3c7ce` (2026-07-11) and promoted to `main` via #2557; the F42/F43/replay work shipped as successor PR [#2562](https://github.com/automagik-dev/genie/pull/2562), merged into `dev` as `137dede8` on 2026-07-12 with 15 CI checks passing on its exact head `bd8c6128` (no independent `APPROVED` review — see F02), and has since been promoted to `main` |
+
+> **Truth (2026-09-19):** Closed 2026-07-24 (PRs #2545/#2556/#2557/#2562), then superseded: its whole IN scope — Codex hooks, the in-root plugin skill payload and agent-sync ownership — was deleted by `e250b9463` and `699a48bbd`; F02 (no independent APPROVED review on #2562) stays recorded as unmet, not waived.
 
 ## Summary
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `hermes-homogeneous-integration` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe (felipe@namastex.io) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/hermes-homogeneous-integration` |
 | **Repos touched** | automagik-dev/genie |
 | **Design** | [DESIGN.md](../../../brainstorms/hermes-homogeneous-integration/DESIGN.md) |
+
+> **Truth (2026-09-19):** PRs #2565/#2566 merged 2026-07-13, then every genie-side deliverable was deleted in `d572f9e0b` (Hermes and pi integrations delisted); the shipped installer's job today is to retire exactly what this wish installed.
 
 ## Summary
 

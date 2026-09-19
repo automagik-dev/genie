@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — G1 spike (hand-rolled) + G2 server + G3 auto-register all SHIP-reviewed (2026-07-03); Warp live-UI QA awaits Felipe |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `genie-mcp` |
 | **Date** | 2026-07-03 |
 | **Author** | Felipe + Genie |
 | **Appetite** | ~3-4 days |
 | **Branch** | `wish/genie-mcp` (from `dev`; PR to `dev`) |
 | **Design** | [DESIGN.md](../../../brainstorms/genie-mcp/DESIGN.md) |
+
+> **Truth (2026-09-19):** G1–G3 shipped 2026-07-03, then the product MCP server was retired by #2820 (`c8280d403`): `src/term-commands/mcp.ts` is a 14-line refusal stub and `genie init` now removes the `.mcp.json` entry this wish taught it to write.
 
 ## Summary
 
@@ -41,6 +43,13 @@ Genie's live state (wishes, tasks, board, what each worktree/pane is working on)
 | 5 | G1 SPIKE decides hand-rolled MCP vs official SDK | genie is 4-deps-lean; a hand-rolled JSON-RPC-over-stdio avoids a 5th dep (Bun.YAML precedent) BUT must satisfy real Warp + Claude Code clients — verify against both first; dynamic-import the SDK (nats precedent) if needed |
 | 6 | `genie_worktree_context` resolves by git BRANCH, not path | The worktree base dir is configurable (`GENIE_WORKTREES_DIR`); branch `wish/<slug>-<group>` is the stable key |
 | 7 | Config writes are JSON parse/merge/preserve, not line-append | Never clobber a user's existing MCP servers; byte-identical rerun |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

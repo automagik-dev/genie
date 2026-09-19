@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — closed 2026-07-27: first full-pipeline stable release v5.260727.5 (run 30240023804, 40/41 jobs, 36 assets, immutable) demonstrated the production-approval gate live and advanced all three channel manifests |
+| **Status** | SHIPPED |
 | **Slug** | `stable-release-security-gate` |
 | **Date** | 2026-07-10 |
 | **Author** | Codex PM, from PR #2545 Ultra supply-chain review |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/stable-release-security-gate` |
 | **Repos touched** | `automagik-dev/genie` plus GitHub repository settings |
 | **Design** | Inherited CRITICAL/HIGH findings SEC1–SEC3 and QA6 |
+
+> **Truth (2026-09-19):** Closed 2026-07-27 by the first full-pipeline stable release v5.260727.5 (run 30240023804, dispatcher ≠ approver, 36 assets); `scripts/release-guard.sh` and the `production` environment gates are what every stable cut, including v6's, still runs through.
 
 ## Summary
 

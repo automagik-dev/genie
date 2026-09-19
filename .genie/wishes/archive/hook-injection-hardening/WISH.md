@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — [PR #2536](https://github.com/automagik-dev/genie/pull/2536) (commit `f61aaf13`, branch `wish/hook-injection-hardening` → main). G1+G2 + whole-wish reviews SHIP; 729 pass/0 fail; full `bun run check` green on the PR base (verified by the pre-push hook) |
+| **Status** | SHIPPED |
 | **Slug** | `hook-injection-hardening` |
 | **Date** | 2026-07-09 |
 | **Author** | namastex888 |
 | **Appetite** | 1 afternoon (~4h) |
 | **Branch** | `wish/hook-injection-hardening` |
 | **Design** | _No brainstorm — direct wish (evidence: `.genie/repo-profile.md` + seven-lane panel synthesis)_ |
+
+> **Truth (2026-09-19):** PR #2536 merged 2026-07-10; its subject code then went away entirely — `src/hooks/**` was deleted in `e250b9463`, so no PreToolUse handler can interpolate a file path into a shell string and the vulnerability class is structurally gone.
 
 ## Summary
 

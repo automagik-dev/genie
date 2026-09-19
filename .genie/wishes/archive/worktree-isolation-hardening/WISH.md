@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — all 3 groups SHIP (policy loop 0 +1 MEDIUM folded; doctor-residue after 1 fix loop — tag-shadow ancestry HIGH reproduced+fixed; review-snapshot after 1 fix loop — false doctor-janitor claim corrected), final gate SHIP 2026-07-27 (617 tests, grep gate 4, mirrors byte-identical). SHIPPED on merge to dev; post-merge: #2594 closure + manual QA. Plan review SHIP 2026-07-27 (2 fix loops; H2 settled by live probe) |
+| **Status** | SHIPPED |
 | **Slug** | `worktree-isolation-hardening` |
 | **Date** | 2026-07-27 |
 | **Author** | Felipe + Genie (council deliberation 2026-07-27, adapting PR #2594 by lirazsiri) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/worktree-isolation-hardening` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PR #2707 merged 2026-07-27 and the code half is live in `src/genie-commands/doctor-worktrees.ts`; the prose half drifted — the "only the orchestrator moves HEAD" clause no longer appears in the shipped `skills/work/SKILL.md`, which a successor should re-single-source.
 
 ## Summary
 

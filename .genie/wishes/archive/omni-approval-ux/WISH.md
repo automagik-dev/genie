@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — G1 spike + G2 correlation + G3 ⏳→✅ lifecycle all SHIP-reviewed (2 HIGHs found+fixed); ⏳→✅ in-place render awaits one Felipe-approved live round-trip (2026-07-03) |
+| **Status** | SHIPPED |
 | **Slug** | `omni-approval-ux` |
 | **Date** | 2026-07-03 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/omni-approval-ux` (from `dev`; PR to `dev`) |
 | **Design** | _No brainstorm — grounded in the live WhatsApp QA on 2026-07-03_ |
 | **Depends on** | `omni-runner-port` (merged), `omni-hardening` (PR #2507, merged) |
+
+> **Truth (2026-09-19):** PRs #2507/#2509 merged 2026-07-03; the ⏳→✅ in-place swap and correlated approval identity are live in `src/lib/omni-runner.ts` and `omni-queue.ts`, reachable today only through `genie omni test-approval` because the capture point died with the hook runtime (`e250b9463`).
 
 ## Summary
 
@@ -42,6 +44,13 @@ The v5 omni approval bridge is live-proven (a PreToolUse hook → WhatsApp 🔔 
 | 4 | Reactions first-class (both directions); text replies stay as fallback | Genie's ⏳/✅/❌ status outbound, the human's 👍/👎 inbound. Bare text is the compatibility path (oldest-pending) |
 | 5 | One approval message + in-place status; never re-announce | Anti-spam: the human sees a prompt and its live state, not a wall of prompts. The per-approval `omniMessageId` dedup already prevents re-fires |
 | 6 | Ship a `genie omni test-approval` one-command harness | The QA spam came from ad-hoc multi-iteration scripts; one deliberate command makes future testing safe and repeatable |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

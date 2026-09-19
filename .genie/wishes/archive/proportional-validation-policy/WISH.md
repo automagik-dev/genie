@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `proportional-validation-policy` |
 | **Date** | 2026-07-28 |
 | **Author** | Codex with user direction |
@@ -11,6 +11,8 @@
 | **Repos touched** | `automagik-dev/genie` |
 | **Issue** | [#2724](https://github.com/automagik-dev/genie/issues/2724) |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PR #2725 merged 2026-07-28; the policy text has been in force since in the shipped `skills/{review,work,wish}/SKILL.md`, and the plugin-mirror half of its scope died with the plugin payload.
 
 ## Summary
 

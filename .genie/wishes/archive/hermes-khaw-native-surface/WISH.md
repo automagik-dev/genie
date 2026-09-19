@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 5 groups SHIP-reviewed; #2517 (dev) + #2516 (promotion) merged; live dogfood on Hermes 0.18 (2026-07-05) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `hermes-khaw-native-surface` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (via Hermes plan) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/hermes-khaw-native-surface` (cut from `origin/main` — this planning checkout is a stale fix branch) |
 | **Repos touched** | `automagik-dev/genie`, KHAW (`/home/feliperosa/vm-home/prod/khaw`) |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PRs #2516/#2517 merged 2026-07-04, then both halves were retired: `plugins/hermes-genie/**` deleted in `d572f9e0b` and the `genie mcp` server it read over deleted by #2820.
 
 ## Summary
 
@@ -55,6 +57,13 @@ Source plan: `/home/feliperosa/vm-home/.hermes/plans/2026-07-04_173507-genie-her
 | 7 | `install-local.sh` defaults to symlinking into `$HERMES_HOME/plugins/genie`, with `--copy` for release-style installs | Matches the live machine convention (`~/.hermes/plugins/khaw` is a symlink into the KHAW repo); symlink keeps the dev loop tight |
 | 8 | KHAW work stays in the KHAW repo with its own commits and review gate; this wish tracks it as one execution group with an explicit target repo | Two repos, separate review; the wish remains the single coordination document |
 | 9 | Uniform payload contract on every tool: `success`, `mutation`, `cwd`, `command`/`source`, `data`/`error` | Evidence-first surface shared by both plugins; the KHAW bridge mirrors the contract established in Group 1 |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

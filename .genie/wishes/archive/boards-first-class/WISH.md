@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — PR [#2611](https://github.com/automagik-dev/genie/pull/2611) merged to dev `fa163bd2` (2026-07-21, 16/16 CI); post-merge live QA ritual open (card in Review lane) |
+| **Status** | SHIPPED |
 | **Slug** | `boards-first-class` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe + team-lead brainstorm session |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/boards-first-class` |
 | **Repos touched** | genie |
 | **Design** | [DESIGN.md](../../../brainstorms/boards-first-class/DESIGN.md) |
+
+> **Truth (2026-09-19):** PR #2611 merged to dev 2026-07-21; the board it delivered (`src/term-commands/v5-board.ts`, `idea.ts`, the `task_events` table, the jar↔INDEX drift lint) is the roadmap tracker this triage itself runs on, and ~2 months of daily use closed its post-merge QA de facto.
 
 ## Summary
 

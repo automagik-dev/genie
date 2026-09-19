@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 5 groups SHIP-reviewed (2026-07-02); live WhatsApp QA blocked-with-runbook (needs Felipe Omni instance) |
+| **Status** | SHIPPED |
 | **Slug** | `omni-runner-port` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/omni-runner-port` (from `dev`; PR back to `dev`) |
 | **Design** | genie-v5-lightweight-body DESIGN (brainstorm deleted in the 2026-09-19 triage) — umbrella Group 5 (D3, D8) |
 | **Depends on** | wishes `v5-foundation`, `v5-demolition`, `warp-integration` (all merged to dev) |
+
+> **Truth (2026-09-19):** PR #2503 merged 2026-07-02 and the runner, the global queue and the inbound one-shot are live — but the PreToolUse approval producer died with `src/hooks/` in `e250b9463`, so only `genie omni test-approval` can fill the queue and the docs still advertising a phone-approval gate need correcting.
 
 ## Summary
 
@@ -58,6 +60,13 @@ The approval-capture spike returned **GO**, proven live against Claude Code 2.1.
 | 8 | INTENTIONAL divergences from v4, stated: timeout→`ask` (v4 hard-resolved to deny) and pure polling (v4 had PG LISTEN/NOTIFY sub-second latency) | Fail-safe beats fidelity; sqlite has no NOTIFY. The spike contract must nail the poll-interval vs hook-timeout budget since the low-latency path is gone. Status enum reshapes too (v4 allow/deny → approved/denied/expired) — the port maps allow→approved |
 | 9 | Outbound sends via NATS publish (v4 omni-bridge reply path); registration is the only signed HTTP | v4's `sendApprovalToOmni` shelled to the external `omni` CLI — reviving that adds an undocumented binary dependency; the runner already holds the NATS connection, and publish is a proven v4 path |
 | 10 | Inbound concurrency guard: drop-with-notice (one in-flight run per route; concurrent messages get a "busy — one at a time" reply and are stored) | Simplest honest contract; a queue invites unbounded backlog against a one-shot executor |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

@@ -11,6 +11,8 @@
 | **Repos touched** | genie |
 | **Design** | _No brainstorm — direct wish_ |
 
+> **Truth (2026-09-19):** PR #2745 merged 2026-08-03; `acquireLifecycleLeaseWithWait` is live at `src/lib/lifecycle-lease.ts:428` on exactly the four planned call sites in `update.ts`, `install.ts` and `uninstall.ts`.
+
 ## Summary
 
 `genie update` crashed with a raw Bun stack trace ("Another Genie lifecycle command is active: another agent-sync run holds the lock…") because the shared lifecycle lease is single-attempt fail-fast and the busy path throws a bare `Error`. This wish makes lifecycle commands steal a provably-dead same-host holder immediately, wait briefly for a live one, and — when the wait genuinely times out — print an accurate, actionable message with exit code 2, never a stack trace.

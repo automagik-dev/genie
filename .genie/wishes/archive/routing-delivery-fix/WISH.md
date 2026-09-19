@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — Groups A+B SHIP (2026-07-12), code landed on dev as `2315671a`/`3ffc3300` + hardening chain (superseding local `5c29b2b1`/`127e08e3`); Group C day-3 QA CLOSED 2026-07-21 with 7/7 resolved-model fingerprints — [routing-matrix qa/routing-pin-qa-20260721.md](../routing-matrix/qa/routing-pin-qa-20260721.md) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `routing-delivery-fix` |
 | **Date** | 2026-07-11 |
 | **Author** | Felipe + team-lead session (rebaseline wish 1) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/routing-delivery-fix` |
 | **Repos touched** | genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** Landed on dev as `2315671a`/`3ffc3300`, then deleted whole: `src/lib/agent-sync.ts` in `699a48bbd` (#2882) and `plugins/genie/agents/` in `e250b9463` (#2881) — re-pinning models per role in the skills.sh world would be a new wish.
 
 ## Summary
 

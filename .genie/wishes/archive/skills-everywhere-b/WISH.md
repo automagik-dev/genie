@@ -11,6 +11,8 @@
 | **Repos touched** | automagik-dev/genie (base `dev`) |
 | **Design** | [DESIGN.md](../../../brainstorms/skills-everywhere/DESIGN.md) |
 
+> **Truth (2026-09-19):** PRs #2878–#2882 merged 2026-08-31/09-01 and every named deletion is verified absent on dev; one scheduled follow-up is still open — CLAUDE.md says `src/lib/legacy-integration-retirement.ts` is deleted two stable releases after this wish, and the module is still there.
+
 ## Summary
 
 Second of the three sequenced wishes under the `skills-everywhere` design (umbrella A → B → C). Wish A shipped the additive skills channel; Wish B first **repairs** what the real-host dogfood proved that channel gets wrong — it installs into 57 agent homes and reports 4, and `skills@1.5.23` silently ignores the `@<ref>` pin and serves the default branch instead of the release — and then **deletes** the Codex plugin subsystem, all six hook handlers and the hook runtime, the Claude/Kimi/Hermes/pi integrations, `agent-sync.ts`, the plugin half of `runtime-integrations.ts`, six `check` gates, the Codex dogfood matrix, and the build/release toolchain's plugin coupling. What remains under `plugins/genie` is the Orca tree; what remains as the delivery channel is the signed binary plus `skills/`. Target: ≥ 20,000 non-test lines out of `src/`, with `bun run check` green at every group boundary.

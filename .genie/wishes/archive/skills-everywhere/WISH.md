@@ -11,6 +11,8 @@
 | **Repos touched** | automagik-dev/genie (base `dev`) |
 | **Design** | [DESIGN.md](../../../brainstorms/skills-everywhere/DESIGN.md) |
 
+> **Truth (2026-09-19):** PRs #2866/#2868/#2870 merged 2026-08-30/31; `src/lib/skills-installer.ts` plus `legacy-integration-retirement.ts` are the one delivery channel genie ships, corrected in place by Wish B's `@ref`-pin and agentDirs fixes.
+
 ## Summary
 
 First of the three sequenced wishes under the `skills-everywhere` design (umbrella A → B → C; renamed from `codex-skill-installer` on 2026-08-30 — the contract is every agent, not Codex). Wish A ships the new skills channel and the host-side retirement **without deleting anything from the repo**: `genie install`/`update` run a pinned `npx skills add automagik-dev/genie@v<ver> --all --copy`, record what was installed, retire marker-owned legacy plugin assets on existing hosts backup-first, and `genie doctor` reports the new surface. Two new release smokes (`skills-install-smoke`, `release-update-path-smoke`) are added **alongside** the existing Codex dogfood matrix so they are proven on a real release before Wish B makes them the only gates. Lease/atomic-fs primitives are rehomed out of `agent-sync.ts` now so Wish B's deletion is mechanical.

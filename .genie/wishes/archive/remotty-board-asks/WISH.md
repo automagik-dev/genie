@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `remotty-board-asks` |
 | **Date** | 2026-08-07 |
 | **Author** | felipe (from remotty's `brainstorm-stage-cards` handoff) |
 | **Appetite** | medium |
 | **Repos touched** | genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** PR #2755 merged 2026-08-07; block kind + `enforcedBlock`, `task set-wish`, `task delete` and the doctor lint's `broken` link state were verified symbol by symbol on dev and are test-covered.
 
 > Source: the remotty repo's brainstorm `brainstorm-stage-cards` produced a handoff of five
 > measured asks for genie ([HANDOFF-from-remotty.md](HANDOFF-from-remotty.md), copied here for

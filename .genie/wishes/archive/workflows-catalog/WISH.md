@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `workflows-catalog` |
 | **Date** | 2026-09-15 |
 | **Author** | Felipe + Genie (split from the combined `workflows-multibody` plan, whose three plan-review loops this wish inherits) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/workflows-catalog` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** `.claude/workflows/` is the git-tracked saved-workflow catalog with a path-free five-lens `council.js` as its first entry, pinned by `scripts/workflows-meta.test.ts` and `council-workflow-parity.test.ts`, and two native council runs are recorded in the wish.
 
 ## Summary
 

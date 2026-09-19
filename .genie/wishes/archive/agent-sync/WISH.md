@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — merged as PR #2541; original implementation since superseded by the current agent-sync safety contract (current proof lives in the [PR #2545 remediation ledger](../pr-2545-ultra-release-gate/REVIEW-DISPOSITION.md)). G1/G2/G3 all SHIP (G1 after 1 fix loop; G2/G3 with orchestrator follow-ups), final execution review SHIP (2026-07-10, gates green, 806 pass / 1 skip). Header reconciled to INDEX 2026-07-26 (was EXECUTED) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `agent-sync` |
 | **Date** | 2026-07-10 |
 | **Author** | Felipe (planned with Fable 5) |
 | **Appetite** | small-medium (2-4 days) |
 | **Branch** | `wish/agent-sync` |
 | **Design** | [DESIGN.md](DESIGN.md) — approved via /plan → ExitPlanMode (2026-07-10) |
+
+> **Truth (2026-09-19):** Merged as PR #2541, then superseded whole: `src/lib/agent-sync.ts` was deleted in `699a48bbd` (skills-everywhere-b, PR #2882) and convergence is now the skills.sh channel in `src/lib/skills-installer.ts`, so none of its three adapter targets is a genie surface any more.
 
 ## Summary
 
@@ -46,6 +48,13 @@
 | 7 | Hermes via symlink + enable | install-local.sh's documented default; the atomic source swap freshens Hermes on every future update for free |
 | 8 | Delete scripts/smart-install.js (not backport) | Root cause of the clobber hazard: two diverged copies; shipped copy becomes the single source; build.js copy block dies with it |
 | 9 | Post-swap exec of the new binary | Established pattern in update.ts (three existing probes); makes every FUTURE update self-syncing; delivery release carries a one-time "run `genie update` again" caveat |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

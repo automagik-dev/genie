@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — all 3 groups SHIP-reviewed (2026-07-02) |
+| **Status** | SHIPPED |
 | **Slug** | `v5-housekeeping` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `v5` (rides ahead of PR #2499; commits land per group) |
 | **Design** | genie-v5-lightweight-body DESIGN (brainstorm deleted in the 2026-09-19 triage) — lightweight-body follow-through |
 | **Depends on** | wish `v5-demolition` (DONE, PR #2499 open) |
+
+> **Truth (2026-09-19):** PR #2500 merged 2026-07-02 and every named deletion still holds on dev; criterion 2 (`git ls-files .genie/` empty) was deliberately reversed the same day by taxonomy-rehoming — planning documents are tracked under `.genie/` by design.
 
 ## Summary
 
@@ -43,6 +45,13 @@ The demolition removed the harness but left the shell: unreferenced root files (
 | 4 | Makefile deleted rather than trimmed | Every target either shells to a bun script (duplication) or references deleted build:app/tauri; `bun run <x>` is the single interface |
 | 5 | One `tests/` tree | Three test roots (test/, tests/, test-fixtures/) for two suites is v4 residue; e2e + integration + hooks live together |
 | 6 | README written from scratch, not patched | The G6 sweep made it honest; this wish makes it good — structure designed for v5 rather than v4 minus deletions |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

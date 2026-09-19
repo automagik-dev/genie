@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — PR #2617 merged to dev 2026-07-22 (A–E merge gate closed; each group independently SHIPPED first); final gate **SHIP** 2026-07-22 (Fable final-gate, independent full-suite rerun 2396/ruled-2; cache-advance invariant swept to exactly five gated entries; lifecycle traced end-to-end; no appeal). Stable promotion remains gated on Felipe's live homolog dogfood ritual (structural evidence validator) incl. his ratified veto on Fork A (setup is activation-only). Before the merge, dev had independently shipped only the delivery-adjacent plugin-only layer (B1 `3b4faa3b`, B2 `6f423869`). Plan gate SHIP 2026-07-12 at fix loop 1/2 (reviewed digest `4c71ab68…`). Header reconciled 2026-07-26 (previously read "A-E merge gate OPEN — PR to dev created") |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `codex-plugin-update-handoff` |
 | **Date** | 2026-07-12 |
 | **Author** | Felipe + Codex brainstorm session |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/codex-plugin-update-handoff` |
 | **Repos touched** | genie |
 | **Design** | [DESIGN.md](../../../brainstorms/codex-plugin-update-handoff/DESIGN.md) |
+
+> **Truth (2026-09-19):** PR #2617 merged 2026-07-22, then superseded on both sides: the Codex plugin subsystem it permit-gated was deleted in `5109bf0fb` and the homolog channel its promotion ritual needed was removed in `a51c3f097`; argv-only post-delivery convergence replaced the activation protocol.
 
 ## Status Update: Handoff Criterion Classification — 2026-07-21
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | APPROVED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `genie-official-roadmap` |
 | **Date** | 2026-07-28 |
 | **Author** | Felipe + orchestrator (Fable 5) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/genie-official-roadmap` |
 | **Repos touched** | automagik-dev/genie only |
 | **Design** | [DESIGN.md](../../../brainstorms/genie-official-roadmap/DESIGN.md) |
+
+> **Truth (2026-09-19):** Never executed on dev, and its plan cannot be replayed: the 2026-07-28 audit it is built on counted 36 wishes against today's 55 and assumed an unseeded board — this 2026-09-19 triage is the re-scoped successor that archives, deletes and rewrites INDEX against the real tree.
 
 ## Summary
 

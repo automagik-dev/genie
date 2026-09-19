@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `cross-agent-delegate` |
 | **Date** | 2026-08-11 |
 | **Author** | Felipe + genie orchestrator |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/cross-agent-delegate` |
 | **Repos touched** | genie only |
 | **Design** | [DESIGN.md](../../../brainstorms/cross-agent-delegate/DESIGN.md) |
+
+> **Truth (2026-09-19):** PR #2766 merged 2026-08-11; the roster allowlist (`src/lib/v5/task-state.ts:362`), the `assigned_agent`/`assigned_reason` columns and `task create --agent/--why` / `task assign --clear` are all live and documented in CLAUDE.md.
 
 ## Summary
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `genie-ui-bridge` |
 | **Date** | 2026-07-21 |
 | **Author** | Felipe (channel/home/timing ratified via explicit picker 2026-07-21) + Fable orchestrator |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/genie-ui-bridge` |
 | **Repos touched** | genie (this repo only) |
 | **Design** | [DESIGN.md](../../../brainstorms/genie-ui-bridge/DESIGN.md) |
+
+> **Truth (2026-09-19):** PR #2610 shipped the bridge 2026-07-21; `f45d634b8` (#2834) retired it on the owner's decision that Orca is the only UI surface, leaving `genie ui-bridge` a refusal stub and the `hire_roster` substrate orphaned as a dead-code cleanup, not a roadmap item.
 
 ## Summary
 

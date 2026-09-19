@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — QA CLOSED on model identity 2026-07-21: fresh-session resolved model IDs **7/7 PASS** (haiku/opus×5/fable exactly per pins) — [qa/routing-pin-qa-20260721.md](qa/routing-pin-qa-20260721.md); delivery/discovery/doctor/auth PASS 07-14; effort observation optional follow-up (shared LangWatch key not on host). History: day-1 inconclusive-by-delivery-gap (07-10), day-3 FAIL-by-logout (07-14) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `routing-matrix` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5 + Hermes counter-read) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/routing-matrix` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | genie-token-efficiency-program DESIGN (brainstorm deleted in the 2026-09-19 triage) · [track DRAFT](../../../brainstorms/routing-matrix/DRAFT.md) |
+
+> **Truth (2026-09-19):** Executed with QA closed 2026-07-21, then three of its four surfaces were deleted (`plugins/genie/agents/` in `e250b9463`, skill model pins, `genie launch` in `782a34397`); the only survivor is the Complexity/Model column rule in `scripts/wishes-lint.ts`.
 
 ## Summary
 
@@ -47,6 +49,13 @@ Genie dispatches every subagent with no model/effort pinning, so engineers, fixe
 | 4 | Hybrid budgets: HARD 3 Fable calls/wish + 2 escalations/group (logged override to exceed); $/wish advisory until measurable | Countable in-session today; prevents escalation laundering without false blocks from cost estimation |
 | 5 | Escalation requires diagnosed cause + new evidence; env/tool/spec failures never climb the ladder | A bigger model on rotten context "only burns money more eloquently" (Hermes) |
 | 6 | Budget knobs live in genie config (template keys), not in skill prose | One revisable place; LangWatch data can retune without prompt edits |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

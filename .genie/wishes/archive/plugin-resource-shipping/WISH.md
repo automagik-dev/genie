@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED — PR #2540 merged 2026-07-10 (CI 10/10); remaining QA: live installed-plugin scaffold on next release. Plan review SHIP (2026-07-09, 2 fix loops; Hermes counter-read unavailable — logged, retry next gate). Header reconciled to INDEX 2026-07-26 (was stale at DRAFT) |
+| **Status** | SHIPPED |
 | **Slug** | `plugin-resource-shipping` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/plugin-resource-shipping` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | genie-token-efficiency-program DESIGN (brainstorm deleted in the 2026-09-19 triage) · [track DRAFT](../../../brainstorms/plugin-resource-shipping/DRAFT.md) |
+
+> **Truth (2026-09-19):** PR #2540 merged 2026-07-10; `skills/wish/templates/wish-template.md` and the three `scripts/skills-lint.ts` rules (84 pass) keep the regression class mechanically impossible, and its one open QA item died with the plugin payload.
 
 ## Summary
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — both groups SHIP-reviewed (2026-07-02); branch-guard re-armed, regression-gated |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `dispatch-inproc-default` |
 | **Date** | 2026-07-02 |
 | **Author** | Felipe + Genie |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/dispatch-inproc-default` (from `dev`; PR back to `dev`) |
 | **Design** | _No brainstorm — direct fix of a discovered HIGH defect_ |
 | **Depends on** | none |
+
+> **Truth (2026-09-19):** `bbe281e74` shipped it exactly as specified, then `src/hooks/` was deleted whole in `e250b9463`; the branch-guard intent now lives outside genie code as git hooks plus `.claude/hooks/git-safety.sh`.
 
 ## Summary
 
@@ -44,6 +46,13 @@ The v5 demolition deleted the hook daemon (`src/serve/`) but left `src/hooks/dis
 | 4 | Retire `GENIE_HOOK_FORCE_INPROC` | The two-path split is what let the fall-open hide behind an unflipped flag; one path can't silently diverge from what's tested |
 | 5 | Regression gate drives the BUILT dist on the default path | The bug escaped because tests drove `dispatch()` directly, never the `genie hook dispatch` entry against the binary CC actually invokes |
 | 6 | Coordinate index.ts with omni-runner-port | That wish (separate branch) also edits buildDenyResponse/buildBlockingResponse; note the overlap so the merge is deliberate, not a collision |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DONE — implemented on dev **prior to execution of this wish**: `c4fdb32b` (fail-fast on dead/absent PAT + read/create token split) and `422caaa2` (dev==main healthy no-op) together satisfy the acceptance criteria; both commits are also promoted to `origin/main`. Discovered already-shipped by a council freshness probe (2026-07-10) — no new engineering dispatched. Minting/refreshing the PAT itself remains the open human action for Felipe |
+| **Status** | SHIPPED |
 | **Slug** | `rolling-pr-auth-hardening` |
 | **Date** | 2026-07-05 |
 | **Author** | Felipe (dogfooding the revamped v5 lifecycle) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/rolling-pr-auth-hardening` |
 | **Repos touched** | `automagik-dev/genie` → `/home/feliperosa/vm-home/workspace/worktrees/genie-skills-revamp` |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** Implemented on dev and main as `c4fdb32bd` + `422caaa26` — the fail-fast guard and the read/create token split are verbatim in `.github/workflows/rolling-pr.yml`; minting the RELEASE_PLEASE_TOKEN PAT is an operator action, not a deliverable.
 
 ## Summary
 
@@ -34,6 +36,13 @@ Harden the workflow: fail fast with an actionable `::error` when the secret is a
 |---|----------|-----------|
 | 1 | Fail-fast guard instead of silent PAT fallback to `github.token` for creation | Repo setting `default_workflow_permissions: read`, `can_approve_pull_request_reviews: false` (verified via API) — creation with `github.token` would fail anyway; a loud, actionable error beats an hourly cryptic one |
 | 2 | Split tokens: `github.token` for list, PAT for create | Least privilege; the workflow keeps working read-only (and reports clearly) even while the secret is dead |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 

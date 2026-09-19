@@ -11,6 +11,8 @@
 | **Repos touched** | automagik-dev/genie |
 | **Design** | _No brainstorm — direct wish_ |
 
+> **Truth (2026-09-19):** The one live wish with real open work: not one of the five groups has executed (`skills/observe` does not exist and `observe` is absent from `SHIPPED_SKILLS` in `scripts/release-docs.test.ts`), and it edits the shipped skill roster, so it lands after the stable cut and ahead of the wish-v7 program.
+
 ## Summary
 
 Fix the known gaps in the Phoenix observability tooling merged in #2936 so it works for anyone who runs Phoenix locally, then ship it with genie releases as the `observe` skill. Two `/wish` runs were refused with route `plan`: `wf_be0903ef-7b3` because registering a shipped skill edits the denylisted `scripts/release-docs.test.ts`, and `wf_8491beac-ef6` because the fixes count as 9 units against a maximum of 3. This plan splits the work into five groups that each fit the admission band.

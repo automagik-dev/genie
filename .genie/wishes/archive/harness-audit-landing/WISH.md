@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `harness-audit-landing` |
 | **Date** | 2026-08-06 |
 | **Author** | Fable 5 (council-validated: questioner, architecture, simplifier, perf — 2 rounds) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/harness-audit-landing` (to be created; the diffs currently sit uncommitted on `dev`) |
 | **Repos touched** | genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** Group 1 merged as PR #2752 (2026-08-07) and Group 3 as `dc0e73c93`; Group 2's `completeTask` fence shipped and was deliberately reverted in `e31cb8959` because it broke the documented two-actor flow — that reversal is now load-bearing documentation at `task-state.ts:1215`.
 
 ## Summary
 

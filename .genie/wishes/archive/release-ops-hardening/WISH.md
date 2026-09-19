@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT — not plan-reviewed (2026-07-26); needs Felipe approval + a plan gate before execution |
+| **Status** | DRAFT — SUPERSEDED as written (2026-09-19 triage) |
 | **Slug** | `release-ops-hardening` |
 | **Date** | 2026-07-26 |
 | **Author** | Genie (roadmap triage session, from the 2026-07-20→26 outage post-mortem + stable-path study) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/release-ops-hardening` |
 | **Repos touched** | `automagik-dev/genie` |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** Never plan-reviewed, and two of its three groups shipped without it in `56250fd49` (#2674/#2675, `release-replay-guard.test.ts` 7 pass); only G2 survives — `release-orphan-alert.yml` still fires on every dev→main promotion — and it needs a fresh, smaller wish.
 
 ## The problem
 

@@ -11,6 +11,8 @@
 | **Repos touched** | `remotty` (app, linux, docs, tests), `genie` (`~/prod/genie`) |
 | **Design** | [DESIGN.md](../../../brainstorms/roadmap-truth/DESIGN.md) |
 
+> **Truth (2026-09-19):** PR #2751 merged 2026-08-06; `reconcileWishLanes()` at `src/term-commands/v5-board.ts:243` is live and its deferred live oracles are covered instead by the 97 committed `v5-board.test.ts` cases.
+
 > **Design evidence.** SHIP, reviewed-content sha
 > `40106843a8d88b70d85ea8d0394c4968dc97987d523d044b946944f377919fc8` — the
 > round-4 digest (`7e35c1bd…`) covered the pre-citation-fix DESIGN.md; the

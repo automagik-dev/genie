@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | EXECUTED (2026-07-10) — G1–G5 all SHIP (see INDEX poured entry); design + plan reviews SHIP (2026-07-09, same independent reviewer, 1 fix pass each). **Live-QA ritual (Felipe: `/council "revisar tudo"`) and the final execution review remain pending post-stable-release** — the g5-gate parks in `qa/` until then. First real dogfood tonight surfaced and fixed a string-args defect (`ec68cd8f`): see [qa/overnight-observations-20260710.md](qa/overnight-observations-20260710.md) |
+| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
 | **Slug** | `council-workflow` |
 | **Date** | 2026-07-09 |
 | **Author** | Felipe (planned with Fable 5) |
 | **Appetite** | medium (≈1 week) |
 | **Branch** | `wish/council-workflow` |
 | **Design** | [DESIGN.md](../../../brainstorms/council-workflow/DESIGN.md) |
+
+> **Truth (2026-09-19):** Executed 2026-07-10 (G1–G5 all SHIP), then superseded: the 13-lens, plugin-stamped council died with the plugin payload in `e250b9463`, and today's `/council` is the five-lens path-free `.claude/workflows/council.js` delivered by the workflows channel.
 
 ## Summary
 
@@ -46,6 +48,13 @@ Genie's multi-perspective reasoning is split across two model-driven orchestrato
 | 7 | Fresh-agent Socratic round 2 | Workflows have no SendMessage; feeding each member its own R1 back preserves identity, gains resumability |
 | 8 | `skills/council/` deleted whole | Skill-vs-workflow precedence for one name is undocumented — avoid the collision |
 | 9 | Consumers wired now (not deferred) | Felipe chose delivering the full G4 vision in this wish; both steps are new to the repo skills; sequencing handled by waves |
+
+## Dependencies
+
+**depends-on:** none
+**blocks:** none
+
+_Backfilled 2026-09-19 when this wish was archived and its legacy terminal status became canonical: the wish is closed and no live wish waits on it. Historical sequencing stays in the prose above._
 
 ## Success Criteria
 
