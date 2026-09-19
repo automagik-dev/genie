@@ -198,6 +198,11 @@ describe('runInitCli', () => {
     expect(out).toContain('git -C');
     expect(out).toContain('genie mikro fixtures --from-commits');
     expect(out).toContain('genie mikro bench wish-context');
+    // Step 4 is runnable as printed: the evidence bench writes and the fixture set step 3
+    // built are both untracked, and coach's Gate 1 refuses a dirty .mikro/agents.
+    expect(out).toContain('.mikro/agents/wish-context/EVIDENCE.md .mikro/fixtures/wish-context.json');
+    expect(out).toContain(`git -C ${dir} commit -m "chore(mikro): record the wish-context baseline and fixtures"`);
+    expect(out).toContain('a dirty .mikro/agents aborts the round');
     expect(out).toContain('mikro >= 1.260909.1 on PATH');
     expect(out).toContain('DEEPSEEK_API_KEY');
     expect(out).toContain('deepseek-flash');

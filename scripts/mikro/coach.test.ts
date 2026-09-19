@@ -19,6 +19,7 @@ import {
   benchCommand,
   coachPrompt,
   decideVerdict,
+  dirtyAgentsAbortReason,
   fixtureMetrics,
   improvement,
   verifyProposal,
@@ -451,5 +452,23 @@ process.stdout.write(
     // …and it is still nowhere in the command the round would spawn.
     expect(seen.cmd).toEqual([bin, 'mikro', 'bench']);
     for (const token of seen.cmd) expect(token).not.toContain('$bunfs');
+  });
+});
+
+describe("Gate 1's abort message", () => {
+  test('keeps the diagnostic and the dirty paths, and names both ways out plus the re-run', () => {
+    const reason = dirtyAgentsAbortReason([
+      '?? .mikro/agents/wish-context/EVIDENCE.md',
+      ' M .mikro/agents/wish-context/SYSTEM.md',
+    ]);
+    // The diagnostic half is unchanged: why the gate exists, then every path git listed.
+    expect(reason).toContain('.mikro/agents is not clean — "before" would not be the recorded prompt:');
+    expect(reason).toContain('?? .mikro/agents/wish-context/EVIDENCE.md');
+    expect(reason).toContain(' M .mikro/agents/wish-context/SYSTEM.md');
+    // The remedy half: an operator who followed `genie mikro init` lands here with an
+    // untracked EVIDENCE.md and needs to be told which two exits the gate accepts.
+    expect(reason).toContain('commit the listed paths');
+    expect(reason).toContain('or remove them');
+    expect(reason).toContain('re-run');
   });
 });

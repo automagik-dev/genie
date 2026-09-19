@@ -212,6 +212,11 @@ ${nextStepForCommit(dir)}
 
   4. measure the agent you now own, and keep the number:
      genie mikro bench wish-context --dir ${dir} --reps 1 --write-evidence
+     then commit what steps 3 and 4 just wrote — the evidence file and the fixture set are
+     both untracked until you do, and a dirty .mikro/agents aborts the round, so this
+     commit is a precondition of step 5's "genie mikro coach":
+     git -C ${dir} add .mikro/agents/wish-context/EVIDENCE.md .mikro/fixtures/wish-context.json
+     git -C ${dir} commit -m "chore(mikro): record the wish-context baseline and fixtures"
 
   5. edit .mikro/agents/wish-context/SYSTEM.md, re-bench with --tag round=N, and keep the
      change only if the bars still pass. "genie mikro coach wish-context --dir ${dir}"
