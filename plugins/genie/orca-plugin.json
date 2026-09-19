@@ -35,7 +35,13 @@
       { "command": "genie.council", "key": "Ctrl+Alt+Shift+C", "when": "worktree" },
       { "command": "genie.doctor", "key": "Ctrl+Alt+Shift+D", "when": "worktree" },
       { "command": "genie.update", "key": "Ctrl+Alt+Shift+U", "when": "worktree" }
-    ]
+    ],
+    "events": [{ "on": "agent.status.changed" }]
   },
-  "capabilities": [{ "kind": "workspace:read" }, { "kind": "terminal:send" }, { "kind": "notifications:show" }]
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "terminal:send" },
+    { "kind": "notifications:show" },
+    { "kind": "events:subscribe" }
+  ]
 }

@@ -1,14 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { mirrorTransition } from '../../src/lib/orca-lifecycle-mirror';
 import type { OrcaAdapterResponse, OrcaOrchestrationAdapter } from '../../src/lib/orca-orchestration-adapter';
 import { OrcaAdapterError, buildOrcaOrchestrationArgv } from '../../src/lib/orca-orchestration-adapter';
 import {
   GENIE_PALETTE_COMMANDS,
   GENIE_WORKER_AGENTS,
+  type GenieFetch,
+  type GenieProcessRequest,
+  type GenieProcessResult,
+  type GenieSpawn,
   type GenieTerminal,
   type GenieWorkspace,
   type OrcaPluginHost,
+  type OrcaPluginHostOverrides,
   chooseAgentTerminal,
   composeSlashCommand,
   createOrcaPluginEntrypoint,
@@ -161,17 +168,57 @@ const adapterError = (code: 'timeout' | 'ambiguous_after_possible_commit' | 'pro
 interface Palette {
   readonly handlers: Map<string, (args?: unknown) => Promise<unknown>>;
   readonly logs: string[];
+  /** Delivers one `agent.status.changed` payload the way Orca's worker bridge does. */
+  readonly emit: (event: string, payload: unknown) => Promise<void>;
+  readonly subscribed: string[];
 }
 
-async function activate(adapter: OrcaOrchestrationAdapter, host: OrcaPluginHost): Promise<Palette> {
+const enoent = (command: string): Error => Object.assign(new Error(`spawn ${command} ENOENT`), { code: 'ENOENT' });
+
+/**
+ * No test ever spawns a real binary or opens a real socket: the default seams
+ * fail the way an absent genie and an offline host do, so a handler that
+ * forgot its seam fails loudly instead of reaching the network.
+ */
+const offlineSpawn: GenieSpawn = async (request) => {
+  throw enoent(request.command);
+};
+const offlineFetch: GenieFetch = async () => {
+  throw new Error('no network in tests');
+};
+
+type ActivationSeams = Omit<OrcaPluginHostOverrides, 'host' | 'log'>;
+
+async function activate(
+  adapter: OrcaOrchestrationAdapter,
+  host: OrcaPluginHost,
+  seams: ActivationSeams = {},
+): Promise<Palette> {
   const handlers = new Map<string, (args?: unknown) => Promise<unknown>>();
   const logs: string[] = [];
-  await createOrcaPluginEntrypoint(adapter)({
+  const subscribed: string[] = [];
+  const listeners = new Map<string, ((payload: unknown) => Promise<void> | void)[]>();
+  await createOrcaPluginEntrypoint(adapter, { spawn: offlineSpawn, fetch: offlineFetch, ...seams })({
     commands: { register: (id, handler) => handlers.set(id, handler) },
+    events: {
+      on: (event, handler) => {
+        subscribed.push(event);
+        listeners.set(event, [...(listeners.get(event) ?? []), handler]);
+      },
+    },
     host,
     log: (message) => logs.push(message),
   });
-  return { handlers, logs };
+  return {
+    handlers,
+    logs,
+    subscribed,
+    // Orca awaits each handler inside its own try/catch and then acks; a
+    // handler that rejects here would prove the worker-killing shape.
+    emit: async (event, payload) => {
+      for (const handler of listeners.get(event) ?? []) await handler(payload);
+    },
+  };
 }
 
 async function invoke(palette: Palette, id: string): Promise<unknown> {
@@ -236,9 +283,10 @@ describe('the genie palette manifest', () => {
       { kind: 'workspace:read' },
       { kind: 'terminal:send' },
       { kind: 'notifications:show' },
+      { kind: 'events:subscribe' },
     ]);
-    // Group 5 adds `events:subscribe` with `contributes.events`; not this group.
-    expect(manifest.contributes.events).toBeUndefined();
+    // RF6's one subscription; `events:subscribe` above is what Orca grants it.
+    expect(manifest.contributes.events).toEqual([{ on: 'agent.status.changed' }]);
 
     expect(GENIE_PALETTE_COMMANDS.map((command) => [command.id, command.title])).toEqual(
       commands.map((command) => [command.id, command.title]),
@@ -521,19 +569,367 @@ describe('refusals never reach the plugin host', () => {
 });
 
 describe('the two binary-backed commands', () => {
-  test('doctor and update notify that they are not yet available and mutate nothing', async () => {
-    const adapter = fakeAdapter();
-    const host = fakeHost();
-    const palette = await activate(adapter.adapter, host.host);
+  const GENIE_FALLBACK = join(homedir(), '.local', 'bin', 'genie');
+  const workspaceScript = { 'worktree-show': () => envelope({ worktree: WORKSPACE_RECORD }) };
+  const processResult = (stdout: string, code = 0): GenieProcessResult => ({ code, stdout, stderr: '' });
+  const doctorReport = (ok: boolean, checks: { name: string; status: string; detail?: string }[]) =>
+    JSON.stringify({ ok, checks });
 
-    expect(await invoke(palette, 'genie.doctor')).toEqual({ ok: false, reason: 'not-yet-available' });
-    expect(await invoke(palette, 'genie.update')).toEqual({ ok: false, reason: 'not-yet-available' });
-    expect(host.notifications).toEqual([
-      'Genie: Doctor is not yet available in this build',
-      'Genie: Update is not yet available in this build',
+  /** Records every child process the handler asked for and answers from a script. */
+  function fakeSpawn(answers: ((request: GenieProcessRequest) => GenieProcessResult | Error)[]): {
+    spawn: GenieSpawn;
+    requests: GenieProcessRequest[];
+  } {
+    const requests: GenieProcessRequest[] = [];
+    return {
+      requests,
+      spawn: async (request) => {
+        requests.push(request);
+        const answer = answers[Math.min(requests.length - 1, answers.length - 1)];
+        const value = answer === undefined ? enoent(request.command) : answer(request);
+        if (value instanceof Error) throw value;
+        return value;
+      },
+    };
+  }
+
+  test('doctor runs `genie doctor --json` in the workspace and names the checks that are not pass', async () => {
+    const adapter = fakeAdapter(workspaceScript);
+    const host = fakeHost();
+    const spawn = fakeSpawn([
+      () =>
+        processResult(
+          doctorReport(false, [
+            { name: 'genie version', status: 'pass', detail: '5.260919.7' },
+            { name: 'skills: agent dirs', status: 'warn', detail: 'x' },
+          ]),
+          1,
+        ),
     ]);
+    const palette = await activate(adapter.adapter, host.host, { spawn: spawn.spawn });
+
+    expect(await invoke(palette, 'genie.doctor')).toEqual({ ok: false, warn: 1, fail: 0 });
+    expect(host.notifications).toEqual(['Genie doctor: 1 warn, 0 fail — skills: agent dirs']);
+    // The report is read from stdout whatever the exit code: `genie doctor
+    // --json` prints its checks and exits 1 when it is not ok.
+    expect(spawn.requests).toEqual([
+      { command: 'genie', args: ['doctor', '--json'], cwd: WORKSPACE_PATH, timeoutMs: 20_000 },
+    ]);
+    expect(operationNames(adapter)).toEqual(['worktree-show']);
+    expect(adapter.operations[0]).toEqual({ operation: 'worktree-show', worktree: 'active' });
+  });
+
+  test('doctor counts fails, names at most three checks, and says so when everything passes', async () => {
+    const flagged = [
+      { name: 'a', status: 'warn' },
+      { name: 'b', status: 'fail' },
+      { name: 'c', status: 'warn' },
+      { name: 'd', status: 'fail' },
+      // A non-pass status outside the counted vocabulary is neither counted nor named.
+      { name: 'e', status: 'skipped' },
+    ];
+    const flaggedSpawn = fakeSpawn([() => processResult(doctorReport(false, flagged))]);
+    const flaggedHost = fakeHost();
+    expect(
+      await invoke(
+        await activate(fakeAdapter(workspaceScript).adapter, flaggedHost.host, { spawn: flaggedSpawn.spawn }),
+        'genie.doctor',
+      ),
+    ).toEqual({ ok: false, warn: 2, fail: 2 });
+    expect(flaggedHost.notifications).toEqual(['Genie doctor: 2 warn, 2 fail — a; b; c +1 more']);
+
+    const cleanSpawn = fakeSpawn([
+      () => processResult(doctorReport(true, [{ name: 'genie version', status: 'pass' }])),
+    ]);
+    const cleanHost = fakeHost();
+    expect(
+      await invoke(
+        await activate(fakeAdapter(workspaceScript).adapter, cleanHost.host, { spawn: cleanSpawn.spawn }),
+        'genie.doctor',
+      ),
+    ).toEqual({ ok: true, warn: 0, fail: 0 });
+    expect(cleanHost.notifications).toEqual(['Genie doctor: all checks pass']);
+  });
+
+  test('doctor falls back to ~/.local/bin/genie only when the PATH lookup answers ENOENT', async () => {
+    const spawn = fakeSpawn([
+      (request) => enoent(request.command),
+      () => processResult(doctorReport(true, [{ name: 'genie version', status: 'pass' }])),
+    ]);
+    const host = fakeHost();
+    const palette = await activate(fakeAdapter(workspaceScript).adapter, host.host, { spawn: spawn.spawn });
+
+    expect(await invoke(palette, 'genie.doctor')).toEqual({ ok: true, warn: 0, fail: 0 });
+    expect(spawn.requests.map((request) => request.command)).toEqual(['genie', GENIE_FALLBACK]);
+    expect(spawn.requests[1]).toMatchObject({ args: ['doctor', '--json'], cwd: WORKSPACE_PATH });
+    expect(host.notifications).toEqual(['Genie doctor: all checks pass']);
+    expect(palette.logs.join('\n')).toContain(GENIE_FALLBACK);
+  });
+
+  test('a spawn failure and unparsable output are the same bounded `could not run` line', async () => {
+    for (const answer of [
+      () => new Error('Command failed: genie doctor --json'),
+      () => processResult('Killed\n', 137),
+    ]) {
+      const host = fakeHost();
+      const spawn = fakeSpawn([answer, answer]);
+      expect(
+        await invoke(
+          await activate(fakeAdapter(workspaceScript).adapter, host.host, { spawn: spawn.spawn }),
+          'genie.doctor',
+        ),
+      ).toEqual({ ok: false, warn: 0, fail: 0 });
+      expect(host.notifications).toHaveLength(1);
+      expect(host.notifications[0].startsWith('Genie doctor: could not run (')).toBe(true);
+      expect(host.notifications[0].length).toBeLessThanOrEqual(300);
+    }
+  });
+
+  test('update compares `genie --version` with the published stable manifest', async () => {
+    const requested: { url: string; signal: AbortSignal }[] = [];
+    const fetchManifest = (version: string): GenieFetch => {
+      return async (url, init) => {
+        requested.push({ url, signal: init.signal });
+        return { ok: true, status: 200, json: async () => ({ schema_version: 1, channel: 'stable', version }) };
+      };
+    };
+
+    const newerHost = fakeHost();
+    const spawn = fakeSpawn([() => processResult('5.260919.7\n')]);
+    expect(
+      await invoke(
+        await activate(fakeAdapter().adapter, newerHost.host, {
+          spawn: spawn.spawn,
+          fetch: fetchManifest('5.260920.1'),
+        }),
+        'genie.update',
+      ),
+    ).toEqual({ ok: true, installed: '5.260919.7', latest: '5.260920.1' });
+    expect(newerHost.notifications).toEqual([
+      'Genie update available: 5.260920.1 (installed 5.260919.7) — run genie update',
+    ]);
+    expect(spawn.requests).toEqual([{ command: 'genie', args: ['--version'], cwd: undefined, timeoutMs: 8_000 }]);
+    expect(requested).toHaveLength(1);
+    expect(requested[0].url).toBe('https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json');
+    expect(requested[0].signal).toBeInstanceOf(AbortSignal);
+
+    const currentHost = fakeHost();
+    expect(
+      await invoke(
+        await activate(fakeAdapter().adapter, currentHost.host, {
+          spawn: fakeSpawn([() => processResult('v5.260920.1\n')]).spawn,
+          fetch: fetchManifest('5.260920.1'),
+        }),
+        'genie.update',
+      ),
+    ).toEqual({ ok: true, installed: '5.260920.1', latest: '5.260920.1' });
+    expect(currentHost.notifications).toEqual(['Genie is up to date (5.260920.1)']);
+  });
+
+  test('a manifest that cannot be read is one `could not check` line, never a thrown handler', async () => {
+    const failures: GenieFetch[] = [
+      async () => {
+        throw new Error('fetch failed: getaddrinfo ENOTFOUND raw.githubusercontent.com');
+      },
+      async () => ({ ok: false, status: 503, json: async () => ({}) }),
+      async () => ({ ok: true, status: 200, json: async () => ({ schema_version: 1 }) }),
+    ];
+    for (const fetchManifest of failures) {
+      const host = fakeHost();
+      const result = await invoke(
+        await activate(fakeAdapter().adapter, host.host, {
+          spawn: fakeSpawn([() => processResult('5.260919.7\n')]).spawn,
+          fetch: fetchManifest,
+        }),
+        'genie.update',
+      );
+      expect(result).toEqual({ ok: false, installed: '5.260919.7' });
+      expect(host.notifications).toHaveLength(1);
+      expect(host.notifications[0].startsWith('Genie update: could not check (')).toBe(true);
+      expect(host.notifications[0].length).toBeLessThanOrEqual(300);
+    }
+  });
+
+  test('neither command touches the adapter beyond the one workspace read, and update does not read it at all', async () => {
+    const adapter = fakeAdapter(workspaceScript);
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host, {
+      spawn: fakeSpawn([() => processResult(doctorReport(true, []))]).spawn,
+      fetch: async () => ({ ok: true, status: 200, json: async () => ({ version: '5.260919.7' }) }),
+    });
+    await invoke(palette, 'genie.doctor');
+    await invoke(palette, 'genie.update');
+    expect(operationNames(adapter)).toEqual(['worktree-show']);
+    expect(host.calls.some((call) => call.method === 'terminal.sendText')).toBe(false);
+  });
+});
+
+describe('result notifications from agent.status.changed', () => {
+  const SHIP_COMMENT = mirrorTransition({
+    to: 'REVIEW',
+    verdict: 'SHIP',
+    evidence: 'group 5 — 9 tests, head 445bd603a',
+    today: '2026-09-19',
+  }).comment;
+  const BLOCKED_COMMENT = mirrorTransition({
+    to: 'BLOCKED',
+    evidence: 'gate merge-approval — awaiting the owner',
+    today: '2026-09-19',
+  }).comment;
+
+  /** A `worktree-show` script whose comment advances one step per read. */
+  function commentScript(comments: (string | null)[]): {
+    script: Record<string, () => OrcaAdapterResponse>;
+    reads: number;
+  } {
+    const state = { reads: 0 };
+    return {
+      script: {
+        'worktree-show': () => {
+          const comment = comments[Math.min(state.reads, comments.length - 1)] ?? null;
+          state.reads += 1;
+          return envelope({ worktree: { ...WORKSPACE_RECORD, comment } });
+        },
+      },
+      get reads() {
+        return state.reads;
+      },
+    };
+  }
+
+  const settled = (state: string, worktreeId: string | null = WORKSPACE_ID) => ({
+    worktreeId,
+    paneKey: 'pane_1',
+    state,
+    receivedAt: 1_758_240_000_000,
+  });
+
+  /** A clock the debounce reads; every test that wants a fresh window advances it itself. */
+  function clock(): { now: () => number; advance: (ms: number) => void } {
+    let value = 1_000;
+    return {
+      now: () => value,
+      advance: (ms) => {
+        value += ms;
+      },
+    };
+  }
+
+  test('a settled agent whose card carries a new genie line is exactly one notification for that workspace', async () => {
+    const comments = commentScript([SHIP_COMMENT]);
+    const adapter = fakeAdapter(comments.script);
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host, { now: clock().now });
+
+    expect(palette.subscribed).toEqual(['agent.status.changed']);
+    await palette.emit('agent.status.changed', settled('done'));
+
+    // The workspace is addressed by the id the event carried, never `active`.
+    expect(adapter.operations).toEqual([{ operation: 'worktree-show', worktree: `id:${WORKSPACE_ID}` }]);
+    const shown = host.calls.filter((call) => call.method === 'notifications.show');
+    expect(shown).toHaveLength(1);
+    expect(shown[0].params).toEqual({ title: 'Genie — orca plugin genie', body: SHIP_COMMENT });
+    expect(SHIP_COMMENT).toMatch(/^2026-09-19 genie review: SHIP — /);
+    expect(String(shown[0].params.body).length).toBeLessThanOrEqual(300);
+  });
+
+  test('the same comment is never toasted twice, and the next genie line is', async () => {
+    const comments = commentScript([SHIP_COMMENT, SHIP_COMMENT, BLOCKED_COMMENT]);
+    const adapter = fakeAdapter(comments.script);
+    const host = fakeHost();
+    const time = clock();
+    const palette = await activate(adapter.adapter, host.host, { now: time.now });
+
+    await palette.emit('agent.status.changed', settled('done'));
+    time.advance(10_000);
+    await palette.emit('agent.status.changed', settled('done'));
+    expect(host.notifications).toEqual([SHIP_COMMENT]);
+    expect(comments.reads).toBe(2);
+
+    time.advance(10_000);
+    await palette.emit('agent.status.changed', settled('blocked'));
+    expect(host.notifications).toEqual([SHIP_COMMENT, BLOCKED_COMMENT]);
+    expect(BLOCKED_COMMENT).toMatch(/^2026-09-19 genie blocked — gate /);
+  });
+
+  test('`working` reads nothing while every other state settles', async () => {
+    const comments = commentScript([SHIP_COMMENT]);
+    const adapter = fakeAdapter(comments.script);
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host, { now: clock().now });
+
+    await palette.emit('agent.status.changed', settled('working'));
     expect(adapter.operations).toEqual([]);
-    expect(adapter.statusCalls).toBe(0);
+    expect(host.notifications).toEqual([]);
+
+    for (const state of ['blocked', 'waiting', 'done']) {
+      const each = commentScript([SHIP_COMMENT]);
+      const eachAdapter = fakeAdapter(each.script);
+      const eachPalette = await activate(eachAdapter.adapter, fakeHost().host, { now: clock().now });
+      await eachPalette.emit('agent.status.changed', settled(state));
+      expect(operationNames(eachAdapter), state).toEqual(['worktree-show']);
+    }
+  });
+
+  test('a comment that is not a genie line, and an event carrying no workspace, notify nothing', async () => {
+    const comments = commentScript(['ready for review', null]);
+    const adapter = fakeAdapter(comments.script);
+    const host = fakeHost();
+    const time = clock();
+    const palette = await activate(adapter.adapter, host.host, { now: time.now });
+
+    await palette.emit('agent.status.changed', settled('done'));
+    time.advance(10_000);
+    await palette.emit('agent.status.changed', settled('done'));
+    expect(comments.reads).toBe(2);
+    expect(host.notifications).toEqual([]);
+
+    for (const payload of [settled('done', null), { state: 'done' }, null, 'done']) {
+      await palette.emit('agent.status.changed', payload);
+    }
+    expect(comments.reads).toBe(2);
+    expect(host.notifications).toEqual([]);
+  });
+
+  test('a read that fails is swallowed: no notification, no rejection into the host', async () => {
+    const adapter = fakeAdapter({ 'worktree-show': () => adapterError('process_exit') });
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host, { now: clock().now });
+
+    await expect(palette.emit('agent.status.changed', settled('done'))).resolves.toBeUndefined();
+    expect(host.notifications).toEqual([]);
+    expect(palette.logs.join('\n')).toContain('agent.status.changed ignored (process_exit)');
+  });
+
+  test('at most one workspace read per 2 s window, however fast the burst is', async () => {
+    const comments = commentScript([SHIP_COMMENT]);
+    const adapter = fakeAdapter(comments.script);
+    const host = fakeHost();
+    const time = clock();
+    const palette = await activate(adapter.adapter, host.host, { now: time.now });
+
+    await palette.emit('agent.status.changed', settled('done'));
+    time.advance(1_999);
+    await palette.emit('agent.status.changed', settled('waiting'));
+    expect(comments.reads).toBe(1);
+
+    time.advance(1);
+    await palette.emit('agent.status.changed', settled('done'));
+    expect(comments.reads).toBe(2);
+    // The window bounds child processes, not notifications: the comment is unchanged.
+    expect(host.notifications).toEqual([SHIP_COMMENT]);
+  });
+
+  test('a host with no events API registers every command and says the notifications are off', async () => {
+    const handlers: string[] = [];
+    const logs: string[] = [];
+    await createOrcaPluginEntrypoint(fakeAdapter().adapter)({
+      commands: { register: (id) => handlers.push(id) },
+      host: fakeHost().host,
+      log: (message) => logs.push(message),
+    });
+    expect(handlers).toHaveLength(GENIE_PALETTE_COMMANDS.length);
+    expect(logs.join('\n')).toContain('no events API');
   });
 });
 

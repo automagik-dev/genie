@@ -1,3 +1,6 @@
+import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { OrcaAdapterResponse, OrcaOrchestrationAdapter } from '../../src/lib/orca-orchestration-adapter';
 import { type OrcaPluginRuntime, createOrcaPluginRuntime } from './orca-runtime';
 
@@ -6,9 +9,8 @@ import { type OrcaPluginRuntime, createOrcaPluginRuntime } from './orca-runtime'
  *
  * Six carry a slash verb and are delivered into the workspace's agent terminal
  * (or to a supervised worker started on a fresh Run when there is none). The two
- * with `verb: null` have no slash command — group 5 replaces their stubs with
- * the genie-binary handlers RF6 names, and they are declared from this group so
- * the contributed command set never changes shape again.
+ * with `verb: null` have no slash command: they run the genie binary in the
+ * worker and notify their result (`GENIE_BINARY_HANDLERS`).
  */
 export interface GeniePaletteCommand {
   readonly id: string;
@@ -56,18 +58,69 @@ export interface OrcaPluginHost {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
 }
 
+/**
+ * `activate(ctx)`'s event bridge, read from the same bundle:
+ * `events:{on(e,t){let n=l.get(e)??[];n.push(t),l.set(e,n)}}`. A `deliverEvent`
+ * message runs every registered handler for that event name in order, each
+ * `await`ed inside its own `try`, and only then acknowledges the event
+ * (`for(let t of e)try{await t(r.payload)}catch(e){…log…} a({type:'eventAck',…})`).
+ * A handler is therefore never passed an ack, its return value is discarded,
+ * and a slow handler holds the ack open — so the handler must be cheap, must
+ * absorb its own failures, and must leave no floating promise behind (a
+ * rejection OUTSIDE that `try` reaches `process.on('unhandledRejection')`,
+ * which sends `fatal` and exits the worker).
+ */
+export interface OrcaPluginEvents {
+  on(event: string, handler: (payload: unknown) => Promise<void> | void): void;
+}
+
 export interface OrcaPluginActivationContext {
   commands: {
     register(commandId: string, handler: (args?: unknown) => Promise<unknown>): void;
   };
+  events?: OrcaPluginEvents;
   host?: OrcaPluginHost;
   log?: (message: string) => void;
 }
 
-/** Test and group-5 seams: whatever is supplied here wins over `activate`'s own context. */
+/** One child process of the genie binary, bounded and shell-free. */
+export interface GenieProcessRequest {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd?: string;
+  readonly timeoutMs: number;
+}
+
+export interface GenieProcessResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Resolves for any exit code the binary itself chose (`genie doctor --json`
+ * exits non-zero while still printing its report) and REJECTS when the process
+ * could not run at all — an `ENOENT` rejection is what selects the
+ * `~/.local/bin/genie` fallback.
+ */
+export type GenieSpawn = (request: GenieProcessRequest) => Promise<GenieProcessResult>;
+
+export interface GenieFetchResponse {
+  readonly ok: boolean;
+  readonly status: number;
+  json(): Promise<unknown>;
+}
+
+export type GenieFetch = (url: string, init: { readonly signal: AbortSignal }) => Promise<GenieFetchResponse>;
+
+/** Test and event seams: whatever is supplied here wins over `activate`'s own context. */
 export interface OrcaPluginHostOverrides {
   readonly host?: OrcaPluginHost;
   readonly log?: (message: string) => void;
+  readonly spawn?: GenieSpawn;
+  readonly fetch?: GenieFetch;
+  /** The debounce clock. Injected so the 2 s window is provable without waiting 2 s. */
+  readonly now?: () => number;
 }
 
 export type GenieCommandResult =
@@ -75,6 +128,20 @@ export type GenieCommandResult =
   | { readonly ok: true; readonly mode: 'started'; readonly runId: string; readonly dispatchId: string }
   | { readonly ok: false; readonly reason: 'no-active-workspace' | 'ambiguous-start' | 'not-yet-available' }
   | { readonly ok: false; readonly reason: 'error'; readonly code: string };
+
+/** `genie doctor --json` as the operator sees it: the counts the notification names. */
+export interface GenieDoctorResult {
+  readonly ok: boolean;
+  readonly warn: number;
+  readonly fail: number;
+}
+
+/** `genie --version` against the published stable manifest. `latest` is absent when the check failed. */
+export interface GenieUpdateResult {
+  readonly ok: boolean;
+  readonly installed: string | null;
+  readonly latest?: string;
+}
 
 export interface GenieWorkspace {
   readonly id: string;
@@ -114,7 +181,80 @@ const WORKER_START_TIMEOUT_MS = 15_000;
 const MAX_WORKER_TITLE_BYTES = 512;
 const TERMINAL_HANDLE_PREFIX = 'term_';
 
+/** The event RF6 rides, and the settled states: everything but `working` (design risk 2). */
+const AGENT_STATUS_EVENT = 'agent.status.changed';
+const AGENT_STATE_WORKING = 'working';
+/**
+ * `agent.status.changed` fires per status refresh, so a settling agent can emit
+ * a burst. One `worktree-show` per workspace per window bounds the child
+ * processes that burst can spawn; the second settle inside it is dropped, and
+ * the next event after it reads again.
+ */
+const SETTLE_READ_WINDOW_MS = 2_000;
+/**
+ * `<YYYY-MM-DD> genie ` — the fixed prefix of every comment `mirrorTransition`
+ * composes (`src/lib/orca-lifecycle-mirror.ts`). A card comment a human wrote,
+ * or another tool wrote, is not a genie line and is never toasted.
+ */
+const GENIE_COMMENT_PREFIX = /^\d{4}-\d{2}-\d{2} genie /;
+/** Doctor spends one child process; the host rejects the command at 30 s. */
+const DOCTOR_TIMEOUT_MS = 20_000;
+/** Update spends one child process and one request, each bounded well inside the same window. */
+const UPDATE_TIMEOUT_MS = 8_000;
+const MAX_NAMED_CHECKS = 3;
+/** A failure reason rides inside a 300-character notification beside its own prefix. */
+const MAX_FAILURE_REASON = 160;
+/** `execFile` buffers both streams; `genie doctor --json` is a few kilobytes. */
+const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
+const GENIE_BINARY = 'genie';
+/** The one non-PATH location genie's own installer writes, tried only on `ENOENT`. */
+const GENIE_FALLBACK_BINARY = join(homedir(), '.local', 'bin', 'genie');
+/** The same stable manifest `genie update` reads; the plugin fetches it itself and imports nothing from `update.ts`. */
+const LATEST_MANIFEST_URL = 'https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json';
+
 const encoder = new TextEncoder();
+
+/**
+ * `shell: false` (execFile's default, named here because it is the security
+ * property): argv reaches the binary as typed and no operator string is ever
+ * parsed by a shell. A non-zero exit resolves — `genie doctor --json` prints
+ * its report and exits 1 — while a process that could not start rejects with
+ * its `errno` code intact.
+ */
+const defaultSpawn: GenieSpawn = (request) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      request.command,
+      [...request.args],
+      {
+        cwd: request.cwd,
+        timeout: request.timeoutMs,
+        shell: false,
+        maxBuffer: MAX_PROCESS_OUTPUT_BYTES,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve({ code: 0, stdout, stderr });
+          return;
+        }
+        const code = recordOf(error).code;
+        if (typeof code === 'number') {
+          resolve({ code, stdout, stderr });
+          return;
+        }
+        reject(error);
+      },
+    );
+  });
+
+const defaultFetch: GenieFetch = async (url, init) => {
+  const request = (globalThis as { fetch?: typeof globalThis.fetch }).fetch;
+  if (request === undefined) {
+    throw new GenieHostRefusal('fetch_unavailable', 'this Orca host runtime exposes no global fetch');
+  }
+  return request(url, init);
+};
 
 class GenieHostRefusal extends Error {
   readonly name = 'GenieHostRefusal';
@@ -193,18 +333,27 @@ interface HandlerDeps {
   readonly runtime: OrcaPluginRuntime;
   readonly host: OrcaPluginHost | undefined;
   readonly log: (message: string) => void;
+  readonly spawn: GenieSpawn;
+  readonly fetch: GenieFetch;
+  readonly now: () => number;
 }
 
 /** The one place a handler talks to the operator. It absorbs its own failure: a host that will not show a notification must not turn into a rejected command. */
-async function notify(deps: HandlerDeps, body: string): Promise<void> {
+async function notify(deps: HandlerDeps, body: string, title: string = NOTIFICATION_TITLE): Promise<void> {
   try {
     await hostCall(deps.host, 'notifications.show', {
-      title: NOTIFICATION_TITLE,
+      title: boundText(title, MAX_NOTIFICATION_BODY),
       body: boundText(body, MAX_NOTIFICATION_BODY),
     });
   } catch (error) {
     deps.log(`genie: notification refused (${errorCode(error)})`);
   }
+}
+
+/** A failure the operator reads inside one notification: the message, never a stack. */
+function failureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return boundText(message.replace(/\s+/g, ' ').trim(), MAX_FAILURE_REASON);
 }
 
 function recency(terminal: GenieTerminal): number {
@@ -383,9 +532,152 @@ async function runVerb(deps: HandlerDeps, command: GeniePaletteCommand, verb: st
   return { ok: true, mode: 'sent', terminalId: chosen.terminalId };
 }
 
+/**
+ * `genie` from PATH first, `~/.local/bin/genie` second — and only when the
+ * first attempt proves the binary is not there. The plugin worker is forked by
+ * Orca's main process, so it inherits the desktop app's PATH rather than a
+ * login shell's, and a genie installed by its own installer is frequently
+ * outside it. Any other spawn failure is the operator's to see, not a reason
+ * to run a second process.
+ */
+async function runGenieBinary(
+  deps: HandlerDeps,
+  args: readonly string[],
+  timeoutMs: number,
+  cwd?: string,
+): Promise<GenieProcessResult> {
+  try {
+    return await deps.spawn({ command: GENIE_BINARY, args, cwd, timeoutMs });
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') throw error;
+    deps.log(`genie: "${GENIE_BINARY}" is not on the plugin worker's PATH; trying ${GENIE_FALLBACK_BINARY}`);
+    return deps.spawn({ command: GENIE_FALLBACK_BINARY, args, cwd, timeoutMs });
+  }
+}
+
+function parsedJson(text: string, what: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${what} printed no JSON`);
+  }
+}
+
+interface DoctorSummary extends GenieDoctorResult {
+  /** The warn and fail checks, in report order — the same set the counts describe. */
+  readonly flagged: readonly string[];
+}
+
+/**
+ * `{ok, checks:[{name, status, detail}]}`. Only `warn` and `fail` are counted
+ * AND named: a check with any other non-pass status is outside the counts, and
+ * naming it beside them would make one line disagree with itself.
+ */
+function summarizeDoctor(payload: unknown): DoctorSummary {
+  const record = recordOf(payload);
+  const checks = Array.isArray(record.checks) ? record.checks : [];
+  const flagged = checks.flatMap((entry) => {
+    const check = recordOf(entry);
+    const status = textOf(check.status);
+    if (status !== 'warn' && status !== 'fail') return [];
+    return [{ name: textOf(check.name) ?? 'unnamed check', status }];
+  });
+  return {
+    ok: record.ok === true,
+    warn: flagged.filter((check) => check.status === 'warn').length,
+    fail: flagged.filter((check) => check.status === 'fail').length,
+    flagged: flagged.map((check) => check.name),
+  };
+}
+
+function doctorBody(summary: DoctorSummary): string {
+  if (summary.warn === 0 && summary.fail === 0) return 'Genie doctor: all checks pass';
+  const named = summary.flagged.slice(0, MAX_NAMED_CHECKS);
+  const remainder = summary.flagged.length - named.length;
+  const names = remainder > 0 ? `${named.join('; ')} +${remainder} more` : named.join('; ');
+  return `Genie doctor: ${summary.warn} warn, ${summary.fail} fail — ${names}`;
+}
+
+/** One read, one child process, one notification. Every failure is the same bounded line. */
+async function runDoctor(deps: HandlerDeps): Promise<GenieDoctorResult> {
+  try {
+    const workspace = await readWorkspace(deps);
+    const process = await runGenieBinary(
+      deps,
+      ['doctor', '--json'],
+      DOCTOR_TIMEOUT_MS,
+      workspace.path.length > 0 ? workspace.path : undefined,
+    );
+    const summary = summarizeDoctor(parsedJson(process.stdout, 'genie doctor --json'));
+    await notify(deps, doctorBody(summary));
+    return { ok: summary.ok, warn: summary.warn, fail: summary.fail };
+  } catch (error) {
+    await notify(deps, `Genie doctor: could not run (${failureReason(error)})`);
+    return { ok: false, warn: 0, fail: 0 };
+  }
+}
+
+/** The first non-empty line, without the tag's `v`: `genie --version` prints the bare version. */
+function versionText(stdout: string): string | null {
+  const line = stdout
+    .split('\n')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+  return line === undefined ? null : line.replace(/^v/, '');
+}
+
+async function readLatestVersion(deps: HandlerDeps): Promise<string> {
+  const response = await deps.fetch(LATEST_MANIFEST_URL, { signal: AbortSignal.timeout(UPDATE_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`the release manifest answered HTTP ${response.status}`);
+  const version = textOf(recordOf(await response.json()).version);
+  if (version === null) throw new Error('the release manifest carries no version');
+  return version.trim().replace(/^v/, '');
+}
+
+/**
+ * Inequality of the two normalized strings is the whole comparison: this is a
+ * notification, not the update gate. `genie update` owns the real precedence
+ * rules (`compareGenieVersions`), and importing them would pull the whole
+ * update command into a plugin bundle to answer a question whose wrong answer
+ * costs one extra toast.
+ */
+async function runUpdate(deps: HandlerDeps): Promise<GenieUpdateResult> {
+  let installed: string | null = null;
+  try {
+    const process = await runGenieBinary(deps, ['--version'], UPDATE_TIMEOUT_MS);
+    installed = versionText(process.stdout);
+    if (installed === null) throw new Error(`${GENIE_BINARY} --version printed no version`);
+    const latest = await readLatestVersion(deps);
+    await notify(
+      deps,
+      latest === installed
+        ? `Genie is up to date (${installed})`
+        : `Genie update available: ${latest} (installed ${installed}) — run genie update`,
+    );
+    return { ok: true, installed, latest };
+  } catch (error) {
+    await notify(deps, `Genie update: could not check (${failureReason(error)})`);
+    return { ok: false, installed };
+  }
+}
+
+const GENIE_BINARY_HANDLERS: Readonly<
+  Record<string, (deps: HandlerDeps) => Promise<GenieDoctorResult | GenieUpdateResult>>
+> = Object.freeze({
+  'genie.doctor': runDoctor,
+  'genie.update': runUpdate,
+});
+
 /** Every outcome ends in exactly one notification, and nothing is ever thrown into the plugin host. */
-async function handleCommand(deps: HandlerDeps, command: GeniePaletteCommand): Promise<GenieCommandResult> {
+async function handleCommand(
+  deps: HandlerDeps,
+  command: GeniePaletteCommand,
+): Promise<GenieCommandResult | GenieDoctorResult | GenieUpdateResult> {
+  const binary = GENIE_BINARY_HANDLERS[command.id];
+  if (binary !== undefined) return binary(deps);
   if (command.verb === null) {
+    // Unreachable for the eight contributed commands; the guard is what keeps a
+    // ninth verbless entry a notification instead of a type error or a crash.
     await notify(deps, `${command.title} is not yet available in this build`);
     return { ok: false, reason: 'not-yet-available' };
   }
@@ -399,6 +691,59 @@ async function handleCommand(deps: HandlerDeps, command: GeniePaletteCommand): P
   }
 }
 
+/** Per-activation worker memory: the last comment toasted per workspace, and the last read's clock. */
+interface SettleState {
+  readonly lastComment: Map<string, string>;
+  readonly lastReadAt: Map<string, number>;
+}
+
+interface SettledWorkspace {
+  readonly comment: string | null;
+  readonly displayName: string;
+}
+
+async function readWorkspaceById(deps: HandlerDeps, worktreeId: string): Promise<SettledWorkspace> {
+  // The record's own `id` (`<repoId>::<absolute path>`) is the `id:` selector's
+  // argument, so the event's workspace is addressed directly — never `active`,
+  // which is whichever workspace the operator is looking at right now.
+  const response = await deps.runtime.execute({ operation: 'worktree-show', worktree: `id:${worktreeId}` });
+  const record = recordOf(resultOf(response).worktree);
+  return { comment: textOf(record.comment), displayName: textOf(record.displayName) ?? 'this workspace' };
+}
+
+/**
+ * One settled agent → at most one `worktree-show` per workspace per window →
+ * at most one notification per NEW genie comment. It resolves on every path,
+ * including every failure: Orca logs a rejected handler and keeps going, but a
+ * rejection that escaped this function asynchronously would reach the worker's
+ * `unhandledRejection` hook and kill the plugin.
+ */
+async function handleAgentStatusChanged(deps: HandlerDeps, state: SettleState, payload: unknown): Promise<void> {
+  try {
+    const event = recordOf(payload);
+    const worktreeId = textOf(event.worktreeId);
+    // `worktreeId` is nullable in the event and the state vocabulary is read
+    // from Orca's record schema, not a published contract (design risk 2): an
+    // added state settles, costing one read bounded by the window and the dedupe.
+    if (worktreeId === null || event.state === AGENT_STATE_WORKING) return;
+    const now = deps.now();
+    const lastReadAt = state.lastReadAt.get(worktreeId);
+    if (lastReadAt !== undefined && now - lastReadAt < SETTLE_READ_WINDOW_MS) return;
+    // Stamped BEFORE the read, so a failing read is debounced too: the window
+    // bounds child processes, not successes.
+    state.lastReadAt.set(worktreeId, now);
+    const workspace = await readWorkspaceById(deps, worktreeId);
+    const comment = workspace.comment;
+    if (comment === null || !GENIE_COMMENT_PREFIX.test(comment)) return;
+    if (state.lastComment.get(worktreeId) === comment) return;
+    state.lastComment.set(worktreeId, comment);
+    await notify(deps, comment, `${NOTIFICATION_TITLE} — ${workspace.displayName}`);
+  } catch (error) {
+    // Events are frequent and unsolicited; a failed read is a log line, never a toast.
+    deps.log(`genie: ${AGENT_STATUS_EVENT} ignored (${errorCode(error)})`);
+  }
+}
+
 export function createOrcaPluginEntrypoint(
   adapter?: OrcaOrchestrationAdapter,
   hostOverrides?: OrcaPluginHostOverrides,
@@ -409,10 +754,22 @@ export function createOrcaPluginEntrypoint(
       runtime,
       host: hostOverrides?.host ?? context.host,
       log: hostOverrides?.log ?? context.log ?? (() => undefined),
+      spawn: hostOverrides?.spawn ?? defaultSpawn,
+      fetch: hostOverrides?.fetch ?? defaultFetch,
+      now: hostOverrides?.now ?? Date.now,
     });
     for (const command of GENIE_PALETTE_COMMANDS) {
       context.commands.register(command.id, () => handleCommand(deps, command));
     }
+    // The dedupe memory is per activation, which is per worker: Orca reaps an
+    // idle worker after 60 s, and the next one starts with an empty map and
+    // re-toasts the comment it finds — one repeat per reap, never a silence.
+    const settled: SettleState = { lastComment: new Map(), lastReadAt: new Map() };
+    if (context.events === undefined) {
+      deps.log(`genie: this Orca host exposes no events API; ${AGENT_STATUS_EVENT} notifications are off`);
+      return;
+    }
+    context.events.on(AGENT_STATUS_EVENT, (payload) => handleAgentStatusChanged(deps, settled, payload));
   };
 }
 
