@@ -78,6 +78,13 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+          # FULL history, for the legacy-skills-catalog step below: that
+          # generator walks `git log --all` over every `skills/*/SKILL.md` blob
+          # genie ever committed. On the default depth-1 checkout it would see
+          # almost no history and regenerate an incomplete catalog — the exact
+          # failure the script's header warns about and why it is not in
+          # `bun run check` (#2942).
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -113,6 +120,14 @@ jobs:
 
       - name: Wishes lint
         run: bun run wishes:lint
+
+      # Gated here rather than in `bun run check` because it needs the FULL
+      # history the checkout above fetches. The check is an additive union, so
+      # it proves the committed catalog is a SUPERSET of what this clone's
+      # history yields — it names what is missing and prints that limit on
+      # every verdict.
+      - name: Legacy skills catalog (full history)
+        run: bun scripts/legacy-skills-catalog.ts --check
 
       - name: Complexity budget
         run: bun run lint:complexity-budget

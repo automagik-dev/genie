@@ -3,8 +3,9 @@
  * skills-lint validates both the command surface and the shipped Codex skill
  * contract: strict SKILL.md frontmatter, matching agents/openai.yaml metadata,
  * skill-relative resources, real `genie` commands, the retired-role
- * vocabulary ban, the 40–90 line house size, the hazard/residue ban, and the
- * skills.sh directory shape.
+ * vocabulary ban, the 40–90 line house size, the hazard/residue ban, the
+ * skills.sh directory shape, and the two skill-intake guards (house size, and
+ * no undelivered candidate staged under `<GENIE_HOME>/skills`).
  *
  * Frontmatter carries two OPTIONAL closed-enum keys beyond name/description:
  * `category` (the catalog taxonomy) and `mutates`. `mutates` is ADVISORY
@@ -20,7 +21,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { type Dirent, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import {
   SKILL_CATEGORIES,
@@ -441,6 +442,145 @@ export function checkSkillSize(
 }
 
 /**
+ * STAGED CANDIDATES — `<GENIE_HOME>/skills` is a DELIVERY tree, not a workbench.
+ *
+ * `genie install` / `genie update` point the pinned skills CLI at that exact
+ * directory with `--skill '*'`, so every directory sitting in it is copied into
+ * every detected agent home and recorded in `skills-install.json` as
+ * genie-owned. A candidate staged there — the 2026-09-18 skill-intake round
+ * staged 38 of them — would therefore ship under genie's name, and `genie
+ * uninstall` would later delete it as genie's own.
+ *
+ * The rule refuses any directory there that is NEITHER delivered by the tree
+ * being linted NOR named by the install record's `inventory` (a skill this
+ * release dropped is still legitimately on disk until the next update retires
+ * it — `omni` at v6 is exactly that case).
+ *
+ * Declining in ONE place, deliberately: a record that exists but cannot be
+ * parsed leaves genie unable to tell delivered from staged, and a guard that
+ * cannot tell must not convict every directory on the host. It must not claim
+ * a clean bill of health either — `judged: false` is reported as its own line
+ * and never counted as "0 staged candidates". An ABSENT record is different:
+ * nothing was ever delivered there, so the tree alone decides.
+ */
+export interface StagedCandidateViolation {
+  skill: string;
+  /** Absolute path of the staged directory. */
+  path: string;
+  detail: string;
+}
+
+/**
+ * The scan outcome. `judged: false` is the sentinel: the rule ran, could not
+ * decide, and says so — the gate stays green (declining is right) but the
+ * transcript never reads as a zero.
+ */
+export type StagedCandidateScan =
+  | { judged: true; violations: StagedCandidateViolation[] }
+  | { judged: false; record: string; field: string };
+
+/**
+ * The staged-candidate waiver table: skill name → why one directory may sit in
+ * the delivery tree without being delivered. Empty on purpose — a waiver here
+ * says "ship this to every agent home under genie's name", so every row must be
+ * argued in review rather than added in passing.
+ */
+export const STAGED_CANDIDATE_WAIVERS: ReadonlyMap<string, string> = new Map<string, string>();
+
+export function isStagedCandidateWaived(skill: string): boolean {
+  return STAGED_CANDIDATE_WAIVERS.has(skill);
+}
+
+/**
+ * `<GENIE_HOME>/skills` for this host, or null when neither `GENIE_HOME` nor
+ * `HOME` says where it would be. Resolved from the environment rather than
+ * imported from `src/lib/genie-home.ts` so the gate stays a standalone script.
+ */
+export function resolveGenieSkillsHome(env: Record<string, string | undefined> = process.env): string | null {
+  // An EMPTY value is unset, not a relative root: `GENIE_HOME= genie …` must
+  // never make this resolve to the cwd-relative `skills`, which on this repo
+  // is the delivered tree itself.
+  const explicit = env.GENIE_HOME !== undefined && env.GENIE_HOME !== '' ? env.GENIE_HOME : null;
+  const fallback = env.HOME !== undefined && env.HOME !== '' ? join(env.HOME, '.genie') : null;
+  const home = explicit ?? fallback;
+  return home === null ? null : join(home, 'skills');
+}
+
+/** The install record beside `<GENIE_HOME>/skills`. */
+function recordPathFor(skillsHome: string): string {
+  return join(skillsHome, '..', 'skills-install.json');
+}
+
+type RecordedInventory = { ok: true; inventory: string[] } | { ok: false; field: string };
+
+/**
+ * The ONE parser of the record's ONE field. An absent record reads as an empty
+ * inventory (nothing was delivered); anything else that cannot be understood
+ * names the field that defeated it, so the caller can say so instead of
+ * guessing.
+ */
+function readRecordedInventory(recordPath: string): RecordedInventory {
+  if (!existsSync(recordPath)) return { ok: true, inventory: [] };
+  let parsed: { inventory?: unknown };
+  try {
+    parsed = JSON.parse(readFileSync(recordPath, 'utf8')) as { inventory?: unknown };
+  } catch {
+    return { ok: false, field: 'JSON' };
+  }
+  if (!Array.isArray(parsed.inventory)) return { ok: false, field: 'inventory' };
+  return { ok: true, inventory: parsed.inventory.filter((entry): entry is string => typeof entry === 'string') };
+}
+
+/** What counts as delivered: the linted tree's own skills ∪ what the install record recorded. */
+export function deliveredSkillNames(skillsDir: string = SKILLS_DIR, recordPath?: string): Set<string> {
+  const names = new Set<string>();
+  for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    if (entry.isDirectory() && existsSync(join(skillsDir, entry.name, 'SKILL.md'))) names.add(entry.name);
+  }
+  if (recordPath !== undefined) {
+    const recorded = readRecordedInventory(recordPath);
+    if (recorded.ok) for (const entry of recorded.inventory) names.add(entry);
+  }
+  return names;
+}
+
+/** True for a real directory, and for a symlink that resolves to one — a symlink ships the same way. */
+function isSkillDirEntry(skillsHome: string, entry: Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return statSync(join(skillsHome, entry.name)).isDirectory();
+  } catch {
+    return false; // a broken link delivers nothing
+  }
+}
+
+/** Every directory staged under `<GENIE_HOME>/skills` that nothing proves genie delivers. */
+export function collectStagedCandidateViolations(
+  skillsHome: string | null,
+  delivered: ReadonlySet<string>,
+  waived: (skill: string) => boolean = isStagedCandidateWaived,
+): StagedCandidateScan {
+  if (skillsHome === null || !existsSync(skillsHome)) return { judged: true, violations: [] };
+  const recordPath = recordPathFor(skillsHome);
+  const recorded = readRecordedInventory(recordPath);
+  if (!recorded.ok) return { judged: false, record: recordPath, field: recorded.field };
+  const known = new Set([...delivered, ...recorded.inventory]);
+  const violations: StagedCandidateViolation[] = [];
+  for (const entry of readdirSync(skillsHome, { withFileTypes: true })) {
+    if (known.has(entry.name) || waived(entry.name) || !isSkillDirEntry(skillsHome, entry)) continue;
+    const path = join(skillsHome, entry.name);
+    if (!existsSync(join(path, 'SKILL.md'))) continue;
+    violations.push({
+      skill: entry.name,
+      path,
+      detail: `staged in the delivery tree but not delivered by this release — \`genie install\`/\`genie update\` run the pinned skills CLI over this directory with \`--skill '*'\`, so it would be installed into every detected agent home as a genie-owned skill; stage candidates outside <GENIE_HOME>/skills`,
+    });
+  }
+  return { judged: true, violations };
+}
+
+/**
  * HAZARDS AND RESIDUE — patterns no shipped `.md` under skills/ may carry.
  *
  * Two scopes, because the same string means different things in different
@@ -815,12 +955,20 @@ function reportSizeFailures(sizeViolations: SkillSizeViolation[]): void {
   for (const v of sizeViolations) console.error(`  ${v.skill}/SKILL.md: ${v.detail}`);
 }
 
+/** Print the staged-candidate failures. No-op on an empty list. */
+function reportStagedFailures(stagedViolations: StagedCandidateViolation[]): void {
+  if (stagedViolations.length === 0) return;
+  console.error(`\nskills-lint: ${stagedViolations.length} dir(s) staged under <GENIE_HOME>/skills are not delivered`);
+  for (const v of stagedViolations) console.error(`  ${v.path}: [staged-candidate] ${v.skill} — ${v.detail}`);
+}
+
 /** Emit every failing category. Returns true when the gate must exit non-zero. */
 function reportFailures(
   reports: Report[],
   structureViolations: StructureViolation[],
   catalogViolations: string[],
   sizeViolations: SkillSizeViolation[],
+  stagedViolations: StagedCandidateViolation[],
 ): boolean {
   const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
   const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
@@ -836,6 +984,7 @@ function reportFailures(
     mutationFailed.length === 0 &&
     hazardFailed.length === 0 &&
     sizeViolations.length === 0 &&
+    stagedViolations.length === 0 &&
     catalogViolations.length === 0 &&
     structureViolations.length === 0
   ) {
@@ -877,6 +1026,7 @@ function reportFailures(
   }
   reportHazardFailures(hazardFailed);
   reportSizeFailures(sizeViolations);
+  reportStagedFailures(stagedViolations);
   if (catalogViolations.length > 0) {
     console.error(`\nskills-lint: ${catalogViolations.length} skills/README.md catalog violation(s)`);
     for (const violation of catalogViolations) console.error(`  ${violation}`);
@@ -898,6 +1048,9 @@ function main() {
 
   const files = walk(SKILLS_DIR);
   const structureViolations = collectStructureViolations(SKILLS_DIR);
+  const genieSkillsHome = resolveGenieSkillsHome();
+  const stagedScan = collectStagedCandidateViolations(genieSkillsHome, deliveredSkillNames(SKILLS_DIR));
+  const stagedViolations = stagedScan.judged ? stagedScan.violations : [];
   const catalogViolations = checkSkillCatalogDrift(SKILLS_DIR);
   const reports: Report[] = [];
   const metadataBySkill = new Map<string, string[]>();
@@ -978,9 +1131,19 @@ function main() {
 
   console.log(JSON.stringify(reports, null, 2));
 
-  if (reportFailures(reports, structureViolations, catalogViolations, sizeViolations)) process.exit(1);
+  // A scan that DECLINED never reports a zero: it says so on its own line,
+  // on the failing path too, and the OK line below repeats the distinction.
+  // Declining is right — the gate stays green — but claiming zero is not.
+  if (!stagedScan.judged) {
+    console.error(
+      `skills-lint: staged candidates not judged — ${stagedScan.record} is unreadable (${stagedScan.field}); repair it with \`genie update\` to gate the delivery tree again`,
+    );
+  }
+  if (reportFailures(reports, structureViolations, catalogViolations, sizeViolations, stagedViolations))
+    process.exit(1);
+  const staged = stagedScan.judged ? '0 staged candidates' : 'staged candidates not judged';
   console.error(
-    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations, 0 hazards, 0 house-size violations)`,
+    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations, 0 hazards, 0 house-size violations, ${staged})`,
   );
 }
 
