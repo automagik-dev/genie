@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard: the skill-intake stage roster, disposition vocabulary and
 // untrusted-data fence live in .claude/workflows/skill-intake.js. The skill-audit skill
@@ -32,9 +33,8 @@ function byHandSection(): string {
 }
 
 describe('skill-audit fronts the skill-intake workflow', () => {
-  test('the skill names the script path and the saved name', () => {
-    expect(SKILL).toContain('.claude/workflows/skill-intake.js');
-    expect(SKILL).toContain('saved name `skill-intake`');
+  test('the skill states the explicit-script-path rule for both scopes', () => {
+    expectExplicitScriptPathRule(SKILL, 'skill-intake');
     expect(SKILL).toContain('`references/intake.md`');
     // The caller-owned steps are a deliberately UNNUMBERED bold list, so the reference
     // cannot grow a second stage roster beside the script's. (SKILL.md itself is exempt:

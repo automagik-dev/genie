@@ -27,14 +27,40 @@ the `dsh-workflow-fork` executor, which reads this same directory.
 ## Discovery
 
 Claude Code discovers project scope (`<repo>/.claude/workflows/<name>.js`) and user
-scope (`~/.claude/workflows/<name>.js`). Which one wins when both carry the same
-name is not documented, and a 2026-09-15 probe in this repo resolved the name
-`council` to the stale user copy, so never rely on shadowing: keep names unique
-across both scopes, invoke by explicit path when in doubt, and delete a stale
-`~/.claude/workflows/council.js` left by the old stamped install (its lens root is
-dead; deleted on the dogfood host 2026-09-15). Skills share the slash namespace
-with workflows: the `council` skill is deliberately the front door that runs this
-workflow and carries no lens roster of its own (`scripts/council-workflow-parity.test.ts`).
+scope (`~/.claude/workflows/<name>.js`). Since 2026-09-18 both scopes legitimately
+carry the SAME names: `genie install` / `genie update` deliver this whole catalog to
+user scope, so a host with genie installed runs these workflows from any checkout,
+and inside this repository every name exists twice by design.
+
+The rule is therefore the PATH, never the name. Run the project file when the
+repository carries it, `~/.claude/workflows/<name>.js` otherwise, and pass it as the
+explicit script path — a run by explicit path from a directory outside the project
+is verified (zero-agent probe `wf_f01915ef-42a`, 2026-09-18). Which scope wins for a
+bare name is still undocumented, and a 2026-09-15 probe here resolved the bare name
+`council` to a stale user copy, so nothing relies on shadowing order any more. The
+six front-door skills state exactly that rule and seven parity tests pin it through
+one shared assertion (`scripts/workflow-front-door-parity.ts`).
+
+Drift between the two scopes is observed rather than guessed. `genie doctor` reads
+the `workflows` field of `<GENIE_HOME>/skills-install.json` — file name → the sha256
+genie installed — and reports every recorded file that was hand-edited, deleted,
+replaced by something that is not a regular file, or left by another release, as one
+read-only `workflows: catalog` line. On a host the channel has not run on yet, where
+no record names anything, it instead names the files already sitting in the user
+scope under a catalog name — the stale `council.js` shape — taking those names from
+the catalog this release ships, never from a list written down anywhere. It repairs
+nothing, including under `--fix`.
+Repair is `genie update`'s: it archives a user copy it cannot prove under
+`<GENIE_HOME>/state-backups/workflows-collision-<timestamp>/`, names it in the
+transcript, and replaces it. So a hand edit under `~/.claude/workflows/` is a local
+override with a backup, not a fork — a real change to a workflow is a change to the
+file in THIS directory, shipped in a release. `genie uninstall` removes only the
+recorded files whose digest still matches, preserves and reports the rest, and
+`rmdir`s the user-scope directory only when it ends up empty.
+
+Skills share the slash namespace with workflows: the `council` skill is deliberately
+the front door that runs this workflow and carries no lens roster of its own
+(`scripts/council-workflow-parity.test.ts`).
 
 ## Entries
 
