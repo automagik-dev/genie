@@ -429,6 +429,20 @@ describe('the supervised-worker start path', () => {
     'worker-start': () => envelope({ dispatchId: 'dispatch_9', taskId: 'task_9' }, { dispatchId: 'dispatch_9' }),
   };
 
+  test('a read phase past 20 s reports slow reads and never reaches run-create', async () => {
+    const adapter = fakeAdapter(startScript);
+    const host = fakeHost();
+    // The first reading is the handler's start; every later reading is 25 s on.
+    let readings = 0;
+    const now = () => (readings++ === 0 ? 0 : 25_000);
+    const palette = await activate(adapter.adapter, host.host, { now });
+
+    expect(await invoke(palette, 'genie.wish')).toEqual({ ok: false, reason: 'slow-reads' });
+    expect(operationNames(adapter)).toEqual(['worktree-show', 'terminal-list']);
+    expect(host.notifications).toHaveLength(1);
+    expect(host.notifications[0]).toContain('too slowly');
+  });
+
   test('creates a Run and starts a worker on it with the composed text as its spec', async () => {
     const adapter = fakeAdapter(startScript);
     const host = fakeHost();
@@ -833,6 +847,21 @@ describe('result notifications from agent.status.changed', () => {
     expect(shown[0].params).toEqual({ title: 'Genie — orca plugin genie', body: SHIP_COMMENT });
     expect(SHIP_COMMENT).toMatch(/^2026-09-19 genie review: SHIP — /);
     expect(String(shown[0].params.body).length).toBeLessThanOrEqual(300);
+  });
+
+  test('a long display name still yields a title inside the host limit of 120 characters', async () => {
+    const adapter = fakeAdapter({
+      'worktree-show': () =>
+        envelope({ worktree: { ...WORKSPACE_RECORD, displayName: 'w'.repeat(200), comment: SHIP_COMMENT } }),
+    });
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host, { now: clock().now });
+    await palette.emit('agent.status.changed', settled('done'));
+    const shown = host.calls.filter((call) => call.method === 'notifications.show');
+    expect(shown).toHaveLength(1);
+    const title = String(shown[0].params.title);
+    expect(title.startsWith('Genie — ')).toBe(true);
+    expect(title.length).toBeLessThanOrEqual(120);
   });
 
   test('the same comment is never toasted twice, and the next genie line is', async () => {

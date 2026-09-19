@@ -174,6 +174,8 @@ export interface ChosenAgentTerminal {
 const ACTIVE_WORKSPACE = 'active';
 const NOTIFICATION_TITLE = 'Genie';
 const MAX_NOTIFICATION_BODY = 300;
+/** Orca's `notifications.show` schema bounds `title` to 120 characters (body to 1 000); a longer title is `invalid_params`. */
+const MAX_NOTIFICATION_TITLE = 120;
 /** `worker-start` carries its own bound; the two reads use the adapter's 8 s default. */
 const WORKER_START_TIMEOUT_MS = 15_000;
 /** The adapter's `title` domain is 512 UTF-8 bytes; a 512-byte display name would overflow it. */
@@ -196,7 +198,12 @@ const SETTLE_READ_WINDOW_MS = 2_000;
  * or another tool wrote, is not a genie line and is never toasted.
  */
 const GENIE_COMMENT_PREFIX = /^\d{4}-\d{2}-\d{2} genie /;
-/** Doctor spends one child process; the host rejects the command at 30 s. */
+/**
+ * Doctor's path is the once-per-worker probe (8 s) + `worktree-show active`
+ * (8 s) + the genie child itself (20 s): a 36 s ceiling against the host's 30 s
+ * window, each sub-second on a healthy host. Past 30 s the host rejects the
+ * invoke and the notification still arrives; nothing here mutates.
+ */
 const DOCTOR_TIMEOUT_MS = 20_000;
 /** Update spends one child process and one request, each bounded well inside the same window. */
 const UPDATE_TIMEOUT_MS = 8_000;
@@ -341,7 +348,7 @@ interface HandlerDeps {
 async function notify(deps: HandlerDeps, body: string, title: string = NOTIFICATION_TITLE): Promise<void> {
   try {
     await hostCall(deps.host, 'notifications.show', {
-      title: boundText(title, MAX_NOTIFICATION_BODY),
+      title: boundText(title, MAX_NOTIFICATION_TITLE),
       body: boundText(body, MAX_NOTIFICATION_BODY),
     });
   } catch (error) {
@@ -788,7 +795,7 @@ export function createOrcaPluginEntrypoint(
       context.commands.register(command.id, () => handleCommand(deps, command));
     }
     // The dedupe memory is per activation, which is per worker: Orca reaps an
-    // idle worker after 60 s, and the next one starts with an empty map and
+    // idle worker after 300 s, and the next one starts with an empty map and
     // re-toasts the comment it finds — one repeat per reap, never a silence.
     const settled: SettleState = { lastComment: new Map(), lastReadAt: new Map() };
     if (context.events === undefined) {
