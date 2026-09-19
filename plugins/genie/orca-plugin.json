@@ -32,7 +32,7 @@
       { "command": "genie.review", "key": "Ctrl+Alt+Shift+R", "when": "worktree" },
       { "command": "genie.fix", "key": "Ctrl+Alt+Shift+F", "when": "worktree" },
       { "command": "genie.report", "key": "Ctrl+Alt+Shift+P", "when": "worktree" },
-      { "command": "genie.council", "key": "Ctrl+Alt+Shift+C", "when": "worktree" },
+      { "command": "genie.council", "key": "Ctrl+Alt+Shift+L", "when": "worktree" },
       { "command": "genie.doctor", "key": "Ctrl+Alt+Shift+D", "when": "worktree" },
       { "command": "genie.update", "key": "Ctrl+Alt+Shift+U", "when": "worktree" }
     ],

@@ -108,7 +108,7 @@ describe('Orca marketplace index and published plugin subtree', () => {
     for (const capability of capabilities) {
       expect(typeof capability, JSON.stringify(capability)).toBe('object');
       expect(Object.keys(capability as Record<string, unknown>)).toEqual(['kind']);
-      expect(ORCA_CAPABILITY_KINDS).toContain((capability as Record<string, unknown>).kind);
+      expect(ORCA_CAPABILITY_KINDS).toContain((capability as Record<string, unknown>).kind as string);
     }
     expect(new Set(capabilities.map((capability) => (capability as Record<string, unknown>).kind)).size).toBe(
       capabilities.length,
@@ -186,5 +186,29 @@ describe('Orca marketplace index and published plugin subtree', () => {
     expect(build).not.toContain('orca-marketplace.json');
     const payloadStamp = readFileSync(join(REPO_ROOT, 'scripts/release-payload-version.ts'), 'utf8');
     expect(payloadStamp).not.toContain("'orca-marketplace.json'");
+  });
+});
+
+/**
+ * Orca 1.4.205 binds three chords with all three of Ctrl/Alt/Shift (its
+ * `keybindings-*.js`): `Mod+Alt+Shift+C` (`fileExplorer.copyRelativePath`, on
+ * every platform), `Mod+Alt+Shift+A` and `Mod+Alt+Shift+E` (darwin). `Mod` is
+ * Ctrl off macOS, and Orca's validator only detects duplicates inside one
+ * plugin, so a genie chord on one of those letters would load fine and then
+ * collide with the file explorer. `genie.council` sat on `C` until the group 2
+ * review caught it.
+ */
+describe('genie keybindings avoid the chords Orca already binds with the same modifiers', () => {
+  const ORCA_THREE_MODIFIER_DEFAULT_LETTERS = ['A', 'C', 'E'];
+
+  test('no Ctrl+Alt+Shift chord lands on a letter Orca binds with Mod+Alt+Shift', () => {
+    const manifest = readJsonObject(PAYLOAD_MANIFEST);
+    const contributes = manifest.contributes as { keybindings: Array<{ command: string; key: string }> };
+    expect(contributes.keybindings.length).toBeGreaterThan(0);
+    for (const binding of contributes.keybindings) {
+      const match = /^Ctrl\+Alt\+Shift\+([A-Z])$/.exec(binding.key);
+      expect(match).not.toBeNull();
+      expect(ORCA_THREE_MODIFIER_DEFAULT_LETTERS).not.toContain(match?.[1] as string);
+    }
   });
 });

@@ -12,8 +12,15 @@ export const ORCA_REQUIRED_CONTRACT = 'orchestration.contract.v1';
 
 /**
  * Process bound for every adapter call a palette handler makes. Orca rejects a
- * plugin command after 30 000 ms, so the send path's two reads (8 s each) and
- * the start path's own 15 s `worker-start` all fit inside one host window.
+ * plugin command after 30 000 ms (`invokeTimeoutMs`) — a ceiling, not a
+ * duration: each call is sub-second on a healthy host. The send path spends the
+ * once-per-worker probe plus two reads (ceiling 24 s); the start path adds
+ * `run-create` with its `run-show` read-back and `worker-start` (15 s + grace)
+ * with its `worker-show` read-back — six child processes, ceiling ≈ 68 s — so
+ * the handler checks a 20 s read-phase deadline before the first mutation. Past
+ * 30 s the host rejects the invoke and drops the late result but never kills
+ * the worker, whose closing notification still arrives; the plugin never
+ * retries a mutation.
  */
 export const ORCA_PLUGIN_ADAPTER_TIMEOUT_MS = 8_000;
 

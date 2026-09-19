@@ -1,7 +1,11 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { OrcaAdapterResponse, OrcaOrchestrationAdapter } from '../../src/lib/orca-orchestration-adapter';
+import {
+  ORCA_WORKER_AGENTS,
+  type OrcaAdapterResponse,
+  type OrcaOrchestrationAdapter,
+} from '../../src/lib/orca-orchestration-adapter';
 import { type OrcaPluginRuntime, createOrcaPluginRuntime } from './orca-runtime';
 
 /**
@@ -34,15 +38,7 @@ export const GENIE_PALETTE_COMMANDS: readonly GeniePaletteCommand[] = Object.fre
  * which is not exported. A workspace Orca created with anything outside it
  * starts its supervised worker under `claude` rather than failing validation.
  */
-export const GENIE_WORKER_AGENTS = Object.freeze([
-  'claude',
-  'codex',
-  'cursor',
-  'droid',
-  'gemini',
-  'grok',
-  'opencode',
-] as const);
+export const GENIE_WORKER_AGENTS = ORCA_WORKER_AGENTS;
 
 export type GenieWorkerAgent = (typeof GENIE_WORKER_AGENTS)[number];
 
@@ -126,7 +122,10 @@ export interface OrcaPluginHostOverrides {
 export type GenieCommandResult =
   | { readonly ok: true; readonly mode: 'sent'; readonly terminalId: string }
   | { readonly ok: true; readonly mode: 'started'; readonly runId: string; readonly dispatchId: string }
-  | { readonly ok: false; readonly reason: 'no-active-workspace' | 'ambiguous-start' | 'not-yet-available' }
+  | {
+      readonly ok: false;
+      readonly reason: 'no-active-workspace' | 'ambiguous-start' | 'slow-reads' | 'not-yet-available';
+    }
   | { readonly ok: false; readonly reason: 'error'; readonly code: string };
 
 /** `genie doctor --json` as the operator sees it: the counts the notification names. */
@@ -507,7 +506,11 @@ async function startSupervisedWorker(
   } catch (error) {
     const code = errorCode(error);
     if (code !== 'timeout' && code !== 'ambiguous_after_possible_commit') throw error;
-    await notify(deps, `Genie: start requested for ${workspace.displayName}; confirm in Orca before retrying`);
+    const detail = error instanceof Error ? error.message : String(error);
+    await notify(
+      deps,
+      `Genie: start requested for ${workspace.displayName}; confirm in Orca before retrying (${detail})`,
+    );
     return { ok: false, reason: 'ambiguous-start' };
   }
   const dispatchId = textOf(started.receipt?.ids.dispatchId) ?? textOf(resultOf(started).dispatchId) ?? '';
@@ -515,7 +518,20 @@ async function startSupervisedWorker(
   return { ok: true, mode: 'started', runId, dispatchId };
 }
 
+/**
+ * The host rejects a plugin command after 30 s. The read phase (readContext,
+ * `worktree-show`, `terminal-list`, plus the once-per-worker probe) may spend
+ * up to 24 s of it, and the start path then issues a mutation whose ceiling is
+ * another 36 s (`run-create` + read-back, `worker-start` at 15 s + read-back).
+ * A deadline may fire only BEFORE the mutation: past this point the handler
+ * reports and returns instead of starting a worker it could not wait for.
+ */
+const READ_PHASE_DEADLINE_MS = 20_000;
+/** `terminal.sendText.text` is bounded to 4 096 characters by the host schema. */
+const MAX_SEND_TEXT_CHARS = 4_096;
+
 async function runVerb(deps: HandlerDeps, command: GeniePaletteCommand, verb: string): Promise<GenieCommandResult> {
+  const startedAt = deps.now();
   const context = await hostCall(deps.host, 'workspace.readContext', {});
   if (context === null || context === undefined) {
     await notify(deps, 'Genie: no active workspace');
@@ -525,9 +541,19 @@ async function runVerb(deps: HandlerDeps, command: GeniePaletteCommand, verb: st
   const terminals = await readTerminals(deps);
   const chosen = chooseAgentTerminal(contextTerminalIds(context), terminals);
   const commandText = composeSlashCommand(verb, workspace);
-  if (chosen === undefined) return startSupervisedWorker(deps, command, workspace, commandText);
+  if (chosen === undefined) {
+    if (deps.now() - startedAt > READ_PHASE_DEADLINE_MS) {
+      await notify(deps, `Genie: Orca answered too slowly to start a worker on ${workspace.displayName} safely; retry`);
+      return { ok: false, reason: 'slow-reads' };
+    }
+    return startSupervisedWorker(deps, command, workspace, commandText);
+  }
   deps.log(`genie: ${command.id} chose terminal ${chosen.terminalId} (${chosen.match} handle match)`);
-  await hostCall(deps.host, 'terminal.sendText', { terminalId: chosen.terminalId, text: commandText, enter: true });
+  await hostCall(deps.host, 'terminal.sendText', {
+    terminalId: chosen.terminalId,
+    text: boundText(commandText, MAX_SEND_TEXT_CHARS),
+    enter: true,
+  });
   await notify(deps, `Genie: sent /${verb} to ${workspace.displayName}`);
   return { ok: true, mode: 'sent', terminalId: chosen.terminalId };
 }

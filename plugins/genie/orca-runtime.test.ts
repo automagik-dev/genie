@@ -264,7 +264,7 @@ describe('the genie palette manifest', () => {
       'Ctrl+Alt+Shift+R',
       'Ctrl+Alt+Shift+F',
       'Ctrl+Alt+Shift+P',
-      'Ctrl+Alt+Shift+C',
+      'Ctrl+Alt+Shift+L',
       'Ctrl+Alt+Shift+D',
       'Ctrl+Alt+Shift+U',
     ]);
@@ -478,9 +478,11 @@ describe('the supervised-worker start path', () => {
 
       expect(await invoke(palette, 'genie.fix')).toEqual({ ok: false, reason: 'ambiguous-start' });
       expect(operationNames(adapter).filter((name) => name === 'worker-start')).toHaveLength(1);
-      expect(host.notifications).toEqual([
-        'Genie: start requested for orca plugin genie; confirm in Orca before retrying',
-      ]);
+      expect(host.notifications).toHaveLength(1);
+      // The adapter's own message rides along so a genuinely failed start is not read as a mere "requested".
+      expect(host.notifications[0]).toMatch(
+        /^Genie: start requested for orca plugin genie; confirm in Orca before retrying \(.+\)$/,
+      );
     });
   }
 

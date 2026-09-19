@@ -23,8 +23,6 @@ export const ORCA_ORCHESTRATION_VERBS = [
   'gate-resolve',
 ] as const;
 
-type OrcaOrchestrationVerb = (typeof ORCA_ORCHESTRATION_VERBS)[number];
-
 /**
  * Board-card verbs — argv root `worktree`, never `orchestration`. `worktree set`
  * is the one write the lifecycle mirror needs; `worktree show` is its official
@@ -114,7 +112,9 @@ const messageType = z.enum([
 ]);
 const priority = z.enum(['low', 'normal', 'high', 'urgent']);
 const workerSource = z.enum(['auto', 'transcript', 'terminal']);
-const agent = z.enum(['claude', 'codex', 'cursor', 'droid', 'gemini', 'grok', 'opencode']);
+/** The closed set of agents `worker-start --agent` accepts; exported so a caller derives it rather than mirroring it. */
+export const ORCA_WORKER_AGENTS = ['claude', 'codex', 'cursor', 'droid', 'gemini', 'grok', 'opencode'] as const;
+const agent = z.enum(ORCA_WORKER_AGENTS);
 const effort = z.enum(['low', 'medium', 'high', 'xhigh']);
 /** Orca's four default board columns; a custom column id waits for a host that needs one. */
 const workspaceStatus = z.enum(['todo', 'in-progress', 'in-review', 'completed']);
