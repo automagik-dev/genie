@@ -4,6 +4,10 @@ name: Release Orphan Alert
 # pushed in the last 24 hours and check each against the GitHub
 # Releases API. If a v* tag is in the [30min, 24h] age window and
 # has no corresponding Release, open a release-incident issue.
+# The same fire also reconciles the other direction: every OPEN
+# release-incident issue whose tag has since gained a Release is
+# commented with that Release URL and closed, so the label only ever
+# holds incidents that are still true.
 #
 # The age window is critical: the lower bound (30 min) is the grace
 # period for the orchestrator to ship after a tag push; the upper
@@ -70,12 +74,60 @@ jobs:
           git fetch --tags origin
           mapfile -t TAGS < <(git tag --list 'v*' --sort=-creatordate)
 
-          # Collect existing release tag names (set form). Use the REST API
-          # with --paginate to retrieve ALL release pages — `gh release list
+          # Collect existing releases as `<tag>\t<html_url>` rows. Use the REST
+          # API with --paginate to retrieve ALL release pages — `gh release list
           # --limit N` truncates silently, which would misclassify older tags
           # as orphans once the repo exceeds N releases (Codex P1 review on
           # PR #1743 — limit:200 cap had this exact failure mode).
-          RELEASE_TAGS=$(gh api --paginate "repos/${REPO}/releases" --jq '.[].tag_name' | tr '\n' ' ')
+          # The URL column is what the auto-close pass below posts as the
+          # evidence for closing an incident; the tag column keeps the
+          # whole-word has-release check the orphan loop already used.
+          RELEASES_TSV=$(gh api --paginate "repos/${REPO}/releases" \
+            --jq '.[] | [.tag_name, .html_url] | @tsv')
+          RELEASE_TAGS=$(printf '%s\n' "$RELEASES_TSV" | cut -f1 | tr '\n' ' ')
+
+          # ---------------------------------------------------------------
+          # Auto-close pass. An incident is filed while a tag has no Release;
+          # the release can still land afterwards (a retried orchestrator, a
+          # human stable dispatch). Nothing closed those issues, so the label
+          # accumulated healed incidents and the alarm lost its signal. Every
+          # OPEN release-incident issue whose tag now HAS a Release gets the
+          # Release URL commented as the evidence, then gets closed. Closed
+          # incidents are never reopened or touched — a closed issue is an
+          # operator ack (see the dedup note further down).
+          # This runs before the orphan loop's early exit so a cron fire with
+          # zero orphans still reconciles the open incidents.
+          # The listing must fail loudly under `set -e` for the same reason the
+          # dedup lookup does: an empty result read as "nothing open" is a
+          # silent no-op, and a transient API error must abort the job.
+          OPEN_INCIDENTS=$(gh issue list --repo "$REPO" \
+            --label release-incident --state open --limit 100 \
+            --json number,title --jq '.[] | [.number, .title] | @tsv')
+          CLOSED_COUNT=0
+          while IFS=$'\t' read -r INCIDENT_NUMBER INCIDENT_TITLE; do
+            [[ -n "$INCIDENT_NUMBER" && -n "$INCIDENT_TITLE" ]] || continue
+            # Recover the tag from the title this workflow itself writes.
+            # Anything else carrying the label is left alone.
+            INCIDENT_TAG="${INCIDENT_TITLE#release-incident: }"
+            INCIDENT_TAG="${INCIDENT_TAG% has no Release object}"
+            if [[ "$INCIDENT_TAG" == "$INCIDENT_TITLE" || -z "$INCIDENT_TAG" ]]; then
+              echo "issue #${INCIDENT_NUMBER} is not a tag-orphan incident title; leaving open"
+              continue
+            fi
+            RELEASE_URL=$(printf '%s\n' "$RELEASES_TSV" \
+              | awk -F'\t' -v tag="$INCIDENT_TAG" '$1 == tag { print $2; exit }')
+            if [[ -z "$RELEASE_URL" ]]; then
+              continue
+            fi
+            # Comment first: the close must carry its evidence even if the
+            # close call itself is what fails.
+            gh issue comment "$INCIDENT_NUMBER" --repo "$REPO" \
+              --body "Resolved automatically by Release Orphan Alert: \`${INCIDENT_TAG}\` now has a GitHub Release — ${RELEASE_URL}"
+            gh issue close "$INCIDENT_NUMBER" --repo "$REPO" --reason completed
+            CLOSED_COUNT=$((CLOSED_COUNT + 1))
+          done <<<"$OPEN_INCIDENTS"
+          echo "auto-closed ${CLOSED_COUNT} healed release-incident issue(s)"
+          # ---------------------------------------------------------------
 
           ORPHANS=()
           for TAG in "${TAGS[@]}"; do
@@ -92,6 +144,32 @@ jobs:
             # are not actionable) AND skip tags too fresh for the
             # orchestrator to have shipped yet.
             if [[ "$AGE" -lt "$AGE_MIN_S" || "$AGE" -gt "$AGE_MAX_S" ]]; then
+              continue
+            fi
+            # Promotion-tag predicate. version.yml mints a v* tag on exactly
+            # two paths:
+            #   dev — it rewrites the three version fields, commits the
+            #     version-only child `chore(version): bump to <version>
+            #     [auto-version]` on top of the commit that passed CI, and
+            #     pushes that child and `refs/tags/v<version>` to dev in one
+            #     `git push --atomic`. It then calls release.yml itself
+            #     (release_ready=true, channel=dev), so a missing Release
+            #     really is a broken pipeline: THIS is the orphan we file.
+            #   main promotion — it tags main's promotion HEAD as it stands
+            #     (`git tag "v${VERSION}" HEAD`, no source rewrite, no child
+            #     commit), pushes the tag alone, and sets channel=stable with
+            #     release_ready=false so release-automated is skipped on
+            #     purpose: stable is never auto-dispatched, because a
+            #     maintainer must start Release by hand and a DIFFERENT
+            #     maintainer must approve the protected production
+            #     environment. Such a tag legitimately has no Release until
+            #     that human dispatch, which may be days later or never.
+            # So: a tag whose own commit is not that `[auto-version]` child
+            # for this exact version was minted on the promotion path, and
+            # filing an incident for it alarms on the designed human gate.
+            TAG_SUBJECT=$(git log -1 --format=%s "$TAG" 2>/dev/null || echo '')
+            if [[ "$TAG_SUBJECT" != "chore(version): bump to ${TAG#v} [auto-version]" ]]; then
+              echo "skipping promotion tag ${TAG} (awaits a human stable dispatch, not an orphan)"
               continue
             fi
             ORPHANS+=("$TAG")
