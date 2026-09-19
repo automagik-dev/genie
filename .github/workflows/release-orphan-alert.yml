@@ -82,9 +82,19 @@ jobs:
           # The URL column is what the auto-close pass below posts as the
           # evidence for closing an incident; the tag column keeps the
           # whole-word has-release check the orphan loop already used.
+          # DRAFTS ARE NOT RELEASES here. release-publish.yml creates every
+          # release as a draft and publishes it only after the exact endorsed
+          # asset inventory reconciles, and it explicitly admits the case
+          # where a tag is left with nothing but a draft (an interrupted
+          # publish — release-publish.yml "exists only as a draft release").
+          # That tag is precisely the orphan this alarm exists for, and
+          # counting the draft would (a) suppress the incident and (b) make
+          # the auto-close below terminal: the `--state all` dedup never
+          # refiles a title it has already used, so one wrong close would
+          # retire the alarm for that version for good.
           RELEASES_TSV=$(gh api --paginate "repos/${REPO}/releases" \
-            --jq '.[] | [.tag_name, .html_url] | @tsv')
-          RELEASE_TAGS=$(printf '%s\n' "$RELEASES_TSV" | cut -f1 | tr '\n' ' ')
+            --jq '.[] | select(.draft == false) | [.tag_name, .html_url] | @tsv')
+          RELEASE_TAGS=$(cut -f1 <<<"$RELEASES_TSV" | tr '\n' ' ')
 
           # ---------------------------------------------------------------
           # Auto-close pass. An incident is filed while a tag has no Release;
@@ -100,8 +110,13 @@ jobs:
           # The listing must fail loudly under `set -e` for the same reason the
           # dedup lookup does: an empty result read as "nothing open" is a
           # silent no-op, and a transient API error must abort the job.
+          # --limit 1000, not the CLI's default 30 or a round 100: the
+          # #2211–#2410 era had 664 release-incident issues open at once, and
+          # a truncated page would starve the oldest incidents forever — they
+          # are exactly the ones whose tags have long since been released.
+          RESOLUTION_PREFIX='Resolved automatically by Release Orphan Alert'
           OPEN_INCIDENTS=$(gh issue list --repo "$REPO" \
-            --label release-incident --state open --limit 100 \
+            --label release-incident --state open --limit 1000 \
             --json number,title --jq '.[] | [.number, .title] | @tsv')
           CLOSED_COUNT=0
           while IFS=$'\t' read -r INCIDENT_NUMBER INCIDENT_TITLE; do
@@ -114,16 +129,34 @@ jobs:
               echo "issue #${INCIDENT_NUMBER} is not a tag-orphan incident title; leaving open"
               continue
             fi
-            RELEASE_URL=$(printf '%s\n' "$RELEASES_TSV" \
-              | awk -F'\t' -v tag="$INCIDENT_TAG" '$1 == tag { print $2; exit }')
+            # A herestring, never `printf ... | awk ... exit`: awk leaves the
+            # pipe early by design, so under `pipefail` the whole step would
+            # die with 141 (SIGPIPE) as soon as the releases TSV outgrows one
+            # 64 KiB pipe buffer — taking the orphan loop below down with it.
+            RELEASE_URL=$(awk -F'\t' -v tag="$INCIDENT_TAG" '$1 == tag { print $2; exit }' <<<"$RELEASES_TSV")
             if [[ -z "$RELEASE_URL" ]]; then
               continue
             fi
+            # One shot per issue. Reopening an auto-closed incident is a
+            # deliberate operator act (the Release exists but something about
+            # it is still wrong); re-commenting and re-closing it every 30
+            # minutes would override that human decision forever. The
+            # resolution comment this pass writes is the receipt: if it is
+            # already there, this issue has had its automatic close and is
+            # never touched again.
+            PRIOR_RESOLUTIONS=$(gh issue view "$INCIDENT_NUMBER" --repo "$REPO" \
+              --json comments \
+              --jq "[.comments[].body | select(startswith(\"${RESOLUTION_PREFIX}\"))] | length" </dev/null)
+            if [[ "$PRIOR_RESOLUTIONS" -gt 0 ]]; then
+              echo "issue #${INCIDENT_NUMBER} was already auto-resolved once (reopened deliberately); leaving open"
+              continue
+            fi
             # Comment first: the close must carry its evidence even if the
-            # close call itself is what fails.
+            # close call itself is what fails. `</dev/null` on both calls so
+            # neither can consume the incident list this loop is reading.
             gh issue comment "$INCIDENT_NUMBER" --repo "$REPO" \
-              --body "Resolved automatically by Release Orphan Alert: \`${INCIDENT_TAG}\` now has a GitHub Release — ${RELEASE_URL}"
-            gh issue close "$INCIDENT_NUMBER" --repo "$REPO" --reason completed
+              --body "${RESOLUTION_PREFIX}: \`${INCIDENT_TAG}\` now has a published GitHub Release — ${RELEASE_URL}" </dev/null
+            gh issue close "$INCIDENT_NUMBER" --repo "$REPO" --reason completed </dev/null
             CLOSED_COUNT=$((CLOSED_COUNT + 1))
           done <<<"$OPEN_INCIDENTS"
           echo "auto-closed ${CLOSED_COUNT} healed release-incident issue(s)"
@@ -168,8 +201,15 @@ jobs:
             # for this exact version was minted on the promotion path, and
             # filing an incident for it alarms on the designed human gate.
             TAG_SUBJECT=$(git log -1 --format=%s "$TAG" 2>/dev/null || echo '')
+            # An unreadable subject is not evidence of a promotion tag — it is
+            # evidence that this check could not run. Say so and skip rather
+            # than let a git failure silently suppress a real orphan.
+            if [[ -z "$TAG_SUBJECT" ]]; then
+              echo "::warning::could not read the commit subject of ${TAG}; skipping its promotion-tag check"
+              continue
+            fi
             if [[ "$TAG_SUBJECT" != "chore(version): bump to ${TAG#v} [auto-version]" ]]; then
-              echo "skipping promotion tag ${TAG} (awaits a human stable dispatch, not an orphan)"
+              echo "::notice::skipping promotion tag ${TAG} (awaits a human stable dispatch, not an orphan)"
               continue
             fi
             ORPHANS+=("$TAG")

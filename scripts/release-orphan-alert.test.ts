@@ -32,7 +32,7 @@ describe('release-orphan-alert workflow', () => {
   describe('auto-closes healed incidents', () => {
     test('lists only OPEN issues carrying the release-incident label', () => {
       expect(workflow).toContain(
-        'gh issue list --repo "$REPO" \\\n            --label release-incident --state open --limit 100',
+        'gh issue list --repo "$REPO" \\\n            --label release-incident --state open --limit 1000',
       );
     });
 
@@ -50,8 +50,88 @@ describe('release-orphan-alert workflow', () => {
     });
 
     test('resolves the Release URL from a releases query that yields tag AND html_url', () => {
-      expect(workflow).toContain("--jq '.[] | [.tag_name, .html_url] | @tsv'");
+      expect(workflow).toContain("[.tag_name, .html_url] | @tsv'");
       expect(workflow).toContain('-v tag="$INCIDENT_TAG"');
+    });
+
+    test('the Release-URL lookup is a herestring, never a pipeline into an exiting awk', () => {
+      // `printf … | awk '… exit'` dies with 141 under `pipefail` as soon as
+      // the releases TSV outgrows one 64 KiB pipe buffer, which would take
+      // the whole step — close pass AND orphan loop — down on every fire.
+      expect(workflow).toContain(
+        'RELEASE_URL=$(awk -F\'\\t\' -v tag="$INCIDENT_TAG" \'$1 == tag { print $2; exit }\' <<<"$RELEASES_TSV")',
+      );
+      for (const line of workflow.split('\n')) {
+        if (/^\s*#/.test(line)) continue;
+        if (!line.includes('awk') && !line.includes('cut -f1')) continue;
+        expect(line).not.toMatch(/\|\s*(awk|cut)/);
+        expect(line).not.toMatch(/printf[^|]*\|/);
+      }
+    });
+
+    test('drafts are not Releases — neither for closing nor for the has-release check', () => {
+      // release-publish.yml creates every release as a draft and admits the
+      // interrupted-publish case where only a draft exists; a draft must not
+      // heal an incident, because the --state all dedup never refiles it.
+      expect(workflow).toContain('select(.draft == false)');
+      const jqLine = workflow.split('\n').find((line) => line.includes('[.tag_name, .html_url] | @tsv'));
+      expect(jqLine).toContain('select(.draft == false)');
+      // RELEASE_TAGS (the orphan loop's has-release set) is derived from the
+      // same draft-filtered rows, so both directions agree.
+      expect(workflow).toContain('RELEASE_TAGS=$(cut -f1 <<<"$RELEASES_TSV"');
+    });
+
+    test('the jq program actually drops a draft release', () => {
+      const jq = Bun.which('jq');
+      if (!jq) return; // jq is present in CI and in every workflow runner.
+      const program = workflow
+        .split('\n')
+        .find((line) => line.includes('[.tag_name, .html_url] | @tsv'))
+        ?.trim()
+        .replace(/^--jq '/, '')
+        .replace(/'\)$/, '');
+      expect(program).toBeTruthy();
+      const releases = JSON.stringify([
+        { tag_name: 'v5.260919.1', html_url: 'https://example.com/published', draft: false },
+        { tag_name: 'v5.260919.2', html_url: 'https://example.com/draft', draft: true },
+      ]);
+      const result = Bun.spawnSync(['jq', '-r', program as string], { stdin: Buffer.from(releases) });
+      expect(result.exitCode).toBe(0);
+      const rows = new TextDecoder().decode(result.stdout).trim().split('\n');
+      expect(rows).toEqual(['v5.260919.1\thttps://example.com/published']);
+    });
+
+    test('auto-closes an issue at most once, so a deliberate reopen stands', () => {
+      expect(workflow).toContain("RESOLUTION_PREFIX='Resolved automatically by Release Orphan Alert'");
+      expect(workflow).toContain('PRIOR_RESOLUTIONS=$(gh issue view "$INCIDENT_NUMBER" --repo "$REPO"');
+      expect(workflow).toContain('select(startswith(\\"${RESOLUTION_PREFIX}\\"))] | length');
+      const guardIndex = workflow.indexOf('if [[ "$PRIOR_RESOLUTIONS" -gt 0 ]]; then');
+      const commentIndex = workflow.indexOf('gh issue comment "$INCIDENT_NUMBER"');
+      expect(guardIndex).toBeGreaterThan(-1);
+      expect(commentIndex).toBeGreaterThan(guardIndex);
+      expect(workflow.slice(guardIndex, commentIndex)).toContain('continue');
+      // The comment this pass writes is the receipt the guard looks for.
+      expect(workflow).toContain('--body "${RESOLUTION_PREFIX}:');
+    });
+
+    test('the open-incident listing is not truncated at 100', () => {
+      // 664 release-incident issues were open at once in the #2211–#2410 era.
+      expect(workflow).toContain('--label release-incident --state open --limit 1000');
+    });
+
+    test('every gh call inside the read loop is detached from the loop stdin', () => {
+      const loopStart = workflow.indexOf("while IFS=$'\\t' read -r INCIDENT_NUMBER");
+      const loopEnd = workflow.indexOf('done <<<"$OPEN_INCIDENTS"');
+      expect(loopStart).toBeGreaterThan(-1);
+      expect(loopEnd).toBeGreaterThan(loopStart);
+      const body = workflow.slice(loopStart, loopEnd);
+      // Join backslash continuations so each gh call is one logical line.
+      const logicalLines = body.replace(/\\\n\s*/g, ' ').split('\n');
+      const ghInvocations = logicalLines.filter((line) => !/^\s*#/.test(line) && /(^|\s|\()gh /.test(line));
+      expect(ghInvocations.length).toBe(3);
+      for (const invocation of ghInvocations) {
+        expect(invocation).toContain('</dev/null');
+      }
     });
 
     test('runs before the orphan loop short-circuits on zero orphans', () => {
@@ -90,6 +170,19 @@ describe('release-orphan-alert workflow', () => {
       expect(createIndex).toBeGreaterThan(predicateIndex);
       const guard = workflow.slice(predicateIndex, workflow.indexOf('ORPHANS+=("$TAG")'));
       expect(guard).toContain('continue');
+    });
+
+    test('the skip is an annotation, and an unreadable subject is a warning, not a skip verdict', () => {
+      expect(workflow).toContain(
+        'echo "::notice::skipping promotion tag ${TAG} (awaits a human stable dispatch, not an orphan)"',
+      );
+      const emptyGuardIndex = workflow.indexOf('if [[ -z "$TAG_SUBJECT" ]]; then');
+      const predicateIndex = workflow.indexOf('[[ "$TAG_SUBJECT" != "chore(version)');
+      expect(emptyGuardIndex).toBeGreaterThan(-1);
+      expect(predicateIndex).toBeGreaterThan(emptyGuardIndex);
+      const emptyGuard = workflow.slice(emptyGuardIndex, predicateIndex);
+      expect(emptyGuard).toContain('::warning::could not read the commit subject');
+      expect(emptyGuard).toContain('continue');
     });
 
     test('a comment adjacent to the predicate names both of version.yml mint paths', () => {
