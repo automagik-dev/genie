@@ -935,7 +935,13 @@ describe('Group E release and documentation contracts', () => {
     const commandsBlock = help.split('Commands:')[1] ?? '';
     expect(commandsBlock.length).toBeGreaterThan(0);
     const expected = [...commandsBlock.matchAll(/^ {2}([a-z][a-z-]*)/gm)].map((match) => match[1]).sort();
-    const countWords: Record<number, string> = { 14: 'Fourteen', 15: 'Fifteen', 16: 'Sixteen', 17: 'Seventeen' };
+    const countWords: Record<number, string> = {
+      14: 'Fourteen',
+      15: 'Fifteen',
+      16: 'Sixteen',
+      17: 'Seventeen',
+      18: 'Eighteen',
+    };
     const word = countWords[expected.length];
     if (word === undefined) throw new Error(`no count word recorded for a ${expected.length}-command registry`);
     const readme = read('README.md');
