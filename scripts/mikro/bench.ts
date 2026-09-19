@@ -9,8 +9,12 @@
  * `SYSTEM.md` tree (`scripts/mikro/coach.ts` benches a patched copy under a
  * `mkdtemp` root that way). It moves WHERE the prompt is read from and nothing
  * else: the registry still decides the agent name and the schema its answers are
- * validated against, and without the flag the run is exactly what every round
- * before it measured.
+ * validated against, and without the flag the run measures `<dir>/.mikro/agents` —
+ * the WORKING TREE, which is what every round before this flag existed measured and
+ * what a refinement round is about. That is the deliberate other half of the trust
+ * boundary `genie mikro call` enforces (`benchAgentsDir`, `bench-options.ts`): a
+ * bench is an operator tool over a tree the operator trusts, so point it at nothing
+ * else — reviewing untrusted content is `genie mikro call`'s job.
  *
  * `--boundary bwrap` runs every fixture inside the execution boundary
  * (`scripts/mikro/boundary.ts`); `none` is the default and the control arm. The mode
@@ -38,7 +42,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Adversarial, canaryRoot, clearSharedCanaries, runWithCanary } from './adversarial';
-import { BenchUsageError, parseBenchOptions } from './bench-options';
+import { BenchUsageError, benchAgentsDir, parseBenchOptions } from './bench-options';
 import { BoundaryError } from './boundary';
 import { type RunResult, parseBoundaryFlag, runAgent } from './call';
 import { type Score, type Truth, scoreAnswer } from './score';
@@ -116,7 +120,11 @@ async function worker(): Promise<void> {
           agent,
           prompt,
           dir,
-          agentsDir,
+          // The working tree under `--dir` when no flag was typed: a refinement round
+          // measures the prompt the operator just edited, not the one at a git ref. See
+          // `benchAgentsDir` for what that trades away — the run is judged trusted, so a
+          // bench may only be pointed at a tree the operator trusts.
+          agentsDir: benchAgentsDir(options),
           boundary,
           // The prompt-vector canary root lives outside the repo, so a boundary that did not
           // bind it read-write would hide an executed side effect instead of preventing it.

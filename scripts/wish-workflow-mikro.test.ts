@@ -24,11 +24,31 @@ describe('wish.js mikro offload', () => {
     expect(script).toContain("const MIKRO_SCOUT_AGENT = 'wish-context'");
     expect(script).toContain("const MIKRO_REVIEW_AGENT = 'review-prep'");
   });
+  test('EVERY line that names the runner pins the trusted ref to origin/<base>, and nothing else', () => {
+    // The agent that reviews a pull request must not be readable from that pull request.
+    // `origin/<base>` is the one ref the PR cannot move, and it is deliberately narrower
+    // than the runtime's own default, which would also trust a LOCAL base branch.
+    //
+    // The allowlist mirrors count as much as the mandated commands: a reviewer that reads
+    // "the only commands you may run" and finds the flag missing there either drops it —
+    // falling to the default this workflow is designed not to rely on — or refuses the run.
+    // So the rule is per LINE, not per command, and `…` elisions may hide only tokens with
+    // no security meaning. Over the CODE, not the commentary that explains it.
+    const code = script.replace(/^\s*\/\/.*$/gm, '');
+    const refs = [...code.matchAll(/--agents-ref (\S+)/g)].map((m) => m[1]);
+    expect(refs.length).toBe(4);
+    expect(new Set(refs)).toEqual(new Set(['origin/${job.base}']));
+    const runnerLines = code.split('\n').filter((line) => line.includes('${MIKRO_CALL}'));
+    expect(runnerLines).toHaveLength(4); // two mandated commands, two allowlist mirrors
+    for (const line of runnerLines) expect(line).toContain('--agents-ref origin/${job.base}');
+    for (const agent of ['MIKRO_SCOUT_AGENT', 'MIKRO_REVIEW_AGENT'])
+      expect(runnerLines.filter((line) => line.includes(`\${${agent}}`))).toHaveLength(2);
+  });
   test('the scout offload asks for the deterministic facts file; the review offload does not (opt-in per agent)', () => {
     // #2956 measured wish-context recall 0.87 -> 0.96 with `--facts auto` and issue-triage WORSE with it, so the
     // flag is per agent: the scout line carries it, the review line stays bare until review-prep is measured.
     expect(script).toContain(
-      '${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --facts auto --trace ${job.slug}',
+      '${MIKRO_CALL} ${MIKRO_SCOUT_AGENT} --dir <repository root> --agents-ref origin/${job.base} --facts auto --trace ${job.slug}',
     );
     expect(script).not.toMatch(/MIKRO_REVIEW_AGENT[^\n]*--facts/);
   });

@@ -42,6 +42,29 @@ export interface BenchOptions {
   writeEvidence: boolean;
 }
 
+/**
+ * The agents dir the bench hands `runAgent`: the flag when the operator typed one, else
+ * the WORKING TREE under `--dir`.
+ *
+ * This is deliberate, and it is the one place the trust boundary is taken the other way
+ * round (Decision 8). `genie mikro call` reviews untrusted content, so it reads its agent
+ * from a git ref; the bench and the coach are operator tools over the operator's own
+ * working tree, and the whole point of a refinement round is to measure the `SYSTEM.md`
+ * the operator just edited. Passing it explicitly also keeps the coach honest: its BEFORE
+ * bench then measures the same working-tree prompt its printed diff is computed from,
+ * while AFTER keeps measuring the patched copy.
+ *
+ * Two consequences, stated rather than hidden: the run resolves through the flag path, so
+ * the synthesized trusted root equals `--dir` and the `.mikro/` configuration comparison is
+ * skipped by the same-directory exemption — so `bench` and `coach` may only be pointed at a
+ * tree the operator trusts, never at a PR checkout or an unaudited clone. And the value is
+ * NOT recorded: with no `--agents-dir` the bench record stays byte-identical to every round
+ * before the flag existed.
+ */
+export function benchAgentsDir(options: { dir: string; agentsDir?: string }): string {
+  return options.agentsDir ?? join(options.dir, '.mikro', 'agents');
+}
+
 export function parseBenchOptions(argv: string[], cwd: string): BenchOptions {
   const agent = argv[0];
   if (!agent || !isAgentName(agent)) throw new BenchUsageError(BENCH_USAGE);
