@@ -11,6 +11,8 @@
 | **Repos touched** | automagik-dev/genie |
 | **Design** | [DESIGN.md](../../brainstorms/wish-v6/DESIGN.md) |
 
+> **Truth (2026-09-19):** The v6 delivery body: `.claude/workflows/wish.js` is on dev with its parity tests and `skills/quick/SKILL.md` is the retirement stub (PRs #2931, #2932, #2938–#2940 merged 2026-09-16); the open promotion PR #2935 (dev→main) is the stable cut itself.
+
 ## Summary
 
 Land the saved workflow `wish` (`.claude/workflows/wish.js`) that delivers one task end to end — admit, one executor in one worktree, mechanical gate, blind review, bounded repair, publish and read back — and make the `wish` skill its front door, with `quick` retired to a one-release deprecation stub. This is the `plan`-route delivery the design prescribes for a change that touches a denylisted path (`.claude/hooks/git-safety.sh`).

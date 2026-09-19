@@ -2,7 +2,7 @@
 
 > Slug renomeado panel-workflow → council-workflow após decisão 3 (/council é o nome vencedor).
 
-**Status:** Raw · **Date:** 2026-07-09 · **Related:** [skill-absorbs](../skill-absorbs/DRAFT.md) (umbrella G4 — council ruling), [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md)
+**Status:** Raw · **Date:** 2026-07-09 · **Related:** skill-absorbs (deleted in the 2026-09-19 triage) (umbrella G4 — council ruling), genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage)
 
 ## GOAL (user's words)
 

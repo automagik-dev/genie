@@ -1,6 +1,6 @@
 # DRAFT: routing-matrix (Domain B — umbrella G1)
 
-**Parent:** [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md) · **Status:** Simmering — closest to /wish-ready
+**Parent:** genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage) · **Status:** Simmering — closest to /wish-ready
 
 ## KNOWN (evidence)
 - $17,857 / 95.8M billable tokens in 21d; Fable ≈ $13.8k of model-attributed cost; effort spread: xhigh 425 · high 343 · max 198 · medium 27 · low 2 (LangWatch, 2026-07-09).
