@@ -121,16 +121,44 @@ jobs:
           # forever). With the label, a failed close leaves no receipt — the
           # next fire retries and the worst case is one duplicate comment —
           # while a failed label edit leaves the issue closed, which is the
-          # outcome that mattered. Creating it is idempotent and covered by
-          # `issues: write`.
+          # outcome that mattered. Creating it is covered by `issues: write`.
           RESOLVED_LABEL=release-auto-resolved
-          gh label create "$RESOLVED_LABEL" --repo "$REPO" --force \
-            --description 'Closed automatically by Release Orphan Alert once the tag gained a published Release' \
-            --color 0E8A16
           OPEN_INCIDENTS=$(gh issue list --repo "$REPO" \
             --label release-incident --state open --limit 1000 \
             --json number,title,labels \
             --jq '.[] | [.number, .title, ([.labels[].name] | join(","))] | @tsv')
+
+          # Create the receipt label only when this fire is actually about to
+          # use it, and only when it does not exist yet. `--force` would
+          # rewrite an existing label's description and colour on every fire,
+          # overriding an operator who had adjusted them — and it would do so
+          # on fires that close nothing at all. Called immediately before the
+          # first --add-label; memoized, so the listing costs one read per
+          # run at most. The lookup is a herestring, never `gh … | grep -q`:
+          # grep -q leaves the pipe early, which under `pipefail` turns a
+          # successful match into exit 141 once the label list is large.
+          ensure_resolved_label() {
+            if [[ "${RESOLVED_LABEL_READY:-0}" -eq 1 ]]; then
+              return 0
+            fi
+            local known_labels lookup_status=0
+            known_labels=$(gh label list --repo "$REPO" --limit 200 \
+              --json name --jq '.[].name' </dev/null)
+            # Fail closed exactly like the issue-title dedup: only status 1
+            # means "absent"; any other grep status must abort rather than
+            # create a label that may already exist.
+            grep -Fxq "$RESOLVED_LABEL" <<<"$known_labels" || lookup_status=$?
+            if [[ "$lookup_status" -eq 1 ]]; then
+              gh label create "$RESOLVED_LABEL" --repo "$REPO" \
+                --description 'Closed automatically by Release Orphan Alert once the tag gained a published Release' \
+                --color 0E8A16 </dev/null
+            elif [[ "$lookup_status" -ne 0 ]]; then
+              echo "::error::label lookup for ${RESOLVED_LABEL} failed with status ${lookup_status}"
+              exit "$lookup_status"
+            fi
+            RESOLVED_LABEL_READY=1
+          }
+
           CLOSED_COUNT=0
           while IFS=$'\t' read -r INCIDENT_NUMBER INCIDENT_TITLE INCIDENT_LABELS; do
             [[ -n "$INCIDENT_NUMBER" && -n "$INCIDENT_TITLE" ]] || continue
@@ -167,6 +195,7 @@ jobs:
             gh issue comment "$INCIDENT_NUMBER" --repo "$REPO" \
               --body "Resolved automatically by Release Orphan Alert: \`${INCIDENT_TAG}\` now has a published GitHub Release — ${RELEASE_URL}" </dev/null
             gh issue close "$INCIDENT_NUMBER" --repo "$REPO" --reason completed </dev/null
+            ensure_resolved_label
             gh issue edit "$INCIDENT_NUMBER" --repo "$REPO" --add-label "$RESOLVED_LABEL" </dev/null
             CLOSED_COUNT=$((CLOSED_COUNT + 1))
             # Backlog drain guard. GITHUB_TOKEN is capped at 1,000 REST writes

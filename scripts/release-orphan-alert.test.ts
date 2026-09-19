@@ -104,7 +104,7 @@ describe('release-orphan-alert workflow', () => {
     test('auto-closes an issue at most once, so a deliberate reopen stands', () => {
       // The receipt is a LABEL, read from the listing already fetched.
       expect(workflow).toContain('RESOLVED_LABEL=release-auto-resolved');
-      expect(workflow).toContain('gh label create "$RESOLVED_LABEL" --repo "$REPO" --force');
+      expect(workflow).toContain('gh label create "$RESOLVED_LABEL" --repo "$REPO" \\');
       expect(workflow).toContain('--json number,title,labels');
       expect(workflow).toContain('[.number, .title, ([.labels[].name] | join(","))] | @tsv\'');
       expect(workflow).toContain('read -r INCIDENT_NUMBER INCIDENT_TITLE INCIDENT_LABELS');
@@ -131,6 +131,36 @@ describe('release-orphan-alert workflow', () => {
       expect(commentIndex).toBeGreaterThan(-1);
       expect(closeIndex).toBeGreaterThan(commentIndex);
       expect(labelIndex).toBeGreaterThan(closeIndex);
+    });
+
+    test('the receipt label is created lazily, only when absent, and never with --force', () => {
+      // `--force` rewrites an existing label's description and colour on
+      // every fire — overriding an operator who adjusted them, on fires that
+      // close nothing at all.
+      const createIndex = workflow.indexOf('gh label create "$RESOLVED_LABEL"');
+      expect(createIndex).toBeGreaterThan(-1);
+      const createCall = workflow.slice(createIndex, workflow.indexOf('</dev/null', createIndex));
+      expect(createCall).not.toContain('--force');
+      // Exactly one create, and it lives inside the lazy helper.
+      expect(workflow.split('gh label create').length - 1).toBe(1);
+      const helperIndex = workflow.indexOf('ensure_resolved_label() {');
+      expect(helperIndex).toBeGreaterThan(-1);
+      expect(createIndex).toBeGreaterThan(helperIndex);
+      // The create is not a step preamble: it comes after the open-incident
+      // listing and cannot run before the orphan loop unless an issue is
+      // actually being closed.
+      expect(createIndex).toBeGreaterThan(workflow.indexOf('OPEN_INCIDENTS=$(gh issue list'));
+      // Guarded by an existence check that fails closed, and memoized.
+      expect(workflow).toContain('gh label list --repo "$REPO" --limit 200 \\');
+      expect(workflow).toContain('grep -Fxq "$RESOLVED_LABEL" <<<"$known_labels" || lookup_status=$?');
+      expect(workflow).toContain('elif [[ "$lookup_status" -ne 0 ]]; then');
+      expect(workflow).toContain('RESOLVED_LABEL_READY=1');
+      // Called immediately before the first --add-label, nowhere else.
+      const labelEditIndex = workflow.indexOf('gh issue edit "$INCIDENT_NUMBER"');
+      const lines = workflow.split('\n');
+      const editLine = lines.findIndex((line) => line.includes('gh issue edit "$INCIDENT_NUMBER"'));
+      expect(labelEditIndex).toBeGreaterThan(-1);
+      expect(lines[editLine - 1]?.trim()).toBe('ensure_resolved_label');
     });
 
     test('the close pass is bounded per fire so a backlog drain cannot burn the write budget', () => {
