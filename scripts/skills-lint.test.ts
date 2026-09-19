@@ -580,7 +580,7 @@ describe('checkMutationLine — repo-write commands inside a fence', () => {
     expect(checkMutationLine('genie board --wish slug')).toEqual([]);
     expect(checkMutationLine('git status --short')).toEqual([]);
     // A closing placeholder bracket followed by a space is not a redirect.
-    expect(checkMutationLine('omni connect <instance-id> <agent-name>')).toEqual([]);
+    expect(checkMutationLine('genie task status <task-id> <agent-name>')).toEqual([]);
     // 2>&1 is not a redirect into a path.
     expect(checkMutationLine('bun run check 2>&1')).toEqual([]);
   });

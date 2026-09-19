@@ -27,7 +27,6 @@ import {
   checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkLegacyIntegrations,
-  checkOmniBridgeHealth,
   checkRetiredJsonMcpEntry,
   checkSkillsChannel,
   checkSubagentModelOverride,
@@ -37,7 +36,6 @@ import {
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
-  evaluateOmniBridgeHealth,
   globalDbContaminationBunAlternative,
   globalDbContaminationRemedy,
   globalDbContaminationSqliteAlternative,
@@ -267,81 +265,6 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
     const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(output).not.toContain(key);
-  });
-});
-
-describe('omni bridge health probe (retired SessionStart hook replacement)', () => {
-  test('emits no check when omni is not configured', () => {
-    expect(evaluateOmniBridgeHealth({ configured: false, apiStatus: null })).toBeNull();
-  });
-
-  test('passes when the bridge reports healthy', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'healthy', version: '2.1.0' });
-    expect(res).toMatchObject({ name: 'omni bridge health', status: 'pass' });
-    expect(res?.detail).toContain('(v2.1.0)');
-  });
-
-  test('warns when the bridge reports a non-healthy status', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'degraded' });
-    expect(res).toMatchObject({ status: 'warn' });
-    expect(res?.detail).toContain('degraded');
-    expect(res?.suggestion).toContain('omni status');
-  });
-
-  test('warns when the bridge is unreachable, with a start suggestion', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: null, error: 'fetch failed' });
-    expect(res).toMatchObject({ status: 'warn' });
-    expect(res?.detail).toContain('unreachable');
-    expect(res?.suggestion).toContain('omni start');
-  });
-
-  test('checkOmniBridgeHealth probes the configured URL and stays silent when unconfigured', async () => {
-    const calls: string[] = [];
-    const fakeFetch = (async (input: string | URL | Request) => {
-      calls.push(String(input));
-      return new Response(JSON.stringify({ status: 'healthy', version: '2.1.0' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    }) as typeof fetch;
-
-    // Unconfigured (isolated GENIE_HOME has no omni section, env unset) → silent.
-    const priorUrl = process.env.OMNI_API_URL;
-    const priorKey = process.env.OMNI_API_KEY;
-    Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-    Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
-    try {
-      expect(await checkOmniBridgeHealth(fakeFetch)).toEqual([]);
-      expect(calls).toEqual([]);
-
-      process.env.OMNI_API_URL = 'http://127.0.0.1:8882';
-      const results = await checkOmniBridgeHealth(fakeFetch);
-      expect(calls).toEqual(['http://127.0.0.1:8882/api/v2/health']);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toMatchObject({ name: 'omni bridge health', status: 'pass' });
-    } finally {
-      if (priorUrl === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-      else process.env.OMNI_API_URL = priorUrl;
-      if (priorKey === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
-      else process.env.OMNI_API_KEY = priorKey;
-    }
-  });
-
-  test('checkOmniBridgeHealth degrades to warn on a throwing fetch', async () => {
-    const prior = process.env.OMNI_API_URL;
-    process.env.OMNI_API_URL = 'http://127.0.0.1:9999';
-    try {
-      const throwingFetch = (async () => {
-        throw new Error('connection refused');
-      }) as unknown as typeof fetch;
-      const results = await checkOmniBridgeHealth(throwingFetch);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toMatchObject({ status: 'warn' });
-      expect(results[0].detail).toContain('connection refused');
-    } finally {
-      if (prior === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-      else process.env.OMNI_API_URL = prior;
-    }
   });
 });
 
@@ -2119,7 +2042,7 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
   /**
    * The hand-written `cp` spellings copy `genie.db` alone, so with an
    * uncheckpointed WAL the "backup" is an empty database — voiding the
-   * reversibility the remedy promises while `genie omni serve` holds the file.
+   * reversibility the remedy promises while another process holds the file.
    * The in-process repair folds the WAL back in before the byte copy.
    */
   test('--fix-global-db backs up a database with a live WAL completely', async () => {
@@ -2132,7 +2055,7 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     seed.run("INSERT INTO approvals (id) VALUES ('pending-in-wal')");
     seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
     // Deliberately NOT checkpointed and NOT closed cleanly: the rows live in
-    // genie.db-wal, exactly as they do while the omni runner is writing.
+    // genie.db-wal, exactly as a live writer leaves them.
     expect(existsSync(`${dbPath}-wal`)).toBe(true);
 
     await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));

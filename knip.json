@@ -11,7 +11,7 @@
     "plugins/dsh-genie-board/build.test.ts"
   ],
   "project": ["src/**/*.ts", "plugins/dsh-genie-board/src/**/*.{ts,tsx}"],
-  "ignoreBinaries": ["ldd", "omni"],
+  "ignoreBinaries": ["ldd"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["react"]
 }

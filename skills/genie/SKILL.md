@@ -32,7 +32,7 @@ Precedence when more than one row matches, highest first: an explicit skill requ
 | Writing or revising a genie skill | `authoring` | `review`, then `skill-audit` | The prompt being improved is not a skill; that is `refine` |
 | Stocktaking the skill corpus, searching before authoring, retiring loudly | `skill-audit` | `authoring` for each gap it names | One known skill needs an edit; that is `authoring` |
 | Turning a procedure or skill into a saved workflow | `workfly` | `review` of the landed script | The procedure needs the user mid-run; keep it a skill |
-| Prompt, documentation, channel wiring, community patterns | `refine`, `docs`, `omni`, or `genie-hacks` | the caller | The request is to run the prompt rather than rewrite it, or to change code rather than document it |
+| Prompt, documentation, community patterns | `refine`, `docs`, or `genie-hacks` | the caller | The request is to run the prompt rather than rewrite it, or to change code rather than document it |
 | Genie question or operation | Current CLI help and the requested operation | the caller | The operation needs a plan to be safe; route it to `wish` |
 
 Two borderline cases, worked:

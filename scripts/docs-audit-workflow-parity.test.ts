@@ -36,8 +36,6 @@ const FORBIDDEN_VERBS = [
   'task delete',
   'task import',
   'task sync',
-  'omni serve',
-  'omni handshake',
   'doctor --fix-global-db',
 ];
 const ENTRY = /^ {2}'(.+)',$/gm;

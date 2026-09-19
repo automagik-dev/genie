@@ -61,10 +61,9 @@ Plans themselves are born through the skills: /wish structures them, /work runs 
 genie init                        # Initialize per-repo state (idempotent)
 genie doctor                      # Diagnostic checks
 ```
-There is no infrastructure daemon to start — genie is zero-daemon. The only
-optional resident is `genie omni serve` (Omni channel bridge). Agent identity
-scaffolding is guided, not a CLI verb: propose it from the genie templates
-during onboarding.
+There is no infrastructure daemon to start — genie is zero-daemon, with no
+resident process of any kind. Agent identity scaffolding is guided, not a CLI
+verb: propose it from the genie templates during onboarding.
 
 ## Concierge → Orchestrator Transition
 

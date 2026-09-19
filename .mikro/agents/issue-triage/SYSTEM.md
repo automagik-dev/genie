@@ -170,7 +170,7 @@ one independently valuable outcome — must split); `spike` (no trustworthy
 oracle yet — learn first).
 
 `area`: the subsystem(s) that own the fix, as the repository names them — e.g.
-`workflows`, `skills-installer`, `doctor`, `release`, `update`, `omni`,
+`workflows`, `skills-installer`, `doctor`, `release`, `update`, `mikro`,
 `v5-state`, `docs`, `tests`.
 
 ## Verify before you cite
