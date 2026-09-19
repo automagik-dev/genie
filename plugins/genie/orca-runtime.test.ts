@@ -325,6 +325,23 @@ describe('composeSlashCommand', () => {
       `/wish — workspace orca plugin genie; worktree ${WORKSPACE_PATH}`,
     );
   });
+
+  test('control characters in the workspace record never reach the terminal as keystrokes', () => {
+    const hostile = {
+      ...workspace,
+      displayName: 'orca\nplugin\r\x1b[2J genie',
+      branch: 'refs/heads/feature\x07/x',
+      path: '/home/genie/orca/work\x00spaces/genie\x7f',
+    };
+    const text = composeSlashCommand('review', hostile);
+    expect(text).toBe(
+      '/review — workspace orcaplugin[2J genie; branch feature/x; issue #3005; worktree /home/genie/orca/workspaces/genie',
+    );
+    expect([...text].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)).toBe(
+      false,
+    );
+    expect(text.split('\n')).toHaveLength(1);
+  });
 });
 
 describe('chooseAgentTerminal', () => {

@@ -418,14 +418,27 @@ function issueNumber(linkedIssue: number | string | null): string | null {
  * rendered empty: an unlinked workspace has no issue, and a detached one has no
  * branch name to name.
  */
+/**
+ * The workspace record is Orca's data, not ours: a display name, branch or
+ * path carrying a newline, an escape sequence or any other control character
+ * would otherwise reach the agent terminal as keystrokes — a second command,
+ * or an ANSI sequence the TUI interprets. Every C0 control (including CR/LF
+ * and ESC) and DEL is dropped, so the composed text is always one line of
+ * printable text; the adapter's own domains never promised that for these
+ * passthrough fields.
+ */
+function printableLine(value: string): string {
+  return [...value].filter((character) => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f).join('');
+}
+
 export function composeSlashCommand(verb: string, workspace: GenieWorkspace): string {
-  const segments = [`workspace ${workspace.displayName}`];
+  const segments = [`workspace ${printableLine(workspace.displayName)}`];
   const branch = bareBranch(workspace.branch);
-  if (branch !== null) segments.push(`branch ${branch}`);
+  if (branch !== null) segments.push(`branch ${printableLine(branch)}`);
   const issue = issueNumber(workspace.linkedIssue);
   if (issue !== null) segments.push(`issue #${issue}`);
-  segments.push(`worktree ${workspace.path}`);
-  return normalized(`/${verb} — ${segments.join('; ')}`);
+  segments.push(`worktree ${printableLine(workspace.path)}`);
+  return normalized(`/${printableLine(verb)} — ${segments.join('; ')}`);
 }
 
 function contextTerminalIds(context: unknown): string[] {
