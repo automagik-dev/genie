@@ -1,0 +1,33 @@
+# dsh-workflow-loader bundle patch: mounts the loader row into the host
+# composition of a dsh profile.
+#
+# The row registers one model-facing tool (`workflow_run` by default) that reads
+# a repository's `.claude/workflows/<name>.js`, splits `export const meta` off
+# the body, drops the `agent()` options this engine defers, and submits
+# `{script, meta, args}` to `ctx.workflowEngine`. Nothing is written into the
+# repository, and the script never enters the model's context.
+#
+# Install: `dsh plugin --profile <name> add <this package>` (npm or a local
+# path). The `dsh plugin` command pnpm-installs the package into the profile and
+# reconciles it into the profile's `dsh.profile.bundles` layer list.
+- insert:
+    - id: genie-dsh-workflow-loader
+      # Node-resolvable package name — must stay in sync with package.json
+      # `name`. Quoted because `@` is a reserved indicator in YAML and cannot
+      # open a plain scalar.
+      name: '@automagik/genie-dsh-workflow-loader'
+      config:
+        # The model-facing tool name. Rename it if a composition already has a
+        # `workflow_run`.
+        toolName: workflow_run
+        # Characters of a run's return value rendered to the model. A larger
+        # return value still succeeds — the whole thing is written to the
+        # journal and the projection says how much it left out.
+        maxResultChars: 20000
+        # Where full results are journalled. Empty resolves to
+        # `<DSH_HOME>/workflow-runs`.
+        journalDir: ''
+        # A name carried by both the project root and the personal root is
+        # refused by default: which one wins is undocumented upstream, and a
+        # stale personal copy has shadowed a repository's own file before.
+        allowShadowing: false
