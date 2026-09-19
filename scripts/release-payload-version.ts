@@ -17,6 +17,7 @@ const TOP_LEVEL_VERSION_FILES = [
   'plugins/genie/package.json',
   'plugins/genie/orca-plugin.json',
   'plugins/dsh-genie-board/package.json',
+  'plugins/dsh-workflow-loader/package.json',
 ] as const;
 
 /**

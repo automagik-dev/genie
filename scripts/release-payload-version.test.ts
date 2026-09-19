@@ -33,6 +33,7 @@ describe('release payload version contract', () => {
       version: '5.000000.0',
       minimumGenieVersion: '5.000000.0',
     });
+    writeJson(root, 'plugins/dsh-workflow-loader/package.json', { version: '5.000000.0' });
     return root;
   }
 

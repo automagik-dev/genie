@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveLoaderConfig } from './config';
 import { apply, workflowRunTool } from './index';
+import { journalDirectory } from './run';
 
 const REPO = join(import.meta.dir, '..', '..', '..');
 
@@ -261,6 +262,36 @@ describe('the workflow_run row', () => {
     } finally {
       h.cleanup();
     }
+  });
+
+  test('resolving a resolved config changes nothing', () => {
+    // Regression: cordis validates the patch through the row's `validate()`,
+    // which returns the RESOLVED object, and then hands that object to `apply`,
+    // which resolves again. A resolver that rejects its own output hangs the
+    // boot — the loader smoke found exactly that with `userRoot: ''`.
+    for (const input of [
+      {},
+      { toolName: 'run_saved_workflow', maxResultChars: 5000 },
+      { toolName: 'workflow_run', maxResultChars: 20000, journalDir: '', allowShadowing: false, userRoot: '' },
+      { journalDir: '/tmp/journals', userRoot: '/tmp/user-workflows', allowShadowing: true },
+    ]) {
+      const once = resolveLoaderConfig(input);
+      expect(resolveLoaderConfig(once)).toEqual(once);
+    }
+  });
+
+  test('accepts the shipped patch config verbatim', () => {
+    // Regression: the shipped cordis.patch.yml spelled the journal as '' and the
+    // resolver rejected an empty path, so the row failed to validate and the Host
+    // refused to load it — caught by scripts/dsh-workflow-loader-smoke.ts.
+    const config = resolveLoaderConfig({
+      toolName: 'workflow_run',
+      maxResultChars: 20000,
+      journalDir: '',
+      allowShadowing: false,
+    });
+    expect(config.journalDir).toBe('');
+    expect(journalDirectory(config.journalDir)).toMatch(/workflow-runs$/);
   });
 
   test('apply() registers exactly one tool and returns its disposer', () => {

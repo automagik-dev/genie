@@ -69,6 +69,9 @@ bun build --compile \
 
 cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 bun run --cwd "${REPO_ROOT}/plugins/dsh-genie-board" build "${VERSION}" "${STAGE}/plugins/dsh-genie-board/dist"
+# The loader is host-only: one cordis row, one model-facing tool. It carries no
+# client bundle, so its dist is a single file.
+bun run --cwd "${REPO_ROOT}/plugins/dsh-workflow-loader" build "${VERSION}" "${STAGE}/plugins/dsh-workflow-loader/dist"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
@@ -182,7 +185,12 @@ for required in \
   "plugins/dsh-genie-board/dist/board.js" \
   "plugins/dsh-genie-board/dist/skills.js" \
   "plugins/dsh-genie-board/dist/workflows.js" \
-  "plugins/dsh-genie-board/dist/client.js"; do
+  "plugins/dsh-genie-board/dist/client.js" \
+  "plugins/dsh-workflow-loader/package.json" \
+  "plugins/dsh-workflow-loader/agent.cordis.yml" \
+  "plugins/dsh-workflow-loader/cordis.patch.yml" \
+  "plugins/dsh-workflow-loader/README.md" \
+  "plugins/dsh-workflow-loader/dist/index.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 
