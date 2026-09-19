@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { recordedCatalog, render } from './legacy-skills-catalog.js';
+import {
+  CATALOG_CHECK_GAP,
+  evaluateCatalogCheck,
+  mergeCatalog,
+  recordedCatalog,
+  render,
+} from './legacy-skills-catalog.js';
 
 /**
  * These tests inject a SYNTHETIC catalog Map into `render()`. They never walk git history and never
@@ -85,6 +91,67 @@ describe('render is additive', () => {
 
     expect(rendered).not.toContain(`"${shipped.name}"`);
     expect(rendered).not.toContain(JSON.stringify(shipped.description));
+  });
+});
+
+describe('--check is an additive-union SUPERSET check', () => {
+  const collected = new Map<string, Set<string>>([['pm', new Set([SHIPPED_PM_DESCRIPTION])]]);
+  const current = new Set<string>();
+  const shipping = new Set<string>();
+
+  /** The verdict for a committed catalog that carries exactly `recorded`. */
+  function verdictFor(recorded: { names: string[]; descriptions: string[] }, existing?: string) {
+    const expected = render(collected, recorded);
+    return evaluateCatalogCheck(existing ?? expected, expected, {
+      merged: mergeCatalog(collected, recorded, current, shipping),
+      recorded,
+    });
+  }
+
+  test('a seeded stale catalog — one history entry dropped — is reported and names the gap', () => {
+    const verdict = verdictFor({ names: [], descriptions: [] }, '// a hand-truncated catalog\n');
+
+    expect(verdict.stale).toBe(true);
+    expect(verdict.lines.join('\n')).toContain('stale');
+    expect(verdict.lines.join('\n')).toContain('legacy-skills-catalog.ts --write');
+    // The gap the CI job closes: history yields entries the committed file lacks.
+    expect(verdict.lines.join('\n')).toContain('1 name(s)');
+  });
+
+  test('a catalog that already carries every history entry is current', () => {
+    const verdict = verdictFor({ names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] });
+
+    expect(verdict.stale).toBe(false);
+    expect(verdict.lines.join('\n')).toContain('current');
+  });
+
+  /**
+   * The gap itself, stated as a test rather than a comment: the union means
+   * `--check` proves the committed catalog is a SUPERSET of what THIS clone's
+   * history yields — never an exact match. An entry no history yields rides
+   * along silently, which is also why a shallow checkout cannot run it.
+   */
+  test('an entry no history yields is never reported — the union makes it invisible', () => {
+    const verdict = verdictFor({
+      names: ['pm', 'never-shipped-by-any-ref'],
+      descriptions: [SHIPPED_PM_DESCRIPTION, 'A description no commit ever carried.'],
+    });
+
+    expect(verdict.stale).toBe(false);
+    expect(verdict.lines.join('\n')).toContain(CATALOG_CHECK_GAP);
+  });
+
+  test('every verdict states the gap, so a green check is never read as an exact match', () => {
+    expect(verdictFor({ names: [], descriptions: [] }, 'stale\n').lines).toContain(CATALOG_CHECK_GAP);
+    expect(verdictFor({ names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] }).lines).toContain(CATALOG_CHECK_GAP);
+  });
+
+  test('a text-only difference is stale with no missing entry, and says so', () => {
+    const recorded = { names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] };
+    const verdict = verdictFor(recorded, `${render(collected, recorded)}\n// hand-edited trailer\n`);
+
+    expect(verdict.stale).toBe(true);
+    expect(verdict.lines.join('\n')).toContain('formatting or ordering');
   });
 });
 

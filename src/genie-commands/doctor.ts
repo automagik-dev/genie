@@ -61,7 +61,7 @@ import {
   shippedWorkflowNames,
   shippedWorkflowsRoot,
 } from '../lib/workflows-installer.js';
-import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
+import { type ModeDriftEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -87,6 +87,13 @@ export interface CheckResult {
    * for the stable per-entry state contract.
    */
   indexLane?: { entries: IndexLaneEntry[] };
+  /**
+   * Machine-readable payload rider (survives `--json` as
+   * `checks[].modeDrift.entries`). Only the aggregated `mode drift` check sets
+   * it: EVERY classified entry, uncapped, because the human report names at
+   * most `MAX_NAMED_MODE_DRIFT_ENTRIES` of them.
+   */
+  modeDrift?: { entries: ModeDriftEntry[] };
   /**
    * Machine-readable payload rider (survives `--json` as `checks[].routeLayers`).
    * Only the `Codex Genie MCP registration` check sets it: the typed config-layer
@@ -144,7 +151,8 @@ const MAX_UNLINKED_LINES = 5;
  * `jar: index-lane drift` — the INDEX entries an operator must open by name,
  * since a `broken`/`unlinked` count alone cannot be acted on. Every `broken`
  * entry is named; `unlinked` is the benign majority (a fresh clone has no
- * roadmap cards at all), so it is capped and the remainder counted.
+ * roadmap cards at all), so it is capped and the remainder counted. `mode
+ * drift` names its own capped entries the same way, from its own rider.
  */
 function renderCheckLines(r: CheckResult): string[] {
   const suffix = r.detail ? ` — ${r.detail}` : '';
@@ -156,6 +164,7 @@ function renderCheckLines(r: CheckResult): string[] {
     else if (e.state === 'unlinked' && unlinked++ < MAX_UNLINKED_LINES) lines.push(`      · unlinked: ${e.entry}`);
   }
   if (unlinked > MAX_UNLINKED_LINES) lines.push(`      · …and ${unlinked - MAX_UNLINKED_LINES} more unlinked`);
+  lines.push(...modeDriftLines(r.modeDrift?.entries ?? []));
   return lines;
 }
 

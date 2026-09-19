@@ -11,6 +11,7 @@ import {
   SKILL_MAX_LINES,
   SKILL_MIN_LINES,
   SKILL_SIZE_WAIVERS,
+  STAGED_CANDIDATE_WAIVERS,
   checkHazardLine,
   checkMutationLine,
   checkResourceLine,
@@ -19,13 +20,17 @@ import {
   collectHazardViolations,
   collectMutationViolations,
   collectResourceViolations,
+  collectStagedCandidateViolations,
   countSkillLines,
+  deliveredSkillNames,
   extractInlineCodeSpans,
   getGenieCommands,
   hasUnpinnedNpxInstaller,
   isHazardWaived,
   isPinnedNpxPackage,
   isResourceAllowlisted,
+  isStagedCandidateWaived,
+  resolveGenieSkillsHome,
   validateSkillMetadata,
 } from './skills-lint.ts';
 
@@ -77,9 +82,9 @@ function writeSkillIn(dir: string, name: string, body: string): string {
  * (not `execFileSync`) so stderr is captured on the SUCCESS path too — the
  * "OK (…)" summary the positive fixtures assert against is written to stderr.
  */
-function runLintIn(dir: string): LintRun {
+function runLintIn(dir: string, env: Record<string, string> = {}): LintRun {
   const result = spawnSync('bun', [SCRIPT], {
-    env: { ...process.env, SKILLS_LINT_DIR: dir },
+    env: { ...process.env, SKILLS_LINT_DIR: dir, ...env },
     encoding: 'utf8',
   });
   return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -872,6 +877,112 @@ describe('house size — every shipped SKILL.md is 40-90 lines', () => {
       const ok = runLintIn(dir);
       expect(ok.code).toBe(0);
       expect(ok.stderr).toContain('0 house-size violations');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * The second intake guard (wish `v6-stable-cut`, G7): `<GENIE_HOME>/skills` is
+ * the DELIVERY tree the pinned skills CLI copies into every agent home with
+ * `--skill '*'`. A candidate staged there — the 2026-09-18 skill-intake round
+ * did exactly this — would be installed into every detected agent as a
+ * genie-owned skill, with an install record naming it. Only what this release
+ * delivers, or what the install record proves genie already delivered, may sit
+ * there.
+ */
+describe('staged candidates under <GENIE_HOME>/skills', () => {
+  /** A GENIE_HOME whose `skills/` holds `names`, plus an optional install record. */
+  function makeGenieHome(names: string[], recorded?: string[] | string): string {
+    const home = mkdtempSync(join(tmpdir(), 'skills-lint-genie-home-'));
+    for (const name of names) {
+      mkdirSync(join(home, 'skills', name), { recursive: true });
+      writeFileSync(join(home, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: "x"\n---\n`);
+    }
+    mkdirSync(join(home, 'skills'), { recursive: true });
+    if (recorded !== undefined) {
+      writeFileSync(
+        join(home, 'skills-install.json'),
+        typeof recorded === 'string' ? recorded : JSON.stringify({ ref: 'v0', inventory: recorded }),
+      );
+    }
+    return home;
+  }
+
+  const homes: string[] = [];
+  afterEach(() => {
+    for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function stagedIn(names: string[], delivered: string[], recorded?: string[] | string) {
+    const home = makeGenieHome(names, recorded);
+    homes.push(home);
+    return collectStagedCandidateViolations(join(home, 'skills'), new Set(delivered));
+  }
+
+  test('a dir this release does not deliver is refused, and the line names the remedy', () => {
+    const violations = stagedIn(['wish', 'my-candidate'], ['wish']);
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0].skill).toBe('my-candidate');
+    expect(violations[0].path).toContain(join('skills', 'my-candidate'));
+    expect(violations[0].detail).toContain('delivered');
+  });
+
+  test('every delivered dir passes, and a loose file is not a candidate', () => {
+    const home = makeGenieHome(['wish', 'work'], undefined);
+    homes.push(home);
+    writeFileSync(join(home, 'skills', 'NOTICE'), 'not a skill dir\n');
+    mkdirSync(join(home, 'skills', 'no-skill-md'), { recursive: true });
+
+    expect(collectStagedCandidateViolations(join(home, 'skills'), new Set(['wish', 'work']))).toEqual([]);
+  });
+
+  test('a dir the install record proves genie delivered is never a candidate', () => {
+    // `omni` left the tree at v6 but the installed release still delivers it.
+    expect(stagedIn(['omni'], ['wish'], ['omni'])).toEqual([]);
+    expect(deliveredSkillNames(join(import.meta.dir, '..', 'skills'), '/nonexistent.json')).toContain('wish');
+  });
+
+  test('an unreadable install record refuses to judge rather than flagging every dir', () => {
+    expect(stagedIn(['omni', 'wish'], ['wish'], '{ not json')).toEqual([]);
+  });
+
+  test('the waiver path exists, the table is empty, and a waived name is skipped', () => {
+    expect([...STAGED_CANDIDATE_WAIVERS.keys()]).toEqual([]);
+    expect(isStagedCandidateWaived('my-candidate')).toBe(false);
+
+    const home = makeGenieHome(['my-candidate'], undefined);
+    homes.push(home);
+    expect(
+      collectStagedCandidateViolations(join(home, 'skills'), new Set<string>(), (skill) => skill === 'my-candidate'),
+    ).toEqual([]);
+  });
+
+  test('no GENIE_HOME to scan is not a violation', () => {
+    expect(collectStagedCandidateViolations(null, new Set(['wish']))).toEqual([]);
+    expect(resolveGenieSkillsHome({ GENIE_HOME: '/tmp/gh' })).toBe(join('/tmp/gh', 'skills'));
+    expect(resolveGenieSkillsHome({ HOME: '/home/x' })).toBe(join('/home/x', '.genie', 'skills'));
+    expect(resolveGenieSkillsHome({})).toBeNull();
+  });
+
+  test('end-to-end: a staged candidate fails `skills:lint`; a clean home passes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skills-lint-staged-'));
+    const home = makeGenieHome(['sized', 'staged-candidate'], undefined);
+    homes.push(home);
+    try {
+      writeSkillIn(dir, 'sized', '# sized\n\nOrdinary prose.\n');
+
+      const failed = runLintIn(dir, { GENIE_HOME: home });
+      expect(failed.code).toBe(1);
+      expect(failed.stderr).toContain('[staged-candidate] staged-candidate');
+      expect(failed.stderr).toContain(join(home, 'skills', 'staged-candidate'));
+
+      rmSync(join(home, 'skills', 'staged-candidate'), { recursive: true, force: true });
+      const ok = runLintIn(dir, { GENIE_HOME: home });
+      expect(ok.code).toBe(0);
+      expect(ok.stderr).toContain('0 staged candidates');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
