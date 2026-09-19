@@ -49,6 +49,7 @@ import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
+  PendingMigrationError,
   type ProjectContext,
   openDb,
   resolveProjectContext,
@@ -237,7 +238,13 @@ function checkDatabase(root: string | null): CheckResult[] {
     ];
   }
   try {
-    const db = openDb({ path: dbPath });
+    // `migrate: false` is load-bearing, not a nicety. The v1 -> v2 ladder is
+    // forward-only and destructive, and a 5.x binary on the same machine
+    // refuses a migrated file — so `genie doctor` performing it as a side
+    // effect of LOOKING would silently break every other checkout on the host
+    // (it did: two runs of this check migrated the developer's own shared
+    // database). Doctor observes; `genie task` / `genie board` migrate.
+    const db = openDb({ path: dbPath, migrate: false });
     try {
       const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
       const version = row?.user_version ?? 0;
@@ -255,6 +262,19 @@ function checkDatabase(root: string | null): CheckResult[] {
       db.close();
     }
   } catch (err) {
+    // A pending migration is not a broken database: it is a mutation doctor
+    // declined to perform. Warn with the remedy instead of failing the run.
+    if (err instanceof PendingMigrationError) {
+      return [
+        {
+          name: 'genie.db',
+          status: 'warn',
+          detail: `${dbPath} is at schema v${err.foundVersion}; this build expects v${err.expectedVersion}`,
+          suggestion:
+            'Run `genie task list` (or any lifecycle command) to migrate it — the previous database is backed up under `<GENIE_HOME>/state-backups/db-migration-<timestamp>/` first. Older genie binaries on this host will refuse the migrated file.',
+        },
+      ];
+    }
     const detail = err instanceof GenieDbError ? err.message : err instanceof Error ? err.message : String(err);
     return [{ name: 'genie.db', status: 'fail', detail }];
   }
@@ -277,12 +297,15 @@ const PER_REPO_ONLY_TABLES = [
   'task_events',
   'stage_log',
   'wish_groups',
+  // RETIRED, and kept here on purpose. The v1 -> v2 ladder dropped
+  // `hire_roster` from the per-repo schema, but a global database contaminated
+  // BEFORE v6 still carries the table, and the ladder never runs on the global
+  // path — nothing opens that file with the per-repo opener any more. Dropping
+  // it from this list would leave that stray table on the host for ever, with
+  // doctor reporting the file clean. A table this build no longer creates is
+  // exactly the kind of stray `--fix-global-db` exists to remove.
+  'hire_roster',
 ] as const;
-// `hire_roster` is deliberately absent: the v1 -> v2 migration dropped it, so
-// it is no longer a per-repo table at all. Nothing is lost by leaving it out —
-// contamination is all-or-nothing, because the per-repo opener writes the whole
-// schema through `ensureSchema`, never one table, so any host that could carry
-// a stray `hire_roster` carries the six above it too.
 
 /** The check name, exported so the remedy and the test never drift apart. */
 export const GLOBAL_DB_CONTAMINATION_CHECK = 'global db';

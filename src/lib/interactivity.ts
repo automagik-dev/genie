@@ -48,19 +48,17 @@ const WORKSPACE_EXEMPT = new Set([
   'install', // post-install finisher — invoked by install.sh from arbitrary cwd, before any workspace exists
   'uninstall',
   'shortcuts',
-  'team',
-  'version',
   'help',
-  // `task` / `board` / `launch` are the v5 sqlite-backed commands. They
-  // self-resolve their shared `.genie/genie.db` from the git common-dir (see
+  // `task` / `board` are the sqlite-backed state verbs. They self-resolve
+  // their shared `.genie/genie.db` from the git common-dir (see
   // src/lib/v5/genie-db.ts) and never read the v4 `.genie/workspace.json`, so
   // gating them on the legacy workspace concept is wrong — it made
-  // `genie task create` in a fresh repo exit 2, and `genie launch` die with a
-  // dead-end "run genie init" message on any clean machine/CI (v5 `genie init`
-  // deliberately never writes a workspace.json, so the gate could never be
-  // satisfied). This whole workspace gate is v4-legacy and dies with the
-  // harness in Group 3/5; exempting the v5 commands is the interim correct
-  // behavior.
+  // `genie task create` in a fresh repo exit 2 with a dead-end "run genie init"
+  // message on any clean machine/CI (`genie init` deliberately never writes a
+  // workspace.json, so the gate could never be satisfied). This whole workspace
+  // gate is v4-legacy; exempting the state verbs is the interim correct
+  // behavior. `launch`, `team` and `version` left this set with v6: none is a
+  // registered command any more, so exempting them named nothing.
   'task',
   'board',
   // `context` is the read-only spawn-context contract verb. Like `task`/
@@ -71,7 +69,6 @@ const WORKSPACE_EXEMPT = new Set([
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).
   'idea',
-  'launch',
   // `mikro` is the microagent runtime, whose whole point is that any repository
   // on a host with genie installed can run it. It reads a git checkout and
   // `<GENIE_HOME>/templates`, never `.genie/workspace.json`; gating it would

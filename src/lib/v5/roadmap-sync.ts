@@ -76,13 +76,36 @@ export function hasGenieWorkspace(cwd?: string): boolean {
 
 /**
  * Markers written before the key-sorted hash landed carry no `hashVersion`;
- * their hashes are {@link legacyHash} values. Version 2 is the current
- * {@link canonicalHash}. Every marker this build writes is version 2, so a
- * legacy marker migrates on the first successful sync, import, or export.
+ * their hashes are {@link legacyHash} values. Version 2 is {@link canonicalHash}
+ * over the PRE-v6 snapshot shape. Version 3 is the same hash over the shape v6
+ * emits, and every marker this build writes is version 3 — so a version 1 or 2
+ * marker migrates on the first successful sync, import, or export.
+ *
+ * The bump is not cosmetic. v6 changed the snapshot's CONTENT twice at once:
+ * `hire_roster: []` is gone and `schemaVersion` moved 1 -> 2. A version-2
+ * baseline therefore never matches a v6 db hash, so the very first `task sync`
+ * after an upgrade read `dbChanged && fileChanged` and wedged the checkout into
+ * a permanent `diverged` — on every machine, with no edit by anyone.
+ * {@link baselineHolds} answers that by re-deriving the pre-v6 shape.
  */
 const LEGACY_HASH_VERSION = 1;
-const CURRENT_HASH_VERSION = 2;
-type MarkerHashVersion = typeof LEGACY_HASH_VERSION | typeof CURRENT_HASH_VERSION;
+const PRE_V6_HASH_VERSION = 2;
+const CURRENT_HASH_VERSION = 3;
+type MarkerHashVersion = typeof LEGACY_HASH_VERSION | typeof PRE_V6_HASH_VERSION | typeof CURRENT_HASH_VERSION;
+
+/** The only `user_version` that ever existed before the v1 -> v2 ladder. */
+const PRE_V6_SCHEMA_VERSION = 1;
+
+/**
+ * The snapshot shape a pre-v6 build would have hashed for this same content:
+ * `hire_roster` always published as `[]`, and `schemaVersion` always 1. Applied
+ * to a v6 db snapshot it reconstructs exactly what the old baseline recorded;
+ * applied to a pre-v6 file it is a no-op, because the file already carries both.
+ */
+function preV6Shape(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+  return { ...(value as Record<string, unknown>), hire_roster: [], schemaVersion: PRE_V6_SCHEMA_VERSION };
+}
 
 /**
  * Canonical JSON: every object's keys are emitted in sorted order, recursively.
@@ -122,18 +145,28 @@ function legacyHash(value: unknown): string {
 }
 
 /**
- * Is `value` still the content this baseline recorded? A version-2 baseline is
- * a {@link canonicalHash}, so the canonical hash settles it. A version-1
- * baseline may have been written either by a build that hashed physical key
- * order ({@link legacyHash}) or by the intermediate build that had already
- * switched algorithms but did not yet stamp a version — so EITHER hash
- * matching is a sha256 statement that the content is the baseline content.
- * Accepting both is what keeps an upgrade from reading as a change on its own;
- * it can never invent a false "unchanged" without a sha256 collision.
+ * Is `value` still the content this baseline recorded?
+ *
+ * A version-3 baseline is a {@link canonicalHash} of today's shape, so the
+ * canonical hash settles it. Older baselines recorded the SAME content in an
+ * older shape or with an older algorithm, so each accepted form is re-derived
+ * and compared:
+ *   - version <= 2: the {@link preV6Shape} canonical hash (this is what keeps
+ *     an upgrade from reading as a change on its own — see the version block),
+ *   - version 1: {@link legacyHash} of either shape, because that era's markers
+ *     came from a build that hashed physical key order OR from the intermediate
+ *     build that had switched algorithms without yet stamping a version.
+ *
+ * Every arm is a sha256 statement that the content IS the baseline content, so
+ * none of them can invent a false "unchanged" without a collision.
  */
 function baselineHolds(version: MarkerHashVersion, recorded: string, canonical: string, value: unknown): boolean {
   if (recorded === canonical) return true;
-  return version === LEGACY_HASH_VERSION && recorded === legacyHash(value);
+  if (version > PRE_V6_HASH_VERSION) return false;
+  const asPreV6 = preV6Shape(value);
+  if (recorded === canonicalHash(asPreV6)) return true;
+  if (version !== LEGACY_HASH_VERSION) return false;
+  return recorded === legacyHash(value) || recorded === legacyHash(asPreV6);
 }
 
 /**
@@ -166,8 +199,8 @@ function readMarker(path: string): SyncMarker | null {
     if (parsed.hashVersion === undefined) {
       return { fileHash: parsed.fileHash, dbHash: parsed.dbHash, hashVersion: LEGACY_HASH_VERSION };
     }
-    if (parsed.hashVersion === CURRENT_HASH_VERSION) {
-      return { fileHash: parsed.fileHash, dbHash: parsed.dbHash, hashVersion: CURRENT_HASH_VERSION };
+    if (parsed.hashVersion === PRE_V6_HASH_VERSION || parsed.hashVersion === CURRENT_HASH_VERSION) {
+      return { fileHash: parsed.fileHash, dbHash: parsed.dbHash, hashVersion: parsed.hashVersion };
     }
   } catch {
     // Corrupt marker — treat as absent; sync falls back to its safe defaults.
@@ -230,6 +263,12 @@ function normalizeSnapshotFile(filePath: string, parsed: unknown): boolean {
 
 /** The one clause that explains a whole-file diff carrying no content change. */
 const NORMALIZED_NOTE = 'was rewritten in canonical key order (no board content changed).';
+/**
+ * The v6 shape migration, stated in the same voice as {@link NORMALIZED_NOTE}
+ * because it is the same KIND of event: the bytes move, the board does not.
+ */
+const RESHAPED_NOTE =
+  'was rewritten in the v6 snapshot shape — `hire_roster` retired, schemaVersion 2 (no board content changed).';
 
 /**
  * Baseline the pair an explicit `task export --write` just published, where
@@ -354,6 +393,22 @@ function syncRoadmapLocked(db: Database, cwd?: string): SyncResult {
     writeMarker(markerPath, { fileHash: dbHash, dbHash });
     return { action: 'exported', message: `Board snapshot ${filePath} refreshed from the local database.` };
   }
+  if (!fileChanged && !dbChanged) {
+    // Neither side moved, yet the hashes differ — a state that could not exist
+    // before v6, when the baseline shape equalled both sides. It is what an
+    // upgraded checkout looks like on its first sync: the committed file is
+    // still the pre-v6 shape (`hire_roster: []`, `schemaVersion: 1`) while the
+    // database publishes the v6 one, and `baselineHolds` has just proved the
+    // CONTENT of both is exactly what the baseline recorded. Falling through
+    // from here reached `diverged`, which is how every upgraded checkout wedged
+    // — silently, because the git hooks run `task sync || true`.
+    //
+    // Republish in the current shape, the same way a legacy key order is
+    // rewritten: one commit that moves bytes and no cards.
+    writeSnapshotFile(filePath, dbState);
+    writeMarker(markerPath, { fileHash: dbHash, dbHash });
+    return { action: 'exported', message: `Board snapshot ${filePath} ${RESHAPED_NOTE}` };
+  }
   // Both sides moved. The card conversation is the one slice that is safe to
   // reconcile automatically: events are append-only facts that never conflict,
   // so when the two sides agree on everything except task_events, union them.
@@ -396,11 +451,21 @@ function mergeTimelines(db: Database, dbState: StateExport, parsed: unknown): nu
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
   const file = parsed as Partial<StateExport>;
   if (!Array.isArray(file.task_events)) return null;
-  // `hire_roster` is dropped from BOTH sides rather than zeroed: a pre-v6
-  // roadmap.json still carries the key (always `[]`), the database no longer
-  // has it at all, and an absent key does not hash like an empty array.
+  // `hire_roster` AND `schemaVersion` are dropped from BOTH sides, not zeroed
+  // or normalized: a pre-v6 roadmap.json still carries the key (always `[]`)
+  // and still says `schemaVersion: 1`, while a v6 database has no such table
+  // and reports 2. An absent key does not hash like an empty array, and 1 does
+  // not hash like 2 — so without both removals this comparison answered "these
+  // differ by more than the timeline" for every upgraded checkout and sent a
+  // teammate's ordinary card change to `diverged`.
   const stripped = (state: Partial<StateExport>) => {
-    const { hire_roster: _retiredInV6, ...rest } = state as Partial<StateExport> & { hire_roster?: unknown };
+    const {
+      hire_roster: _retiredInV6,
+      schemaVersion: _movedInV6,
+      ...rest
+    } = state as Partial<StateExport> & {
+      hire_roster?: unknown;
+    };
     return { ...rest, task_events: [] };
   };
   if (canonicalHash(stripped(dbState)) !== canonicalHash(stripped(file))) return null;

@@ -75,14 +75,31 @@ const HUMAN = { author: 'felipe', authorKind: 'human' };
 
 let dir: string;
 let db: Database;
+/**
+ * Any fixture stamped below the current schema version migrates on open, and
+ * the migration is backup-first — so without this the suite writes real
+ * `db-migration-<stamp>/` roots into the DEVELOPER's `~/.genie/state-backups`,
+ * which genie treats as a never-pruned archive.
+ */
+let genieHome: string;
+let previousGenieHome: string | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'genie-task-'));
+  genieHome = mkdtempSync(join(tmpdir(), 'genie-task-home-'));
+  previousGenieHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = genieHome;
   db = openDb({ path: join(dir, 'genie.db') });
 });
 
 afterEach(() => {
   db.close();
+  // Restoring an UNSET variable means REMOVING the key: assigning `undefined`
+  // to process.env stores the literal string "undefined", which the next test
+  // would then resolve as a GENIE_HOME path.
+  if (previousGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = previousGenieHome;
+  rmSync(genieHome, { recursive: true, force: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -1282,7 +1299,8 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
     expect(published.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
     expect(getTask(db, pending.id)?.title).toBe('unpublished card');
     // And the baseline is migrated on the way out.
-    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(2);
+    // v6 stamps version 3 (the snapshot shape changed with `hire_roster`).
+    expect(JSON.parse(readFileSync(markerPath, 'utf-8')).hashVersion).toBe(3);
   });
 
   test('export carries assigned_agent/assigned_reason (SELECT *) and round-trips them through import', () => {

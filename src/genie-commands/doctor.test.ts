@@ -1784,6 +1784,73 @@ describe('doctor --json: skills channel riders', () => {
   });
 });
 
+/**
+ * `genie doctor` is a read-only observer, and the v1 -> v2 ladder is a
+ * forward-only destructive change that a 5.x binary on the same host refuses
+ * afterwards. Before `migrate: false` existed, merely LOOKING at a repository
+ * migrated its shared database — two hand-runs of doctor did exactly that to
+ * the developer's own checkout. This is the regression that owns that scenario.
+ */
+describe('doctor never migrates the database it is looking at', () => {
+  /** A `.genie/genie.db` exactly as a 5.x binary left it: stamped 1, with hires. */
+  function seedV1Repo(): string {
+    const repo = join(isolatedHome, 'v1-repo');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const dbPath = join(repo, '.genie', 'genie.db');
+    const seed = new Database(dbPath);
+    seed.exec(`
+CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, lanes TEXT);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE hire_roster (
+  wish TEXT NOT NULL, agent_adapter_id TEXT NOT NULL, profile TEXT, worktree TEXT NOT NULL,
+  hired_at INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (wish, agent_adapter_id)
+);
+`);
+    seed.exec('PRAGMA user_version = 1');
+    seed.close();
+    return repo;
+  }
+
+  const dbStateOf = (repo: string): { version: number; hasHireRoster: boolean } => {
+    const db = new Database(join(repo, '.genie', 'genie.db'), { readonly: true });
+    try {
+      return {
+        version: (db.query('PRAGMA user_version').get() as { user_version: number }).user_version,
+        hasHireRoster:
+          db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get() !== null,
+      };
+    } finally {
+      db.close();
+    }
+  };
+
+  test('a v1 database is REPORTED, not migrated, and the remedy names the backup', async () => {
+    const repo = seedV1Repo();
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(repo)));
+    const doc = JSON.parse(output) as {
+      ok: boolean;
+      checks: Array<{ name: string; status: string; detail: string; suggestion?: string }>;
+    };
+    const check = doc.checks.find((entry) => entry.name === 'genie.db');
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('schema v1');
+    expect(check?.detail).toContain('expects v2');
+    expect(check?.suggestion).toContain('state-backups/db-migration-');
+    expect(check?.suggestion).toContain('Older genie binaries');
+    // A pending migration is a finding, never a hard failure.
+    expect(doc.ok).toBe(true);
+    expect(exitCode).toBe(0);
+    // THE point: the file is untouched.
+    expect(dbStateOf(repo)).toEqual({ version: 1, hasHireRoster: true });
+  });
+
+  test('--fix does not migrate it either — doctor repairs nothing here', async () => {
+    const repo = seedV1Repo();
+    await captureDoctor(() => doctorCommand({ json: true, fix: true }, isolatedDoctorDeps(repo)));
+    expect(dbStateOf(repo)).toEqual({ version: 1, hasHireRoster: true });
+  });
+});
+
 describe('global db contamination (r2 #6 / M7 operator half)', () => {
   test('a clean global db passes and names the file', () => {
     const genieHome = join(isolatedHome, 'globaldb-clean');

@@ -1,7 +1,16 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveGlobalDbPath } from '../genie-home.js';
@@ -12,6 +21,7 @@ import {
   GenieDbError,
   GlobalDbPathError,
   MalformedDbError,
+  PendingMigrationError,
   STAGE_LOG_BACKFILL_KEY,
   isBusyError,
   isCurrentGenieDb,
@@ -23,12 +33,30 @@ import {
 import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 
 let dir: string;
+/**
+ * Every v1 fixture in this file migrates on open, and the migration is
+ * backup-first — so without this the suite writes real
+ * `db-migration-<stamp>/` roots into the DEVELOPER's `~/.genie/state-backups`,
+ * a directory genie treats as a never-pruned archive. Isolated file-wide, not
+ * per test, because any future v1 fixture inherits the same behaviour.
+ */
+let genieHome: string;
+let previousGenieHome: string | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'genie-db-'));
+  genieHome = mkdtempSync(join(tmpdir(), 'genie-db-home-'));
+  previousGenieHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = genieHome;
 });
 
 afterEach(() => {
+  // Restoring an UNSET variable means REMOVING the key: assigning `undefined`
+  // to process.env stores the literal string "undefined", which the next test
+  // would then resolve as a GENIE_HOME path.
+  if (previousGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = previousGenieHome;
+  rmSync(genieHome, { recursive: true, force: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -283,6 +311,88 @@ CREATE TABLE hire_roster (
     expect(marker).not.toBeNull();
   });
 
+  test('the migration is backup-first: the pre-migration database is archived and named', () => {
+    // The ladder is forward-only and destructive, and a 5.x binary on the same
+    // machine refuses the migrated file. The backup is therefore unconditional
+    // — an operator who discovers the wrong binary migrated a shared database
+    // needs the bytes, not a flag nobody knew to pass.
+    const written: string[] = [];
+    const priorWrite = process.stdout.write;
+    process.stdout.write = ((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const path = join(dir, 'v1-backup.db');
+      seedV1Db(path);
+      // The CONTENT the migration is about to destroy, captured independently.
+      const control = new Database(path, { readonly: true });
+      const beforeHires = control.query('SELECT * FROM hire_roster').all();
+      const beforeTasks = control.query('SELECT id, title FROM tasks').all();
+      control.close();
+
+      openDb({ path }).close();
+
+      const root = join(genieHome, 'state-backups');
+      const roots = readdirSync(root).filter((entry) => entry.startsWith('db-migration-'));
+      expect(roots).toHaveLength(1);
+      const archived = join(root, roots[0] as string, 'v1-backup.db');
+      expect(existsSync(archived)).toBe(true);
+
+      // The archive IS the pre-migration database: same stamp, the table this
+      // run dropped, and its rows. (Byte identity against the pre-OPEN file is
+      // deliberately not asserted — `openSqlite` applies its WAL/synchronous
+      // pragmas to the live file before the ladder runs, so those bytes are
+      // already not the ones the migration replaced. What must survive is the
+      // content, and that is what this checks.)
+      const restored = new Database(archived, { readonly: true });
+      try {
+        expect((restored.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+        expect(restored.query('SELECT * FROM hire_roster').all()).toEqual(beforeHires);
+        expect(restored.query('SELECT id, title FROM tasks').all()).toEqual(beforeTasks);
+      } finally {
+        restored.close();
+      }
+      // The live database really did lose it, so the archive is the only copy.
+      expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+
+      // ONE line, naming the archive. A backup nobody is told about is useless.
+      const lines = written.join('').trimEnd().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('schema v1 -> v2');
+      expect(lines[0]).toContain(archived);
+    } finally {
+      process.stdout.write = priorWrite;
+    }
+  });
+
+  test('a second open of a current database takes no backup', () => {
+    const path = join(dir, 'v1-once.db');
+    seedV1Db(path);
+    openDb({ path }).close();
+    const root = join(genieHome, 'state-backups');
+    expect(readdirSync(root).filter((e) => e.startsWith('db-migration-'))).toHaveLength(1);
+    // Already current: nothing to migrate, so nothing to archive.
+    openDb({ path }).close();
+    expect(readdirSync(root).filter((e) => e.startsWith('db-migration-'))).toHaveLength(1);
+  });
+
+  test('`migrate: false` observes without migrating — the doctor contract', () => {
+    // `genie doctor` must never perform a forward-only destructive change as a
+    // side effect of looking at a file: two hand-runs of it migrated the
+    // developer's own shared database before this switch existed.
+    const path = join(dir, 'v1-observed.db');
+    seedV1Db(path);
+    expect(() => openDb({ path, migrate: false })).toThrow(PendingMigrationError);
+    expect(userVersion(path)).toBe(1);
+    const db = new Database(path, { readonly: true });
+    try {
+      expect(db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get()).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test('a version the ladder cannot bridge still throws ForeignDbError', () => {
     const path = join(dir, 'unbridgeable.db');
     const seed = new Database(path);
@@ -300,7 +410,7 @@ CREATE TABLE hire_roster (
 // and preserve every existing row. This is the worktree-shared-DB rollout
 // guarantee — an older binary's DB opens clean under the new code.
 // ---------------------------------------------------------------------------
-describe('pre-lanes DB backfill (additive, no version bump)', () => {
+describe('pre-lanes DB backfill (additive columns, carried across the v1 -> v2 ladder)', () => {
   /** The exact `boards/tasks/...` schema that shipped BEFORE lifecycle lanes. */
   function seedOldSchemaDb(path: string): void {
     const seed = new Database(path);
@@ -397,7 +507,7 @@ describe('pre-lanes DB backfill (additive, no version bump)', () => {
 // omitting the columns from EXPECTED_SCHEMA: schemaIsCurrent would then return
 // true for the pre-upgrade shape and the backfill would be silently skipped.
 // ---------------------------------------------------------------------------
-describe('pre-assignment DB backfill (additive, no version bump)', () => {
+describe('pre-assignment DB backfill (additive columns, carried across the v1 -> v2 ladder)', () => {
   test('a full-schema DB missing only the assignment columns is not current and heals on open', () => {
     const path = join(dir, 'pre-assignment.db');
     const db1 = openDb({ path });

@@ -146,7 +146,7 @@ const SURFACES = [
     key: 'runtime-dx',
     label: 'Runtime DX',
     where: 'help text, error messages and exit codes, plus the onboarding path stated in README or CONTRIBUTING',
-    brief: `You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full sixteen-command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.\nProbe ONLY these shapes, and treat the list as closed:\n${PROBE_ALLOWLIST_BLOCK}\n${PROBE_FAIL_CLOSED_RULE}`,
+    brief: `You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.\nProbe ONLY these shapes, and treat the list as closed:\n${PROBE_ALLOWLIST_BLOCK}\n${PROBE_FAIL_CLOSED_RULE}`,
     effort: 'medium',
     minChecks: 6,
     minimum: 'help text, exit code and stderr each graded on every failing invocation you probe',

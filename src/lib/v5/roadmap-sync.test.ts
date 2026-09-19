@@ -33,17 +33,55 @@ import {
   serializeSnapshot,
   syncRoadmap,
 } from './roadmap-sync.js';
-import { type StateExport, createBoard, createTask, getTask, importState } from './task-state.js';
+import {
+  type StateExport,
+  appendTaskEvent,
+  createBoard,
+  createTask,
+  getTask,
+  getTaskEvents,
+  importState,
+} from './task-state.js';
 
 let dir: string;
+/**
+ * Any fixture stamped below {@link CURRENT_SCHEMA_VERSION} migrates on open,
+ * and the migration is backup-first — so without this the suite writes real
+ * `db-migration-<stamp>/` roots into the DEVELOPER's `~/.genie/state-backups`,
+ * which genie treats as a never-pruned archive.
+ */
+let genieHome: string;
+let previousGenieHome: string | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'genie-roadmap-sync-'));
+  genieHome = mkdtempSync(join(tmpdir(), 'genie-roadmap-sync-home-'));
+  previousGenieHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = genieHome;
 });
 
 afterEach(() => {
+  // Restoring an UNSET variable means REMOVING the key: assigning `undefined`
+  // to process.env stores the literal string "undefined", which the next test
+  // would then resolve as a GENIE_HOME path.
+  if (previousGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = previousGenieHome;
+  rmSync(genieHome, { recursive: true, force: true });
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** The version every marker this build writes carries. */
+const CURRENT_HASH_VERSION = 3;
+/** The version a 5.x build stamped: canonical hashes over the PRE-v6 shape. */
+const PRE_V6_HASH_VERSION = 2;
+
+/**
+ * The snapshot a 5.x build published for this same board: `hire_roster: []`
+ * (always empty — hires never travelled) and `schemaVersion: 1`.
+ */
+function preV6Snapshot(value: StateExport): unknown {
+  return { ...value, hire_roster: [], schemaVersion: 1 };
+}
 
 /** The pre-`hashVersion` hash: sha256 over the physical key order. */
 function legacyHash(value: unknown): string {
@@ -116,7 +154,7 @@ describe('workspace precondition', () => {
 });
 
 describe('sync-marker hash-algorithm migration', () => {
-  test('a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as v2', () => {
+  test('a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version', () => {
     const { repo, db, filePath, markerPath } = fixture('legacy-pull');
     createTask(db, { title: 'existing card' });
     const published = roadmapSnapshot(db);
@@ -141,7 +179,7 @@ describe('sync-marker hash-algorithm migration', () => {
     expect(getTask(db, pulledId)?.title).toBe('pulled card');
 
     const marker = readMarkerFile(markerPath);
-    expect(marker.hashVersion).toBe(2);
+    expect(marker.hashVersion).toBe(CURRENT_HASH_VERSION);
     expect(marker.fileHash).toBe(canonicalHash(pulled));
     expect(marker.dbHash).toBe(canonicalHash(roadmapSnapshot(db)));
 
@@ -167,7 +205,7 @@ describe('sync-marker hash-algorithm migration', () => {
 
     expect(syncRoadmap(db, repo).action).toBe('imported');
     expect(getTask(db, pulledId)?.title).toBe('pulled card');
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
     db.close();
   });
 
@@ -187,7 +225,7 @@ describe('sync-marker hash-algorithm migration', () => {
     const snapshot = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport;
     expect(snapshot.tasks.map((t) => t.title).sort()).toEqual(['existing card', 'unpublished card']);
     expect(getTask(db, local.id)?.title).toBe('unpublished card');
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
     db.close();
   });
 
@@ -235,15 +273,161 @@ describe('sync-marker hash-algorithm migration', () => {
     createTask(db, { title: 'first card' });
 
     expect(syncRoadmap(db, repo).action).toBe('exported');
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
 
     rmSync(markerPath);
     recordExportBaseline(roadmapSnapshot(db), repo);
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
 
     rmSync(markerPath);
     recordImportBaseline(db, JSON.parse(readFileSync(filePath, 'utf-8')), repo);
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
+    db.close();
+  });
+});
+
+/**
+ * The v6 upgrade, which changed the snapshot's CONTENT twice at once:
+ * `hire_roster: []` left and `schemaVersion` moved 1 -> 2. A version-2 baseline
+ * is a hash of the OLD shape, so without {@link baselineHolds} re-deriving it,
+ * the first `task sync` after an upgrade saw both sides changed and answered
+ * `diverged` — on every checkout on earth, with nobody having edited anything.
+ * The git hooks run `task sync || true`, so that refusal would have been silent
+ * and every board would simply have stopped reconciling.
+ */
+describe('v6 upgrade: a pre-v6 baseline is not a divergence', () => {
+  test('a pulled teammate change imports, never diverges, and re-stamps the marker', () => {
+    const { repo, db, filePath, markerPath } = fixture('v6-upgrade-pull');
+    createTask(db, { title: 'existing card' });
+
+    // The world as a 5.x binary left it: the file and the baseline both carry
+    // the pre-v6 shape, stamped hashVersion 2.
+    const published = roadmapSnapshot(db);
+    const asPreV6 = preV6Snapshot(published);
+    const baseline = canonicalHash(asPreV6);
+    writeFileSync(filePath, `${JSON.stringify(asPreV6, null, 2)}\n`);
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({ fileHash: baseline, dbHash: baseline, hashVersion: PRE_V6_HASH_VERSION }, null, 2)}\n`,
+    );
+    // Guard: the shapes really do hash differently, so this exercises the
+    // compatibility arm rather than an accidental match.
+    expect(canonicalHash(published)).not.toBe(baseline);
+
+    // A teammate pushes one more card, still in the pre-v6 shape.
+    const { snapshot: pulled, id: pulledId } = snapshotWithExtraCard(
+      published,
+      join(dir, 'v6-teammate.db'),
+      'pulled card',
+    );
+    writeFileSync(filePath, `${JSON.stringify(preV6Snapshot(pulled), null, 2)}\n`);
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('imported');
+    expect(result.action).not.toBe('diverged');
+    expect(getTask(db, pulledId)?.title).toBe('pulled card');
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
+
+    // The imported file is still the PRE-v6 shape on disk, so the next sync
+    // republishes it in the v6 shape — one commit that moves bytes and no
+    // cards — and only then is the pair quiet.
+    const reshaped = syncRoadmap(db, repo);
+    expect(reshaped.action).toBe('exported');
+    expect(reshaped.message).toContain('no board content changed');
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    db.close();
+  });
+
+  test('an untouched pre-v6 checkout reads as in-sync, not as a change on both sides', () => {
+    const { repo, db, filePath, markerPath } = fixture('v6-upgrade-quiet');
+    createTask(db, { title: 'existing card' });
+    const asPreV6 = preV6Snapshot(roadmapSnapshot(db));
+    const baseline = canonicalHash(asPreV6);
+    writeFileSync(filePath, `${JSON.stringify(asPreV6, null, 2)}\n`);
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({ fileHash: baseline, dbHash: baseline, hashVersion: PRE_V6_HASH_VERSION }, null, 2)}\n`,
+    );
+
+    // Nobody changed anything; the binary changed. That is not a divergence —
+    // it is a reshape, and it reports itself as one.
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('exported');
+    expect(result.action).not.toBe('diverged');
+    expect(result.message).toContain('v6 snapshot shape');
+    expect(result.message).toContain('no board content changed');
+    // The reshaped file carries the current shape, and the pair is now quiet.
+    const written = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport & { hire_roster?: unknown };
+    expect(written.hire_roster).toBeUndefined();
+    expect(written.schemaVersion).toBe(2);
+    expect(written.tasks.map((task) => task.title)).toEqual(['existing card']);
+    expect(syncRoadmap(db, repo).action).toBe('none');
+    db.close();
+  });
+
+  test('a local edit on a pre-v6 baseline exports, and the file keeps every card', () => {
+    const { repo, db, filePath, markerPath } = fixture('v6-upgrade-local');
+    createTask(db, { title: 'existing card' });
+    const asPreV6 = preV6Snapshot(roadmapSnapshot(db));
+    const baseline = canonicalHash(asPreV6);
+    writeFileSync(filePath, `${JSON.stringify(asPreV6, null, 2)}\n`);
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({ fileHash: baseline, dbHash: baseline, hashVersion: PRE_V6_HASH_VERSION }, null, 2)}\n`,
+    );
+
+    createTask(db, { title: 'local card' });
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('exported');
+    const written = JSON.parse(readFileSync(filePath, 'utf-8')) as StateExport & { hire_roster?: unknown };
+    expect(written.tasks.map((task) => task.title).sort()).toEqual(['existing card', 'local card']);
+    // The published shape is v6's: the retired key is gone, the version moved.
+    expect(written.hire_roster).toBeUndefined();
+    expect(written.schemaVersion).toBe(2);
+    db.close();
+  });
+
+  test('a timeline-only difference across the upgrade still merges instead of diverging', () => {
+    // `mergeTimelines` compares everything EXCEPT the timeline; if it did not
+    // drop `hire_roster` and `schemaVersion` from both sides, an upgraded db
+    // would differ from a pre-v6 file by more than the timeline and the union
+    // would never be attempted.
+    const { repo, db, filePath, markerPath } = fixture('v6-upgrade-timeline');
+    const card = createTask(db, { title: 'shared card' });
+    const published = roadmapSnapshot(db);
+    const asPreV6 = preV6Snapshot(published) as StateExport;
+
+    // Both sides moved, but only the event log differs.
+    const fileSide = {
+      ...asPreV6,
+      task_events: [
+        ...published.task_events,
+        {
+          id: 9001,
+          task_id: card.id,
+          kind: 'comment',
+          note: 'from the teammate',
+          author_kind: 'human',
+          author: 'someone',
+          created_at: 1,
+        },
+      ],
+    };
+    const baseline = canonicalHash(asPreV6);
+    writeFileSync(filePath, `${JSON.stringify(fileSide, null, 2)}\n`);
+    writeFileSync(
+      markerPath,
+      `${JSON.stringify({ fileHash: baseline, dbHash: baseline, hashVersion: PRE_V6_HASH_VERSION }, null, 2)}\n`,
+    );
+    appendTaskEvent(db, card.id, { kind: 'comment', note: 'from me' });
+
+    const result = syncRoadmap(db, repo);
+    expect(result.action).toBe('merged');
+    expect(
+      getTaskEvents(db, card.id)
+        .map((event) => event.note)
+        .sort(),
+    ).toEqual(['from me', 'from the teammate']);
     db.close();
   });
 });
@@ -379,7 +563,7 @@ describe('legacy-ordered snapshot bytes', () => {
     expect(result.message).toContain('no board content changed');
     // Content is untouched; only the bytes moved.
     expect(readFileSync(filePath, 'utf-8')).toBe(serializeSnapshot(state));
-    expect(readMarkerFile(markerPath).hashVersion).toBe(2);
+    expect(readMarkerFile(markerPath).hashVersion).toBe(CURRENT_HASH_VERSION);
     // Idempotent: a second sync has nothing left to normalize and says nothing.
     const again = syncRoadmap(db, repo);
     expect(again.action).toBe('none');

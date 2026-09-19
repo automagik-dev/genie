@@ -37,7 +37,7 @@ There is no Claude marketplace plugin, no Codex plugin, no Genie-installed hooks
 
 `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel. Any value other than `none` installs to **every** detected agent skill home, because the skills CLI already installs per agent; `none` skips the channel entirely, writes no record, and reports `skills: skipped (consent: none)`. A failed skills install never rolls back the promoted binary — it prints the exact remedy command and sets a non-zero exit code.
 
-Upgrading from a plugin-era release? The one-shot, backup-first retirement `genie update` used to run for that era — Codex and Claude plugin registrations and caches, the stamped Claude workflow, role-agent TOMLs, managed skill mirrors, Hermes and pi links — shipped from `5.260711.6` through the last `5.x` release and was removed in v6, three stable releases after its compat window opened. A host that updated through any `5.x` release is already clean; one coming straight from the plugin era to v6 follows the manual steps in the docs. Genie still retires what the **skills** channel itself no longer delivers, backup-first, under `~/.genie/state-backups/skills-retirement-<timestamp>/`.
+Upgrading from a plugin-era release? The one-shot, backup-first retirement `genie update` used to run for that era shipped from `5.260711.6` through the last `5.x` release and **was removed in v6**, three stable releases after its compat window opened. A host that updated through any `5.x` release is already clean and needs nothing. A host coming straight from the plugin era to v6 is not cleaned up by genie at all any more — see [Removing plugin-era leftovers by hand](#removing-plugin-era-leftovers-by-hand). Genie still retires what the **skills** channel itself no longer delivers, backup-first, under `~/.genie/state-backups/skills-retirement-<timestamp>/`.
 
 From inside a trusted initialized repo, run `genie init` to scaffold state and retire proven-owned historical MCP routes. Then run `genie doctor` to confirm the install: it reports one `skills: <agent> <present>/<total> @ <ref>` line per known agent skill home, `not detected` for a home this host does not have, and a warning naming `genie update` when skills are missing or older than the running binary.
 
@@ -269,6 +269,33 @@ the skill inventory, every agent directory the install actually wrote (a bounded
 table), a content digest per directory, and any collisions it backed up. That record is what `genie doctor` reads
 for its `skills:` lines and what `genie uninstall` proves against before it deletes anything: a directory whose
 digest no longer matches is preserved and reported, never removed.
+
+### Removing plugin-era leftovers by hand
+
+Genie no longer removes these. Through the last `5.x` release `genie update` classified and retired them
+automatically; v6 deleted that code, so on a host that never updated inside the window the files below simply stay
+where the plugin era left them. None of them is read by v6 — they are inert, not harmful — so removing them is
+housekeeping, at your own pace. **Back up anything you are unsure about; genie is no longer taking the backup for
+you.** Anything in these paths you created yourself is yours: check before deleting.
+
+| What | Path |
+|------|------|
+| Claude marketplace registration | `~/.claude/plugins/marketplaces/automagik/` |
+| Claude plugin cache | `~/.claude/plugins/cache/automagik/genie/` |
+| Codex plugin cache | `~/.codex/plugins/cache/automagik/genie/` |
+| Codex role-agent profiles | `~/.codex/agents/genie-*.toml` |
+| Codex role-agent inventory | `~/.codex/agents/.genie-role-agents.json` |
+| Codex fallback transaction dirs | `~/.codex/agents/.genie-*-retirement/`, `~/.agents/skills/.genie-codex-fallback-retirement/` |
+| Codex curated skill lane | `~/.codex/skills/.curated/` |
+| Hermes link + marker | `~/.hermes/` genie symlinks, and the genie block in `~/.hermes/config.yaml` |
+| pi link + marker | `~/.pi/extensions/` genie symlinks, and the genie block in its config |
+| Codex plugin enablement | the `[plugins."genie@automagik"]` table in `~/.codex/config.toml` |
+| Claude plugin enablement | the `"genie@automagik"` key under `enabledPlugins` in `~/.claude/settings.json` |
+| Stamped workflow sidecar | `~/.claude/workflows/council.js.genie-sync.json` |
+
+Two of these are keys inside files you own, not whole files: remove only the named table/key and leave the rest of
+`~/.codex/config.toml` and `~/.claude/settings.json` alone. `genie doctor` does not report any of this — the checks
+that observed it left with the code that acted on it.
 
 ### Verifying and removing
 

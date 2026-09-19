@@ -15,14 +15,14 @@
 
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 // One-way, deliberate: the per-repo database asks the GENIE_HOME path module
 // where the machine-scope file lives so it can REFUSE to be that file. v6 ships
 // no machine-scope database — the Omni runner owned every table it held — but
 // the refusal outlives it, because a host contaminated before the rule landed
 // still carries the file and both databases stamp `user_version = 1`.
-import { resolveGlobalDbPath } from '../genie-home.js';
+import { resolveGenieHome, resolveGlobalDbPath } from '../genie-home.js';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { GenieDbError, openSqlite } from './sqlite-open.js';
 
@@ -37,6 +37,7 @@ export {
   GenieDbError,
   isBusyError,
   MalformedDbError,
+  PendingMigrationError,
 } from './sqlite-open.js';
 
 /**
@@ -460,6 +461,52 @@ export interface OpenOptions {
   path?: string;
   /** Working directory used for git-based path resolution when `path` is absent. */
   cwd?: string;
+  /**
+   * `false` refuses to migrate a database stamped below
+   * {@link CURRENT_SCHEMA_VERSION}, throwing `PendingMigrationError` instead.
+   * For callers that only OBSERVE — `genie doctor` — because a forward-only,
+   * destructive schema change must never be a side effect of looking at a file.
+   */
+  migrate?: boolean;
+}
+
+/**
+ * Copy the database aside before the first migration step runs.
+ *
+ * The ladder is forward-only and destructive: once `hire_roster` is dropped
+ * there is no step back, and a 5.x binary on the same machine refuses the
+ * migrated file outright. So the backup is unconditional, not opt-in — an
+ * operator who discovers the wrong binary migrated a shared database needs the
+ * bytes, not a flag they did not know to pass.
+ *
+ * WAL first: an un-checkpointed write-ahead log lives in a sidecar, so copying
+ * `genie.db` alone could archive a file missing the most recent commits.
+ * `wal_checkpoint(TRUNCATE)` folds the log into the main file, after which one
+ * `copyFileSync` is the whole database.
+ *
+ * The root lives under `<GENIE_HOME>/state-backups/`, which is an ARCHIVE:
+ * nothing genie writes there is removed by a later run. Returns the path so
+ * the caller can name it on stdout — an unreported backup is a backup the
+ * operator cannot use.
+ */
+function backupBeforeMigration(db: Database, path: string, from: number, to: number): string {
+  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}`);
+  mkdirSync(root, { recursive: true });
+  const target = join(root, basename(path));
+  copyFileSync(path, target);
+  reportDbMigration(`genie.db: schema v${from} -> v${to}; previous database backed up to ${target}`);
+  return target;
+}
+
+/**
+ * The ONE line the migration prints. Split out so tests can capture it without
+ * spawning, and so the rule "a backup nobody is told about is useless" has a
+ * single implementation.
+ */
+function reportDbMigration(line: string): void {
+  process.stdout.write(`${line}\n`);
 }
 
 /**
@@ -477,6 +524,8 @@ export function openDb(opts: OpenOptions = {}): Database {
     ensureSchema,
     schemaIsCurrent,
     migrations: SCHEMA_MIGRATIONS,
+    ...(opts.migrate === false ? { migrate: false } : {}),
+    beforeMigrate: ({ db, path: dbPath, from, to }) => backupBeforeMigration(db, dbPath, from, to),
   });
 }
 
@@ -586,9 +635,15 @@ function schemaShapeIsCurrent(db: Database): boolean {
 }
 
 /**
- * Validate a read-only handle without applying migrations or taking a write
- * lock. MCP uses this before exposing a database to any tool handler: both the
- * per-repo user_version and the complete required schema must match this build.
+ * Validate a handle without applying migrations or taking a write lock: both
+ * the per-repo `user_version` and the complete required schema must match this
+ * build. The retired MCP server was its original caller — that comment outlived
+ * the subsystem by two releases — and what the property is FOR now is the
+ * observe-don't-mutate side of the v1 -> v2 ladder: `ensureSchema` and the
+ * migration are write paths, and a caller that only needs to know whether this
+ * database is current must not trigger either. `genie doctor` takes the same
+ * guarantee through `openDb({ migrate: false })`, which additionally
+ * distinguishes a PENDING migration from a foreign or malformed file.
  *
  * Malformed SQLite inputs may throw while being inspected; callers own closing
  * the handle and translating that failure at their boundary.

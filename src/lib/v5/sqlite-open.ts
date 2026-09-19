@@ -128,6 +128,28 @@ export class ForeignDbError extends GenieDbError {
 }
 
 /**
+ * The database is stamped below `schemaVersion` and the ladder CAN bridge it,
+ * but this caller opened with `migrate: false`. It is not an error about the
+ * file — it is a statement that a mutation is pending and this caller declined
+ * to perform it. `genie doctor` turns it into a finding; every lifecycle verb
+ * opens with the default and migrates.
+ */
+export class PendingMigrationError extends GenieDbError {
+  readonly path: string;
+  readonly foundVersion: number;
+  readonly expectedVersion: number;
+  constructor(path: string, foundVersion: number, expectedVersion: number) {
+    super(
+      `Database at ${path} is at schema v${foundVersion}; this build expects v${expectedVersion}. The next lifecycle command (\`genie task\`, \`genie board\`) migrates it after taking a backup.`,
+    );
+    this.name = 'PendingMigrationError';
+    this.path = path;
+    this.foundVersion = foundVersion;
+    this.expectedVersion = expectedVersion;
+  }
+}
+
+/**
  * True when `err` is a contended-lock failure (transient, retryable) rather than
  * a corrupt/foreign database. Matches bun:sqlite's numeric `errno` (primary code
  * in the low byte — the only field that covers every extended busy code), its
@@ -176,6 +198,25 @@ export interface OpenSqliteOptions {
    * exactly as they do to one already at `schemaVersion`.
    */
   migrations?: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }>;
+  /**
+   * Opt OUT of applying the ladder. A caller that only OBSERVES the database
+   * — `genie doctor` is the whole reason this exists — must never perform an
+   * irreversible schema change as a side effect of looking. With `false`, a
+   * database stamped below `schemaVersion` that the ladder COULD bridge throws
+   * {@link PendingMigrationError} instead of being migrated; one it could not
+   * bridge still throws {@link ForeignDbError}, because that is not a pending
+   * migration, it is a foreign file.
+   */
+  migrate?: boolean;
+  /**
+   * Called once, before the FIRST step runs, with the chain the planner
+   * settled on. The migration is destructive and forward-only, so the caller
+   * uses this to take its backup and tell the operator where it went; a throw
+   * here aborts the migration with the database untouched. It is not called at
+   * all when the database is already current, when there is nothing to bridge,
+   * or when `migrate` is false.
+   */
+  beforeMigrate?: (info: { db: Database; path: string; from: number; to: number }) => void;
 }
 
 /**
@@ -593,28 +634,65 @@ export function hasUserTables(db: Database): boolean {
   return row.n > 0;
 }
 
+/** One resolved rung of the ladder. */
+type MigrationStep = { from: number; to: number; apply: (db: Database) => void };
+
 /**
- * Apply the forward-only ladder from `version` up to `schemaVersion`.
+ * PURE pass: the exact chain that carries `version` to `schemaVersion`, or null
+ * when no such chain exists. Nothing is executed and nothing is written here.
  *
- * Each step runs inside its own transaction, so a step that throws leaves the
- * database at the version it started from rather than half-migrated. The
- * `user_version` is re-stamped only once the whole chain arrives, and the caller
- * then falls through to the current-version branch. Returns false when the chain
- * cannot be completed, which the caller turns into a {@link ForeignDbError}: a
- * partial ladder is a foreign database, never a silent best effort.
+ * Planning before applying is the whole point. A ladder that applied steps as
+ * it walked would run every rung it COULD before discovering the chain stops
+ * short, leaving a database partially migrated at a version it was never
+ * stamped for — the one state from which no later open can recover. With the
+ * plan settled first, an unbridgeable gap refuses with the file untouched.
+ *
+ * `to` must strictly increase (forward-only) and each step must start where the
+ * previous one ended, so a malformed or cyclic declaration yields no plan
+ * rather than an infinite walk.
  */
-function runMigrationLadder(db: Database, version: number, opts: OpenSqliteOptions): boolean {
-  const steps = opts.migrations ?? [];
-  let at = version;
-  for (const step of [...steps].sort((left, right) => left.from - right.from)) {
-    if (step.from !== at) continue;
-    db.transaction(() => step.apply(db))();
-    at = step.to;
-    if (at === opts.schemaVersion) break;
+function planMigrationChain(version: number, opts: OpenSqliteOptions): MigrationStep[] | null {
+  const byFrom = new Map<number, MigrationStep>();
+  for (const step of opts.migrations ?? []) {
+    if (step.to <= step.from) continue;
+    if (!byFrom.has(step.from)) byFrom.set(step.from, step);
   }
-  if (at !== opts.schemaVersion) return false;
-  db.exec(`PRAGMA user_version = ${opts.schemaVersion}`);
-  return true;
+  const chain: MigrationStep[] = [];
+  let at = version;
+  while (at < opts.schemaVersion) {
+    const step = byFrom.get(at);
+    if (step === undefined || step.to > opts.schemaVersion) return null;
+    chain.push(step);
+    at = step.to;
+  }
+  return at === opts.schemaVersion ? chain : null;
+}
+
+/**
+ * Apply a plan {@link planMigrationChain} already proved complete.
+ *
+ * Each step runs in ONE transaction that also stamps its own `to` into
+ * `PRAGMA user_version` — SQLite rolls that pragma back with the transaction,
+ * so there is no window in which the DDL has committed and the version has not.
+ * Stamping once at the end instead would leave a process killed mid-chain with
+ * migrated tables and a stale version: the next open would re-run steps against
+ * a schema that had already moved. The version is re-read after each commit and
+ * a disagreement aborts the chain rather than continuing on an assumption.
+ */
+function applyMigrationChain(db: Database, chain: readonly MigrationStep[], opts: OpenSqliteOptions): void {
+  for (const step of chain) {
+    db.transaction(() => {
+      step.apply(db);
+      db.exec(`PRAGMA user_version = ${step.to}`);
+    })();
+    const stamped = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+    if (stamped !== step.to) {
+      throw new MalformedDbError(
+        opts.path,
+        new Error(`migration ${step.from} -> ${step.to} committed but user_version reads ${stamped}`),
+      );
+    }
+  }
 }
 
 /**
@@ -644,13 +722,31 @@ function initOrValidate(db: Database, version: number, opts: OpenSqliteOptions):
     db.exec(`PRAGMA user_version = ${schemaVersion}`);
     return;
   }
-  if (version > 0 && version < schemaVersion && runMigrationLadder(db, version, opts)) {
-    // Deliberate fall-through, not a second open: a database the ladder just
-    // brought to `schemaVersion` must receive the same additive backfills as
-    // one that was already there. Returning here instead left a migrated
-    // database permanently short of them.
-    if (!schemaIsCurrent || !schemaIsCurrent(db)) ensureSchema(db);
-    return;
+  if (version > 0 && version < schemaVersion) {
+    const chain = planMigrationChain(version, opts);
+    if (chain !== null) {
+      // Declined, not performed: the caller only wanted to look.
+      if (opts.migrate === false) throw new PendingMigrationError(path, version, schemaVersion);
+      // The caller's last chance to take a backup. A throw here aborts with the
+      // database untouched, because no step has run yet.
+      opts.beforeMigrate?.({ db, path, from: version, to: schemaVersion });
+      applyMigrationChain(db, chain, opts);
+      // Deliberate fall-through, not a second open: a database the ladder just
+      // brought to `schemaVersion` must receive the same additive backfills as
+      // one that was already there. Returning here instead left a migrated
+      // database permanently short of them.
+      if (!schemaIsCurrent || !schemaIsCurrent(db)) ensureSchema(db);
+      return;
+    }
+    throw new ForeignDbError(path, version, schemaVersion, 'no migration path from this schema version');
+  }
+  if (version > schemaVersion) {
+    throw new ForeignDbError(
+      path,
+      version,
+      schemaVersion,
+      `written by a newer genie (schema v${version}); run \`genie update\` in this checkout`,
+    );
   }
   throw new ForeignDbError(path, version, schemaVersion, 'unrecognized schema version');
 }

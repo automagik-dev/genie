@@ -146,7 +146,7 @@ selecting an Orca lifecycle mode is separate from selecting a release channel.
 
 ## MCP retirement
 
-A7 retired the Genie MCP runtime, launchers, and only registrations whose Genie ownership is proven. `genie mcp` now
-exits non-zero with the stable diagnostic documented in the repository README and never starts a compatibility server.
-Unrelated user configuration and both authorities' lifecycle history remain untouched; use standalone task/board or
-roll back to a pre-A7 signed release when temporary MCP compatibility is required.
+A7 retired the Genie MCP runtime, launchers, and only registrations whose Genie ownership is proven; v6 then removed
+the `genie mcp` stub that had stood in for the runtime, so the verb no longer parses at all. Unrelated user
+configuration and both authorities' lifecycle history remain untouched; use standalone task/board, or roll back to a
+pre-A7 signed release when temporary MCP compatibility is required.
