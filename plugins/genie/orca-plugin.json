@@ -4,24 +4,44 @@
   "publisher": "automagik",
   "name": "Genie",
   "version": "5.260919.13",
-  "description": "Genie workflows backed by Orca as the sole lifecycle authority.",
+  "description": "Genie's wish, work, review, fix, report and council verbs in Orca's palette and keybindings; genie lifecycle status and review verdicts mirrored onto the existing board cards; human decisions as Orca gates; result notifications. Genie: Update reads the public release manifest for the installed update channel from raw.githubusercontent.com — the plugin's only network egress.",
   "author": {
     "name": "Namastex Labs",
     "url": "https://github.com/automagik-dev"
   },
   "repository": "https://github.com/automagik-dev/genie",
   "engines": {
-    "orca": ">=1.4.192"
+    "orca": ">=1.4.205"
   },
   "pluginApi": 1,
   "main": "orca-entrypoint.min.js",
   "contributes": {
     "commands": [
-      {
-        "id": "genie.orca.run-list",
-        "title": "Genie: List Orca Runs"
-      }
-    ]
+      { "id": "genie.wish", "title": "Genie: Wish", "context": "worktree" },
+      { "id": "genie.work", "title": "Genie: Work", "context": "worktree" },
+      { "id": "genie.review", "title": "Genie: Review", "context": "worktree" },
+      { "id": "genie.fix", "title": "Genie: Fix", "context": "worktree" },
+      { "id": "genie.report", "title": "Genie: Report", "context": "worktree" },
+      { "id": "genie.council", "title": "Genie: Council", "context": "worktree" },
+      { "id": "genie.doctor", "title": "Genie: Doctor", "context": "worktree" },
+      { "id": "genie.update", "title": "Genie: Update", "context": "worktree" }
+    ],
+    "keybindings": [
+      { "command": "genie.wish", "key": "Ctrl+Alt+Shift+W", "when": "worktree" },
+      { "command": "genie.work", "key": "Ctrl+Alt+Shift+K", "when": "worktree" },
+      { "command": "genie.review", "key": "Ctrl+Alt+Shift+R", "when": "worktree" },
+      { "command": "genie.fix", "key": "Ctrl+Alt+Shift+F", "when": "worktree" },
+      { "command": "genie.report", "key": "Ctrl+Alt+Shift+P", "when": "worktree" },
+      { "command": "genie.council", "key": "Ctrl+Alt+Shift+L", "when": "worktree" },
+      { "command": "genie.doctor", "key": "Ctrl+Alt+Shift+D", "when": "worktree" },
+      { "command": "genie.update", "key": "Ctrl+Alt+Shift+U", "when": "worktree" }
+    ],
+    "events": [{ "on": "agent.status.changed" }]
   },
-  "capabilities": []
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "terminal:send" },
+    { "kind": "notifications:show" },
+    { "kind": "events:subscribe" }
+  ]
 }
