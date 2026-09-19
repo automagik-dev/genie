@@ -725,12 +725,30 @@ const checkResult = receipt({
  * bounded by the 1 MiB stdout cap and the typed field bounds.
  */
 const boundedText = (max: number) => z.string().max(max);
+/** C0, DEL and C1 — every character a terminal or a notification treats as a control, not as text. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching them IS the point — this class is the refusal's input domain, not an accidental escape.
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/;
+/**
+ * The two worktree fields that are typed into a terminal downstream. The Orca
+ * plugin composes `/<verb> — workspace <displayName>; … worktree <path>` and
+ * submits it with `enter: true`, and a display name is an agent-facing value
+ * (`orca worktree create --name`), so a newline in one would arrive in another
+ * agent's terminal as a second command. Orca's own records never carry control
+ * characters; a read that does is refused here, at the boundary, rather than
+ * sanitized into something that looks like Orca said it. Spaces, unicode and
+ * every other printable character are untouched — a real worktree path carries
+ * both.
+ */
+const controlFree = (schema: z.ZodString) =>
+  schema.refine((value) => !CONTROL_CHARACTERS.test(value), {
+    message: 'must not contain control characters',
+  });
 const worktreeRecord = z
   .object({
     id: z.string().min(1).max(2048),
-    path: z.string().min(1).max(32_768),
+    path: controlFree(z.string().min(1).max(32_768)),
     branch: boundedText(512).nullable().optional(),
-    displayName: boundedText(512),
+    displayName: controlFree(boundedText(512)),
     comment: boundedText(4096).nullable().optional(),
     workspaceStatus: boundedText(128).nullable().optional(),
     createdWithAgent: boundedText(128).nullable().optional(),

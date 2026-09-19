@@ -326,16 +326,64 @@ describe('composeSlashCommand', () => {
     );
   });
 
-  test('control characters in the workspace record never reach the terminal as keystrokes', () => {
-    const hostile = {
+  // The composed text is submitted (`enter: true`), and a display name is an
+  // agent-facing value (`orca worktree create --name`): a newline inside one
+  // would be a SECOND command typed into another agent's terminal.
+  test('a control character in the display name or the path never becomes a second line', () => {
+    const injected = composeSlashCommand('review', {
       ...workspace,
-      displayName: 'orca\nplugin\r\x1b[2J genie',
-      branch: 'refs/heads/feature\x07/x',
-      path: '/home/genie/orca/work\x00spaces/genie\x7f',
-    };
-    const text = composeSlashCommand('review', hostile);
+      displayName: 'orca\nrm -rf ~\rplugin\tgenie\u001b[2J',
+      path: `${WORKSPACE_PATH}\ngit push --force\u007f`,
+    });
+    expect(injected).toBe(
+      `/review — workspace orca rm -rf ~ plugin genie [2J; branch namastex888/orca-plugin-genie; issue #3005; worktree ${WORKSPACE_PATH} git push --force`,
+    );
+    expect(injected.split('\n')).toHaveLength(1);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the assertion IS that none of them survived.
+    expect(/[\u0000-\u001F\u007F-\u009F]/.test(injected)).toBe(false);
+  });
+
+  test('a branch, a line separator and a display name of nothing but control characters are all one clean line', () => {
+    for (const workspaceUnderTest of [
+      { ...workspace, branch: 'refs/heads/feat\u0085injected' },
+      { ...workspace, displayName: 'name\u2028\u2029two' },
+      { ...workspace, displayName: '\n\t\u0007' },
+      { ...workspace, path: '\u0000' },
+    ] satisfies GenieWorkspace[]) {
+      const composed = composeSlashCommand('work', workspaceUnderTest);
+      expect(composed.split('\n'), composed).toHaveLength(1);
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the assertion IS that none of them survived.
+      expect(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/.test(composed), composed).toBe(false);
+    }
+    // Nothing survives sanitization: the name falls back, and the path segment
+    // is omitted rather than rendered as an empty fact.
+    expect(composeSlashCommand('work', { ...workspace, displayName: '\n\t\u0007', path: '\u0000' })).toBe(
+      '/work — workspace this workspace; branch namastex888/orca-plugin-genie; issue #3005',
+    );
+  });
+
+  test('spaces and unicode in a real path are left exactly as Orca reports them', () => {
+    const path = '/home/genie/My Worktrees/wish—café/orca plugin';
+    expect(composeSlashCommand('fix', { ...workspace, path })).toBe(
+      `/fix — workspace orca plugin genie; branch namastex888/orca-plugin-genie; issue #3005; worktree ${path}`,
+    );
+  });
+
+  /**
+   * The branch owner's hostile-record case (2c5e8aec6), kept and re-pinned
+   * against the sanitizer this branch settled on: a control character becomes a
+   * SPACE rather than vanishing, because dropping it silently joins two tokens
+   * into a word the record never held.
+   */
+  test('control characters in the workspace record never reach the terminal as keystrokes', () => {
+    const text = composeSlashCommand('review', {
+      ...workspace,
+      displayName: 'orca\nplugin\r\u001b[2J genie',
+      branch: 'refs/heads/feature\u0007/x',
+      path: '/home/genie/orca/work\u0000spaces/genie\u007f',
+    });
     expect(text).toBe(
-      '/review — workspace orcaplugin[2J genie; branch feature/x; issue #3005; worktree /home/genie/orca/workspaces/genie',
+      '/review — workspace orca plugin [2J genie; branch feature /x; issue #3005; worktree /home/genie/orca/work spaces/genie',
     );
     expect([...text].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)).toBe(
       false,
@@ -718,30 +766,43 @@ describe('the two binary-backed commands', () => {
     }
   });
 
-  test('update compares `genie --version` with the published stable manifest', async () => {
+  /**
+   * The update handler's two children, answered by what was asked rather than
+   * by call order: `genie --version` and `genie config get updateChannel`.
+   */
+  const updateSpawn = (version: string, channel: GenieProcessResult | Error) =>
+    fakeSpawn([
+      (request) => (request.args[0] === '--version' ? processResult(version) : channel),
+      (request) => (request.args[0] === '--version' ? processResult(version) : channel),
+    ]);
+
+  test('update compares `genie --version` with the manifest of the channel the CLI reports', async () => {
     const requested: { url: string; signal: AbortSignal }[] = [];
-    const fetchManifest = (version: string): GenieFetch => {
+    const fetchManifest = (version: string, channel: string): GenieFetch => {
       return async (url, init) => {
         requested.push({ url, signal: init.signal });
-        return { ok: true, status: 200, json: async () => ({ schema_version: 1, channel: 'stable', version }) };
+        return { ok: true, status: 200, json: async () => ({ schema_version: 1, channel, version }) };
       };
     };
 
     const newerHost = fakeHost();
-    const spawn = fakeSpawn([() => processResult('5.260919.7\n')]);
+    const spawn = updateSpawn('5.260919.7\n', processResult('latest\n'));
     expect(
       await invoke(
         await activate(fakeAdapter().adapter, newerHost.host, {
           spawn: spawn.spawn,
-          fetch: fetchManifest('5.260920.1'),
+          fetch: fetchManifest('5.260920.1', 'stable'),
         }),
         'genie.update',
       ),
-    ).toEqual({ ok: true, installed: '5.260919.7', latest: '5.260920.1' });
+    ).toEqual({ ok: true, installed: '5.260919.7', latest: '5.260920.1', channel: 'stable' });
     expect(newerHost.notifications).toEqual([
-      'Genie update available: 5.260920.1 (installed 5.260919.7) — run genie update',
+      'Genie update available: 5.260920.1 (installed 5.260919.7, stable channel) — run genie update',
     ]);
-    expect(spawn.requests).toEqual([{ command: 'genie', args: ['--version'], cwd: undefined, timeoutMs: 8_000 }]);
+    expect(spawn.requests).toEqual([
+      { command: 'genie', args: ['--version'], cwd: undefined, timeoutMs: 8_000 },
+      { command: 'genie', args: ['config', 'get', 'updateChannel'], cwd: undefined, timeoutMs: 8_000 },
+    ]);
     expect(requested).toHaveLength(1);
     expect(requested[0].url).toBe('https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json');
     expect(requested[0].signal).toBeInstanceOf(AbortSignal);
@@ -750,13 +811,81 @@ describe('the two binary-backed commands', () => {
     expect(
       await invoke(
         await activate(fakeAdapter().adapter, currentHost.host, {
-          spawn: fakeSpawn([() => processResult('v5.260920.1\n')]).spawn,
-          fetch: fetchManifest('5.260920.1'),
+          spawn: updateSpawn('v5.260920.1\n', processResult('latest\n')).spawn,
+          fetch: fetchManifest('5.260920.1', 'stable'),
         }),
         'genie.update',
       ),
-    ).toEqual({ ok: true, installed: '5.260920.1', latest: '5.260920.1' });
-    expect(currentHost.notifications).toEqual(['Genie is up to date (5.260920.1)']);
+    ).toEqual({ ok: true, installed: '5.260920.1', latest: '5.260920.1', channel: 'stable' });
+    expect(currentHost.notifications).toEqual(['Genie is up to date (5.260920.1, stable channel)']);
+  });
+
+  /**
+   * The bug this pins: a dev host read against `latest.json` reports the dev
+   * build it already runs as an update, and stays silent when a dev build is
+   * actually waiting.
+   */
+  test('a host on the dev channel reads dev.json, not the stable manifest', async () => {
+    const requested: string[] = [];
+    const host = fakeHost();
+    expect(
+      await invoke(
+        await activate(fakeAdapter().adapter, host.host, {
+          spawn: updateSpawn('5.260919.13\n', processResult('dev\n')).spawn,
+          fetch: async (url) => {
+            requested.push(url);
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ schema_version: 1, channel: 'dev', version: '5.260919.14' }),
+            };
+          },
+        }),
+        'genie.update',
+      ),
+    ).toEqual({ ok: true, installed: '5.260919.13', latest: '5.260919.14', channel: 'dev' });
+    expect(requested).toEqual(['https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/dev.json']);
+    expect(host.notifications).toEqual([
+      'Genie update available: 5.260919.14 (installed 5.260919.13, dev channel) — run genie update',
+    ]);
+  });
+
+  test('every unreadable channel answer resolves to stable, the conservative direction', async () => {
+    const answers: (GenieProcessResult | Error)[] = [
+      // A binary too old to carry the `config` verb.
+      processResult('Error (genie config get): unknown config key: updateChannel', 1),
+      // A token this build does not know, and no token at all.
+      processResult('homolog\n'),
+      processResult(''),
+      new Error('spawn genie ENOENT'),
+    ];
+    for (const answer of answers) {
+      const host = fakeHost();
+      const requested: string[] = [];
+      const result = await invoke(
+        await activate(fakeAdapter().adapter, host.host, {
+          spawn: updateSpawn('5.260919.7\n', answer).spawn,
+          fetch: async (url) => {
+            requested.push(url);
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ schema_version: 1, channel: 'stable', version: '5.260919.7' }),
+            };
+          },
+        }),
+        'genie.update',
+      );
+      expect(result, String(answer)).toEqual({
+        ok: true,
+        installed: '5.260919.7',
+        latest: '5.260919.7',
+        channel: 'stable',
+      });
+      expect(requested, String(answer)).toEqual([
+        'https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json',
+      ]);
+    }
   });
 
   test('a manifest that cannot be read is one `could not check` line, never a thrown handler', async () => {

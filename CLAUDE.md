@@ -158,7 +158,7 @@ sequence, and `genie mikro init` prints it, because an installed host has no REA
 ### Orca subcommands
 
 ```bash
-genie orca mirror --to <APPROVED|IN_PROGRESS|REVIEW|SHIPPED|BLOCKED> [--verdict <SHIP|FIX-FIRST|BLOCKED>] --evidence '<text>' [--worktree <selector>] [--json]
+genie orca mirror --to <APPROVED|IN_PROGRESS|REVIEW|SHIPPED|BLOCKED> [--verdict <SHIP|FIX-FIRST|BLOCKED>] --evidence '<text>' [--worktree <selector>]
 ```
 
 The map is fixed in code (`src/lib/orca-lifecycle-mirror.ts`): `APPROVED → todo`, `IN_PROGRESS → in-progress`,

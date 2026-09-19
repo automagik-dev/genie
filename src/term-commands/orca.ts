@@ -2,7 +2,7 @@
  * genie orca — write genie's lifecycle onto the Orca workspace card, one way.
  *
  *   orca mirror --to <transition> [--verdict <verdict>] --evidence <text>
- *               [--worktree <selector>] [--json]
+ *               [--worktree <selector>]
  *
  * One verb, because the map has to be code rather than four prose recipes, and
  * because the card must have exactly one writer. The transition → status map
@@ -41,7 +41,6 @@ export interface MirrorCommandOptions {
   verdict?: string;
   evidence: string;
   worktree?: string;
-  json?: boolean;
 }
 
 export interface MirrorCommandDeps {
@@ -152,7 +151,9 @@ export function registerOrcaCommands(program: Command): void {
       'current | active | id:<repoId>::<abs path> | path:<abs path> | branch:<ref> | name:<display name>',
       'current',
     )
-    .option('--json', 'Accepted for symmetry; one JSON line is printed either way')
+    // Deliberately no `--json`: this verb has ONE output shape, one JSON line on
+    // stdout, and an accepted-but-ignored flag is a promise that some other
+    // spelling prints something else. A caller that wants a human line pipes it.
     .action(async (options: MirrorCommandOptions) => {
       // The seam returns the code; only the registered command touches process state.
       process.exitCode = await runMirror(options);

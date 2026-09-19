@@ -41,9 +41,10 @@ The workspace already has a card in Orca. Genie writes its lifecycle onto that c
 2026-09-19 genie blocked — gate gate_7f3a: Merge PR #3005 into dev?
 ```
 
-Three rules hold the mirror one-way:
+Four rules hold the mirror one-way:
 
 - **One writer.** `genie orca mirror` is the only thing that writes the card's status or comment. A coordinator never sets them by another route, and a worker never writes the card at all.
+- **One status line; latest wins.** The card carries a single genie line, and each transition REPLACES the previous one rather than appending — the card says where the wish stands now, not how it got there. The history (every verdict, every gate, every repair loop) belongs to the wish and its `## Review Results`, which is the record; never mirror a moment whose only purpose is to leave a trail on the card.
 - **Never read back.** Orca's workspace status and comment are a view, never lifecycle truth. The wish document (and its `## Review Results`) stays the record; a status changed by hand in Orca's UI changes nothing in genie and is overwritten by the next transition.
 - **`BLOCKED` means waiting on a human.** Orca's four columns hold no blocked column, so the card stays `in-progress` and the evidence names what is being waited on — the gate and its question, or the cause and the route. The next transition (`IN_PROGRESS`, `APPROVED`, `SHIPPED`) closes the loop on the card.
 

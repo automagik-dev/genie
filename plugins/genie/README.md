@@ -37,6 +37,21 @@ authority with `genie setup --orchestration-mode orca`.
   rejects a command after 30 s, so the compatibility probe runs once per worker and every operation carries a bound.
 - The card itself is written only by the genie binary (`genie orca mirror`); the plugin reads the comment back when a
   workspace's agent settles and turns a changed genie line into a desktop notification.
+- Every fact the plugin interpolates into the text it submits — the workspace display name, its path — is stripped of
+  control characters and collapsed to one line first. A display name is an agent-facing value (`orca worktree create
+  --name`) and the text is sent with `enter: true`, so a newline in one would otherwise arrive in another agent's
+  terminal as a second command. The adapter refuses a worktree record whose name or path carries a control character
+  at the read boundary, before the plugin ever composes anything.
+
+### Network egress
+
+`Genie: Update` makes the plugin's **only** network request: an unauthenticated HTTPS `GET` of the release manifest
+for the channel this host updates on — `https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/`
+`latest.json` on the stable channel, `dev.json` on the dev channel. The channel is not guessed: the plugin asks the
+installed binary with `genie config get updateChannel`, the same sticky preference `genie update` resolves, and every
+unreadable answer falls back to stable. The result is compared against `genie --version` and shown as one toast;
+nothing is downloaded and nothing is installed. Every other handler talks only to the Orca host API and the local
+`genie` binary. The egress is named in the manifest description, which is what the consent dialog shows.
 
 Nothing else belongs in this tree. It is force-pushed verbatim as the tree-only `orca-plugin` /
 `orca-plugin-dev` subtree refs by `.github/workflows/orca-plugin-ref.yml`, and Orca's loader rejects

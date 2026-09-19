@@ -135,11 +135,16 @@ export interface GenieDoctorResult {
   readonly fail: number;
 }
 
-/** `genie --version` against the published stable manifest. `latest` is absent when the check failed. */
+/** The two release channels genie publishes; `latest.json` is how `stable` is spelled on disk. */
+export type GenieReleaseChannel = 'stable' | 'dev';
+
+/** `genie --version` against the manifest of this host's channel. `latest` is absent when the check failed. */
 export interface GenieUpdateResult {
   readonly ok: boolean;
   readonly installed: string | null;
   readonly latest?: string;
+  /** Which ladder `latest` was read from — a dev host must not be compared against stable. */
+  readonly channel?: GenieReleaseChannel;
 }
 
 export interface GenieWorkspace {
@@ -205,7 +210,11 @@ const GENIE_COMMENT_PREFIX = /^\d{4}-\d{2}-\d{2} genie /;
  * invoke and the notification still arrives; nothing here mutates.
  */
 const DOCTOR_TIMEOUT_MS = 20_000;
-/** Update spends one child process and one request, each bounded well inside the same window. */
+/**
+ * Update spends two child processes (`--version`, `config get updateChannel`)
+ * and one request, each bounded by this: a 24 s ceiling against the host's 30 s
+ * window, sub-second apiece on a healthy host. Nothing on this path mutates.
+ */
 const UPDATE_TIMEOUT_MS = 8_000;
 const MAX_NAMED_CHECKS = 3;
 /** A failure reason rides inside a 300-character notification beside its own prefix. */
@@ -215,8 +224,22 @@ const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
 const GENIE_BINARY = 'genie';
 /** The one non-PATH location genie's own installer writes, tried only on `ENOENT`. */
 const GENIE_FALLBACK_BINARY = join(homedir(), '.local', 'bin', 'genie');
-/** The same stable manifest `genie update` reads; the plugin fetches it itself and imports nothing from `update.ts`. */
-const LATEST_MANIFEST_URL = 'https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json';
+/**
+ * The release manifests `genie update` reads — `.well-known/<channel>.json` on
+ * the release repo's `main` branch, where `stable` is spelled `latest.json`
+ * (`manifestUrlForChannel`, `src/genie-commands/update.ts`). This is the
+ * plugin's only network egress, and it is declared in the plugin manifest's
+ * description and its README.
+ *
+ * The bundle imports nothing from `update.ts` — that would pull the whole
+ * delivery path into an Orca worker — so it asks the installed binary for the
+ * same sticky preference `resolveChannel` reads and spells the URL the same way.
+ */
+const MANIFEST_BASE_URL = 'https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known';
+
+function manifestUrlForChannel(channel: GenieReleaseChannel): string {
+  return `${MANIFEST_BASE_URL}/${channel === 'dev' ? 'dev.json' : 'latest.json'}`;
+}
 
 const encoder = new TextEncoder();
 
@@ -314,6 +337,37 @@ function normalized(value: string): string {
   return value.normalize('NFC');
 }
 
+/**
+ * C0, DEL and C1. Every one of them is a SUBMIT hazard, not a cosmetic one: the
+ * composed slash command reaches `terminal.sendText` with `enter: true`, so a
+ * newline inside an interpolated fact is a second line typed into another
+ * agent's terminal — and a workspace display name is an agent-facing value
+ * (`orca worktree create --name`), never a fact genie authored.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching them IS the point — this class is the sanitizer's input domain, not an accidental escape.
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
+
+/**
+ * One line, made safe to type into a terminal: control characters become
+ * spaces, runs of whitespace (which `\s` already spans to U+2028/U+2029)
+ * collapse to one, and the result is trimmed. Spaces and unicode are otherwise
+ * untouched — a worktree path legitimately carries both.
+ */
+function sanitizedLine(value: string): string {
+  return value.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * One interpolated segment. `null` when nothing survives sanitization, so a
+ * display name made only of control characters is omitted rather than rendered
+ * as an empty fact.
+ */
+function sanitizedSegment(value: string | null): string | null {
+  if (value === null) return null;
+  const cleaned = sanitizedLine(value);
+  return cleaned.length === 0 ? null : cleaned;
+}
+
 function refusalOf(value: unknown): GenieHostRefusal | undefined {
   const record = recordOf(value);
   if (record.ok !== false) return undefined;
@@ -347,9 +401,12 @@ interface HandlerDeps {
 /** The one place a handler talks to the operator. It absorbs its own failure: a host that will not show a notification must not turn into a rejected command. */
 async function notify(deps: HandlerDeps, body: string, title: string = NOTIFICATION_TITLE): Promise<void> {
   try {
+    // Sanitized for the same reason as the slash command: a display name and a
+    // card comment both reach this, and a toast whose body carries newlines can
+    // be made to read as two notifications.
     await hostCall(deps.host, 'notifications.show', {
-      title: boundText(title, MAX_NOTIFICATION_TITLE),
-      body: boundText(body, MAX_NOTIFICATION_BODY),
+      title: boundText(sanitizedLine(title), MAX_NOTIFICATION_TITLE),
+      body: boundText(sanitizedLine(body), MAX_NOTIFICATION_BODY),
     });
   } catch (error) {
     deps.log(`genie: notification refused (${errorCode(error)})`);
@@ -417,28 +474,26 @@ function issueNumber(linkedIssue: number | string | null): string | null {
  * A segment whose fact the workspace does not carry is omitted rather than
  * rendered empty: an unlinked workspace has no issue, and a detached one has no
  * branch name to name.
+ *
+ * The workspace record is Orca's data, not genie's, and the composed text is
+ * SUBMITTED (`enter: true`): a display name, branch or path carrying a newline
+ * or an escape sequence would otherwise reach the agent terminal as keystrokes
+ * — a second command, or an ANSI sequence the TUI interprets. Every
+ * interpolated fact therefore passes through `sanitizedSegment` first and the
+ * whole line through `sanitizedLine` after, so the result is exactly ONE line
+ * of printable text whatever the record carries. A control character becomes a
+ * SPACE rather than vanishing, because dropping it silently joins two tokens
+ * into a word the record never held.
  */
-/**
- * The workspace record is Orca's data, not ours: a display name, branch or
- * path carrying a newline, an escape sequence or any other control character
- * would otherwise reach the agent terminal as keystrokes — a second command,
- * or an ANSI sequence the TUI interprets. Every C0 control (including CR/LF
- * and ESC) and DEL is dropped, so the composed text is always one line of
- * printable text; the adapter's own domains never promised that for these
- * passthrough fields.
- */
-function printableLine(value: string): string {
-  return [...value].filter((character) => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f).join('');
-}
-
 export function composeSlashCommand(verb: string, workspace: GenieWorkspace): string {
-  const segments = [`workspace ${printableLine(workspace.displayName)}`];
-  const branch = bareBranch(workspace.branch);
-  if (branch !== null) segments.push(`branch ${printableLine(branch)}`);
+  const segments = [`workspace ${sanitizedSegment(workspace.displayName) ?? 'this workspace'}`];
+  const branch = sanitizedSegment(bareBranch(workspace.branch));
+  if (branch !== null) segments.push(`branch ${branch}`);
   const issue = issueNumber(workspace.linkedIssue);
   if (issue !== null) segments.push(`issue #${issue}`);
-  segments.push(`worktree ${printableLine(workspace.path)}`);
-  return normalized(`/${printableLine(verb)} — ${segments.join('; ')}`);
+  const path = sanitizedSegment(workspace.path);
+  if (path !== null) segments.push(`worktree ${path}`);
+  return normalized(sanitizedLine(`/${verb} — ${segments.join('; ')}`));
 }
 
 function contextTerminalIds(context: unknown): string[] {
@@ -505,7 +560,7 @@ async function startSupervisedWorker(
   workspace: GenieWorkspace,
   spec: string,
 ): Promise<GenieCommandResult> {
-  const objective = normalized(`${command.title} — ${workspace.displayName}`);
+  const objective = normalized(sanitizedLine(`${command.title} — ${workspace.displayName}`));
   const created = await deps.runtime.execute({ operation: 'run-create', objective });
   const runId = createdRunId(created);
   if (runId === undefined) {
@@ -663,20 +718,50 @@ async function runDoctor(deps: HandlerDeps): Promise<GenieDoctorResult> {
   }
 }
 
-/** The first non-empty line, without the tag's `v`: `genie --version` prints the bare version. */
-function versionText(stdout: string): string | null {
+/** The first non-empty line of a genie child's stdout; both verbs below print exactly one. */
+function firstLine(stdout: string): string | null {
   const line = stdout
     .split('\n')
     .map((entry) => entry.trim())
     .find((entry) => entry.length > 0);
-  return line === undefined ? null : line.replace(/^v/, '');
+  return line === undefined ? null : line;
 }
 
-async function readLatestVersion(deps: HandlerDeps): Promise<string> {
-  const response = await deps.fetch(LATEST_MANIFEST_URL, { signal: AbortSignal.timeout(UPDATE_TIMEOUT_MS) });
-  if (!response.ok) throw new Error(`the release manifest answered HTTP ${response.status}`);
+/** The first line without the tag's `v`: `genie --version` prints the bare version. */
+function versionText(stdout: string): string | null {
+  const line = firstLine(stdout);
+  return line === null ? null : line.replace(/^v/, '');
+}
+
+/**
+ * The channel this host updates on, read through the CLI rather than guessed:
+ * `genie config get updateChannel` prints the resolved token bare — `dev` (which
+ * the legacy `next` alias transforms to) or `latest` (the schema default, and
+ * what the retired `homolog` transforms to).
+ *
+ * Every other answer resolves to stable: a binary too old to carry the `config`
+ * verb exits non-zero, an unreadable config resolves to the schema default, and
+ * a token this build does not know is not a channel to point an operator at.
+ * That is the direction `resolveChannel` falls back in too (`update.ts`), and it
+ * is the conservative one — never subscribe a host to dev builds it never chose.
+ */
+async function readUpdateChannel(deps: HandlerDeps): Promise<GenieReleaseChannel> {
+  try {
+    const process = await runGenieBinary(deps, ['config', 'get', 'updateChannel'], UPDATE_TIMEOUT_MS);
+    if (process.code !== 0) return 'stable';
+    return firstLine(process.stdout) === 'dev' ? 'dev' : 'stable';
+  } catch {
+    return 'stable';
+  }
+}
+
+async function readLatestVersion(deps: HandlerDeps, channel: GenieReleaseChannel): Promise<string> {
+  const response = await deps.fetch(manifestUrlForChannel(channel), {
+    signal: AbortSignal.timeout(UPDATE_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`the ${channel} release manifest answered HTTP ${response.status}`);
   const version = textOf(recordOf(await response.json()).version);
-  if (version === null) throw new Error('the release manifest carries no version');
+  if (version === null) throw new Error(`the ${channel} release manifest carries no version`);
   return version.trim().replace(/^v/, '');
 }
 
@@ -693,14 +778,18 @@ async function runUpdate(deps: HandlerDeps): Promise<GenieUpdateResult> {
     const process = await runGenieBinary(deps, ['--version'], UPDATE_TIMEOUT_MS);
     installed = versionText(process.stdout);
     if (installed === null) throw new Error(`${GENIE_BINARY} --version printed no version`);
-    const latest = await readLatestVersion(deps);
+    // The channel comes first: comparing a dev host against the stable ladder
+    // reports every newer dev build it already runs as an available update, and
+    // reports nothing when a dev build actually is waiting.
+    const channel = await readUpdateChannel(deps);
+    const latest = await readLatestVersion(deps, channel);
     await notify(
       deps,
       latest === installed
-        ? `Genie is up to date (${installed})`
-        : `Genie update available: ${latest} (installed ${installed}) — run genie update`,
+        ? `Genie is up to date (${installed}, ${channel} channel)`
+        : `Genie update available: ${latest} (installed ${installed}, ${channel} channel) — run genie update`,
     );
-    return { ok: true, installed, latest };
+    return { ok: true, installed, latest, channel };
   } catch (error) {
     await notify(deps, `Genie update: could not check (${failureReason(error)})`);
     return { ok: false, installed };

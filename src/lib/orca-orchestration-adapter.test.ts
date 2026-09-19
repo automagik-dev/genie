@@ -1441,6 +1441,48 @@ describe('worktree, terminal and amended worker-start grammar', () => {
     expect(terminals[0]?.ptyId).toBe('opaque');
   });
 
+  /**
+   * A worktree `displayName` is an agent-facing value (`orca worktree create
+   * --name`) and the Orca plugin types both of these fields into a terminal with
+   * `enter: true`. Orca's own records never carry control characters; one that
+   * does is refused at the read boundary rather than sanitized into something
+   * that reads as Orca's own output.
+   */
+  test('a control character in a worktree displayName or path is refused, not decoded', async () => {
+    for (const record of [
+      activeRecord({ displayName: 'orca\nrm -rf ~' }),
+      activeRecord({ displayName: 'orca\u001b[2J' }),
+      activeRecord({ path: '/home/genie/orca\ngit push --force' }),
+      activeRecord({ path: '/home/genie/orca\u0000' }),
+    ]) {
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({ exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' }),
+      });
+      try {
+        await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+        throw new Error('expected failure');
+      } catch (error) {
+        expect(error, JSON.stringify(record)).toBeInstanceOf(OrcaAdapterError);
+        expect((error as OrcaAdapterError).code, JSON.stringify(record)).toBe('unexpected_response');
+      }
+    }
+  });
+
+  test('spaces, unicode and a long real path still decode — only controls are refused', async () => {
+    const record = activeRecord({
+      displayName: 'wish — café ☕ (rev 2)',
+      path: '/home/genie/My Worktrees/wish—café/orca plugin',
+    });
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({ exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' }),
+    });
+    const shown = await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+    expect((shown.result as { worktree: { displayName: string; path: string } }).worktree).toMatchObject({
+      displayName: 'wish — café ☕ (rev 2)',
+      path: '/home/genie/My Worktrees/wish—café/orca plugin',
+    });
+  });
+
   test('a worker started from a spec is read back by the task id the receipt minted', async () => {
     const verbs: string[] = [];
     const adapter = __orcaAdapterTestOnly.createAdapter({

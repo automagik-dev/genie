@@ -217,9 +217,21 @@ describe('genie orca mirror — a proven write', () => {
     ]);
   });
 
-  test('--json changes nothing: one JSON line is the contract either way', async () => {
+  /**
+   * The verb has ONE output shape, so there is no `--json` to accept. An
+   * accepted-but-ignored flag promised a second spelling that never existed;
+   * refusing it is what keeps the one JSON line the whole contract.
+   */
+  test('there is no --json: one JSON line is the only output, and the flag is refused', async () => {
     stage({ 'worktree set': {}, 'worktree show': {} });
-    const result = await runCli([
+    const plain = await runCli(['orca', 'mirror', '--to', 'IN_PROGRESS', '--evidence', 'group 3 dispatched']);
+    expect(plain.code).toBe(0);
+    expect(plain.stdout.trimEnd().split('\n')).toHaveLength(1);
+    const line = JSON.parse(plain.stdout) as { workspaceStatus: string; comment: string };
+    expect(line.workspaceStatus).toBe('in-progress');
+    expect(line.comment).toBe(`${today()} genie in progress — group 3 dispatched`);
+
+    const flagged = await runCli([
       'orca',
       'mirror',
       '--to',
@@ -228,10 +240,11 @@ describe('genie orca mirror — a proven write', () => {
       'group 3 dispatched',
       '--json',
     ]);
-    expect(result.code).toBe(0);
-    const line = JSON.parse(result.stdout) as { workspaceStatus: string; comment: string };
-    expect(line.workspaceStatus).toBe('in-progress');
-    expect(line.comment).toBe(`${today()} genie in progress — group 3 dispatched`);
+    expect(flagged.code).not.toBe(0);
+    expect(flagged.stdout).toBe('');
+    expect(flagged.stderr).toContain("unknown option '--json'");
+    // Refused at parse time: nothing was written to the card.
+    expect(flagged.log).toHaveLength(2);
   });
 
   test('a selector other than the default reaches the CLI verbatim', async () => {

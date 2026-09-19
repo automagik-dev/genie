@@ -372,6 +372,17 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Group 5 (`d1bd411a5`), group 6 (`48f03ebfa`), the group 2 follow-up (`d144cd71c`) and the `origin/dev` merge (`226d8827b`, `e3a17b74b` — dev's `genie wish` makes eighteen top-level commands): final review SHIP by `final-review@claude-fable-5.1/orca-plugin-genie-independent`, 307 focused tests green; three MEDIUM applied in the follow-up commit (the notification title is bounded to Orca's 120-character `title` limit, with a test; the 20 s read-phase deadline has a test proving it fires before `run-create`; the doctor path's three-process ceiling is stated), two LOW (the 300 s reap comment fixed; this block).
 - Full gate `bun run check` green on `ad85693d1` (3148 pass, 3 skip, 0 fail); merge-ready PR [#3019](https://github.com/automagik-dev/genie/pull/3019) against `dev`, opened 2026-09-19 and deliberately not merged. Stays IN_PROGRESS through PR review and CI; SHIPPED only after the authorized merge and the QA criteria above run on a live Orca 1.4.205.
 
+### PR review — 2026-09-19 — FIX-FIRST, repaired
+
+An independent PR review of `8cfd00ccb` returned FIX-FIRST. Every finding is applied on the branch:
+
+- **HIGH — terminal injection.** `composeSlashCommand` interpolated the workspace display name and path into text submitted with `enter: true` after NFC normalization only, so a newline in an agent-chosen `--name` was a second command typed into another agent's terminal. Every interpolated fact now passes through a sanitizer (C0/DEL/C1 → space, whitespace runs collapsed, trimmed, empty segments omitted), the whole composed line is sanitized again, and the same guard covers the worker objective and both notification fields. Defence in depth at the read boundary too: the adapter's `worktreeRecord` refuses a `displayName` or `path` carrying a control character (`unexpected_response`), while spaces and unicode still decode. Nine new assertions across the two suites.
+- **MEDIUM — stale base.** `origin/dev` (`5.260919.13`) merged; the only conflict was the plugin manifest version, resolved to dev's, with `bun scripts/version.ts --check` and the manifest-parity test green.
+- **LOW — update channel.** `Genie: Update` hardcoded the stable `latest.json`, so a dev host read the wrong ladder. The channel now comes from the CLI (`genie config get updateChannel`, the same sticky preference `resolveChannel` reads) and selects `latest.json` or `dev.json`; every unreadable answer falls back to stable. The toast names the channel. The egress is documented in the manifest description (which the consent dialog shows) and in `plugins/genie/README.md`.
+- **LOW — a flag that promised a second output.** `genie orca mirror --json` was accepted and ignored; it is removed, and the one JSON line is pinned as the only output.
+- **Prose.** The coordinator reference now states that the card holds ONE genie status line (latest wins; the history belongs to the wish), and the PR body states that the RF3 gates are a convention the coordinator polls with `gate-list` (no mechanical wake) and that RF6's only proactive trigger is `agent.status.changed`.
+- Errata: `genie orca mirror` takes no `--json`, against the stamped design's synopsis.
+
 ---
 
 ## Files to Create/Modify
