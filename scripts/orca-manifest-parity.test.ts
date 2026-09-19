@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { ORCA_MINIMUM_RUNTIME_VERSION } from '../plugins/genie/orca-runtime.ts';
 
 /**
  * Orca accepts exactly two source kinds:
@@ -27,7 +28,23 @@ const REPO_ROOT = resolve(dirname(import.meta.path), '..');
 const PAYLOAD_DIR = join(REPO_ROOT, 'plugins/genie');
 const PAYLOAD_MANIFEST = join(PAYLOAD_DIR, 'orca-plugin.json');
 const ROOT_MARKETPLACE = join(REPO_ROOT, 'orca-marketplace.json');
+const AGENT_PLUGIN_MANIFEST = join(PAYLOAD_DIR, 'plugin.json');
 const PLUGIN_REF = 'orca-plugin';
+
+/**
+ * Orca's manifest schema is `f.array(f.object({kind: f.enum(...)}).strict())`
+ * over this closed set. A bare string element (`"workspace:read"`) parses as
+ * JSON and fails Orca's validation, so the plugin silently never loads.
+ */
+const ORCA_CAPABILITY_KINDS = [
+  'workspace:read',
+  'terminal:send',
+  'notifications:show',
+  'storage',
+  'secrets',
+  'events:subscribe',
+  'settings:own',
+];
 
 // Orca's bundled loader limits, mirrored here so the published subtree can never
 // silently grow past what Orca will install.
@@ -64,6 +81,38 @@ describe('Orca marketplace index and published plugin subtree', () => {
   test('both Orca JSON documents parse as JSON objects', () => {
     expect(() => readJsonObject(ROOT_MARKETPLACE)).not.toThrow();
     expect(() => readJsonObject(PAYLOAD_MANIFEST)).not.toThrow();
+  });
+
+  test('the three shipped JSON documents carry one identical description', () => {
+    const manifest = readJsonObject(PAYLOAD_MANIFEST);
+    const agentPlugin = readJsonObject(AGENT_PLUGIN_MANIFEST);
+    const entry = (readJsonObject(ROOT_MARKETPLACE).plugins as Record<string, unknown>[])[0];
+    expect(typeof manifest.description).toBe('string');
+    expect(agentPlugin.description).toBe(manifest.description);
+    expect(entry.description).toBe(manifest.description);
+  });
+
+  test('the engine pin, the agent-plugin floor and the runtime constant name one Orca version', () => {
+    const manifest = readJsonObject(PAYLOAD_MANIFEST);
+    const compatibility = (readJsonObject(AGENT_PLUGIN_MANIFEST).extensions as Record<string, unknown>)[
+      'dev.orca.compatibility'
+    ] as Record<string, unknown>;
+    expect((manifest.engines as Record<string, unknown>).orca).toBe(`>=${ORCA_MINIMUM_RUNTIME_VERSION}`);
+    expect(compatibility.minimumRuntimeVersion).toBe(ORCA_MINIMUM_RUNTIME_VERSION);
+  });
+
+  test('every declared capability is a {kind} object from the closed Orca set', () => {
+    const capabilities = readJsonObject(PAYLOAD_MANIFEST).capabilities;
+    if (!Array.isArray(capabilities)) throw new Error('the payload manifest has no capabilities array');
+    expect(capabilities.length).toBeGreaterThan(0);
+    for (const capability of capabilities) {
+      expect(typeof capability, JSON.stringify(capability)).toBe('object');
+      expect(Object.keys(capability as Record<string, unknown>)).toEqual(['kind']);
+      expect(ORCA_CAPABILITY_KINDS).toContain((capability as Record<string, unknown>).kind);
+    }
+    expect(new Set(capabilities.map((capability) => (capability as Record<string, unknown>).kind)).size).toBe(
+      capabilities.length,
+    );
   });
 
   test('the root marketplace lists exactly the genie plugin at publisher.id', () => {
