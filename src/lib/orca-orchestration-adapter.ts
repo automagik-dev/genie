@@ -122,6 +122,7 @@ const workspaceStatus = z.enum(['todo', 'in-progress', 'in-review', 'completed']
 const isOneLine = (value: string, max: number): boolean =>
   value.length >= 1 &&
   value.length <= max &&
+  !/[\uD800-\uDFFF]/u.test(value) &&
   ![...value].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f);
 const isAbsolutePath = (value: string): boolean => isOneLine(value, 4096) && /^(?:\/|[A-Za-z]:\\)./.test(value);
 // The charset `git check-ref-format` accepts, bounded; no leading `-` (the
@@ -331,6 +332,11 @@ export function buildOrcaOrchestrationArgv(input: unknown): readonly string[] {
   const operation = parsed.data;
   const args = buildArguments(operation);
   return Object.freeze([...argvRoot(operation.operation), ...args, '--json']);
+}
+
+/** The public spelling of an operation, for recovery hints: `orca worktree show`, `orca orchestration gate-list`. */
+function publicCommand(operation: OrcaAdapterOperationName): string {
+  return `orca ${argvRoot(operation).join(' ')}`;
 }
 
 /** argv root per verb: the orchestration group, the worktree pair, the terminal read. */
@@ -780,7 +786,10 @@ const responseSchemas: Readonly<Record<OrcaAdapterOperationName, z.ZodTypeAny>> 
     }),
   ]),
   'task-update': z.union([receipt({ taskId: id }), receipt({ task: publicTaskEntity, mutation: mutationMetadata })]),
-  'worker-start': receipt({ dispatchId: id, taskId: id }),
+  // "The start receipt records which one ran" (worker-start --help on 1.4.205):
+  // the identity pair is required and the rest passes through, so a richer
+  // receipt never turns a committed start into a false ambiguity.
+  'worker-start': z.object({ dispatchId: id, taskId: id }).passthrough(),
   'worker-show': receipt({ dispatch: workerEntity }),
   'worker-read': receipt({ dispatchId: id, source: workerSource, output: longText, cursor: cursor.optional() }),
   'worker-release': receipt({ dispatchId: id }),
@@ -1466,7 +1475,7 @@ async function finalizeMutation(
         operation.operation,
         'readback',
         'unsafe',
-        `Inspect state with orchestration ${plan.operation.operation}; do not retry the mutation automatically.`,
+        `Inspect state with ${publicCommand(plan.operation.operation)}; do not retry the mutation automatically.`,
         `${plan.operation.operation} disagreed with the mutation receipt`,
       );
     }
@@ -1496,7 +1505,7 @@ function mapReadbackFailure(
       mutation.operation,
       'readback',
       'unrecoverably-ambiguous',
-      `Inspect state with orchestration ${readback}; do not retry the mutation automatically.`,
+      `Inspect state with ${publicCommand(readback)}; do not retry the mutation automatically.`,
       `${readback} failed after Orca returned a valid mutation receipt`,
     );
   }
@@ -1505,7 +1514,7 @@ function mapReadbackFailure(
     mutation.operation,
     'readback',
     'readback-required',
-    `Repeat or inspect orchestration ${readback}; do not retry the mutation automatically.`,
+    `Repeat or inspect ${publicCommand(readback)}; do not retry the mutation automatically.`,
     sanitizeDiagnosticText(
       `${readback} failed after Orca returned a valid mutation receipt: ${error.message}`,
       mutation,

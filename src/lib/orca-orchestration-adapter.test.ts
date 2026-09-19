@@ -741,7 +741,13 @@ describe('runtime and executor boundary', () => {
       'ask',
       'gate-create',
       'gate-resolve',
+      'worktree-set',
     ]);
+    const amended: OrcaOperation[] = [
+      { operation: 'worktree-show', worktree: 'active' },
+      { operation: 'worktree-set', worktree: 'active', comment: 'x' },
+      { operation: 'terminal-list', worktree: 'active' },
+    ];
     const failures = [
       { exitCode: 7, stdout: '', stderr: 'failed' },
       { exitCode: 0, stdout: 'not-json', stderr: '' },
@@ -754,7 +760,7 @@ describe('runtime and executor boundary', () => {
         stderr: '',
       },
     ];
-    for (const [, input] of cases) {
+    for (const input of [...cases.map(([, operation]) => operation), ...amended]) {
       for (const failure of failures) {
         const adapter = __orcaAdapterTestOnly.createAdapter({ executor: async () => failure });
         try {
@@ -1278,6 +1284,7 @@ describe('worktree, terminal and amended worker-start grammar', () => {
       'name:',
       'name:two\nlines',
       `name:${'x'.repeat(257)}`,
+      'name:lone\uD800surrogate',
       'identity:wt2:local:abc',
     ]) {
       expect(() => buildOrcaOrchestrationArgv({ operation: 'worktree-show', worktree: selector })).toThrow(
@@ -1370,6 +1377,8 @@ describe('worktree, terminal and amended worker-start grammar', () => {
     } catch (error) {
       expect((error as OrcaAdapterError).code).toBe('readback_mismatch');
       expect((error as OrcaAdapterError).retrySafety).toBe('unsafe');
+      // The hint names the public spelling, never `orchestration worktree-show`.
+      expect((error as OrcaAdapterError).recovery).toContain('orca worktree show');
     }
     expect(verbs).toEqual(['set', 'show']);
   });
@@ -1439,7 +1448,7 @@ describe('worktree, terminal and amended worker-start grammar', () => {
         verbs.push(request.argv[1] as string);
         const result =
           request.argv[1] === 'worker-start'
-            ? { dispatchId: 'dispatch_a', taskId: 'task_minted' }
+            ? { dispatchId: 'dispatch_a', taskId: 'task_minted', launchedVia: 'worker-launch-preferences' }
             : { dispatch: { id: 'dispatch_a', taskId: 'task_minted', agent: 'claude' } };
         return { exitCode: 0, stdout: envelope(result), stderr: '' };
       },
