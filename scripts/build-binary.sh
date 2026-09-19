@@ -88,6 +88,22 @@ for agent in "${SHIPPED_AGENTS[@]}"; do
     cp "${src}/${file}" "${dest}/${file}"
   done
 done
+# The workflow catalog ships inside templates/ for the same reason, and whole
+# (decision 13): a filter would be a second list to keep in parity, and a
+# workflow with no front-door skill is still invocable by path. Only top-level
+# *.js is staged -- README.md is documentation, never a delivered workflow --
+# and `genie install` / `genie update` copy it into ~/.claude/workflows.
+WORKFLOW_SOURCE="${REPO_ROOT}/.claude/workflows"
+mkdir -p "${STAGE}/templates/workflows"
+staged_workflows=0
+for workflow in "${WORKFLOW_SOURCE}"/*.js; do
+  [[ -f "${workflow}" ]] || continue
+  cp "${workflow}" "${STAGE}/templates/workflows/$(basename "${workflow}")"
+  staged_workflows=$(( staged_workflows + 1 ))
+done
+(( staged_workflows > 0 )) \
+  || { echo "error: no workflow catalog files found under ${WORKFLOW_SOURCE}" >&2; exit 1; }
+
 # Empty compatibility members. The promoter baked into every previously
 # installed binary validates the downloaded payload against an *exact*
 # top-level allowlist (src/lib/install-promotion.ts INSTALL_PAYLOAD_MEMBERS),
@@ -145,6 +161,8 @@ for required in \
   "templates/mikro/agents/wish-context/SYSTEM.md" \
   "templates/mikro/agents/review-prep/agent.yaml" \
   "templates/mikro/agents/review-prep/SYSTEM.md" \
+  "templates/workflows/wish.js" \
+  "templates/workflows/council.js" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
   "plugins/dsh-genie-board/package.json" \

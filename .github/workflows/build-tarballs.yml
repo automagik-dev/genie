@@ -11,9 +11,11 @@ name: Build Tarballs
 #   plugins/    — the Orca plugin payload: native manifest, entrypoint bundle,
 #                 and the Orca orchestration reference
 #   skills/     — canonical skills/<name>/SKILL.md + agents/openai.yaml/resources
-#   templates/  — wish-template, genie-config.template.json, and the default
-#                 mikro agents (templates/mikro/agents/<name>/) staged from
-#                 .mikro/agents by scripts/build-binary.sh
+#   templates/  — wish-template, genie-config.template.json, the default mikro
+#                 agents (templates/mikro/agents/<name>/) staged from
+#                 .mikro/agents, and the workflow catalog
+#                 (templates/workflows/*.js) staged from .claude/workflows by
+#                 scripts/build-binary.sh
 #   VERSION     — plain-text stamp consumed by src/lib/version.ts
 #
 # Size budget: each tarball ≤80 MB compressed (CI fails if exceeded).
@@ -56,6 +58,9 @@ on:
       # staged into templates/, so both are release-payload inputs.
       - 'scripts/mikro/**'
       - '.mikro/agents/**'
+      # The workflow catalog is staged into templates/ and installed into
+      # ~/.claude/workflows by the workflows channel: a release-payload input.
+      - '.claude/workflows/**'
       - 'package.json'
       - 'LICENSE'
       - 'bun.lock'

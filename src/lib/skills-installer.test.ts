@@ -1965,6 +1965,105 @@ describe('install record', () => {
   });
 });
 
+/**
+ * The workflows channel writes ONE optional field into this record (wish
+ * `global-workflows-local-mikro`, decision 4), and the skills channel — which
+ * runs FIRST and rewrites the whole document — must carry it forward. Both
+ * halves are regression tests: a required field would invalidate every record
+ * already on disk, and a dropped one would orphan every installed workflow file
+ * because `genie uninstall` removes only what the record names.
+ */
+describe('install record — the optional workflows field', () => {
+  const workflows = {
+    dir: '/home/u/.claude/workflows',
+    ref: 'v5.260918.9',
+    files: { 'wish.js': 'a'.repeat(64) },
+  };
+
+  /** The delivered tree, plus the post-install state the fake spawner cannot write. */
+  function seedInstalledSkill(): void {
+    fixtureSkillsTree(['wish']);
+    for (const parent of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')]) {
+      mkdirSync(join(parent, 'wish'), { recursive: true });
+      writeFileSync(join(parent, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    }
+  }
+
+  function legacyRecordWithoutWorkflows(): SkillsInstallRecord {
+    return {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(home, '.claude', 'skills')],
+      installedAt: '2026-08-30T12:00:00.000Z',
+    };
+  }
+
+  test('a record without the field still parses, and reads back without it', () => {
+    const legacy = legacyRecordWithoutWorkflows();
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(legacy), 'utf8');
+    const read = readSkillsInstallRecord(genieHome);
+    expect(read).toEqual(legacy);
+    expect(read?.workflows).toBeUndefined();
+  });
+
+  test('a record with the field round-trips', () => {
+    const record: SkillsInstallRecord = { ...legacyRecordWithoutWorkflows(), workflows };
+    writeSkillsInstallRecord(genieHome, record);
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+  });
+
+  test('the field is traversal-proof and digest-typed, or the record is malformed', () => {
+    for (const [invalid, field] of [
+      [{ ...workflows, dir: 'relative/workflows' }, 'workflows.dir'],
+      [{ ...workflows, dir: '/home/u/../../etc' }, 'workflows.dir'],
+      [{ ...workflows, files: { '../../evil.js': 'a'.repeat(64) } }, 'workflows.files'],
+      [{ ...workflows, files: { 'wish.md': 'a'.repeat(64) } }, 'workflows.files'],
+      [{ ...workflows, files: { 'wish.js': 'NOTADIGEST' } }, 'workflows.files'],
+    ] as const) {
+      writeFileSync(
+        skillsInstallRecordPath(genieHome),
+        JSON.stringify({ ...legacyRecordWithoutWorkflows(), workflows: invalid }),
+        'utf8',
+      );
+      const read = inspectSkillsInstallRecord(genieHome);
+      expect(read.status).toBe('invalid');
+      expect(read.status === 'invalid' ? read.error.field : '').toContain(field);
+    }
+  });
+
+  test('a skills-channel install carries an existing workflows value forward verbatim', () => {
+    writeSkillsInstallRecord(genieHome, { ...legacyRecordWithoutWorkflows(), workflows });
+    seedInstalledSkill();
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    // Rewritten document, untouched field — and it survives on disk, which is
+    // what `genie doctor` and `genie uninstall` read back.
+    expect(outcome.ok === true && outcome.record.workflows).toEqual(workflows);
+    expect(readSkillsInstallRecord(genieHome)?.workflows).toEqual(workflows);
+  });
+
+  test('a skills-channel install over a record without the field writes no field', () => {
+    seedInstalledSkill();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+    expect(outcome.ok === true && outcome.record.workflows).toBeUndefined();
+  });
+});
+
 describe('isSafeSkillName', () => {
   test('is the one traversal guard uninstall shares with the installer', () => {
     expect(isSafeSkillName('wish')).toBe(true);
