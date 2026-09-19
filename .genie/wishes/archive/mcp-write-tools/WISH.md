@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage) |
 | **Slug** | `mcp-write-tools` |
 | **Date** | 2026-08-11 |
 | **Author** | Felipe |

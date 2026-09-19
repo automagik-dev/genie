@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | SHIPPED — SUPERSEDED (2026-09-19 triage) |
+| **Status** | SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage) |
 | **Slug** | `hermes-khaw-native-surface` |
 | **Date** | 2026-07-04 |
 | **Author** | Felipe (via Hermes plan) |

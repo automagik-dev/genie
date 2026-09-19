@@ -139,7 +139,7 @@ const CONTRACT = parseWishTemplateContract(wishTemplate);
 export const TEMPLATE_CONTRACT_DATE = '2026-07-29';
 
 /** Terminal statuses — a doc in one of these is completed. */
-const COMPLETED_STATUSES = new Set(['SHIPPED', 'DONE', 'EXECUTED']);
+const COMPLETED_STATUSES = new Set(['SHIPPED', 'SUPERSEDED', 'DONE', 'EXECUTED']);
 
 /** Normalise a status cell the way the corpus linter does: first token, annotations stripped. */
 export function normaliseStatus(raw: string | null | undefined): string | null {

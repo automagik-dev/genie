@@ -177,6 +177,18 @@ describe('wishes-lint Execution Strategy routing fields', () => {
     expect(result.stderr).toContain('wish Date field must use a valid YYYY-MM-DD value');
   });
 
+  test('accepts SUPERSEDED as a canonical terminal status, with the explanation after the dash', () => {
+    writeWish(
+      wish('2026-07-08', 'No table required.').replace(
+        'DRAFT',
+        'SUPERSEDED — shipped first, then removed or replaced (2026-09-19 triage)',
+      ),
+    );
+    const result = runLint();
+    expect(result.stderr).not.toContain('unsupported wish status');
+    expect(result.code).toBe(0);
+  });
+
   test('rejects unsupported lifecycle status and missing mandatory dependency keys', () => {
     const invalidStatus = wish('2026-07-08', 'No table required.').replace('DRAFT', 'SUPERSEDED IN PART');
     writeWish(invalidStatus);
