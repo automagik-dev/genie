@@ -60,7 +60,10 @@ const HOUSE_DRIFT = ['under', 'in-range', 'over']
 const BARE_REASONS = ['superseded', 'too long']
 
 const LINT_CHECK = 'bun scripts/skills-lint.ts'
-const PARITY_CHECK = 'bun scripts/skills-inventory-parity.ts'
+// The parity script reads the skills listing from stdin unless --list-file is given, so the bare
+// `bun scripts/skills-inventory-parity.ts` always exits 1 with `--list named []`. The listing
+// producer is part of the command: without it the parity signal is a permanent false alarm.
+const PARITY_CHECK = 'npx -y skills@1.5.23 add "$PWD" --list 2>&1 | bun scripts/skills-inventory-parity.ts --repo .'
 const DOCTOR_LINES = 'the skills lines of the genie doctor command'
 
 const str = { type: 'string' }
