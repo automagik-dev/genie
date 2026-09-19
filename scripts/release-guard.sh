@@ -38,13 +38,24 @@ source "$(dirname "$0")/gh-retry.sh"
 # carry dev/stable semantics, so suffix-bearing tags are rejected before any
 # asset upload or manifest reconciliation can begin.
 #
-# The major moved 5.→6. for the v6 stable cut. This guard is loaded from the
-# CONTROL ref — main — not from `source_sha` (release.yml:91), so while the
-# change sits on dev it binds NOTHING in a real release: it only affects dev's
-# own `scripts/release-guard.test.ts`. It takes effect the moment main carries
-# it, which is why the bump is the last dev change before the promotion merge
-# and why no dev release may fire in between: a 6-major dev tree under a
-# 5-major main would mint a tag that main's guard rejects.
+# The major moved 5.→6. for the v6 stable cut. On dev this change is INERT,
+# and the generator can never disagree with it: BOTH sides load from main.
+# release.yml checks out the CONTROL ref — main — to run this guard, not
+# `source_sha` (release.yml:91-93), and version.yml's inline generator
+# (`prefix=`, the promotion-tag glob) runs from main too, because a
+# `workflow_run` trigger always executes the DEFAULT-BRANCH copy of the
+# workflow. `scripts/version.ts` is the local `npm run version` path only
+# (package.json:13); the release pipeline never reads it. So while this sits
+# on dev the only thing it binds is dev's own release-guard.test.ts.
+#
+# What merging it to dev DOES do: version.yml fires on the merge commit — its
+# `if` skips only `[auto-version]`/`[release-manifest]` tips (version.yml:75-76)
+# — so ONE FINAL, VALID 5.x dev release publishes from main's still-5
+# generator. That is expected and it publishes cleanly. The hazard is the dev
+# tip those pushes move: under main's ruleset (require_last_push_approval,
+# dismiss_stale_reviews_on_push) they dismiss the promotion PR's approval, so
+# #2935 may only be approved once that release's `[auto-version]` tip is dev's
+# head and no Version run is queued.
 VERSION_RE='^6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
 TAG_REF_RE='^refs/tags/v6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
 

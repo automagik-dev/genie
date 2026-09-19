@@ -187,6 +187,74 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
   });
 });
 
+// --- release-major drift guard --------------------------------------------
+// The leading major is hardcoded in nine places across three files that are
+// edited by different hands at different times: the local generator
+// (scripts/version.ts), this guard, and version.yml's own inline generator.
+// Nothing at runtime compares them — version.yml and release-guard.sh both
+// load from main and would simply agree on a WRONG shared number, while a
+// half-applied bump mints tags one site rejects. So the invariant is asserted
+// statically here: every site carries the SAME major, and that major is 6.
+
+interface MajorSite {
+  readonly site: string;
+  readonly major: string;
+}
+
+/** Extract the major each hardcoding site carries; a missing site is a failure, not a skip. */
+function collectReleaseMajorSites(sources: {
+  versionTs: string;
+  guardSh: string;
+  versionYml: string;
+}): MajorSite[] {
+  const pick = (site: string, source: string, pattern: RegExp): MajorSite => {
+    const match = pattern.exec(source);
+    if (!match?.[1]) throw new Error(`release-major site not found (renamed or removed): ${site} — ${pattern}`);
+    return { site, major: match[1] };
+  };
+  return [
+    pick('version.ts tag glob', sources.versionTs, /git tag --list "v(\d+)\.\$\{datePrefix\}\.\*"/),
+    pick('version.ts generator', sources.versionTs, /return `(\d+)\.\$\{datePrefix\}\.\$\{n\}`/),
+    pick('release-guard.sh VERSION_RE', sources.guardSh, /^VERSION_RE='\^(\d+)\\\./m),
+    pick('release-guard.sh TAG_REF_RE', sources.guardSh, /^TAG_REF_RE='\^refs\/tags\/v(\d+)\\\./m),
+    pick('release-guard.sh date_part strip', sources.guardSh, /date_part="\$\{version#(\d+)\.\}"/),
+    pick('version.yml prefix', sources.versionYml, /echo "prefix=(\d+)" >> "\$GITHUB_OUTPUT"/),
+    pick('version.yml promotion tag glob', sources.versionYml, /git tag --list "v(\d+)\.\$\{TODAY\}\.\*"/),
+    pick('version.yml promotion sed', sources.versionYml, /sed -nE "s\/\^v(\d+)\\\\\./),
+    pick('version.yml promotion VERSION', sources.versionYml, /VERSION="(\d+)\.\$\{TODAY\}\./),
+  ];
+}
+
+describe('release major (drift guard across the three authorities)', () => {
+  const sources = () => ({
+    versionTs: readFileSync(join(REPO_ROOT, 'scripts', 'version.ts'), 'utf8'),
+    guardSh: readFileSync(SCRIPT, 'utf8'),
+    versionYml: readFileSync(join(REPO_ROOT, '.github', 'workflows', 'version.yml'), 'utf8'),
+  });
+
+  test('every hardcoding site carries the same major, and it is 6', () => {
+    const sites = collectReleaseMajorSites(sources());
+    expect(sites).toHaveLength(9);
+    const majors = [...new Set(sites.map((entry) => entry.major))];
+    // The failure message names the offenders, so a half-applied bump reads as
+    // a list of sites rather than "expected 1, got 2".
+    expect(majors, sites.map((entry) => `${entry.site}=${entry.major}`).join(', ')).toHaveLength(1);
+    expect(majors[0]).toBe('6');
+  });
+
+  test('a single divergent site is caught', () => {
+    const drifted = sources();
+    drifted.versionYml = drifted.versionYml.replace('echo "prefix=6"', 'echo "prefix=7"');
+    const majors = new Set(collectReleaseMajorSites(drifted).map((entry) => entry.major));
+    expect([...majors].sort()).toEqual(['6', '7']);
+  });
+
+  test('a renamed or deleted site fails loudly instead of passing vacuously', () => {
+    const gutted = { ...sources(), guardSh: "VERSION_RE='^.*$'\n" };
+    expect(() => collectReleaseMajorSites(gutted)).toThrow(/release-major site not found/);
+  });
+});
+
 describe('check-run-provenance (F17 upstream identity)', () => {
   test('a matching upstream run record passes', () => {
     const root = mkroot('genie-run-ok-');
