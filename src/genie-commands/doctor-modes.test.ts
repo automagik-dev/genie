@@ -350,6 +350,39 @@ describe('the whole scan reports as ONE aggregated check', () => {
     expect(summarizeModeDrift([])).toEqual({ name: 'mode drift', status: 'pass', detail: 'none found' });
     expect(modeDriftLines([])).toEqual([]);
   });
+
+  /**
+   * The only `stricter` entry anybody can act on is a tracked-755 FILE that
+   * lost its executable bit — `--fix` never widens, so a human must. Sorting
+   * it behind the benign 0700-vs-0755 directories left all 345 of the dogfood
+   * host's such entries unnamed.
+   */
+  test('a stricter file that lost its executable bit is named ahead of the benign stricter majority', () => {
+    const fixture = makeFixture();
+    const wt = plantDrift(fixture, 120, 0o600);
+    chmodSync(join(wt, 'bin', 'run.sh'), 0o644); // index 755, executable bit gone
+
+    const lines = modeDriftLines(driftEntries(fixture.root));
+    expect(lines[0]).toContain('bin/run.sh');
+    expect(lines[0]).toContain('chmod 755');
+    // …and the duplicated suffix is gone: the reason already ends in it.
+    expect(lines[1]).toContain('never widened'); // from entry.reason
+    expect(lines[1]?.match(/never widened/g)).toHaveLength(1);
+  });
+
+  test('every entry carries its own remedy under --json, so the cap never hides one', () => {
+    const fixture = makeFixture();
+    const wt = plantDrift(fixture, 120, 0o600);
+    chmodSync(join(wt, 'bin', 'run.sh'), 0o644);
+
+    const entries = driftEntries(fixture.root);
+    const remedied = entries.filter((entry) => entry.suggestion !== undefined);
+    expect(remedied).toHaveLength(1);
+    expect(remedied[0].relPath).toBe('bin/run.sh');
+    expect(remedied[0].suggestion).toContain('chmod 755');
+    // A benign stricter entry carries none — a remedy is evidence, not decoration.
+    expect(entries.find((entry) => entry.relPath === 'f0000.txt')?.suggestion).toBeUndefined();
+  });
 });
 
 describe('directory repair is included', () => {

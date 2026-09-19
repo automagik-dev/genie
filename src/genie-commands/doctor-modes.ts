@@ -75,6 +75,12 @@ export interface ModeDriftEntry {
   reason: string;
 }
 
+/** A scan entry as the `--json` rider reports it: the classification plus its remedy, when it has one. */
+export interface ModeDriftReportEntry extends ModeDriftEntry {
+  /** The manual repair `--fix` will never perform; absent when there is none. */
+  suggestion?: string;
+}
+
 export interface ModeDriftScan {
   entries: ModeDriftEntry[];
   /** Non-null when enumeration itself failed; `entries` is then empty. */
@@ -507,6 +513,25 @@ export const MAX_NAMED_MODE_DRIFT_ENTRIES = 5;
  */
 const NAMING_ORDER: readonly ModeDriftDisposition[] = ['refused', 'mixed', 'wider', 'stricter'];
 
+/**
+ * The one `stricter` entry that carries a remedy: a FILE whose index mode is
+ * 755 and which lost its executable bit. `--fix` will never restore it (that
+ * is a widening), so a human must — and on the dogfood host 345 such entries
+ * sat behind 9,700 benign 0700-vs-0755 directories. Inside the stricter
+ * bucket they are named first, so the capped five carry remedies rather than
+ * whichever path sorted earliest.
+ */
+function carriesManualRemedy(entry: ModeDriftEntry): boolean {
+  return entry.disposition === 'stricter' && entry.kind === 'file' && entry.indexMode === '755';
+}
+
+/** The per-entry remedy `--fix` will never perform, carried into `--json` as well. */
+function entrySuggestion(entry: ModeDriftEntry): string | undefined {
+  return carriesManualRemedy(entry)
+    ? 'Restoring the executable bit is a widening: run `chmod 755 <path>` yourself if the index mode is intended — --fix never widens.'
+    : undefined;
+}
+
 /** Headline: how much drift exists and whether anything is provably repairable. */
 function summarizeScan(entries: ModeDriftEntry[]): CheckResult {
   if (entries.length === 0) return { name: CHECK_NAME, status: 'pass', detail: 'none found' };
@@ -554,10 +579,11 @@ function describeEntry(entry: ModeDriftEntry): string {
       // A stricter FILE on a tracked-100755 path (e.g. a bundle that lost its
       // executable bit) names the one repair that restores it: a manual chmod.
       // That is a widening, so it is a user decision — never a --fix action.
-      if (entry.kind === 'file' && entry.indexMode === '755') {
-        return `kept (${entry.reason}; ${modes}) — never widened; restoring the executable bit is a widening, so run \`chmod 755\` yourself if the index mode is intended`;
+      // `entry.reason` already ends in "— never widened", so nothing repeats it.
+      if (carriesManualRemedy(entry)) {
+        return `kept (${entry.reason}; ${modes}) — run \`chmod 755\` yourself if the index mode is intended`;
       }
-      return `kept (${entry.reason}; ${modes}) — never widened`;
+      return `kept (${entry.reason}; ${modes})`;
     case 'mixed':
       return `kept (${entry.reason}; ${modes}) — never edited`;
     case 'refused':
@@ -568,25 +594,34 @@ function describeEntry(entry: ModeDriftEntry): string {
 /**
  * The aggregated check for a whole scan: ONE `mode drift` result whose
  * `modeDrift.entries` rider carries every classified entry, uncapped, for
- * `--json` (`checks[].modeDrift.entries`).
+ * `--json` (`checks[].modeDrift.entries`). Each entry carries its own
+ * `suggestion` where one exists, so a machine reader gets the remedy the
+ * capped human lines may never print.
  */
 export function summarizeModeDrift(entries: ModeDriftEntry[]): CheckResult {
   const summary = summarizeScan(entries);
-  return entries.length === 0 ? summary : { ...summary, modeDrift: { entries } };
+  if (entries.length === 0) return summary;
+  const reported: ModeDriftReportEntry[] = entries.map((entry) => {
+    const suggestion = entrySuggestion(entry);
+    return suggestion === undefined ? entry : { ...entry, suggestion };
+  });
+  return { ...summary, modeDrift: { entries: reported } };
 }
 
 /**
  * The human sub-lines under the aggregated check: at most
  * {@link MAX_NAMED_MODE_DRIFT_ENTRIES} entries an operator can act on, then a
  * `+<n> more` remainder pointing at the complete machine-readable list. The
- * scan order (worktree, then path) is preserved inside each disposition, so
- * the named five are stable between runs.
+ * scan order (worktree, then path) is preserved inside each disposition —
+ * except that the one stricter sub-case carrying a manual remedy is named
+ * ahead of the benign majority — so the named five are stable between runs.
  */
 export function modeDriftLines(entries: ModeDriftEntry[]): string[] {
   if (entries.length === 0) return [];
-  const ordered = NAMING_ORDER.flatMap((disposition) =>
-    entries.filter((entry) => entry.disposition === disposition),
-  ).slice(0, MAX_NAMED_MODE_DRIFT_ENTRIES);
+  const ordered = NAMING_ORDER.flatMap((disposition) => {
+    const bucket = entries.filter((entry) => entry.disposition === disposition);
+    return [...bucket.filter(carriesManualRemedy), ...bucket.filter((entry) => !carriesManualRemedy(entry))];
+  }).slice(0, MAX_NAMED_MODE_DRIFT_ENTRIES);
   const lines = ordered.map((entry) => `      · ${entry.disposition}: ${displayName(entry)} — ${describeEntry(entry)}`);
   const remainder = entries.length - ordered.length;
   if (remainder > 0) {

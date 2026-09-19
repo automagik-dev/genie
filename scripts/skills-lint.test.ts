@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SKILL_CATEGORIES, SKILL_MUTATES_LEVELS } from './skills-inventory-parity.ts';
@@ -921,8 +921,14 @@ describe('staged candidates under <GENIE_HOME>/skills', () => {
     return collectStagedCandidateViolations(join(home, 'skills'), new Set(delivered));
   }
 
+  /** The violations of a scan that judged; fails the test when it declined. */
+  function judged(scan: ReturnType<typeof collectStagedCandidateViolations>) {
+    if (!scan.judged) throw new Error(`expected a judged scan, got: ${scan.field}`);
+    return scan.violations;
+  }
+
   test('a dir this release does not deliver is refused, and the line names the remedy', () => {
-    const violations = stagedIn(['wish', 'my-candidate'], ['wish']);
+    const violations = judged(stagedIn(['wish', 'my-candidate'], ['wish']));
 
     expect(violations).toHaveLength(1);
     expect(violations[0].skill).toBe('my-candidate');
@@ -936,17 +942,67 @@ describe('staged candidates under <GENIE_HOME>/skills', () => {
     writeFileSync(join(home, 'skills', 'NOTICE'), 'not a skill dir\n');
     mkdirSync(join(home, 'skills', 'no-skill-md'), { recursive: true });
 
-    expect(collectStagedCandidateViolations(join(home, 'skills'), new Set(['wish', 'work']))).toEqual([]);
+    expect(judged(collectStagedCandidateViolations(join(home, 'skills'), new Set(['wish', 'work'])))).toEqual([]);
+  });
+
+  /**
+   * `Dirent.isDirectory()` is FALSE for a symlink, so a symlinked candidate
+   * evaded the rule entirely — and the skills CLI copies it into every agent
+   * home exactly like a real directory.
+   */
+  test('a SYMLINKED staged candidate is caught; a broken link is not', () => {
+    const home = makeGenieHome(['wish'], undefined);
+    homes.push(home);
+    const elsewhere = mkdtempSync(join(tmpdir(), 'skills-lint-staged-src-'));
+    homes.push(elsewhere);
+    mkdirSync(join(elsewhere, 'linked-candidate'), { recursive: true });
+    writeFileSync(join(elsewhere, 'linked-candidate', 'SKILL.md'), '---\nname: linked-candidate\n---\n');
+    symlinkSync(join(elsewhere, 'linked-candidate'), join(home, 'skills', 'linked-candidate'));
+    symlinkSync(join(elsewhere, 'gone'), join(home, 'skills', 'dangling'));
+
+    const violations = judged(collectStagedCandidateViolations(join(home, 'skills'), new Set(['wish'])));
+    expect(violations.map((v) => v.skill)).toEqual(['linked-candidate']);
   });
 
   test('a dir the install record proves genie delivered is never a candidate', () => {
     // `omni` left the tree at v6 but the installed release still delivers it.
-    expect(stagedIn(['omni'], ['wish'], ['omni'])).toEqual([]);
+    expect(judged(stagedIn(['omni'], ['wish'], ['omni']))).toEqual([]);
     expect(deliveredSkillNames(join(import.meta.dir, '..', 'skills'), '/nonexistent.json')).toContain('wish');
   });
 
-  test('an unreadable install record refuses to judge rather than flagging every dir', () => {
-    expect(stagedIn(['omni', 'wish'], ['wish'], '{ not json')).toEqual([]);
+  /**
+   * Declining is right — genie cannot tell delivered from staged without the
+   * record — but a decline that printed "0 staged candidates" would report a
+   * clean bill of health it never established.
+   */
+  test('an unreadable record declines to judge, naming the file and the field', () => {
+    const broken = stagedIn(['omni', 'wish'], ['wish'], '{ not json');
+    expect(broken.judged).toBe(false);
+    if (broken.judged) throw new Error('unreachable');
+    expect(broken.record).toContain('skills-install.json');
+    expect(broken.field).toBe('JSON');
+
+    const inventoryless = stagedIn(['omni'], ['wish'], JSON.stringify({ ref: 'v0' }));
+    expect(inventoryless.judged).toBe(false);
+    if (inventoryless.judged) throw new Error('unreachable');
+    expect(inventoryless.field).toBe('inventory');
+  });
+
+  test('end-to-end: an unreadable record never prints a zero, and the gate stays green', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skills-lint-unjudged-'));
+    const home = makeGenieHome(['sized'], '{ not json');
+    homes.push(home);
+    try {
+      writeSkillIn(dir, 'sized', '# sized\n\nOrdinary prose.\n');
+      const run = runLintIn(dir, { GENIE_HOME: home });
+
+      expect(run.code).toBe(0); // declining is not a failure
+      expect(run.stderr).toContain('staged candidates not judged');
+      expect(run.stderr).toContain('skills-install.json is unreadable (JSON)');
+      expect(run.stderr).not.toContain('0 staged candidates');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('the waiver path exists, the table is empty, and a waived name is skipped', () => {
@@ -956,15 +1012,22 @@ describe('staged candidates under <GENIE_HOME>/skills', () => {
     const home = makeGenieHome(['my-candidate'], undefined);
     homes.push(home);
     expect(
-      collectStagedCandidateViolations(join(home, 'skills'), new Set<string>(), (skill) => skill === 'my-candidate'),
+      judged(
+        collectStagedCandidateViolations(join(home, 'skills'), new Set<string>(), (skill) => skill === 'my-candidate'),
+      ),
     ).toEqual([]);
   });
 
-  test('no GENIE_HOME to scan is not a violation', () => {
-    expect(collectStagedCandidateViolations(null, new Set(['wish']))).toEqual([]);
+  test('no GENIE_HOME to scan is not a violation, and an EMPTY one is unset', () => {
+    expect(judged(collectStagedCandidateViolations(null, new Set(['wish'])))).toEqual([]);
     expect(resolveGenieSkillsHome({ GENIE_HOME: '/tmp/gh' })).toBe(join('/tmp/gh', 'skills'));
     expect(resolveGenieSkillsHome({ HOME: '/home/x' })).toBe(join('/home/x', '.genie', 'skills'));
     expect(resolveGenieSkillsHome({})).toBeNull();
+    // An empty value must never resolve to the cwd-relative `skills`, which in
+    // this repository is the delivered tree itself.
+    expect(resolveGenieSkillsHome({ GENIE_HOME: '' })).toBeNull();
+    expect(resolveGenieSkillsHome({ GENIE_HOME: '', HOME: '/home/x' })).toBe(join('/home/x', '.genie', 'skills'));
+    expect(resolveGenieSkillsHome({ HOME: '' })).toBeNull();
   });
 
   test('end-to-end: a staged candidate fails `skills:lint`; a clean home passes', () => {

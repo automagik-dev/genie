@@ -61,7 +61,7 @@ import {
   shippedWorkflowNames,
   shippedWorkflowsRoot,
 } from '../lib/workflows-installer.js';
-import { type ModeDriftEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
+import { type ModeDriftReportEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -91,9 +91,10 @@ export interface CheckResult {
    * Machine-readable payload rider (survives `--json` as
    * `checks[].modeDrift.entries`). Only the aggregated `mode drift` check sets
    * it: EVERY classified entry, uncapped, because the human report names at
-   * most `MAX_NAMED_MODE_DRIFT_ENTRIES` of them.
+   * most `MAX_NAMED_MODE_DRIFT_ENTRIES` of them. Each entry carries its own
+   * `suggestion` where one exists, so the remedy survives the cap.
    */
-  modeDrift?: { entries: ModeDriftEntry[] };
+  modeDrift?: { entries: ModeDriftReportEntry[] };
   /**
    * Machine-readable payload rider (survives `--json` as `checks[].routeLayers`).
    * Only the `Codex Genie MCP registration` check sets it: the typed config-layer

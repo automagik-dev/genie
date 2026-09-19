@@ -20,9 +20,11 @@
  *   bun scripts/legacy-skills-catalog.ts --check   # exits 1 when the file is stale
  *
  * CI runs `--check` as its own step in the `unit` job, whose checkout sets
- * `fetch-depth: 0` for exactly this reason (#2942). The check is an additive
- * union, so it proves a SUPERSET, never an exact match — see
- * {@link CATALOG_CHECK_GAP}, which every verdict prints.
+ * `fetch-depth: 0` for exactly this reason (#2942); on a shallow clone
+ * `--check` REFUSES ({@link SHALLOW_REFUSAL}) rather than passing vacuously,
+ * while `--write` stays allowed. The check is an additive union, so it proves
+ * a SUPERSET, never an exact match — see {@link CATALOG_CHECK_GAP}, which
+ * every verdict prints.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -248,10 +250,35 @@ function formatted(source: string): string {
   });
 }
 
+/**
+ * The one refusal `--check` owns. On a shallow clone `git log --all` sees
+ * (almost) nothing, so the collected catalog is empty, the additive union
+ * leaves the committed file unchanged, and the check passes having proven
+ * NOTHING — the exact vacuous green the CI `fetch-depth: 0` exists to prevent.
+ * `--write` stays allowed: a maintainer regenerating on a partial clone still
+ * only ever adds, and the union protects the rest.
+ */
+export const SHALLOW_REFUSAL =
+  'legacy-skills-catalog: refusing --check on a shallow clone — `git log --all` cannot see the history this catalog is derived from, so the additive union would pass vacuously; re-run on a FULL clone (`fetch-depth: 0`). `--write` is still allowed.';
+
+function isShallowClone(): boolean {
+  try {
+    return git('rev-parse', '--is-shallow-repository').trim() === 'true';
+  } catch {
+    // Not a git repo, or a git too old for the flag: the walk below answers.
+    return false;
+  }
+}
+
 // Only the CLI walks git history, shells out to biome and exits: importing this module
 // (the tests inject a synthetic catalog into `render`) must do none of that.
 if (import.meta.main) {
   const mode = process.argv[2];
+  // Before ANY work: a shallow --check cannot prove what it claims.
+  if (mode === '--check' && isShallowClone()) {
+    process.stderr.write(`${SHALLOW_REFUSAL}\n`);
+    process.exit(1);
+  }
   const collected = collectCatalog();
   const recorded = await recordedCatalog();
   const rendered = render(collected, recorded);
