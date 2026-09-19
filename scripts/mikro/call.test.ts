@@ -47,6 +47,16 @@ import { IssueTriage, SCHEMAS } from './schemas';
 const FOOTER =
   'mikro · issue-triage · deepseek-api/deepseek-flash · 7 iterations · 12,345 in / 1,234 out · $0.0031 · 84.2s · session 3f2a-b1';
 
+/**
+ * A command that EXISTS on this host and exits non-zero: the stand-in for a
+ * runtime that RAN and failed. Never the literal `/bin/false` — macOS ships
+ * `false` in /usr/bin only, so that path named a MISSING binary there, the spawn
+ * failed ENOENT, and `runAgent` classified the whole run as "the mikro runtime
+ * is not runnable on this host" and broke out of the retry loop under test
+ * (#2926).
+ */
+const FAILING_RUNTIME = Bun.which('false') ?? '/usr/bin/false';
+
 describe('parseFooter', () => {
   test('parses the seven fields and the session id', () => {
     const f = parseFooter(`answer\n${FOOTER}`);
@@ -492,7 +502,7 @@ describe('facts inside the boundary', () => {
       closed: false,
       argv(command: string[]) {
         session.commands.push(command);
-        return ['/bin/false'];
+        return [FAILING_RUNTIME];
       },
       env: {} as Record<string, string>,
       counts: () => ({ allowed: 0, denied: 0 }),
@@ -552,7 +562,7 @@ describe('facts inside the boundary', () => {
     expect(JSON.parse(readFileSync(join(root, '.mikro', 'runs', `facts-${result.runId}.json`), 'utf8')).basis.gh).toBe(
       'skipped-boundary',
     );
-    // The runtime was /bin/false, so the run failed — and the boundary still closed.
+    // The runtime exits non-zero, so the run failed — and the boundary still closed.
     expect(result.ok).toBe(false);
     expect(result.boundary).toBe('bwrap');
     expect(session.closed).toBe(true);
@@ -586,7 +596,7 @@ describe('facts inside the boundary', () => {
     expect(runner.canRunGh).toBe(false);
     const ran = runner.run(['git', 'ls-files'], '/anywhere');
     expect(session.commands).toEqual([['git', 'ls-files']]);
-    expect(ran).toEqual({ ok: false, out: '' }); // /bin/false: no output, not ok
+    expect(ran).toEqual({ ok: false, out: '' }); // a failing command: no output, not ok
   });
 
   test('the context path a boundary binds is the path prepareFacts writes', () => {
@@ -841,7 +851,7 @@ describe('agent resolution and the run ledger', () => {
     const session = {
       mode: 'bwrap' as const,
       spec: null as unknown as BoundarySession['spec'],
-      argv: () => ['/bin/false'],
+      argv: () => [FAILING_RUNTIME],
       env: {} as Record<string, string>,
       counts: () => ({ allowed: 0, denied: 0 }),
       close: async () => undefined,
@@ -861,7 +871,7 @@ describe('agent resolution and the run ledger', () => {
         return session;
       },
     });
-    expect(result.ok).toBe(false); // /bin/false is not a runtime: what is under test is WHERE it looked
+    expect(result.ok).toBe(false); // a failing command is not a runtime: what is under test is WHERE it looked
     expect(result.agentSource).toBe('shipped');
     const seen = opened as unknown as OpenBoundaryOptions;
     expect(seen.agentsDir).toBe(shippedAgentsRoot(home));

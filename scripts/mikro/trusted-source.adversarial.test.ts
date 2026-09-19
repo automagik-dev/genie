@@ -6,7 +6,7 @@
  * boundary opener — on the agents dir the runtime would have been handed AND on the
  * child environment's `MIKRO_AGENTS_DIR`, because mikro does its own project-agent
  * discovery inside `--dir` and that variable is what overrides it. Nothing here spawns
- * the mikro runtime: the fake session answers `/bin/false` for every command, so a run
+ * the mikro runtime: the fake session answers with a failing command for every argv, so a run
  * that gets that far fails without a provider call, and the refusal cases never get that
  * far at all.
  */
@@ -149,7 +149,7 @@ async function runCaptured(options: {
   const session: BoundarySession = {
     mode: 'bwrap',
     spec: null as unknown as BoundarySession['spec'],
-    argv: () => ['/bin/false'],
+    argv: () => [FAILING_RUNTIME],
     env: {} as Record<string, string>,
     counts: () => ({ allowed: 0, denied: 0 }),
     close: async () => undefined,
@@ -172,6 +172,16 @@ async function runCaptured(options: {
   });
   return { result, seen };
 }
+
+/**
+ * A command that EXISTS on this host and exits non-zero: the stand-in for a
+ * runtime that RAN and failed. Never the literal `/bin/false` — macOS ships
+ * `false` in /usr/bin only, so that path named a MISSING binary there, the spawn
+ * failed ENOENT, and `runAgent` classified the whole run as "the mikro runtime
+ * is not runnable on this host" and broke out of the retry loop under test
+ * (#2926).
+ */
+const FAILING_RUNTIME = Bun.which('false') ?? '/usr/bin/false';
 
 describe('(a) a PR worktree cannot rewrite the prompt of the agent that reviews it', () => {
   test('the base ref wins over a committed PR change AND over an uncommitted one', async () => {

@@ -2139,7 +2139,12 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     seed.close();
 
     const backup = readdirSync(genieHome).find((entry) => entry.startsWith('genie.db.backup-')) as string;
-    const restored = new Database(join(genieHome, backup), { readonly: true });
+    // Read-write on purpose. This backup is a copy of a WAL-mode database, and a
+    // read-only connection to one needs its `-shm` index: bun's bundled SQLite
+    // creates it, the system SQLite bun uses on macOS answers SQLITE_CANTOPEN
+    // instead (#2926). What is under test is the CONTENT of the backup, not
+    // which handle can reach it, so open it the way a restore would.
+    const restored = new Database(join(genieHome, backup));
     const rows = restored.query('SELECT id FROM approvals').all() as Array<{ id: string }>;
     restored.close();
     expect(rows.map((r) => r.id)).toEqual(['pending-in-wal']);

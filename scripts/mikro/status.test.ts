@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyCitations } from './call';
@@ -303,6 +303,9 @@ process.stdout.write(
     expect(seen.foreign).toBe(false);
     expect(seen.own).toBe(true);
     // …and the facts scan reads the tree it was pointed at, not the exported one.
-    expect(seen.gitDir).toStartWith(analysed.dir);
+    // Compared as REAL paths: the temp root is reached through a symlink on macOS
+    // (`/var/folders/…` → `/private/var/folders/…`), and git answers with the
+    // resolved one, so the raw mkdtemp path never prefixed it there (#2926).
+    expect(seen.gitDir).toStartWith(realpathSync(analysed.dir));
   });
 });
