@@ -35,7 +35,7 @@ import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
 import { registerMcpCommand } from './term-commands/mcp.js';
-import { registerOmniCommands } from './term-commands/omni.js';
+import { registerMikroCommands } from './term-commands/mikro.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
@@ -118,7 +118,7 @@ program
   )
   .option(
     '--fix-global-db',
-    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it (the omni approval queue and inbox are never touched). Runs this repair alone, not the other checks (idempotent)',
+    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it. v6 writes nothing to that path, so on a clean host there is nothing to drop; anything else already in the file is left byte-for-byte alone. Runs this repair alone, not the other checks (idempotent)',
   )
   .action(doctorCommand);
 
@@ -262,7 +262,7 @@ registerV5BoardCommands(program);
 registerContextCommand(program);
 registerConfigCommand(program);
 registerIdeaCommand(program);
-registerOmniCommands(program);
+registerMikroCommands(program);
 
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it

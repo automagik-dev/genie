@@ -39,10 +39,6 @@ export interface PermissionsConfig {
   timeout?: number;
   /** Action taken on timeout (default: 'deny'). */
   defaultAction?: 'allow' | 'deny';
-  /** Omni chat JID for WhatsApp approval delivery. */
-  omniChat?: string;
-  /** Omni instance ID for WhatsApp approval delivery. */
-  omniInstance?: string;
 }
 
 export interface WorkspaceConfig {

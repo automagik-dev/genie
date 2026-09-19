@@ -7,7 +7,7 @@ the sole lifecycle authority. The current design fixes the boundary at Orca's pu
 `orca orchestration ... --json` CLI, rejects local lifecycle fallback or mirroring, and retires Genie MCP only
 after authority guards, adapter parity, plugin lifecycle, packaging, and documentation are green.
 
-This DRAFT, [DESIGN.md](DESIGN.md), [WISH.md](../../wishes/genie-dual-mode-orca-plugin/WISH.md), and the
+This DRAFT, [DESIGN.md](DESIGN.md), [WISH.md](../../wishes/archive/genie-dual-mode-orca-plugin/WISH.md), and the
 [INDEX entry](../../INDEX.md) are the four canonical planning documents. Current reviewable DESIGN SHA-256
 `2499668e81fe3d3f3f7f15bac0246c3e0647a036e9441fa882dcf6a8ecb92bf9` was independently reviewed SHIP by
 `term_6c98a3c8-7ac8-4274-a8e9-ade35e2d82dd` at `2026-08-29T18:13:16Z`; the four-document plan is approved and

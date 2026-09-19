@@ -1321,7 +1321,7 @@ export function runLegacyIntegrationRetirement(
     const why = entry.detail === undefined ? '' : ` — ${entry.detail}`;
     emit(`kept (${entry.state === 'unmanaged' ? 'unmanaged' : 'modified'}) ${entry.surface}: ${entry.path}${why}`);
   }
-  for (const failure of result.failures) emit(`  retirement failed for ${failure.path}: ${failure.reason}`);
+  for (const failure of result.failures) emit(`retirement failed for ${failure.path}: ${failure.reason}`);
   // A run with failures is never "nothing to retire": something WAS owed and did
   // not happen, and the operator has to see that even when nothing came off.
   if (result.failures.length > 0) emit(`retirement incomplete: ${result.failures.length} failure(s)`);

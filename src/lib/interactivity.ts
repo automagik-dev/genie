@@ -72,10 +72,11 @@ const WORKSPACE_EXEMPT = new Set([
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).
   'idea',
   'launch',
-  // `omni` is the resident runner + its status/inbox/handshake helpers. Like
-  // `task`/`board` it self-resolves the global genie.db and never reads the
-  // v4 workspace.json, so gating it on the legacy workspace concept is wrong.
-  'omni',
+  // `mikro` is the microagent runtime, whose whole point is that any repository
+  // on a host with genie installed can run it. It reads a git checkout and
+  // `<GENIE_HOME>/templates`, never `.genie/workspace.json`; gating it would
+  // make the offload fail in exactly the repositories this command exists for.
+  'mikro',
   // `mcp` is now a retirement stub: it writes the stable diagnostic to stderr and
   // exits 1. It touches no workspace state, so the legacy workspace gate must not
   // exit 2 and mask the retirement diagnostic callers are told to expect.

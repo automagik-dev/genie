@@ -1,6 +1,0 @@
-interface:
-  display_name: "Omni Wiring"
-  short_description: "Wire Genie routing and approvals through Omni"
-  default_prompt: "Wire this Genie repository to the selected Omni channel and verify the round trip."
-policy:
-  allow_implicit_invocation: false

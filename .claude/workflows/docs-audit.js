@@ -64,12 +64,50 @@ export const meta = {
 //    unprobed[], rowsRejected[], consolidatorNote, notConvened[]}
 // A failure return is {ok: false, error, ...the same trace keys that were reached}.
 
-const DEFAULT_MODEL = 'opus'
 // Used ONLY when the Locate stage returns nothing, and always labelled assumed: it gives a
 // stranded auditor somewhere to start without ever being reported as resolved.
 const DEFAULT_DOCS_HOME = 'docs'
 const MAX_PROBES = 12
 const HELP_COMMAND = 'bun src/genie.ts <command> --help'
+
+// The runtime-DX auditor is the only agent in this workflow that executes anything, and the
+// brief used to license an open-ended set of documented failing invocations: a missing-argument
+// probe on a mutating verb still runs that verb's argument parsing, and one wrong guess writes
+// to the host. The allowlist below is therefore fail-closed and closed by construction — six
+// shapes, nothing else, and a claim that cannot be probed inside it is reported unprobed
+// rather than chased with a seventh shape.
+const PROBE_ALLOWLIST = [
+  'bun src/genie.ts <command> --help, for any command the documented surfaces name',
+  'a missing-argument error: a documented read command invoked with a required argument omitted, and nothing else omitted',
+  'the retired genie mcp stub, which only writes its retirement diagnostic to stderr and exits non-zero',
+  'the retired genie ui-bridge stub, which only writes its retirement diagnostic to stderr and exits non-zero',
+  'genie config get <unknown key>, which only reads the resolved config',
+  'genie --version',
+]
+
+// Named bare, never with a leading binary, so the only place these spellings appear as an
+// invocation would be an allowlist entry that must not exist.
+const FORBIDDEN_PROBE_VERBS = [
+  'install',
+  'update',
+  'uninstall',
+  'init',
+  'setup',
+  'task create',
+  'task move',
+  'task done',
+  'task delete',
+  'task import',
+  'task sync',
+  'doctor --fix-global-db',
+]
+
+const PROBE_ALLOWLIST_BLOCK = PROBE_ALLOWLIST.map((shape) => `- ${shape}`).join('\n')
+const PROBE_FAIL_CLOSED_RULE = [
+  `Any other invocation of the product binary is FORBIDDEN, whatever it would prove. Forbidden outright: ${FORBIDDEN_PROBE_VERBS.join(', ')}.`,
+  'That denylist outranks the missing-argument shape: a forbidden verb invoked with its argument omitted is still forbidden, because the binary parses and enters the verb before it reports the missing argument.',
+  'A documented claim you cannot prove with one of the allowed shapes is recorded in unprobed[] with the claim and the shape you would have needed — never reach for an invocation outside the list to close it.',
+].join('\n')
 
 const SEVERITIES = ['onboarding-blocker', 'drift', 'misfiling', 'polish']
 
@@ -110,8 +148,7 @@ const SURFACES = [
     key: 'runtime-dx',
     label: 'Runtime DX',
     where: 'help text, error messages and exit codes, plus the onboarding path stated in README or CONTRIBUTING',
-    brief:
-      'You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make: run the read-only help command for the commands the docs name, then a handful of documented failing invocations, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full sixteen-command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.',
+    brief: `You are the only auditor that executes anything, and all of it is read-only. Probe the claims the documented surfaces actually make, grading each failure on the three questions (what failed, why, what to do next) and reporting the exit code and the stderr text verbatim. Never walk the full sixteen-command matrix. Carry several checks per finding class — help text, error message and exit code — so this surface stays above its own injection cost.\nProbe ONLY these shapes, and treat the list as closed:\n${PROBE_ALLOWLIST_BLOCK}\n${PROBE_FAIL_CLOSED_RULE}`,
     effort: 'medium',
     minChecks: 6,
     minimum: 'help text, exit code and stderr each graded on every failing invocation you probe',
@@ -250,7 +287,7 @@ function normalizeInput(raw) {
     requested: asked,
     // Held raw: the default quorum depends on the roster AFTER narrowing.
     quorum: Number.isInteger(input.quorum) ? input.quorum : null,
-    model: text(input.model) || DEFAULT_MODEL,
+    model: text(input.model),
     timestamp: text(input.timestamp),
   }
 }
@@ -324,7 +361,7 @@ function auditPrompt(job, surface, docs) {
     docsBlock(docs),
     'You hold one surface of four. No other auditor answer is visible to you, and you must not re-read a surface you do not own: cite it instead and let the consolidator collapse the overlap. The roster is closed, so a claim you leave unchecked is a gap nobody else fills.',
     surface.key === 'runtime-dx'
-      ? `Probe read-only only: ${HELP_COMMAND} for the commands the documented surfaces actually claim, plus documented failing invocations whose exit code and stderr you report verbatim. Keep the whole probe matrix to roughly ${MAX_PROBES} invocations — an advisory bound on the bill, not a licence to stop mid-claim. No probe installs, clones, writes or mutates anything.`
+      ? `Probe read-only only: ${HELP_COMMAND} for the commands the documented surfaces actually claim, and report the exit code and stderr of every probe verbatim.\nProbe ONLY these shapes, and treat the list as closed:\n${PROBE_ALLOWLIST_BLOCK}\n${PROBE_FAIL_CLOSED_RULE}\nKeep the whole probe matrix to roughly ${MAX_PROBES} invocations — an advisory bound on the bill, not a licence to stop mid-claim. No probe installs, clones, writes or mutates anything.`
       : 'Verify claims against the live product with read-only commands and reads. You execute nothing that changes state.',
     EVIDENCE_RULE,
     SEVERITY_RULE,
@@ -547,7 +584,7 @@ if (narrowedOut.length) log(`Narrowed to ${roster.join(', ')}; ${narrowedOut.joi
 log(`${surfacesExpected} surface(s) on the roster; quorum ${quorum}.`)
 
 phase('Locate')
-const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, model: MODEL, effort: 'low' })
+const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
 if (!located) {
   notConvened.push('locate:docs-home')
   log('No response from locate:docs-home; the auditors are told the docs home is unresolved and every fix is marked unrouted.')
@@ -583,7 +620,7 @@ const rawAudits = await parallel(
       label: `audit:${surface.key}`,
       phase: 'Audit',
       schema: AUDIT_SCHEMA,
-      model: MODEL,
+      ...(MODEL ? { model: MODEL } : {}),
       effort: surface.effort,
     }),
   ),
@@ -681,7 +718,7 @@ const judged = await agent(consolidatePrompt(job, responded, silent.map((surface
   label: 'consolidate:audit-table',
   phase: 'Consolidate',
   schema: CONSOLIDATE_SCHEMA,
-  model: MODEL,
+  ...(MODEL ? { model: MODEL } : {}),
   effort: 'high',
 })
 if (!judged) {

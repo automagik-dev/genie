@@ -160,14 +160,6 @@ export interface OpenSqliteOptions {
    * without contending on the schema write lock. Omit to always run ensureSchema.
    */
   schemaIsCurrent?: (db: Database) => boolean;
-  /**
-   * Mode for the containing directory when this open creates it. Set ONLY by
-   * the global DB, whose directory IS GENIE_HOME and must never carry group or
-   * other write bits (the install promoter rejects those). Left unset for the
-   * per-repo `.genie/`, which lives inside the user's own repository where
-   * forcing 0o700 would be surprising — that path keeps the ambient umask.
-   */
-  dirMode?: number;
 }
 
 /**
@@ -175,15 +167,19 @@ export interface OpenSqliteOptions {
  * ensure the schema. Refuses malformed or foreign databases with typed errors.
  * Idempotent: safe to call on every CLI invocation.
  *
- * This is the FLEET hot path — every `genie task`, `task sync`, git-hook sync,
- * omni-queue writer and MCP read opens through it — so it does exactly one
- * thing: open, pragma, ensure schema. No probing, no journal-mode churn. WAL
+ * This is the FLEET hot path — every `genie task`, `task sync`, git-hook sync
+ * and MCP read opens through it — so it does exactly one thing: open, pragma,
+ * ensure schema. No probing, no journal-mode churn. WAL
  * index recovery is deliberately NOT wired in here; it is opt-in and scoped to
  * the component that creates the poison (see {@link openWithWalIndexRecovery}).
  */
 export function openSqlite(opts: OpenSqliteOptions): Database {
   const { path } = opts;
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: opts.dirMode });
+  // No explicit mode: every DB this primitive now opens lives in the user's own
+  // repository (`<repo>/.genie/`), where forcing owner-only would be
+  // surprising. The one caller that opted into 0o700 was the machine-scope DB,
+  // whose directory IS GENIE_HOME; it left with the Omni runner in v6.
+  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   return openInitialized(opts);
 }
 
@@ -223,7 +219,7 @@ function openInitialized(opts: OpenSqliteOptions): Database {
 // apart and fires on healthy, contended databases as readily as on poisoned
 // ones. What follows the gate is journal-mode churn (WAL → DELETE → WAL) that a
 // plain WAL open/close never performs; run from every process of a live fleet
-// (`genie task` workers, omni-queue resolvers, git-hook sync) it drove bun's
+// (`genie task` workers, git-hook sync) it drove bun's
 // Linux shm handling into SIGBUS. Recovery therefore belongs to the ONE
 // component that CREATES the poison: a degraded read-only session whose close
 // writes the header. That component was the retired MCP/ui-bridge server pair,

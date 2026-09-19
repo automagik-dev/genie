@@ -140,7 +140,7 @@ The lifecycle is shared by every agent the skills channel reaches. Claude Code i
 
 ```text
 1. /brainstorm or "brainstorm this"   an idea → DESIGN.md → mandatory design review
-2. /wish or "turn that into a wish"   accepted DESIGN.md → a scoped WISH.md
+2. /wish or "deliver this"            one decided task → a merge-ready PR; bigger work → a scoped WISH.md
 3. /review                            mandatory plan review; persist APPROVED or concrete gaps
 4. /work                              native role subagents build each approved group
 5. /review                            independent implementation review: SHIP, FIX-FIRST, or BLOCKED
@@ -155,7 +155,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 16 CLI commands, 4 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, `nats`) — `nats` initializes only when the omni runner starts. A ~0.9 MB single-file bundle. Bun-powered.
+- **Small.** 16 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -175,10 +175,10 @@ genie --help
 | `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
 | `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
-| `genie omni` | Bridge agents to WhatsApp via Omni — remote approvals + inbound one-shots (`serve`, `status`, `inbox`, `test-approval`, `handshake`) |
+| `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
-| `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated global database, backup-first) |
+| `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
 | `genie uninstall` | Remove Genie, the recorded skills install, and plugin-era leftovers proven to be Genie-owned |
@@ -215,15 +215,19 @@ record. If retirement fails, `genie update` retains the previous record and repo
 
 #### Restoring from a retirement backup
 
-Restore with `--no-preserve=mode` (or `rsync -a --no-perms`). A plain `cp -a` copies the backup's own directory
-metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently becomes `drwx------`:
+Restore without asking for the backup's modes (`cp -R`, or `rsync -a --no-perms`). A plain `cp -a` copies the
+backup's own directory metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently
+becomes `drwx------`:
 
 ```bash
 BK=~/.genie/state-backups/skills-retirement-<timestamp>
-cp -a --no-preserve=mode "$BK/." "$HOME/"
+cp -R "$BK/." "$HOME/"
 # or, equivalently:
 rsync -a --no-perms "$BK/" "$HOME/"
 ```
+
+Both forms work with GNU coreutils and with the BSD `cp` macOS ships; GNU's `cp -a --no-preserve=mode` is
+equivalent on Linux but is rejected on macOS.
 
 Both forms restore the removed trees and leave the modes of pre-existing directories alone.
 
@@ -262,21 +266,6 @@ yours to restore).
 Documents live in git; operational state lives in one SQLite file. `work` fans agents out through the active client's native subagents — each gets a task claim, with state changes serialized through `genie.db` rather than a coordinator. Review runs as a separate subagent from the one that wrote the code (reviewer ≠ engineer), so the verdict is independent evidence against the wish criteria.
 
 All linked worktrees of a repository share one `genie.db`, resolved from the git common directory, so a task created in one worktree is immediately visible in another with no sync step.
-
-## Omni (WhatsApp bridge)
-
-`genie omni` wires a running agent to WhatsApp through an [Omni](https://automagik.dev) hub, so you can drive approvals and short tasks from your phone.
-
-**How it works** (verified by the test suite against a fake transport; the live WhatsApp round-trip is a documented manual-QA step — see `.genie/wishes/omni-runner-port/qa.md`):
-
-- **Remote approvals.** `genie omni serve` bridges a chat to the global approval queue: reply `y`/`n` (or `sim`/`nao`), or react 👍/👎. The feature is off by default and the queue is now driven by CLI-originated approvals only — Genie no longer installs the in-session permission hook, so an agent's own permission prompt is not approvable from a chat.
-- **Inbound one-shots.** Each mapped chat selects `agent: claude|codex`. Codex JSONL thread ids persist per provider/instance/chat and resume on later messages. Unmapped chats are stored, not answered.
-
-**What it needs:**
-
-- An **Omni hub** plus a connected **WhatsApp instance** — Genie speaks to Omni over NATS; the hub owns the WhatsApp session.
-- `genie omni handshake` once per host — registers an ed25519 keypair so outbound sends are signed.
-- `genie omni serve` running as the one resident process. It is the *only* NATS client — `--help`, `task`, `board`, and every other command stay transport-free (`nats` never initializes on those paths).
 
 ## MCP retirement
 

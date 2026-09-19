@@ -362,7 +362,9 @@ describe('atomicWriteFileSync', () => {
     const path = join(fixture.root, 'nested', 'state.json');
     atomicWriteFileSync(path, '{"a":1}', { mode: 0o640 });
     expect(readFileSync(path, 'utf8')).toBe('{"a":1}');
-    expect(lstatSync(path).mode & 0o777).toBe(0o640);
+    // The mode is a create mode: the kernel filters it through the process umask. Asserting the bare
+    // 0o640 made `bun run check` red on a host that logs in at umask 0077 (issue #2963).
+    expect(lstatSync(path).mode & 0o777).toBe(0o640 & ~process.umask());
     expect(readdirSync(dirname(path)).filter((name) => name.includes('.staging-'))).toEqual([]);
   });
 

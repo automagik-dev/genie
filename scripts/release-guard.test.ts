@@ -664,3 +664,121 @@ describe('check-trusted-release (main control + source provenance)', () => {
     ).toBe(3);
   });
 });
+
+// --- control CI lookup: listing miss -> direct head_sha confirmation --------
+// Regression owner for the 2026-09-18 incident (Version run 35362976343): the
+// paginated successful-main-CI listing omitted main's tip run, the guard
+// failed closed, and v5.260918.5 became an orphan tag that no re-run can
+// republish. The direct head_sha read confirms the SAME predicate.
+
+const CONTROL_RUN_RECORD = {
+  repository: { full_name: 'automagik-dev/genie' },
+  path: '.github/workflows/ci.yml',
+  status: 'completed',
+  conclusion: 'success',
+  event: 'push',
+  head_branch: 'main',
+  head_sha: TRUSTED_CONTROL_SHA,
+};
+
+/** Fake `gh` that records its argv per call and replays a fixed runs payload. */
+function ghRunsShim(root: string, runs: Record<string, unknown>[]): { dir: string; argv: string; calls: string } {
+  const dir = join(root, 'bin');
+  mkdirSync(dir, { recursive: true });
+  const argv = join(root, 'argv');
+  const calls = join(root, 'calls');
+  writeFileSync(argv, '');
+  writeFileSync(calls, '0');
+  const ghPath = join(dir, 'gh');
+  writeFileSync(
+    ghPath,
+    `#!/usr/bin/env bun\nimport { appendFileSync, readFileSync, writeFileSync, writeSync } from 'node:fs';\nappendFileSync(${JSON.stringify(
+      argv,
+    )}, process.argv.slice(2).join(' ') + '\\n');\nwriteFileSync(${JSON.stringify(
+      calls,
+    )}, String(Number(readFileSync(${JSON.stringify(
+      calls,
+    )}, 'utf8')) + 1));\nwriteSync(1, JSON.stringify({ workflow_runs: ${JSON.stringify(runs)} }));\nprocess.exit(0);\n`,
+  );
+  chmodSync(ghPath, 0o755);
+  return { dir, argv, calls };
+}
+
+describe('check-trusted-release (control CI head_sha fallback)', () => {
+  test('confirms the control ancestor by head_sha when the listing misses it', () => {
+    const root = mkroot('genie-control-headsha-hit-');
+    const shim = ghRunsShim(root, [CONTROL_RUN_RECORD]);
+    const result = guard(
+      'check-trusted-release',
+      {
+        ...TRUSTED_ENV,
+        CONTROL_HEAD_SHA_LOOKUP: 'true',
+        CONTROL_HEAD_SHA_RETRY_SLEEP: '0',
+        PATH: `${shim.dir}:${process.env.PATH ?? ''}`,
+      },
+      [trustedRunFile(root), controlRunsFile(root, false)],
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain('confirmed by head_sha lookup');
+    expect(readFileSync(shim.argv, 'utf8')).toContain(`head_sha=${TRUSTED_CONTROL_SHA}`);
+    expect(readFileSync(shim.calls, 'utf8')).toBe('1');
+  });
+
+  test('fails closed when the listing and the head_sha lookup both miss', () => {
+    const root = mkroot('genie-control-headsha-miss-');
+    const shim = ghRunsShim(root, []);
+    const result = guard(
+      'check-trusted-release',
+      {
+        ...TRUSTED_ENV,
+        CONTROL_HEAD_SHA_LOOKUP: 'true',
+        CONTROL_HEAD_SHA_RETRY_SLEEP: '0',
+        PATH: `${shim.dir}:${process.env.PATH ?? ''}`,
+      },
+      [trustedRunFile(root), controlRunsFile(root, false)],
+    );
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      `trusted main control ancestor ${TRUSTED_CONTROL_SHA} has no successful CI push run`,
+    );
+    // Bounded: the direct lookup is retried exactly once before failing.
+    expect(readFileSync(shim.calls, 'utf8')).toBe('2');
+  });
+
+  test('never widens the predicate: a failed or non-main head_sha run still fails', () => {
+    for (const override of [{ conclusion: 'failure' }, { head_branch: 'dev' }, { status: 'in_progress' }]) {
+      const root = mkroot('genie-control-headsha-narrow-');
+      const shim = ghRunsShim(root, [{ ...CONTROL_RUN_RECORD, ...override }]);
+      const result = guard(
+        'check-trusted-release',
+        {
+          ...TRUSTED_ENV,
+          CONTROL_HEAD_SHA_LOOKUP: 'true',
+          CONTROL_HEAD_SHA_RETRY_SLEEP: '0',
+          PATH: `${shim.dir}:${process.env.PATH ?? ''}`,
+        },
+        [trustedRunFile(root), controlRunsFile(root, false)],
+      );
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr.toString()).toContain('has no successful CI push run');
+    }
+  });
+
+  test('a listing hit still satisfies the check without any direct lookup', () => {
+    const root = mkroot('genie-control-listing-hit-');
+    const shim = ghRunsShim(root, [CONTROL_RUN_RECORD]);
+    const result = guard(
+      'check-trusted-release',
+      {
+        ...TRUSTED_ENV,
+        CONTROL_HEAD_SHA_LOOKUP: 'true',
+        CONTROL_HEAD_SHA_RETRY_SLEEP: '0',
+        PATH: `${shim.dir}:${process.env.PATH ?? ''}`,
+      },
+      [trustedRunFile(root), controlRunsFile(root)],
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain('confirmed by listing lookup');
+    expect(readFileSync(shim.calls, 'utf8')).toBe('0');
+  });
+});

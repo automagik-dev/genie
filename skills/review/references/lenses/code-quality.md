@@ -9,6 +9,7 @@ The type system is the cheapest reviewer on the team: quality is how much correc
 - Escape hatches at boundaries versus in the interior: a hatch at a runtime-validated system boundary (user input, external API) is correct; an interior hole where the compiler was silenced without runtime backing is a finding.
 - Existing hotspot ledgers or baseline files; new violations are drift against them, not discoveries.
 - Duplication with at least two cited sites and one proposed home, respecting documented deliberate non-sharing.
+- Before recommending a removal, an inventory of what the apparent overhead protects: authorization, validation at trust boundaries, transactions, retries, timeouts, concurrency, compatibility, diagnostics, and accessibility each justify an abstraction that reads as redundant from one call site. A construct whose purpose you could not establish from the code or its history is a low-confidence finding, not a removal recommendation.
 
 ## Traps
 
@@ -17,5 +18,7 @@ The type system is the cheapest reviewer on the team: quality is how much correc
 - Proposing the shared-utils layer the repo's docs forbid between deliberately parallel modules.
 - Flagging test files without checking the lint overrides that relax rules there.
 - Saying "gates pass" from memory or documentation.
+- Arguing quality from the size of a diff. A shorter diff is not evidence of performance, correctness, or saved maintenance; the finding has to name what the current shape costs the next reader.
+- Reading `set -e` as fail-closed in a shell gate. A Bash function reached from `if`, `||`, `&&`, or `!` runs with errexit disabled and continues past a failed step, so a script that must fail closed checks each command's status explicitly on that path.
 
 Rank gate failures first, then interior type holes by blast radius, then ledger drift, then duplication; distinguish "gate is red" (fact) from "discipline is eroding" (trend with examples).

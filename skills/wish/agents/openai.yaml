@@ -1,4 +1,4 @@
 interface:
   display_name: "Wish"
-  short_description: "Plan scoped work with criteria and review"
-  default_prompt: "Turn this request into a wish using the bundled template, current design evidence, dependency-ordered groups, validation, and independent plan review."
+  short_description: "Deliver one task end to end, or plan a multi-group wish"
+  default_prompt: "Deliver this task end to end through the wish workflow — admit, work, gate, review, repair, merge-ready PR — or, when it is bigger than one task, plan it as a multi-group wish from the bundled template."

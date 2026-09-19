@@ -40,6 +40,7 @@ import {
   writeSkillsInstallRecord,
 } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
+import type { WorkflowsChannelConvergenceResult } from '../../lib/workflows-installer.js';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
 import {
   DeliveryPublicationError,
@@ -61,6 +62,7 @@ import {
   hashPhysicalFileIncrementally,
   isGenieProcessSnapshotLine,
   isGhUnavailable,
+  manifestApiUrlForChannel,
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
@@ -91,6 +93,14 @@ import {
  * `src/lib/skills-installer.test.ts`.
  */
 const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
+
+/**
+ * And this: the production default writes the operator's real
+ * `~/.claude/workflows`. Group 2's own behavior lives in
+ * `src/lib/workflows-installer.test.ts`; every convergence test here injects the
+ * seam so no unit test can touch a real product home.
+ */
+const noWorkflowsChannel = (): WorkflowsChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -976,9 +986,9 @@ describe('resolveChannel + persistChannel — config preservation (BUG A)', () =
   });
 
   test('schema-invalid-but-parseable config keeps its channel on resolve and is NOT clobbered on persist', async () => {
-    // omni present but missing its required apiUrl → the full schema rejects this,
+    // A budget past its schema `.max()` ceiling → the full schema rejects this,
     // but the file is valid JSON, so the channel is still recoverable.
-    const invalid = { updateChannel: 'dev', setupComplete: true, omni: { instance: 'x' } };
+    const invalid = { updateChannel: 'dev', setupComplete: true, budgets: { maxEscalationsPerGroup: 99 } };
     writeFileSync(configPath, JSON.stringify(invalid, null, 2), 'utf-8');
 
     // resolve: recovers 'dev' from the raw key rather than silently → stable.
@@ -990,7 +1000,7 @@ describe('resolveChannel + persistChannel — config preservation (BUG A)', () =
     const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
     expect(saved.updateChannel).toBe('dev');
     expect(saved.setupComplete).toBe(true); // NOT reset to the default (false)
-    expect(saved.omni).toEqual({ instance: 'x' }); // NOT dropped
+    expect(saved.budgets).toEqual({ maxEscalationsPerGroup: 99 }); // NOT dropped
   });
 
   test('unparseable config → advisory + no write on persist, stated stable fallback on resolve', async () => {
@@ -1038,6 +1048,121 @@ describe('fetchLatestManifest (G5)', () => {
       manifestBytes: raw,
       manifestSha256: createHash('sha256').update(raw).digest('hex'),
     });
+  });
+
+  // Issue #2947: raw.githubusercontent.com caches independently of the repository,
+  // so for minutes after a release publishes it still serves the PREVIOUS manifest.
+  // Both sources are read and the newer answer wins, so the stale copy cannot
+  // decide the update. `by` lets a case answer differently per source.
+  const manifestJson = (version: string): string =>
+    JSON.stringify({
+      ...validManifest,
+      version,
+      manifestBytes: undefined,
+      manifestSha256: undefined,
+    });
+  const bySource =
+    (cdn: string | null, api: string | null) =>
+    async (url: string): Promise<string | null> =>
+      url.startsWith('https://api.github.com/') ? api : cdn;
+
+  test('the API answer wins while the CDN copy is still stale', async () => {
+    const fresh = manifestJson('4.260509.6');
+    const manifest = await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), fresh),
+    });
+    expect(manifest?.version).toBe('4.260509.6');
+    // The digest must describe the bytes that won, not the ones that lost.
+    expect(manifest?.manifestBytes).toBe(fresh);
+    expect(manifest?.manifestSha256).toBe(createHash('sha256').update(fresh).digest('hex'));
+  });
+
+  test('the CDN answer is kept when it is the newer one, and on a tie', async () => {
+    const ahead = await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.7'), manifestJson('4.260509.6')),
+    });
+    expect(ahead?.version).toBe('4.260509.7');
+    const cdnBytes = manifestJson('4.260509.5');
+    const tie = await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, manifestJson('4.260509.5')) });
+    expect(tie?.manifestBytes).toBe(cdnBytes);
+  });
+
+  test('either source alone still answers', async () => {
+    const cdnOnly = await fetchLatestManifest('stable', { fetcher: bySource(manifestJson('4.260509.5'), null) });
+    expect(cdnOnly?.version).toBe('4.260509.5');
+    const apiOnly = await fetchLatestManifest('stable', { fetcher: bySource(null, manifestJson('4.260509.6')) });
+    expect(apiOnly?.version).toBe('4.260509.6');
+    const neither = await fetchLatestManifest('stable', { fetcher: bySource('<html>', 'nope') });
+    expect(neither).toBeNull();
+  });
+
+  test('a JSON envelope from the API cannot displace the CDN answer', () => {
+    // What the contents API returns WITHOUT the raw Accept header. Its bytes are not the
+    // manifest's, so if it ever won, manifestSha256 would describe the envelope.
+    const envelope = JSON.stringify({
+      name: 'latest.json',
+      path: '.well-known/latest.json',
+      sha: 'd015d2a4',
+      size: 312,
+      type: 'file',
+      content: Buffer.from(manifestJson('9.260918.9')).toString('base64'),
+      encoding: 'base64',
+    });
+    const cdnBytes = manifestJson('4.260509.5');
+    return fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, envelope) }).then((manifest) => {
+      expect(manifest?.version).toBe('4.260509.5');
+      expect(manifest?.manifestBytes).toBe(cdnBytes);
+    });
+  });
+
+  test('an API error body cannot displace the CDN answer', async () => {
+    const rateLimited = JSON.stringify({
+      message: 'API rate limit exceeded for 203.0.113.7.',
+      documentation_url: 'https://docs.github.com/rest/overview/rate-limits',
+      status: '403',
+    });
+    const cdnBytes = manifestJson('4.260509.5');
+    const manifest = await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, rateLimited) });
+    expect(manifest?.manifestBytes).toBe(cdnBytes);
+    // And the operator is told, because a silent rate limit is the #2947 symptom again.
+    const notes: string[] = [];
+    await fetchLatestManifest('stable', { fetcher: bySource(cdnBytes, rateLimited), onNote: (m) => notes.push(m) });
+    expect(notes.join(' ')).toContain('api.github.com did not answer');
+  });
+
+  test('a disagreement is reported with both versions, and agreement is silent', async () => {
+    const notes: string[] = [];
+    const note = (m: string) => notes.push(m);
+    await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), manifestJson('4.260509.6')),
+      onNote: note,
+    });
+    expect(notes[0]).toContain('api.github.com has 4.260509.6');
+    expect(notes[0]).toContain('still at 4.260509.5');
+    notes.length = 0;
+    await fetchLatestManifest('stable', {
+      fetcher: bySource(manifestJson('4.260509.5'), manifestJson('4.260509.5')),
+      onNote: note,
+    });
+    expect(notes).toEqual([]);
+  });
+
+  test('the API URL names the same file on main, and the fetcher asks for its raw bytes', () => {
+    expect(manifestApiUrlForChannel('stable')).toBe(
+      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/latest.json?ref=main',
+    );
+    expect(manifestApiUrlForChannel('dev')).toBe(
+      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/dev.json?ref=main',
+    );
+    // Without the raw Accept header the API answers with a JSON envelope whose
+    // digest is not the manifest's, which would break the byte binding above.
+    const body = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
+    const fetcherStart = body.indexOf('async function defaultManifestFetcher');
+    expect(fetcherStart).toBeGreaterThan(-1);
+    const afterStart = body.slice(fetcherStart);
+    const fetcherBody = afterStart.slice(0, afterStart.indexOf('\ninterface '));
+    expect(fetcherBody).toContain("'Accept: application/vnd.github.raw'");
+    expect(fetcherBody).toContain('url.startsWith(`${API_BASE_URL}/`)');
   });
 
   test('returns null when fetcher resolves null (network failure)', async () => {
@@ -1176,6 +1301,14 @@ describe('private external update staging', () => {
 
 const HOST_PLATFORM_ID =
   process.platform === 'darwin' ? 'darwin-arm64' : process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64-glibc';
+
+/**
+ * A platform id that is never this host's. The "signed for another platform"
+ * case must stay foreign wherever the suite runs: a hardcoded `darwin-arm64`
+ * silently became the HOST id on macOS, so the descriptor verified and the
+ * assertion that it must be rejected failed there (#2926).
+ */
+const FOREIGN_PLATFORM_ID = HOST_PLATFORM_ID === 'darwin-arm64' ? 'linux-x64-glibc' : 'darwin-arm64';
 
 /** Signature-math seam only — never a binding seam. */
 const EVIDENCE_SEAM = { verifyBundle: () => ({ integratedTime: '1758000000' }) };
@@ -1570,7 +1703,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
     ],
     [
       'the signed release name is for another platform',
-      { descriptor: { releaseName: 'genie-5.260916.1-darwin-arm64.tar.gz' } },
+      { descriptor: { releaseName: `genie-5.260916.1-${FOREIGN_PLATFORM_ID}.tar.gz` } },
       /releaseName is invalid/,
     ],
   ])('aborts when %s, without a credential to hide behind', async (_label, overrides, expected) => {
@@ -2303,6 +2436,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
   test('runs the canonical convergence APIs and returns the structured channel outcome', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: '5.260711.3',
       runSkills: (selection) => {
         calls.push(`parent-skills:${selection}`);
@@ -2315,13 +2449,35 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     });
     expect(calls[0]).toBe('parent-skills:all');
     expect(result.skills).toEqual({ status: 'skipped', reason: 'test fixture' });
+    // The workflows channel is a leg of its own, so a caller can give a failed
+    // workflows install the same exit precedence a failed skills install gets.
+    expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
     expect(result.retirement).toBeNull();
+  });
+
+  test('a failed workflows install reaches the exit code, exactly as a failed skills install does', () => {
+    const savedExitCode = process.exitCode;
+    try {
+      const result = runManualUpdateConvergence({
+        runWorkflows: () => ({ status: 'failed', warnings: [] }),
+        expectedVersion: '5.260711.3',
+        selection: 'all',
+        runSkills: noSkillsChannel,
+        log: () => {},
+      });
+      expect(result.workflows).toEqual({ status: 'failed', warnings: [] });
+      applyConvergenceExitSignal(result);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = savedExitCode ?? 0;
+    }
   });
 
   test('the skills-channel outcome is surfaced, never discarded, so exit 1 survives action-required', () => {
     const savedExitCode = process.exitCode;
     try {
       const result = runManualUpdateConvergence({
+        runWorkflows: noWorkflowsChannel,
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
@@ -2343,15 +2499,23 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     for (const selection of ['codex', 'auto', 'all', 'claude'] as const) {
       expect(
         runManualUpdateConvergence({
+          runWorkflows: noWorkflowsChannel,
           expectedVersion: VERSION,
           selection,
           runSkills: noSkillsChannel,
           log: () => {},
         }),
-      ).toEqual({ skills: { status: 'skipped', reason: 'test fixture' }, retirement: null });
+      ).toEqual({
+        skills: { status: 'skipped', reason: 'test fixture' },
+        workflows: { status: 'skipped', warnings: [] },
+        retirement: null,
+      });
     }
+    // Consent `none` reaches NO channel: the workflows leg is null too, and the
+    // production default is never invoked, so nothing can touch `~/.claude`.
     expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
       skills: null,
+      workflows: null,
       retirement: null,
     });
 
@@ -2516,6 +2680,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {
     const calls: string[] = [];
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'all',
       runSkills: (selection) => {
@@ -2533,10 +2698,51 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     expect(calls).toEqual(['skills:all']);
   });
 
+  test('the convergence runs skills, then the plugin-era retirement, then the workflows channel', () => {
+    // The ordering is load-bearing and was pinned by nothing: the plugin-era
+    // retirement owns `~/.claude/workflows/council.js` and its `.genie-sync.json`
+    // sidecar, so the workflows channel must not install over that file before
+    // the retirement has proven and archived it. Retirement marks its own
+    // position through the `integrations: ` prefix it emits.
+    const steps: string[] = [];
+    const result = runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: () => {
+        steps.push('skills');
+        return {
+          status: 'installed',
+          record: {
+            ref: releaseTag(VERSION),
+            cliVersion: SKILLS_CLI_VERSION,
+            inventory: ['alpha'],
+            agentDirs: [],
+            installedAt: new Date('2026-09-18T00:00:00.000Z').toISOString(),
+          },
+        };
+      },
+      runWorkflows: () => {
+        steps.push('workflows');
+        return { status: 'skipped', warnings: [] };
+      },
+      retirementHomes: {
+        home: mkdtempSync(join(tmpdir(), 'genie-converge-order3-home-')),
+        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order3-genie-')),
+      },
+      log: (line) => {
+        if (line.startsWith('integrations: ') && !steps.includes('retirement')) steps.push('retirement');
+      },
+    });
+    expect(steps).toEqual(['skills', 'retirement', 'workflows']);
+    expect(result.retirement).not.toBeNull();
+    expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
+  });
+
   test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
     const seen: string[] = [];
     for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {
       runManualUpdateConvergence({
+        runWorkflows: noWorkflowsChannel,
         expectedVersion: VERSION,
         selection,
         runSkills: (received) => {
@@ -2552,6 +2758,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('consent none skips the channel with the rest of the convergence', () => {
     let skills = 0;
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'none',
       runSkills: () => {
@@ -2566,6 +2773,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('the channel logs through the convergence emitter', () => {
     const lines: string[] = [];
     runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'claude',
       runSkills: (_selection, emit) => {
@@ -2580,6 +2788,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
   test('a skills failure never aborts the convergence — the promoted binary stays committed', () => {
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: VERSION,
       selection: 'all',
       runSkills: () => {
@@ -2962,6 +3171,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
   } {
     const lines: string[] = [];
     const result = runManualUpdateConvergence({
+      runWorkflows: noWorkflowsChannel,
       expectedVersion: '9.9.9',
       selection: 'all',
       runSkills: () => skills,
@@ -3067,7 +3277,10 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
 
     const second = converge(fixture, installedSkills());
     expect(second.retirement?.removed).toEqual([]);
-    expect(second.lines).toContain('nothing to retire');
+    // Scoped: the skills channel owns the `skills:` lines in this same transcript, and an
+    // unqualified `nothing to retire` read as a verdict on those too (issue #2927).
+    expect(second.lines).toContain('integrations: nothing to retire');
+    expect(second.lines).not.toContain('nothing to retire');
     expect(treeHash(fixture.home)).toBe(afterFirst);
   });
 
@@ -3077,7 +3290,7 @@ describe('runManualUpdateConvergence — plugin-era retirement runs last, behind
 
     const run = converge(fixture, { status: 'failed', reason: 'skills CLI exited 1: boom' });
     expect(run.retirement).toBeNull();
-    expect(run.lines).not.toContain('nothing to retire');
+    expect(run.lines).not.toContain('integrations: nothing to retire');
 
     // Nothing was retired: every plugin-era asset is still exactly where it was.
     expect(readFileSync(join(fixture.codexHome, 'config.toml'), 'utf8')).toContain('[plugins."genie@automagik"]');

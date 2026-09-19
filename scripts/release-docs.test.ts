@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { SEEDED_AGENTS } from './mikro/init';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -16,13 +17,13 @@ const SHIPPED_SKILLS = [
   'authoring',
   'brainstorm',
   'council',
+  'deslop',
   'docs',
   'dream',
   'fix',
   'genie',
   'genie-hacks',
   'merge',
-  'omni',
   'quick',
   'refine',
   'report',
@@ -513,6 +514,13 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/build-binary.sh'",
       "'scripts/json-top-level-string.js'",
       "'scripts/orca-bundle-parity.ts'",
+      // The mikro runtime ships inside the binary and its default agents are
+      // staged into templates/: both are release-payload inputs like any other.
+      "'scripts/mikro/**'",
+      "'.mikro/agents/**'",
+      // The workflow catalog is staged into templates/ and delivered to
+      // ~/.claude/workflows by the workflows channel.
+      "'.claude/workflows/**'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
@@ -524,6 +532,58 @@ describe('Group E release and documentation contracts', () => {
     expect(workflow).toContain('agents/openai.yaml');
     expect(buildHelperInputs()).toContain('scripts/skills-lint.ts');
     for (const helper of buildHelperInputs()) expect(workflow).toContain(`- '${helper}'`);
+  });
+
+  test('the default mikro agents ship inside templates/, from the one tracked copy', () => {
+    // Decision 3 of `global-workflows-local-mikro`: the tarball's top-level member
+    // set is frozen (the 5.260901.1 incident), and `templates/` already converges to
+    // <GENIE_HOME>/templates on install and update — so the shipped agents are staged
+    // INTO it rather than added as a ninth member or duplicated in the repository.
+    const script = read('scripts/build-binary.sh');
+    expect(script).toContain('${STAGE}/templates/mikro/agents/${agent}');
+    // `mikro-coach` ships too, and is deliberately NOT one of the agents `genie mikro
+    // init` seeds: it is the TOOL a coaching round runs, so `genie mikro coach` has to
+    // resolve it on a host whose repository never carried it, while a repository
+    // specializes only the two workers. The two lists are pinned against each other
+    // here so neither can drift alone.
+    expect(script).toContain('SHIPPED_AGENTS=(wish-context review-prep mikro-coach)');
+    const shipped = ['wish-context', 'review-prep', 'mikro-coach'];
+    for (const agent of shipped) {
+      expect(script).toContain(`"templates/mikro/agents/${agent}/agent.yaml"`);
+      expect(script).toContain(`"templates/mikro/agents/${agent}/SYSTEM.md"`);
+      for (const file of ['agent.yaml', 'SYSTEM.md']) {
+        expect(existsSync(join(ROOT, '.mikro', 'agents', agent, file))).toBe(true);
+        // Nothing staged under templates/ may be a symlink or a special file.
+        expect(lstatSync(join(ROOT, '.mikro', 'agents', agent, file)).isFile()).toBe(true);
+      }
+    }
+    expect([...SEEDED_AGENTS].every((agent) => shipped.includes(agent))).toBe(true);
+    expect([...SEEDED_AGENTS]).not.toContain('mikro-coach');
+  });
+
+  test('the workflow catalog ships whole inside templates/, .js only', () => {
+    // Decisions 3 and 13 of `global-workflows-local-mikro`: the catalog rides the
+    // frozen `templates/` member (no ninth top-level member, no second tracked
+    // copy), and it ships WHOLE — a filter would be a second list to keep in
+    // parity, and a workflow with no front-door skill is still invocable by path.
+    const script = read('scripts/build-binary.sh');
+    expect(script).toContain('WORKFLOW_SOURCE="${REPO_ROOT}/.claude/workflows"');
+    expect(script).toContain('"${STAGE}/templates/workflows/$(basename "${workflow}")"');
+    expect(script).toContain('no workflow catalog files found under');
+    expect(script).toContain('"templates/workflows/wish.js"');
+    expect(script).toContain('"templates/workflows/council.js"');
+
+    const catalog = readdirSync(join(ROOT, '.claude', 'workflows'));
+    const delivered = catalog.filter((name) => name.endsWith('.js'));
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(delivered).toContain('wish.js');
+    // The README is documentation, never a delivered workflow: the staging glob
+    // is `*.js`, so it cannot reach `~/.claude/workflows`.
+    expect(catalog).toContain('README.md');
+    // Nothing staged under templates/ may be a symlink or a special file.
+    for (const name of delivered) {
+      expect(lstatSync(join(ROOT, '.claude', 'workflows', name)).isFile()).toBe(true);
+    }
   });
 
   test('every native release-binary smoke proves the hidden installer transaction syscall', () => {
@@ -757,7 +817,13 @@ describe('Group E release and documentation contracts', () => {
         .sort(),
     ).toEqual(['lint:complexity-budget', 'lint:docs-links', 'lint:docs-markdown', 'lint:fix', 'lint:orca-bundle']);
     expect(Object.keys(pkg.scripts).some((name) => name.startsWith('hooks:'))).toBe(false);
-    const workflowGates = [...workflow.matchAll(/^ +run: bun run (\S+)$/gm)].map((match) => match[1]).sort();
+    // DISTINCT gates: the workflow runs the platform-dependent third of the
+    // gate twice, once per OS (`unit` on linux, `unit-darwin` on macOS, #2926),
+    // so `build` and `typecheck` legitimately appear more than once. What must
+    // not drift is WHICH gates CI runs, not how many runners run them.
+    const workflowGates = [
+      ...new Set([...workflow.matchAll(/^ +run: bun run (\S+)$/gm)].map((match) => match[1] as string)),
+    ].sort();
     expect(workflowGates).toEqual([
       'build',
       'lint:complexity-budget',
@@ -960,23 +1026,26 @@ describe('Group E release and documentation contracts', () => {
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
-  test('ships quick as the bounded fast path and no longer distributes pm', () => {
+  test('ships wish as the one-task delivery front door, quick as a deprecation stub, and no pm', () => {
+    const wish = read('skills/wish/SKILL.md');
     const quick = read('skills/quick/SKILL.md');
     const router = read('skills/genie/SKILL.md');
     const lifecycle = read('skills/genie/reference/lifecycle.md');
     const overview = read('skills/README.md');
     const skillNames = skillDirectories('SKILL.md');
 
-    expect(quick).toContain('request → deployed-dev read-back within 60 minutes');
-    expect(quick).toContain('existing merge authority');
-    expect(quick).toContain('quick-missed');
+    expect(wish).toContain('.claude/workflows/wish.js');
+    expect(wish).toContain('`merge-ready`');
+    expect(wish).toContain('The workflow never deletes a worktree or a branch.');
+    expect(quick).toContain('Retired: `quick` is superseded by `wish`');
+    expect(quick).not.toContain('60 minutes');
     expect(skillNames).toContain('quick');
     expect(skillNames).not.toContain('pm');
-    expect(router).toContain('"quick"');
+    expect(router).toContain('| `wish` or `dream` |');
     expect(router).not.toContain('"pm"');
-    expect(lifecycle).toContain('`quick`');
+    expect(lifecycle).toContain('`wish` delivers one admitted task');
     expect(lifecycle).not.toContain('| `pm` |');
-    expect(overview).toContain('`quick`');
+    expect(overview).toContain('| `quick` | delivery | none | Retired');
     expect(overview).not.toContain('`pm`');
   });
 
@@ -1096,10 +1165,7 @@ describe('Group E release and documentation contracts', () => {
     expect(lint).toContain('designReviewViolations');
   });
 
-  test('Omni and MCP operator instructions expose provider and project-route ownership policy', () => {
-    const omni = read('skills/omni/SKILL.md');
-    expect(omni).toContain('{instance, chat, repo, agent, persona?}');
-    expect(omni).toContain('"agent": "codex"');
+  test('MCP operator instructions expose project-route ownership policy', () => {
     const readme = read('README.md');
     expect(readme).toContain('registrations proven to be Genie-owned');
     expect(readme).toContain('unowned same-name routes');

@@ -17,12 +17,13 @@ import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
+// One-way, deliberate: the per-repo database asks the GENIE_HOME path module
+// where the machine-scope file lives so it can REFUSE to be that file. v6 ships
+// no machine-scope database — the Omni runner owned every table it held — but
+// the refusal outlives it, because a host contaminated before the rule landed
+// still carries the file and both databases stamp `user_version = 1`.
+import { resolveGlobalDbPath } from '../genie-home.js';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
-// One-way, deliberate: the per-repo database asks the global module where the
-// machine-scope file lives so it can REFUSE to be that file. global-db.ts still
-// imports nothing from here, so the "never cross-import" rule keeps its
-// direction and the two path rules can never drift apart.
-import { resolveGlobalDbPath } from './global-db.js';
 import { GenieDbError, openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
@@ -396,17 +397,18 @@ export function resolveProjectContext(cwd: string = process.cwd()): ProjectConte
 // ============================================================================
 
 const GLOBAL_DB_REFUSAL = [
-  'that file is GENIE_HOME/genie.db (the Omni approval queue and inbox), and the per-repo',
+  'that file is GENIE_HOME/genie.db (the machine-scope database), and the per-repo',
   'task/board schema must never be written into it. Run the command from inside a repository,',
   "or point GENIE_HOME at a directory that is not this repo's .genie/.",
 ].join(' ');
 
 /**
  * The resolved path names the machine-scope `<GENIE_HOME>/genie.db`, so opening
- * it here would write the 9-table per-repo schema into the Omni approval-queue
- * database. The two databases are separate files with independent
- * `PRAGMA user_version`; merging them means a future per-repo migration runs
- * against — or silently skips — the approval queue.
+ * it here would write the 9-table per-repo schema into a machine-scope file.
+ * v6 ships nothing into that path — the Omni runner owned every table it ever
+ * held — but the refusal outlives the feature: an older host still carries the
+ * file, both databases stamp `user_version = 1`, and a future per-repo
+ * migration must never be able to run against — or silently skip — it.
  */
 export class GlobalDbPathError extends GenieDbError {
   readonly path: string;

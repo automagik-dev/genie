@@ -1,0 +1,23 @@
+# review-prep — one pull request → what an independent reviewer must read and verify, cited.
+# Runs before the (expensive) reviewer: for every changed file the tests that pin it,
+# the CLAUDE.md gotchas that name it, whether it is a trust-boundary path, the wish
+# it belongs to; plus the PR body's claims turned into verifiable checks and risk flags.
+# Runs only through `mikro mcp`; genie calls it with
+# `bun scripts/mikro/call.ts review-prep --prompt "Prepare the review of PR #<n>"` — or, inside the wish
+# workflow before any PR exists, `--dir <worktree> --prompt "Prepare the review of commit <sha> against origin/<base>"`.
+schema_version: 1
+tools_api: 1
+shape: loop
+model: deepseek-api/deepseek-flash
+thinking: low
+description: >-
+  Prepares the independent review of one pull request of this repository: per
+  changed file the pinning tests, the CLAUDE.md gotchas, the trust-boundary flag
+  and the owning wish; the PR body's claims as verifiable checks with evidence;
+  risk flags — every citation verified in its own REPL. Prompt:
+  "Prepare the review of PR #<number>" or "Prepare the review of commit <sha> against <base>".
+system: SYSTEM.md
+budget:
+  max_iterations: 14
+  max_cost: 0.30
+  max_depth: 0

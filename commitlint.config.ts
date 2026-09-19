@@ -97,5 +97,14 @@ export default {
         'merge: group-5 slim native surface + skills cleanup + version align (review SHIP)',
         'merge: group-6 smoke/dogfood gate + changelog (review SHIP)',
       ].includes(message.split('\n')[0]),
+    // Historical exception: one docs(workflows) commit (586e5fd0a) landed on
+    // dev with a subject that opens on the run label "R2 Task-lane", which
+    // subject-case reads as start-case. It passed the push-range lint because
+    // it arrived inside a merge, and now fails the rolling dev→main promotion,
+    // whose range replays every dev commit. Rewriting dev is off the table.
+    // Matching is pinned to the exact full subject. Do NOT open a subject on
+    // an uppercase label — write "r2 task-lane pair" or lead with a verb.
+    (message: string) =>
+      message.split('\n')[0] === 'docs(workflows): R2 Task-lane pair on #2919 — offload arm 8.32 vs control 9.77',
   ],
 };

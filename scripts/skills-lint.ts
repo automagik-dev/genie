@@ -2,8 +2,9 @@
 /**
  * skills-lint validates both the command surface and the shipped Codex skill
  * contract: strict SKILL.md frontmatter, matching agents/openai.yaml metadata,
- * skill-relative resources, real `genie` / `omni` commands, the retired-role
- * vocabulary ban, and the skills.sh directory shape.
+ * skill-relative resources, real `genie` commands, the retired-role
+ * vocabulary ban, the 40–90 line house size, the hazard/residue ban, and the
+ * skills.sh directory shape.
  *
  * Frontmatter carries two OPTIONAL closed-enum keys beyond name/description:
  * `category` (the catalog taxonomy) and `mutates`. `mutates` is ADVISORY
@@ -18,7 +19,7 @@
  * skippable (see BANNED_TOKEN_GUIDANCE).
  */
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import {
@@ -188,40 +189,6 @@ export function getGenieCommands(root: string = ROOT): Set<string> {
 }
 
 /**
- * Probe the omni CLI surface. Contract: a missing/broken omni binary is NOT a
- * lint failure by default — CI runners don't ship omni, so the probe degrades
- * to a loud stderr warning and returns null, and the caller skips ONLY the
- * omni-invocation checks (genie-command validation stays fully strict). Set
- * SKILLS_LINT_REQUIRE_OMNI=1 to restore the hard failure (exit 2) where omni
- * checks must be enforced. The old "never silently swallow" intent survives
- * as the warning + env knob — a skip is always visible in the output.
- */
-function getOmniCommands(): Set<string> | null {
-  let out: string;
-  try {
-    out = execSync('omni --help --all 2>/dev/null || omni --help', { encoding: 'utf8' });
-  } catch (err) {
-    if (process.env.SKILLS_LINT_REQUIRE_OMNI === '1') {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`[skills-lint] failed to probe \`omni --help\`: ${detail}`);
-      console.error('[skills-lint] install the omni CLI or unset skills linting before running.');
-      process.exit(2);
-    }
-    console.error(
-      '[skills-lint] omni CLI not found — skipping omni-invocation validation (set SKILLS_LINT_REQUIRE_OMNI=1 to enforce)',
-    );
-    return null;
-  }
-  // omni uses section headers (Core:, Management:, System:); strip them.
-  const cmds = new Set<string>();
-  for (const line of out.split('\n')) {
-    const m = line.match(/^\s{4,}([a-z][a-z0-9:_-]*)\s{2,}/);
-    if (m) cmds.add(m[1]);
-  }
-  return cmds;
-}
-
-/**
  * Every file under `dir`, `.md` and non-`.md` alike. The vocabulary scan needs
  * the whole tree (Decision 10: `agents/openai.yaml` starter prompts are shipped
  * skill content); the command/resource/metadata checks stay markdown-only and
@@ -249,7 +216,7 @@ function extractBashFences(text: string): string[] {
   return fences;
 }
 
-function extractInvocations(fence: string, tool: 'genie' | 'omni'): string[] {
+function extractInvocations(fence: string, tool: 'genie'): string[] {
   const hits: string[] = [];
   // Match start of a command: "genie cmd" or "$ genie cmd" or "| genie cmd"
   const re = new RegExp(`(?:^|[;&|\\n\`$(])\\s*${tool}\\s+([a-z][a-z0-9:_-]*)`, 'g');
@@ -308,7 +275,14 @@ const ALLOWED_FRONTMATTER_KEYS = new Set(['name', 'description', 'category', 'mu
 const REPO_WRITE_PATTERNS: ReadonlyArray<readonly [label: string, pattern: RegExp]> = [
   ['git commit', /\bgit\s+commit\b/],
   ['git push', /\bgit\s+push\b/],
-  ['git merge', /\bgit\s+merge\b/],
+  // `\bgit\s+merge\b` also matched `git merge-base` and `git merge-tree`: `-`
+  // is a non-word character, so the word boundary sat happily between `merge`
+  // and the hyphen. Both siblings are read-only plumbing — `merge-base` prints
+  // an ancestor SHA, `merge-tree` computes a merge in memory and writes
+  // nothing — and `context`/`review` recipes call them to locate a base. They
+  // are exempted BY NAME, not by a blanket `merge-*` exemption, so a sibling
+  // that does write (`git merge-file` rewrites a worktree file) still fails.
+  ['git merge', /\bgit\s+merge(?!-(?:base|tree)\b)\b/],
   ['git rebase', /\bgit\s+rebase\b/],
   ['gh pr create', /\bgh\s+pr\s+create\b/],
   ['gh pr merge', /\bgh\s+pr\s+merge\b/],
@@ -324,9 +298,9 @@ const REPO_WRITE_PATTERNS: ReadonlyArray<readonly [label: string, pattern: RegEx
 
 /**
  * `>` / `>>` redirection into a path. Checked against a line whose `<...>`
- * placeholders have been stripped first — `omni connect <instance-id> <name>`
- * ends a placeholder with `> ` and is not a redirect. `2>&1` does not match
- * either: the target class holds no `&`.
+ * placeholders have been stripped first — `cmd <instance-id> <name>` ends a
+ * placeholder with `> ` and is not a redirect. `2>&1` does not match either:
+ * the target class holds no `&`.
  */
 const REDIRECT_PATTERN = /(?:^|\s)\d?>>?\s*["']?[A-Za-z0-9_.$~/-]/;
 const PLACEHOLDER_PATTERN = /<[^<>\n]*>/g;
@@ -340,11 +314,12 @@ export interface MutationViolation {
 }
 
 /**
- * Every repo-write command inside a ``` fence, with its 1-indexed line. Fence
- * language is irrelevant: a `text` fence showing `git push` is still a recipe.
+ * Walk `text` line by line, telling the visitor whether each line sits inside
+ * a ``` (or ~~~) fence. Fence lines themselves are never visited. One walker
+ * serves the mutates-none rule and the hazard rule below, so the two cannot
+ * disagree about what "inside a fence" means.
  */
-export function collectMutationViolations(text: string): MutationViolation[] {
-  const violations: MutationViolation[] = [];
+function eachContentLine(text: string, visit: (line: string, lineNumber: number, inFence: boolean) => void): void {
   const lines = text.split(/\r?\n/);
   let fence: string | null = null;
   for (let index = 0; index < lines.length; index += 1) {
@@ -356,9 +331,19 @@ export function collectMutationViolations(text: string): MutationViolation[] {
       else if (marker[0] === fence) fence = null;
       continue;
     }
-    if (fence === null) continue;
-    violations.push(...checkMutationLine(raw, index + 1));
+    visit(raw, index + 1, fence !== null);
   }
+}
+
+/**
+ * Every repo-write command inside a ``` fence, with its 1-indexed line. Fence
+ * language is irrelevant: a `text` fence showing `git push` is still a recipe.
+ */
+export function collectMutationViolations(text: string): MutationViolation[] {
+  const violations: MutationViolation[] = [];
+  eachContentLine(text, (line, lineNumber, inFence) => {
+    if (inFence) violations.push(...checkMutationLine(line, lineNumber));
+  });
   return violations;
 }
 
@@ -373,6 +358,277 @@ export function checkMutationLine(line: string, lineNumber = 1): MutationViolati
     hits.push({ command: '> redirection into a path', line: lineNumber, snippet });
   }
   return hits;
+}
+
+/**
+ * HOUSE SIZE — every shipped `skills/<name>/SKILL.md` stays between 40 and 90
+ * lines. Under the floor a "skill" is a stub that belongs inside whichever
+ * skill owns the workflow; over the ceiling it stops being loadable context
+ * and becomes a manual, and its on-demand half belongs in `references/`.
+ *
+ * Counted the way `wc -l` counts — newline-terminated lines — except that a
+ * file with no trailing newline also counts its last, unterminated line. One
+ * line of slack never decides a 40–90 window, and the stricter reading is the
+ * honest one for a file that is missing its final newline.
+ */
+export const SKILL_MIN_LINES = 40;
+export const SKILL_MAX_LINES = 90;
+
+export interface SkillSizeWaiver {
+  readonly min: number;
+  readonly max: number;
+  readonly reason: string;
+}
+
+/**
+ * The house-size waiver table: skill name → the window that ONE skill may
+ * occupy, and why. Two properties are deliberate:
+ *   - Every row carries a real ceiling, pinned to the file's current size. A
+ *     waiver that allowed "any size" would let the exception grow silently,
+ *     which is the failure the rule exists to catch.
+ *   - Every row carries the condition that retires it, so a stale waiver is
+ *     visible in review rather than permanent by default.
+ */
+export const SKILL_SIZE_WAIVERS: ReadonlyMap<string, SkillSizeWaiver> = new Map<string, SkillSizeWaiver>([
+  [
+    'quick',
+    {
+      min: 0,
+      max: 8,
+      // A deliberate retirement stub that points at the wish skill and is
+      // deleted after three measured runs. Ceiling 8 = its current size: the
+      // stub may shrink or disappear, and can never grow back into a skill.
+      reason: 'retirement stub, deleted after three measured runs — it may shrink, never grow',
+    },
+  ],
+]);
+
+export interface SkillSizeViolation {
+  skill: string;
+  lines: number;
+  detail: string;
+}
+
+/** `wc -l`, plus a final unterminated line when the file has no trailing newline. */
+export function countSkillLines(text: string): number {
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+}
+
+/** The house-size verdict for one shipped SKILL.md, or null when it fits. */
+export function checkSkillSize(skill: string, text: string): SkillSizeViolation | null {
+  const lines = countSkillLines(text);
+  const waiver = SKILL_SIZE_WAIVERS.get(skill) ?? null;
+  const min = waiver?.min ?? SKILL_MIN_LINES;
+  const max = waiver?.max ?? SKILL_MAX_LINES;
+  if (lines >= min && lines <= max) return null;
+  const window =
+    waiver === null
+      ? `house size ${SKILL_MIN_LINES}-${SKILL_MAX_LINES}`
+      : `waived window ${min}-${max}: ${waiver.reason}`;
+  const fix =
+    lines > max
+      ? `trim to ${max} line(s) or fewer — move the on-demand half into ${skill}/references/`
+      : `grow to at least ${min} line(s), or fold the workflow into the skill that owns it and delete the directory`;
+  return { skill, lines, detail: `${lines} lines — ${fix} (${window})` };
+}
+
+/**
+ * HAZARDS AND RESIDUE — patterns no shipped `.md` under skills/ may carry.
+ *
+ * Two scopes, because the same string means different things in different
+ * places:
+ *   - `fence` rules match only inside a ``` fence, on the same reasoning the
+ *     mutates-none rule uses: a fence is a runnable recipe that gets copied,
+ *     while prose (and prose-adjacent inline code) is where a skill documents
+ *     somebody else's command or forbids one outright. "Never run `git stash`
+ *     in a shared checkout" is the sentence we want skills to carry, so it
+ *     must not be the sentence that fails the gate.
+ *   - `file` rules match anywhere in the file, because the string is residue
+ *     with no legitimate use in shipped text at all — a foreign runtime name
+ *     or a foreign record id is wrong in prose exactly as it is in a fence.
+ *
+ * Every rule names the replacement, in the same shape as the retired-token
+ * vocabulary ban: the failure states the fix, not just the sin.
+ */
+export type HazardScope = 'fence' | 'file';
+
+export interface HazardRule {
+  readonly label: string;
+  readonly scope: HazardScope;
+  /** True when `subject` carries the hazard. */
+  readonly matches: (subject: string) => boolean;
+  readonly guidance: string;
+}
+
+/**
+ * An `npx` package argument is pinned when it carries an explicit `@version`
+ * suffix — a literal version or a documented `<version>` placeholder. A bare
+ * name, a bare `@scope/name`, and the moving tags (`@latest`, `@next`, `@*`)
+ * are all unpinned: they resolve to whatever the registry serves that minute.
+ */
+export function isPinnedNpxPackage(pkg: string): boolean {
+  const at = pkg.lastIndexOf('@');
+  if (at <= 0) return false;
+  const version = pkg.slice(at + 1);
+  return version !== '' && !['latest', 'next', '*'].includes(version);
+}
+
+/** The one unpinned invocation shipped skills already document, allowed verbatim. */
+const DOCUMENTED_NPX_INSTALL = /^skills\s+add\s+automagik-dev\/genie\b/;
+const NPX_INVOCATION = /\bnpx\s+(?:-{1,2}[A-Za-z][A-Za-z0-9-]*\s+)*([^\s'"`]+)([^\n]*)/g;
+
+/** True when `subject` runs `npx` on a package that is neither pinned nor the documented installer. */
+export function hasUnpinnedNpxInstaller(subject: string): boolean {
+  for (const match of subject.matchAll(NPX_INVOCATION)) {
+    const pkg = match[1] as string;
+    const rest = match[2] ?? '';
+    if (isPinnedNpxPackage(pkg)) continue;
+    if (DOCUMENTED_NPX_INSTALL.test(`${pkg}${rest}`)) continue;
+    return true;
+  }
+  return false;
+}
+
+const matcher =
+  (pattern: RegExp) =>
+  (subject: string): boolean =>
+    pattern.test(subject);
+
+export const HAZARD_RULES: readonly HazardRule[] = [
+  {
+    label: 'sudo',
+    scope: 'fence',
+    matches: matcher(/\bsudo\b/),
+    guidance: 'run as the invoking user; a skill never escalates to root on somebody else’s machine',
+  },
+  {
+    label: 'unpinned npx installer',
+    scope: 'fence',
+    matches: hasUnpinnedNpxInstaller,
+    guidance:
+      'pin the package (`npx -y skills@<version>`) or use the documented `npx skills add automagik-dev/genie` form',
+  },
+  {
+    label: 'pip install',
+    scope: 'fence',
+    matches: matcher(/\bpip3?\s+install\b/),
+    guidance: 'state the dependency as a prerequisite; a skill never installs packages into the host environment',
+  },
+  {
+    label: '--break-system-packages',
+    scope: 'fence',
+    matches: matcher(/--break-system-packages\b/),
+    guidance: 'state the prerequisite instead of overriding the host package manager’s protection',
+  },
+  {
+    label: 'curl with an Authorization header',
+    scope: 'fence',
+    matches: (subject) => /\bcurl\b/.test(subject) && /authorization\s*:/i.test(subject),
+    guidance: 'fetch public URLs only, or use the tool that owns the credential (`gh`); never hand a token to curl',
+  },
+  {
+    label: 'GITHUB_TOKEN',
+    scope: 'fence',
+    matches: matcher(/\bGITHUB_TOKEN\b/),
+    guidance: 'let `gh` resolve its own credential; a skill never reads a token out of the environment',
+  },
+  {
+    label: '.git-credentials',
+    scope: 'fence',
+    matches: matcher(/\.git-credentials\b/),
+    guidance: 'let git and `gh` resolve their own credentials; a skill never reads the credential store',
+  },
+  {
+    label: 'git stash',
+    scope: 'fence',
+    matches: matcher(/\bgit\s+stash\b/),
+    guidance: 'commit on a branch or leave the tree alone; `git stash` hides work the operator never handed over',
+  },
+  {
+    label: 'git add -A',
+    scope: 'fence',
+    // `git add <path>` is fine and stays fine: only the sweep-everything forms
+    // (-A, --all, -u, `.`) match, because those are what pull an unrelated
+    // worker's files into a commit in a shared checkout.
+    matches: matcher(/\bgit\s+add\s+(?:-A|--all|-u|\.)(?:\s|$)/),
+    guidance: 'stage by path — `git add -A` sweeps up files this skill never touched',
+  },
+  {
+    label: '--dangerously flag',
+    scope: 'fence',
+    matches: matcher(/--dangerously/),
+    guidance: 'earn the permission the ordinary way; a permission-bypass flag never ships in a skill',
+  },
+  {
+    label: 'SKIP_TRUST',
+    scope: 'file',
+    matches: matcher(/\bSKIP_TRUST/),
+    guidance: 'drop the foreign trust-bypass switch; Genie skills carry no such escape hatch',
+  },
+  {
+    label: 'Hermes',
+    scope: 'file',
+    matches: matcher(/\bhermes\b/i),
+    guidance: 'name the runtime-neutral role instead; shipped skill text names no vendor runtime',
+  },
+  {
+    label: 'brn_ identifier',
+    scope: 'file',
+    matches: matcher(/\bbrn_[A-Za-z0-9]/),
+    guidance: 'strip the foreign record id; shipped skill text carries no external identifier',
+  },
+];
+
+export interface HazardWaiver {
+  /** Path relative to the scanned skills dir, POSIX-separated. */
+  readonly file: string;
+  /** The `HazardRule.label` this one file may carry. */
+  readonly label: string;
+  readonly reason: string;
+}
+
+/**
+ * The hazard waiver table: one file, one rule, one reason. Pre-existing
+ * shipped text only — every row names text that was already on this branch
+ * when the rule landed, so the rule could be added without editing files
+ * other workers own. A row is deleted with the text it covers; a stale row
+ * fails nothing, because a waiver that outlived its hit is a review finding,
+ * not a reason to redden everybody else's gate.
+ */
+export const HAZARD_WAIVERS: readonly HazardWaiver[] = [];
+
+export function isHazardWaived(relativeFile: string, label: string): boolean {
+  return HAZARD_WAIVERS.some((waiver) => waiver.file === relativeFile && waiver.label === label);
+}
+
+export interface HazardViolation {
+  label: string;
+  /** 1-indexed line within the scanned file. */
+  line: number;
+  snippet: string;
+  guidance: string;
+}
+
+/** Every hazard hit on one line, given whether that line sits inside a fence. */
+export function checkHazardLine(line: string, context: HazardScope | 'prose', lineNumber = 1): HazardViolation[] {
+  const snippet = line.trim();
+  const hits: HazardViolation[] = [];
+  for (const rule of HAZARD_RULES) {
+    if (rule.scope === 'fence' && context !== 'fence') continue;
+    if (rule.matches(line)) hits.push({ label: rule.label, line: lineNumber, snippet, guidance: rule.guidance });
+  }
+  return hits;
+}
+
+/** Every hazard hit in one markdown file, with its 1-indexed line. */
+export function collectHazardViolations(text: string): HazardViolation[] {
+  const violations: HazardViolation[] = [];
+  eachContentLine(text, (line, lineNumber, inFence) => {
+    violations.push(...checkHazardLine(line, inFence ? 'fence' : 'prose', lineNumber));
+  });
+  return violations;
 }
 
 /** Validate the portable SKILL.md + Codex UI metadata contract for one skill. */
@@ -530,6 +786,27 @@ interface Report {
   metadataViolations: string[];
   bannedTokens: BannedTokenViolation[];
   mutationViolations: MutationViolation[];
+  hazardViolations: HazardViolation[];
+}
+
+/** Print the hazard/residue failures. No-op on an empty list. */
+function reportHazardFailures(hazardFailed: Report[]): void {
+  if (hazardFailed.length === 0) return;
+  console.error(`\nskills-lint: ${hazardFailed.length} file(s) ship a hazard or a residue marker`);
+  for (const r of hazardFailed) {
+    for (const v of r.hazardViolations) {
+      console.error(`  ${r.skill}:${v.line}: [hazard] ${v.label} — ${v.guidance}`);
+    }
+  }
+}
+
+/** Print the house-size failures. No-op on an empty list. */
+function reportSizeFailures(sizeViolations: SkillSizeViolation[]): void {
+  if (sizeViolations.length === 0) return;
+  console.error(
+    `\nskills-lint: ${sizeViolations.length} skill(s) outside the ${SKILL_MIN_LINES}-${SKILL_MAX_LINES} line house size`,
+  );
+  for (const v of sizeViolations) console.error(`  ${v.skill}/SKILL.md: ${v.detail}`);
 }
 
 /** Emit every failing category. Returns true when the gate must exit non-zero. */
@@ -537,18 +814,22 @@ function reportFailures(
   reports: Report[],
   structureViolations: StructureViolation[],
   catalogViolations: string[],
+  sizeViolations: SkillSizeViolation[],
 ): boolean {
   const missingFailed = reports.filter((r) => r.missingCommands.length > 0);
   const resourceFailed = reports.filter((r) => r.resourceViolations.length > 0);
   const metadataFailed = reports.filter((r) => r.metadataViolations.length > 0);
   const tokenFailed = reports.filter((r) => r.bannedTokens.length > 0);
   const mutationFailed = reports.filter((r) => r.mutationViolations.length > 0);
+  const hazardFailed = reports.filter((r) => r.hazardViolations.length > 0);
   if (
     missingFailed.length === 0 &&
     resourceFailed.length === 0 &&
     metadataFailed.length === 0 &&
     tokenFailed.length === 0 &&
     mutationFailed.length === 0 &&
+    hazardFailed.length === 0 &&
+    sizeViolations.length === 0 &&
     catalogViolations.length === 0 &&
     structureViolations.length === 0
   ) {
@@ -588,6 +869,8 @@ function reportFailures(
       }
     }
   }
+  reportHazardFailures(hazardFailed);
+  reportSizeFailures(sizeViolations);
   if (catalogViolations.length > 0) {
     console.error(`\nskills-lint: ${catalogViolations.length} skills/README.md catalog violation(s)`);
     for (const violation of catalogViolations) console.error(`  ${violation}`);
@@ -613,24 +896,25 @@ function main() {
   const reports: Report[] = [];
   const metadataBySkill = new Map<string, string[]>();
   const mutatesBySkill = new Map<string, string | null>();
+  const sizeViolations: SkillSizeViolation[] = [];
   for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !existsSync(join(SKILLS_DIR, entry.name, 'SKILL.md'))) continue;
+    const skillPath = join(SKILLS_DIR, entry.name, 'SKILL.md');
+    if (!entry.isDirectory() || !existsSync(skillPath)) continue;
     const metadata = validateSkillMetadata(join(SKILLS_DIR, entry.name));
     metadataBySkill.set(entry.name, metadata.violations);
     mutatesBySkill.set(entry.name, metadata.mutates);
+    const size = checkSkillSize(entry.name, readFileSync(skillPath, 'utf8'));
+    if (size !== null) sizeViolations.push(size);
   }
 
-  // First pass: collect all invocations from non-ignored skills. The omni CLI
-  // is only probed when some scanned skill actually references it; when the
-  // probe fails, getOmniCommands() returns null and omni checks are skipped
-  // (loudly) instead of failing the gate — see its contract comment.
+  // First pass: collect all invocations from non-ignored skills.
   const scanned: Array<{
     file: string;
     genie: string[];
-    omni: string[];
     resource: ResourceViolation[];
     banned: BannedTokenViolation[];
     mutation: MutationViolation[];
+    hazard: HazardViolation[];
   }> = [];
   for (const file of files) {
     const text = readFileSync(file, 'utf8');
@@ -644,37 +928,34 @@ function main() {
     // BEFORE the ignore bailout. The bailout below skips only the
     // command/resource checks it was introduced for.
     const banned = collectBannedTokenViolations(text);
+    // Hazards are a safety contract too, so — like the vocabulary scan and the
+    // mutates-none rule — they are checked on every markdown file of every
+    // skill and BEFORE the ignore bailout. The only exemption is the explicit,
+    // reasoned waiver table, matched on file AND rule.
+    const relativeFile = relative(SKILLS_DIR, file).split(sep).join('/');
+    const hazard = file.endsWith('.md')
+      ? collectHazardViolations(text).filter((v) => !isHazardWaived(relativeFile, v.label))
+      : [];
     const commandChecksSkipped = !file.endsWith('.md') || text.includes('<!-- skills-lint:ignore -->');
     if (commandChecksSkipped) {
-      scanned.push({ file, genie: [], omni: [], resource: [], banned, mutation });
+      scanned.push({ file, genie: [], resource: [], banned, mutation, hazard });
       continue;
     }
     const genie: string[] = [];
-    const omni: string[] = [];
     for (const fence of extractBashFences(text)) {
       genie.push(...extractInvocations(fence, 'genie'));
-      omni.push(...extractInvocations(fence, 'omni'));
     }
     // Catalog/recipe content and the contributor-facing top-level README may
     // show repo-root commands; executable skill instructions must ship their
     // own resources.
     const resource = isResourceAllowlisted(file) ? [] : collectResourceViolations(text);
-    scanned.push({ file, genie, omni, resource, banned, mutation });
+    scanned.push({ file, genie, resource, banned, mutation, hazard });
   }
 
-  const omniNeeded = scanned.some((s) => s.omni.length > 0);
-  const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
-  const omniSkipped = omniCmds === null;
-
-  for (const { file, genie, omni, resource, banned, mutation } of scanned) {
+  for (const { file, genie, resource, banned, mutation, hazard } of scanned) {
     const missing: Report['missingCommands'] = [];
     for (const cmd of genie) {
       if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
-    }
-    if (omniCmds !== null && omniCmds.size > 0) {
-      for (const cmd of omni) {
-        if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
-      }
     }
     const topLevelSkill = relative(SKILLS_DIR, file).split(sep)[0];
     const metadataViolations = file.endsWith(`${sep}SKILL.md`) ? (metadataBySkill.get(topLevelSkill) ?? []) : [];
@@ -685,15 +966,15 @@ function main() {
       metadataViolations,
       bannedTokens: banned,
       mutationViolations: mutation,
+      hazardViolations: hazard,
     });
   }
 
   console.log(JSON.stringify(reports, null, 2));
 
-  if (reportFailures(reports, structureViolations, catalogViolations)) process.exit(1);
-  const omniNote = omniSkipped ? ', omni checks skipped' : '';
+  if (reportFailures(reports, structureViolations, catalogViolations, sizeViolations)) process.exit(1);
   console.error(
-    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations${omniNote})`,
+    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations, 0 hazards, 0 house-size violations)`,
   );
 }
 

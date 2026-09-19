@@ -11,16 +11,19 @@ Shared skill bodies name semantic routes without a host-specific prefix. Skills 
 
 The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating any selector — a bare `$<name>` included — inside that card could redirect execution to a different physical copy of the skill. Manual invocation uses the discovery forms above.
 
-The lifecycle is:
+The lifecycle has two entries:
 
 ```text
-brainstorm → design review → wish → plan review → work → implementation review
+wish → merge-ready PR                                                            (one decided task)
+brainstorm → design review → wish → plan review → work → implementation review   (bigger than one task)
 ```
 
-For non-trivial work, `brainstorm` automatically sends the completed design through read-only design review before
-handoff to `wish`. The resulting WISH must then pass a distinct plan review before `work`; implementation receives its
-own independent review after execution. These are mandatory artifact gates, not interchangeable uses of one generic
-review step.
+One decided task goes straight to `wish`, which admits it, works it in a worktree, gates it, has it independently
+reviewed and returns a merge-ready PR; it writes no WISH.md, so no plan review stands between it and the PR. Work
+bigger than one task takes the second line. For non-trivial work, `brainstorm` automatically sends the completed
+design through read-only design review before handoff to `wish`. The resulting WISH must then pass a distinct plan
+review before `work`; implementation receives its own independent review after execution. These are mandatory artifact
+gates, not interchangeable uses of one generic review step.
 
 The design gate is durable: DESIGN.md carries reviewer identity, UTC timestamp, verdict, and the SHA-256 of its exact reviewed content (excluding only the bounded evidence block). Editing the design invalidates that evidence; `wish` and lint require a current SHIP digest for linked designs.
 
@@ -65,15 +68,16 @@ bun scripts/skills-inventory-parity.ts --write
 | Skill | Category | Mutates | Description |
 |---|---|---|---|
 | `brainstorm` | lifecycle | documents | Explore an ambiguous idea with the user, settle scope and success criteria, and produce an independently reviewed design for wish. |
+| `deslop` | lifecycle | repo | Clean up the prose, code or interface already in scope — protect its meaning, voice and behaviour, remove what only adds reading work, and return findings instead of edits when a review was asked for. |
 | `fix` | lifecycle | repo | Resolve blocking review gaps through bounded repairs and independent re-review; diagnose stalled attempts without expanding scope. |
 | `review` | lifecycle | none | Independently assess designs, plans, implementations, PRs, or repository quality; return evidence and SHIP, FIX-FIRST, or BLOCKED without applying fixes. |
-| `wish` | lifecycle | documents | Turn a settled idea into a reviewed executable wish with scope, criteria, dependency-ordered groups, and validation. |
+| `wish` | lifecycle | repo | Deliver one decided task end to end — admit it, work it in one worktree, gate, independent review, bounded repair, a merge-ready PR — or plan a multi-group wish when it is bigger than one task. |
 | `work` | lifecycle | repo | Execute an approved wish in dependency order with scoped workers, independent review, bounded repairs, and verified completion. |
 | `council` | routing | none | Assess a proposal through independent technical, product, risk, and dissenting lenses, then synthesize a decision without mutating unless explicitly requested. |
 | `genie` | routing | none | Route Genie questions, operations, bugs, and planned work. Resume related wishes; handle ordinary requests directly unless Genie planning or coordination adds value. |
 | `dream` | delivery | external | Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results. |
 | `merge` | delivery | repo | Resolve an in-progress merge or rebase by the intent of both sides, re-run the full gate on the merged tree, and finish the operation. |
-| `quick` | delivery | repo | Ship tiny low-risk changes to dev within one hour. |
+| `quick` | delivery | none | Retired: superseded by wish, which delivers one task end to end; this stub is removed after three measured runs. |
 | `report` | investigation | documents | Investigate a failure to its root cause with grounded evidence, hand the diagnosis to fix, and create a GitHub issue only when asked. |
 | `research` | investigation | documents | Investigate a question against primary sources, cite every claim, and write the findings into the repository's own notes. |
 | `authoring` | authoring | none | Write or revise a Genie skill so it survives the shipped contract — frontmatter, house size, starter card, and runtime-neutral voice. |
@@ -82,7 +86,6 @@ bun scripts/skills-inventory-parity.ts --write
 | `workfly` | authoring | repo | Discover a procedure and build its saved workflow — dynamic discovery, drafted script, adversarial verification, landed in the catalog. |
 | `verify` | verification | none | Prove a completion claim with fresh evidence before making it — the gate's exit code, the real diff, the remote's checks, the reviewer's verdict. |
 | `genie-hacks` | integration | external | Browse, search, and contribute community hacks — real-world patterns for provider switching, teams, skills, hooks, cost optimization, and more. |
-| `omni` | integration | external | Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip. |
 | `skill-audit` | skill-ops | documents | Audit the shipped skill catalogue for overlap, staleness, and drift against the install record, and propose keep, improve, merge, or retire per skill. |
 
 <!-- skills-catalog:end -->

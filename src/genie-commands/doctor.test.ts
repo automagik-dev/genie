@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -26,16 +27,15 @@ import {
   checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkLegacyIntegrations,
-  checkOmniBridgeHealth,
   checkRetiredJsonMcpEntry,
   checkSkillsChannel,
   checkSubagentModelOverride,
   checkTrackedMachineState,
   checkV4Residue,
+  checkWorkflowsChannel,
   doctorCommand,
   evaluateBunVersion,
   evaluateIndexLaneDrift,
-  evaluateOmniBridgeHealth,
   globalDbContaminationBunAlternative,
   globalDbContaminationRemedy,
   globalDbContaminationSqliteAlternative,
@@ -265,81 +265,6 @@ describe('CLAUDE_CODE_SUBAGENT_MODEL override warning', () => {
     const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
 
     expect(output).not.toContain(key);
-  });
-});
-
-describe('omni bridge health probe (retired SessionStart hook replacement)', () => {
-  test('emits no check when omni is not configured', () => {
-    expect(evaluateOmniBridgeHealth({ configured: false, apiStatus: null })).toBeNull();
-  });
-
-  test('passes when the bridge reports healthy', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'healthy', version: '2.1.0' });
-    expect(res).toMatchObject({ name: 'omni bridge health', status: 'pass' });
-    expect(res?.detail).toContain('(v2.1.0)');
-  });
-
-  test('warns when the bridge reports a non-healthy status', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: 'degraded' });
-    expect(res).toMatchObject({ status: 'warn' });
-    expect(res?.detail).toContain('degraded');
-    expect(res?.suggestion).toContain('omni status');
-  });
-
-  test('warns when the bridge is unreachable, with a start suggestion', () => {
-    const res = evaluateOmniBridgeHealth({ configured: true, apiStatus: null, error: 'fetch failed' });
-    expect(res).toMatchObject({ status: 'warn' });
-    expect(res?.detail).toContain('unreachable');
-    expect(res?.suggestion).toContain('omni start');
-  });
-
-  test('checkOmniBridgeHealth probes the configured URL and stays silent when unconfigured', async () => {
-    const calls: string[] = [];
-    const fakeFetch = (async (input: string | URL | Request) => {
-      calls.push(String(input));
-      return new Response(JSON.stringify({ status: 'healthy', version: '2.1.0' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    }) as typeof fetch;
-
-    // Unconfigured (isolated GENIE_HOME has no omni section, env unset) → silent.
-    const priorUrl = process.env.OMNI_API_URL;
-    const priorKey = process.env.OMNI_API_KEY;
-    Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-    Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
-    try {
-      expect(await checkOmniBridgeHealth(fakeFetch)).toEqual([]);
-      expect(calls).toEqual([]);
-
-      process.env.OMNI_API_URL = 'http://127.0.0.1:8882';
-      const results = await checkOmniBridgeHealth(fakeFetch);
-      expect(calls).toEqual(['http://127.0.0.1:8882/api/v2/health']);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toMatchObject({ name: 'omni bridge health', status: 'pass' });
-    } finally {
-      if (priorUrl === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-      else process.env.OMNI_API_URL = priorUrl;
-      if (priorKey === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_KEY');
-      else process.env.OMNI_API_KEY = priorKey;
-    }
-  });
-
-  test('checkOmniBridgeHealth degrades to warn on a throwing fetch', async () => {
-    const prior = process.env.OMNI_API_URL;
-    process.env.OMNI_API_URL = 'http://127.0.0.1:9999';
-    try {
-      const throwingFetch = (async () => {
-        throw new Error('connection refused');
-      }) as unknown as typeof fetch;
-      const results = await checkOmniBridgeHealth(throwingFetch);
-      expect(results).toHaveLength(1);
-      expect(results[0]).toMatchObject({ status: 'warn' });
-      expect(results[0].detail).toContain('connection refused');
-    } finally {
-      if (prior === undefined) Reflect.deleteProperty(process.env, 'OMNI_API_URL');
-      else process.env.OMNI_API_URL = prior;
-    }
   });
 });
 
@@ -1608,6 +1533,223 @@ describe('doctor: skills.sh channel', () => {
   });
 });
 
+// ============================================================================
+// Workflows channel (wish `global-workflows-local-mikro`, group 3)
+// ============================================================================
+
+describe('doctor: workflows channel', () => {
+  const WORKFLOWS_LINE = 'workflows: catalog';
+  const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+  function workflowsDir(): string {
+    return join(isolatedHome, '.claude', 'workflows');
+  }
+
+  /** Write `<home>/.claude/workflows/<name>` and return its digest. */
+  function seedWorkflowFile(name: string, body: string): string {
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(workflowsDir(), name), body);
+    return sha256(body);
+  }
+
+  function seedWorkflowsRecord(files: Record<string, string>, ref = releaseTag(VERSION)): void {
+    seedSkillsRecord(process.env.GENIE_HOME as string, {
+      workflows: { dir: workflowsDir(), ref, files },
+    });
+  }
+
+  function workflowsResults(): CheckResult[] {
+    return checkWorkflowsChannel({ home: isolatedHome, genieHome: process.env.GENIE_HOME as string });
+  }
+
+  /** Every path under `root` with its size and mtime — a doctor run must not move one. */
+  function snapshot(root: string): string[] {
+    const seen: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const path = join(dir, entry.name);
+        const stat = statSync(path);
+        seen.push(`${path} ${stat.size} ${stat.mtimeMs}`);
+        if (entry.isDirectory()) walk(path);
+      }
+    };
+    walk(root);
+    return seen;
+  }
+
+  test('a complete current record reports one pass line and writes nothing', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    const before = snapshot(isolatedHome);
+
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: `2/2 in ${workflowsDir()} @ ${releaseTag(VERSION)}`,
+    });
+    // Read-only observer: not one byte, and not one mtime, moved.
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('a hand-edited file warns as modified and names it', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+      'wish.js': seedWorkflowFile('wish.js', "export const meta = { name: 'wish' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    writeFileSync(join(workflowsDir(), 'council.js'), '// local edit\n');
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('1/2 ');
+    expect(result.detail).toContain('council.js (modified)');
+    expect(result.suggestion).toBe('Run `genie update` to reinstall the workflow catalog');
+  });
+
+  test('a deleted file warns as missing', () => {
+    const files = {
+      'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n"),
+    };
+    seedWorkflowsRecord(files);
+    rmSync(join(workflowsDir(), 'council.js'));
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/1 ');
+    expect(result.detail).toContain('council.js (missing)');
+  });
+
+  test('a symlink at a recorded name is never followed — it reports as not a regular file', () => {
+    const files = { 'council.js': sha256("export const meta = { name: 'council' }\n") };
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(isolatedHome, 'elsewhere.js'), "export const meta = { name: 'council' }\n");
+    symlinkSync(join(isolatedHome, 'elsewhere.js'), join(workflowsDir(), 'council.js'));
+    seedWorkflowsRecord(files);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // The link TARGET hashes to the recorded digest; following it would have
+    // read `1/1`. The check refuses to resolve it, so it stays drift.
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/1 ');
+    expect(result.detail).toContain('council.js (not a regular file)');
+  });
+
+  test('a record from another release is stale even when every file matches', () => {
+    const files = { 'council.js': seedWorkflowFile('council.js', "export const meta = { name: 'council' }\n") };
+    seedWorkflowsRecord(files, 'v0.000000.1');
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe(`1/1 in ${workflowsDir()} @ v0.000000.1 (stale, binary is ${releaseTag(VERSION)})`);
+  });
+
+  test('a record without the workflows field reads as unrecorded, or not detected without ~/.claude', () => {
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: 'not detected',
+    });
+
+    mkdirSync(join(isolatedHome, '.claude'), { recursive: true });
+    // No shipped catalog under this GENIE_HOME, so the channel could not run
+    // even if asked: the line states the fact and offers no remedy it cannot keep.
+    expect(byName(workflowsResults(), WORKFLOWS_LINE)).toEqual({
+      name: WORKFLOWS_LINE,
+      status: 'pass',
+      detail: '(unrecorded)',
+    });
+  });
+
+  /** `<GENIE_HOME>/templates/workflows/<name>` for each name — the release's catalog. */
+  function seedShippedCatalog(names: string[]): void {
+    const root = join(process.env.GENIE_HOME as string, 'templates', 'workflows');
+    mkdirSync(root, { recursive: true });
+    for (const name of names) writeFileSync(join(root, name), `export const meta = { name: '${name}' }\n`);
+  }
+
+  test('an unrecorded stale file at a catalog name is named, with a remedy', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js');
+    expect(result.suggestion).toContain('genie update');
+    expect(result.suggestion).toContain('state-backups');
+  });
+
+  test('an unrecorded scope holding only names this release does not ship stays a pass', () => {
+    seedShippedCatalog(['council.js']);
+    seedWorkflowFile('someone-elses.js', '// not genie namespace\n');
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // A catalog NAME is the whole claim: doctor never lists the user's dir, so a
+    // workflow outside genie's namespace is structurally invisible here.
+    expect(result.status).toBe('pass');
+    expect(result.detail).toBe('(unrecorded)');
+    // The channel could run, so the pass still carries the remedy.
+    expect(result.suggestion).toContain('genie update');
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('an unrecorded symlink at a catalog name is named, never followed', () => {
+    seedShippedCatalog(['council.js']);
+    mkdirSync(workflowsDir(), { recursive: true });
+    writeFileSync(join(isolatedHome, 'elsewhere.js'), "export const meta = { name: 'council' }\n");
+    symlinkSync(join(isolatedHome, 'elsewhere.js'), join(workflowsDir(), 'council.js'));
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 1 file(s) genie did not record: council.js (not a regular file)');
+    // Read-only, and the link is still a link pointing where it pointed.
+    expect(readFileSync(join(isolatedHome, 'elsewhere.js'), 'utf8')).toBe("export const meta = { name: 'council' }\n");
+  });
+
+  test('with no install record at all the unrecorded scan still runs and writes nothing', () => {
+    seedShippedCatalog(['council.js', 'wish.js']);
+    seedWorkflowFile('council.js', '// the stale stamped install\n');
+    seedWorkflowFile('wish.js', '// another one\n');
+
+    const before = snapshot(isolatedHome);
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    // The host that carries pre-record leftovers is exactly the host with no
+    // record, so the scan must not sit behind a record that exists.
+    expect(result.status).toBe('warn');
+    expect(result.detail).toBe('(unrecorded) 2 file(s) genie did not record: council.js; wish.js');
+    expect(snapshot(isolatedHome)).toEqual(before);
+  });
+
+  test('a malformed record prints no workflows line — the skills check owns that one remedy', () => {
+    const genieHome = process.env.GENIE_HOME as string;
+    mkdirSync(genieHome, { recursive: true });
+    writeFileSync(join(genieHome, 'skills-install.json'), '{"ref":"v1"}');
+
+    expect(workflowsResults()).toEqual([]);
+    expect(byName(skillsChannelResults(), 'skills: channel').status).toBe('warn');
+  });
+
+  test('more than five drifting files are named up to five with a remainder', () => {
+    const files: Record<string, string> = {};
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      files[`${name}.js`] = sha256(`export const meta = { name: '${name}' }\n`);
+    }
+    seedWorkflowsRecord(files);
+
+    const result = byName(workflowsResults(), WORKFLOWS_LINE);
+    expect(result.status).toBe('warn');
+    expect(result.detail).toContain('0/7 ');
+    expect(result.detail).toContain('+2 more');
+  });
+});
+
 describe('doctor: legacy marker-owned integrations', () => {
   const pendingClassifier: LegacyClassifier = () => ({
     entries: [
@@ -1900,7 +2042,7 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
   /**
    * The hand-written `cp` spellings copy `genie.db` alone, so with an
    * uncheckpointed WAL the "backup" is an empty database — voiding the
-   * reversibility the remedy promises while `genie omni serve` holds the file.
+   * reversibility the remedy promises while another process holds the file.
    * The in-process repair folds the WAL back in before the byte copy.
    */
   test('--fix-global-db backs up a database with a live WAL completely', async () => {
@@ -1913,14 +2055,19 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
     seed.run("INSERT INTO approvals (id) VALUES ('pending-in-wal')");
     seed.run('CREATE TABLE boards (id TEXT PRIMARY KEY)');
     // Deliberately NOT checkpointed and NOT closed cleanly: the rows live in
-    // genie.db-wal, exactly as they do while the omni runner is writing.
+    // genie.db-wal, exactly as a live writer leaves them.
     expect(existsSync(`${dbPath}-wal`)).toBe(true);
 
     await captureDoctor(() => doctorCommand({ fixGlobalDb: true }));
     seed.close();
 
     const backup = readdirSync(genieHome).find((entry) => entry.startsWith('genie.db.backup-')) as string;
-    const restored = new Database(join(genieHome, backup), { readonly: true });
+    // Read-write on purpose. This backup is a copy of a WAL-mode database, and a
+    // read-only connection to one needs its `-shm` index: bun's bundled SQLite
+    // creates it, the system SQLite bun uses on macOS answers SQLITE_CANTOPEN
+    // instead (#2926). What is under test is the CONTENT of the backup, not
+    // which handle can reach it, so open it the way a restore would.
+    const restored = new Database(join(genieHome, backup));
     const rows = restored.query('SELECT id FROM approvals').all() as Array<{ id: string }>;
     restored.close();
     expect(rows.map((r) => r.id)).toEqual(['pending-in-wal']);
@@ -2002,5 +2149,61 @@ describe('global db contamination (r2 #6 / M7 operator half)', () => {
 
   test('an absent global db is not a finding', () => {
     expect(checkGlobalDbContamination({ genieHome: join(isolatedHome, 'globaldb-missing') })).toEqual([]);
+  });
+});
+
+/** Issue #2927: the record cannot name what predates it, so doctor scans the homes themselves. */
+describe('doctor: pre-record genie leftovers', () => {
+  const PM_DESCRIPTION =
+    'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.';
+
+  test('warns with every leftover path and its kind, in path order, and stays silent when there are none', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha', 'beta']);
+    seedSkillsRecord(process.env.GENIE_HOME as string);
+    expect(skillsChannelResults().some((result) => result.name === 'skills: legacy leftovers')).toBe(false);
+
+    const agents = join(isolatedHome, '.agents', 'skills');
+    mkdirSync(join(agents, 'genie-review'), { recursive: true });
+    writeFileSync(
+      join(agents, 'genie-review', 'SKILL.md'),
+      `---\nname: genie-review\ndescription: "${PM_DESCRIPTION}"\n---\n`,
+    );
+    mkdirSync(join(agents, '.genie-codex-fallback-retirement', 'txn-1'), { recursive: true });
+    const claude = join(isolatedHome, '.claude', 'skills');
+    mkdirSync(join(claude, 'brain'), { recursive: true });
+    writeFileSync(
+      join(claude, 'brain', 'SKILL.md'),
+      '---\nname: brain\ndescription: a live third-party product\n---\n',
+    );
+
+    const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
+    expect(check.status).toBe('warn');
+    // The third row is a live third-party `brain`: it shares a name genie once shipped and nothing
+    // else, so the line counts it apart and says genie claims none of those — calling every row a
+    // genie skill dir told the operator their own product was genie's.
+    expect(check.detail).toBe(
+      `3 dir(s) predate the install record — 2 genie's own, 1 unproven (a retired genie name or description, not both; genie claims none of these): ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'brain')} (unproven)`,
+    );
+    expect(check.suggestion).toContain('genie update');
+    // Nothing on disk moved: doctor observes, update retires.
+    expect(existsSync(join(agents, 'genie-review', 'SKILL.md'))).toBe(true);
+  });
+
+  test('covers a host with no record at all through every skills.sh registry home on disk', () => {
+    const agents = join(isolatedHome, '.agents', 'skills');
+    mkdirSync(join(agents, 'pm'), { recursive: true });
+    writeFileSync(join(agents, 'pm', 'SKILL.md'), `---\nname: pm\ndescription: ${PM_DESCRIPTION}\n---\n`);
+    // An `--all`-era home the four-row known table never lists (Codex review on PR #2928).
+    const openclaw = join(isolatedHome, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wizard'), { recursive: true });
+    writeFileSync(
+      join(openclaw, 'wizard', 'SKILL.md'),
+      '---\nname: wizard\ndescription: "Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate."\n---\n',
+    );
+    const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
+    expect(check.status).toBe('warn');
+    expect(check.detail).toContain(`${join(agents, 'pm')} (proven)`);
+    expect(check.detail).toContain(`${join(openclaw, 'wizard')} (proven)`);
   });
 });

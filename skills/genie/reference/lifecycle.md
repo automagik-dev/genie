@@ -28,8 +28,8 @@ Plan SHIP sets APPROVED; plan FIX-FIRST/BLOCKED sets the matching status. Execut
 - Documents in git: `.genie/wishes/`, `.genie/brainstorms/`, and the intake index `.genie/INDEX.md`. Group dependencies live in WISH.md.
 - Standalone, the default: per-repo task state uses `.genie/genie.db`, shared by worktrees through the Git common directory. Workers claim with `genie task checkout`; only the coordinator runs `genie task done` after review and validation.
 - Explicit Orca mode: Orca owns lifecycle state. `wish` and `work` supply their conditional Orca instructions and use its version-matched guides. Do not fall back to the standalone DB on a refusal. Merely installing/opening Orca does not select this mode.
-- Global Omni state is separate at `~/.genie/genie.db`; never mix its schema/path with repo task state. The optional `genie omni serve` bridge is the only explicitly launched resident Genie process.
+- Genie is zero-daemon: no resident process of any kind. The machine-scope `~/.genie/genie.db` path carries no genie state; the per-repo opener refuses it so repo task state can never land there.
 
 Use native completion notifications/structured waits. Inspect standalone state with `genie board` or `genie task status`; `genie context --wish <slug> --plan` previews without mutation. Claims do not replace dependency ordering or independent review.
 
-For task choice use the `genie` router and the installed skill descriptions. `quick` has its own one-hour dev-read-back contract; `dream` batches approved wishes. Neither bypasses existing authorization or required evidence.
+For task choice use the `genie` router and the installed skill descriptions. `wish` delivers one admitted task to a merge-ready PR and never merges; `dream` batches approved wishes. Neither bypasses existing authorization or required evidence.

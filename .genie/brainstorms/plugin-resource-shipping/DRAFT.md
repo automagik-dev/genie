@@ -1,6 +1,6 @@
 # DRAFT: plugin-resource-shipping (squeeze-in — fresh-install gap, found live 2026-07-09)
 
-**Parent:** [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md) (extends G2/G3 distribution scope) · **Status:** Simmering — small, urgent, wishable fast
+**Parent:** genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage) (extends G2/G3 distribution scope) · **Status:** Simmering — small, urgent, wishable fast
 
 ## KNOWN (evidence, audited on this machine)
 - `plugins/genie/skills` is a relative symlink → `../../skills`. It RESOLVES in shipped artifacts: marketplace install = full repo clone; CC's runtime cache (`~/.claude/plugins/cache/automagik/genie/<ver>/skills/`) materializes real dirs; dist platform builds materialize too. **Skills ship fine.**

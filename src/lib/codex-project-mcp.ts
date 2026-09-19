@@ -26,7 +26,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { resolveCodexDir, resolveGenieHome } from './genie-home.js';
 import { resolveTrustedExecutable, validateTrustedExecutablePath } from './trusted-executable.js';
 
-export type ArtifactAction = 'created' | 'updated' | 'skipped';
+export type ArtifactAction = 'created' | 'updated' | 'removed' | 'skipped';
 
 export interface McpConfigResult {
   path: string;
@@ -699,7 +699,7 @@ function assertNonGenieTomlSemantics(raw: string, next: string, path: string): v
 }
 
 /** Remove only the marker-owned Codex fallback. */
-export function removeCodexMcpFallback(configPath: string): ArtifactAction {
+export function removeCodexMcpFallback(configPath: string, now: Date = new Date()): ArtifactAction {
   assertSafeProjectConfigPath(configProjectRoot(configPath), configPath);
   if (!existsSync(configPath)) return 'skipped';
   const raw = readFileSync(configPath, 'utf8');
@@ -707,6 +707,18 @@ export function removeCodexMcpFallback(configPath: string): ArtifactAction {
   if (owned === null) return 'skipped';
   const content = removeOwnedFallback(raw, owned);
   assertNonGenieTomlSemantics(raw, content, configPath);
+  // A file that held nothing but the marker block is genie's own artifact: on
+  // 2026-09-16 `genie init` left a 0-byte `.codex/config.toml` behind, which is
+  // the same trash the retirement exists to remove. Back it up beside itself
+  // first — the same `<path>.genie-backup-<stamp>` pattern the `.mcp.json` path
+  // and the Codex OTel migration use — then unlink it. The backup keeps
+  // `.codex/` non-empty on purpose: the bytes stay where the operator looks.
+  if (content.trim() === '') {
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    copyFileSync(configPath, `${configPath}.genie-backup-${stamp}`);
+    unlinkSync(configPath);
+    return 'removed';
+  }
   applyPreparedWrite({ path: configPath, action: 'updated', content });
   return 'updated';
 }
@@ -1080,9 +1092,11 @@ export function retireProjectMcpConfigs(root: string, _options: RetireProjectMcp
     path: codexPath,
     action,
     detail:
-      action === 'updated'
-        ? 'retired marker-owned project registration'
-        : 'no marker-owned project registration to retire',
+      action === 'removed'
+        ? 'retired marker-owned project registration; .codex/config.toml held nothing else and was removed (backup beside it: config.toml.genie-backup-<stamp>)'
+        : action === 'updated'
+          ? 'retired marker-owned project registration'
+          : 'no marker-owned project registration to retire',
   });
   return results;
 }

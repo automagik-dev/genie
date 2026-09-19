@@ -2139,7 +2139,7 @@ describe('committed roadmap.json round-trip', () => {
 /**
  * M7 — `GENIE_HOME` defaults to `$HOME/.genie`, which is also a valid spelling
  * of a per-repo `.genie/`. A per-repo verb run with cwd = that home resolved the
- * GLOBAL database and initialized the per-repo schema inside the Omni approval
+ * GLOBAL database and initialized the per-repo schema inside the machine-scope
  * queue. The two databases have independent `PRAGMA user_version`; they must
  * never merge.
  */

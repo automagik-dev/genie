@@ -8,7 +8,7 @@ invocation opens the SQLite file, runs one transaction, and exits.
 
 | Concern | Home | Rationale |
 |---------|------|-----------|
-| Wishes, designs, brainstorms (`.md`) | git (`.genie/wishes/<slug>/`, `.genie/brainstorms/<slug>/`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
+| Wishes, reviewed designs (`.md`) | git (`.genie/wishes/<slug>/`, `.genie/brainstorms/<slug>/DESIGN.md`) | Human-authored, review-worthy, diffable, mergeable. Belong in PRs. |
 | Task rows, dependency edges, checkout claims, stage log, board membership, wish-group execution state | `.genie/genie.db` (SQLite, WAL) | High-churn operational state. Would create merge conflicts and noisy diffs if versioned. Never committed. |
 
 The database is **never** git-versioned. `.gitignore` excludes `genie.db`,
@@ -25,12 +25,12 @@ from the committed documents.
   genie.db-shm          # shared-memory index — gitignored
   INDEX.md              # planning index — tracked
   wishes/<slug>/        # WISH.md + per-wish evidence (qa.md, …) — tracked
-  brainstorms/<slug>/   # DESIGN.md / DRAFT.md / COUNCIL.md — tracked
+  brainstorms/<slug>/   # DESIGN.md tracked; DRAFT.md / COUNCIL.md / REVIEW.md — gitignored working notes
 ```
 
-`.genie/` holds both the tracked planning documents (wishes, designs,
-brainstorms — genie's own taxonomy, versioned in git and reviewed in PRs) and
-the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
+`.genie/` holds the tracked planning documents (wishes, reviewed designs and
+the index — genie's own taxonomy, versioned in git and reviewed in PRs), the
+gitignored brainstorm working notes, and the untracked runtime state. Runtime state — the SQLite engine (`genie.db` and
 its sidecars) plus legacy v4 state paths — is gitignored; the markdown
 documents are committed.
 
@@ -87,18 +87,18 @@ the rows stay in the database. The symmetric rule on the way back in: an import
 never destroys local hires unless the snapshot it is applying brings hire rows
 of its own.
 
-### Two databases, never one file
+### One database, and a path that must stay empty
 
-There are two `genie.db` files and they are wholly separate databases:
+There is exactly one `genie.db` genie writes:
 
 | File | Module | Holds | `user_version` |
 |------|--------|-------|----------------|
 | `<repo>/.genie/genie.db` | `genie-db.ts` | boards, tasks, dependencies, events, stage log, wish groups, hire roster | its own |
-| `<GENIE_HOME>/genie.db` | `global-db.ts` | Omni approval queue, inbound message inbox, agent sessions, service leases | its own, independent |
+| `<GENIE_HOME>/genie.db` | — | nothing; the Omni runner owned every table it ever held and left with it in v6 | its own, independent |
 
-The two schemas must never meet in one file. They are stamped with independent
-`PRAGMA user_version` values, so a merged file makes a future per-repo migration
-run against — or silently skip — the approval queue.
+The per-repo schema must never land in the machine-scope file. Both were
+stamped `user_version = 1`, so a merged file makes a future per-repo migration
+run against — or silently skip — whatever an older host still keeps there.
 
 The default `GENIE_HOME` is `$HOME/.genie`, which is *also* a valid spelling of
 a per-repo `.genie/` directory: a per-repo verb invoked with `cwd = $HOME`
@@ -110,9 +110,10 @@ the collision, whether the path came from `cwd` resolution or an explicit
 `{ path }`. The remedy is to run the command inside a repository, or to point
 `GENIE_HOME` somewhere that is not that repo's `.genie/`.
 
-The guard is the only link between the modules and it points one way:
-`genie-db.ts` imports `resolveGlobalDbPath` so the two path rules cannot drift;
-`global-db.ts` still imports nothing from `genie-db.ts`.
+`resolveGlobalDbPath` lives in `src/lib/genie-home.ts` with every other
+`GENIE_HOME`-derived path, so the guard survived the module that used to own
+it. `genie doctor --fix-global-db` is the one repair for a host already
+contaminated before the refusal landed.
 
 ### Worktree sharing
 
