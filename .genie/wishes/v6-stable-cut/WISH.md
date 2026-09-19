@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `v6-stable-cut` |
 | **Date** | 2026-09-19 |
 | **Author** | Felipe Rosa |
@@ -85,7 +85,7 @@ PR #3002 (`accept superseded as a canonical terminal wish status`) is **merged**
 | 1 | 4 | engineer | Low: verification of merged #3004; no in-repo residual | sonnet | Omni out — verify and close |
 | 1 | 5 | engineer | High: reverses a merged decision; adds a second `preAction`; touches a git hook and the context verb | opus | Orca honesty + board freeze (D-C) |
 | 1 | 7 | engineer | High: four independent concerns plus a new lint rule with a waiver path | opus | Open bugs and intake guards |
-| 1 | 9 | engineer | Medium: review and adopt work planned and executed elsewhere | opus | Adopt the `orca-plugin-genie` PR (gates nothing) |
+| — | 9 | engineer | Medium: review and adopt work planned and executed elsewhere | opus | Adopt the `orca-plugin-genie` PR — runs whenever its subject lands; merge slot 9; gates nothing |
 | 2 | 10 | engineer | Medium: an entry-point refactor of a script that has no guard today | opus | `genie wish lint` |
 | 3 | 6 | engineer | High: a destructive migration on a shared primitive, plus four shared files | opus | Stubs and dead surfaces at a major |
 | 4 | 8 | engineer | Medium: two repositories, a submodule init and a pointer bump | opus | Docs and README rewritten to the v6 story |
@@ -96,7 +96,7 @@ PR #3002 (`accept superseded as a canonical terminal wish status`) is **merged**
 **Global constraints:**
 - Never push to `dev` or `main`, never force, never merge, never bypass a hook; every PR targets `dev`. Wave-1 groups run in parallel in isolated worktrees.
 - No dev release may fire between the Group 1 merge and the promotion merge; the promotion PR opens immediately after Group 1 merges. `origin/dev` already advanced past `94adc6e96` while this plan was written — that drift is the live form of the first risk below.
-- **Shared source files across parallel groups** — a group that touches one of these rebases its branch over the earlier group's branch before its PR leaves draft, in merge order: `src/genie.ts` (G5, G6, G10), `scripts/skills-lint.ts` (G6, G7), `scripts/release-docs.test.ts` (G6, G7), `src/term-commands/v5-task.ts` + its test (G5 owns the file; G6 strips `hire_roster` from `:667,716,780` and 17 test assertions), `README.md` (G3, G6, G7, G10, G8), `CLAUDE.md` (G3, G5, G6, G7, G10).
+- **Shared source files across parallel groups** — a group that touches one of these rebases its branch over the earlier group's branch before its PR leaves draft, in merge order: `src/genie.ts` (G5, G6, G10), `src/lib/interactivity.ts` + its test (G10 creates both; G6 removes the dead `'mcp'`/`'ui-bridge'` entries), `scripts/skills-lint.ts` (G6, G7), `scripts/release-docs.test.ts` (G6, G7), `src/term-commands/v5-task.ts` + its test (G5 owns the file; G6 strips `hire_roster` from `:667,716,780` and 17 test assertions), `skills/wish/SKILL.md` (G6 d.3 removes the `quick` sentence, G10 d.4 rewrites the linter step), `README.md` (G3, G6, G10, G8), `CLAUDE.md` (G3, G5, G6, G10, G8). Group 7 touches neither README nor CLAUDE.md — its one documentation line, the doctor mode-drift aggregation gotcha, belongs to Group 8.
 - The board is frozen (D-C): no new verb, lane or column; the `hire_roster` drop in Group 6 is the only schema change permitted. `plugins/genie`, `plugins/dsh-genie-board`, `orca-marketplace.json` and `orca-plugin-ref.yml` are not deleted (D-B); the three version files stay three. `INSTALL_PAYLOAD_MEMBERS` stays the frozen 8; `state-backups/` roots written by an earlier run are never removed; doctor is read-only including under `--fix`; genie creates no product home.
 - `src/` style: `.js` import specifiers, no `console.log`, cognitive complexity ceiling 25, Biome single quotes / 2 spaces / 120 columns; tests colocated, `bun:test`, tmpdir fixtures, real git repositories, `GENIE_HOME` isolated to a tmpdir. `scripts/{mikro,wishes-lint,validate-wish}` files are not relocated and complexity-budget ceilings are not raised.
 - A group that edits CLAUDE.md runs `src/__tests__/claude-md-drift.test.ts`. The command count is **per tree** under the merge order: the live registry is 16, G10 adds the new `wish` group (**17 / `Seventeen`**), G6 then drops `mcp` and `ui-bridge` (**15 / `Fifteen`**, the final registry). `scripts/release-docs.test.ts:938-944` asserts the exact `<n> CLI commands` string in README and `<word> top-level commands` in CLAUDE.md, and `:947-948` asserts both **command tables** equal the live registry element-for-element — so a group that changes the registry edits the counts *and* the table rows.
@@ -115,9 +115,9 @@ PR #3002 (`accept superseded as a canonical terminal wish status`) is **merged**
 **Interfaces:** Consumes: none. Produces: the paths every other group's `Design` cell and citations resolve against.
 
 **Acceptance Criteria:**
-- [ ] `bun run wishes:lint` is green on the branch — with the design stamped, zero findings — and #3006's checks are green (11 completed SUCCESS at the time of writing) before any Wave-1 PR opens.
+- [ ] `bun run wishes:lint` is green on the branch — with the design stamped, zero findings — and PR #3006's checks are green and it is merged before any Wave-1 PR opens.
 
-**Validation:** `umask 022 && bun run wishes:lint && bun run skills:lint`
+**Validation:** `umask 022 && bun run wishes:lint && bun run skills:lint && bun run check:fast`
 
 **depends-on:** none
 
@@ -146,7 +146,7 @@ PR #3002 (`accept superseded as a canonical terminal wish status`) is **merged**
 
 **Deliverables:**
 1. **The approval path — the real work.** #2935 is `BLOCKED` *only* because `reviewDecision` is `""`: the required `Quality Gate (typecheck + lint + test)` context already reads SUCCESS on it, because `version.yml:295` dispatches `gh workflow run ci.yml --ref v${VERSION}` and `ci.yml:3-12` carries the `workflow_dispatch` trigger for exactly that. The `main` ruleset needs `required_approving_review_count: 1` **plus** `require_extra_approval_for_unattributed_changes: true` — so a bot-authored `[auto-version]` tip may need **two** approvals — with `require_last_push_approval: true`, `dismiss_stale_reviews_on_push: true`, `required_review_thread_resolution: true` and `allowed_merge_methods: ["merge"]`. The PR body names **who** approves (humans with write access who are not the bot author) and records that the last-push approval must post-date the final push of any kind, since any later push dismisses it.
-2. **#2923 — adopt.** The orphan-alert autoclose plus promotion-tag skip is running by hand on branch `wish/release-orphan-alert-autoclose`, because `wish.js` refuses `.github/` changes by policy and could not deliver it. Review that PR at its exact SHA and adopt it; if it has not landed, do the work here under the same policy caveat.
+2. **#2923 — adopt.** The orphan-alert autoclose plus promotion-tag skip is open as **PR #3007** (`fix(release-orphan-alert): auto-close healed incidents and skip promotion tags`, branch `wish/release-orphan-alert-autoclose`, head `412c724fd`), authored by hand because `wish.js` refuses `.github/` changes by policy. Review it at `412c724fd` and adopt; if it has not landed, do the work here under the same policy caveat.
 3. **#2924.** The Recovery section of `genie/_internal/runbooks/release-pipeline.md` (in `automagik-dev/docs`) is rewritten — a dev orphan recovers by landing any commit on dev through a PR, a stable orphan by the stable re-dispatch; the tag stays and the incident closes as superseded. No `workflow_call`-only workflow is named. Run `git submodule update --init --recursive .docs-vendor` first: `docs/` is a dangling symlink here and `git submodule status` reports `.docs-vendor` uninitialized (`-41eb2dd…`). The edit goes to `automagik-dev/docs` as its own PR plus a submodule bump, per CLAUDE.md's Docs section.
 4. **Verify, do not build:** one dry rehearsal on a replica HOME (tag → release → update hop) recorded in the PR body with its `"outcome":"committed"` line, and a recorded confirmation that the dispatched CI checks attach to the promotion head.
 
@@ -208,7 +208,7 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 5. The freeze restated in CLAUDE.md and README (no new verb, lane or column), plus a test pinning `ORCA_FORBIDDEN` so a verb cannot join or leave it silently.
 
 **Interfaces:**
-- Consumes: `assertLocalLifecycleEnabled`, `LocalLifecycleDisabledError`, `LOCAL_LIFECYCLE_DISABLED_CODE` (`src/lib/orchestration-mode.ts:7,28`).
+- Consumes: `LOCAL_LIFECYCLE_DISABLED_CODE` (`src/lib/orchestration-mode.ts:7`), `LocalLifecycleDisabledError` (`:28`), `assertLocalLifecycleEnabled` (`:57`).
 - Produces: `export const ORCA_FORBIDDEN: ReadonlySet<string>`; `export function orcaRefusalPreAction(thisCommand: Command, actionCommand: Command): void`, registered as `program.hook('preAction', orcaRefusalPreAction)` and calling `process.exit(2)` after writing the fixed message to stderr.
 
 **Acceptance Criteria:**
@@ -226,13 +226,13 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 
 **Deliverables:**
 1. Delete `src/term-commands/{mcp,ui-bridge}.ts` and their tests, the imports at `src/genie.ts:37,39` and the registrations at `:258,259`, **and their now-dead `WORKSPACE_EXEMPT` entries** (`src/lib/interactivity.ts:83` `'mcp'`, `:88` `'ui-bridge'`). `genie doctor` keeps observing the old `.mcp.json` and `.codex/config.toml` routes. `README.md:175,177,273-279` and `CLAUDE.md:83,88` lose their rows and prose; because G10 merges first, the counts at `README.md:158` and `CLAUDE.md:72` move from 17/`Seventeen` to **15/`Fifteen`** in this tree, and both command tables lose their two rows (`scripts/release-docs.test.ts:938-944`, `:947-948`).
-2. Drop `hire_roster` behind the Decision-4 ladder: `CURRENT_SCHEMA_VERSION` 1 → 2 (`src/lib/v5/genie-db.ts:43`), a `migrations` entry `{from: 1, to: 2}` applied inside `initOrValidate` (`src/lib/v5/sqlite-open.ts:588-604`) when `version < schemaVersion`. Sites: `genie-db.ts:479,657`; `src/term-commands/v5-task.ts:667,716,780` (`snapshotCarriesHires`, `preserveHireRoster`) plus its 17 test assertions — **G5 owns that file, so this group rebases over G5's branch**; `task-state.ts:2097,2114,2120,2128-2129,2152,2195,2238`; `roadmap-sync.ts:140,146,403`; `doctor.ts:284`; `src/lib/v5/TAXONOMY.md:83`; `.genie/INDEX.md:3` (the board-snapshot preamble's "`hire_roster` worktree state stays machine-local" clause); the committed `.genie/roadmap.json` and its golden. `task import` of a snapshot carrying the key ignores it rather than failing.
+2. Drop `hire_roster` behind the Decision-4 ladder: `CURRENT_SCHEMA_VERSION` 1 → 2 (`src/lib/v5/genie-db.ts:43`), a `migrations` entry `{from: 1, to: 2}` applied inside `initOrValidate` (`src/lib/v5/sqlite-open.ts:588-604`) when `version < schemaVersion`. Sites: `genie-db.ts:479,657`; `src/term-commands/v5-task.ts:667,716,780` — the declarations are `snapshotCarriesHires` at `:715` and `preserveHireRoster` at `:786` — plus its 17 test assertions — **G5 owns that file, so this group rebases over G5's branch**; `task-state.ts:2097,2114,2120,2128-2129,2152,2195,2238`; `roadmap-sync.ts:140,146,403`; `doctor.ts:284`; `src/lib/v5/TAXONOMY.md:83`; `.genie/INDEX.md:3` (the board-snapshot preamble's "`hire_roster` worktree state stays machine-local" clause); the committed `.genie/roadmap.json` and its golden. `task import` of a snapshot carrying the key ignores it rather than failing.
 3. Delete `skills/quick/` and its references: `skills/README.md:80`, `skills/wish/SKILL.md:10`, `scripts/skills-lint.ts:394`, `scripts/release-docs.test.ts:27,1029-1048`, `scripts/wish-workflow-parity.test.ts:134-142`, `.claude/workflows/wish.js:6,58`, `.genie/INDEX.md:28`. `skills/genie/SKILL.md:41` is **not** touched — its "Quick idea" is live routing prose about the word, not a reference to the skill.
 4. Delete `src/lib/legacy-integration-retirement.ts` (window comment `:1388`), its tests and call sites; the update transcript loses its `integrations: ` lines and `CLAUDE.md:219` its gotcha. Window evidence in the PR body (Decision 5).
 
 **Interfaces:**
 - Consumes: G5's `src/genie.ts` preAction registration and `v5-task.ts`; G7's `scripts/{skills-lint,release-docs.test}.ts`; G10's `src/genie.ts` `wish` registration and doc counts.
-- Produces: `OpenSqliteOptions.migrations?: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }>` — a ladder applied in ascending `from` order inside `initOrValidate` when `version < schemaVersion`, each step in one transaction, re-stamping `PRAGMA user_version` at the end; an unbridgeable gap still throws `ForeignDbError`. Plus `CURRENT_SCHEMA_VERSION = 2`.
+- Produces: `OpenSqliteOptions.migrations?: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }>` — a ladder applied in ascending `from` order inside `initOrValidate` when `version < schemaVersion`, each step in one transaction, re-stamping `PRAGMA user_version` at the end. **After the ladder runs the database falls through to the current-version branch** — `schemaIsCurrent` then `ensureSchema` — so additive backfills still apply to a just-migrated database exactly as they do to one already at `schemaVersion`. An unbridgeable gap still throws `ForeignDbError`. Plus `CURRENT_SCHEMA_VERSION = 2`.
 
 **Acceptance Criteria:**
 - [ ] In **this group's tree** `genie --help` lists **15** commands and neither `mcp` nor `ui-bridge`; `release-docs.test.ts` passes with `Fifteen top-level commands` in CLAUDE.md, `15 CLI commands` in README, and both command tables equal the live registry.
@@ -250,7 +250,7 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 
 **Deliverables:**
 1. **#2919 — verification only.** It shipped as #3005: `.claude/workflows/skill-audit-sweep.js:66` now reads the piped form, `npx -y skills@1.5.23 add "$PWD" --list 2>&1 | bun scripts/skills-inventory-parity.ts --repo .`, so `readListInput()` (`scripts/skills-inventory-parity.ts:519-522`) no longer blocks on `Bun.stdin.stream()`. Confirm and record.
-2. **#2917 — adopt.** The runtime-neutral front doors are running as the `front-doors-runtime-neutral` wish: `skills/{council,workfly,docs,research,skill-audit}/SKILL.md:12` and `skill-audit/SKILL.md:46` adopt the neutral form already in `skills/wish/SKILL.md:12`, plus a `BANNED_TOKEN_GUIDANCE`-shaped rule (`scripts/skills-lint.ts:72`, collected at `:114-119`) and its test. Review at its exact SHA and adopt; if it has not landed, do it here. `skills/workfly/SKILL.md:41` — which hands every repository the genie-repo-only `bun test scripts/workflows-meta.test.ts` — is the same defect from the other side and is in scope either way.
+2. **#2917 — adopt.** The runtime-neutral front doors are running as the `front-doors-runtime-neutral` wish: `skills/{council,workfly,docs,research,skill-audit}/SKILL.md:12` and `skill-audit/SKILL.md:46` adopt the neutral form already in `skills/wish/SKILL.md:12`, plus a `BANNED_TOKEN_GUIDANCE`-shaped rule (`scripts/skills-lint.ts:72`, collected at `:114-119`) and its test. The `wish.js` run for `front-doors-runtime-neutral` is in flight with **no branch on origin as of `94adc6e96`**; adopt it at its SHA once it lands, else do the work here. `skills/workfly/SKILL.md:41` — which hands every repository the genie-repo-only `bun test scripts/workflows-meta.test.ts` — is the same defect from the other side and is in scope either way.
 3. **#2942:** `scripts/legacy-skills-catalog.ts --check` (`:186`) runs in CI on a **full** checkout (`fetch-depth: 0`) — the comment at `:16` is exactly why it is not in `bun run check`.
 4. **Doctor mode drift:** `src/genie-commands/doctor-modes.ts` emits one result per drifted entry (`describeEntry` `:529`, reached from `checkWorktreeModes` `:561`; repair loop `:635`) over an uncapped scan — ~10k lines on the dogfood host. Aggregate to one `mode drift` line (`CHECK_NAME` `:481`) naming at most five entries plus a `+<n> more` remainder, with the full list under `--json`.
 5. **Two skill-intake guards** in `scripts/skills-lint.ts`: the 40–90 line house size (`SKILL_MIN_LINES` `:374`, `SKILL_MAX_LINES` `:375`, applied at `:423`) covers every roster skill with waivers named, and a new rule refuses a candidate staged under `<GENIE_HOME>/skills`.
@@ -276,9 +276,9 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 **Deliverables:**
 1. `git submodule update --init --recursive .docs-vendor` **first** — `docs/` is a dangling symlink in a fresh checkout and `git submodule status` reports `-41eb2dd…`. Every docs edit is then made under `.docs-vendor/genie/`.
 2. `README.md` rewritten around four things: the Orca happy path (explicit authority, closed one-way adapter, no fallback database), the saved-workflow catalog, `genie mikro` (repo-first agents behind a trusted ref), and the skills.sh channel with signed delivery evidence. Omni, the Genie UI and the MCP server shrink to one historical paragraph each.
-3. `.docs-vendor/genie/` operator pages follow the same story and lose the Omni pages #3004 left behind; the `_internal` release runbook keeps Group 2's Recovery rewrite. That goes to `automagik-dev/docs` as its own PR; this repository then carries only the `.docs-vendor` pointer bump. Linux and macOS are named as the supported stable platforms in README and `.docs-vendor/genie/installation.mdx` (D-D).
+3. `.docs-vendor/genie/` operator pages follow the same story and lose the Omni pages #3004 left behind; the `_internal` release runbook keeps Group 2's Recovery rewrite. That goes to `automagik-dev/docs` as its own PR; this repository then carries only the `.docs-vendor` pointer bump. Linux and macOS are named as the supported stable platforms in README and `.docs-vendor/genie/installation.mdx` (D-D), and CLAUDE.md gains the one documentation line Group 7's work needs — the doctor mode-drift aggregation gotcha — which lives here because Group 7 touches neither document.
 
-**Interfaces:** Consumes: Group 4's omni enumeration, Group 6's command set, Group 10's `wish` verb. Produces: none.
+**Interfaces:** Consumes: Group 4's omni enumeration, Group 6's command set, Group 10's `wish` verb, Group 7's aggregated `mode drift` line. Produces: none.
 
 **Acceptance Criteria:**
 - [ ] `git submodule status .docs-vendor` shows an initialized submodule, and `grep -rni 'omni\|ui-bridge\|mcp server' README.md .docs-vendor/genie/` returns only sentences marked as retired history.
@@ -286,7 +286,7 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 
 **Validation:** `umask 022 && git submodule update --init --recursive .docs-vendor && bun run check:fast && bun test scripts/release-docs.test.ts src/__tests__/claude-md-drift.test.ts`
 
-**depends-on:** Group 4, Group 6, Group 10
+**depends-on:** Group 4, Group 6, Group 7, Group 10
 
 ### Group 9: Adopt the `orca-plugin-genie` PR (D-B)
 
@@ -349,7 +349,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | Group 5 reverses a merged decision (#2830) and a later reader restores the identical-degrade rule | High | Decision 7 plus the comment in the split `context.test.ts` case; the reversal is never implicit |
 | `genie wish lint` ships but trips the workspace gate in every non-genie repository, which is the only place it is useful | High | Group 10 deliverable 3 adds `'wish'` to `WORKSPACE_EXEMPT` and creates the test that pins it — no such test exists today |
 | The Orca plugin API is documented by Orca's issue tracker and a third-party reconstruction, not a public doc site; `pluginApi: 1` may change under us | High | Group 9 floor-bumps `engines.orca` to `>=1.4.205` (a floor, never a pin) and keeps `orca-manifest-parity.test.ts` asserting the manifest's exact shape; only contribution points an `stablyai/orca` issue corroborates are used |
-| Four source files are touched by more than one parallel group | Medium | The named shared-file set in the global constraints, plus explicit `depends-on` edges G6 → G5, G7, G10 and G8 → G4, G6, G10; each group rebases over the earlier branch in merge order before leaving draft |
+| Four source files are touched by more than one parallel group | Medium | The named shared-file set in the global constraints, plus explicit `depends-on` edges G6 → G5, G7, G10 and G8 → G4, G6, G7, G10; each group rebases over the earlier branch in merge order before leaving draft |
 | Two adopted items (#2923, #2917) are authored outside this wish and their scope can move | Medium | Decision 6: each is reviewed at its exact SHA and adopted, or done here under the stated policy caveat (`wish.js` refuses `.github/`) |
 | `docs/` is a dangling symlink and `.docs-vendor` is uninitialized, so a docs edit silently writes nowhere | Medium | `git submodule update --init --recursive .docs-vendor` is the first step of Groups 2 and 8, and Group 8's Validation runs it |
 | Group 9's subject moves under us — its wish is not yet in the repository and its branch is not pushed to origin as of `94adc6e96` | Medium | Decision 11: adoption, not authorship; it gates nothing and the cut proceeds without it |
@@ -358,6 +358,14 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### 2026-09-19 — plan review, round 1 — FIX-FIRST
+
+Independent plan reviewer (claude-opus-5), read-only, against dev at `94adc6e96`. Sixteen findings: **6 HIGH** — `genie wish lint` would trip `installWorkspaceCheck` in every repository it exists for (`'wish'` missing from `WORKSPACE_EXEMPT`, `src/lib/interactivity.ts:42-94`); `scripts/wishes-lint.ts` has no `import.meta.main` guard (bare `main()` at `:474`, `process.exit`, `ROOT`/`DEFAULT_WISHES_DIR` from `import.meta.url` at `:19-20`) so the deliverable was mis-stated as a registration; four source files shared across parallel groups with no `depends-on` edge; `docs/` is a dangling symlink and `.docs-vendor` uninitialized, so docs edits would write nowhere; G7 d.1 (#2919) had already shipped as #3005; the `hire_roster` criterion was unscoped and unreachable. **6 MEDIUM** — #2935's `Quality Gate` already reads SUCCESS (`version.yml:295` dispatches `ci.yml:3-12`), so the real work is the approvals; Decision 4's rationale predated #3004 deleting `global-db.ts`; every group lacked `**Goal:**`/`**Interfaces:**`; G0 was not a real group; `genie wish lint` belonged in its own group; `src/lib/interactivity.ts` was missing from G6's files. **4 LOW** — `skills/genie/SKILL.md:41` is live routing prose, not a `quick` reference; Complexity and Model columns disagreed; two wording items. All repaired in **`69317d9be`**.
+
+### 2026-09-19 — plan review, round 2 — SHIP
+
+Same reviewer, same basis, against `69317d9be`. All sixteen round-1 findings verified resolved against code; no contradiction introduced; the plan is approved for execution. Nine bookkeeping items returned with the verdict and applied in this commit without re-review: the shared-file list gains `src/lib/interactivity.ts(+test)` and `skills/wish/SKILL.md` and loses Group 7's README/CLAUDE.md claim (its one doc line moves to Group 8); Group 0's Validation appends `check:fast` and its acceptance drops a transient check count for "merged"; Group 5's Interfaces cite `orchestration-mode.ts:7,28,57`; Group 6 names the `snapshotCarriesHires` (`:715`) and `preserveHireRoster` (`:786`) declarations and states that the migration ladder falls through to the current-version branch so additive backfills still apply; Group 2 names **PR #3007** (`412c724fd`) as its adopt subject and Group 7 mirrors Group 9's in-flight sentence for `front-doors-runtime-neutral`; Group 9's wave becomes "whenever its subject lands; merge slot 9". Status persisted by the orchestrator: **APPROVED**.
 
 ## Files to Create/Modify
 
