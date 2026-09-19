@@ -190,6 +190,33 @@ describe('genie orca mirror — a proven write', () => {
     ]);
   });
 
+  test('is idempotent: the same transition twice is two proven writes and one unchanged card', async () => {
+    stage({ 'worktree set': {}, 'worktree show': {} });
+    const args = [
+      'orca',
+      'mirror',
+      '--to',
+      'IN_PROGRESS',
+      '--evidence',
+      'wish orca-plugin-genie, wave 2, base 2ea6ee9',
+    ];
+    const first = await runCli(args);
+    expect(first.code).toBe(0);
+    const cardAfterFirst = readFileSync(statePath, 'utf-8');
+    const second = await runCli(args);
+    expect(second.code).toBe(0);
+    expect(second.stderr).toBe('');
+    expect(readFileSync(statePath, 'utf-8')).toBe(cardAfterFirst);
+    expect(JSON.parse(second.stdout).comment).toBe(JSON.parse(first.stdout).comment);
+    expect(second.log).toHaveLength(4);
+    expect(second.log.map((argv) => argv.slice(0, 2))).toEqual([
+      ['worktree', 'set'],
+      ['worktree', 'show'],
+      ['worktree', 'set'],
+      ['worktree', 'show'],
+    ]);
+  });
+
   test('--json changes nothing: one JSON line is the contract either way', async () => {
     stage({ 'worktree set': {}, 'worktree show': {} });
     const result = await runCli([
@@ -337,21 +364,12 @@ describe('genie orca mirror — usage (exit 2, nothing spawned)', () => {
 });
 
 describe('the runMirror seam', () => {
-  // The seam sets `process.exitCode` the way the command does; restoring it
-  // keeps one usage-path test from deciding the whole suite's exit status.
-  let previousExitCode: typeof process.exitCode;
-
-  beforeEach(() => {
-    previousExitCode = process.exitCode;
-  });
-
-  afterEach(() => {
-    process.exitCode = previousExitCode;
-  });
-
+  // The seam RETURNS the exit code and never touches `process.exitCode`: an
+  // in-process usage test used to leave 2 behind and the whole suite exited 2
+  // with zero failures (group 3 review, finding 1).
   test('never builds an adapter when validation fails', async () => {
     let built = 0;
-    await runMirror(
+    const code = await runMirror(
       { to: 'REVIEW', evidence: 'group 3', worktree: 'current' },
       {
         today: () => '2026-09-19',
@@ -362,12 +380,13 @@ describe('the runMirror seam', () => {
       },
     );
     expect(built).toBe(0);
-    expect(process.exitCode).toBe(2);
+    expect(code).toBe(2);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('takes its clock from the seam, never from a hidden global', async () => {
     const calls: unknown[] = [];
-    await runMirror(
+    const code = await runMirror(
       { to: 'BLOCKED', evidence: 'gate gate_7f3a: Merge PR #3005 into dev?', worktree: 'active' },
       {
         today: () => '2026-09-19',
@@ -395,5 +414,6 @@ describe('the runMirror seam', () => {
         comment: '2026-09-19 genie blocked — gate gate_7f3a: Merge PR #3005 into dev?',
       },
     ]);
+    expect(code).toBe(0);
   });
 });

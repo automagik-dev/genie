@@ -56,9 +56,12 @@ function utcToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function failUsage(reason: string): void {
+/** Exit codes: 0 a proven write, 1 a typed Orca failure, 2 the caller's own input. */
+export type MirrorExitCode = 0 | 1 | 2;
+
+function failUsage(reason: string): MirrorExitCode {
   printErr(`Error (genie orca mirror): ${reason}`);
-  process.exitCode = 2;
+  return 2;
 }
 
 /**
@@ -68,11 +71,8 @@ function failUsage(reason: string): void {
  * leaves as one machine-readable line so a coordinator can route it without
  * parsing prose.
  */
-function failAdapter(error: OrcaAdapterError): void {
-  if (error.code === 'invalid_argument' && error.phase === 'validate') {
-    failUsage(error.message);
-    return;
-  }
+function failAdapter(error: OrcaAdapterError): MirrorExitCode {
+  if (error.code === 'invalid_argument' && error.phase === 'validate') return failUsage(error.message);
   printErr(
     JSON.stringify({
       error: error.code,
@@ -83,7 +83,7 @@ function failAdapter(error: OrcaAdapterError): void {
       reason: error.message,
     }),
   );
-  process.exitCode = 1;
+  return 1;
 }
 
 /** The three card fields the caller needs to know which workspace was written. */
@@ -102,7 +102,7 @@ function describeWorktree(response: OrcaAdapterResponse): { id: unknown; display
  * cost, then exactly one adapter call happens, then one JSON line describes what
  * the card now holds.
  */
-export async function runMirror(options: MirrorCommandOptions, deps: MirrorCommandDeps = {}): Promise<void> {
+export async function runMirror(options: MirrorCommandOptions, deps: MirrorCommandDeps = {}): Promise<MirrorExitCode> {
   let plan: { workspaceStatus: string; comment: string };
   try {
     plan = mirrorTransition({
@@ -112,10 +112,7 @@ export async function runMirror(options: MirrorCommandOptions, deps: MirrorComma
       today: (deps.today ?? utcToday)(),
     });
   } catch (error) {
-    if (error instanceof MirrorInputError) {
-      failUsage(error.message);
-      return;
-    }
+    if (error instanceof MirrorInputError) return failUsage(error.message);
     throw error;
   }
   try {
@@ -134,13 +131,11 @@ export async function runMirror(options: MirrorCommandOptions, deps: MirrorComma
         receipt: response.receipt,
       }),
     );
+    return 0;
   } catch (error) {
-    if (error instanceof OrcaAdapterError) {
-      failAdapter(error);
-      return;
-    }
+    if (error instanceof OrcaAdapterError) return failAdapter(error);
     printErr(`Error (genie orca mirror): ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
+    return 1;
   }
 }
 
@@ -159,6 +154,7 @@ export function registerOrcaCommands(program: Command): void {
     )
     .option('--json', 'Accepted for symmetry; one JSON line is printed either way')
     .action(async (options: MirrorCommandOptions) => {
-      await runMirror(options);
+      // The seam returns the code; only the registered command touches process state.
+      process.exitCode = await runMirror(options);
     });
 }

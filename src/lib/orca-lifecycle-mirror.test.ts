@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import * as mirrorModule from './orca-lifecycle-mirror.js';
 import {
   GENIE_TRANSITIONS,
@@ -217,6 +218,17 @@ describe('the module surface', () => {
     // `to` is validated against GENIE_TRANSITIONS — an Orca status coming back
     // in has no entry point at all.
     expect(GENIE_TRANSITIONS.some((to) => (ORCA_WORKSPACE_STATUSES as readonly string[]).includes(to))).toBe(false);
+  });
+
+  test('the module imports nothing: no adapter, no I/O, no clock — one-way by construction', () => {
+    const source = readFileSync(new URL('./orca-lifecycle-mirror.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/^\s*import\b/m);
+    expect(source).not.toMatch(/\brequire\(/);
+    expect(source).not.toContain('orca-orchestration-adapter');
+    expect(source).not.toContain('node:');
+    // `new Date(<given>)` parses the caller's `today`; a clock read would be `new Date()` / `Date.now()`.
+    expect(source).not.toMatch(/new Date\(\s*\)/);
+    expect(source).not.toContain('Date.now(');
   });
 
   test('the vocabularies are the frozen ones the wish pins', () => {
