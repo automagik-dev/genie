@@ -647,6 +647,7 @@ db.close();
         migrate: false,
         beforeMigrate: () => {
           backups++;
+          return undefined;
         },
         migrations: [
           {

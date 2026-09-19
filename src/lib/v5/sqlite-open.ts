@@ -215,8 +215,19 @@ export interface OpenSqliteOptions {
    * here aborts the migration with the database untouched. It is not called at
    * all when the database is already current, when there is nothing to bridge,
    * or when `migrate` is false.
+   *
+   * TWO-PHASE, because the copy cannot happen under the write lock: neither
+   * `wal_checkpoint` nor `VACUUM INTO` may run inside a transaction, so the
+   * backup is PREPARED here and its fate decided afterwards. Every racing
+   * opener prepares one; exactly the one that wins the lock gets `commit()`
+   * and every other gets `discard()`. Returning nothing opts out of both.
    */
-  beforeMigrate?: (info: { db: Database; path: string; from: number; to: number }) => void;
+  beforeMigrate?: (info: {
+    db: Database;
+    path: string;
+    from: number;
+    to: number;
+  }) => PreparedMigrationBackup | undefined;
 }
 
 /**
@@ -634,6 +645,16 @@ export function hasUserTables(db: Database): boolean {
   return row.n > 0;
 }
 
+/**
+ * A backup taken but not yet accounted for. `commit` keeps it and announces it;
+ * `discard` throws it away silently, because a backup of a migration that never
+ * happened is a receipt for bytes nobody archived.
+ */
+export interface PreparedMigrationBackup {
+  commit: () => void;
+  discard: () => void;
+}
+
 /** One resolved rung of the ladder. */
 type MigrationStep = { from: number; to: number; apply: (db: Database) => void };
 
@@ -681,10 +702,13 @@ function planMigrationChain(version: number, opts: OpenSqliteOptions): Migration
  */
 function applyMigrationChain(db: Database, chain: readonly MigrationStep[], opts: OpenSqliteOptions): void {
   for (const step of chain) {
+    // IMMEDIATE, not deferred: a step whose first statement is a read would
+    // take the write lock only later, leaving a window in which another opener
+    // commits the same step underneath it.
     db.transaction(() => {
       step.apply(db);
       db.exec(`PRAGMA user_version = ${step.to}`);
-    })();
+    }).immediate();
     const stamped = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
     if (stamped !== step.to) {
       throw new MalformedDbError(
@@ -692,6 +716,75 @@ function applyMigrationChain(db: Database, chain: readonly MigrationStep[], opts
         new Error(`migration ${step.from} -> ${step.to} committed but user_version reads ${stamped}`),
       );
     }
+  }
+}
+
+/**
+ * Run the chain under the write lock, with the stamped version RE-READ inside
+ * it, and settle the prepared backup by the outcome.
+ *
+ * `readUserVersion` happens on an unsynchronized read, so by the time a caller
+ * has planned a chain another process may already have run it. Six concurrent
+ * first-openers each believed they were the migrator: three took backups, and
+ * the losers announced "previous database backed up" over a file already at the
+ * new version — a receipt for bytes nobody archived. The re-read inside the
+ * FIRST step's immediate transaction is the arbiter: only the process that
+ * still sees `from` under the lock migrates, and only it keeps and announces
+ * its backup.
+ *
+ * Returns false when this process lost the race — nothing was written and the
+ * backup was discarded, so the caller re-reads the version and continues.
+ */
+function migrateUnderLock(
+  db: Database,
+  chain: readonly MigrationStep[],
+  from: number,
+  opts: OpenSqliteOptions,
+): boolean {
+  const first = chain[0] as MigrationStep;
+  const backup = opts.beforeMigrate?.({ db, path: opts.path, from, to: opts.schemaVersion });
+  let won = false;
+  try {
+    won = db
+      .transaction(() => {
+        const current = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
+        // Another opener migrated between our read and this lock. Not an error.
+        if (current !== from) return false;
+        first.apply(db);
+        db.exec(`PRAGMA user_version = ${first.to}`);
+        return true;
+      })
+      .immediate() as boolean;
+    if (won) applyMigrationChain(db, chain.slice(1), opts);
+  } finally {
+    if (won) backup?.commit();
+    else backup?.discard();
+  }
+  return won;
+}
+
+/**
+ * The policy for a database stamped BELOW this build's `schemaVersion`: refuse,
+ * decline, migrate, or adopt a concurrent migration. Split out of
+ * {@link initOrValidate} because it is a distinct decision with four outcomes,
+ * not another branch of that function's version dispatch.
+ *
+ * Returns normally once the database is at `schemaVersion`; throws otherwise.
+ */
+function bringUpToSchemaVersion(db: Database, version: number, opts: OpenSqliteOptions): void {
+  const { path, schemaVersion } = opts;
+  const chain = planMigrationChain(version, opts);
+  if (chain === null) {
+    throw new ForeignDbError(path, version, schemaVersion, 'no migration path from this schema version');
+  }
+  // Declined, not performed: the caller only wanted to look.
+  if (opts.migrate === false) throw new PendingMigrationError(path, version, schemaVersion);
+  if (migrateUnderLock(db, chain, version, opts)) return;
+  // A concurrent opener migrated first. Its result is authoritative, so adopt
+  // it — but only once it really did land on this build's version.
+  const settled = readUserVersion(db, path);
+  if (settled !== schemaVersion) {
+    throw new ForeignDbError(path, settled, schemaVersion, 'concurrent migration left an unexpected version');
   }
 }
 
@@ -723,22 +816,13 @@ function initOrValidate(db: Database, version: number, opts: OpenSqliteOptions):
     return;
   }
   if (version > 0 && version < schemaVersion) {
-    const chain = planMigrationChain(version, opts);
-    if (chain !== null) {
-      // Declined, not performed: the caller only wanted to look.
-      if (opts.migrate === false) throw new PendingMigrationError(path, version, schemaVersion);
-      // The caller's last chance to take a backup. A throw here aborts with the
-      // database untouched, because no step has run yet.
-      opts.beforeMigrate?.({ db, path, from: version, to: schemaVersion });
-      applyMigrationChain(db, chain, opts);
-      // Deliberate fall-through, not a second open: a database the ladder just
-      // brought to `schemaVersion` must receive the same additive backfills as
-      // one that was already there. Returning here instead left a migrated
-      // database permanently short of them.
-      if (!schemaIsCurrent || !schemaIsCurrent(db)) ensureSchema(db);
-      return;
-    }
-    throw new ForeignDbError(path, version, schemaVersion, 'no migration path from this schema version');
+    bringUpToSchemaVersion(db, version, opts);
+    // Deliberate fall-through, not a second open: a database the ladder just
+    // brought to `schemaVersion` must receive the same additive backfills as
+    // one that was already there. Returning here instead left a migrated
+    // database permanently short of them.
+    if (!schemaIsCurrent || !schemaIsCurrent(db)) ensureSchema(db);
+    return;
   }
   if (version > schemaVersion) {
     throw new ForeignDbError(

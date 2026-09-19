@@ -15,7 +15,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 // One-way, deliberate: the per-repo database asks the GENIE_HOME path module
 // where the machine-scope file lives so it can REFUSE to be that file. v6 ships
@@ -24,7 +24,8 @@ import { basename, dirname, join, normalize, resolve } from 'node:path';
 // still carries the file and both databases stamp `user_version = 1`.
 import { resolveGenieHome, resolveGlobalDbPath } from '../genie-home.js';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
-import { GenieDbError, openSqlite } from './sqlite-open.js';
+import { printErr } from '../term-output.js';
+import { GenieDbError, type PreparedMigrationBackup, openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
 // the global DB). Re-exported here so existing importers of ./genie-db keep
@@ -489,24 +490,37 @@ export interface OpenOptions {
  * the caller can name it on stdout — an unreported backup is a backup the
  * operator cannot use.
  */
-function backupBeforeMigration(db: Database, path: string, from: number, to: number): string {
+function prepareMigrationBackup(db: Database, path: string, from: number, to: number): PreparedMigrationBackup {
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}`);
   mkdirSync(root, { recursive: true });
   const target = join(root, basename(path));
   copyFileSync(path, target);
-  reportDbMigration(`genie.db: schema v${from} -> v${to}; previous database backed up to ${target}`);
-  return target;
+  return {
+    // This process won the lock: the copy is genuinely the previous database,
+    // so keep it and say where it went.
+    commit: () => reportDbMigration(`genie.db: schema v${from} -> v${to}; previous database backed up to ${target}`),
+    // It lost: the file it copied was migrated by someone else (or already
+    // was), so this root archives nothing anyone needs and announcing it would
+    // be a receipt for bytes nobody saved. Remove it and stay silent — the
+    // winner's root is the one that matters, and `state-backups` never
+    // accumulates a root that describes no event.
+    discard: () => rmSync(root, { recursive: true, force: true }),
+  };
 }
 
 /**
- * The ONE line the migration prints. Split out so tests can capture it without
- * spawning, and so the rule "a backup nobody is told about is useless" has a
- * single implementation.
+ * The ONE line the migration prints, and it goes to STDERR.
+ *
+ * `genie task export` and `genie board --json` put a single JSON document on
+ * stdout; a notice on that stream corrupts exactly the run that migrates — the
+ * first one after an upgrade — and the caller's `JSON.parse` fails on
+ * `genie.db: schema v1 -> v2; …`. This is operator text, so it belongs on
+ * stderr with every other diagnostic genie writes.
  */
 function reportDbMigration(line: string): void {
-  process.stdout.write(`${line}\n`);
+  printErr(line);
 }
 
 /**
@@ -525,7 +539,7 @@ export function openDb(opts: OpenOptions = {}): Database {
     schemaIsCurrent,
     migrations: SCHEMA_MIGRATIONS,
     ...(opts.migrate === false ? { migrate: false } : {}),
-    beforeMigrate: ({ db, path: dbPath, from, to }) => backupBeforeMigration(db, dbPath, from, to),
+    beforeMigrate: ({ db, path: dbPath, from, to }) => prepareMigrationBackup(db, dbPath, from, to),
   });
 }
 
@@ -751,32 +765,53 @@ export function ensureSchema(db: Database): void {
 }
 
 /**
+ * Add one nullable column unless it is already there.
+ *
+ * The presence check and the `ALTER` are two statements, so two processes
+ * opening the same older database at the same moment can both read the column
+ * as missing and both try to add it — the loser then dies with
+ * `duplicate column name`, taking an ordinary `genie task` invocation with it.
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so the error IS the signal that
+ * another opener won: it means the column now exists, which is precisely the
+ * post-condition this function promises. Every other failure propagates.
+ */
+function addTaskColumn(db: Database, present: ReadonlySet<string>, name: string, type: 'TEXT' | 'INTEGER'): void {
+  if (present.has(name)) return;
+  try {
+    db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+  } catch (err) {
+    if (!/duplicate column name/i.test(err instanceof Error ? err.message : String(err))) throw err;
+  }
+}
+
+/**
  * Additive, in-place column backfill for `tasks`. `CREATE TABLE IF NOT EXISTS`
  * never alters an existing table, so a DB stamped by an earlier build (which
  * lacked `wish`/`group_name`/`lane`) needs the columns added. All are nullable,
- * so this stays within `user_version = 1` — no destructive migration, no version
- * bump. Idempotent: a table that already has the columns is left untouched.
+ * so this stays within the current `user_version` — no destructive migration,
+ * no version bump. Idempotent, and safe against a concurrent opener running it
+ * at the same time (see {@link addTaskColumn}).
  */
 function ensureTaskColumns(db: Database): void {
   const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
-  if (!cols.has('wish')) db.exec('ALTER TABLE tasks ADD COLUMN wish TEXT');
-  if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
-  if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
+  addTaskColumn(db, cols, 'wish', 'TEXT');
+  addTaskColumn(db, cols, 'group_name', 'TEXT');
+  addTaskColumn(db, cols, 'lane', 'TEXT');
   // Runtime layer: authored identity, heartbeat liveness, and the enforced block
   // (blocked_by drives the single carved checkout exception; block_kind says
   // whether it is a work problem or a deliberate hold, NULL ⇒ 'work'). All
   // nullable ⇒ no user_version bump; the card-projection render reads them,
   // TaskRow stays frozen.
-  if (!cols.has('agent_kind')) db.exec('ALTER TABLE tasks ADD COLUMN agent_kind TEXT');
-  if (!cols.has('heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN heartbeat_at INTEGER');
-  if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
-  if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
-  if (!cols.has('block_kind')) db.exec('ALTER TABLE tasks ADD COLUMN block_kind TEXT');
+  addTaskColumn(db, cols, 'agent_kind', 'TEXT');
+  addTaskColumn(db, cols, 'heartbeat_at', 'INTEGER');
+  addTaskColumn(db, cols, 'blocked_by', 'TEXT');
+  addTaskColumn(db, cols, 'blocked_reason', 'TEXT');
+  addTaskColumn(db, cols, 'block_kind', 'TEXT');
   // Declared routing (cross-agent-delegate W1): which roster agent works the
   // card and why. Nullable ⇒ no user_version bump; both halves travel together
   // (an assignment without its reason is rejected at the state API).
-  if (!cols.has('assigned_agent')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_agent TEXT');
-  if (!cols.has('assigned_reason')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_reason TEXT');
+  addTaskColumn(db, cols, 'assigned_agent', 'TEXT');
+  addTaskColumn(db, cols, 'assigned_reason', 'TEXT');
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */

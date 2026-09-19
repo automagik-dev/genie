@@ -31,6 +31,7 @@ import {
   resolveRepoRoot,
 } from './genie-db.js';
 import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
+import { exportState } from './task-state.js';
 
 let dir: string;
 /**
@@ -224,7 +225,7 @@ CREATE TABLE tasks (
   claimed_by TEXT, claimed_at INTEGER, wish TEXT, group_name TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, lane TEXT, agent_kind TEXT,
   heartbeat_at INTEGER, blocked_by TEXT, blocked_reason TEXT, block_kind TEXT,
-  assignment_agent TEXT, assignment_why TEXT, assignment_at INTEGER
+  assigned_agent TEXT, assigned_reason TEXT
 );
 CREATE TABLE task_dependencies (task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL, PRIMARY KEY (task_id, depends_on_id));
 CREATE TABLE stage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, stage TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL);
@@ -317,11 +318,11 @@ CREATE TABLE hire_roster (
     // — an operator who discovers the wrong binary migrated a shared database
     // needs the bytes, not a flag nobody knew to pass.
     const written: string[] = [];
-    const priorWrite = process.stdout.write;
-    process.stdout.write = ((chunk: unknown) => {
+    const priorWrite = process.stderr.write;
+    process.stderr.write = ((chunk: unknown) => {
       written.push(String(chunk));
       return true;
-    }) as typeof process.stdout.write;
+    }) as typeof process.stderr.write;
     try {
       const path = join(dir, 'v1-backup.db');
       seedV1Db(path);
@@ -362,7 +363,7 @@ CREATE TABLE hire_roster (
       expect(lines[0]).toContain('schema v1 -> v2');
       expect(lines[0]).toContain(archived);
     } finally {
-      process.stdout.write = priorWrite;
+      process.stderr.write = priorWrite;
     }
   });
 
@@ -392,6 +393,162 @@ CREATE TABLE hire_roster (
       db.close();
     }
   });
+
+  test('the migration notice goes to STDERR, so a piped stdout stays machine-readable', () => {
+    // `genie task export` writes ONE JSON document to stdout. A migration
+    // notice on the same stream corrupts exactly the run that migrates — the
+    // first one after an upgrade — and `JSON.parse` fails on
+    // `genie.db: schema v1 -> v2; …`. The notice is operator text; it belongs
+    // on stderr like every other diagnostic genie prints.
+    const outChunks: string[] = [];
+    const errChunks: string[] = [];
+    const priorOut = process.stdout.write;
+    const priorErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown) => {
+      outChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown) => {
+      errChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const path = join(dir, 'v1-streams.db');
+      seedV1Db(path);
+      const db = openDb({ path });
+      // What `task export` puts on stdout, on the very run that migrated.
+      process.stdout.write(JSON.stringify(exportState(db)));
+      db.close();
+    } finally {
+      process.stdout.write = priorOut;
+      process.stderr.write = priorErr;
+    }
+    // stdout is the payload and nothing else.
+    expect(() => JSON.parse(outChunks.join(''))).not.toThrow();
+    expect(outChunks.join('')).not.toContain('schema v1 -> v2');
+    // stderr carries the notice, once.
+    const notices = errChunks
+      .join('')
+      .trimEnd()
+      .split('\n')
+      .filter((line) => line.includes('schema v1 -> v2'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('state-backups');
+  });
+
+  test('six concurrent first-openers take exactly ONE backup and print exactly ONE line', async () => {
+    // `beforeMigrate` ran outside the write lock, after an unsynchronized
+    // version read: six racing processes each believed they were the migrator,
+    // so three backup roots appeared and the losers announced "previous
+    // database backed up" over a file already at v2 with no hire_roster — a
+    // receipt for bytes nobody archived.
+    const path = join(dir, 'v1-race.db');
+    seedV1Db(path);
+    const worker = join(dir, 'race-worker.ts');
+    writeFileSync(
+      worker,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+const db = openDb({ path: process.argv[2] });
+process.stdout.write(String((db.query('PRAGMA user_version').get()).user_version));
+db.close();
+`,
+    );
+    const runs = await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        const proc = Bun.spawn(['bun', 'run', worker, path], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: { ...process.env, GENIE_HOME: genieHome },
+        });
+        return {
+          out: await new Response(proc.stdout).text(),
+          err: await new Response(proc.stderr).text(),
+          code: await proc.exited,
+        };
+      }),
+    );
+    for (const run of runs) {
+      expect(run.code, run.err).toBe(0);
+      expect(run.out).toBe('2');
+    }
+    // ONE migrator: one archive, and one announcement across all six.
+    const roots = readdirSync(join(genieHome, 'state-backups')).filter((e) => e.startsWith('db-migration-'));
+    expect(roots).toHaveLength(1);
+    const announcements = runs
+      .flatMap((run) => `${run.out}${run.err}`.split('\n'))
+      .filter((line) => line.includes('schema v1 -> v2'));
+    expect(announcements).toHaveLength(1);
+    // And the one archive really is the pre-migration database.
+    const archived = new Database(join(genieHome, 'state-backups', roots[0] as string, 'v1-race.db'), {
+      readonly: true,
+    });
+    try {
+      expect((archived.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+      expect((archived.query('SELECT COUNT(*) AS n FROM hire_roster').get() as { n: number }).n).toBe(1);
+    } finally {
+      archived.close();
+    }
+  }, 30_000);
+
+  test('concurrent openers of a column-short database all succeed (additive-backfill race)', async () => {
+    // Found by the six-way test above, and older than this wish: the additive
+    // `tasks` backfill reads `PRAGMA table_info` and THEN runs `ALTER TABLE
+    // ADD COLUMN`, so two openers can both read a column as missing and both
+    // add it. The loser died with `duplicate column name`, taking an ordinary
+    // `genie task` invocation down with it. SQLite has no
+    // `ADD COLUMN IF NOT EXISTS`, so that error is the signal the column now
+    // exists — which is exactly the post-condition the backfill promises.
+    const path = join(dir, 'column-short.db');
+    const seed = new Database(path);
+    seed.exec(`
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL,
+  claimed_by TEXT, claimed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+`);
+    seed.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
+    seed.close();
+
+    const worker = join(dir, 'backfill-worker.ts');
+    writeFileSync(
+      worker,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+const db = openDb({ path: process.argv[2] });
+process.stdout.write('ok');
+db.close();
+`,
+    );
+    const runs = await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        const proc = Bun.spawn(['bun', 'run', worker, path], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: { ...process.env, GENIE_HOME: genieHome },
+        });
+        return {
+          out: await new Response(proc.stdout).text(),
+          err: await new Response(proc.stderr).text(),
+          code: await proc.exited,
+        };
+      }),
+    );
+    for (const run of runs) {
+      expect(run.code, run.err).toBe(0);
+      expect(run.err).not.toContain('duplicate column name');
+    }
+    // One well-formed table, every column present exactly once.
+    const check = new Database(path, { readonly: true });
+    try {
+      const names = (check.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name);
+      for (const column of ['wish', 'group_name', 'lane', 'agent_kind', 'assigned_agent', 'assigned_reason']) {
+        expect(names.filter((name) => name === column)).toHaveLength(1);
+      }
+    } finally {
+      check.close();
+    }
+  }, 30_000);
 
   test('a version the ladder cannot bridge still throws ForeignDbError', () => {
     const path = join(dir, 'unbridgeable.db');
