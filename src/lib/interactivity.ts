@@ -83,15 +83,6 @@ const WORKSPACE_EXEMPT = new Set([
   // (interactive) or exit 2 (CI, piped output) in exactly the repositories the
   // verb exists for. `src/lib/interactivity.test.ts` pins this membership.
   'wish',
-  // `mcp` is now a retirement stub: it writes the stable diagnostic to stderr and
-  // exits 1. It touches no workspace state, so the legacy workspace gate must not
-  // exit 2 and mask the retirement diagnostic callers are told to expect.
-  'mcp',
-  // `ui-bridge` is now a retirement stub too: the Orca integration replaced the
-  // UI-owned stdio bridge, so the command only writes its stable diagnostic to
-  // stderr and exits 1. It touches no workspace state, so the legacy workspace
-  // gate must not exit 2 and mask the diagnostic callers are told to expect.
-  'ui-bridge',
   // `config` is the read-only global-config reader. It resolves keys against
   // `<GENIE_HOME>/config.json` and the schema, never against a repo, so the
   // legacy per-repo workspace gate must not exit 2 on a machine that has a

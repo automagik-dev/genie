@@ -40,9 +40,7 @@ import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
-import { registerMcpCommand } from './term-commands/mcp.js';
 import { registerMikroCommands } from './term-commands/mikro.js';
-import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
 import { registerWishCommands } from './term-commands/wish.js';
@@ -262,8 +260,6 @@ shortcuts
 // ============================================================================
 
 registerInitCommand(program);
-registerMcpCommand(program);
-registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerContextCommand(program);

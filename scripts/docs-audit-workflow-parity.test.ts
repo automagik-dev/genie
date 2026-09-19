@@ -19,8 +19,6 @@ const SURFACES = ['readme', 'agent-instructions', 'docs-architecture', 'runtime-
 const PROBE_SHAPES = [
   'bun src/genie.ts <command> --help, for any command the documented surfaces name',
   'a missing-argument error: a documented read command invoked with a required argument omitted, and nothing else omitted',
-  'the retired genie mcp stub, which only writes its retirement diagnostic to stderr and exits non-zero',
-  'the retired genie ui-bridge stub, which only writes its retirement diagnostic to stderr and exits non-zero',
   'genie config get <unknown key>, which only reads the resolved config',
   'genie --version',
 ];

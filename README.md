@@ -147,10 +147,11 @@ from a collection or infers success from a partial response.
 
 ### MCP retirement
 
-The legacy Genie MCP server is retired. `genie mcp` exits non-zero with a stable diagnostic and never starts a server;
-use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or exact
-Genie-owned historical project registrations and preserves unrelated or unproven user configuration byte-for-byte.
-Rollback to a pre-A7 signed release remains the migration escape hatch.
+The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
+parses. Use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or
+exact Genie-owned historical project registrations and preserves unrelated or unproven user configuration
+byte-for-byte. Rollback to a pre-A7 signed release remains the migration escape hatch for a host that still needs the
+verb to answer at all.
 
 Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
 before changing the adapter or its operator guidance.
@@ -176,7 +177,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 17 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
+- **Small.** 15 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -193,9 +194,7 @@ genie --help
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie idea` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
-| `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
-| `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
 | `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
@@ -292,16 +291,17 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 ## MCP retirement
 
 The legacy cross-client MCP server, its write tools, plugin launchers, and Genie-owned registrations are retired.
-`genie mcp` prints `Error: genie mcp has been retired; use \`genie task\` and \`genie board\`, or roll back to a
-pre-A7 signed release.` to stderr and exits 1 without reading or speaking MCP. `genie init` removes only historical
-registrations proven to be Genie-owned; unowned same-name routes and every unrelated config key remain untouched.
+v6 also removed the `genie mcp` retirement stub itself: the verb no longer parses, so use `genie task` and
+`genie board`. Host state is still cleaned up, because that was never about the verb — `genie init` removes only
+historical registrations proven to be Genie-owned: in `.mcp.json` a `genie` server whose command is a genie binary
+with args exactly `["mcp"]`, plus the marker-owned `.codex/config.toml` route, backing the file up first. Meanwhile
+unowned same-name routes and every unrelated config key remain untouched, and `genie doctor` keeps reporting a dead
+route it finds.
 
-The UI-owned `genie ui-bridge` is retired on the same terms: there is no separate Genie UI any more, the Orca
-integration is the supported UI surface, and the private stdio transport, tool registry, and change watcher behind the
-bridge are deleted. `genie ui-bridge` prints `Error: genie ui-bridge has been retired; the Orca integration is the
-supported UI surface, or roll back to a pre-retirement signed release.` to stderr and exits 1. Standalone `genie task`
-and `genie board` retain their existing behavior in standalone mode; Orca mode continues to use the public
-`orca orchestration ... --json` adapter as its sole authority.
+The UI-owned `genie ui-bridge` went the same way: there is no separate Genie UI any more, the Orca integration is the
+supported UI surface, and the private stdio transport, tool registry, and change watcher behind the bridge are
+deleted along with the verb. Standalone `genie task` and `genie board` retain their existing behavior in standalone
+mode; Orca mode continues to use the public `orca orchestration ... --json` adapter as its sole authority.
 
 ## Roadmap
 
