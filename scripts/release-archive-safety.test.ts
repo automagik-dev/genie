@@ -56,13 +56,41 @@ test('a backslash-bearing member name is rejected before extraction', () => {
   expect(() => assertSafeArchiveListing(w.tarball)).toThrow('unsafe archive path');
 });
 
+/**
+ * Write a gzipped tar holding exactly one member, under the name given —
+ * including a name no `tar` will produce from a real file tree.
+ *
+ * Byte-by-byte on purpose: the only way to make a tar CLI store an escaping
+ * name is GNU tar's `--transform`, which macOS ships no equivalent of (bsdtar
+ * has `-s`, with its own regex dialect), so the GNU-only form failed this test
+ * on every darwin host (#2926). A plain POSIX ustar header is read identically
+ * by GNU tar and bsdtar, which is what the listing guard actually consumes.
+ */
+function writeSingleMemberTarball(tarball: string, member: string, body: string): void {
+  const header = Buffer.alloc(512);
+  header.write(member, 0, 100, 'ascii');
+  header.write('000644 \0', 100, 8, 'ascii'); // mode
+  header.write('000000 \0', 108, 8, 'ascii'); // uid
+  header.write('000000 \0', 116, 8, 'ascii'); // gid
+  header.write(`${body.length.toString(8).padStart(11, '0')} `, 124, 12, 'ascii'); // size
+  header.write('00000000000 ', 136, 12, 'ascii'); // mtime
+  header.write('        ', 148, 8, 'ascii'); // checksum, counted as spaces
+  header.write('0', 156, 1, 'ascii'); // typeflag: regular file
+  header.write('ustar\0', 257, 6, 'ascii');
+  header.write('00', 263, 2, 'ascii');
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii');
+  const content = Buffer.alloc(512);
+  content.write(body, 0, 'ascii');
+  // Two zero blocks end the archive.
+  writeFileSync(tarball, Bun.gzipSync(Buffer.concat([header, content, Buffer.alloc(1024)])));
+}
+
 test('an escaping member name is rejected before extraction', () => {
   const w = workspace();
   const tarball = join(w.root, 'escape.tar.gz');
-  expect(
-    Bun.spawnSync(['tar', '-czf', tarball, '-C', w.payload, '--transform', 's|nested/file.txt|../escape.txt|', '.'])
-      .exitCode,
-  ).toBe(0);
+  writeSingleMemberTarball(tarball, '../escape.txt', 'bytes');
   expect(() => assertSafeArchiveListing(tarball)).toThrow('unsafe archive path');
 });
 

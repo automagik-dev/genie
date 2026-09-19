@@ -1302,6 +1302,14 @@ describe('private external update staging', () => {
 const HOST_PLATFORM_ID =
   process.platform === 'darwin' ? 'darwin-arm64' : process.arch === 'arm64' ? 'linux-arm64' : 'linux-x64-glibc';
 
+/**
+ * A platform id that is never this host's. The "signed for another platform"
+ * case must stay foreign wherever the suite runs: a hardcoded `darwin-arm64`
+ * silently became the HOST id on macOS, so the descriptor verified and the
+ * assertion that it must be rejected failed there (#2926).
+ */
+const FOREIGN_PLATFORM_ID = HOST_PLATFORM_ID === 'darwin-arm64' ? 'linux-x64-glibc' : 'darwin-arm64';
+
 /** Signature-math seam only — never a binding seam. */
 const EVIDENCE_SEAM = { verifyBundle: () => ({ integratedTime: '1758000000' }) };
 
@@ -1695,7 +1703,7 @@ describe('downloadAndVerifyTarball (G5)', () => {
     ],
     [
       'the signed release name is for another platform',
-      { descriptor: { releaseName: 'genie-5.260916.1-darwin-arm64.tar.gz' } },
+      { descriptor: { releaseName: `genie-5.260916.1-${FOREIGN_PLATFORM_ID}.tar.gz` } },
       /releaseName is invalid/,
     ],
   ])('aborts when %s, without a credential to hide behind', async (_label, overrides, expected) => {
