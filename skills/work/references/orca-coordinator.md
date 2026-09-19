@@ -8,7 +8,7 @@ The version-matched Orca orchestration guide loaded in the session owns command 
 
 - `WISH.md` at `APPROVED` starts execution. `IN_PROGRESS` resumes: first reconcile the wish's existing Run, Tasks, and Dispatches through Orca's status queries, then continue from the recorded state rather than creating duplicates.
 - The wish header pins the initial base branch and SHA; first-wave groups start there. Before dispatching a group whose dependencies completed in earlier waves, integrate those dependency commits into the wish branch and record the group's exact starting SHA in its task spec, so no worker starts without the work it depends on.
-- Existing user authorization satisfies the wish-approval gate and any gate the Orca guide expresses for this run; do not ask again.
+- Existing user authorization satisfies the matching gate of the catalogue below, and any gate the Orca guide expresses for this run; a satisfied gate is raised no second time.
 
 ## Loop
 
@@ -48,6 +48,27 @@ Three rules hold the mirror one-way:
 - **`BLOCKED` means waiting on a human.** Orca's four columns hold no blocked column, so the card stays `in-progress` and the evidence names what is being waited on — the gate and its question, or the cause and the route. The next transition (`IN_PROGRESS`, `APPROVED`, `SHIPPED`) closes the loop on the card.
 
 A failed mirror is reported, never retried blindly: the verb exits 2 on a refused input with the reason on stderr, and 1 on an Orca failure with one JSON line naming the code, the phase and the recovery. A card write is never a delivery gate — the wish proceeds on its documents and its evidence.
+
+## Gates
+
+Every question that would otherwise stall the flow in chat is raised as an Orca decision gate, so it is answerable from Orca's UI in any workspace. An authorization the user already gave satisfies the matching gate below, and that gate is raised no second time.
+
+| Moment | Gate question | Options | What each resolution means |
+|---|---|---|---|
+| Plan review returned (`wish`), on the wish-level task, from the wish's coordinator terminal after the `run-create` `work` needs anyway | `Approve wish <slug>? plan review: <verdict>` | `approve, fix-first, blocked` | the persisted Status becomes `APPROVED`, `FIX-FIRST` or `BLOCKED`; record the Run and task ids in WISH.md so `work` resumes them instead of creating duplicates |
+| A group ends blocked or a repair loop is exhausted (`work`, `fix`), on the group's task | `Group <n> of <slug> is BLOCKED: <cause>. Accept and continue?` | `accept, stop` | `accept`: the blocker is recorded and independent groups continue; `stop`: the wish is `BLOCKED` |
+| The PR is merge-ready (`work` § Delivery), on the group's task | `PR #<n> for <slug> is merge-ready against <base>. Merge?` | `merge, hold` | `merge` is the operator's recorded decision; the coordinator merges only into a non-protected base and never bypasses a hook, and a protected base stays merge-ready for the operator |
+| The wish promotes (`work` § Delivery), on the group's task | `Promote <from> to <to> (<version>)?` | `promote, hold` | the decision is recorded; the promotion itself stays the operator's act |
+
+Every gate follows one sequence, run from the Run-bound coordinator terminal in the loaded Orca guide's own vocabulary:
+
+1. Raise it with `gate-create --task <task> --question … --options …`, spelled exactly as the loaded guide spells it, on the task named in the row above.
+2. Mirror the wait onto the card: `genie orca mirror --to BLOCKED --evidence "gate <id>: <question>"`.
+3. Wait with the guide's structured wait (`check --wait … --timeout-ms <n>`). A timeout is a checkpoint, never a decision: keep coordinator work moving and wait again.
+4. Confirm the resolution with `gate-list --task <task>` when the wait returns, whatever woke it. The guide promises no `decision_gate` wake for a resolution made in Orca's UI, so the gate list is the one proof a gate resolved and what it resolved to.
+5. Close the loop on the card with the next transition — `APPROVED`, `IN_PROGRESS` or `SHIPPED` — as the board mirror above describes.
+
+A gate the coordinator cannot create is reported as a blocker naming the question and the decision it was to carry; the human's answer stays the human's to give.
 
 ## Engineer brief
 
