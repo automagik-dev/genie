@@ -31,7 +31,6 @@ import {
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
-import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
@@ -266,13 +265,14 @@ function checkDatabase(root: string | null): CheckResult[] {
 }
 
 /**
- * Tables that belong ONLY to a per-repo `.genie/genie.db`. The global
- * `<GENIE_HOME>/genie.db` carries the omni approval queue and inbox and nothing
- * else; a per-repo table sitting next to `approvals` is proof that some binary
- * once opened the global path with the per-repo opener (M7). Prevention landed
- * (the per-repo opener refuses the global path), but a host contaminated before
- * that fix stays contaminated forever, and both databases still report
- * `user_version = 1` — so a future numbered migration cannot tell them apart.
+ * Tables that belong ONLY to a per-repo `.genie/genie.db`. v6 writes NOTHING to
+ * the machine-scope `<GENIE_HOME>/genie.db` — the Omni runner owned every table
+ * that file ever held and left with it — so any per-repo table found there is
+ * proof that some binary once opened the global path with the per-repo opener
+ * (M7). Prevention landed (the per-repo opener refuses the global path), but a
+ * host contaminated before that fix stays contaminated forever, and both
+ * databases still report `user_version = 1` — so a future numbered migration
+ * cannot tell them apart.
  */
 const PER_REPO_ONLY_TABLES = [
   'boards',
@@ -352,10 +352,12 @@ export interface GlobalDbRepairResult {
 /**
  * The ONE destructive act doctor performs, and only under its own explicit flag.
  * Backup-first and WAL-safe: the write-ahead log is folded back into the main
- * file before the byte copy, so the backup is complete even when `genie omni
- * serve` has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES}
- * that are actually present are dropped; the approval queue and inbox are never
- * touched. Idempotent — a repaired database reports `clean` on the next run.
+ * file before the byte copy, so the backup is complete even when another process
+ * has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES} that
+ * are actually present are dropped; every other table in the file is left
+ * byte-for-byte alone — v6 puts none there itself, but the operator's own rows
+ * are not doctor's to delete. Idempotent — a repaired database reports `clean`
+ * on the next run.
  */
 export function repairGlobalDbContamination(options: { genieHome?: string } = {}): GlobalDbRepairResult {
   const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
@@ -383,7 +385,7 @@ export function repairGlobalDbContamination(options: { genieHome?: string } = {}
         dbPath,
         dropped: [],
         backupPath: null,
-        message: `${dbPath}: already clean (omni queue + inbox only) — nothing to repair.`,
+        message: `${dbPath}: already clean (no per-repo tables) — nothing to repair.`,
       };
     }
     db.run('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -425,7 +427,7 @@ export function repairGlobalDbContamination(options: { genieHome?: string } = {}
 export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]): CheckResult {
   const strays = PER_REPO_ONLY_TABLES.filter((name) => tables.includes(name));
   if (strays.length === 0) {
-    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
+    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (no per-repo tables)` };
   }
   const remedy = globalDbContaminationRemedy();
   const detail =
@@ -1499,92 +1501,6 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
 }
 
 // ============================================================================
-// Omni bridge health probe
-// ============================================================================
-
-/** omni CLI's own fallback API URL (packages/cli/src/commands/status.ts). */
-export const OMNI_BRIDGE_DEFAULT_URL = 'http://localhost:8882';
-/** Bounded probe budget — doctor is interactive; the bridge answers locally. */
-export const OMNI_BRIDGE_PROBE_TIMEOUT_MS = 3_000;
-
-/**
- * Evaluate the omni bridge health probe. Returns null when omni is not
- * configured (no check emitted). The probe moved here from the retired omni
- * plugin SessionStart health hook (hooks-v2#retire): `genie doctor` replaces
- * the hook's per-session health scan with an on-demand diagnostic — no
- * auto-install, no auto-recovery. Pure + exported for testing.
- */
-export function evaluateOmniBridgeHealth(params: {
-  configured: boolean;
-  apiStatus: string | null;
-  version?: string;
-  error?: string;
-}): CheckResult | null {
-  if (!params.configured) return null;
-  const name = 'omni bridge health';
-  const versionSuffix = params.version ? ` (v${params.version})` : '';
-  if (params.apiStatus === 'healthy') {
-    return { name, status: 'pass', detail: `omni bridge healthy${versionSuffix}` };
-  }
-  if (params.apiStatus !== null) {
-    return {
-      name,
-      status: 'warn',
-      detail: `omni bridge reports status "${params.apiStatus}"${versionSuffix}`,
-      suggestion: 'Inspect the bridge with `omni status`; `omni start` brings it up.',
-    };
-  }
-  return {
-    name,
-    status: 'warn',
-    detail: `omni bridge unreachable${params.error ? ` (${params.error})` : ''}`,
-    suggestion: 'Start the bridge with `omni start` (or `genie omni serve`), then re-run `genie doctor`.',
-  };
-}
-
-interface OmniBridgeHealthProbe {
-  status: string | null;
-  version?: string;
-  error?: string;
-}
-
-/** One bounded GET to the bridge's health endpoint; never throws. */
-async function fetchOmniBridgeHealth(apiUrl: string, fetchImpl: typeof fetch): Promise<OmniBridgeHealthProbe> {
-  try {
-    const response = await fetchImpl(`${apiUrl.replace(/\/+$/, '')}/api/v2/health`, {
-      headers: { 'Accept-Encoding': 'identity' },
-      signal: AbortSignal.timeout(OMNI_BRIDGE_PROBE_TIMEOUT_MS),
-    });
-    const health = (await response.json()) as { status?: unknown; version?: unknown };
-    return {
-      status: typeof health.status === 'string' ? health.status : 'unknown',
-      version: typeof health.version === 'string' ? health.version : undefined,
-    };
-  } catch (err) {
-    return { status: null, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * Probe the configured omni bridge. Silent when omni is not configured
- * (no `apiUrl`/`apiKey` in genie config or env) so a machine that never uses
- * omni carries no probe noise. `fetchImpl` is a test seam; production uses
- * the global fetch.
- */
-export async function checkOmniBridgeHealth(fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
-  const rt = await resolveOmniRuntimeConfig();
-  if (rt.apiUrl === undefined && rt.apiKey === undefined) return []; // omni off → stay silent
-  const probe = await fetchOmniBridgeHealth(rt.apiUrl ?? OMNI_BRIDGE_DEFAULT_URL, fetchImpl);
-  const result = evaluateOmniBridgeHealth({
-    configured: true,
-    apiStatus: probe.status,
-    version: probe.version,
-    error: probe.error,
-  });
-  return result ? [result] : [];
-}
-
-// ============================================================================
 // jar: index-lane drift — INDEX.md sections vs roadmap board lanes
 //
 // One tracker: the `roadmap` board owns placement truth; `.genie/INDEX.md` prose
@@ -2086,7 +2002,6 @@ export async function doctorCommand(
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
     ...checkWorktreeModes(root),
-    ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
     ...checkTrackedMachineState(root),

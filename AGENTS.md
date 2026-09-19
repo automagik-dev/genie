@@ -15,13 +15,13 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 ## Architecture
 
 - `src/genie.ts` is the Commander CLI entry point.
-- `src/lib/v5/` owns SQLite state. Per-repo `.genie/genie.db` stores task state; global `~/.genie/genie.db` stores Omni state. Never mix their path/schema modules.
-- `src/term-commands/` owns `init`, `context`, MCP, Omni, task, and board commands.
+- `src/lib/v5/` owns SQLite state. The per-repo `.genie/genie.db` stores task state and is the only database genie writes; the machine-scope `~/.genie/genie.db` path carries no genie state in v6, and the per-repo opener refuses it so the two can never merge.
+- `src/term-commands/` owns `init`, `context`, MCP, task, and board commands.
 - `plugins/genie/` is the Orca plugin payload: the native manifest, its entrypoint bundle, and `references/orca-orchestration.md`.
 - `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
 - `.genie/` contains git-tracked wishes, reviewed designs (`brainstorms/*/DESIGN.md`) and the index, plus gitignored brainstorm working notes and operational SQLite files.
 
-Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` bridge. Do not use telemetry presence as integration health.
+Genie is zero-daemon: every command is fork-and-exit and there is no resident process, optional or otherwise. Do not use telemetry presence as integration health.
 
 ## Engineering rules
 

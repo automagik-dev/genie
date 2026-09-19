@@ -60,7 +60,6 @@ const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
   'doctor',
   'idea',
   'init',
-  'omni',
   'setup',
   'shortcuts',
   'task',
@@ -115,9 +114,9 @@ describe('CLAUDE.md v5 drift guard', () => {
  *
  * The fossil guard above only forbids strings and the release-docs guard only
  * derives the TOP-LEVEL inventory, so `genie task move <id> --lane <x>`, a
- * `--worker` bolted onto `task heartbeat`, and an `omni` row naming four of the
- * five subcommands all sat in the contributor contract with a green suite (the
- * 2026-09-15 dogfood run found them by hand). Every flag and verb CLAUDE.md
+ * `--worker` bolted onto `task heartbeat`, and a subcommand row naming four of
+ * a command's five verbs all sat in the contributor contract with a green suite
+ * (the 2026-09-15 dogfood run found them by hand). Every flag and verb CLAUDE.md
  * documents is now spawned and checked against `--help`.
  */
 const ROOT = join(import.meta.dir, '..', '..');
@@ -219,37 +218,6 @@ describe('CLAUDE.md subcommand drift guard', () => {
     }
   });
 
-  test('CLAUDE.md names every omni subcommand the registry registers', () => {
-    const help = cliHelp(['omni']);
-    const subcommands = subcommandNames(help);
-    // The dogfood defect: the table row named four of the five.
-    expect(subcommands).toContain('test-approval');
-    const row = (content.split('\n').find((line) => line.startsWith('| `omni` |')) as string) ?? '';
-    // The CLI's own one-line summary is the other half of this claim.
-    const summary = help.split('Options:')[0] as string;
-    const documented = documentedLines(content, 'Omni subcommands', 'omni').map(
-      (line) => documentedInvocation(line, 'omni').name,
-    );
-    for (const name of subcommands) {
-      expect(row).toContain(`\`${name}\``);
-      expect(documented).toContain(name);
-      expect(summary).toContain(name);
-    }
-    expect(documented.sort()).toEqual(subcommands);
-  });
-
-  /**
-   * The same claim in the other file a reader meets first. Dogfood r5 Z11: the
-   * CLAUDE.md table was corrected while README's command table kept naming four
-   * of the five omni subcommands.
-   */
-  test('the README command table names every omni subcommand too', () => {
-    const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-    const row = (readme.split('\n').find((line) => line.startsWith('| `genie omni` |')) as string) ?? '';
-    expect(row).not.toBe('');
-    for (const name of subcommandNames(cliHelp(['omni']))) expect(row).toContain(`\`${name}\``);
-  });
-
   /**
    * Dogfood 7 W5: `genie config` shipped, the `fix` skill built its repair
    * budget on `genie config get budgets.maxEscalationsPerGroup`, and the
@@ -287,13 +255,5 @@ describe('CLAUDE.md subcommand drift guard', () => {
     const proc = Bun.spawnSync([process.execPath, join(ROOT, 'src', 'genie.ts'), 'config', 'get', key], { cwd: ROOT });
     expect(proc.exitCode).toBe(0);
     expect(proc.stdout.toString().trim().length).toBeGreaterThan(0);
-  });
-
-  test('every omni flag CLAUDE.md documents exists on that subcommand', () => {
-    for (const line of documentedLines(content, 'Omni subcommands', 'omni')) {
-      const { name, flags } = documentedInvocation(line, 'omni');
-      const options = longOptions(cliHelp(['omni', name]));
-      for (const flag of flags) expect(options).toContain(flag);
-    }
   });
 });

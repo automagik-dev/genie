@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveGlobalDbPath } from '../genie-home.js';
 import {
   BusyDbError,
   CURRENT_SCHEMA_VERSION,
@@ -19,7 +20,6 @@ import {
   resolveDbPath,
   resolveRepoRoot,
 } from './genie-db.js';
-import { resolveGlobalDbPath } from './global-db.js';
 import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 
 let dir: string;
@@ -575,8 +575,8 @@ describe('resolveDbPath fallback', () => {
  * M7 — the default `GENIE_HOME` is `$HOME/.genie`, which is also a valid
  * spelling of a per-repo `.genie/`. A per-repo verb invoked with cwd = that home
  * (outside any git repo, so resolution falls back to cwd) resolved the GLOBAL
- * database and initialized the 9-table per-repo schema inside the Omni approval
- * queue — two schemas, two independent `PRAGMA user_version`, one file.
+ * database and initialized the 9-table per-repo schema inside the machine-scope
+ * file — two schemas, two independent `PRAGMA user_version`, one file.
  */
 describe('global-database separation guard', () => {
   let home: string;

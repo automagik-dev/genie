@@ -986,9 +986,9 @@ describe('resolveChannel + persistChannel — config preservation (BUG A)', () =
   });
 
   test('schema-invalid-but-parseable config keeps its channel on resolve and is NOT clobbered on persist', async () => {
-    // omni present but missing its required apiUrl → the full schema rejects this,
+    // A budget past its schema `.max()` ceiling → the full schema rejects this,
     // but the file is valid JSON, so the channel is still recoverable.
-    const invalid = { updateChannel: 'dev', setupComplete: true, omni: { instance: 'x' } };
+    const invalid = { updateChannel: 'dev', setupComplete: true, budgets: { maxEscalationsPerGroup: 99 } };
     writeFileSync(configPath, JSON.stringify(invalid, null, 2), 'utf-8');
 
     // resolve: recovers 'dev' from the raw key rather than silently → stable.
@@ -1000,7 +1000,7 @@ describe('resolveChannel + persistChannel — config preservation (BUG A)', () =
     const saved = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
     expect(saved.updateChannel).toBe('dev');
     expect(saved.setupComplete).toBe(true); // NOT reset to the default (false)
-    expect(saved.omni).toEqual({ instance: 'x' }); // NOT dropped
+    expect(saved.budgets).toEqual({ maxEscalationsPerGroup: 99 }); // NOT dropped
   });
 
   test('unparseable config → advisory + no write on persist, stated stable fallback on resolve', async () => {

@@ -18,11 +18,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { convergeAuxiliaryTree } from '../genie-commands/auxiliary-trees.js';
 import { persistIntegrationConsent } from './runtime-integrations.js';
-import { openGlobalDb, resolveGlobalDbPath } from './v5/global-db.js';
 import { openSqlite } from './v5/sqlite-open.js';
 import { findWorkspace } from './workspace.js';
 
@@ -63,12 +62,6 @@ describe('GENIE_HOME first-creation permissions', () => {
     {
       site: 'runtime-integrations.ts — persistIntegrationConsent',
       create: (genieHome) => persistIntegrationConsent('auto', genieHome),
-    },
-    {
-      // The global genie.db lives directly in GENIE_HOME, and every `genie
-      // omni` subcommand opens it leaseless — so this is a first-creator.
-      site: 'global-db.ts — openGlobalDb',
-      create: (genieHome) => openGlobalDb({ path: join(genieHome, 'genie.db') }).close(),
     },
     {
       site: 'auxiliary-trees.ts — convergeAuxiliaryTree staging',
@@ -134,28 +127,15 @@ describe('GENIE_HOME first-creation permissions', () => {
     expect(hasUnsafeWriteBits(intermediate)).toBe(false);
   });
 
-  test('the global db resolves into GENIE_HOME, while a per-repo .genie keeps the ambient umask', () => {
-    // The two halves of the deliberate split in openSqlite's `dirMode`. The
-    // global db's directory IS GENIE_HOME (so it opts in to 0o700); the
-    // per-repo `.genie/` lives inside the user's own repository, where forcing
-    // owner-only would be surprising, so it stays at the ambient umask.
+  test('a per-repo .genie keeps the ambient umask', () => {
+    // v6 opens no machine-scope database — the Omni runner owned the one caller
+    // that forced 0o700 on GENIE_HOME and left with it, so openSqlite no longer
+    // takes a directory mode at all. What survives is the other half of that
+    // split: the per-repo `.genie/` lives inside the user's own repository,
+    // where forcing owner-only would be surprising, so it stays at the ambient
+    // umask. Every remaining GENIE_HOME creator is covered above.
     const root = tempRoot('genie-home-perms-split-');
-    const genieHome = join(root, '.genie-home');
-    const previousGenieHome = process.env.GENIE_HOME;
-    process.env.GENIE_HOME = genieHome;
-    cleanups.push(() => {
-      if (previousGenieHome === undefined) {
-        // biome-ignore lint/performance/noDelete: process.env assignment coerces undefined→"undefined"; delete is the only correct unset
-        delete process.env.GENIE_HOME;
-      } else {
-        process.env.GENIE_HOME = previousGenieHome;
-      }
-    });
-    expect(dirname(resolveGlobalDbPath())).toBe(genieHome);
-
     useUmask(PERMISSIVE_UMASK);
-    openGlobalDb().close();
-    expect(hasUnsafeWriteBits(genieHome)).toBe(false);
 
     const repoGenieDir = join(root, 'repo', '.genie');
     openSqlite({
@@ -203,10 +183,6 @@ describe('GENIE_HOME first-creation permissions', () => {
       expect(call, `${file}: no call matching \`${marker}\``).toBeDefined();
       expect(call, `${file}: ${why} — must declare a safe mode`).toMatch(SAFE_MODE);
     }
-
-    // The shared sqlite primitive takes its mode from the caller, so the pin is
-    // on the global DB opting in — the per-repo DB deliberately does not.
-    expect(readFileSync(join(REPO_ROOT, 'src/lib/v5/global-db.ts'), 'utf8')).toContain('dirMode: 0o700');
   });
 });
 

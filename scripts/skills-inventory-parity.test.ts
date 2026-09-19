@@ -351,7 +351,7 @@ describe('skills/README.md catalog block', () => {
 
   test('derives the catalog from the tree, ordered by category then name', () => {
     const skillsRoot = skillsRootWith([
-      ['omni', ['description: "Wire a channel."', 'category: integration', 'mutates: external']],
+      ['wiring', ['description: "Wire a channel."', 'category: integration', 'mutates: external']],
       ['work', ['description: "Execute a wish."', 'category: lifecycle', 'mutates: repo']],
       ['fix', ['description: "Repair gaps."', 'category: lifecycle', 'mutates: repo']],
       ['stray', ['description: "No taxonomy yet."']],
@@ -359,7 +359,7 @@ describe('skills/README.md catalog block', () => {
     expect(readSkillCatalog(skillsRoot)).toEqual([
       { name: 'fix', category: 'lifecycle', mutates: 'repo', description: 'Repair gaps.' },
       { name: 'work', category: 'lifecycle', mutates: 'repo', description: 'Execute a wish.' },
-      { name: 'omni', category: 'integration', mutates: 'external', description: 'Wire a channel.' },
+      { name: 'wiring', category: 'integration', mutates: 'external', description: 'Wire a channel.' },
       // Absent keys are legal and sort last, rendered as an em dash.
       { name: 'stray', category: null, mutates: null, description: 'No taxonomy yet.' },
     ]);

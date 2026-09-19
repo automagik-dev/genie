@@ -99,8 +99,6 @@ const FORBIDDEN_PROBE_VERBS = [
   'task delete',
   'task import',
   'task sync',
-  'omni serve',
-  'omni handshake',
   'doctor --fix-global-db',
 ]
 

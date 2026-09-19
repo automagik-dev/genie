@@ -206,8 +206,6 @@
           "src/term-commands/context.test.ts",
           "scripts/observability/annotate.test.ts",
           "scripts/observability/backfill.test.ts",
-          "src/lib/v5/global-db.test.ts",
-          "src/lib/v5/omni-queue.test.ts",
           "src/lib/v5/roadmap-sync.test.ts",
           "src/lib/v5/task-state.test.ts"
         ],

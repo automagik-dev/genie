@@ -11,7 +11,7 @@ in each clone. No source was adapted without a permissive licence on disk.
 
 ## Collision policy
 
-`research`, `merge` and `deslop` are generic names. A host may already own a
+`research`, `merge`, `deslop` and the retired `omni` are generic names (Automagik ships a separate Omni product; only a byte-exact retired description makes a dir named `omni` genie's). A host may already own a
 skill under any of them in one of its agent skill homes, installed by another
 catalogue or by the user. `deslop` in particular is a term several personal
 catalogues already use as a prefix; genie ships the bare word only, so a

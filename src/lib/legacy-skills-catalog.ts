@@ -35,6 +35,7 @@ export const LEGACY_SKILL_NAMES: readonly string[] = [
   'juice-server',
   'learn',
   'make',
+  'omni',
   'onboarding',
   'perf',
   'plan-review',
@@ -58,6 +59,7 @@ export const LEGACY_SKILL_DESCRIPTIONS: readonly string[] = [
   "Bootstrap or migrate an OpenClaw personal-assistant workspace into a new agent/body while preserving the current Genie conventions, persona, and memory files. Use when the user says things like: 'new workspace', 'new body', 'wake up buddy', 'divide yourself', 'make a base agent', 'survive for good', or asks to carry progress forward into a reusable skill/template. Includes scripts to install/update AGENTS.md/SOUL.md/USER.md/TOOLS.md/MEMORY.md/HEARTBEAT.md/IDENTITY.md and daily memory notes, plus a post-migration sanity scan for stale paths and tmux/session conventions.'",
   'Brainstorm and critique with 10 specialist viewpoints. Use for architecture, plan reviews, or tradeoffs.',
   'Bridge contract between KHAW Brain/Purpose Sessions and Genie execution — KHAW stays canonical for purpose, Genie owns execution detail, evidence over vibes.',
+  'Clean up the prose or code already in scope — protect its meaning, voice and behaviour, remove what only adds reading work, and return findings instead of edits when a review was asked for.',
   'Cockpit contract for driving Genie from Hermes — structured read-only tools first, human-gated mutations, outcome-first evidence reporting.',
   'Convene real AI agents for multi-perspective deliberation on architecture, design, and strategy decisions.',
   'Convert an idea into a structured wish plan with scope, acceptance criteria, and execution groups for /work.',
@@ -142,5 +144,6 @@ export const LEGACY_SKILL_DESCRIPTIONS: readonly string[] = [
   'Validate a wish document (structure, scope boundaries, acceptance criteria, validation commands). Use after creating or editing .genie/wishes/<slug>/wish.md to catch missing sections before make.',
   'Validate plans, execution, or PRs against wish criteria — returns SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps.',
   'Wire a Genie agent to an Omni channel in one canonical flow — register the agent, bind to an instance, verify the round-trip. Replaces the 5+ command legacy chain.',
+  'Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip.',
   'Work execution discipline for Genie wishes — dry-run work plans first, dispatch stays in the Genie/Claude Code lane, reviewer differs from engineer.',
 ];

@@ -3,7 +3,7 @@
  * poisoned-WAL-index recovery helper it deliberately does NOT call.
  *
  * `openSqlite` is the fleet hot path (`genie task`, `task sync`, the git-hook
- * sync, the global omni database) and stays churn-free; the recovery is opt-in
+ * sync) and stays churn-free; the recovery is opt-in
  * and was wired only into the retired MCP write open, the path that created the
  * poison. No shipped caller remains, so these tests are the whole contract:
  * they drive the helper directly — predicates, retry contract, and the

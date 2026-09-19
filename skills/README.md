@@ -86,7 +86,6 @@ bun scripts/skills-inventory-parity.ts --write
 | `workfly` | authoring | repo | Discover a procedure and build its saved workflow — dynamic discovery, drafted script, adversarial verification, landed in the catalog. |
 | `verify` | verification | none | Prove a completion claim with fresh evidence before making it — the gate's exit code, the real diff, the remote's checks, the reviewer's verdict. |
 | `genie-hacks` | integration | external | Browse, search, and contribute community hacks — real-world patterns for provider switching, teams, skills, hooks, cost optimization, and more. |
-| `omni` | integration | external | Wire a Genie agent to an Omni channel in one canonical flow — register the host, bind the instance, route chats to a repo, verify the round-trip. |
 | `skill-audit` | skill-ops | documents | Audit the shipped skill catalogue for overlap, staleness, and drift against the install record, and propose keep, improve, merge, or retire per skill. |
 
 <!-- skills-catalog:end -->

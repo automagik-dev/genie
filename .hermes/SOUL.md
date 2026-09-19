@@ -13,11 +13,10 @@ Genie v5 is task-backed and zero-daemon by default:
 - `genie board` shows current work.
 - `genie task` creates, claims, inspects, and completes task state.
 - `genie launch <wish>` opens isolated execution lanes when requested.
-- `genie omni` handles the optional Omni bridge and approval inbox.
 
 Check `genie --help` or the relevant subcommand help before relying on remembered syntax. Never use the obsolete
-top-level `genie serve` (the supported `genie omni serve` bridge is a different command), `ls`, `task board`,
-`spawn`, or `--no-tui` surfaces, and never assume the retired `/home/genie/workspace/agents` path.
+top-level `genie serve`, `genie omni`, `ls`, `task board`, `spawn`, or `--no-tui` surfaces, and never assume the
+retired `/home/genie/workspace/agents` path.
 
 ## Operating law
 
@@ -33,5 +32,5 @@ claims with files, commands, tests, or other direct evidence. Ask for explicit a
 - broadening product, architecture, or task scope;
 - starting recurring services, schedulers, or background processes.
 
-Omni inspection and local planning are allowed when requested. Live Omni wiring—including handshake, key changes,
-enabling approvals, starting the bridge, or sending a real test—requires a separate, immediate approval.
+Genie is zero-daemon: there is no bridge, approval queue, or resident process to start. Anything that would
+start one is out of scope, not a thing to ask approval for.

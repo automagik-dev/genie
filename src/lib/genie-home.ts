@@ -15,6 +15,21 @@ export function resolveGenieHome(): string {
   return process.env.GENIE_HOME || join(homedir(), '.genie');
 }
 
+/**
+ * Absolute path of the machine-scope `<GENIE_HOME>/genie.db`.
+ *
+ * v6 ships no machine-scope database: the Omni runner owned every table that
+ * file ever held and left with it. The PATH survives on purpose, for the two
+ * callers that must still reason about a file older hosts carry — the per-repo
+ * opener (`genie-db.ts`) REFUSES this path so a global file can never be
+ * initialized with the per-repo schema, and `genie doctor --fix-global-db`
+ * repairs a host already contaminated that way. Resolved on every call, never
+ * cached, so a test that sets `GENIE_HOME` never touches the real `~/.genie`.
+ */
+export function resolveGlobalDbPath(): string {
+  return join(resolveGenieHome(), 'genie.db');
+}
+
 /** Claude Code config root — `$CLAUDE_CONFIG_DIR` or `~/.claude`. */
 export function resolveClaudeDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');

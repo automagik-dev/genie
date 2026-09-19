@@ -2,7 +2,7 @@
 /**
  * skills-lint validates both the command surface and the shipped Codex skill
  * contract: strict SKILL.md frontmatter, matching agents/openai.yaml metadata,
- * skill-relative resources, real `genie` / `omni` commands, the retired-role
+ * skill-relative resources, real `genie` commands, the retired-role
  * vocabulary ban, the 40–90 line house size, the hazard/residue ban, and the
  * skills.sh directory shape.
  *
@@ -19,7 +19,7 @@
  * skippable (see BANNED_TOKEN_GUIDANCE).
  */
 
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, sep } from 'node:path';
 import {
@@ -189,40 +189,6 @@ export function getGenieCommands(root: string = ROOT): Set<string> {
 }
 
 /**
- * Probe the omni CLI surface. Contract: a missing/broken omni binary is NOT a
- * lint failure by default — CI runners don't ship omni, so the probe degrades
- * to a loud stderr warning and returns null, and the caller skips ONLY the
- * omni-invocation checks (genie-command validation stays fully strict). Set
- * SKILLS_LINT_REQUIRE_OMNI=1 to restore the hard failure (exit 2) where omni
- * checks must be enforced. The old "never silently swallow" intent survives
- * as the warning + env knob — a skip is always visible in the output.
- */
-function getOmniCommands(): Set<string> | null {
-  let out: string;
-  try {
-    out = execSync('omni --help --all 2>/dev/null || omni --help', { encoding: 'utf8' });
-  } catch (err) {
-    if (process.env.SKILLS_LINT_REQUIRE_OMNI === '1') {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`[skills-lint] failed to probe \`omni --help\`: ${detail}`);
-      console.error('[skills-lint] install the omni CLI or unset skills linting before running.');
-      process.exit(2);
-    }
-    console.error(
-      '[skills-lint] omni CLI not found — skipping omni-invocation validation (set SKILLS_LINT_REQUIRE_OMNI=1 to enforce)',
-    );
-    return null;
-  }
-  // omni uses section headers (Core:, Management:, System:); strip them.
-  const cmds = new Set<string>();
-  for (const line of out.split('\n')) {
-    const m = line.match(/^\s{4,}([a-z][a-z0-9:_-]*)\s{2,}/);
-    if (m) cmds.add(m[1]);
-  }
-  return cmds;
-}
-
-/**
  * Every file under `dir`, `.md` and non-`.md` alike. The vocabulary scan needs
  * the whole tree (Decision 10: `agents/openai.yaml` starter prompts are shipped
  * skill content); the command/resource/metadata checks stay markdown-only and
@@ -250,7 +216,7 @@ function extractBashFences(text: string): string[] {
   return fences;
 }
 
-function extractInvocations(fence: string, tool: 'genie' | 'omni'): string[] {
+function extractInvocations(fence: string, tool: 'genie'): string[] {
   const hits: string[] = [];
   // Match start of a command: "genie cmd" or "$ genie cmd" or "| genie cmd"
   const re = new RegExp(`(?:^|[;&|\\n\`$(])\\s*${tool}\\s+([a-z][a-z0-9:_-]*)`, 'g');
@@ -332,9 +298,9 @@ const REPO_WRITE_PATTERNS: ReadonlyArray<readonly [label: string, pattern: RegEx
 
 /**
  * `>` / `>>` redirection into a path. Checked against a line whose `<...>`
- * placeholders have been stripped first — `omni connect <instance-id> <name>`
- * ends a placeholder with `> ` and is not a redirect. `2>&1` does not match
- * either: the target class holds no `&`.
+ * placeholders have been stripped first — `cmd <instance-id> <name>` ends a
+ * placeholder with `> ` and is not a redirect. `2>&1` does not match either:
+ * the target class holds no `&`.
  */
 const REDIRECT_PATTERN = /(?:^|\s)\d?>>?\s*["']?[A-Za-z0-9_.$~/-]/;
 const PLACEHOLDER_PATTERN = /<[^<>\n]*>/g;
@@ -941,14 +907,10 @@ function main() {
     if (size !== null) sizeViolations.push(size);
   }
 
-  // First pass: collect all invocations from non-ignored skills. The omni CLI
-  // is only probed when some scanned skill actually references it; when the
-  // probe fails, getOmniCommands() returns null and omni checks are skipped
-  // (loudly) instead of failing the gate — see its contract comment.
+  // First pass: collect all invocations from non-ignored skills.
   const scanned: Array<{
     file: string;
     genie: string[];
-    omni: string[];
     resource: ResourceViolation[];
     banned: BannedTokenViolation[];
     mutation: MutationViolation[];
@@ -976,35 +938,24 @@ function main() {
       : [];
     const commandChecksSkipped = !file.endsWith('.md') || text.includes('<!-- skills-lint:ignore -->');
     if (commandChecksSkipped) {
-      scanned.push({ file, genie: [], omni: [], resource: [], banned, mutation, hazard });
+      scanned.push({ file, genie: [], resource: [], banned, mutation, hazard });
       continue;
     }
     const genie: string[] = [];
-    const omni: string[] = [];
     for (const fence of extractBashFences(text)) {
       genie.push(...extractInvocations(fence, 'genie'));
-      omni.push(...extractInvocations(fence, 'omni'));
     }
     // Catalog/recipe content and the contributor-facing top-level README may
     // show repo-root commands; executable skill instructions must ship their
     // own resources.
     const resource = isResourceAllowlisted(file) ? [] : collectResourceViolations(text);
-    scanned.push({ file, genie, omni, resource, banned, mutation, hazard });
+    scanned.push({ file, genie, resource, banned, mutation, hazard });
   }
 
-  const omniNeeded = scanned.some((s) => s.omni.length > 0);
-  const omniCmds = omniNeeded ? getOmniCommands() : new Set<string>();
-  const omniSkipped = omniCmds === null;
-
-  for (const { file, genie, omni, resource, banned, mutation, hazard } of scanned) {
+  for (const { file, genie, resource, banned, mutation, hazard } of scanned) {
     const missing: Report['missingCommands'] = [];
     for (const cmd of genie) {
       if (!genieCmds.has(cmd)) missing.push({ tool: 'genie', command: cmd });
-    }
-    if (omniCmds !== null && omniCmds.size > 0) {
-      for (const cmd of omni) {
-        if (!omniCmds.has(cmd)) missing.push({ tool: 'omni', command: cmd });
-      }
     }
     const topLevelSkill = relative(SKILLS_DIR, file).split(sep)[0];
     const metadataViolations = file.endsWith(`${sep}SKILL.md`) ? (metadataBySkill.get(topLevelSkill) ?? []) : [];
@@ -1022,9 +973,8 @@ function main() {
   console.log(JSON.stringify(reports, null, 2));
 
   if (reportFailures(reports, structureViolations, catalogViolations, sizeViolations)) process.exit(1);
-  const omniNote = omniSkipped ? ', omni checks skipped' : '';
   console.error(
-    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations, 0 hazards, 0 house-size violations${omniNote})`,
+    `skills-lint: OK (${reports.length} files scanned, 0 missing, 0 resource violations, 0 retired tokens, 0 mutates-none violations, 0 structure violations, 0 hazards, 0 house-size violations)`,
   );
 }
 

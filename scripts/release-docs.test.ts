@@ -24,7 +24,6 @@ const SHIPPED_SKILLS = [
   'genie',
   'genie-hacks',
   'merge',
-  'omni',
   'quick',
   'refine',
   'report',
@@ -1166,10 +1165,7 @@ describe('Group E release and documentation contracts', () => {
     expect(lint).toContain('designReviewViolations');
   });
 
-  test('Omni and MCP operator instructions expose provider and project-route ownership policy', () => {
-    const omni = read('skills/omni/SKILL.md');
-    expect(omni).toContain('{instance, chat, repo, agent, persona?}');
-    expect(omni).toContain('"agent": "codex"');
+  test('MCP operator instructions expose project-route ownership policy', () => {
     const readme = read('README.md');
     expect(readme).toContain('registrations proven to be Genie-owned');
     expect(readme).toContain('unowned same-name routes');
