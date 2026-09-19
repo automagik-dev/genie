@@ -1,0 +1,26 @@
+{
+  "name": "@automagik/genie-dsh-workflow-loader",
+  "version": "5.260919.8",
+  "description": "Run a repository's saved .claude/workflows catalog on DSH, by name",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "agent.cordis.yml", "cordis.patch.yml", "README.md"],
+  "scripts": {
+    "build": "bun run build.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test src/"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.2-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

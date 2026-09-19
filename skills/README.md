@@ -6,7 +6,7 @@
 Shared skill bodies name semantic routes without a host-specific prefix. Skills are installed into each agent's own global skills home by skills.sh (`npx skills add automagik-dev/genie`, or `genie update`), and every runtime discovers them from there. Invoke them the way the active runtime surfaces a discovered skill:
 
 - Codex: `$brainstorm`, `$wish`, `$review`, `$work`
-- Claude Code: `/brainstorm`, `/wish`, `/review`, `/work`
+- A runtime with slash commands: `/brainstorm`, `/wish`, `/review`, `/work`
 - Any runtime: the bare skill name, or plain natural language describing the workflow
 
 The `agents/openai.yaml` starter prompt inside each skill is deliberately selector-free. A starter card already belongs to one discovered physical skill, and repeating any selector — a bare `$<name>` included — inside that card could redirect execution to a different physical copy of the skill. Manual invocation uses the discovery forms above.

@@ -1,0 +1,5 @@
+# The loader is a host row: it registers a model-facing tool and nothing else.
+# A preset that wants the run path adds this file; the catalog panel itself
+# belongs to `plugins/dsh-genie-board`.
+- id: genie-dsh-workflow-loader
+  name: '@automagik/genie-dsh-workflow-loader'
