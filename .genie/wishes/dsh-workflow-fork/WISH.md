@@ -48,6 +48,7 @@
 | 6 | Pin to the exact DSH version recorded on the target host, reconciled against the `0.1.2-rc.1` floor `plugins/dsh-genie-board` declares | The host runs `0.1.1-rc.2` today; Group 0 records either an upgrade with the board smoke re-run or a lowered floor with a reason. Re-verifying the `ctx.subagents` seam is the one step that can end BLOCKED, so it is its own group. |
 | 8 | A seam comparison against DSH's first-party workflow engine gates the fork | The council run of 2026-09-15 found `ctx.workflowEngine` with the same guest vocabulary; if a loader over it runs `council.js` unmodified, the QuickJS fork, the `run(wf, args)` transform and the snapshot detachment are all unnecessary. Deciding that on paper first is cheaper than discovering it after Group 1. |
 | 7 | Conformance fixtures live in the fork and are staged into a temporary project's `.claude/workflows/` to run on either body | Fixtures are not saved workflows and must not pollute a real catalog; the fork is the consumer that has to prove parity. |
+| 9 | **Group 0 outcome (2026-09-19): the loader route wins** — a thin loader over DSH's first-party `ctx.workflowEngine`, shipped as an in-repo genie DSH plugin next to `plugins/dsh-genie-board`; the QuickJS fork becomes the fallback for the triggers named in Group 0 | The catalog uses none of the features the fork exists to shim (`budget`, `workflow()`, `isolation`, `agentType`, a clock ban, model aliases — zero occurrences across all nine scripts); the engine already provides `agent`+`schema`+`model`, `parallel`, `pipeline`, `phase`, `log` and `args`; the `spawn` provider already advertises `outputSchema`/`depthLimit`/`persona`/`toolFilter`/`agentOptions`, so Group 1's capability assertion is answered in advance; and the one real gap — the 50 000-character model-facing result cap — is closed by the loader's journal, which the fork does not close at all. Evidence: [docs/seam-comparison.md](docs/seam-comparison.md) |
 
 ## Simplicity Case
 
@@ -132,6 +133,14 @@ model and effort in runtime session/agent configuration, never skill frontmatter
 # Planning document plus a recorded spike: the wish linter and the presence of the comparison and spike record
 test -f .genie/wishes/dsh-workflow-fork/docs/seam-comparison.md && grep -q 'dsh --version' .genie/wishes/dsh-workflow-fork/docs/seam-comparison.md && bun run wishes:lint
 ```
+
+**Outcome (2026-09-19, Sofia on the DSH body; evidence in [docs/seam-comparison.md](docs/seam-comparison.md)):**
+
+- **Deliverable 1 (comparison):** written. Every hook in the list has its first-party behaviour at the recorded host version, a cost on each route, and an evidence line; the two hooks the catalog actually uses (`model`, `effort`) plus the always-present `meta` split are the only real work.
+- **Deliverable 2 (spike): it runs.** `.claude/workflows/council.js` with `export const meta` split off the body into the `meta` request field, and `effort` removed from `agent()` options, ran to completion on the host: `workflow "council" completed (6 agents)`, `decision: gather-evidence`, four reporting lenses `support-with-conditions` (medium). Where it fails with no transform: `export const meta` at parse (`workflow meta rides the meta request field, not the script…`), `effort` at the first `agent()` call (`WorkflowError: agent() option "effort" is deferred and not supported by this engine (supported: label, phase, schema, provider, model)`), `budget`/`workflow` as `ReferenceError` / `undefined`.
+- **Deliverable 3 (host version / floor):** `dsh --version` = `0.1.5-rc.2`, which already satisfies the `>=0.1.2-rc.1` floor `plugins/dsh-genie-board` declares. Neither an upgrade nor a lowered floor is needed; the board smoke script was not run in this spike and is the standing check after any bump.
+- **Deliverable 4 (route):** **loader over the first-party engine**, recorded as Decision 9. Groups 1–3 are re-planned against the seam before Group 1 work starts, as this group requires.
+- **New constraint for both routes:** the model-facing result projection is capped at 50 000 characters by the consumer, so a run returning more silently loses its **tail** — the recorded council run lost its synthesis block (decision, consensus, dissent, conditions, next action) while the lens sections survived. The loader's journal (already in this wish's IN list, "a run driver writing normalized journals outside the DSH run root") is the place that closes it; the fork inherits the same cap.
 
 **depends-on:** none
 
