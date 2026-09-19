@@ -256,7 +256,15 @@ describe('runtime and executor boundary', () => {
 
   test('does not spawn on invalid input and owns all process controls', async () => {
     const requests: Parameters<OrcaProcessExecutor>[0][] = [];
+    // The executable is pinned by PLATFORM, not by the host running the suite:
+    // the default resolution is `orca-ide` on an unmanaged linux terminal and
+    // `orca` on darwin, so a literal host-shaped expectation here failed every
+    // macOS run (#2926). Resolve the same way the adapter does, from the same
+    // explicit platform the adapter is built with.
+    const platform: NodeJS.Platform = 'linux';
     const adapter = __orcaAdapterTestOnly.createAdapter({
+      platform,
+      managedTerminal: false,
       env: { SAFE: 'yes' },
       executor: async (request) => {
         requests.push(request);
@@ -268,7 +276,7 @@ describe('runtime and executor boundary', () => {
     await adapter.execute({ operation: 'run-list' });
     expect(requests).toEqual([
       {
-        executable: 'orca-ide',
+        executable: resolveOrcaExecutable({ platform, managedTerminal: false }),
         argv: ['orchestration', 'run-list', '--json'],
         shell: false,
         timeoutMs: 30_000,

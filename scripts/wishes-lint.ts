@@ -22,7 +22,15 @@ const EXECUTION_STRATEGY_THRESHOLD = '2026-07-09';
 const DESIGN_REVIEW_EVIDENCE_THRESHOLD = '2026-07-11';
 
 const STUB_MARKERS = ['_No brainstorm — direct wish_', '_Design not recovered'];
-const CANONICAL_STATUSES = new Set(['DRAFT', 'FIX-FIRST', 'APPROVED', 'IN_PROGRESS', 'BLOCKED', 'SHIPPED']);
+const CANONICAL_STATUSES = new Set([
+  'DRAFT',
+  'FIX-FIRST',
+  'APPROVED',
+  'IN_PROGRESS',
+  'BLOCKED',
+  'SHIPPED',
+  'SUPERSEDED',
+]);
 // Historical wishes predate the persisted lifecycle state machine. They remain
 // readable terminal records, but new/active documents must use canonical state.
 const LEGACY_TERMINAL_STATUSES = new Set(['DONE', 'EXECUTED']);

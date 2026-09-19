@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | FIX-FIRST |
+| **Status** | DRAFT |
 | **Slug** | `dsh-workflow-fork` |
 | **Date** | 2026-09-15 |
 | **Author** | Felipe + Genie (split from the combined `workflows-multibody` plan, whose three plan-review loops this wish inherits; fork target analysed at `omdsh-dev/dsh_workflow@44b83c1`) |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/dsh-workflow-fork` |
 | **Repos touched** | new repository `automagik-dev/dsh_workflow`, a fork of `omdsh-dev/dsh_workflow` (package name `@dsh-external/workflow`, git-only, not published on npm; MIT); `automagik-dev/genie` only for this document |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-19):** Nothing has executed — `automagik-dev/dsh_workflow` does not resolve, Group 0's seam comparison was never written and all five cards are unclaimed — and the wish's own 2026-09-15 council recorded that DSH 0.1.x already ships a first-party `ctx.workflowEngine`, which may make the fork unnecessary.
 
 ## Summary
 

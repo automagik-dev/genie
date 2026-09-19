@@ -1,6 +1,6 @@
 # DRAFT: cross-agent-delegate (Domain F — umbrella G6 + refine)
 
-**Parent:** [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md) · **Status:** Simmering
+**Parent:** genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage) · **Status:** Simmering
 
 ## RE-OPENED 2026-08-10 — orca-inspired teammate delegation (Felipe)
 

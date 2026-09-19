@@ -8,7 +8,7 @@
  * The one process this file starts is a compiled probe binary, which runs no agent.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -449,8 +449,11 @@ process.stdout.write(
     // The fact the old fixture denied: inside the binary, the embedded main DOES exist.
     expect(seen.main).toContain('$bunfs');
     expect(seen.mainExists).toBe(true);
-    // …and it is still nowhere in the command the round would spawn.
-    expect(seen.cmd).toEqual([bin, 'mikro', 'bench']);
+    // …and it is still nowhere in the command the round would spawn. The binary
+    // reports its own REAL path, which on macOS resolves the temp root's symlink
+    // (`/var/folders/…` → `/private/var/folders/…`), so the raw mkdtemp path is
+    // not what a correct answer looks like there (#2926).
+    expect(seen.cmd).toEqual([realpathSync(bin), 'mikro', 'bench']);
     for (const token of seen.cmd) expect(token).not.toContain('$bunfs');
   });
 });

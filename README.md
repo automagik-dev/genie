@@ -215,15 +215,19 @@ record. If retirement fails, `genie update` retains the previous record and repo
 
 #### Restoring from a retirement backup
 
-Restore with `--no-preserve=mode` (or `rsync -a --no-perms`). A plain `cp -a` copies the backup's own directory
-metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently becomes `drwx------`:
+Restore without asking for the backup's modes (`cp -R`, or `rsync -a --no-perms`). A plain `cp -a` copies the
+backup's own directory metadata onto the agent homes that already exist, so a `drwxr-xr-x` `~/.claude` silently
+becomes `drwx------`:
 
 ```bash
 BK=~/.genie/state-backups/skills-retirement-<timestamp>
-cp -a --no-preserve=mode "$BK/." "$HOME/"
+cp -R "$BK/." "$HOME/"
 # or, equivalently:
 rsync -a --no-perms "$BK/" "$HOME/"
 ```
+
+Both forms work with GNU coreutils and with the BSD `cp` macOS ships; GNU's `cp -a --no-preserve=mode` is
+equivalent on Linux but is rejected on macOS.
 
 Both forms restore the removed trees and leave the modes of pre-existing directories alone.
 

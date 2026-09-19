@@ -35,6 +35,16 @@ function write(root: string, path: string, body: string): void {
   writeFileSync(join(root, path), body);
 }
 
+/**
+ * A command that EXISTS on this host and exits non-zero: the stand-in for a
+ * runtime that RAN and failed. Never the literal `/bin/false` — macOS ships
+ * `false` in /usr/bin only, so that path named a MISSING binary there, the spawn
+ * failed ENOENT, and `runAgent` classified the whole run as "the mikro runtime
+ * is not runnable on this host" and broke out of the retry loop under test
+ * (#2926).
+ */
+const FAILING_RUNTIME = Bun.which('false') ?? '/usr/bin/false';
+
 describe('benchAgentsDir', () => {
   test('no flag means the working tree under --dir; a flag is passed through untouched', () => {
     expect(benchAgentsDir({ dir: '/repo' })).toBe(join('/repo', '.mikro', 'agents'));
@@ -86,7 +96,7 @@ describe('the no-flag bench measures the working tree', () => {
     const session: BoundarySession = {
       mode: 'bwrap',
       spec: null as unknown as BoundarySession['spec'],
-      argv: () => ['/bin/false'],
+      argv: () => [FAILING_RUNTIME],
       env: {} as Record<string, string>,
       counts: () => ({ allowed: 0, denied: 0 }),
       close: async () => undefined,
