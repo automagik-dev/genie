@@ -174,7 +174,7 @@ Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-commo
 
 ## Build
 
-Single-file bundle: `bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun` inlines all three runtime deps (`commander`, `@inquirer/prompts`, `zod`) into `dist/genie.js` (~2MB). Only the `bun` builtin is external. The shebang `#!/usr/bin/env bun` makes it executable; `chmod +x` is applied after build.
+Single-file bundle: `bun build src/genie.ts --outdir dist --target bun --minify-syntax --minify-whitespace --external bun` inlines all six runtime deps (`commander`, `@inquirer/prompts`, `zod`, `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify`) into `dist/genie.js` (~2MB). Only the `bun` builtin is external. The shebang `#!/usr/bin/env bun` makes it executable; `chmod +x` is applied after build.
 
 ## Testing
 
