@@ -232,7 +232,21 @@ function realPathOrGiven(path) {
   }
 }
 
-if (process.argv[1] && realPathOrGiven(resolve(process.argv[1])) === realPathOrGiven(fileURLToPath(import.meta.url))) {
+// `import.meta.main` is asked FIRST because it is the only answer that survives
+// bundling: `genie wish lint` reaches this module through `scripts/wishes-lint.ts`,
+// and inside `dist/genie.js` every inlined module's `import.meta.url` is the
+// bundle's own URL — which argv[1] also names, so the realpath comparison below
+// matched and this CLI ran its usage banner on every genie command. A bundler
+// replaces the flag with a literal `false` for a module it did not make the entry
+// point; a runtime that does not define it at all (older Node) falls through to
+// the path comparison, which is still what handles a symlinked launcher.
+const invokedAsEntryPoint =
+  typeof import.meta.main === 'boolean'
+    ? import.meta.main
+    : Boolean(process.argv[1]) &&
+      realPathOrGiven(resolve(process.argv[1])) === realPathOrGiven(fileURLToPath(import.meta.url));
+
+if (invokedAsEntryPoint) {
   try {
     runDesignReviewEvidenceCli();
   } catch (error) {

@@ -176,7 +176,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 16 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
+- **Small.** 17 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -202,6 +202,7 @@ genie --help
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
+| `genie wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` lints `<repo>/.genie/wishes` for structure, writes nothing, and exits 0 or 1 |
 | `genie uninstall` | Remove Genie, the recorded skills install, and plugin-era leftovers proven to be Genie-owned |
 | `genie help` | Show help for any command |
 

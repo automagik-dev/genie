@@ -69,7 +69,7 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Commands
 
-Sixteen top-level commands (run `genie <command> --help` for detail):
+Seventeen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
@@ -88,6 +88,7 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `ui-bridge` | Retired — prints the stable non-zero UI-bridge-retirement diagnostic (the Orca integration is the supported UI surface) |
 | `uninstall` | Remove the Genie CLI, the recorded skills-channel install, and plugin-era leftovers the legacy collectors prove are Genie-owned |
 | `update` | Update Genie CLI to the latest GitHub Release |
+| `wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` runs the structural lint over `<repo>/.genie/wishes` (0 clean / 1 findings), writes nothing, and never trips the workspace gate |
 | `help` | `genie help [command]` |
 
 ### Task subcommands

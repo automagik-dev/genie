@@ -45,6 +45,7 @@ import { registerMikroCommands } from './term-commands/mikro.js';
 import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
+import { registerWishCommands } from './term-commands/wish.js';
 
 const program = new Command();
 
@@ -269,6 +270,7 @@ registerContextCommand(program);
 registerConfigCommand(program);
 registerIdeaCommand(program);
 registerMikroCommands(program);
+registerWishCommands(program);
 
 // ============================================================================
 // Orca lifecycle gate — refuses the verbs Orca owns before their handler runs
