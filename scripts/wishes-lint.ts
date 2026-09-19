@@ -119,11 +119,28 @@ function gitToplevel(cwd: string): string | null {
   }
 }
 
+/** True only for a path that exists AND is a directory (following symlinks). */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve argv to a wishes root. `--dir <repo>` is the operator-facing form
  * (`<repo>/.genie/wishes`); `--wishes-dir <path>` points straight at a wishes
  * tree and is what the repository's own tests use. With neither, the root is the
  * git toplevel of `cwd`, falling back to `cwd` itself — never `import.meta.url`.
+ *
+ * A root an operator TYPED is verified before it is linted: a missing path, a
+ * regular file, or a repository carrying no `.genie/wishes` is refused rather
+ * than scanned. Without that, `--dir /nope` and `--dir ./some-file.md` both
+ * walked nothing and reported `OK (0 files scanned)` — a typo passing as a
+ * clean bill of health, which is the one failure a linter must never have. The
+ * DEFAULT root is deliberately lenient the other way: a repository that simply
+ * has no wishes yet is not a mistake, so it still reports 0 files and exits 0.
  */
 export function resolveWishLintTarget(argv: string[], cwd: string): WishLintTarget {
   let repo: string | undefined;
@@ -131,16 +148,28 @@ export function resolveWishLintTarget(argv: string[], cwd: string): WishLintTarg
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--help' || arg === '-h') return { wishesDir: '', reportRoot: cwd, help: true };
-    if (arg !== '--dir' && arg !== '--wishes-dir') throw new Error(WISH_LINT_USAGE);
+    if (arg !== '--dir' && arg !== '--wishes-dir')
+      throw new Error(`unknown argument ${JSON.stringify(arg)}\n${WISH_LINT_USAGE}`);
     const value = argv[index + 1];
-    if (!value || value.startsWith('-')) throw new Error(WISH_LINT_USAGE);
+    if (!value || value.startsWith('-')) throw new Error(`${arg} needs a path\n${WISH_LINT_USAGE}`);
     index += 1;
     if (arg === '--dir') repo = resolve(cwd, value);
     else wishesDir = resolve(cwd, value);
   }
-  if (repo !== undefined && wishesDir !== undefined) throw new Error(WISH_LINT_USAGE);
-  if (wishesDir !== undefined) return { wishesDir, reportRoot: gitToplevel(cwd) ?? cwd, help: false };
-  const root = repo ?? gitToplevel(cwd) ?? cwd;
+  if (repo !== undefined && wishesDir !== undefined) {
+    throw new Error(`--dir and --wishes-dir name the same thing twice; pass one\n${WISH_LINT_USAGE}`);
+  }
+  if (wishesDir !== undefined) {
+    if (!isDirectory(wishesDir)) throw new Error(`--wishes-dir is not a directory: ${wishesDir}\n${WISH_LINT_USAGE}`);
+    return { wishesDir, reportRoot: gitToplevel(cwd) ?? cwd, help: false };
+  }
+  if (repo !== undefined) {
+    if (!isDirectory(repo)) throw new Error(`--dir is not a directory: ${repo}\n${WISH_LINT_USAGE}`);
+    const dir = join(repo, '.genie/wishes');
+    if (!isDirectory(dir)) throw new Error(`--dir names no .genie/wishes: ${repo}\n${WISH_LINT_USAGE}`);
+    return { wishesDir: dir, reportRoot: repo, help: false };
+  }
+  const root = gitToplevel(cwd) ?? cwd;
   return { wishesDir: join(root, '.genie/wishes'), reportRoot: root, help: false };
 }
 
@@ -505,8 +534,8 @@ function lintWishGraph(records: WishRecord[]): WishIssue[] {
  * ambient location, which is what lets the compiled binary lint a tree that is
  * not the genie checkout.
  */
-export function lintWishes(options: { wishesDir: string; files?: string[] }): WishStructureIssue[] {
-  const files = options.files ?? walk(options.wishesDir);
+export function lintWishes(options: { wishesDir: string }): WishStructureIssue[] {
+  const files = walk(options.wishesDir);
   const links: WishStructureIssue[] = [];
   const structure: WishStructureIssue[] = [];
   const wishRecords: WishRecord[] = [];
@@ -548,8 +577,10 @@ export async function runWishLintCli(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const files = wishFiles(target.wishesDir);
-  const issues = lintWishes({ wishesDir: target.wishesDir, files });
+  // The file count is only in the report line; `lintWishes` owns the walk that
+  // actually reads them, so the root stays its single input.
+  const scanned = wishFiles(target.wishesDir).length;
+  const issues = lintWishes({ wishesDir: target.wishesDir });
   const broken = issues.filter((issue) => issue.kind === 'link');
   const structure = issues.filter((issue) => issue.kind === 'structure');
 
@@ -558,7 +589,7 @@ export async function runWishLintCli(argv: string[]): Promise<number> {
       console.error(`${displayPath(target.reportRoot, b.file)}:${b.line}: ${b.message}`);
     }
     if (broken.length > 0) {
-      console.error(`\nwishes-lint: ${broken.length} broken brainstorm link(s) across ${files.length} wish file(s)`);
+      console.error(`\nwishes-lint: ${broken.length} broken brainstorm link(s) across ${scanned} wish file(s)`);
     }
     for (const issue of structure) {
       console.error(`${displayPath(target.reportRoot, issue.file)}:${issue.line}: ${issue.message}`);
@@ -569,7 +600,7 @@ export async function runWishLintCli(argv: string[]): Promise<number> {
     return 1;
   }
 
-  console.error(`wishes-lint: OK (${files.length} files scanned, 0 broken brainstorm links, template validator green)`);
+  console.error(`wishes-lint: OK (${scanned} files scanned, 0 broken brainstorm links, template validator green)`);
   return 0;
 }
 

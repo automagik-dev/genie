@@ -15,7 +15,10 @@
  * `WORKSPACE_EXEMPT` (`src/lib/interactivity.ts`): without it the v4 workspace
  * gate would prompt for `genie init` in every repository this verb exists for.
  *
- * Exit codes: 0 clean, 1 findings, 2 the command was refused (a bad flag).
+ * Exit codes: 0 clean, 1 findings, 2 the runtime refused the root it was handed
+ * (a `--dir` that is not a directory, or one carrying no `.genie/wishes`). An
+ * unknown FLAG is Commander's own error through genie's global handler and
+ * exits 1 — the same path `genie mikro call` with no agent takes.
  */
 
 import type { Command } from 'commander';
@@ -30,8 +33,11 @@ YYYY-MM-DD Date), the Execution Strategy routing columns, and every markdown
 link into .genie/brainstorms/ that does not resolve on disk. It writes nothing.
 
 Without --dir the root is the git toplevel of the working directory, falling
-back to the working directory itself. A file may opt out with a leading
-<!-- wishes-lint:ignore --> marker.
+back to the working directory itself; a checkout that carries no wishes yet is
+not an error and reports 0 files. A --dir you TYPED is verified instead: one
+that is not a directory, or that holds no .genie/wishes, is refused rather than
+scanned, so a typo can never read as a clean bill of health. A file may opt out
+with a leading <!-- wishes-lint:ignore --> marker.
 
 Two further rules ride the same pass but stay REPOSITORY-GATE concerns rather
 than a promise this verb makes to every checkout: design-review evidence (a
@@ -41,7 +47,8 @@ corpus and stay acyclic). They are authored for the genie repository's own
 \`bun run wishes:lint\` gate, where the whole corpus is present; a repository
 that does not follow that contract should treat them there, not here.
 
-Exit codes: 0 clean, 1 findings, 2 the command was refused.`;
+Exit codes: 0 clean, 1 findings, 2 the root was refused. An unknown flag is the
+parser's own error and exits 1.`;
 
 export function registerWishCommands(program: Command): void {
   const existing = program.commands.find((c) => c.name() === 'wish');
@@ -52,7 +59,10 @@ export function registerWishCommands(program: Command): void {
     .description("Lint a repository's wish documents for structure (writes nothing)")
     .option('--dir <repo>', 'Repository whose .genie/wishes is linted (default: the git toplevel of the cwd)')
     .addHelpText('after', LINT_HELP)
+    // `!== undefined`, never truthiness: `--dir ""` is a mistake an operator made
+    // (an unset shell variable), and a falsy check silently turned it into "lint
+    // the working directory instead". The runtime refuses the empty value.
     .action(async (options: { dir?: string }) => {
-      process.exitCode = await runWishLintCli(options.dir ? ['--dir', options.dir] : []);
+      process.exitCode = await runWishLintCli(options.dir !== undefined ? ['--dir', options.dir] : []);
     });
 }

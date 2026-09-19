@@ -93,6 +93,9 @@ describe('genie wish lint', () => {
     expect(stdout).toContain('cross-wish graph');
     expect(stdout).toContain('REPOSITORY-GATE');
     expect(stdout).toContain('writes nothing');
+    // The exit-code promise the help makes is one the command actually keeps —
+    // see the mistyped-root case below.
+    expect(stdout).toContain('2 the root was refused');
   });
 
   test('a foreign repository carrying one valid and one malformed wish exits 1 and names the malformed file', () => {
@@ -147,6 +150,40 @@ describe('genie wish lint', () => {
     expect(code).toBe(1);
     expect(stderr).toContain("unknown option '--nope'");
     expect(stderr).not.toContain('wishes-lint: OK');
+  });
+
+  /**
+   * The failure a linter must never have: a mistyped root that walks nothing and
+   * reports a clean bill of health. Each of these used to exit 0 with
+   * `OK (0 files scanned)`, and the empty value used to lint the cwd instead.
+   */
+  test('a mistyped --dir is refused with exit 2 and never reads as clean', () => {
+    const repo = foreignRepo({ good: wishDoc('DRAFT') });
+    const bare = tmp('genie-wish-bare-'); // a real directory with no .genie/wishes
+    writeFileSync(join(bare, 'a-file.md'), 'not a directory\n');
+
+    for (const [dir, message] of [
+      [join(repo, 'nope'), '--dir is not a directory'],
+      [join(bare, 'a-file.md'), '--dir is not a directory'],
+      [bare, '--dir names no .genie/wishes'],
+      // `genie wish lint --dir "$REPO"` with REPO unset: Commander hands over the
+      // empty string, and a truthiness gate used to drop the flag and lint the cwd.
+      ['', '--dir needs a path'],
+    ] as Array<[string, string]>) {
+      const { code, stderr } = runCli(['wish', 'lint', '--dir', dir], { cwd: repo });
+      expect({ dir, code }).toEqual({ dir, code: 2 });
+      expect(stderr).toContain(message);
+      expect(stderr).toContain('usage: wishes-lint');
+      expect(stderr).not.toContain('files scanned');
+    }
+  });
+
+  test('a repository with no wishes yet is a clean 0, not a refusal', () => {
+    const repo = foreignRepo({});
+    mkdirSync(join(repo, '.genie', 'wishes'), { recursive: true });
+    const { code, stderr } = runCli(['wish', 'lint', '--dir', repo]);
+    expect(code).toBe(0);
+    expect(stderr).toContain('wishes-lint: OK (0 files scanned');
   });
 });
 
