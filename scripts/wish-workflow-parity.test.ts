@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard: the wish delivery workflow lives only in .claude/workflows/wish.js.
 // The wish skill is a front door that runs that workflow and must not carry a roster of its own,
@@ -38,8 +39,9 @@ describe('wish skill fronts the wish workflow', () => {
   });
 
   test('the skill points at the workflow, names no client tool, and carries no roster', () => {
-    expect(skill).toContain('.claude/workflows/wish.js');
-    expect(skill).toContain('saved name `wish`');
+    expectExplicitScriptPathRule(skill, 'wish');
+    // The user-scope path is a host layout, not a client tool name: `wish` stays
+    // runtime-neutral, so it may say WHERE the file is and never WHO runs it.
     expect(skill).not.toMatch(/Claude Code|Workflow tool/);
     expect(/^\d+\. \*\*[A-Za-z]+\*\*/m.test(skill)).toBe(false);
   });

@@ -519,6 +519,9 @@ describe('Group E release and documentation contracts', () => {
       // staged into templates/: both are release-payload inputs like any other.
       "'scripts/mikro/**'",
       "'.mikro/agents/**'",
+      // The workflow catalog is staged into templates/ and delivered to
+      // ~/.claude/workflows by the workflows channel.
+      "'.claude/workflows/**'",
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
@@ -557,6 +560,31 @@ describe('Group E release and documentation contracts', () => {
     }
     expect([...SEEDED_AGENTS].every((agent) => shipped.includes(agent))).toBe(true);
     expect([...SEEDED_AGENTS]).not.toContain('mikro-coach');
+  });
+
+  test('the workflow catalog ships whole inside templates/, .js only', () => {
+    // Decisions 3 and 13 of `global-workflows-local-mikro`: the catalog rides the
+    // frozen `templates/` member (no ninth top-level member, no second tracked
+    // copy), and it ships WHOLE — a filter would be a second list to keep in
+    // parity, and a workflow with no front-door skill is still invocable by path.
+    const script = read('scripts/build-binary.sh');
+    expect(script).toContain('WORKFLOW_SOURCE="${REPO_ROOT}/.claude/workflows"');
+    expect(script).toContain('"${STAGE}/templates/workflows/$(basename "${workflow}")"');
+    expect(script).toContain('no workflow catalog files found under');
+    expect(script).toContain('"templates/workflows/wish.js"');
+    expect(script).toContain('"templates/workflows/council.js"');
+
+    const catalog = readdirSync(join(ROOT, '.claude', 'workflows'));
+    const delivered = catalog.filter((name) => name.endsWith('.js'));
+    expect(delivered.length).toBeGreaterThan(0);
+    expect(delivered).toContain('wish.js');
+    // The README is documentation, never a delivered workflow: the staging glob
+    // is `*.js`, so it cannot reach `~/.claude/workflows`.
+    expect(catalog).toContain('README.md');
+    // Nothing staged under templates/ may be a symlink or a special file.
+    for (const name of delivered) {
+      expect(lstatSync(join(ROOT, '.claude', 'workflows', name)).isFile()).toBe(true);
+    }
   });
 
   test('every native release-binary smoke proves the hidden installer transaction syscall', () => {

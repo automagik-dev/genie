@@ -29,7 +29,7 @@ import {
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
-import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
+import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
@@ -40,9 +40,11 @@ import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  type SkillsWorkflowsInstall,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
+  isSafeWorkflowFileName,
   releaseTag,
 } from '../lib/skills-installer.js';
 import { writeErr, writeOut } from '../lib/term-output.js';
@@ -54,6 +56,12 @@ import {
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
+import {
+  classifyWorkflowFile,
+  inspectOnDiskWorkflow,
+  shippedWorkflowNames,
+  shippedWorkflowsRoot,
+} from '../lib/workflows-installer.js';
 import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
@@ -830,6 +838,130 @@ export function checkSkillsChannel(
   const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
   if (backups !== null) results.push(backups);
   return results;
+}
+
+// ============================================================================
+// Workflows channel (wish `global-workflows-local-mikro`, group 3)
+// ============================================================================
+
+const WORKFLOWS_CHANNEL_SUGGESTION = 'Run `genie update` to reinstall the workflow catalog';
+
+/**
+ * ONE remedy for both unrecorded shapes, because both are answered by the same
+ * run: it must be true when files are named AND when none are, so it states the
+ * install and the backup rather than only the replacement.
+ */
+const WORKFLOWS_UNRECORDED_SUGGESTION =
+  'Run `genie update` to install and record the workflow catalog; a file already there is backed up under `<GENIE_HOME>/state-backups/` before it is replaced';
+
+/** The one name every workflows-channel line carries, in the `skills: …` family. */
+const WORKFLOWS_CHECK_NAME = 'workflows: catalog';
+
+/**
+ * Every recorded workflow file whose bytes no longer prove the recorded
+ * install, named with its state. `replace` is the ONLY verdict that proves the
+ * file on disk is still byte-for-byte what genie installed.
+ */
+function describeWorkflowDrift(recorded: SkillsWorkflowsInstall): { present: number; drift: string[] } {
+  let present = 0;
+  const drift: string[] = [];
+  for (const [name, digest] of Object.entries(recorded.files)) {
+    // The same traversal floor every other consumer of the record uses.
+    if (!isSafeWorkflowFileName(name)) continue;
+    const state = inspectOnDiskWorkflow(join(recorded.dir, name));
+    if (state.kind === 'other') {
+      drift.push(`${name} (not a regular file)`);
+      continue;
+    }
+    const verdict = classifyWorkflowFile({ recorded: digest, onDisk: state.digest });
+    if (verdict === 'replace') present += 1;
+    else drift.push(`${name} (${verdict === 'missing' ? 'missing' : 'modified'})`);
+  }
+  return { present, drift };
+}
+
+/**
+ * Catalog names sitting in a user scope that NO record accounts for — the
+ * 2026-09-15 incident shape, on a host where the channel has not run yet.
+ *
+ * It walks the SHIPPED names and lstats each one, rather than listing the user
+ * directory: a workflow that is not genie's namespace is then structurally
+ * invisible here, and a symlink is named rather than resolved.
+ */
+function describeUnrecordedWorkflows(workflowsDir: string, catalog: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const name of catalog) {
+    const state = inspectOnDiskWorkflow(join(workflowsDir, name));
+    if (state.kind === 'absent') continue;
+    found.push(state.kind === 'other' ? `${name} (not a regular file)` : name);
+  }
+  return found;
+}
+
+/**
+ * The line for a host whose record carries no `workflows` field at all.
+ *
+ * `(unrecorded)` alone used to be the whole answer, and it was the one place
+ * this check was quieter than the skills leg, which lists pre-record leftovers
+ * BEFORE its no-record return. A stale `~/.claude/workflows/council.js` from
+ * the retired stamped install — exactly what shadowed the project copy on
+ * 2026-09-15 — sat in a user scope unnamed, because no record named it.
+ */
+function unrecordedWorkflowsResult(claudeDir: string, genieHome: string): CheckResult {
+  if (!isDirectory(claudeDir)) {
+    // No product home: genie creates none, so there is nothing to say and
+    // nothing `genie update` would do here.
+    return { name: WORKFLOWS_CHECK_NAME, status: 'pass', detail: 'not detected' };
+  }
+  // The names come from what THIS release ships, never a list written down
+  // here: a hardcoded one goes stale the first time the catalog grows. With no
+  // shipped catalog on disk the channel cannot run, so nothing is claimed.
+  const catalog = shippedWorkflowNames(shippedWorkflowsRoot(genieHome));
+  const leftovers = describeUnrecordedWorkflows(join(claudeDir, 'workflows'), catalog);
+  if (leftovers.length > 0) {
+    return {
+      name: WORKFLOWS_CHECK_NAME,
+      status: 'warn',
+      detail: `(unrecorded) ${leftovers.length} file(s) genie did not record: ${namedWithRemainder(leftovers)}`,
+      suggestion: WORKFLOWS_UNRECORDED_SUGGESTION,
+    };
+  }
+  return {
+    name: WORKFLOWS_CHECK_NAME,
+    status: 'pass',
+    detail: '(unrecorded)',
+    ...(catalog.length > 0 ? { suggestion: WORKFLOWS_UNRECORDED_SUGGESTION } : {}),
+  };
+}
+
+/**
+ * ONE line for the user-scope workflow catalog, read straight off the install
+ * record the workflows channel wrote — the same authority `genie uninstall`
+ * removes by, so the two can never disagree about what genie owns.
+ *
+ * Read-only, like every other doctor check and including under `--fix`: it
+ * lstats and digests, and repairs nothing. `genie update` is the only repair.
+ */
+export function checkWorkflowsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+  const genieHome = options.genieHome ?? resolveGlobalGenieHome();
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is ONE fault with ONE remedy, and `checkSkillsChannel`
+  // already names the offending field and the repair. Doctor says it once.
+  if (read.status === 'invalid') return [];
+  const recorded = read.status === 'ok' ? read.record.workflows : undefined;
+  if (recorded === undefined) {
+    const claudeDir = options.home === undefined ? resolveClaudeDir() : join(options.home, '.claude');
+    return [unrecordedWorkflowsResult(claudeDir, genieHome)];
+  }
+  const { present, drift } = describeWorkflowDrift(recorded);
+  const binaryTag = releaseTag(VERSION);
+  const stale = recorded.ref !== binaryTag;
+  const total = Object.keys(recorded.files).length;
+  const staleSuffix = stale ? ` (stale, binary is ${binaryTag})` : '';
+  const driftSuffix = drift.length === 0 ? '' : `; ${namedWithRemainder(drift)}`;
+  const detail = `${present}/${total} in ${recorded.dir} @ ${recorded.ref}${staleSuffix}${driftSuffix}`;
+  if (drift.length === 0 && !stale) return [{ name: WORKFLOWS_CHECK_NAME, status: 'pass', detail }];
+  return [{ name: WORKFLOWS_CHECK_NAME, status: 'warn', detail, suggestion: WORKFLOWS_CHANNEL_SUGGESTION }];
 }
 
 // ============================================================================
@@ -1939,6 +2071,7 @@ export async function doctorCommand(
     ...checkGlobalDbContamination(),
     ...checkSkills(root),
     ...checkSkillsChannel(),
+    ...checkWorkflowsChannel(),
     ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...(await checkBudgets()),

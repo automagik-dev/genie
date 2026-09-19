@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
+import type { WorkflowsChannelConvergenceResult } from '../lib/workflows-installer.js';
 import { convergeAuxiliaryTree } from './auxiliary-trees.js';
 import {
   INTEGRATION_SELECTIONS,
@@ -65,10 +66,18 @@ const noopConsent = () => undefined;
  */
 const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skipped', reason: 'test fixture' });
 
+/**
+ * Same rule for the workflows channel: the production default writes the
+ * operator's real `~/.claude/workflows` and rewrites the install record. Its own
+ * behavior lives in `src/lib/workflows-installer.test.ts`.
+ */
+const noWorkflowsChannel = (): WorkflowsChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
+
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
   args[5] ??= () => undefined;
   args[6] ??= noSkillsChannel;
+  args[7] ??= noWorkflowsChannel;
   return runInstallCommand(...args);
 }
 
@@ -520,6 +529,50 @@ describe('installCommand', () => {
     await runFor({});
     await runFor({ skipIntegrations: true });
     expect(seen).toEqual(['auto', 'none']);
+  });
+
+  test('the workflows channel runs after the skills channel, under the same consent', async () => {
+    const order: string[] = [];
+    await installCommand(
+      { integrations: 'claude' },
+      makeCleanupSpy().runner,
+      () => undefined,
+      noopLease,
+      noopConsent,
+      () => order.push('marker') as unknown as undefined,
+      (selection) => {
+        order.push(`skills:${selection}`);
+        return { status: 'skipped', reason: 'test fixture' };
+      },
+      (selection) => {
+        order.push(`workflows:${selection}`);
+        return { status: 'skipped', warnings: [] };
+      },
+    );
+    // The record the workflows field rides is written by the skills channel, so
+    // the order is load-bearing; marker retirement stays the LAST finisher.
+    expect(order).toEqual(['skills:claude', 'workflows:claude', 'marker']);
+  });
+
+  test('a failed workflows install is exit 1, never a throw and never a rollback', async () => {
+    const savedExitCode = process.exitCode;
+    try {
+      await expect(
+        installCommand(
+          {},
+          makeCleanupSpy().runner,
+          () => undefined,
+          noopLease,
+          noopConsent,
+          () => null,
+          noSkillsChannel,
+          () => ({ status: 'failed', warnings: [] }),
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = savedExitCode ?? 0;
+    }
   });
 
   /**
