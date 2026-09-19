@@ -318,6 +318,19 @@ function gitStatus(dir: string, pathspec?: string): string[] {
 }
 
 /**
+ * Gate 1's abort text. The diagnostic half is unchanged — the reason the gate exists, then
+ * every dirty path — and the remedy half names BOTH ways out, because the sequence
+ * `genie mikro init` prints leaves an untracked `EVIDENCE.md` here and said nothing about it.
+ */
+export function dirtyAgentsAbortReason(dirtyAgents: string[]): string {
+  return [
+    `.mikro/agents is not clean — "before" would not be the recorded prompt:`,
+    ...dirtyAgents,
+    'commit the listed paths (a bench --write-evidence run writes one of them), or remove them, then re-run this command.',
+  ].join('\n');
+}
+
+/**
  * How this round runs its two benches — the one thing a coaching round cannot do
  * in-process, because a bench is a whole run of its own with its own record.
  *
@@ -605,10 +618,7 @@ async function coachRound(argv: string[]): Promise<number> {
 
   // Gate 1: the tracked agents dir must be clean. A patched or half-staged prompt makes "before" meaningless.
   const dirtyAgents = gitStatus(repo, '.mikro/agents');
-  if (dirtyAgents.length)
-    abort(`.mikro/agents is not clean — "before" would not be the recorded prompt:\n${dirtyAgents.join('\n')}`, {
-      dirtyAgents,
-    });
+  if (dirtyAgents.length) abort(dirtyAgentsAbortReason(dirtyAgents), { dirtyAgents });
   round.trackedAgentsClean = true;
 
   // Step 1: the proposal — from the coach, from a file (deterministic replay), or the null patch.
