@@ -47,11 +47,17 @@ stamp path (execDir/VERSION) works for compiled binaries. ✅
   idempotent on second run (exit 0). `genie task list` and `genie board` both work. ✅
 
 ### Release-workflow chain — coherent ✅
-`version.yml` (derives `5.YYMMDD.N`, `bun run version` syncs all 4 JSONs, commits + pushes
-tag `v<version>`) → tag `v*` fires `release.yml` orchestrator → `build-tarballs.yml`
+`version.yml` (derives `<major>.YYMMDD.N`, `bun run version` syncs all 4 JSONs, commits +
+pushes tag `v<version>`) → tag `v*` fires `release.yml` orchestrator → `build-tarballs.yml`
 (matrix, native runners) → `sign-attest.yml` (cosign keyless + SLSA L3) →
 `release-publish.yml` (gh release + 12 assets + `.well-known/*.json`). Single run via
-`workflow_call`; no `workflow_run` recursion. Tag glob `v5.*` matches the version scheme.
+`workflow_call`; no `workflow_run` recursion. The tag glob tracks the current major
+(`v5.*` when this audit ran) and matches the version scheme.
+
+> **The scheme is `<major>.YYMMDD.N`, not `5.YYMMDD.N`.** Only the leading major moves; the
+> daily CalVer date and the same-day counter are unchanged by a major bump. v5 did exactly
+> this over v4, and v6 does exactly this over v5 — so read every `5.` in this document as
+> the major that was current on 2026-07-02, never as part of the format.
 
 **Naming contract is consistent end-to-end:**
 `genie-<v>-<platform>.tar.gz` (build) → `+.bundle` `+.intoto.jsonl` (sign) → upload
@@ -119,8 +125,9 @@ inside it (verified in the extracted darwin tarball). Cause: commit `e92ad2f1`
 80-101) and it wasn't run.
 Severity depends on the release route:
 - **Normal dev-bump route (auto-heals):** a real release is derived on a dev CI push
-  where `version.yml` runs `bun run version` → all 4 files rewritten to `5.YYMMDD.N`,
-  committed, tagged. The drift disappears. Cosmetic.
+  where `version.yml` runs `bun run version` → all 4 files rewritten to `<major>.YYMMDD.N`
+  (`5.YYMMDD.N` on the day of this audit), committed, tagged. The drift disappears.
+  Cosmetic.
 - **Direct tag from this commit (real mismatch):** the release ships a plugin advertising
   4.260702.10 while the CLI reports 5.260702.1 — marketplace listing + in-tarball
   plugin.json disagree with the binary. Confusing on a fresh plugin install.
