@@ -17,44 +17,44 @@
  * call when one property holds `undefined`.
  */
 
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { CatalogError, catalogRoots, listWorkflows, resolveWorkflow } from './catalog'
-import { type LoaderConfig, resolveLoaderConfig, schemaOf } from './config'
-import { DialectError, scanUnsupported, stripDeferredOptions } from './dialect'
-import { journalDirectory, previewValue, render, writeJournal } from './run'
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { CatalogError, catalogRoots, listWorkflows, resolveWorkflow } from './catalog';
+import { type LoaderConfig, resolveLoaderConfig, schemaOf } from './config';
+import { DialectError, scanUnsupported, stripDeferredOptions } from './dialect';
+import { journalDirectory, previewValue, render, writeJournal } from './run';
 
-export const name = 'genie-dsh-workflow-loader'
-export const inject = ['tools']
-export const Config = schemaOf(resolveLoaderConfig)
+export const name = 'genie-dsh-workflow-loader';
+export const inject = ['tools'];
+export const Config = schemaOf(resolveLoaderConfig);
 
 interface ToolExec {
-  agent?: { session?: { header?: { cwd?: string } } }
-  signal?: AbortSignal
+  agent?: { session?: { header?: { cwd?: string } } };
+  signal?: AbortSignal;
 }
 
 interface ToolContext {
-  tools: { register: (definition: unknown) => () => void }
+  tools: { register: (definition: unknown) => () => void };
   workflowEngine: {
     start: (request: {
-      script: string
-      meta: unknown
-      args?: unknown
-      parent: unknown
-      signal?: AbortSignal
+      script: string;
+      meta: unknown;
+      args?: unknown;
+      parent: unknown;
+      signal?: AbortSignal;
     }) => {
-      id: string
-      result: Promise<{ stopReason: string; agentsStarted: number; value?: unknown; error?: string }>
-      dispose: () => Promise<void>
-    }
-  }
+      id: string;
+      result: Promise<{ stopReason: string; agentsStarted: number; value?: unknown; error?: string }>;
+      dispose: () => Promise<void>;
+    };
+  };
 }
 
 const DESCRIPTION = `Run a saved workflow from this repository's \`.claude/workflows\` catalog, by name, on DSH.
 
 The workflow executes on the first-party workflow engine with the catalog script as its body — the script never passes through your context, so a 100 KB workflow costs the same as a small one. Use it when the user asks to run a saved workflow (council, docs-audit, wish, workfly, research-sweep, skill-intake, skill-audit-sweep, observability-review, pm-ledger-verify), or names one of those directly.
 
-Everything the workflow needs arrives through \`args\`, so read the workflow's own \`whenToUse\` and args contract before calling (the catalog panel shows it, or read the file). The full return value is written to a journal file and the response carries a bounded projection plus that path.`
+Everything the workflow needs arrives through \`args\`, so read the workflow's own \`whenToUse\` and args contract before calling (the catalog panel shows it, or read the file). The full return value is written to a journal file and the response carries a bounded projection plus that path.`;
 
 /** The model-facing tool, built once per row. */
 export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
@@ -98,48 +98,60 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
         },
         required: ['ok', 'name', 'journalPath', 'preview'],
       },
-      render: (_args: unknown, value: { ok?: boolean; name?: string; agentsStarted?: number; journalPath?: string; truncated?: boolean; preview?: string }) => {
-        if (!value?.ok) return [{ type: 'text', text: `workflow "${value?.name ?? 'unknown'}" did not complete` }]
-        const agents = value.agentsStarted ?? 0
-        const truncation = value.truncated ? `\n\n(This projection is bounded; the full return value is at ${value.journalPath}.)` : ''
+      render: (
+        _args: unknown,
+        value: {
+          ok?: boolean;
+          name?: string;
+          agentsStarted?: number;
+          journalPath?: string;
+          truncated?: boolean;
+          preview?: string;
+        },
+      ) => {
+        if (!value?.ok) return [{ type: 'text', text: `workflow "${value?.name ?? 'unknown'}" did not complete` }];
+        const agents = value.agentsStarted ?? 0;
+        const truncation = value.truncated
+          ? `\n\n(This projection is bounded; the full return value is at ${value.journalPath}.)`
+          : '';
         return [
           {
             type: 'text',
             text: `workflow "${value.name}" completed (${agents} agent${agents === 1 ? '' : 's'}).\nReturn value:\n${value.preview ?? ''}${truncation}`,
           },
-        ]
+        ];
       },
     },
     async execute(args: { name: string; args?: unknown; cwd?: string }, exec: ToolExec) {
-      const parent = exec.agent
-      if (!parent) throw new Error(`${config.toolName} requires a calling agent`)
-      const cwd = args.cwd ?? parent.session?.header?.cwd ?? process.cwd()
-      const roots = catalogRoots(cwd, config.userRoot || join(homedir(), '.claude', 'workflows'))
-      const workflow = resolveWorkflow(args.name, roots, config.allowShadowing)
-      const diagnostics: string[] = []
-      const stripped = stripDeferredOptions(workflow.body, diagnostics)
+      const parent = exec.agent;
+      if (!parent) throw new Error(`${config.toolName} requires a calling agent`);
+      const cwd = args.cwd ?? parent.session?.header?.cwd ?? process.cwd();
+      const roots = catalogRoots(cwd, config.userRoot || join(homedir(), '.claude', 'workflows'));
+      const workflow = resolveWorkflow(args.name, roots, config.allowShadowing);
+      const diagnostics: string[] = [];
+      const stripped = stripDeferredOptions(workflow.body, diagnostics);
       if (!stripped) {
         throw new Error(
           `${workflow.path} uses an \`agent()\` option this engine does not accept, so it cannot run unchanged: ${diagnostics.join('; ')}`,
-        )
+        );
       }
-      scanUnsupported(stripped.script)
+      scanUnsupported(stripped.script);
 
-      const startedAt = new Date().toISOString()
-      const started = Date.now()
+      const startedAt = new Date().toISOString();
+      const started = Date.now();
       const run = ctx.workflowEngine.start({
         script: stripped.script,
         meta: workflow.meta,
         args: args.args ?? {},
         parent,
         ...(exec.signal ? { signal: exec.signal } : {}),
-      })
+      });
       try {
-        const result = await run.result
+        const result = await run.result;
         if (result.stopReason !== 'completed') {
           throw new Error(
             `workflow "${workflow.name}" ${result.stopReason === 'cancelled' ? 'was cancelled' : `failed: ${result.error ?? 'unknown error'}`}`,
-          )
+          );
         }
         const journalPath = writeJournal(journalDirectory(config.journalDir), {
           name: workflow.name,
@@ -151,8 +163,8 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
           startedAt,
           durationMs: Date.now() - started,
           value: result.value,
-        })
-        const preview = previewValue(result.value, config.maxResultChars)
+        });
+        const preview = previewValue(result.value, config.maxResultChars);
         return {
           ok: true,
           name: workflow.name,
@@ -161,18 +173,18 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
           journalPath,
           truncated: preview.truncated,
           preview: preview.text,
-        }
+        };
       } finally {
-        await run.dispose()
+        await run.dispose();
       }
     },
-  }
+  };
 }
 
 export function apply(ctx: ToolContext, rawConfig?: unknown): () => void {
-  const config = resolveLoaderConfig(rawConfig)
-  return ctx.tools.register(workflowRunTool(ctx, config))
+  const config = resolveLoaderConfig(rawConfig);
+  return ctx.tools.register(workflowRunTool(ctx, config));
 }
 
 /** Exported for the catalog-routes half and for tests. */
-export { catalogRoots, listWorkflows, CatalogError, DialectError, render }
+export { catalogRoots, listWorkflows, CatalogError, DialectError, render };

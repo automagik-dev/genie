@@ -9,44 +9,44 @@
  * name that exists in both roots is refused by name rather than resolved by luck.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { type MetaBlock, splitMeta } from './dialect'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { type MetaBlock, splitMeta } from './dialect';
 
-export type RootKind = 'project' | 'user'
+export type RootKind = 'project' | 'user';
 
 export interface CatalogRoots {
-  project: string
-  user: string
+  project: string;
+  user: string;
 }
 
 export interface WorkflowEntry {
-  name: string
-  path: string
-  root: RootKind
-  bytes: number
-  meta: MetaBlock
+  name: string;
+  path: string;
+  root: RootKind;
+  bytes: number;
+  meta: MetaBlock;
 }
 
 export interface ResolvedWorkflow {
-  name: string
-  path: string
-  root: RootKind
-  meta: MetaBlock
+  name: string;
+  path: string;
+  root: RootKind;
+  meta: MetaBlock;
   /** The body with `export const meta` split off — the engine rejects the export. */
-  body: string
+  body: string;
 }
 
 export class CatalogError extends Error {
   constructor(message: string) {
-    super(message)
-    this.name = 'CatalogError'
+    super(message);
+    this.name = 'CatalogError';
   }
 }
 
 /** A workflow name is a filename stem, never a path. */
-const SAFE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/
+const SAFE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /**
  * The two roots. `userWorkflows` is the personal `.claude/workflows` directory
@@ -54,81 +54,77 @@ const SAFE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/
  * derived from the working directory, never configured.
  */
 export function catalogRoots(cwd: string, userWorkflows = join(homedir(), '.claude', 'workflows')): CatalogRoots {
-  return { project: join(cwd, '.claude', 'workflows'), user: userWorkflows }
+  return { project: join(cwd, '.claude', 'workflows'), user: userWorkflows };
 }
 
 function entriesIn(root: string, kind: RootKind): WorkflowEntry[] {
-  let files: string[]
+  let files: string[];
   try {
-    files = readdirSync(root)
+    files = readdirSync(root);
   } catch {
-    return []
+    return [];
   }
-  const entries: WorkflowEntry[] = []
+  const entries: WorkflowEntry[] = [];
   for (const file of files.sort()) {
-    if (!file.endsWith('.js')) continue
-    const name = file.slice(0, -3)
-    if (!SAFE_NAME.test(name)) continue
-    const path = join(root, file)
+    if (!file.endsWith('.js')) continue;
+    const name = file.slice(0, -3);
+    if (!SAFE_NAME.test(name)) continue;
+    const path = join(root, file);
     try {
-      if (!statSync(path).isFile()) continue
-      const text = readFileSync(path, 'utf8')
-      const { meta } = splitMeta(text)
-      entries.push({ name, path, root: kind, bytes: Buffer.byteLength(text), meta })
-    } catch {
-      // A file that cannot be read or parsed is not part of the catalog; the
-      // operator sees it when they ask for it by name (resolve reports why).
-      continue
-    }
+      if (!statSync(path).isFile()) continue;
+      const text = readFileSync(path, 'utf8');
+      const { meta } = splitMeta(text);
+      entries.push({ name, path, root: kind, bytes: Buffer.byteLength(text), meta });
+    } catch {}
   }
-  return entries
+  return entries;
 }
 
 /** Every workflow both roots offer, project first. */
 export function listWorkflows(roots: CatalogRoots): WorkflowEntry[] {
-  return [...entriesIn(roots.project, 'project'), ...entriesIn(roots.user, 'user')]
+  return [...entriesIn(roots.project, 'project'), ...entriesIn(roots.user, 'user')];
 }
 
 /** Names that exist in both roots — the collision the loader refuses. */
 export function collisions(roots: CatalogRoots): string[] {
-  const project = new Set(entriesIn(roots.project, 'project').map((entry) => entry.name))
+  const project = new Set(entriesIn(roots.project, 'project').map((entry) => entry.name));
   return entriesIn(roots.user, 'user')
     .map((entry) => entry.name)
-    .filter((name) => project.has(name))
+    .filter((name) => project.has(name));
 }
 
 /** Resolve one workflow by name, or explain exactly why it cannot be resolved. */
 export function resolveWorkflow(name: string, roots: CatalogRoots, allowShadowing = false): ResolvedWorkflow {
   if (!SAFE_NAME.test(name)) {
-    throw new CatalogError(`"${name}" is not a workflow name: expected a filename stem like \`council\``)
+    throw new CatalogError(`"${name}" is not a workflow name: expected a filename stem like \`council\``);
   }
-  const projectPath = join(roots.project, `${name}.js`)
-  const userPath = join(roots.user, `${name}.js`)
-  const inProject = existsSync(projectPath)
-  const inUser = existsSync(userPath)
+  const projectPath = join(roots.project, `${name}.js`);
+  const userPath = join(roots.user, `${name}.js`);
+  const inProject = existsSync(projectPath);
+  const inUser = existsSync(userPath);
   if (inProject && inUser && !allowShadowing) {
     throw new CatalogError(
-      `"${name}" exists in both roots and this loader does not guess which one you meant:\n  ${projectPath}\n  ${userPath}\n` +
-        'Delete the one you do not want, or set allowShadowing to accept the project copy.',
-    )
+      `"${name}" exists in both roots and this loader does not guess which one you meant:\n  ${projectPath}\n  ${userPath}\nDelete the one you do not want, or set allowShadowing to accept the project copy.`,
+    );
   }
-  const path = inProject ? projectPath : inUser ? userPath : ''
+  const path = inProject ? projectPath : inUser ? userPath : '';
   if (!path) {
-    const available = listWorkflows(roots).map((entry) => entry.name)
-    const shown = available.slice(0, 20)
+    const available = listWorkflows(roots).map((entry) => entry.name);
+    const shown = available.slice(0, 20);
     throw new CatalogError(
-      `no workflow named "${name}".` +
-        (shown.length
+      `no workflow named "${name}".${
+        shown.length
           ? `\nAvailable: ${shown.join(', ')}${available.length > shown.length ? `, +${available.length - shown.length} more` : ''}`
-          : `\nNo .claude/workflows catalog was found at ${roots.project} or ${roots.user}`),
-    )
+          : `\nNo .claude/workflows catalog was found at ${roots.project} or ${roots.user}`
+      }`,
+    );
   }
-  let text: string
+  let text: string;
   try {
-    text = readFileSync(path, 'utf8')
+    text = readFileSync(path, 'utf8');
   } catch (failure) {
-    throw new CatalogError(`could not read ${path}: ${failure instanceof Error ? failure.message : 'unknown error'}`)
+    throw new CatalogError(`could not read ${path}: ${failure instanceof Error ? failure.message : 'unknown error'}`);
   }
-  const { meta, body } = splitMeta(text)
-  return { name, path, root: inProject ? 'project' : 'user', meta, body }
+  const { meta, body } = splitMeta(text);
+  return { name, path, root: inProject ? 'project' : 'user', meta, body };
 }
