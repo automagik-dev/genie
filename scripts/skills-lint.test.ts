@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SKILL_CATEGORIES, SKILL_MUTATES_LEVELS } from './skills-inventory-parity.ts';
@@ -306,10 +306,10 @@ describe('validateSkillMetadata', () => {
 });
 
 describe('collectBannedTokenViolations — plain-substring vocabulary scan', () => {
-  test('BANNED-13 is exactly thirteen tokens with no duplicates', () => {
+  test('BANNED-15 is exactly fifteen tokens with no duplicates', () => {
     const tokens = BANNED_TOKEN_GUIDANCE.map(([token]) => token);
-    expect(tokens).toHaveLength(13);
-    expect(new Set(tokens).size).toBe(13);
+    expect(tokens).toHaveLength(15);
+    expect(new Set(tokens).size).toBe(15);
   });
 
   test('matches as a plain substring, with no word boundary and no allowlist', () => {
@@ -323,6 +323,27 @@ describe('collectBannedTokenViolations — plain-substring vocabulary scan', () 
       '\n',
     );
     expect(collectBannedTokenViolations(text).map((v) => v.line)).toEqual([2, 4]);
+  });
+
+  // Issue #2917: the five shipped workflow front doors and the catalogue README named one
+  // client tool as the actor — seven `Claude Code` hits and five `Workflow tool` hits — while
+  // every one of them also stated the runtime-neutral script-path rule. This case owns that
+  // regression, and it reads the SHIPPED files rather than a fixture, because a fixture
+  // cannot fail when a front door is rewritten.
+  test('the shipped workflow front doors and the catalogue README name no client tool', () => {
+    const shipped = join(import.meta.dir, '..', 'skills');
+    const frontDoors = [
+      'council/SKILL.md',
+      'docs/SKILL.md',
+      'research/SKILL.md',
+      'skill-audit/SKILL.md',
+      'workfly/SKILL.md',
+      'README.md',
+    ];
+    for (const rel of frontDoors) {
+      const hits = collectBannedTokenViolations(readFileSync(join(shipped, rel), 'utf8'));
+      expect(hits.map((v) => `${rel}:${v.line}: ${v.token}`)).toEqual([]);
+    }
   });
 
   test('legitimate prose and the surviving bare role names are clean', () => {
@@ -347,7 +368,7 @@ describe('end-to-end: retired-vocabulary and directory-shape fixtures', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  // One negative fixture per BANNED-13 token: exit code AND message text.
+  // One negative fixture per BANNED-15 token: exit code AND message text.
   // The frontmatter is written explicitly so the offending line number (6) is
   // asserted, not inferred.
   for (const [token, guidance] of BANNED_TOKEN_GUIDANCE) {
