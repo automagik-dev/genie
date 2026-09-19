@@ -369,6 +369,9 @@ describe('the runMirror seam', () => {
   // with zero failures (group 3 review, finding 1).
   test('never builds an adapter when validation fails', async () => {
     let built = 0;
+    // Other suites in the same runner may have set the process code already;
+    // the invariant is that the seam leaves it exactly as it found it.
+    const codeBefore = process.exitCode;
     const code = await runMirror(
       { to: 'REVIEW', evidence: 'group 3', worktree: 'current' },
       {
@@ -381,7 +384,7 @@ describe('the runMirror seam', () => {
     );
     expect(built).toBe(0);
     expect(code).toBe(2);
-    expect(process.exitCode).toBeUndefined();
+    expect(process.exitCode).toBe(codeBefore);
   });
 
   test('takes its clock from the seam, never from a hidden global', async () => {
