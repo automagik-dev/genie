@@ -23,7 +23,7 @@ export const ORCA_ORCHESTRATION_VERBS = [
   'gate-resolve',
 ] as const;
 
-export type OrcaOrchestrationVerb = (typeof ORCA_ORCHESTRATION_VERBS)[number];
+type OrcaOrchestrationVerb = (typeof ORCA_ORCHESTRATION_VERBS)[number];
 
 /**
  * Board-card verbs — argv root `worktree`, never `orchestration`. `worktree set`
