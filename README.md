@@ -52,7 +52,7 @@ genie setup --orchestration-mode orca
 genie doctor
 ```
 
-The switch first verifies the shipped plugin payload and a compatible Orca runtime (Orca `1.4.192` or newer with
+The switch first verifies the shipped plugin payload and a compatible Orca runtime (Orca `1.4.205` or newer with
 `orchestration.contract.v1`). Only after that probe succeeds does Genie back up its configuration and atomically select
 Orca. In Orca mode, Genie does not open `.genie/genie.db` for lifecycle reads or writes and refuses roadmap writes,
 syncs, and exports before they can create or change local files. Existing local history is preserved in place, but it is
@@ -100,6 +100,32 @@ The repo root carries only `orca-marketplace.json`, a source-only index no relea
 `scripts/orca-manifest-parity.test.ts` fails the build if the index drifts from the plugin's identity, or if
 `plugins/genie` ever grows a symlink or crosses Orca's file cap.
 
+### What the plugin does inside Orca
+
+Once installed and enabled, the plugin rides Orca's own mechanisms — no second board, no task provider, no panel:
+
+- **Palette and keybindings.** Eight `Genie:` entries (`Wish`, `Work`, `Review`, `Fix`, `Report`, `Council`, `Doctor`,
+  `Update`) in the command palette of any workspace, each with a `Ctrl+Alt+Shift+<letter>` chord (`W`, `K`, `R`, `F`,
+  `P`, `L`, `D`, `U`). The six lifecycle verbs send their slash command, with the workspace's display name, branch,
+  linked issue and path filled in, into the workspace's active agent terminal; with no agent terminal they create a Run
+  and start a supervised worker whose task spec is that text. `Doctor` runs `genie doctor --json` and `Update` checks
+  the stable release manifest; both answer with a desktop notification.
+- **The board.** Orca's board columns are workspace statuses, so genie's lifecycle is mirrored one-way onto the
+  existing cards by `genie orca mirror`: `APPROVED → todo`, `IN_PROGRESS → in-progress`, a review verdict →
+  `in-review`, `SHIPPED → completed`, `BLOCKED → in-progress` (waiting on a human), each with a dated one-line card
+  comment naming the evidence. Orca's status is never read back as lifecycle truth; the documents stay the record.
+- **Gates.** The questions that used to stall the flow in chat — approve a wish, accept a BLOCKED group, merge,
+  promote — become Orca decision gates raised by the coordinator with the orchestration verbs the Orca guide already
+  owns; the human resolves them from Orca's UI, from any workspace.
+- **Notifications.** When a workspace's agent settles, a changed genie card comment (a review verdict, a pending gate)
+  becomes a desktop notification.
+
+The manifest declares exactly the capabilities those handlers use (`workspace:read`, `terminal:send`,
+`notifications:show`, `events:subscribe`). Orca asks for consent once per plugin and capability set, so a release that
+changes that set asks once more on the next update; it never prompts per action. `genie orca mirror` works in standalone
+mode too — it is a write to a card, not a lifecycle-authority question — and refuses cleanly (exit 1, one JSON line on
+stderr) outside an Orca-managed worktree.
+
 ### Install, update, rollback, and uninstall
 
 Signed release tarballs include `plugins/genie/orca-plugin.json` and the compiled Orca entrypoint on every supported
@@ -116,7 +142,8 @@ are deleted. Review the command's backup/recovery output before removing any ret
 
 ### Ambiguous Orca receipts and recovery
 
-The plugin invokes only a closed subset of official `orca orchestration ... --json` commands. Successful mutations
+The plugin invokes only a closed allowlist of official `orca ... --json` commands: the `orca orchestration` verbs,
+`worktree show` / `worktree set`, and `terminal list`. Successful mutations
 require a bounded receipt and, where the public CLI supports it, an immediate public read-back. If the process times out,
 exceeds its output cap, or loses transport after launch without a complete identifying receipt, Genie reports
 `ambiguous_after_possible_commit`. Do not automatically retry: Orca may already have committed the operation. Inspect
@@ -155,7 +182,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 16 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
+- **Small.** 17 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -178,6 +205,7 @@ genie --help
 | `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
+| `genie orca` | Write genie's lifecycle onto the Orca workspace card, one-way — `orca mirror --to <transition> --evidence "…"` flips the board status and writes a dated comment |
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |

@@ -15,11 +15,28 @@ authority with `genie setup --orchestration-mode orca`.
 | File | Purpose |
 |------|---------|
 | `orca-plugin.json` | The native Orca manifest. Version-stamped inside the release payload by `scripts/release-payload-version.ts`. |
-| `orca-entrypoint.ts` → `orca-entrypoint.min.js` | The plugin entrypoint and its committed esbuild bundle. `bun run lint:orca-bundle` fails CI on any drift between the two, so an edited blob can never be attested as reviewed source. |
+| `orca-entrypoint.ts` → `orca-entrypoint.min.js` | The plugin entrypoint — the eight palette handlers and the agent-settle notification — and its committed esbuild bundle. `bun run lint:orca-bundle` fails CI on any drift between the two, so an edited blob can never be attested as reviewed source. |
 | `orca-runtime.ts` | The runtime the entrypoint bundles. |
 | `plugin.json` | Compatibility metadata only — `extensions."dev.orca.compatibility"` and `minimumRuntimeVersion`. |
 | `package.json` | Runtime payload metadata, version-stamped with the binary. |
 | `references/orca-orchestration.md` | The operator and contributor contract. |
+
+## What the plugin contributes
+
+- `contributes.commands`: `genie.wish`, `genie.work`, `genie.review`, `genie.fix`, `genie.report`, `genie.council`,
+  `genie.doctor`, `genie.update` (`Genie: …`), all `context: "worktree"`, so they are listed only with an active
+  workspace; `contributes.keybindings`: one `Ctrl+Alt+Shift+<letter>` chord per command, `when: "worktree"` (the
+  validator requires `when` to equal the command's context); `contributes.events`: `agent.status.changed`.
+- `capabilities`, as the `{"kind": …}` objects Orca's manifest schema requires: `workspace:read`, `terminal:send`,
+  `notifications:show`, `events:subscribe` — exactly what the handlers call. Consent is per plugin and capability set,
+  granted once when the plugin is enabled and asked again only when the set changes.
+- The six lifecycle handlers read the active workspace through the host API (`workspace.readContext`), read its
+  record and terminals through the adapter (`worktree show` / `terminal list`, both addressed as `active`), and send
+  the composed slash command through `terminal.sendText` — never through `orca terminal send`. With no agent terminal
+  they `run-create` and `worker-start` from the text. The worker runs outside every terminal and every Run, the host
+  rejects a command after 30 s, so the compatibility probe runs once per worker and every operation carries a bound.
+- The card itself is written only by the genie binary (`genie orca mirror`); the plugin reads the comment back when a
+  workspace's agent settles and turns a changed genie line into a desktop notification.
 
 Nothing else belongs in this tree. It is force-pushed verbatim as the tree-only `orca-plugin` /
 `orca-plugin-dev` subtree refs by `.github/workflows/orca-plugin-ref.yml`, and Orca's loader rejects

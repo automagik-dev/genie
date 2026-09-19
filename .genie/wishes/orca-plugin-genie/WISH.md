@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `orca-plugin-genie` |
 | **Date** | 2026-09-19 |
 | **Author** | Claude Fable 5.1 (Orca worktree `orca-plugin-genie`) for Felipe Rosa |
@@ -362,6 +362,13 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Round 1 (design rev. 1): 4 HIGH (the palette `worker-start` fallback had no Run to land in; `branch:<x>` is `selector_ambiguous` on this host; manifest `capabilities` must be `{kind}` objects; the host's `invokeTimeoutMs` is 30 s and the send path spent most of it), 1 HIGH on KISS (`genie orca gate` was a poller with its own Run/Task ledger — the machinery the contributor contract forbids), 4 MEDIUM, 2 LOW. All eleven applied: design rev. 2 (decisions 3, 5, 8, 9, 16, risks 5, 7, 8) and this plan (decisions 5–7, groups 1, 2, 4, 6, QA).
 - Round 2 (design rev. 2, digest `291011e2…`): SHIP. 1 MEDIUM — the reference must not claim a `decision_gate` wake for a UI gate resolution (applied to group 4 and QA above); 2 LOW — the design says idle workers are reaped after 60 s where the bundle reads `idleReapMs ?? 3e5` (300 s), accepted as-is because the slip only strengthens the design's own trigger and the design is stamped at the reviewed digest; whether a non-terminal caller can `worker-start --run` onto the Run it created stays a hypothesis routed to QA.
 - Evidence: `validate-wish` passed; `wishes:lint` failed only on the then-PENDING evidence; `orca orchestration worker-start --help` carries `(--task | --spec)`, `[--run]`, `[--worktree]`; `active` and `id:` selectors resolve for `worktree show` and `terminal list` on this host. Status DRAFT → APPROVED.
+
+### Execution — 2026-09-19 — groups 1–4 landed, each independently reviewed
+
+- Group 1 (`98104af26`, follow-up `240537478`, chore `445bd603a`): review SHIP by `g1-review@claude-fable-5.1/orca-plugin-genie-independent` (threat-boundary review): allowlist closed at 22, receipts/read-backs proven, 75 tests; two MEDIUM applied (recovery hints spell the public command; the six-failure classifier covers the new verbs); the `worker-start` receipt passes extra fields through. Also repaired two 1.4.205 breaks that made every adapter read fail on the host (UUID `_meta.runtimeId`; `desktopWindowStatus: "openable"` + `connectionState`), proven by a live read of `status`, `run-current`, `worktree-show active`, `terminal-list active`.
+- Group 2 (`bc4e6fae5`): review SHIP by `g2-review@…independent`; 41 tests; two MEDIUM recorded for a follow-up: `Ctrl+Alt+Shift+C` (`genie.council`) equals Orca's `fileExplorer.copyRelativePath` chord on Linux/Windows (move it and pin the three 1.4.205 three-modifier defaults as forbidden), and design decision 16's arithmetic is wrong — the start path spawns six child processes plus the once-per-worker probe (ceiling ≈ 68 s, send path ≈ 24 s) against the host's 30 s `invokeTimeoutMs`; the host then rejects the invoke and drops the late result but does not kill the worker, whose closing notification still arrives, and the plugin never retries the mutation; accepted as a bounded risk, recorded here and in the PR body, with a read-phase deadline before `run-create` as the follow-up hardening.
+- Group 3 (`810af8719`): review FIX-FIRST by `g3-review@fable` — HIGH: the in-process seam test leaked `process.exitCode = 2` so the suite exited 2 with zero failures; applied in `e5711c58c` (the seam returns 0|1|2, only the registered command assigns process state), plus the idempotency subprocess test and a source-scan pinning the mirror module import-free. Recorded errata against the stamped design: a directory that is not an Orca worktree surfaces as `ambiguous_after_possible_commit` (the adapter classifies every failed mutation as ambiguous), not `process_exit`; the exit code (1) and the JSON stderr line are as designed.
+- Group 4 (`c879c4c96`, follow-up `70933eba9`): review SHIP by `g4-review@fable`; two MEDIUM applied (the wish-level gate task is created with the guide's `task-create` after `run-create`; the promote gate also carries fix's out-of-worktree ruling naming the change and blast radius). Skills at 88/84/89/48 lines.
 
 ---
 

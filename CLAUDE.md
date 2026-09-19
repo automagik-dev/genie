@@ -51,7 +51,8 @@ src/genie.ts                    CLI entry point (commander)
 src/lib/                        Core modules (install/update lifecycle, paths, config, Orca adapter)
 src/lib/codex-config.ts         Backup-first removal of the obsolete Genie loopback OTel exporter
 src/lib/genie-home.ts           GENIE_HOME resolution and the per-agent home paths built on it
-src/lib/orca-orchestration-adapter.ts  The closed public `orca orchestration ... --json` boundary
+src/lib/orca-orchestration-adapter.ts  The closed public `orca ... --json` boundary: 19 orchestration verbs, worktree show/set, terminal list
+src/lib/orca-lifecycle-mirror.ts  The fixed one-way map genie transition → Orca workspace status + dated card comment (pure)
 src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightweight body")
   genie-db.ts                   Per-repo .genie/genie.db open/init (worktree-aware, WAL)
   sqlite-open.ts                Shared bun:sqlite open primitive (WAL, busy_timeout, typed errors)
@@ -60,7 +61,8 @@ src/lib/v5/                     v5 state engine — SQLite, zero-daemon ("lightw
   TAXONOMY.md                   The docs-in-git / state-in-SQLite contract
 src/lib/skills-installer.ts     The skills.sh channel — pinned CLI, local delivered source, install record
 src/lib/legacy-integration-retirement.ts  Marker-owned, backup-first retirement of plugin-era host assets
-src/term-commands/              CLI command handlers (board, context, init, mikro, shortcuts, task, ...)
+src/term-commands/              CLI command handlers (board, context, init, mikro, orca, shortcuts, task, ...)
+src/term-commands/orca.ts       `genie orca mirror` — the one writer of the Orca card, over worktree-set + its worktree-show read-back
 src/term-commands/mikro.ts      `genie mikro call|bench|coach|fixtures|init` — registration over scripts/mikro/*, imported in place
 scripts/mikro/                  The mikro microagent runtime (call/bench/coach/facts/boundary); NOT relocated under src/
 skills/                         Skill prompt files (brainstorm, wish, work, review, etc.)
@@ -69,7 +71,7 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Commands
 
-Sixteen top-level commands (run `genie <command> --help` for detail):
+Seventeen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
@@ -83,6 +85,7 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `mcp` | Retired — prints the stable non-zero MCP-retirement diagnostic (use `genie task` / `genie board`) |
 | `mikro` | The mikro microagent runtime, on PATH — `mikro call <agent>` hands its tail to `scripts/mikro/call.ts` as typed (genie's global options excepted); `init`, `fixtures --from-commits`, `bench` and `coach` are the per-repository growth loop |
 | `setup` | Configure Genie; `setup --orchestration-mode <standalone\|orca>` selects the lifecycle authority |
+| `orca` | Write genie's lifecycle onto the Orca workspace card, one-way: `orca mirror --to <APPROVED\|IN_PROGRESS\|REVIEW\|SHIPPED\|BLOCKED> [--verdict …] --evidence '<text>' [--worktree <selector>]` — the fixed map plus a dated comment, proven by the adapter's read-back |
 | `shortcuts` | Manage tmux keyboard shortcuts |
 | `task` | Task state (SQLite, zero-daemon) |
 | `ui-bridge` | Retired — prints the stable non-zero UI-bridge-retirement diagnostic (the Orca integration is the supported UI surface) |
@@ -150,6 +153,21 @@ vocabulary: **2 is a refusal that cost nothing** — a fixture set or an agent t
 on disk, a range that could be an option, an existing fixture file without `--force`.
 `scripts/mikro/README.md` §"Growing agents in another repository" is the operator
 sequence, and `genie mikro init` prints it, because an installed host has no README.
+
+### Orca subcommands
+
+```bash
+genie orca mirror --to <APPROVED|IN_PROGRESS|REVIEW|SHIPPED|BLOCKED> [--verdict <SHIP|FIX-FIRST|BLOCKED>] --evidence '<text>' [--worktree <selector>] [--json]
+```
+
+The map is fixed in code (`src/lib/orca-lifecycle-mirror.ts`): `APPROVED → todo`, `IN_PROGRESS → in-progress`,
+`REVIEW → in-review` (requires `--verdict`), `SHIPPED → completed`, `BLOCKED → in-progress` (waiting on a human; the
+evidence names the gate). The comment is `<YYYY-MM-DD> genie <transition>[: <verdict>] — <evidence>`, one line, evidence
+≤ 300 bytes. `--worktree` accepts the adapter's closed selector grammar (`current` default, `active`, `id:…`, `path:…`,
+`branch:…`, `name:…`). Exit 0 only on a proven write (receipt plus `worktree show` read-back), 1 on a typed adapter
+error with one JSON line on stderr (a directory that is not an Orca worktree lands here), 2 on usage. It never reads
+Orca's status back as lifecycle truth, and it works in standalone mode too — it is a card write, not authority. The
+verb is exempt from the v4 workspace gate because it reads no repository state.
 
 ## State File Locations (SQLite + git-tracked docs)
 
@@ -231,6 +249,7 @@ Biome's `noExcessiveCognitiveComplexity` is set to `maxAllowedComplexity: 25` (w
 - **Post-delivery convergence is an argv-only handoff, never an environment-only re-exec** — the 2026-07-11 downgrade incident proved that an old target can ignore an environment-only sync contract and perform a second full update. Today `genie update` invokes the freshly installed binary as `update --post-delivery-converge`: an explicit argv protocol that pre-contract binaries reject at commander parse time, with the mode resolved before any mutation and the lifecycle lease borrowed under an exact-owner record (the parent stays the sole lease owner). Never replace this with an environment-variable-only convergence signal. The post-convergence half of the old two-hop upgrade is gone: the freshly installed binary converges the skills channel itself, so there is no second activation command to run afterwards.
 - **`budgets.maxEscalationsPerGroup` is the repair budget, read from the config and never restated in prose** — the fix skill resolves it with `genie config get budgets.maxEscalationsPerGroup` rather than naming the constant, so the skill and `<GENIE_HOME>/config.json` cannot drift. Every `budgets.*` key is a conservative default with a schema `.max()` ceiling (escalations 5, Fable calls 10): configuration may only TIGHTEN a gate, and a hand-edited value past the ceiling fails the whole parse, so `loadGenieConfig` returns defaults and `genie config get` reports `source: default` — never the out-of-range number. `genie doctor` echoes the resolved value as one read-only `budgets: maxEscalationsPerGroup=<n> (<default|file>)` line and never writes a config file.
 - **Wish state is persisted by the orchestrator, never the reviewer** — reviewer verdicts are SHIP/FIX-FIRST/BLOCKED evidence; durable WISH statuses are `DRAFT`, `FIX-FIRST`, `APPROVED`, `IN_PROGRESS`, `BLOCKED`, `SHIPPED`, and `SUPERSEDED` (a terminal record of work that shipped, or was approved, and was later removed or replaced — it names what replaced it). SessionStart, `genie`, `dream`, and resume routing consume that vocabulary. A chat verdict does not advance state until the invoking orchestrator appends review evidence and updates WISH.md.
+- **The Orca plugin rides Orca's native mechanisms, and genie is the only writer** — `plugins/genie` contributes eight `context: "worktree"` palette commands with `Ctrl+Alt+Shift` chords, the `agent.status.changed` event, and four capabilities written as `{"kind": …}` OBJECTS (a string element fails Orca's manifest validation and the plugin never loads; Orca asks consent once per capability set, so changing the set costs one re-consent on the next update, never a prompt per action). Text reaches a terminal only through the host API `terminal.sendText`; the adapter still rejects `terminal send`. Handlers address the workspace as `active` and then by its record `id` — never `branch:<x>`, which is `selector_ambiguous` on a host with two checkouts of one branch — run the compatibility probe once per worker and bound every operation, because Orca rejects a plugin command after 30 s (`invokeTimeoutMs`) while the worker keeps running; a `worker-start` that times out is reported as "confirm in Orca before retrying" and never retried. The board mirror is one-way by construction: `genie orca mirror` maps a genie transition to a workspace status plus a dated comment and reads nothing back as truth; gates are raised with the allowlisted `gate-create` / structured wait / `gate-list` the Orca guide owns and mirrored as `BLOCKED`; notifications come from the plugin reading the card comment when a workspace's agent settles (`waiting | done | blocked`). The floor is Orca `1.4.205` in three places (`engines.orca`, `plugin.json`, `ORCA_MINIMUM_RUNTIME_VERSION`), pinned by `scripts/orca-manifest-parity.test.ts`, because that build's host API shapes are the only ones verified — and because 1.4.205 broke the old strict schemas (a UUID `_meta.runtimeId`, `desktopWindowStatus: "openable"`, a new `connectionState`), so every adapter read failed on the host until the envelope's runtime id became bounded text and the runtime status object passed unknown fields through. RF4 (roadmap cards on Orca's Tasks page through the GitHub provider) and RF5 (nightly automations) are designed in the wish and not built.
 - **`tasks.wish` is a lifecycle slug, valid from brainstorm-dir creation — the roadmap board is the one tracker** — `tasks.wish` is no longer "the WISH.md slug post-pour"; it is the single stable slug a card carries from `.genie/brainstorms/<slug>/` creation onward, threading Idea → Brainstorm → Wish → Work → Review → Done (a card can hold a slug while still in an early lane; the slug is identity, not proof a wish exists). Hand-written `.genie/INDEX.md` prose stays authored by humans, but the `jar: index-lane drift` doctor check lint-checks it against placement truth: for each INDEX entry it takes the first `brainstorms/<slug>/` or `wishes/<slug>/` link, joins the roadmap card `WHERE tasks.wish = slug`, and verifies the card's lane against the section (Raw→Idea, Simmering→Brainstorm, Ready→Brainstorm/Wish, Poured→Wish/Work/Review/Done). It is warning-level and never flips doctor `ok:false`; linkless/cardless/laneless entries report `unlinked` (never `drift`), a link whose target is missing on disk — or resolves outside `.genie/`, which is rejected without a stat so `../` traversal is never a path-existence oracle — reports `broken` (decided before the lane comparison, so it outranks `drift`; `#anchor` suffixes are stripped and a bare `wishes/<slug>/` link resolves against the directory), and the per-entry states ride `--json` under `checks[].indexLane.entries`. The check line warns when `drift > 0` **or** `broken > 0`; human output names every `broken` entry and at most five `unlinked` ones, then counts the remainder. `evaluateIndexLaneDrift` stays pure — the caller injects both `laneForSlug` and the target-existence resolver.
 
 ## PR Review Rules
