@@ -352,6 +352,7 @@ CREATE TABLE hire_roster (
       const restored = new Database(archived, { readonly: true });
       try {
         expect(restored.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'delete' });
+        expect(restored.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
         expect((restored.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
         expect(restored.query('SELECT * FROM hire_roster').all()).toEqual(beforeHires);
         expect(restored.query('SELECT id, title FROM tasks').all()).toEqual(beforeTasks);
@@ -549,6 +550,10 @@ db.close();
       for (const column of ['wish', 'group_name', 'lane', 'agent_kind', 'assigned_agent', 'assigned_reason']) {
         expect(names.filter((name) => name === column)).toHaveLength(1);
       }
+      // `boards` is created WITHOUT `lanes` and every fresh opener ALTERs it in,
+      // so the same race lives there (it lost on darwin CI, 2026-09-20).
+      const boardNames = (check.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name);
+      expect(boardNames.filter((name) => name === 'lanes')).toHaveLength(1);
     } finally {
       check.close();
     }

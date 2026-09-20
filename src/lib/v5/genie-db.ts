@@ -15,7 +15,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 // One-way, deliberate: the per-repo database asks the GENIE_HOME path module
 // where the machine-scope file lives so it can REFUSE to be that file. v6 ships
@@ -480,24 +480,47 @@ export interface OpenOptions {
  * operator who discovers the wrong binary migrated a shared database needs the
  * bytes, not a flag they did not know to pass.
  *
- * `VACUUM INTO`, never a file copy. An un-checkpointed write-ahead log lives in
- * a sidecar, so copying `genie.db` alone could archive a file missing the most
- * recent commits; and a copy of a WAL-mode file carries the WAL flag in its
- * header with no `-wal`/`-shm` beside it, which the system SQLite bun links on
- * macOS refuses to open read-only (`SQLITE_CANTOPEN`, CI 2026-09-20). `VACUUM
- * INTO` reads through the live connection — WAL frames included — and writes a
- * rollback-journal (DELETE-mode) single file that any SQLite opens read-only,
- * with `user_version` preserved. It may not run inside a transaction, which is
- * why the ladder calls this hook before it takes the lock.
+ * The archive is `db.serialize()` — the page image this connection's snapshot
+ * sees, WAL frames included — written as a ROLLBACK-JOURNAL file, and not any
+ * of the two obvious alternatives, both of which failed on 2026-09-20:
+ *
+ *   - `wal_checkpoint` + `copyFileSync` copies a WAL-mode file: its header says
+ *     WAL and no `-wal`/`-shm` sit beside it, which the system SQLite bun links
+ *     on macOS refuses to open read-only (`SQLITE_CANTOPEN`; darwin CI, two
+ *     tests). A torn copy under a concurrent checkpoint is also possible.
+ *   - `VACUUM INTO` rebuilds the output by stepping `SELECT sql FROM
+ *     sqlite_schema` and executing each CREATE into it. When another process
+ *     changes the schema meanwhile — exactly what the race winner's `DROP
+ *     TABLE` does while the losers are still preparing their backups — that
+ *     SELECT restarts on `SQLITE_SCHEMA` and re-emits the rows it already ran,
+ *     so the output dies with `table boards already exists` (1–3 of six
+ *     openers, most local runs; a separate read-only connection changes
+ *     nothing because the window is inside VACUUM).
+ *
+ * `sqlite3_serialize` copies pages through the pager under one read
+ * transaction and parses no schema, so neither failure applies. Header bytes
+ * 18 and 19 are the file-format write/read versions (1 = rollback journal,
+ * 2 = WAL); setting both to 1 is byte-for-byte what `PRAGMA journal_mode =
+ * DELETE` writes, and it is what lets any SQLite open the archive read-only
+ * with no sidecar. `user_version` and every page are untouched.
  *
  * The root lives under `<GENIE_HOME>/state-backups/`, which is an ARCHIVE:
  * nothing genie writes there is removed by a later run. Returns the path so
  * the caller can name it on stdout — an unreported backup is a backup the
  * operator cannot use.
  */
+const HEADER_WRITE_VERSION_OFFSET = 18;
+const HEADER_READ_VERSION_OFFSET = 19;
+const FILE_FORMAT_ROLLBACK_JOURNAL = 1;
+
 function prepareMigrationBackup(db: Database, path: string, from: number, to: number): PreparedMigrationBackup {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}`);
+  // Stamp AND pid: every racing opener prepares a backup and only the winner
+  // keeps its root, so two openers landing in the same millisecond must not
+  // share one — the loser's `discard` deleted the winner's archive (the
+  // six-opener test found 0 roots, 2 of 5 local runs). Still sortable, still
+  // the `<family>-<compact ISO>` shape every state-backups root uses.
+  const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}-${process.pid}`);
   // Explicit 0o700, like every other `state-backups` root. Without a mode the
   // directory inherits the ambient umask, which on CI produced a root this
   // very process could not traverse — the copy landed and re-opening it failed
@@ -505,7 +528,10 @@ function prepareMigrationBackup(db: Database, path: string, from: number, to: nu
   // enforces the rule for every GENIE_HOME creator.
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const target = join(root, basename(path));
-  db.prepare('VACUUM INTO ?').run(target);
+  const image = Buffer.from(db.serialize());
+  image[HEADER_WRITE_VERSION_OFFSET] = FILE_FORMAT_ROLLBACK_JOURNAL;
+  image[HEADER_READ_VERSION_OFFSET] = FILE_FORMAT_ROLLBACK_JOURNAL;
+  writeFileSync(target, image, { mode: 0o600 });
   return {
     // This process won the lock: the copy is genuinely the previous database,
     // so keep it and say where it went.
@@ -784,13 +810,23 @@ export function ensureSchema(db: Database): void {
  * another opener won: it means the column now exists, which is precisely the
  * post-condition this function promises. Every other failure propagates.
  */
-function addTaskColumn(db: Database, present: ReadonlySet<string>, name: string, type: 'TEXT' | 'INTEGER'): void {
+function addColumn(
+  db: Database,
+  table: 'tasks' | 'boards',
+  present: ReadonlySet<string>,
+  name: string,
+  type: 'TEXT' | 'INTEGER',
+): void {
   if (present.has(name)) return;
   try {
-    db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   } catch (err) {
     if (!/duplicate column name/i.test(err instanceof Error ? err.message : String(err))) throw err;
   }
+}
+
+function addTaskColumn(db: Database, present: ReadonlySet<string>, name: string, type: 'TEXT' | 'INTEGER'): void {
+  addColumn(db, 'tasks', present, name, type);
 }
 
 /**
@@ -867,9 +903,12 @@ export function backfillStageLog(db: Database): void {
 /**
  * Additive, in-place column backfill for `boards`. Adds the nullable `lanes`
  * JSON column to a DB stamped before lifecycle lanes existed. Nullable ⇒ stays
- * within `user_version = 1`. Idempotent: a no-op once the column is present.
+ * within the current `user_version`. Idempotent, and tolerant of a concurrent
+ * opener adding it first (see {@link addColumn}): `SCHEMA_SQL` creates `boards`
+ * WITHOUT `lanes`, so on a brand-new database every first opener reaches this
+ * `ALTER` — the race is not confined to older files (darwin CI, 2026-09-20).
  */
 function ensureBoardColumns(db: Database): void {
   const cols = new Set((db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name));
-  if (!cols.has('lanes')) db.exec('ALTER TABLE boards ADD COLUMN lanes TEXT');
+  addColumn(db, 'boards', cols, 'lanes', 'TEXT');
 }

@@ -271,7 +271,7 @@ function checkDatabase(root: string | null): CheckResult[] {
           status: 'warn',
           detail: `${dbPath} is at schema v${err.foundVersion}; this build expects v${err.expectedVersion}`,
           suggestion:
-            'Run `genie task list` (or any lifecycle command) to migrate it — the previous database is backed up under `<GENIE_HOME>/state-backups/db-migration-<timestamp>/` first. Older genie binaries on this host will refuse the migrated file.',
+            'Run `genie task list` (or any lifecycle command) to migrate it — the previous database is backed up under `<GENIE_HOME>/state-backups/db-migration-<timestamp>-<pid>/` first. Older genie binaries on this host will refuse the migrated file.',
         },
       ];
     }
