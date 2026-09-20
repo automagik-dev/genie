@@ -14,7 +14,7 @@
  *
  * Every source is read-only and deterministic: `git ls-files`, `git grep`,
  * `git log`, `git diff --name-only`, the working tree's own CLAUDE.md /
- * AGENTS.md / .genie tree, plus `gh` for the issue body and related PRs (the
+ * AGENTS.md / .claude/rules / .genie tree, plus `gh` for the issue body and related PRs (the
  * only network, and skipped cleanly when `gh` is absent or unauthenticated).
  * Two runs over the same tree produce byte-identical JSON apart from
  * `basis.generatedAt`.
@@ -36,7 +36,7 @@
  *
  * Nothing is written anywhere unless `--out` names a file.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { gitProbeEnv } from './trusted-source';
 
@@ -73,7 +73,12 @@ export interface FactsCandidate {
 export interface FactsGotcha {
   /** The candidate this line names — `source:line` is the citation. */
   path: string;
-  source: 'CLAUDE.md' | 'AGENTS.md';
+  /**
+   * The repo-relative file the line came from: `CLAUDE.md`, `AGENTS.md`, or a
+   * `.claude/rules/*.md` path-scoped rule (issue #2967). Every value names a
+   * tracked file, so the `source:line` citation always passes the gate.
+   */
+  source: 'CLAUDE.md' | 'AGENTS.md' | `.claude/rules/${string}`;
   line: number;
   text: string;
 }
@@ -399,18 +404,43 @@ function pinningTests(runner: FactsRunner, dir: string, paths: string[]): Record
   return out;
 }
 
-/** CLAUDE.md / AGENTS.md lines that name a candidate — the rules a change to it must survive. */
-function gotchaLines(dir: string, paths: string[]): FactsGotcha[] {
+/**
+ * The files gotcha lines are read from: the two always-on contract files plus
+ * every tracked `.claude/rules/*.md` path-scoped rule (issue #2967). A repository
+ * without a rules directory contributes exactly the two files it always did, so
+ * this is forward-compatible: the scanner lands before any rule does. Untracked
+ * rules never load — a facts file may only name paths that pass the citation
+ * gate, and an untracked file would not.
+ */
+function gotchaSources(dir: string, tracked: Set<string>): FactsGotcha['source'][] {
+  const sources: FactsGotcha['source'][] = ['CLAUDE.md', 'AGENTS.md'];
+  const rulesDir = resolve(dir, '.claude', 'rules');
+  if (!existsSync(rulesDir)) return sources;
+  const rules = readdirSync(rulesDir)
+    .filter((name) => name.endsWith('.md'))
+    .map((name): FactsGotcha['source'] => `.claude/rules/${name}`)
+    .filter((source) => tracked.has(source))
+    .sort(); // deterministic: two runs over one tree agree on gotcha order
+  return [...sources, ...rules];
+}
+
+/** Contract lines that name a candidate — the rules a change to it must survive. */
+function gotchaLines(dir: string, paths: string[], tracked: Set<string>): FactsGotcha[] {
   const out: FactsGotcha[] = [];
-  for (const source of ['CLAUDE.md', 'AGENTS.md'] as const) {
+  for (const source of gotchaSources(dir, tracked)) {
     const abs = resolve(dir, source);
     if (!existsSync(abs)) continue;
     const text = readFileSync(abs, 'utf8').split('\n');
+    // A rules file opens with `---` YAML frontmatter whose `paths:` globs name
+    // every candidate the file covers; a citation must land on rule TEXT, never
+    // on the frontmatter line that merely points at it.
+    const bodyStart = text[0] === '---' ? text.indexOf('---', 1) + 1 : 0;
     for (const path of paths) {
-      if (path === 'CLAUDE.md' || path === 'AGENTS.md') continue; // a rule about the rule file is not a gotcha
+      if (path === 'CLAUDE.md' || path === 'AGENTS.md' || path === source) continue; // a rule about the rule file is not a gotcha
       const base = basename(path);
       const needles = base.length >= 6 && !GENERIC_BASENAMES.has(base) ? [path, base] : [path];
       for (const [i, line] of text.entries()) {
+        if (i < bodyStart) continue;
         if (!needles.some((n) => line.includes(n))) continue;
         out.push({ path, source, line: i + 1, text: line.trim().slice(0, GOTCHA_TEXT) });
         break; // one line per (candidate, file): the first rule that names it
@@ -615,7 +645,7 @@ export function buildFacts(options: FactsOptions): Facts {
   const tests = pinningTests(runner, dir, paths);
   for (const c of candidates) if (tests[c.path]) c.why = [...new Set([...c.why, 'test-names' as CandidateWhy])].sort();
 
-  const allGotchas = gotchaLines(dir, paths);
+  const allGotchas = gotchaLines(dir, paths, tracked);
   if (allGotchas.length > MAX_GOTCHAS) truncated.gotchas = allGotchas.length - MAX_GOTCHAS;
 
   const facts: Facts = {
