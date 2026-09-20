@@ -20,13 +20,11 @@ import { type SkillsInstallRecord, releaseTag, writeSkillsInstallRecord } from '
 import { VERSION } from '../lib/version.js';
 import {
   type CheckResult,
-  type LegacyClassifier,
   MINIMUM_BUN_VERSION,
   checkBudgets,
   checkCodexProjectContext,
   checkGlobalDbContamination,
   checkIndexLaneDrift,
-  checkLegacyIntegrations,
   checkRetiredJsonMcpEntry,
   checkSkillsChannel,
   checkSubagentModelOverride,
@@ -1183,7 +1181,6 @@ interface SkillsChannelJson {
       detected: boolean;
       recorded: boolean;
     };
-    legacyIntegrations?: { pending: Array<{ surface: string; path: string }>; available: boolean };
   }>;
 }
 
@@ -1750,156 +1747,107 @@ describe('doctor: workflows channel', () => {
   });
 });
 
-describe('doctor: legacy marker-owned integrations', () => {
-  const pendingClassifier: LegacyClassifier = () => ({
-    entries: [
-      { surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish', state: 'managed-clean' },
-      { surface: 'codex-agents', path: '/home/u/.codex/agents/genie.md', state: 'managed-modified' },
-      { surface: 'claude-skills', path: '/home/u/.claude/skills/other', state: 'unmanaged' },
-      { surface: 'gone', path: '/home/u/.agents/skills/old', state: 'absent' },
-    ],
-  });
-
-  test('one managed-clean asset warns and names its path', async () => {
-    const results = await checkLegacyIntegrations({ legacyClassifier: pendingClassifier });
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({
-      name: 'legacy integrations',
-      status: 'warn',
-      suggestion: 'Run `genie update` to retire them',
-    });
-    expect(results[0]?.detail).toBe('1 marker-owned assets pending: /home/u/.codex/skills/genie-wish');
-    expect(results[0]?.legacyIntegrations).toEqual({
-      pending: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish' }],
-      available: true,
-    });
-  });
-
-  test('nothing managed-clean is `retired`', async () => {
-    const results = await checkLegacyIntegrations({
-      legacyClassifier: () => ({
-        entries: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/x', state: 'unmanaged' as const }],
-      }),
-    });
-    expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass', detail: 'retired' });
-    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: true });
-  });
-
-  test('more than five pending assets name five and count the remainder', async () => {
-    const results = await checkLegacyIntegrations({
-      legacyClassifier: () => ({
-        entries: Array.from({ length: 7 }, (_, index) => ({
-          surface: 'codex-skills',
-          path: `/home/u/.codex/skills/s${index}`,
-          state: 'managed-clean' as const,
-        })),
-      }),
-    });
-    expect(results[0]?.detail).toContain('7 marker-owned assets pending:');
-    expect(results[0]?.detail).toContain('/home/u/.codex/skills/s4');
-    expect(results[0]?.detail).toContain('…and 2 more');
-    expect(results[0]?.detail).not.toContain('/home/u/.codex/skills/s5');
-    expect(results[0]?.legacyIntegrations?.pending).toHaveLength(7);
-  });
-
-  test('a null classifier seam degrades to a passing `classifier unavailable` that still rides the rider', async () => {
-    const results = await checkLegacyIntegrations({ legacyClassifier: null });
-    expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass' });
-    expect(results[0]?.detail).toBe('classifier unavailable');
-    // `available:false` is what separates "nothing pending" from "nothing observed".
-    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: false });
-  });
-
-  test('the default path uses the real group-2 classifier: an empty home is `retired`', async () => {
-    const tmpHome = mkdtempSync(join(tmpdir(), 'doctor-legacy-default-'));
-    try {
-      const results = await checkLegacyIntegrations({}, { home: tmpHome, genieHome: join(tmpHome, '.genie') });
-      expect(results[0]).toMatchObject({ name: 'legacy integrations', status: 'pass', detail: 'retired' });
-      expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: true });
-    } finally {
-      rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  test('a throwing classifier never fails the doctor run', async () => {
-    const results = await checkLegacyIntegrations({
-      legacyClassifier: () => {
-        throw new Error('boom');
-      },
-    });
-    expect(results[0]).toMatchObject({ status: 'pass' });
-    expect(results[0]?.detail).toContain('classifier unavailable (boom)');
-    expect(results[0]?.legacyIntegrations).toEqual({ pending: [], available: false });
-  });
-
-  test('doctor imports the retirement classifier statically so `bun build` bundles it (source lock)', async () => {
-    // A non-literal `await import(SPECIFIER)` is invisible to the bundler: the
-    // shipped dist/genie.js would degrade to a permanent silent pass.
-    const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf-8');
-    expect(source).toMatch(
-      /import \{ classifyLegacyIntegrations \} from '\.\.\/lib\/legacy-integration-retirement\.js';/,
-    );
-    expect(source).not.toMatch(/await import\(LEGACY_RETIREMENT_MODULE\)/);
-    const loaded = await import('../lib/legacy-integration-retirement.js');
-    expect(typeof loaded.classifyLegacyIntegrations).toBe('function');
-  });
-});
-
-describe('doctor --json: skills channel + legacy integration riders', () => {
-  test('per-agent skillsChannel riders and the legacyIntegrations rider survive --json', async () => {
+describe('doctor --json: skills channel riders', () => {
+  test('per-agent skillsChannel riders survive --json', async () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
     seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha']);
     seedSkillsRecord(process.env.GENIE_HOME as string);
 
-    const { output } = await captureDoctor(() =>
-      doctorCommand(
-        { json: true },
-        {
-          ...isolatedDoctorDeps(),
-          legacyClassifier: () => ({
-            entries: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish', state: 'managed-clean' }],
-          }),
-        },
-      ),
-    );
+    const { output } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
     const json = JSON.parse(output) as SkillsChannelJson;
     const riders = json.checks.filter((check) => check.skillsChannel !== undefined).map((c) => c.skillsChannel);
     expect(riders.map((r) => r?.agent)).toEqual(['claude', 'agents', 'goose', 'windsurf']);
     expect(riders[0]).toMatchObject({ present: 2, total: 2, detected: true, stale: false, recorded: true });
     expect(riders[1]).toMatchObject({ present: 1, total: 2, detected: true });
     expect(riders[2]).toMatchObject({ detected: false });
-    const legacy = json.checks.find((check) => check.name === 'legacy integrations');
-    expect(legacy).toMatchObject({ status: 'warn' });
-    expect(legacy?.legacyIntegrations).toEqual({
-      pending: [{ surface: 'codex-skills', path: '/home/u/.codex/skills/genie-wish' }],
-      available: true,
-    });
+    // The `legacy integrations` check left with the plugin-era retirement
+    // module in v6, so no check carries that name any more.
+    expect(json.checks.some((check) => check.name === 'legacy integrations')).toBe(false);
     // Warnings never flip the hard-failure verdict.
     expect(json.ok).toBe(true);
   });
 
-  test('--fix retires nothing: the pending classification and the on-disk skills are unchanged', async () => {
+  test('--fix retires nothing: every asset on disk is byte-for-byte unchanged', async () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
     seedSkillsRecord(process.env.GENIE_HOME as string);
     const legacyAsset = join(isolatedHome, '.codex', 'skills', 'genie-legacy');
     mkdirSync(legacyAsset, { recursive: true });
     writeFileSync(join(legacyAsset, 'SKILL.md'), '# legacy\n');
 
-    const { output } = await captureDoctor(() =>
-      doctorCommand(
-        { json: true, fix: true },
-        {
-          ...isolatedDoctorDeps(),
-          legacyClassifier: () => ({
-            entries: [{ surface: 'codex-skills', path: legacyAsset, state: 'managed-clean' }],
-          }),
-        },
-      ),
-    );
+    const { output } = await captureDoctor(() => doctorCommand({ json: true, fix: true }, isolatedDoctorDeps()));
     const json = JSON.parse(output) as SkillsChannelJson;
-    expect(json.checks.find((c) => c.name === 'legacy integrations')?.status).toBe('warn');
+    expect(json.checks.length).toBeGreaterThan(0);
+    // Doctor is a read-only observer even under `--fix`: a stray plugin-era
+    // asset it can see is never removed, and neither is a recorded skill.
     expect(existsSync(join(legacyAsset, 'SKILL.md'))).toBe(true);
     expect(existsSync(join(isolatedHome, '.claude', 'skills', 'alpha', 'SKILL.md'))).toBe(true);
+  });
+});
+
+/**
+ * `genie doctor` is a read-only observer, and the v1 -> v2 ladder is a
+ * forward-only destructive change that a 5.x binary on the same host refuses
+ * afterwards. Before `migrate: false` existed, merely LOOKING at a repository
+ * migrated its shared database — two hand-runs of doctor did exactly that to
+ * the developer's own checkout. This is the regression that owns that scenario.
+ */
+describe('doctor never migrates the database it is looking at', () => {
+  /** A `.genie/genie.db` exactly as a 5.x binary left it: stamped 1, with hires. */
+  function seedV1Repo(): string {
+    const repo = join(isolatedHome, 'v1-repo');
+    mkdirSync(join(repo, '.genie'), { recursive: true });
+    const dbPath = join(repo, '.genie', 'genie.db');
+    const seed = new Database(dbPath);
+    seed.exec(`
+CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, lanes TEXT);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE hire_roster (
+  wish TEXT NOT NULL, agent_adapter_id TEXT NOT NULL, profile TEXT, worktree TEXT NOT NULL,
+  hired_at INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (wish, agent_adapter_id)
+);
+`);
+    seed.exec('PRAGMA user_version = 1');
+    seed.close();
+    return repo;
+  }
+
+  const dbStateOf = (repo: string): { version: number; hasHireRoster: boolean } => {
+    const db = new Database(join(repo, '.genie', 'genie.db'), { readonly: true });
+    try {
+      return {
+        version: (db.query('PRAGMA user_version').get() as { user_version: number }).user_version,
+        hasHireRoster:
+          db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get() !== null,
+      };
+    } finally {
+      db.close();
+    }
+  };
+
+  test('a v1 database is REPORTED, not migrated, and the remedy names the backup', async () => {
+    const repo = seedV1Repo();
+    const { output, exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps(repo)));
+    const doc = JSON.parse(output) as {
+      ok: boolean;
+      checks: Array<{ name: string; status: string; detail: string; suggestion?: string }>;
+    };
+    const check = doc.checks.find((entry) => entry.name === 'genie.db');
+    expect(check?.status).toBe('warn');
+    expect(check?.detail).toContain('schema v1');
+    expect(check?.detail).toContain('expects v2');
+    expect(check?.suggestion).toContain('state-backups/db-migration-');
+    expect(check?.suggestion).toContain('Older genie binaries');
+    // A pending migration is a finding, never a hard failure.
+    expect(doc.ok).toBe(true);
+    expect(exitCode).toBe(0);
+    // THE point: the file is untouched.
+    expect(dbStateOf(repo)).toEqual({ version: 1, hasHireRoster: true });
+  });
+
+  test('--fix does not migrate it either — doctor repairs nothing here', async () => {
+    const repo = seedV1Repo();
+    await captureDoctor(() => doctorCommand({ json: true, fix: true }, isolatedDoctorDeps(repo)));
+    expect(dbStateOf(repo)).toEqual({ version: 1, hasHireRoster: true });
   });
 });
 

@@ -397,20 +397,14 @@ export interface SkillSizeWaiver {
  *     which is the failure the rule exists to catch.
  *   - Every row carries the condition that retires it, so a stale waiver is
  *     visible in review rather than permanent by default.
+ *
+ * It is EMPTY today: its last row was the `quick` retirement stub, whose own
+ * body set its window at three measured runs, and v6 deleted that skill. The
+ * mechanism stays because the second property is what makes a future waiver
+ * reviewable — `checkSkillSize` takes the table as a parameter so it is still
+ * tested with the shipped one empty.
  */
-export const SKILL_SIZE_WAIVERS: ReadonlyMap<string, SkillSizeWaiver> = new Map<string, SkillSizeWaiver>([
-  [
-    'quick',
-    {
-      min: 0,
-      max: 8,
-      // A deliberate retirement stub that points at the wish skill and is
-      // deleted after three measured runs. Ceiling 8 = its current size: the
-      // stub may shrink or disappear, and can never grow back into a skill.
-      reason: 'retirement stub, deleted after three measured runs — it may shrink, never grow',
-    },
-  ],
-]);
+export const SKILL_SIZE_WAIVERS: ReadonlyMap<string, SkillSizeWaiver> = new Map<string, SkillSizeWaiver>();
 
 export interface SkillSizeViolation {
   skill: string;
@@ -426,9 +420,13 @@ export function countSkillLines(text: string): number {
 }
 
 /** The house-size verdict for one shipped SKILL.md, or null when it fits. */
-export function checkSkillSize(skill: string, text: string): SkillSizeViolation | null {
+export function checkSkillSize(
+  skill: string,
+  text: string,
+  waivers: ReadonlyMap<string, SkillSizeWaiver> = SKILL_SIZE_WAIVERS,
+): SkillSizeViolation | null {
   const lines = countSkillLines(text);
-  const waiver = SKILL_SIZE_WAIVERS.get(skill) ?? null;
+  const waiver = waivers.get(skill) ?? null;
   const min = waiver?.min ?? SKILL_MIN_LINES;
   const max = waiver?.max ?? SKILL_MAX_LINES;
   if (lines >= min && lines <= max) return null;

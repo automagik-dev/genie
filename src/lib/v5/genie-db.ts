@@ -15,16 +15,17 @@
 
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 // One-way, deliberate: the per-repo database asks the GENIE_HOME path module
 // where the machine-scope file lives so it can REFUSE to be that file. v6 ships
 // no machine-scope database — the Omni runner owned every table it held — but
 // the refusal outlives it, because a host contaminated before the rule landed
 // still carries the file and both databases stamp `user_version = 1`.
-import { resolveGlobalDbPath } from '../genie-home.js';
+import { resolveGenieHome, resolveGlobalDbPath } from '../genie-home.js';
 import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
-import { GenieDbError, openSqlite } from './sqlite-open.js';
+import { printErr } from '../term-output.js';
+import { GenieDbError, type PreparedMigrationBackup, openSqlite } from './sqlite-open.js';
 
 // Concurrency + typed-error primitives now live in sqlite-open.ts (shared with
 // the global DB). Re-exported here so existing importers of ./genie-db keep
@@ -37,10 +38,17 @@ export {
   GenieDbError,
   isBusyError,
   MalformedDbError,
+  PendingMigrationError,
 } from './sqlite-open.js';
 
-/** Schema revision stamped into `PRAGMA user_version`. Bump on breaking change. */
-export const CURRENT_SCHEMA_VERSION = 1;
+/**
+ * Schema revision stamped into `PRAGMA user_version`. Bump on breaking change,
+ * and add the matching {@link SCHEMA_MIGRATIONS} step in the same commit — a
+ * bump alone makes `initOrValidate` refuse every database already on disk.
+ *
+ * 1 -> 2 (wish `v6-stable-cut`): `hire_roster` dropped.
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 // ============================================================================
 // Path resolution (worktree-aware)
@@ -454,6 +462,100 @@ export interface OpenOptions {
   path?: string;
   /** Working directory used for git-based path resolution when `path` is absent. */
   cwd?: string;
+  /**
+   * `false` refuses to migrate a database stamped below
+   * {@link CURRENT_SCHEMA_VERSION}, throwing `PendingMigrationError` instead.
+   * For callers that only OBSERVE — `genie doctor` — because a forward-only,
+   * destructive schema change must never be a side effect of looking at a file.
+   */
+  migrate?: boolean;
+}
+
+/**
+ * Copy the database aside before the first migration step runs.
+ *
+ * The ladder is forward-only and destructive: once `hire_roster` is dropped
+ * there is no step back, and a 5.x binary on the same machine refuses the
+ * migrated file outright. So the backup is unconditional, not opt-in — an
+ * operator who discovers the wrong binary migrated a shared database needs the
+ * bytes, not a flag they did not know to pass.
+ *
+ * The archive is `db.serialize()` — the page image this connection's snapshot
+ * sees, WAL frames included — written as a ROLLBACK-JOURNAL file, and not any
+ * of the two obvious alternatives, both of which failed on 2026-09-20:
+ *
+ *   - `wal_checkpoint` + `copyFileSync` copies a WAL-mode file: its header says
+ *     WAL and no `-wal`/`-shm` sit beside it, which the system SQLite bun links
+ *     on macOS refuses to open read-only (`SQLITE_CANTOPEN`; darwin CI, two
+ *     tests). A torn copy under a concurrent checkpoint is also possible.
+ *   - `VACUUM INTO` rebuilds the output by stepping `SELECT sql FROM
+ *     sqlite_schema` and executing each CREATE into it. When another process
+ *     changes the schema meanwhile — exactly what the race winner's `DROP
+ *     TABLE` does while the losers are still preparing their backups — that
+ *     SELECT restarts on `SQLITE_SCHEMA` and re-emits the rows it already ran,
+ *     so the output dies with `table boards already exists` (1–3 of six
+ *     openers, most local runs; a separate read-only connection changes
+ *     nothing because the window is inside VACUUM).
+ *
+ * `sqlite3_serialize` copies pages through the pager under one read
+ * transaction and parses no schema, so neither failure applies. Header bytes
+ * 18 and 19 are the file-format write/read versions (1 = rollback journal,
+ * 2 = WAL); setting both to 1 is byte-for-byte what `PRAGMA journal_mode =
+ * DELETE` writes, and it is what lets any SQLite open the archive read-only
+ * with no sidecar. `user_version` and every page are untouched.
+ *
+ * The root lives under `<GENIE_HOME>/state-backups/`, which is an ARCHIVE:
+ * nothing genie writes there is removed by a later run. Returns the path so
+ * the caller can name it on stdout — an unreported backup is a backup the
+ * operator cannot use.
+ */
+const HEADER_WRITE_VERSION_OFFSET = 18;
+const HEADER_READ_VERSION_OFFSET = 19;
+const FILE_FORMAT_ROLLBACK_JOURNAL = 1;
+
+function prepareMigrationBackup(db: Database, path: string, from: number, to: number): PreparedMigrationBackup {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  // Stamp AND pid: every racing opener prepares a backup and only the winner
+  // keeps its root, so two openers landing in the same millisecond must not
+  // share one — the loser's `discard` deleted the winner's archive (the
+  // six-opener test found 0 roots, 2 of 5 local runs). Still sortable, still
+  // the `<family>-<compact ISO>` shape every state-backups root uses.
+  const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}-${process.pid}`);
+  // Explicit 0o700, like every other `state-backups` root. Without a mode the
+  // directory inherits the ambient umask, which on CI produced a root this
+  // very process could not traverse — the copy landed and re-opening it failed
+  // with `unable to open database file`. `genie-home-permissions.test.ts`
+  // enforces the rule for every GENIE_HOME creator.
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const target = join(root, basename(path));
+  const image = Buffer.from(db.serialize());
+  image[HEADER_WRITE_VERSION_OFFSET] = FILE_FORMAT_ROLLBACK_JOURNAL;
+  image[HEADER_READ_VERSION_OFFSET] = FILE_FORMAT_ROLLBACK_JOURNAL;
+  writeFileSync(target, image, { mode: 0o600 });
+  return {
+    // This process won the lock: the copy is genuinely the previous database,
+    // so keep it and say where it went.
+    commit: () => reportDbMigration(`genie.db: schema v${from} -> v${to}; previous database backed up to ${target}`),
+    // It lost: the file it copied was migrated by someone else (or already
+    // was), so this root archives nothing anyone needs and announcing it would
+    // be a receipt for bytes nobody saved. Remove it and stay silent — the
+    // winner's root is the one that matters, and `state-backups` never
+    // accumulates a root that describes no event.
+    discard: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * The ONE line the migration prints, and it goes to STDERR.
+ *
+ * `genie task export` and `genie board --json` put a single JSON document on
+ * stdout; a notice on that stream corrupts exactly the run that migrates — the
+ * first one after an upgrade — and the caller's `JSON.parse` fails on
+ * `genie.db: schema v1 -> v2; …`. This is operator text, so it belongs on
+ * stderr with every other diagnostic genie writes.
+ */
+function reportDbMigration(line: string): void {
+  printErr(line);
 }
 
 /**
@@ -470,13 +572,36 @@ export function openDb(opts: OpenOptions = {}): Database {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     ensureSchema,
     schemaIsCurrent,
+    migrations: SCHEMA_MIGRATIONS,
+    ...(opts.migrate === false ? { migrate: false } : {}),
+    beforeMigrate: ({ db, path: dbPath, from, to }) => prepareMigrationBackup(db, dbPath, from, to),
   });
 }
+
+/**
+ * The forward-only ladder every stamped version below {@link
+ * CURRENT_SCHEMA_VERSION} climbs. Each step is destructive-change-only: an
+ * ADDITIVE change needs no step at all, because `ensureSchema` + the
+ * `schemaIsCurrent` shape check already backfill it within one version.
+ *
+ * 1 -> 2: drop `hire_roster`. It held machine-local worktree paths for the
+ * retired `genie ui-bridge` hire surface, was excluded from every snapshot
+ * genie ever published (`hire_roster: []`), and had no reader left. Dropping
+ * it is what made the 1 -> 2 bump — and therefore this ladder — necessary.
+ */
+const SCHEMA_MIGRATIONS: ReadonlyArray<{ from: number; to: number; apply: (db: Database) => void }> = [
+  {
+    from: 1,
+    to: 2,
+    apply: (db) => {
+      db.exec('DROP TABLE IF EXISTS hire_roster');
+    },
+  },
+];
 
 /** Required table/column shape of a fully-initialized per-repo Genie database. */
 const EXPECTED_SCHEMA = {
   boards: ['id', 'name', 'created_at', 'lanes'],
-  hire_roster: ['wish', 'agent_adapter_id', 'profile', 'worktree', 'hired_at', 'state'],
   meta: ['key', 'value'],
   stage_log: ['id', 'task_id', 'stage', 'note', 'created_at'],
   task_dependencies: ['task_id', 'depends_on_id'],
@@ -559,9 +684,15 @@ function schemaShapeIsCurrent(db: Database): boolean {
 }
 
 /**
- * Validate a read-only handle without applying migrations or taking a write
- * lock. MCP uses this before exposing a database to any tool handler: both the
- * per-repo user_version and the complete required schema must match this build.
+ * Validate a handle without applying migrations or taking a write lock: both
+ * the per-repo `user_version` and the complete required schema must match this
+ * build. The retired MCP server was its original caller — that comment outlived
+ * the subsystem by two releases — and what the property is FOR now is the
+ * observe-don't-mutate side of the v1 -> v2 ladder: `ensureSchema` and the
+ * migration are write paths, and a caller that only needs to know whether this
+ * database is current must not trigger either. `genie doctor` takes the same
+ * guarantee through `openDb({ migrate: false })`, which additionally
+ * distinguishes a PENDING migration from a foreign or malformed file.
  *
  * Malformed SQLite inputs may throw while being inspected; callers own closing
  * the handle and translating that failure at their boundary.
@@ -654,16 +785,6 @@ CREATE TABLE IF NOT EXISTS wish_groups (
   PRIMARY KEY (wish, name)
 );
 
-CREATE TABLE IF NOT EXISTS hire_roster (
-  wish             TEXT NOT NULL,
-  agent_adapter_id TEXT NOT NULL,
-  profile          TEXT,
-  worktree         TEXT NOT NULL,
-  hired_at         INTEGER NOT NULL,
-  state            TEXT NOT NULL,
-  PRIMARY KEY (wish, agent_adapter_id)
-);
-
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_dependencies(depends_on_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_stage_log_task ON stage_log(task_id);
@@ -679,32 +800,63 @@ export function ensureSchema(db: Database): void {
 }
 
 /**
+ * Add one nullable column unless it is already there.
+ *
+ * The presence check and the `ALTER` are two statements, so two processes
+ * opening the same older database at the same moment can both read the column
+ * as missing and both try to add it — the loser then dies with
+ * `duplicate column name`, taking an ordinary `genie task` invocation with it.
+ * SQLite has no `ADD COLUMN IF NOT EXISTS`, so the error IS the signal that
+ * another opener won: it means the column now exists, which is precisely the
+ * post-condition this function promises. Every other failure propagates.
+ */
+function addColumn(
+  db: Database,
+  table: 'tasks' | 'boards',
+  present: ReadonlySet<string>,
+  name: string,
+  type: 'TEXT' | 'INTEGER',
+): void {
+  if (present.has(name)) return;
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  } catch (err) {
+    if (!/duplicate column name/i.test(err instanceof Error ? err.message : String(err))) throw err;
+  }
+}
+
+function addTaskColumn(db: Database, present: ReadonlySet<string>, name: string, type: 'TEXT' | 'INTEGER'): void {
+  addColumn(db, 'tasks', present, name, type);
+}
+
+/**
  * Additive, in-place column backfill for `tasks`. `CREATE TABLE IF NOT EXISTS`
  * never alters an existing table, so a DB stamped by an earlier build (which
  * lacked `wish`/`group_name`/`lane`) needs the columns added. All are nullable,
- * so this stays within `user_version = 1` — no destructive migration, no version
- * bump. Idempotent: a table that already has the columns is left untouched.
+ * so this stays within the current `user_version` — no destructive migration,
+ * no version bump. Idempotent, and safe against a concurrent opener running it
+ * at the same time (see {@link addTaskColumn}).
  */
 function ensureTaskColumns(db: Database): void {
   const cols = new Set((db.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name));
-  if (!cols.has('wish')) db.exec('ALTER TABLE tasks ADD COLUMN wish TEXT');
-  if (!cols.has('group_name')) db.exec('ALTER TABLE tasks ADD COLUMN group_name TEXT');
-  if (!cols.has('lane')) db.exec('ALTER TABLE tasks ADD COLUMN lane TEXT');
+  addTaskColumn(db, cols, 'wish', 'TEXT');
+  addTaskColumn(db, cols, 'group_name', 'TEXT');
+  addTaskColumn(db, cols, 'lane', 'TEXT');
   // Runtime layer: authored identity, heartbeat liveness, and the enforced block
   // (blocked_by drives the single carved checkout exception; block_kind says
   // whether it is a work problem or a deliberate hold, NULL ⇒ 'work'). All
   // nullable ⇒ no user_version bump; the card-projection render reads them,
   // TaskRow stays frozen.
-  if (!cols.has('agent_kind')) db.exec('ALTER TABLE tasks ADD COLUMN agent_kind TEXT');
-  if (!cols.has('heartbeat_at')) db.exec('ALTER TABLE tasks ADD COLUMN heartbeat_at INTEGER');
-  if (!cols.has('blocked_by')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_by TEXT');
-  if (!cols.has('blocked_reason')) db.exec('ALTER TABLE tasks ADD COLUMN blocked_reason TEXT');
-  if (!cols.has('block_kind')) db.exec('ALTER TABLE tasks ADD COLUMN block_kind TEXT');
+  addTaskColumn(db, cols, 'agent_kind', 'TEXT');
+  addTaskColumn(db, cols, 'heartbeat_at', 'INTEGER');
+  addTaskColumn(db, cols, 'blocked_by', 'TEXT');
+  addTaskColumn(db, cols, 'blocked_reason', 'TEXT');
+  addTaskColumn(db, cols, 'block_kind', 'TEXT');
   // Declared routing (cross-agent-delegate W1): which roster agent works the
   // card and why. Nullable ⇒ no user_version bump; both halves travel together
   // (an assignment without its reason is rejected at the state API).
-  if (!cols.has('assigned_agent')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_agent TEXT');
-  if (!cols.has('assigned_reason')) db.exec('ALTER TABLE tasks ADD COLUMN assigned_reason TEXT');
+  addTaskColumn(db, cols, 'assigned_agent', 'TEXT');
+  addTaskColumn(db, cols, 'assigned_reason', 'TEXT');
 }
 
 /** Meta key marking the one-time stage_log → task_events backfill as complete. */
@@ -751,9 +903,12 @@ export function backfillStageLog(db: Database): void {
 /**
  * Additive, in-place column backfill for `boards`. Adds the nullable `lanes`
  * JSON column to a DB stamped before lifecycle lanes existed. Nullable ⇒ stays
- * within `user_version = 1`. Idempotent: a no-op once the column is present.
+ * within the current `user_version`. Idempotent, and tolerant of a concurrent
+ * opener adding it first (see {@link addColumn}): `SCHEMA_SQL` creates `boards`
+ * WITHOUT `lanes`, so on a brand-new database every first opener reaches this
+ * `ALTER` — the race is not confined to older files (darwin CI, 2026-09-20).
  */
 function ensureBoardColumns(db: Database): void {
   const cols = new Set((db.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name));
-  if (!cols.has('lanes')) db.exec('ALTER TABLE boards ADD COLUMN lanes TEXT');
+  addColumn(db, 'boards', cols, 'lanes', 'TEXT');
 }

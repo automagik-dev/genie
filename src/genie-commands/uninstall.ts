@@ -35,7 +35,6 @@ import { hookScriptExists } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveCodexDir, resolveHermesHome, resolvePiExtensionsDir } from '../lib/genie-home.js';
 import { isInteractive } from '../lib/interactivity.js';
-import { runLegacyIntegrationRetirement } from '../lib/legacy-integration-retirement.js';
 import {
   type LifecycleLease,
   type LifecycleLeaseSkip,
@@ -2423,19 +2422,10 @@ export function performFreshUninstallPlan(
       },
     };
   }
-  // Plugin-era leftovers the batch below does not enumerate (marketplace caches,
-  // role-agent inventories, Hermes/pi links, historical curated lanes) are
-  // retired backup-first before the home itself is removed. Never fatal: a
-  // retirement failure leaves an operator-owned asset in place, and the ordinary
-  // uninstall report still runs.
-  try {
-    runLegacyIntegrationRetirement({
-      homes: { home: homedir(), genieHome: genieDir },
-      log: (line) => printOut(`  \x1b[2m${line}\x1b[0m`),
-    });
-  } catch (error) {
-    printOut(`  \x1b[33m~\x1b[0m legacy integration retirement skipped: ${errorMessage(error)}`);
-  }
+  // The plugin-era retirement pass that ran here left with v6: its compat
+  // window (assets written by releases `>= 5.260711.6`) closed three stable
+  // releases after `skills-everywhere-b`. What uninstall removes is proven by
+  // the skills-install record and the batch below, never by that module.
   const execution = inspectUninstallPlan(genieDir, removeMarketplace);
   const unsafeState = [
     ...execution.runtimeEvidence.errors.codex,

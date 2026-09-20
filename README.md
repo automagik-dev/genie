@@ -37,7 +37,7 @@ There is no Claude marketplace plugin, no Codex plugin, no Genie-installed hooks
 
 `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel. Any value other than `none` installs to **every** detected agent skill home, because the skills CLI already installs per agent; `none` skips the channel entirely, writes no record, and reports `skills: skipped (consent: none)`. A failed skills install never rolls back the promoted binary — it prints the exact remedy command and sets a non-zero exit code.
 
-Upgrading from a plugin-era release? `genie update` runs a one-shot, backup-first retirement of what that era left on the host — Codex and Claude plugin registrations and caches, the stamped Claude workflow, role-agent TOMLs, managed skill mirrors, Hermes and pi links. Every asset is classified before anything is touched, and only the ones provably Genie-owned and unmodified are removed; modified, unmanaged or ambiguous assets are preserved and reported. Backups land under `~/.genie/state-backups/integration-retirement-<timestamp>/`. The window covers assets written by releases `5.260711.6` or newer; older hosts follow the manual steps in the docs.
+Upgrading from a plugin-era release? The one-shot, backup-first retirement `genie update` used to run for that era shipped from `5.260711.6` through the last `5.x` release and **was removed in v6**, three stable releases after its compat window opened. A host that updated through any `5.x` release is already clean and needs nothing. A host coming straight from the plugin era to v6 is not cleaned up by genie at all any more — see [Removing plugin-era leftovers by hand](#removing-plugin-era-leftovers-by-hand). Genie still retires what the **skills** channel itself no longer delivers, backup-first, under `~/.genie/state-backups/skills-retirement-<timestamp>/`.
 
 From inside a trusted initialized repo, run `genie init` to scaffold state and retire proven-owned historical MCP routes. Then run `genie doctor` to confirm the install: it reports one `skills: <agent> <present>/<total> @ <ref>` line per known agent skill home, `not detected` for a home this host does not have, and a warning naming `genie update` when skills are missing or older than the running binary.
 
@@ -174,10 +174,11 @@ from a collection or infers success from a partial response.
 
 ### MCP retirement
 
-The legacy Genie MCP server is retired. `genie mcp` exits non-zero with a stable diagnostic and never starts a server;
-use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or exact
-Genie-owned historical project registrations and preserves unrelated or unproven user configuration byte-for-byte.
-Rollback to a pre-A7 signed release remains the migration escape hatch.
+The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
+parses. Use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or
+exact Genie-owned historical project registrations and preserves unrelated or unproven user configuration
+byte-for-byte. Rollback to a pre-A7 signed release remains the migration escape hatch for a host that still needs the
+verb to answer at all.
 
 Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
 before changing the adapter or its operator guidance.
@@ -203,7 +204,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Skills** carry the methodology — `brainstorm → design review → wish → plan review → work → implementation review`, authored once in runtime-neutral form and delivered to every agent skill home.
 - **Documents in git.** Wishes, designs, and brainstorms are plain markdown under `.genie/wishes/<slug>/` and `.genie/brainstorms/<slug>/`; you diff, review, and version them like any other code.
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
-- **Small.** 18 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
+- **Small.** 16 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
@@ -220,9 +221,7 @@ genie --help
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie idea` | Capture an idea into the roadmap board Idea lane (creates the board if absent) |
 | `genie task` | Inspect and drive task state (SQLite, zero-daemon) |
-| `genie ui-bridge` | Return the stable non-zero UI-bridge-retirement diagnostic |
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
-| `genie mcp` | Return the stable non-zero MCP-retirement diagnostic |
 | `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
@@ -248,7 +247,7 @@ Skills are the product. Invoke them as `/name` in Claude Code, or by name or pla
 
 Shared skill bodies use a runtime-neutral delegation contract: they name portable roles and let each runtime map them onto its own native subagents. Genie installs no custom agent profiles. Subagents share a workspace, so task claims own scope; worktree isolation, when required, is orchestrator-arranged per the dispatch contract. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
 
-The [skill catalog](skills/README.md) lists all twenty skills by category (lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops) with an advisory `mutates` axis, plus replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
+The [skill catalog](skills/README.md) lists all nineteen skills by category (lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops) with an advisory `mutates` axis, plus replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
 
 ### Where the skills land
 
@@ -299,6 +298,33 @@ table), a content digest per directory, and any collisions it backed up. That re
 for its `skills:` lines and what `genie uninstall` proves against before it deletes anything: a directory whose
 digest no longer matches is preserved and reported, never removed.
 
+### Removing plugin-era leftovers by hand
+
+Genie no longer removes these. Through the last `5.x` release `genie update` classified and retired them
+automatically; v6 deleted that code, so on a host that never updated inside the window the files below simply stay
+where the plugin era left them. None of them is read by v6 — they are inert, not harmful — so removing them is
+housekeeping, at your own pace. **Back up anything you are unsure about; genie is no longer taking the backup for
+you.** Anything in these paths you created yourself is yours: check before deleting.
+
+| What | Path |
+|------|------|
+| Claude marketplace registration | `~/.claude/plugins/marketplaces/automagik/` |
+| Claude plugin cache | `~/.claude/plugins/cache/automagik/genie/` |
+| Codex plugin cache | `~/.codex/plugins/cache/automagik/genie/` |
+| Codex role-agent profiles | `~/.codex/agents/genie-*.toml` |
+| Codex role-agent inventory | `~/.codex/agents/.genie-role-agents.json` |
+| Codex fallback transaction dirs | `~/.codex/agents/.genie-*-retirement/`, `~/.agents/skills/.genie-codex-fallback-retirement/` |
+| Codex curated skill lane | `~/.codex/skills/.curated/` |
+| Hermes link + marker | `~/.hermes/` genie symlinks, and the genie block in `~/.hermes/config.yaml` |
+| pi link + marker | `~/.pi/extensions/` genie symlinks, and the genie block in its config |
+| Codex plugin enablement | the `[plugins."genie@automagik"]` table in `~/.codex/config.toml` |
+| Claude plugin enablement | the `"genie@automagik"` key under `enabledPlugins` in `~/.claude/settings.json` |
+| Stamped workflow sidecar | `~/.claude/workflows/council.js.genie-sync.json` |
+
+Two of these are keys inside files you own, not whole files: remove only the named table/key and leave the rest of
+`~/.codex/config.toml` and `~/.claude/settings.json` alone. `genie doctor` does not report any of this — the checks
+that observed it left with the code that acted on it.
+
 ### Verifying and removing
 
 ```bash
@@ -320,16 +346,17 @@ All linked worktrees of a repository share one `genie.db`, resolved from the git
 ## MCP retirement
 
 The legacy cross-client MCP server, its write tools, plugin launchers, and Genie-owned registrations are retired.
-`genie mcp` prints `Error: genie mcp has been retired; use \`genie task\` and \`genie board\`, or roll back to a
-pre-A7 signed release.` to stderr and exits 1 without reading or speaking MCP. `genie init` removes only historical
-registrations proven to be Genie-owned; unowned same-name routes and every unrelated config key remain untouched.
+v6 also removed the `genie mcp` retirement stub itself: the verb no longer parses, so use `genie task` and
+`genie board`. Host state is still cleaned up, because that was never about the verb — `genie init` removes only
+historical registrations proven to be Genie-owned: in `.mcp.json` a `genie` server whose command is a genie binary
+with args exactly `["mcp"]`, plus the marker-owned `.codex/config.toml` route, backing the file up first. Meanwhile
+unowned same-name routes and every unrelated config key remain untouched, and `genie doctor` keeps reporting a dead
+route it finds.
 
-The UI-owned `genie ui-bridge` is retired on the same terms: there is no separate Genie UI any more, the Orca
-integration is the supported UI surface, and the private stdio transport, tool registry, and change watcher behind the
-bridge are deleted. `genie ui-bridge` prints `Error: genie ui-bridge has been retired; the Orca integration is the
-supported UI surface, or roll back to a pre-retirement signed release.` to stderr and exits 1. Standalone `genie task`
-and `genie board` retain their existing behavior in standalone mode; Orca mode continues to use the public
-`orca orchestration ... --json` adapter as its sole authority.
+The UI-owned `genie ui-bridge` went the same way: there is no separate Genie UI any more, the Orca integration is the
+supported UI surface, and the private stdio transport, tool registry, and change watcher behind the bridge are
+deleted along with the verb. Standalone `genie task` and `genie board` retain their existing behavior in standalone
+mode; Orca mode continues to use the public `orca orchestration ... --json` adapter as its sole authority.
 
 ## Roadmap
 
