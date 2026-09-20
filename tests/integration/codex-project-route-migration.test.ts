@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const GENIE = join(import.meta.dir, '..', '..', 'src', 'genie.ts');
-const RETIRED =
-  'Error: genie mcp has been retired; use `genie task` and `genie board`, or roll back to a pre-A7 signed release.\n';
+// v6 removed the `genie mcp` STUB as well as the runtime behind it, so the
+// verb no longer parses and Commander answers. The ROUTE retirement this file
+// exists for is unaffected: `genie init` still removes a proven Genie-owned
+// `.mcp.json` entry and preserves every unowned byte.
+// Commander's own trailing blank line follows genie's error handler's newline.
+const UNKNOWN_VERB = "Error (genie): error: unknown command 'mcp'\n\n";
 
 let base: string;
 let genieHome: string;
@@ -51,7 +55,7 @@ describe('project MCP route retirement', () => {
     expect(existsSync(join(repo, '.mcp.json'))).toBe(false);
   });
 
-  test('unowned configuration is byte-stable and every repo gets the same fail-closed command', () => {
+  test('unowned configuration is byte-stable and every repo fails closed on the removed verb', () => {
     for (const name of ['alpha', 'bravo']) {
       const repo = initRepo(name);
       const json = join(repo, '.mcp.json');
@@ -61,8 +65,10 @@ describe('project MCP route retirement', () => {
       expect(run(['init'], repo).code).toBe(0);
       expect(readFileSync(json, 'utf8')).toBe(original);
 
+      // Fail-closed is still the contract: an MCP client that speaks to this
+      // verb gets a non-zero exit and nothing on stdout — never a server.
       const mcp = run(['mcp'], repo, '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n');
-      expect(mcp).toEqual({ code: 1, stdout: '', stderr: RETIRED });
+      expect(mcp).toEqual({ code: 1, stdout: '', stderr: UNKNOWN_VERB });
     }
   });
 });

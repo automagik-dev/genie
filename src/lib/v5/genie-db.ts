@@ -494,7 +494,12 @@ function prepareMigrationBackup(db: Database, path: string, from: number, to: nu
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}`);
-  mkdirSync(root, { recursive: true });
+  // Explicit 0o700, like every other `state-backups` root. Without a mode the
+  // directory inherits the ambient umask, which on CI produced a root this
+  // very process could not traverse — the copy landed and re-opening it failed
+  // with `unable to open database file`. `genie-home-permissions.test.ts`
+  // enforces the rule for every GENIE_HOME creator.
+  mkdirSync(root, { recursive: true, mode: 0o700 });
   const target = join(root, basename(path));
   copyFileSync(path, target);
   return {
