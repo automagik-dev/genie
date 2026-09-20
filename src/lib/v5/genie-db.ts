@@ -15,7 +15,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { execFileSync, execSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 // One-way, deliberate: the per-repo database asks the GENIE_HOME path module
 // where the machine-scope file lives so it can REFUSE to be that file. v6 ships
@@ -480,10 +480,15 @@ export interface OpenOptions {
  * operator who discovers the wrong binary migrated a shared database needs the
  * bytes, not a flag they did not know to pass.
  *
- * WAL first: an un-checkpointed write-ahead log lives in a sidecar, so copying
- * `genie.db` alone could archive a file missing the most recent commits.
- * `wal_checkpoint(TRUNCATE)` folds the log into the main file, after which one
- * `copyFileSync` is the whole database.
+ * `VACUUM INTO`, never a file copy. An un-checkpointed write-ahead log lives in
+ * a sidecar, so copying `genie.db` alone could archive a file missing the most
+ * recent commits; and a copy of a WAL-mode file carries the WAL flag in its
+ * header with no `-wal`/`-shm` beside it, which the system SQLite bun links on
+ * macOS refuses to open read-only (`SQLITE_CANTOPEN`, CI 2026-09-20). `VACUUM
+ * INTO` reads through the live connection — WAL frames included — and writes a
+ * rollback-journal (DELETE-mode) single file that any SQLite opens read-only,
+ * with `user_version` preserved. It may not run inside a transaction, which is
+ * why the ladder calls this hook before it takes the lock.
  *
  * The root lives under `<GENIE_HOME>/state-backups/`, which is an ARCHIVE:
  * nothing genie writes there is removed by a later run. Returns the path so
@@ -491,7 +496,6 @@ export interface OpenOptions {
  * operator cannot use.
  */
 function prepareMigrationBackup(db: Database, path: string, from: number, to: number): PreparedMigrationBackup {
-  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const root = join(resolveGenieHome(), 'state-backups', `db-migration-${stamp}`);
   // Explicit 0o700, like every other `state-backups` root. Without a mode the
@@ -501,7 +505,7 @@ function prepareMigrationBackup(db: Database, path: string, from: number, to: nu
   // enforces the rule for every GENIE_HOME creator.
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const target = join(root, basename(path));
-  copyFileSync(path, target);
+  db.prepare('VACUUM INTO ?').run(target);
   return {
     // This process won the lock: the copy is genuinely the previous database,
     // so keep it and say where it went.

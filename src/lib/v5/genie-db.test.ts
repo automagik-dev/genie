@@ -345,9 +345,13 @@ CREATE TABLE hire_roster (
       // deliberately not asserted — `openSqlite` applies its WAL/synchronous
       // pragmas to the live file before the ladder runs, so those bytes are
       // already not the ones the migration replaced. What must survive is the
-      // content, and that is what this checks.)
+      // content, and that is what this checks.) It is opened READ-ONLY on
+      // purpose: the archive is a self-contained rollback-journal file, not a
+      // copy of a WAL-mode file with no sidecars, which the system SQLite on
+      // macOS refuses to open this way.
       const restored = new Database(archived, { readonly: true });
       try {
+        expect(restored.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'delete' });
         expect((restored.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
         expect(restored.query('SELECT * FROM hire_roster').all()).toEqual(beforeHires);
         expect(restored.query('SELECT id, title FROM tasks').all()).toEqual(beforeTasks);
