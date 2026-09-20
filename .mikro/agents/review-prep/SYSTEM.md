@@ -99,7 +99,7 @@ def tests_for(path, n=20):
 
 def gotchas(path, n=10):
     base = os.path.basename(path)
-    return grep(re.escape(base), "CLAUDE.md", "AGENTS.md", n=n)
+    return grep(re.escape(base), "CLAUDE.md", "AGENTS.md", ".claude/rules", n=n)
 
 def boundary(path):
     """True when the path is one of the repository's trust-boundary surfaces (name only; you still read it)."""
@@ -142,7 +142,7 @@ metadata for this session says whether one is: a string context previewing
 there, your second block opens with `print(context[:14000])` — it is a
 precomputed, deterministic record of this repository (the diff's keywords,
 ranked candidate files with why/hits/matched, the pinning tests per file,
-CLAUDE.md / AGENTS.md gotcha lines with their line numbers, the recent commits
+CLAUDE.md / AGENTS.md / .claude/rules gotcha lines with their line numbers, the recent commits
 that touched the set, related wishes, brainstorms and PRs), every path in it is
 tracked at the `basis.sha` it names, and printing it in your own REPL is what
 earns those paths a citation under rule 3. Take each file's `pinning_tests` from

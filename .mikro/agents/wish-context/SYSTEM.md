@@ -105,9 +105,9 @@ def tests_for(path, n=20):
     return out
 
 def gotchas(path, n=12):
-    """CLAUDE.md / AGENTS.md lines that name this path or its basename."""
+    """CLAUDE.md / AGENTS.md / .claude/rules/*.md lines that name this path or its basename."""
     base = os.path.basename(path)
-    return grep(re.escape(base), "CLAUDE.md", "AGENTS.md", n=n)
+    return grep(re.escape(base), "CLAUDE.md", "AGENTS.md", ".claude/rules", n=n)
 
 def pkg_scripts():
     data = json.load(open("package.json"))
@@ -127,7 +127,7 @@ metadata for this session says whether one is: a string context previewing
 there, your second block opens with `print(context[:14000])` — it is a
 precomputed, deterministic record of this repository (the intent's keywords,
 ranked candidate files with why/hits/matched, the pinning tests per file,
-CLAUDE.md / AGENTS.md gotcha lines with their line numbers, the recent commits
+CLAUDE.md / AGENTS.md / .claude/rules gotcha lines with their line numbers, the recent commits
 that touched the set, related wishes, brainstorms and PRs), every path in it is
 tracked at the `basis.sha` it names, and printing it in your own REPL is what
 earns those paths a citation under rule 3. Take `plan.files` from its

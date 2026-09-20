@@ -167,6 +167,30 @@ describe('buildFacts — the rest of the record', () => {
     expect(facts.gotchas.find((g) => g.source === 'AGENTS.md')?.path).toBe('src/lib/widget-store.ts');
     expect(facts.gotchas.every((g) => g.path !== 'CLAUDE.md' && g.path !== 'AGENTS.md')).toBe(true);
   });
+  test('a tracked .claude/rules/*.md is a gotcha source; an untracked one never loads', () => {
+    // Before any rule exists this is a no-op: only the two contract files load.
+    const dir = seedRepo();
+    const before = buildFacts({ dir, intent: 'sprocketize in widget-forge.ts', gh: false });
+    expect(before.gotchas.every((g) => g.source === 'CLAUDE.md' || g.source === 'AGENTS.md')).toBe(true);
+    write(
+      dir,
+      '.claude/rules/widget-forge.md',
+      '---\npaths:\n  - src/lib/widget-forge.ts\n---\n\n- **widget-forge.ts never inlines sprocketize** — scoped rule\n',
+    );
+    write(dir, '.claude/rules/local-note.md', '- local note naming src/lib/widget-forge.ts\n');
+    git(dir, 'add', '.claude/rules/widget-forge.md');
+    git(dir, 'commit', '-qm', 'add a scoped rule');
+    const facts = buildFacts({ dir, intent: 'sprocketize in widget-forge.ts', gh: false });
+    // The citation lands on rule text, past the frontmatter whose `paths:` glob
+    // also names the candidate (line 3), and the untracked sibling never loads.
+    const scoped = facts.gotchas.find(
+      (g) => g.path === 'src/lib/widget-forge.ts' && g.source === '.claude/rules/widget-forge.md',
+    );
+    expect(scoped?.line).toBe(6);
+    expect(scoped?.text).toContain('never inlines sprocketize');
+    expect(facts.gotchas.some((g) => g.source === '.claude/rules/local-note.md')).toBe(false);
+    expect(facts.gotchas.some((g) => g.source === 'CLAUDE.md')).toBe(true); // the floor still loads beside it
+  });
   test('recent commits, related prior work and an INDEX line are all recorded', () => {
     const dir = seedRepo();
     const facts = buildFacts({ dir, intent: 'sprocketize the forge', gh: false });

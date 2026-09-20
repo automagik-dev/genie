@@ -214,7 +214,7 @@ bun scripts/mikro/facts.ts --dir <worktree> --range origin/dev..HEAD --no-gh
 ```
 
 One JSON record: `basis` (sha, mode, `gh`), `keywords`, ranked `candidates` (`path`, `why`, `hits`,
-`matched`), `tests` (the pinning test per candidate), `gotchas` (CLAUDE.md / AGENTS.md lines with
+`matched`), `tests` (the pinning test per candidate), `gotchas` (CLAUDE.md / AGENTS.md / `.claude/rules/*.md` lines with
 their line numbers), `recent` commits, `related` PRs / wishes / brainstorms, and `truncated`.
 Sources are `git ls-files`, `git grep`, `git log`, `git diff` and the working tree, plus `gh` for
 the issue body and related PRs — the only network, skipped cleanly when `gh` is absent or the
