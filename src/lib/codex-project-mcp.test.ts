@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { execFileSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -20,6 +21,7 @@ import {
   inspectRetiredJsonMcpEntry,
   isRetiredGenieMcpServer,
   projectTrustState,
+  resolveGitProjectRoots,
   retireJsonMcpGenieEntry,
   retireProjectMcpConfigs,
 } from './codex-project-mcp.js';
@@ -31,6 +33,62 @@ beforeEach(() => {
 });
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+describe('resolveGitProjectRoots', () => {
+  /**
+   * A probe that never answered (timeout kill, fork pressure) used to collapse
+   * into the same null as a genuine "not a git repository", which made
+   * `genie init` exit 1 spuriously on contended CI runners while the same
+   * commit passed elsewhere (darwin flake, #3026). The retry contract below is
+   * what separates the two.
+   */
+  const whichGit = (name: string) => Bun.which(name);
+
+  test('a stalled probe (timeout kill, no verdict) is retried and a later answer wins', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      if (calls === 1) {
+        const stalled = new Error('spawnSync git ETIMEDOUT') as Error & { status: null; signal: string };
+        stalled.status = null;
+        stalled.signal = 'SIGTERM';
+        throw stalled;
+      }
+      return `${root}\n${root}/.git\n`;
+    }) as unknown as typeof execFileSync;
+
+    const roots = resolveGitProjectRoots(root, exec, 3_000, whichGit);
+
+    expect(calls).toBe(2);
+    expect(roots?.worktreeRoot).toBe(root);
+    expect(roots?.commonRoot).toBe(root);
+  });
+
+  test('a genuine "not a git repository" answer is returned once, never retried', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      const answered = new Error('Command failed: git rev-parse') as Error & { status: number; stderr: string };
+      answered.status = 128;
+      answered.stderr = 'fatal: not a git repository';
+      throw answered;
+    }) as unknown as typeof execFileSync;
+
+    expect(resolveGitProjectRoots(root, exec, 3_000, whichGit)).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  test('a probe that never answers exhausts its attempts and still resolves to null', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      throw new Error('spawnSync git EAGAIN');
+    }) as unknown as typeof execFileSync;
+
+    expect(resolveGitProjectRoots(root, exec, 3_000, whichGit)).toBeNull();
+    expect(calls).toBe(3);
+  });
+});
 
 describe('retireProjectMcpConfigs', () => {
   test('exports no registration or revival API', () => {
