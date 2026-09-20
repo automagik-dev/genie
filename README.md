@@ -32,7 +32,7 @@ The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the
 Genie ships exactly three surfaces, and nothing else:
 
 1. **The signed binary** — installed and updated by `install.sh` and `genie update`.
-2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — about 53 of them actually materialized on the 2026-09-01 dogfood host, and a later `--all`-era record named 57).
+2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — 57 of them materialized on the measured dogfood host (2026-08-30, re-confirmed 2026-09-01; only 4 were recorded, leaving 53 unrecorded homes).
 3. **The Orca plugin** — an optional lifecycle integration you register with Orca yourself (see below).
 
 There is no Claude marketplace plugin, no Codex plugin, no Genie-installed hooks, and no role-agent profiles.
@@ -208,9 +208,9 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **One file of state.** Tasks, boards, dependency edges, and wish-group execution state live in a single per-repo SQLite file (`.genie/genie.db`), on Bun's built-in engine.
 - **Small.** 16 CLI commands, 6 runtime dependencies (`@inquirer/prompts`, `commander`, `zod`, and the `@sigstore/bundle`, `@sigstore/protobuf-specs`, `@sigstore/verify` trio that verifies a release offline). A ~2 MB single-file bundle. Bun-powered.
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
-- **Saved workflows.** A catalog of scripts for the procedures worth running the same way twice — `council`, `docs-audit`, `skill-intake`, `research-sweep`, `workfly` — delivered to `~/.claude/workflows` on every install and update, alongside the skills.
+- **Saved workflows.** A catalog of scripts for the procedures worth running the same way twice — `council`, `docs-audit`, `observability-review`, `pm-ledger-verify`, `research-sweep`, `skill-audit-sweep`, `skill-intake`, `wish`, `workfly` — delivered to `~/.claude/workflows` on every install and update, alongside the skills.
 - **Microagents.** `genie mikro` runs narrow, repository-local agents defined by a prompt and an answer schema, returning validated JSON whose every citation is verified against the tree. `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine a repository's own agents, and every agent resolves repo-first behind a trusted root.
-- **A linter for the plan itself.** `genie wish lint [--dir <repo>]` checks any repository's `.genie/wishes` for structure, writes nothing, and exits 0 or 1 — so a malformed plan fails in CI instead of after a wasted execution wave.
+- **A linter for the plan itself.** `genie wish lint [--dir <repo>]` checks any repository's `.genie/wishes` for structure, writes nothing, and exits 0 clean, 1 findings, or 2 when `--dir` is refused — so a malformed plan fails in CI instead of after a wasted execution wave.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
 ## Commands
@@ -234,7 +234,7 @@ genie --help
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
-| `genie wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` lints `<repo>/.genie/wishes` for structure, writes nothing, and exits 0 or 1 |
+| `genie wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` lints `<repo>/.genie/wishes` for structure, writes nothing, and exits 0 clean / 1 findings / 2 refused root |
 | `genie uninstall` | Remove Genie, the recorded skills install, and plugin-era leftovers proven to be Genie-owned |
 | `genie help` | Show help for any command |
 
@@ -376,12 +376,12 @@ v4 is preserved on the [`v4` branch](https://github.com/automagik-dev/genie/tree
 
 v5 was the deliberate cutover to a lightweight body. The v4 harness — a Postgres backend, pane-based process orchestration, executor registries, the telemetry spine, the full-screen console, and the desktop app — is gone. What remains is the part that always did the work: the skills, the documents, and one SQLite file of state.
 
-v6 is where the product and its documentation finally describe the same thing. It discharges the debt a major exists to discharge: the surfaces that had no implementation behind them are removed rather than left as stubs, the docs describe the commands that exist, and the supported platforms are stated rather than assumed. The `.genie/genie.db` schema migrates itself forward on first open under the new binary; a database at an unbridgeable version still refuses rather than guessing. See the [release notes](https://automagik.dev/genie/release-notes) for what is gone and what to do instead.
+v6 is where the product and its documentation finally describe the same thing. It discharges the debt a major exists to discharge: the surfaces that had no implementation behind them are removed rather than left as stubs, the docs describe the commands that exist, and the supported platforms are stated rather than assumed. The `.genie/genie.db` schema migrates itself forward on first open under the new binary; a database at an unbridgeable version still refuses rather than guessing. See the [release notes](https://docs.automagik.dev/genie/release-notes) for what is gone and what to do instead.
 
 ---
 
 <p align="center">
-  <a href="https://automagik.dev/genie"><strong>Docs</strong></a> &middot;
+  <a href="https://docs.automagik.dev/genie"><strong>Docs</strong></a> &middot;
   <a href="https://github.com/automagik-dev/genie/releases"><strong>Releases</strong></a> &middot;
   <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a> &middot;
   <a href="LICENSE"><strong>MIT License</strong></a>

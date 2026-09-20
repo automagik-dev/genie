@@ -47,7 +47,8 @@ stamp path (execDir/VERSION) works for compiled binaries. ✅
   idempotent on second run (exit 0). `genie task list` and `genie board` both work. ✅
 
 ### Release-workflow chain — coherent ✅
-`version.yml` (derives `<major>.YYMMDD.N`, `bun run version` syncs the version JSONs, commits +
+`version.yml` (derives `<major>.YYMMDD.N` and rewrites the version JSONs inline — the
+`JSON_FILES` rewrite at `version.yml:197-241`; `bun run version` is only the local path — commits +
 pushes tag `v<version>`) → tag `v*` fires `release.yml` orchestrator → `build-tarballs.yml`
 (matrix, native runners) → `sign-attest.yml` (cosign keyless + SLSA L3) →
 `release-publish.yml` (gh release + 12 assets + `.well-known/*.json`). Single run via
