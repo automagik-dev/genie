@@ -2437,6 +2437,33 @@
       "kind": "move",
       "note": "Wish→Done",
       "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093821,
+      "id": 349,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9ad80ce9781"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093830,
+      "id": 350,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9g2aae24594"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093831,
+      "id": 351,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9ln2f533934"
     }
   ],
   "tasks": [
@@ -3254,10 +3281,10 @@
       "group_name": "structured-cli",
       "heartbeat_at": null,
       "id": "t_mtlkd9ad80ce9781",
-      "lane": "Review",
+      "lane": "Work",
       "status": "done",
       "title": "Freeze structured CLI contract for DSH board",
-      "updated_at": 1789833759157,
+      "updated_at": 1789914093821,
       "wish": "dsh-genie-board"
     },
     {
@@ -3274,10 +3301,10 @@
       "group_name": "dsh-plugin",
       "heartbeat_at": null,
       "id": "t_mtlkd9g2aae24594",
-      "lane": "Review",
+      "lane": "Work",
       "status": "done",
       "title": "Build DSH Host adapter and kanban",
-      "updated_at": 1789833759454,
+      "updated_at": 1789914093830,
       "wish": "dsh-genie-board"
     },
     {
@@ -3294,10 +3321,10 @@
       "group_name": "release",
       "heartbeat_at": null,
       "id": "t_mtlkd9ln2f533934",
-      "lane": "Review",
+      "lane": "Work",
       "status": "in_progress",
       "title": "Package, smoke, and publish DSH discoverability",
-      "updated_at": 1789833759712,
+      "updated_at": 1789914093831,
       "wish": "dsh-genie-board"
     },
     {
