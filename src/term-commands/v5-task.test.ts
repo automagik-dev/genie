@@ -1884,19 +1884,44 @@ describe('timeline verbs under a concurrent delete', () => {
       const result = (appended as PromiseFulfilledResult<CliResult>).value;
       expect(result.stderr).not.toContain('FOREIGN KEY');
       if (result.code === 0) continue;
+      // 143 is SIGTERM: the harness killed the child, never a product exit —
+      // name it, so the next budget overrun reads as one instead of as a bug.
+      expect(result.code, 'exit 143 = SIGTERM: bun:test killed the child at its timeout; raise RACE_BUDGET_MS').not.toBe(
+        143,
+      );
       // The only legitimate loss is "the card is gone", and it must say so.
       expect(result.code).toBe(1);
       expect(result.stderr).toMatch(/Task not found: t_\w+/);
     }
   }
 
-  test('comment never leaks a raw FOREIGN KEY failure', async () => {
-    await raceVerb('comment');
-  });
+  // `report` spawns 36 `bun genie task …` processes (12 sequential claims +
+  // 12 raced pairs) and `comment` 24; per-process startup alone outlives
+  // bun:test's default 5 s per-test budget on macos-latest (3.5 s for comment,
+  // >5.1 s for report on the 2026-09-20 run), and `BUSY_TIMEOUT_MS` is itself
+  // 5 s, so one legitimately contended writer can spend the whole default
+  // budget. When the budget runs out bun kills the test's children — the verb
+  // under test reads exit 143 (SIGTERM) and the assertion below blamed the
+  // product (#3014, three darwin hits in two days). The budget is the
+  // harness's, not the contract's: the six-opener migration test already
+  // carries 30 s for the same reason.
+  const RACE_BUDGET_MS = 60_000;
 
-  test('report never leaks a raw FOREIGN KEY failure', async () => {
-    await raceVerb('report');
-  });
+  test(
+    'comment never leaks a raw FOREIGN KEY failure',
+    async () => {
+      await raceVerb('comment');
+    },
+    RACE_BUDGET_MS,
+  );
+
+  test(
+    'report never leaks a raw FOREIGN KEY failure',
+    async () => {
+      await raceVerb('report');
+    },
+    RACE_BUDGET_MS,
+  );
 });
 
 /**
