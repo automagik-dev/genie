@@ -1886,9 +1886,10 @@ describe('timeline verbs under a concurrent delete', () => {
       if (result.code === 0) continue;
       // 143 is SIGTERM: the harness killed the child, never a product exit —
       // name it, so the next budget overrun reads as one instead of as a bug.
-      expect(result.code, 'exit 143 = SIGTERM: bun:test killed the child at its timeout; raise RACE_BUDGET_MS').not.toBe(
-        143,
-      );
+      expect(
+        result.code,
+        'exit 143 = SIGTERM: bun:test killed the child at its timeout; raise RACE_BUDGET_MS',
+      ).not.toBe(143);
       // The only legitimate loss is "the card is gone", and it must say so.
       expect(result.code).toBe(1);
       expect(result.stderr).toMatch(/Task not found: t_\w+/);
