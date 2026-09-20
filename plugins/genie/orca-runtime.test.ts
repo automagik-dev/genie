@@ -454,12 +454,54 @@ describe('the six slash verbs', () => {
     expect(text).toContain(WORKSPACE_PATH);
 
     expect(host.notifications).toEqual(['Genie: sent /review to orca plugin genie']);
+    // `active`/`current` are cwd shortcuts the worker can never satisfy: the
+    // workspace is the host's, enriched by name and checked against its branch.
     expect(adapter.operations).toEqual([
-      { operation: 'worktree-show', worktree: 'active' },
-      { operation: 'terminal-list', worktree: 'active' },
+      { operation: 'worktree-show', worktree: 'name:orca plugin genie' },
+      { operation: 'terminal-list', worktree: `id:${WORKSPACE_ID}` },
     ]);
     // The spelling that won is recorded for QA (design risk 1).
     expect(palette.logs.join('\n')).toContain('exact handle match');
+  });
+
+  test('a desktop whose CLI cannot reach the workspace still sends, to the first terminal the host lists', async () => {
+    // A Mac paired to a remote runtime: the local CLI answers selector_not_found
+    // for every workspace of that runtime, and the host API is the only bridge.
+    const adapter = fakeAdapter({ 'worktree-show': () => adapterError('process_exit') });
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host);
+
+    expect(await invoke(palette, 'genie.review')).toEqual({ ok: true, mode: 'sent', terminalId: 'term_agent' });
+    const send = host.calls.find((call) => call.method === 'terminal.sendText');
+    const text = String(send?.params.text);
+    expect(text.startsWith('/review — workspace orca plugin genie; branch namastex888/orca-plugin-genie')).toBe(true);
+    expect(text).not.toContain('worktree ');
+    expect(operationNames(adapter)).toEqual(['worktree-show']);
+    expect(host.notifications).toEqual(['Genie: sent /review to orca plugin genie']);
+    expect(palette.logs.join('\n')).toContain('using the host context alone');
+  });
+
+  test('a name that resolves a workspace on another branch is not trusted', async () => {
+    const adapter = fakeAdapter({
+      'worktree-show': () => envelope({ worktree: { ...WORKSPACE_RECORD, branch: 'refs/heads/dev' } }),
+    });
+    const host = fakeHost();
+    const palette = await activate(adapter.adapter, host.host);
+    expect(await invoke(palette, 'genie.work')).toEqual({ ok: true, mode: 'sent', terminalId: 'term_agent' });
+    expect(operationNames(adapter)).toEqual(['worktree-show']);
+    expect(String(host.calls.find((call) => call.method === 'terminal.sendText')?.params.text)).not.toContain(
+      WORKSPACE_PATH,
+    );
+  });
+
+  test('an unreachable workspace with no terminal is one notification, never a worker', async () => {
+    const adapter = fakeAdapter({ 'worktree-show': () => adapterError('process_exit') });
+    const host = fakeHost({ 'workspace.readContext': () => ({ ...READ_CONTEXT, terminals: [] }) });
+    const palette = await activate(adapter.adapter, host.host);
+    expect(await invoke(palette, 'genie.wish')).toEqual({ ok: false, reason: 'unreachable-workspace' });
+    expect(operationNames(adapter)).toEqual(['worktree-show']);
+    expect(host.notifications).toHaveLength(1);
+    expect(host.notifications[0]).toContain('open a terminal there and retry');
   });
 
   test('probes the runtime exactly once across three invocations', async () => {
@@ -613,12 +655,14 @@ describe('refusals never reach the plugin host', () => {
     }
   });
 
-  test('an adapter error becomes one bounded notification and an error result', async () => {
+  test('an adapter error past the reads becomes one bounded notification and an error result', async () => {
     const adapter = fakeAdapter({
-      'worktree-show': () =>
+      'worktree-show': () => envelope({ worktree: WORKSPACE_RECORD }),
+      'terminal-list': () => envelope({ terminals: [] }),
+      'run-create': () =>
         new OrcaAdapterError(
           'unsupported_environment',
-          'worktree-show',
+          'run-create',
           'resolve',
           'safe',
           'Run this plugin in a supported Orca host.',
@@ -697,7 +741,19 @@ describe('the two binary-backed commands', () => {
       { command: 'genie', args: ['doctor', '--json'], cwd: WORKSPACE_PATH, timeoutMs: 20_000 },
     ]);
     expect(operationNames(adapter)).toEqual(['worktree-show']);
-    expect(adapter.operations[0]).toEqual({ operation: 'worktree-show', worktree: 'active' });
+    expect(adapter.operations[0]).toEqual({ operation: 'worktree-show', worktree: 'name:orca plugin genie' });
+  });
+
+  test('doctor cannot run when this machine cannot resolve the workspace path', async () => {
+    const adapter = fakeAdapter({ 'worktree-show': () => adapterError('process_exit') });
+    const host = fakeHost();
+    const spawn = fakeSpawn([]);
+    const palette = await activate(adapter.adapter, host.host, { spawn: spawn.spawn });
+    expect(await invoke(palette, 'genie.doctor')).toEqual({ ok: false, warn: 0, fail: 0 });
+    expect(spawn.requests).toEqual([]);
+    expect(host.notifications).toEqual([
+      'Genie doctor: could not run (the workspace path is not known from this machine)',
+    ]);
   });
 
   test('doctor counts fails, names at most three checks, and says so when everything passes', async () => {

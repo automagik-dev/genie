@@ -31,7 +31,10 @@ authority with `genie setup --orchestration-mode orca`.
   `notifications:show`, `events:subscribe` — exactly what the handlers call. Consent is per plugin and capability set,
   granted once when the plugin is enabled and asked again only when the set changes.
 - The six lifecycle handlers read the active workspace through the host API (`workspace.readContext`), read its
-  record and terminals through the adapter (`worktree show` / `terminal list`, both addressed as `active`), and send
+  record and terminals through the adapter (`worktree show --worktree name:<displayName>`, accepted only on the
+  context's branch, then `terminal list --worktree id:<id>`; the CLI's `active`/`current` are cwd shortcuts the worker
+  can never satisfy, and a desktop paired to a remote runtime cannot see that workspace through its local CLI at all,
+  so both reads degrade to the host context and the host's first terminal), and send
   the composed slash command through `terminal.sendText` — never through `orca terminal send`. With no agent terminal
   they `run-create` and `worker-start` from the text. The worker runs outside every terminal and every Run, the host
   rejects a command after 30 s, so the compatibility probe runs once per worker and every operation carries a bound.
