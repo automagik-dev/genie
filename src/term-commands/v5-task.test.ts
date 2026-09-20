@@ -1890,13 +1890,30 @@ describe('timeline verbs under a concurrent delete', () => {
     }
   }
 
-  test('comment never leaks a raw FOREIGN KEY failure', async () => {
-    await raceVerb('comment');
-  });
+  // 24 concurrent `bun genie task …` processes contend for one WAL write lock
+  // (busy_timeout 5 s); on the macos-latest runner that regularly outlives
+  // bun:test's default 5 s per-test budget, which then kills the children —
+  // the race verb reads exit 143 (SIGTERM) and the assertion blames the
+  // product (#3014, three hits in two days, all darwin). The budget is the
+  // harness's, not the contract's: the six-opener migration test already
+  // carries 30 s for the same reason.
+  const RACE_BUDGET_MS = 60_000;
 
-  test('report never leaks a raw FOREIGN KEY failure', async () => {
-    await raceVerb('report');
-  });
+  test(
+    'comment never leaks a raw FOREIGN KEY failure',
+    async () => {
+      await raceVerb('comment');
+    },
+    RACE_BUDGET_MS,
+  );
+
+  test(
+    'report never leaks a raw FOREIGN KEY failure',
+    async () => {
+      await raceVerb('report');
+    },
+    RACE_BUDGET_MS,
+  );
 });
 
 /**
