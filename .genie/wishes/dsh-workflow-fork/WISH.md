@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `dsh-workflow-fork` |
 | **Date** | 2026-09-15 |
 | **Author** | Felipe + Genie (split from the combined `workflows-multibody` plan, whose three plan-review loops this wish inherits; fork target analysed at `omdsh-dev/dsh_workflow@44b83c1`) |
@@ -334,6 +334,12 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Context:** executed on Felipe's instruction by the DSH body (Sofia) against host `dsh 0.1.5-rc.2`; opened as a PR rather than committed here, because a reviewer's evidence is not a status change.
 - **Evidence:** [`docs/seam-comparison.md`](docs/seam-comparison.md) — every Claude Code hook with its first-party behaviour, the exact engine refusals, the spike record and the host/floor decision. The spike split `export const meta` off `.claude/workflows/council.js`, dropped `effort` from `agent()` options and ran it: `workflow "council" completed (6 agents)`, `decision: gather-evidence`. Across the nine catalog scripts the transform removes 35 options in 7 files and preserves every data occurrence named `effort` (cross-checked against an independent TypeScript-AST transform). The loader that implements the route is [#3011](https://github.com/automagik-dev/genie/pull/3011); its payload wiring and host smoke are [#3015](https://github.com/automagik-dev/genie/pull/3015), where `bun scripts/dsh-workflow-loader-smoke.ts` exits PASS on that branch with the row active in a booted Host, having caught two real loader defects before either could reach a profile (the PR is still in review).
 - **Transition:** Group 0's evidence is **accepted** (merged in #3008), and the re-plan above records what that does to Groups 1–4. **Status stays DRAFT:** a re-planned wish needs the re-review that gates the residual work before it starts, and the orchestrator sets the status — not the author of this block.
+
+### Orchestrator approval — 2026-09-20 — DRAFT → APPROVED
+
+- **Decision:** Felipe approved the re-plan (his words: "3. approved."), accepting the collapse it records: Group 1 not taken, Group 2 delivered by `plugins/dsh-workflow-loader`, Group 3 partly delivered with three adapters deferred behind named triggers, Group 4 reduced to the cross-body comparator and the integration record.
+- **Evidence the decision rests on:** all merged — the Group 0 comparison and spike ([#3008](https://github.com/automagik-dev/genie/pull/3008)), the loader ([#3011](https://github.com/automagik-dev/genie/pull/3011)), its payload wiring and boot smoke ([#3015](https://github.com/automagik-dev/genie/pull/3015)) and this re-plan ([#3021](https://github.com/automagik-dev/genie/pull/3021)) — plus live evidence from the operator's own installation: `workflow_run probe` returned `{ok: true, word: "ok"}` with the stripped `effort` recorded in the journal, `workflow_run council` completed with six agents in 513 s (`decision: "revise"`, 141 KB journal), and a call through the default web mount refused the project/personal name collision by name.
+- **Applied in-document:** status advanced to APPROVED; the loader is also named in the repository's release contract, so the tarball carries it. The five cards stay unclaimed until work starts. The residual work this wish owns is the Group 4 comparator plus the three deferred adapters; the loader's own follow-ups (collision rule, projection budget, cost visibility, failure journaling, version pinning) are tracked in its README rather than here.
 
 ---
 
