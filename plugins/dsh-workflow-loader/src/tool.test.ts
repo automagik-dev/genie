@@ -123,7 +123,11 @@ function harness(config: Record<string, unknown> = {}) {
   const userWorkflows = join(root, 'user-workflows');
   mkdirSync(join(workspace, '.claude', 'workflows'), { recursive: true });
   mkdirSync(userWorkflows, { recursive: true });
-  const ctx = { tools: { register: () => () => {} }, workflowEngine: stubEngine(capture) };
+  const ctx = {
+    tools: { register: () => () => {} },
+    workflowEngine: stubEngine(capture),
+    systemPrompt: { section: () => {}, getSectionOrder: () => 100 },
+  };
   const resolved = resolveLoaderConfig({ journalDir: join(root, 'journal'), userRoot: userWorkflows, ...config });
   const tool = workflowRunTool(ctx as never, resolved) as {
     execute: (args: unknown, exec: unknown) => Promise<Record<string, unknown>>;
@@ -222,18 +226,6 @@ describe('the workflow_run row', () => {
     }
   });
 
-  test('refuses a name that exists in both roots instead of guessing', async () => {
-    const h = harness();
-    try {
-      const body = ["export const meta = { name: 'twice', description: 'both roots' }", 'return 1'].join('\n');
-      writeFileSync(join(h.workspace, '.claude', 'workflows', 'twice.js'), body);
-      writeFileSync(join(h.userWorkflows, 'twice.js'), body);
-      await expect(h.tool.execute({ name: 'twice' }, h.exec)).rejects.toThrow(/exists in both roots/);
-    } finally {
-      h.cleanup();
-    }
-  });
-
   test('names the available workflows when the name is unknown', async () => {
     const h = harness();
     try {
@@ -305,11 +297,67 @@ describe('the workflow_run row', () => {
     // Regression: the row read `ctx.workflowEngine` without declaring it, and
     // cordis refuses an undeclared service read AT CALL TIME — invisible to a
     // stub-engine test, found by a live headless run.
-    expect(inject).toEqual(['tools', 'workflowEngine']);
+    expect(inject).toEqual(['tools', 'workflowEngine', 'systemPrompt']);
+  });
+
+  test('runs the project copy when the two roots are byte-identical', async () => {
+    // The common case on an installed host: genie's workflows channel copies the
+    // catalog into ~/.claude/workflows, so a repository with its own catalog
+    // collides with it. Identical bytes cannot disagree, so the run proceeds and
+    // the operator is told which copy ran.
+    const h = harness();
+    try {
+      const body = ["export const meta = { name: 'same', description: 'both roots' }", 'return 2'].join('\n');
+      writeFileSync(join(h.workspace, '.claude', 'workflows', 'same.js'), body);
+      writeFileSync(join(h.userWorkflows, 'same.js'), body);
+      const outcome = await h.tool.execute({ name: 'same' }, h.exec);
+      expect(outcome.ok).toBe(true);
+      expect(String(outcome.warning)).toContain('byte-identical');
+      expect(String(h.capture.script ?? '')).toContain('return 2');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test('still refuses two roots whose copies differ', async () => {
+    const h = harness();
+    try {
+      writeFileSync(
+        join(h.workspace, '.claude', 'workflows', 'differ.js'),
+        ["export const meta = { name: 'differ', description: 'project copy' }", 'return 1'].join('\n'),
+      );
+      writeFileSync(
+        join(h.userWorkflows, 'differ.js'),
+        ["export const meta = { name: 'differ', description: 'stale personal copy' }", 'return 2'].join('\n'),
+      );
+      await expect(h.tool.execute({ name: 'differ' }, h.exec)).rejects.toThrow(/the two files differ/);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test('allowShadowing runs the project copy even when the copies differ', async () => {
+    const h = harness({ allowShadowing: true });
+    try {
+      writeFileSync(
+        join(h.workspace, '.claude', 'workflows', 'shadowed.js'),
+        ["export const meta = { name: 'shadowed', description: 'project copy' }", 'return 1'].join('\n'),
+      );
+      writeFileSync(
+        join(h.userWorkflows, 'shadowed.js'),
+        ["export const meta = { name: 'shadowed', description: 'personal copy' }", 'return 2'].join('\n'),
+      );
+      const outcome = await h.tool.execute({ name: 'shadowed' }, h.exec);
+      expect(outcome.ok).toBe(true);
+      expect(outcome.warning).toBeUndefined();
+    } finally {
+      h.cleanup();
+    }
   });
 
   test('apply() registers exactly one tool and returns its disposer', () => {
     const registered: unknown[] = [];
+    const sections: Array<{ name: string; order: number; text: string }> = [];
     const ctx = {
       tools: {
         register: (definition: unknown) => {
@@ -318,10 +366,18 @@ describe('the workflow_run row', () => {
         },
       },
       workflowEngine: stubEngine({ runs: 0 }),
+      systemPrompt: {
+        section: (section: { name: string; order: number; text: string }) => sections.push(section),
+        getSectionOrder: () => 100,
+      },
     };
     const dispose = apply(ctx as never, {});
     expect(registered).toHaveLength(1);
     expect((registered[0] as { name: string }).name).toBe('workflow_run');
+    // The row also states when to use this tool rather than the first-party one.
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.name).toBe('tool:workflow_run');
+    expect(sections[0]?.text).toContain('workflow` tool only when no saved workflow fits');
     dispose();
     expect(registered).toHaveLength(0);
   });

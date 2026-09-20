@@ -36,6 +36,13 @@ export interface ResolvedWorkflow {
   meta: MetaBlock;
   /** The body with `export const meta` split off — the engine rejects the export. */
   body: string;
+  /**
+   * Set when the name exists in both roots and the loader still ran. Today that
+   * means the two files are byte-identical (so either one is the same workflow)
+   * or `allowShadowing` is on; the operator is told which copy ran and how to
+   * make the other one go away.
+   */
+  warning?: string;
 }
 
 export class CatalogError extends Error {
@@ -102,10 +109,22 @@ export function resolveWorkflow(name: string, roots: CatalogRoots, allowShadowin
   const userPath = join(roots.user, `${name}.js`);
   const inProject = existsSync(projectPath);
   const inUser = existsSync(userPath);
+  // A name in both roots is the COMMON case on an installed host: genie's
+  // workflows channel copies every shipped catalog file into the personal root,
+  // so a repository carrying its own catalog collides with it by default. Which
+  // root wins is undocumented upstream (and a stale personal copy shadowed a
+  // repository's own file once, 2026-09-15), so the loader compares the two
+  // files: byte-identical copies cannot disagree, and a divergent pair is still
+  // refused by name. `allowShadowing` remains the explicit override.
+  let warning: string | undefined;
   if (inProject && inUser && !allowShadowing) {
-    throw new CatalogError(
-      `"${name}" exists in both roots and this loader does not guess which one you meant:\n  ${projectPath}\n  ${userPath}\nDelete the one you do not want, or set allowShadowing to accept the project copy.`,
-    );
+    const sameBytes = readIfPresent(projectPath) === readIfPresent(userPath);
+    if (!sameBytes) {
+      throw new CatalogError(
+        `"${name}" exists in both roots and the two files differ, so this loader does not guess which one you meant:\n  ${projectPath}\n  ${userPath}\nDelete or update the one you do not want, or set allowShadowing to accept the project copy.`,
+      );
+    }
+    warning = `"${name}" exists in both roots and the copies are byte-identical, so the project copy ran: ${projectPath} (personal copy left in place: ${userPath})`;
   }
   const path = inProject ? projectPath : inUser ? userPath : '';
   if (!path) {
@@ -126,5 +145,14 @@ export function resolveWorkflow(name: string, roots: CatalogRoots, allowShadowin
     throw new CatalogError(`could not read ${path}: ${failure instanceof Error ? failure.message : 'unknown error'}`);
   }
   const { meta, body } = splitMeta(text);
-  return { name, path, root: inProject ? 'project' : 'user', meta, body };
+  return { name, path, root: inProject ? 'project' : 'user', meta, body, ...(warning ? { warning } : {}) };
+}
+
+/** Read a file, or undefined when it cannot be read — a comparison, not a load. */
+function readIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
 }
