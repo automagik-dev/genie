@@ -189,3 +189,96 @@ describe('the board aggregate carries the checklist', () => {
     expect(cards.map((c) => c.id)).toContain(taskId);
   });
 });
+
+describe('structured worker reports', () => {
+  /** Any genie command (the `cli` helper above is `task`-scoped). */
+  async function g(cwd: string, ...args: string[]): Promise<CliResult> {
+    const proc = Bun.spawn(['bun', GENIE, ...args], {
+      cwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1', GENIE_TEST_SKIP_PGSERVE: '1' },
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const code = await proc.exited;
+    return { stdout, stderr, code };
+  }
+
+  async function claimedCard(): Promise<string> {
+    const id = await newCard();
+    const claimed = await cli(repo, 'checkout', id, '--worker', 'eng-A');
+    expect(claimed.code).toBe(0);
+    return id;
+  }
+
+  test('structured flags land in the payload and render in task status', async () => {
+    const id = await claimedCard();
+    const reported = await cli(
+      repo,
+      'report',
+      id,
+      'Delivered the CLI and its tests; nothing else touched.',
+      '--worker',
+      'eng-A',
+      '--files',
+      'a.ts, b.ts',
+      '--check',
+      'bun test: 452 pass',
+      '--artifact',
+      'out.txt',
+      '--risk',
+      'windows untested',
+    );
+    expect(reported.code).toBe(0);
+    expect(reported.stdout).toContain('2 file(s), 1 check(s), 1 artifact(s), risk noted');
+
+    const status = await cli(repo, 'status', id);
+    expect(status.stdout).toContain('Changed files:');
+    expect(status.stdout).toContain('- a.ts');
+    expect(status.stdout).toContain('Checks run:');
+    expect(status.stdout).toContain('- bun test: 452 pass');
+    expect(status.stdout).toContain('Remaining risk:');
+    expect(status.stdout).toContain('windows untested');
+  });
+
+  test('a prose-only report is unchanged and carries no structure', async () => {
+    const id = await claimedCard();
+    const reported = await cli(repo, 'report', id, 'just prose', '--worker', 'eng-A');
+    expect(reported.code).toBe(0);
+    expect(reported.stdout).not.toContain('file(s)');
+    const status = await cli(repo, 'status', id);
+    expect(status.stdout).not.toContain('Changed files:');
+    expect(status.stdout).toContain('just prose');
+  });
+
+  test('refuses a structured payload over the size limit', async () => {
+    const id = await claimedCard();
+    const reported = await cli(repo, 'report', id, 'big', '--worker', 'eng-A', '--risk', 'x'.repeat(9000));
+    expect(reported.code).toBe(1);
+    expect(reported.stderr).toContain('over the');
+  });
+
+  test('the payload survives export and import into a fresh repository', async () => {
+    const id = await claimedCard();
+    await cli(repo, 'report', id, 'carry me', '--worker', 'eng-A', '--files', 'a.ts', '--check', 'suite: green');
+
+    const snapshot = join(repo, 'snapshot.json');
+    const exported = await g(repo, 'task', 'export', '--write', snapshot);
+    expect(exported.code).toBe(0);
+
+    const fresh = mkdtempSync(join(tmpdir(), 'genie-report-import-'));
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: fresh, stdio: 'ignore' });
+      const imported = await g(fresh, 'task', 'import', snapshot);
+      expect(imported.code).toBe(0);
+
+      const status = await g(fresh, 'task', 'status', id);
+      expect(status.stdout).toContain('Changed files:');
+      expect(status.stdout).toContain('- a.ts');
+      expect(status.stdout).toContain('- suite: green');
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+});

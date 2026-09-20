@@ -606,7 +606,7 @@ const EXPECTED_SCHEMA = {
   stage_log: ['id', 'task_id', 'stage', 'note', 'created_at'],
   task_checklist: ['id', 'task_id', 'position', 'text', 'checked_at', 'checked_by', 'evidence', 'created_at'],
   task_dependencies: ['task_id', 'depends_on_id'],
-  task_events: ['id', 'task_id', 'kind', 'note', 'author_kind', 'author', 'created_at'],
+  task_events: ['id', 'task_id', 'kind', 'note', 'author_kind', 'author', 'payload', 'created_at'],
   tasks: [
     'id',
     'board_id',
@@ -766,6 +766,7 @@ CREATE TABLE IF NOT EXISTS task_events (
   note        TEXT,
   author_kind TEXT,
   author      TEXT,
+  payload     TEXT,
   created_at  INTEGER NOT NULL
 );
 
@@ -817,6 +818,7 @@ export function ensureSchema(db: Database): void {
   db.exec(SCHEMA_SQL);
   ensureTaskColumns(db);
   ensureBoardColumns(db);
+  ensureTaskEventColumns(db);
   backfillStageLog(db);
 }
 
@@ -833,7 +835,7 @@ export function ensureSchema(db: Database): void {
  */
 function addColumn(
   db: Database,
-  table: 'tasks' | 'boards',
+  table: 'tasks' | 'boards' | 'task_events',
   present: ReadonlySet<string>,
   name: string,
   type: 'TEXT' | 'INTEGER',
@@ -848,6 +850,20 @@ function addColumn(
 
 function addTaskColumn(db: Database, present: ReadonlySet<string>, name: string, type: 'TEXT' | 'INTEGER'): void {
   addColumn(db, 'tasks', present, name, type);
+}
+
+/**
+ * Additive, in-place column backfill for `task_events`. `payload` carries the
+ * structured half of a worker report (changed files, checks, artifacts, risk) as
+ * JSON; a NULL payload is every event written before it existed, and every event
+ * kind that has no structure. Nullable ⇒ no version bump, same rule as
+ * {@link addTaskColumn}.
+ */
+function ensureTaskEventColumns(db: Database): void {
+  const cols = new Set(
+    (db.query('PRAGMA table_info(task_events)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  addColumn(db, 'task_events', cols, 'payload', 'TEXT');
 }
 
 /**

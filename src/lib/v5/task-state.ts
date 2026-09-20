@@ -207,6 +207,12 @@ export interface TaskEvent {
   taskId: string;
   kind: string;
   note: string | null;
+  /**
+   * The structured half of an event, as JSON text: a worker report carries
+   * `{files, checks, artifacts, risk}` here. NULL for every event kind that has
+   * no structure, and for every event written before the column existed.
+   */
+  payload: string | null;
   authorKind: string | null;
   author: string | null;
   createdAt: number;
@@ -290,6 +296,8 @@ export interface BoardTaskAggregate extends TaskCardRow {
 export interface AppendEventInput {
   kind: string;
   note?: string;
+  /** Structured half of the event as JSON text; omitted for kinds without one. */
+  payload?: string;
   authorKind?: string;
   author?: string;
 }
@@ -1493,6 +1501,7 @@ interface RawTaskEvent {
   note: string | null;
   author_kind: string | null;
   author: string | null;
+  payload: string | null;
   created_at: number;
 }
 
@@ -1502,6 +1511,7 @@ function mapTaskEvent(row: RawTaskEvent): TaskEvent {
     taskId: row.task_id,
     kind: row.kind,
     note: row.note,
+    payload: row.payload,
     authorKind: row.author_kind,
     author: row.author,
     createdAt: row.created_at,
@@ -1518,13 +1528,24 @@ function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInp
   requireTask(db, taskId);
   const createdAt = Date.now();
   const res = db
-    .query('INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(taskId, event.kind, event.note ?? null, event.authorKind ?? null, event.author ?? null, createdAt);
+    .query(
+      'INSERT INTO task_events (task_id, kind, note, author_kind, author, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(
+      taskId,
+      event.kind,
+      event.note ?? null,
+      event.authorKind ?? null,
+      event.author ?? null,
+      event.payload ?? null,
+      createdAt,
+    );
   return {
     id: Number(res.lastInsertRowid),
     taskId,
     kind: event.kind,
     note: event.note ?? null,
+    payload: event.payload ?? null,
     authorKind: event.authorKind ?? null,
     author: event.author ?? null,
     createdAt,
@@ -1558,6 +1579,8 @@ export function appendTaskEvent(db: Database, taskId: string, event: AppendEvent
 /** Input for {@link appendReportEvent}: the author is required (a report is attributed by contract). */
 export interface ReportEventInput {
   note: string;
+  /** Structured half of the report as JSON text: {files, checks, artifacts, risk}. */
+  payload?: string;
   author: string;
   authorKind?: string;
 }
@@ -1594,6 +1617,7 @@ export function appendReportEvent(db: Database, taskId: string, input: ReportEve
     return appendTaskEventInTx(db, taskId, {
       kind: 'report',
       note: input.note,
+      payload: input.payload,
       author: input.author,
       authorKind: input.authorKind,
     });
@@ -1766,6 +1790,7 @@ function collectBoardTaskSnapshot(
       id: requireNumber(row.id, `task ${owner} event id`),
       kind: requireString(row.kind, `task ${owner} event kind`),
       note: requireNullableString(row.note, `task ${owner} event note`),
+      payload: requireNullableString(row.payload, `task ${owner} event payload`),
       authorKind: requireNullableString(row.author_kind, `task ${owner} event authorKind`),
       author: requireNullableString(row.author, `task ${owner} event author`),
       createdAt: requireNumber(row.created_at, `task ${owner} event createdAt`),
@@ -2086,7 +2111,13 @@ export function exportState(db: Database): StateExport {
       .query('SELECT task_id, depends_on_id FROM task_dependencies ORDER BY task_id, depends_on_id')
       .all() as StateExport['task_dependencies'],
     stage_log: db.query('SELECT * FROM stage_log ORDER BY id').all() as RawStage[],
-    task_events: db.query('SELECT * FROM task_events ORDER BY id').all() as RawTaskEvent[],
+    // `payload` is dropped while it is NULL: a snapshot of a board with no
+    // structured reports must stay byte-identical to the one earlier builds
+    // wrote (the committed roadmap.json round-trip depends on it), and an absent
+    // key already means "no structure" on import.
+    task_events: (db.query('SELECT * FROM task_events ORDER BY id').all() as RawTaskEvent[]).map((event) =>
+      event.payload === null ? (({ payload: _payload, ...rest }) => rest)(event) : event,
+    ) as RawTaskEvent[],
     wish_groups: db.query('SELECT * FROM wish_groups ORDER BY wish, name').all() as RawWishGroup[],
   };
 }
@@ -2349,10 +2380,19 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   for (const s of state.stage_log) stage.run(s.id, s.task_id, s.stage, s.note ?? null, s.created_at);
 
   const event = db.query(
-    'INSERT INTO task_events (id, task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO task_events (id, task_id, kind, note, author_kind, author, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   );
   for (const e of state.task_events) {
-    event.run(e.id, e.task_id, e.kind, e.note ?? null, e.author_kind ?? null, e.author ?? null, e.created_at);
+    event.run(
+      e.id,
+      e.task_id,
+      e.kind,
+      e.note ?? null,
+      e.author_kind ?? null,
+      e.author ?? null,
+      e.payload ?? null,
+      e.created_at,
+    );
   }
 
   // wish_groups is tolerated-and-dropped: the machinery that wrote it is

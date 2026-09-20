@@ -204,6 +204,33 @@ function printDependencies(db: Database, taskId: string): void {
   }
 }
 
+/**
+ * Render the structured half of a worker report. The prose note stays on the
+ * timeline line; this is the part a reviewer needs without re-reading a
+ * transcript — what changed, what ran, what to look at, what is still unknown.
+ */
+function printStructuredReport(payload: string): void {
+  let parsed: { files?: string[]; checks?: string[]; artifacts?: string[]; risk?: string | null };
+  try {
+    parsed = JSON.parse(payload) as typeof parsed;
+  } catch {
+    out(`    (unreadable structured payload, ${payload.length} bytes)`);
+    return;
+  }
+  const section = (label: string, items: string[] | undefined) => {
+    if (!items || items.length === 0) return;
+    out(`    ${label}:`);
+    for (const item of items) out(`      - ${item}`);
+  };
+  section('Changed files', parsed.files);
+  section('Checks run', parsed.checks);
+  section('Artifacts', parsed.artifacts);
+  if (parsed.risk) {
+    out('    Remaining risk:');
+    out(`      ${parsed.risk}`);
+  }
+}
+
 function printTaskDetail(db: Database, task: TaskCardRow): void {
   printDetailHeader(db, task);
   printDependencies(db, task.id);
@@ -212,6 +239,12 @@ function printTaskDetail(db: Database, task: TaskCardRow): void {
   if (events.length > 0) {
     out('\n  Timeline:');
     for (const e of events) out(`    ${formatEventLine(e)}`);
+  }
+
+  const structured = events.filter((e) => e.kind === 'report' && e.payload);
+  for (const e of structured) {
+    out(`\n  Report (${e.author ?? 'unknown'}):`);
+    printStructuredReport(e.payload as string);
   }
 
   const log = getStageLog(db, task.id);
@@ -670,8 +703,47 @@ function handleComment(id: string, text: string, opts: AuthoredNoteOptions): voi
   });
 }
 
-function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void {
+interface ReportOptions extends AuthoredNoteOptions {
+  files?: string;
+  check?: string[];
+  artifact?: string[];
+  risk?: string;
+}
+
+/** One report may not carry an unbounded pile of evidence; the timeline is not a data store. */
+const REPORT_PAYLOAD_MAX_BYTES = 8 * 1024;
+
+/**
+ * The structured half of a worker report, as JSON text — or undefined when the
+ * caller gave only prose, which keeps the free-text report byte-identical to
+ * what it has always been.
+ */
+function buildReportPayload(opts: ReportOptions): string | undefined {
+  const files = (opts.files ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean);
+  const checks = (opts.check ?? []).map((c) => c.trim()).filter(Boolean);
+  const artifacts = (opts.artifact ?? []).map((a) => a.trim()).filter(Boolean);
+  const risk = opts.risk?.trim() ?? '';
+  if (files.length === 0 && checks.length === 0 && artifacts.length === 0 && !risk) return undefined;
+  const payload = JSON.stringify({
+    files,
+    checks,
+    artifacts,
+    risk: risk || null,
+  });
+  if (Buffer.byteLength(payload, 'utf8') > REPORT_PAYLOAD_MAX_BYTES) {
+    fail(
+      `report refused: the structured fields are ${Buffer.byteLength(payload, 'utf8')} bytes, over the ${REPORT_PAYLOAD_MAX_BYTES}-byte limit. Link to the detail instead of pasting it.`,
+    );
+  }
+  return payload;
+}
+
+function handleReport(id: string, text: string, opts: ReportOptions): void {
   const note = boundedNote(text, 'report');
+  const payload = buildReportPayload(opts);
   run(() => {
     const db = openDb();
     try {
@@ -689,12 +761,34 @@ function handleReport(id: string, text: string, opts: AuthoredNoteOptions): void
       // One report per claim-to-handoff span (the promise `task report --help`
       // makes): the span rule lives in the state module so the probe and the
       // insert share one write lock.
-      appendReportEvent(db, id, { note, authorKind: author.authorKind, author: author.author });
-      out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'}).`);
+      appendReportEvent(db, id, { note, payload, authorKind: author.authorKind, author: author.author });
+      const structured = payload ? describeReportPayload(payload) : '';
+      out(`Reported on task ${id} as ${author.author} (${author.authorKind ?? 'unknown'})${structured}.`);
     } finally {
       db.close();
     }
   });
+}
+
+/** Name what was recorded, so the caller can see the shape landed and not just that it did. */
+function describeReportPayload(payload: string): string {
+  try {
+    const parsed = JSON.parse(payload) as {
+      files?: string[];
+      checks?: string[];
+      artifacts?: string[];
+      risk?: string | null;
+    };
+    const parts = [
+      `${parsed.files?.length ?? 0} file(s)`,
+      `${parsed.checks?.length ?? 0} check(s)`,
+      `${parsed.artifacts?.length ?? 0} artifact(s)`,
+    ];
+    if (parsed.risk) parts.push('risk noted');
+    return ` with ${parts.join(', ')}`;
+  } catch {
+    return ' with structured fields';
+  }
 }
 
 interface BlockOptions {
@@ -1056,7 +1150,11 @@ export, with two caveats:
       "Append the claimant's worker report to the card timeline (one per claim-to-handoff span; a new checkout opens the next)",
     )
     .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
-    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleReport(id, text, opts));
+    .option('--files <paths>', 'Comma-separated paths this work changed')
+    .option('--check <result...>', 'A command you ran and its outcome (repeatable)')
+    .option('--artifact <path...>', 'An artifact worth reviewing (repeatable)')
+    .option('--risk <text>', 'What remains unverified or risky')
+    .action((id: string, text: string, opts: ReportOptions) => handleReport(id, text, opts));
 
   task
     .command('block <id>')

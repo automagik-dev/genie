@@ -1249,6 +1249,7 @@ describe('declared routing — roadmap snapshot round-trip (roadmap-sync lockste
       note: 'dispatch: eng-A — G1',
       author_kind: 'claude-code',
       author: 'orchestrator',
+      payload: null,
       created_at: 1_700_000_000_000,
     });
     writeFileSync(filePath, `${JSON.stringify(theirs, null, 2)}\n`);

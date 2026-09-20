@@ -644,8 +644,12 @@ describe('scoped board JSON aggregate v1', () => {
       expect(Object.keys(dependency)).toEqual(['id', 'title', 'status']);
     }
     expect(card.timeline.map((event) => event.id)).toEqual([10, 40, 90]);
+    // `payload` is the structured half of an event (a worker report's files,
+    // checks, artifacts, risk). Always present, null for every kind without one,
+    // so a client never has to guess whether its absence means "no structure" or
+    // "old genie".
     for (const event of card.timeline) {
-      expect(Object.keys(event)).toEqual(['id', 'kind', 'note', 'authorKind', 'author', 'createdAt']);
+      expect(Object.keys(event)).toEqual(['id', 'kind', 'note', 'payload', 'authorKind', 'author', 'createdAt']);
     }
     expect(card.comments).toEqual([
       { id: 10, note: 'first comment', authorKind: null, author: null, createdAt: 20 },
