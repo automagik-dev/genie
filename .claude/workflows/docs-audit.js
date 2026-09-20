@@ -125,12 +125,12 @@ const SURFACES = [
   {
     key: 'agent-instructions',
     label: 'Agent instructions',
-    where: 'AGENTS.md (governing) and CLAUDE.md and kin (overlays; both stay current when both exist)',
+    where: 'AGENTS.md (governing), CLAUDE.md, and .claude/rules/*.md (Claude overlays; all stay current)',
     brief:
-      'Read the governing AGENTS.md first, then the CLAUDE.md overlay, and compare the two against each other and against the real CLI. This is the densest prose in the repository — the command table, the state-file table, the environment-variable table, the gotchas — and you are the ONLY auditor that reads these two files whole; the other three cite the surface they own instead, because four full reads of the overlay is the single biggest avoidable bill of this audit. Handle the volume by summarising, never by widening the brief.',
+      'Read the governing AGENTS.md first, then the CLAUDE.md overlay and the path-scoped .claude/rules/*.md gotchas beneath it, and compare them against each other and against the real CLI. This is the densest prose in the repository — the command table, the state-file table, the environment-variable table, the gotchas — and you are the ONLY auditor that reads these files whole; the other three cite the surface they own instead, because four full reads of the overlay is the single biggest avoidable bill of this audit. Handle the volume by summarising, never by widening the brief.',
     effort: 'medium',
     minChecks: 4,
-    minimum: 'both files read and compared against each other and against the live CLI',
+    minimum: 'AGENTS.md, CLAUDE.md and the .claude/rules gotchas read and compared against the live CLI',
   },
   {
     key: 'docs-architecture',

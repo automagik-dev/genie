@@ -24,7 +24,7 @@ The four keys are the audit's shard roster: `surfaces` narrows it, never grows i
 | Surface | Key | Where |
 |---|---|---|
 | README | `readme` | `README.md`, `*/README.md` |
-| Agent instructions | `agent-instructions` | `AGENTS.md` (governing), `CLAUDE.md` and kin (overlays; keep both current when both exist) |
+| Agent instructions | `agent-instructions` | `AGENTS.md` (governing), `CLAUDE.md` + `.claude/rules/*.md` (Claude overlays; keep current) |
 | Reference and architecture | `docs-architecture` | `docs/`, `ARCHITECTURE.md`, inline JSDoc/TSDoc |
 | Runtime DX | `runtime-dx` | `--help` text, error messages, onboarding path in README/CONTRIBUTING |
 
