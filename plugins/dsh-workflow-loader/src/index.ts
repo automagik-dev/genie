@@ -25,12 +25,12 @@ import { DialectError, scanUnsupported, stripDeferredOptions } from './dialect';
 import { journalDirectory, previewValue, render, writeJournal } from './run';
 
 export const name = 'genie-dsh-workflow-loader';
-// Both services are read by the row: `tools` to register the tool, and
-// `workflowEngine` to start a run. Cordis refuses a service read that was not
-// declared — `cannot get property "workflowEngine" without inject` — and that
-// refusal only appears when the tool is CALLED, so a stub-engine test cannot see
-// it; the live headless proof did.
-export const inject = ['tools', 'workflowEngine'];
+// Every service this row reads must be declared: `tools` to register the tool,
+// `workflowEngine` to start a run, and `systemPrompt` for the usage guidance
+// below. Cordis refuses an undeclared service read — `cannot get property
+// "workflowEngine" without inject` — and that refusal only appears when the tool
+// is CALLED, so a stub-engine test cannot see it; the live headless proof did.
+export const inject = ['tools', 'workflowEngine', 'systemPrompt'];
 export const Config = schemaOf(resolveLoaderConfig);
 
 interface ToolExec {
@@ -40,6 +40,10 @@ interface ToolExec {
 
 interface ToolContext {
   tools: { register: (definition: unknown) => () => void };
+  systemPrompt: {
+    section: (section: { name: string; order: number; text: string }) => unknown;
+    getSectionOrder?: (key: string) => number;
+  };
   workflowEngine: {
     start: (request: {
       script: string;
@@ -99,6 +103,7 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
           stoppedEffort: { type: 'number' },
           journalPath: { type: 'string' },
           truncated: { type: 'boolean' },
+          warning: { type: 'string' },
           preview: { type: 'string' },
         },
         required: ['ok', 'name', 'journalPath', 'preview'],
@@ -111,6 +116,7 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
           agentsStarted?: number;
           journalPath?: string;
           truncated?: boolean;
+          warning?: string;
           preview?: string;
         },
       ) => {
@@ -120,10 +126,11 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
         // hunting the filesystem for it, because the projection only mentioned
         // it when the value was too big to show.
         const bounded = value.truncated ? ' (bounded projection)' : '';
+        const note = value.warning ? `\nNote: ${value.warning}` : '';
         return [
           {
             type: 'text',
-            text: `workflow "${value.name}" completed (${agents} agent${agents === 1 ? '' : 's'}).\nFull result in the journal: ${value.journalPath}${bounded}\nReturn value:\n${value.preview ?? ''}`,
+            text: `workflow "${value.name}" completed (${agents} agent${agents === 1 ? '' : 's'}).\nFull result in the journal: ${value.journalPath}${bounded}${note}\nReturn value:\n${value.preview ?? ''}`,
           },
         ];
       },
@@ -178,6 +185,7 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
           stoppedEffort: stripped.removed.length,
           journalPath,
           truncated: preview.truncated,
+          ...(workflow.warning ? { warning: workflow.warning } : {}),
           preview: preview.text,
         };
       } finally {
@@ -187,8 +195,22 @@ export function workflowRunTool(ctx: ToolContext, config: LoaderConfig) {
   };
 }
 
+/**
+ * Usage guidance. The first-party `workflow` tool is mounted in the same
+ * profiles and takes the same engine, so without a stated boundary the model
+ * has two ways to run a workflow and no rule for choosing — a live council run
+ * raised exactly that.
+ */
+export const USAGE_GUIDANCE = `Use the {tool} tool to run a SAVED workflow from a repository's \`.claude/workflows/\` catalog by name — council, docs-audit, wish, workfly, research-sweep, skill-intake, skill-audit-sweep, observability-review, pm-ledger-verify. It keeps the script out of your context, so a large workflow costs no more than a small one, and it refuses anything the engine cannot honour instead of running a weaker script. Write an ad-hoc orchestration script with the \`workflow\` tool only when no saved workflow fits the task. A name carried by both the project and the personal root runs the project copy only when the two files are byte-identical; divergent copies are refused by name.`;
+
 export function apply(ctx: ToolContext, rawConfig?: unknown): () => void {
   const config = resolveLoaderConfig(rawConfig);
+  const order = ctx.systemPrompt.getSectionOrder?.('TOOL_WORKFLOW') ?? 100;
+  ctx.systemPrompt.section({
+    name: `tool:${config.toolName}`,
+    order,
+    text: USAGE_GUIDANCE.replace('{tool}', config.toolName),
+  });
   return ctx.tools.register(workflowRunTool(ctx, config));
 }
 

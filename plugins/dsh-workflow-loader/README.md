@@ -86,10 +86,20 @@ the next script, not a limitation today.
 - project: `<cwd>/.claude/workflows/<name>.js`
 - personal: `~/.claude/workflows/<name>.js` (override with `userRoot`)
 
-A name carried by **both** roots is refused by default, naming both paths: which
-root wins is undocumented upstream, and on 2026-09-15 a stale personal copy
-shadowed a repository's own file (`workflows-catalog`). `allowShadowing: true`
-accepts the project copy instead.
+A name carried by **both** roots is decided by comparing the two files. Which root
+wins is undocumented upstream, and on 2026-09-15 a stale personal copy shadowed a
+repository's own file (`workflows-catalog`) — but refusing every collision also
+refuses the case where both copies are the same bytes:
+
+| The two files | What happens |
+|---|---|
+| **Byte-identical** | The **project** copy runs, and the result carries a warning naming both paths — identical bytes cannot disagree about what the workflow does. |
+| **Divergent** | **Refused**, naming both paths: something changed on one side, and this loader will not guess which. |
+| `allowShadowing: true` | The project copy runs regardless, with no warning. |
+
+The refusal is reserved for the one case where guessing could run a workflow you
+did not mean. Accepting identical copies is what keeps the tool usable on an
+installed host (next section but one).
 
 ## Result delivery
 
@@ -126,24 +136,31 @@ covered without a host.
 
 The workflows channel (`genie install` / `genie update`) delivers every catalog file
 this release ships into `~/.claude/workflows/`, so a repository that carries its own
-`.claude/workflows/council.js` has a personal copy of the same name beside it. A
-`workflow_run({"name": "council"})` from inside that repository is therefore refused
-until the operator either deletes the personal copy or sets `allowShadowing: true`
-(project wins, with a warning). Read that refusal as the feature it is — it is
-telling you two different files answer to one name — but expect to meet it.
-A live council run on 2026-09-20 raised this as its first usability finding
-(`decision: revise`, journal
-`<DSH_HOME>/workflow-runs/<ts>-council-<runId>.json`).
+`.claude/workflows/council.js` has a personal copy of the same name beside it.
+
+That is the identical-bytes row of the table, and it used to be a refusal: before
+the comparison rule landed, `workflow_run({"name": "council"})` from inside such a
+repository failed on the collision alone. Verified on this host on 2026-09-20 — all
+five shipped names hash the same in both roots (`council` = `d51089f2a939`, both
+sides) — and the rule now runs them. A live council run raised this as its first
+usability finding (`decision: revise`, journal
+`<DSH_HOME>/workflow-runs/<ts>-council-<runId>.json`); the byte comparison is the
+fix for that finding. The refusal that remains is the one that carries information:
+a personal copy that has drifted from the project's.
 
 ## Verification
 
-- `bun test src/` — 45 tests: the dialect against this repository's own catalog,
+- `bun test src/` — 47 tests: the dialect against this repository's own catalog,
   and the row end to end with a stub engine.
 - `bun scripts/dsh-workflow-loader-smoke.ts` — boots a real `dsh web` in an
   isolated `DSH_HOME`/`HOME`/`TMPDIR` tree with the row installed, asserts the
   composed profile carries it, and holds the Host through the 10 s settle window
   the boot audit needs. It found the two defects that would have broken a boot:
   the shipped patch's own `journalDir: ''` and a resolver that was not idempotent.
+- The plugin is a **release payload member**: `scripts/build-binary.sh` stages its dist
+  into the tarball, `scripts/release-payload-version.ts` stamps its `package.json` with
+  the release version, and the release contract names it. An installed host loads the
+  released copy (`~/.genie/plugins/dsh-workflow-loader`), not a checkout.
 - A live headless session (`dsh --profile headless "<task>"`) on an isolated host
   called `workflow_run` for real: `probe` returned `{ok: true, word: "ok"}` with
   the stripped `effort` recorded in the journal, and `council` completed with six
@@ -155,11 +172,18 @@ A live council run on 2026-09-20 raised this as its first usability finding
 ## Not done yet
 
 - **No client half.** Discovery stays in the board's catalog panel.
-- **Not wired into the release tarball yet at the time of writing:** the payload
-  member and version stamping are in review
-  ([#3015](https://github.com/automagik-dev/genie/pull/3015)). Until that lands,
-  a profile install is a `link:` to a built checkout, and the checkout's `dist/`
-  must be rebuilt from a revision that carries the fixes above.
+- **Four open conditions from the loader's live council review** (2026-09-20,
+  `decision: revise` — revise means do not default this yet):
+  - **Projection budget and ordering.** The projection is a head cut with an omission
+    marker; nothing ranks what it keeps, so a workflow whose synthesis lands at the end
+    still loses it from the model-visible result. The journal holds everything.
+  - **Cost and `stoppedEffort` visibility.** A run reports how many agents it started
+    and which `effort` options it stripped, but no cost figure; the engine exposes none.
+  - **Failed and cancelled runs are not journaled**, and `<DSH_HOME>/workflow-runs` has
+    no retention policy — only completed runs write a file, and nothing prunes them.
+  - **The profile mount is not pinned by exact version.** The installed host points a
+    `link:` at the released copy, so the loaded loader is whatever that directory holds,
+    not a version the profile names.
 - **The `effort` policy is a drop, not a mapping.** Effort is recorded in the
   journal and not passed to dispatch; a mapping to a model tier is deferred until
   a body needs it.
