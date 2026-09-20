@@ -175,4 +175,15 @@ Confirming independent review of this repaired rev. 4, then stamp with `skills/b
 - **Reviewed content SHA-256:** `2a74bdc356e4d34d7c25ad828c3b2c2c97aba398a86d78297547d972489abd6f`
 - **Reviewer:** claude-opus-5 independent design reviewer (3 rounds, session b17f7778)
 - **Reviewed at:** 2026-09-19T17:20:12.000Z
+
+**Amendment 2026-09-20 (recorded here, not in the reviewed body; the digest above stays the
+review's fingerprint):** the G1 review's H1 finding corrected the release-sequence mechanism the
+body still asserts above — Decision 4 (first `6.x` tag), Risk 1 and the sequencing sentence
+("no dev release fires in between") describe a generator/main split that does not exist:
+generator and guard both load from **main**, so merging G1 fires exactly one final, **valid**
+`5.x` dev release, and the promotion merge itself mints the first `6.x` tag on main
+(promotion-tag path, awaiting human dispatch). The operative corrected text lives in
+`wishes/v6-stable-cut/WISH.md` — Decision 2 as corrected, Decision 3 as corrected, and Group 1
+deliverable 3's **Corrected 2026-09-19 (G1 review, H1)** block. Independent re-review 2026-09-20
+(PR #3017) confirmed the mechanism against `version.yml` and `release-guard.sh` at `d1cb34e6a`.
 <!-- genie-design-review:end -->
