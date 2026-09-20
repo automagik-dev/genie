@@ -46,7 +46,9 @@ The three non-orchestration operations and the amended `worker-start` are the wr
 - A **worktree selector** is the one placement value a caller may name, because the plugin worker runs outside every
   terminal: `current`, `active`, `id:<repoId>::<absolute path>`, `path:<absolute path>`, `branch:<ref>` (the charset
   `git check-ref-format` accepts), `name:<display name>` — a closed grammar validated before spawn. `branch:` is
-  `selector_ambiguous` on a host with two checkouts of one branch; handlers use `active`, then `id:`.
+  `selector_ambiguous` on a host with two checkouts of one branch, and `active`/`current` are cwd shortcuts ("No
+  Orca-managed worktree contains the current directory"), never the workspace open in the UI; the plugin resolves the
+  host's workspace by `name:<displayName>`, accepts it only on the host's branch, then addresses it by `id:`.
 - `worktree-set {worktree, workspaceStatus?, comment?}` (at least one; status is one of Orca's four default columns,
   the comment one line of the short-text domain) is a mutation whose receipt is the updated record and whose public
   read-back is `worktree show --worktree id:<returned id>`; a disagreement is `readback_mismatch`, never retried.

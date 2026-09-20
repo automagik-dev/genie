@@ -24,9 +24,9 @@
         # return value still succeeds — the whole thing is written to the
         # journal and the projection says how much it left out.
         maxResultChars: 20000
-        # Where full results are journalled. Empty resolves to
-        # `<DSH_HOME>/workflow-runs`.
-        journalDir: ''
+        # Where full results are journalled. The shipped default is
+        # `<DSH_HOME>/workflow-runs`; set this to move them.
+        # journalDir: ''
         # A name carried by both the project root and the personal root is
         # refused by default: which one wins is undocumented upstream, and a
         # stale personal copy has shadowed a repository's own file before.

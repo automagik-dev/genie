@@ -8,10 +8,10 @@
 | **Author** | Felipe + Genie (split from the combined `workflows-multibody` plan, whose three plan-review loops this wish inherits; fork target analysed at `omdsh-dev/dsh_workflow@44b83c1`) |
 | **Appetite** | medium |
 | **Branch** | `wish/dsh-workflow-fork` |
-| **Repos touched** | new repository `automagik-dev/dsh_workflow`, a fork of `omdsh-dev/dsh_workflow` (package name `@dsh-external/workflow`, git-only, not published on npm; MIT); `automagik-dev/genie` only for this document |
+| **Repos touched** | `automagik-dev/genie` — the loader route puts the whole thing here (`plugins/dsh-workflow-loader`, plus its payload wiring and smoke). The fork's `automagik-dev/dsh_workflow` is **not created**: Group 0 chose the first-party engine, so no fork repository is involved |
 | **Design** | _No brainstorm — direct wish_ |
 
-> **Truth (2026-09-19):** Nothing has executed — `automagik-dev/dsh_workflow` does not resolve, Group 0's seam comparison was never written and all five cards are unclaimed — and the wish's own 2026-09-15 council recorded that DSH 0.1.x already ships a first-party `ctx.workflowEngine`, which may make the fork unnecessary.
+> **Truth (2026-09-19, re-planned):** `automagik-dev/dsh_workflow` does not exist and will not be created — Group 0's seam comparison ([docs/seam-comparison.md](docs/seam-comparison.md)) was written and accepted (#3008), and the loader route it chose over DSH's first-party `ctx.workflowEngine` is implemented in genie (#3011 merged; payload wiring and smoke in #3015, in review). Residual work this wish owns: the cross-body engine comparator, the recorded `council` integration run, and the deferred adapters. All five cards are unclaimed; the wish awaits the re-review that gates the residual work.
 
 ## Summary
 
@@ -22,10 +22,10 @@
 ### IN
 
 - Seam comparison (gate): a written comparison in this wish between forking `omdsh-dev/dsh_workflow` and a thin loader plugin over DSH's first-party `ctx.workflowEngine`, with the exact host DSH version recorded (`dsh --version` on the target host is `0.1.1-rc.2` today, below the `0.1.2-rc.1` floor `plugins/dsh-genie-board` declares) and a kill criterion: if neither route can run `council.js` unmodified within this wish's appetite, the fork stops and the catalog stands alone.
-- Fork bootstrap: a new `automagik-dev/dsh_workflow` repository detached from the upstream's private DSH snapshot (`link:../test-icetomoyo/*`), with `@deepseek-ai/*` devDependencies pinned to exact versions (no ranges) matching the recorded host version, a regenerated committed lockfile, and its own `pnpm check` green. Group 1 asserts the chosen `ctx.subagents` provider reports `outputSchema` and `depthLimit` capabilities, since every catalog agent call passes `schema`.
-- Catalog and dialect: `.claude/workflows` roots classified by root, static `meta` extraction into the DSH manifest, a body transform wrapping the script into the engine's `run(wf, args)` shape, a guest-bootstrap shim defining the bare Claude Code globals over `wf`, the clock ban, a marker-style `phase` bridge, `workflow({scriptPath})`, a `model` alias map onto DSH tiers, an explicit per-option policy that is fail-closed for anything affecting correctness or tool restriction (`isolation`, `disallowedTools`, `bashCommandClamp` refuse to run without an explicit per-run override, matching DSH's own "misused hooks always kill the script" rule) and drop-with-warning only for cosmetic options, finite defaults in interactive profiles (a wall timeout and an agent ceiling stay on; `scriptWallTimeoutMs: 0` and the 1000-agent ceiling exist only in the conformance driver's temporary profile), and a run driver writing normalized journals outside the DSH run root.
-- Adapters: a git-worktree isolation adapter for `isolation: 'worktree'`, `effort` accepted as a soft hint when no dispatch adapter is registered, and `AGENTS.md` / `CLAUDE.md` injected into every spawned subagent through the plugin's existing `ctx.inject(['systemPrompt'])` seam.
-- Conformance, living in the fork: fixture scripts covering each primitive and semantic, goldens captured from Claude Code with stub agents (normalized result lines plus the script's return value, with provenance), and a comparator; the genie catalog's `council.js` is the integration fixture that must run unmodified.
+- Fork bootstrap: a new `automagik-dev/dsh_workflow` repository detached from the upstream's private DSH snapshot (`link:../test-icetomoyo/*`), with `@deepseek-ai/*` devDependencies pinned to exact versions (no ranges) matching the recorded host version, a regenerated committed lockfile, and its own `pnpm check` green. Group 1 asserts the chosen `ctx.subagents` provider reports `outputSchema` and `depthLimit` capabilities, since every catalog agent call passes `schema`. *(historical, superseded by the Re-plan — the fork is not created)*
+- Catalog and dialect: `.claude/workflows` roots classified by root, static `meta` extraction into the DSH manifest, a body transform wrapping the script into the engine's `run(wf, args)` shape, a guest-bootstrap shim defining the bare Claude Code globals over `wf`, the clock ban, a marker-style `phase` bridge, `workflow({scriptPath})`, a `model` alias map onto DSH tiers, an explicit per-option policy that is fail-closed for anything affecting correctness or tool restriction (`isolation`, `disallowedTools`, `bashCommandClamp` refuse to run without an explicit per-run override, matching DSH's own "misused hooks always kill the script" rule) and drop-with-warning only for cosmetic options, finite defaults in interactive profiles (a wall timeout and an agent ceiling stay on; `scriptWallTimeoutMs: 0` and the 1000-agent ceiling exist only in the conformance driver's temporary profile), and a run driver writing normalized journals outside the DSH run root. *(historical, superseded by the Re-plan — delivered in genie by `plugins/dsh-workflow-loader`)*
+- Adapters: a git-worktree isolation adapter for `isolation: 'worktree'`, `effort` accepted as a soft hint when no dispatch adapter is registered, and `AGENTS.md` / `CLAUDE.md` injected into every spawned subagent through the plugin's existing `ctx.inject(['systemPrompt'])` seam. *(historical, superseded by the Re-plan — the fail-closed policy and journal are in the loader; the rest is deferred behind triggers)*
+- Conformance, living in the fork: fixture scripts covering each primitive and semantic, goldens captured from Claude Code with stub agents (normalized result lines plus the script's return value, with provenance), and a comparator; the genie catalog's `council.js` is the integration fixture that must run unmodified. *(historical, superseded by the Re-plan — the fixture matrix goes with the fork; the comparator and integration record remain, re-aimed)*
 
 ### OUT
 
@@ -66,11 +66,11 @@ Group 0 gates every other group; if it ends BLOCKED the wish stops and `workflow
 
 ## Success Criteria
 
-- [ ] The fork's `pnpm check` passes with devDependencies resolved from npm at `0.1.2-rc.1` or a newer explicitly proven series, no `link:` to the private snapshot, and the upstream engine specs green on that series.
-- [ ] The fork lists a script placed in `<cwd>/.claude/workflows/` and one in `~/.claude/workflows/` with project shadowing personal, and a DSH-root / Claude-root name collision is a listing error.
-- [ ] Every conformance fixture runs on the fork unmodified with stub subagents and the comparator exits 0 against the Claude Code goldens, including `forbidden-clock` returning the same error message.
-- [ ] genie's `.claude/workflows/council.js` runs on the fork from a genie checkout and returns a report in the same shape as the native run recorded in `workflows-catalog`.
-- [ ] A fixture using `effort` and `isolation: 'worktree'` runs without a preflight error, and a spawned subagent's system prompt contains the first heading of the repo's `AGENTS.md`.
+- [ ] `bun run check` passes with `plugins/dsh-workflow-loader` in the tree, its test suite green, and the loader row present in the release payload.
+- [ ] The loader lists a script at `<cwd>/.claude/workflows/` and one at `~/.claude/workflows/`, resolves by name, and refuses a name carried by both roots with both paths.
+- [ ] The Claude Code → DSH engine-level comparator, aimed at `ctx.workflowEngine`, exits 0 against the Claude Code goldens, and its negative cases fail as designed.
+- [ ] genie's `.claude/workflows/council.js` runs through the loader on a live DSH Host via `workflow_run` and returns a report in the same shape as the native run recorded in `workflows-catalog`, with the full value in the run's journal.
+- [ ] The loader refuses `budget()`, `workflow()`, `isolation` and `agentType` with a line number, and drops `effort` from `agent()` option objects only — every data occurrence named `effort` preserved byte-identically.
 
 ## Execution Strategy
 
@@ -84,7 +84,7 @@ Group 0 gates every other group; if it ends BLOCKED the wish stops and `workflow
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| 1 | engineer | 3 — dependency / lockfile on an rc series (+2), prior-rework risk (+1) | `implementor-mid` / high | Fork bootstrap: detach, pin exact versions, green gate, capability assertion |
+| 1 | engineer | 3 — dependency / lockfile on an rc series (+2), prior-rework risk (+1) | `implementor-mid` / high | Fork bootstrap: detach, pin exact versions, green gate, capability assertion (historical — not taken; superseded by the Re-plan) |
 
 ### Wave 2 (sequential after Wave 1)
 
@@ -110,6 +110,39 @@ Route the total in **Model** by portable role and reasoning effort: **0–1** �
 independent `final-gate` at the highest justified effort. Each runtime maps
 these to its matching native roles. Keep
 model and effort in runtime session/agent configuration, never skill frontmatter.
+
+## Re-plan — 2026-09-19 (Group 0 accepted: the loader route)
+
+**Trigger:** Group 0's evidence was accepted by merging [#3008](https://github.com/automagik-dev/genie/pull/3008)
+and the route it chose was implemented by merging [#3011](https://github.com/automagik-dev/genie/pull/3011)
+(source) and opening [#3015](https://github.com/automagik-dev/genie/pull/3015) (payload wiring + smoke).
+This section re-plans Groups 1–4 against that seam, which Group 0's acceptance criteria require before
+Group 1 work starts. It is an amendment, not a rewrite: each affected group carries a **Re-plan** note
+below, and nothing in the original text is presented as delivered that is not.
+
+**What changed.** Group 0 found the catalog needs only two transforms — `export const meta` lifted into
+the `meta` request field, and `effort` dropped from `agent()` option objects — over an engine that already
+supplies `agent` + `schema` + `model`, `parallel`, `pipeline`, `phase`, `log` and `args`, with a `spawn`
+provider that already advertises `outputSchema`, `depthLimit`, `persona`, `toolFilter` and `agentOptions`.
+None of `budget(`, `workflow(`, `isolation`, `agentType`, clock APIs or model aliases appears anywhere in
+the nine catalog scripts, so the fork's distinguishing machinery covers zero present usage.
+
+**What that does to the groups:**
+
+| Group | Was | Becomes |
+|---|---|---|
+| 1 | fork-bootstrap, detach from a private DSH snapshot | **Not taken.** No fork repository, no snapshot detachment, no npm-pinned `@deepseek-ai/*` devDependencies. Its capability assertion (`outputSchema`/`depthLimit`) is answered by Group 0's provider inspection and by the loader's own tests. |
+| 2 | catalog-dialect on the fork | **Delivered in genie** by `plugins/dsh-workflow-loader`: two roots with the collision rule, the `meta` split (parsed as data, never evaluated), the `effort` policy, and `budget()`/`workflow()`/`isolation`/`agentType` refused with a line number. |
+| 3 | adapters: worktree, effort soft hint, repo context injection | **Partly delivered.** The fail-closed policy and the journal writer are in the loader. Worktree isolation, the `effort` soft hint and `AGENTS.md`/`CLAUDE.md` injection are **deferred with triggers**, because the loader refuses those options loudly rather than approximating them. |
+| 4 | conformance: fixtures, goldens, comparator, council run | **Reduced and re-aimed.** The QuickJS fixture matrix goes with the fork. What survives is worth keeping: a Claude Code → DSH engine-level comparator, and an integration record of `council` running through the loader on a live Host — which the smoke now covers mechanically and a recorded run covers behaviourally. |
+
+**Residual work this wish now owns:** (a) the cross-body comparator and its goldens, re-aimed at the
+first-party engine rather than the fork; (b) the live integration record for `council`; (c) the deferred
+adapters, each behind the trigger that would make it real. Everything else in Groups 1–3 is delivered or
+moot. The wish is re-planned and **awaits the re-review that gates the residual work**; its status stays with the
+orchestrator, not with whoever writes this section.
+
+---
 
 ## Execution Groups
 
@@ -148,7 +181,9 @@ test -f .genie/wishes/dsh-workflow-fork/docs/seam-comparison.md && grep -q 'dsh 
 
 ### Group 1: fork-bootstrap — detach from the private DSH snapshot
 
-**Goal:** Create `automagik-dev/dsh_workflow` from `omdsh-dev/dsh_workflow` and make its own gate green against npm-published DSH packages on the series genie deploys.
+**Re-plan (2026-09-19): NOT TAKEN — the fork is not created.** Group 0 chose the first-party engine, so there is no repository to bootstrap, no private snapshot to detach from and no `@deepseek-ai/*` devDependency pinning. The capability assertion this group existed to make (`SubagentCapabilities.outputSchema === true`, `depthLimit === true`) is answered in Group 0 §2 against the `spawn` provider the loader runs on, and the loader's own tests exercise `schema` end to end. The rest of this group's text is retained as the record of the route not taken.
+
+**Goal (historical):** Create `automagik-dev/dsh_workflow` from `omdsh-dev/dsh_workflow` and make its own gate green against npm-published DSH packages on the series genie deploys.
 
 **Deliverables:**
 1. Fork created; `README` states the upstream and the genie purpose; `NOTICE` retains the MIT attribution.
@@ -172,7 +207,9 @@ pnpm install --frozen-lockfile && pnpm check && node -e "const c=require('./comp
 
 ### Group 2: catalog-dialect — read and run Claude Code scripts from the canonical paths
 
-**Goal:** Make an unmodified `.claude/workflows/<name>.js` discoverable, loadable and executable by the DSH engine.
+**Re-plan (2026-09-19): DELIVERED in genie, not in a fork** — `plugins/dsh-workflow-loader` (merged in #3011, payload wiring in #3015). Root discovery is `catalogRoots` (project `.claude/workflows` plus the personal root), and a name carried by both roots is refused by name rather than resolved by luck. The dialect is `src/dialect.ts`: the `meta` literal is parsed as data (never evaluated, and a computed one is refused by name), `effort` is removed from `agent()` option objects **only** — a schema field or prompt word named `effort` is preserved byte-identically, which is what `workfly.js` and `docs-audit.js` require — an unknown option refuses the run instead of reaching the engine, and the result must compile before it is returned. `budget()`/`workflow()`/`isolation`/`agentType` are refused with a line number. `bg`/`meta` handling no longer needs a `run(wf, args)` transform: the engine already takes the body as-is.
+
+**Goal (historical):** Make an unmodified `.claude/workflows/<name>.js` discoverable, loadable and executable by the DSH engine.
 
 **Deliverables:**
 1. `src/catalog.ts`: two new roots, `<cwd>/.claude/workflows/*.js` (project) and `~/.claude/workflows/*.js` (personal). Classification is by root: every `.js` under a Claude root is dialect (`capability-generated`), and a Claude root never yields `trusted-local`. Project shadows personal within the Claude roots; a name present in both a DSH root and a Claude root is a listing error, not a shadow.
@@ -198,7 +235,9 @@ pnpm check && pnpm vitest run tests/claude-dialect.spec.ts
 
 ### Group 3: adapters — worktree, effort, shared context
 
-**Goal:** Remove the preflight failures that stop real genie scripts from running, and give DSH subagents the same repo context Claude Code subagents get.
+**Re-plan (2026-09-19): PARTLY DELIVERED, remainder deferred with triggers.** Delivered by the loader: the fail-closed policy for `isolation`/`agentType` (refuse with a line number, never approximate) and the journal writer (the full return value to `<DSH_HOME>/workflow-runs/`, with the model-facing projection bounded — the cap that cost the recorded council run its synthesis block). Deferred, each behind a trigger: **worktree isolation** when a catalog script actually passes `isolation: 'worktree'` (none does today); **the `effort` soft hint** when a body needs effort to reach dispatch (today it is dropped, and the engine's own refusal is quoted in the tests); **`AGENTS.md`/`CLAUDE.md` injection** when a spawned subagent is observed missing repo context. A soft hint or a silent approximation would be worse than the refusal this delivers.
+
+**Goal (historical):** Remove the preflight failures that stop real genie scripts from running, and give DSH subagents the same repo context Claude Code subagents get.
 
 **Deliverables:**
 1. `src/adapters/git-worktree.ts`: a `WorktreeIsolationAdapter` creating a linked worktree per task outside the pruned run root, disposed via `git worktree remove` plus `git worktree prune` (never a plain directory delete), opt-in per run when the host repo is dirty; registered by default and covered by the adapter spec.
@@ -212,7 +251,7 @@ pnpm check && pnpm vitest run tests/claude-dialect.spec.ts
 
 **Validation:**
 ```bash
-# Fork gate plus the adapter specs
+# Fork gate plus the adapter specs (historical, superseded by the Re-plan — trigger work lands in genie)
 pnpm check && pnpm vitest run tests/adapters.spec.ts
 ```
 
@@ -222,7 +261,9 @@ pnpm check && pnpm vitest run tests/adapters.spec.ts
 
 ### Group 4: conformance — fixtures, Claude Code goldens, comparator, council run
 
-**Goal:** Prove parity mechanically and run genie's first canonical workflow on the fork.
+**Re-plan (2026-09-19): REDUCED and re-aimed at the first-party engine.** The QuickJS fixture matrix, `approvalMode: never` driver and fake-subagent extraction go with the fork. What survives: (a) a Claude Code → DSH **engine-level comparator** with goldens and `provenance.json`, aimed at `ctx.workflowEngine`, because two executors reading the same directory will diverge on semantics nobody re-checks; (b) the **integration record** for `council`, which now has a mechanical half — `scripts/dsh-workflow-loader-smoke.ts` boots a real Host with the row active and holds it through the boot audit — and still needs the behavioural half, a recorded `workflow_run council` run from a live body.
+
+**Goal (historical):** Prove parity mechanically and run genie's first canonical workflow on the fork.
 
 **Deliverables:**
 1. `conformance/fixtures/<fixture>.js`, one per primitive and semantic: `pipeline-streaming`, `parallel-null-isolation`, `phase-marker-and-opts-phase`, `agent-schema`, `nested-workflow-and-depth-limit`, `budget-visibility`, `forbidden-clock`. Each takes `{stamp}` via `args` and returns a JSON object encoding the semantic under test (phase names seen, arrival order, budget values, the caught `Date.now` error message), because the native `journal.jsonl` records only agent results. Stub-agent prompts instruct the agent to return a fixed literal per label.
@@ -231,14 +272,14 @@ pnpm check && pnpm vitest run tests/adapters.spec.ts
 4. Integration run: genie's `.claude/workflows/council.js` executed on the fork from a genie checkout with real DSH subagents, report saved under `conformance/integration/council-<date>.md`. This is evidence-recorded, like the native run in `workflows-catalog`; the validation checks the report exists.
 
 **Acceptance Criteria:**
-- [ ] `node scripts/run-conformance.mjs --fixtures conformance/fixtures --out .dsh/conformance-out && node scripts/workflow-conformance.mjs .dsh/conformance-out` exits 0.
+- [ ] The comparator script exits 0 against the Claude Code goldens with `provenance.json` present, and exits non-zero on a mutated return and on a golden without provenance.
 - [ ] The comparator spec's negative cases fail as designed.
 - [ ] The council integration report has five lens sections and a synthesis in the skill's shape.
 
 **Validation:**
 ```bash
-# Fork gate plus the driver, comparator and its spec
-pnpm check && node scripts/run-conformance.mjs --fixtures conformance/fixtures --out .dsh/conformance-out && node scripts/workflow-conformance.mjs .dsh/conformance-out && pnpm vitest run tests/conformance.spec.ts && ls conformance/integration/council-*.md && (cd "$GENIE_ROOT" && bun run wishes:lint)
+# Genie gate plus the loader suite; the council integration record is evidence-checked (AC 3) once it exists
+bun run check && bun test plugins/dsh-workflow-loader && bun run wishes:lint
 ```
 
 **depends-on:** 3
@@ -249,9 +290,9 @@ pnpm check && node scripts/run-conformance.mjs --fixtures conformance/fixtures -
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
-- [ ] Functional: from a genie checkout, `/workflow list` on DSH shows `council` and `pm-ledger-verify` from `.claude/workflows/`.
-- [ ] Integration: `/workflow council {"decision": "..."}` on DSH returns a report in the same shape as the native run recorded in `workflows-catalog`.
-- [ ] Regression: a `.workflow.json` capsule in `.dsh/workflows/` still lists and runs.
+- [ ] Functional: on a DSH body, a catalog rooted at a genie checkout lists `council` and `pm-ledger-verify` from `.claude/workflows/` — the panel route `/api/genie-board/workflows` returns both, and the loader resolves them by name.
+- [ ] Integration: `workflow_run({"name": "council", "args": {"decision": "..."}})` on a DSH body returns a report in the same shape as the native run recorded in `workflows-catalog`, with the full value in the run's journal.
+- [ ] Regression: the loader refuses `budget()`, `workflow()`, `isolation` and a name carried by both roots with a line number or both paths, rather than running a weaker script.
 
 ---
 
@@ -288,33 +329,32 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Applied in-document:** all of the above, plus Group 0 (seam comparison, host version, kill criterion) gating Group 1, exact-version pins with a committed lockfile, the `outputSchema` / `depthLimit` capability assertion, fail-closed per-option policy, finite shipped defaults with the permissive settings confined to the conformance driver's temporary profile, worktree disposal via git.
 - **Transition:** APPROVED → **FIX-FIRST**: Group 0 is a new gate and the route decision may re-plan Groups 1 to 3, so the plan needs re-review before work; the recorded wave base stands.
 
+### Group 0 accepted + route implemented — 2026-09-19 — re-plan awaiting review
+
+- **Context:** executed on Felipe's instruction by the DSH body (Sofia) against host `dsh 0.1.5-rc.2`; opened as a PR rather than committed here, because a reviewer's evidence is not a status change.
+- **Evidence:** [`docs/seam-comparison.md`](docs/seam-comparison.md) — every Claude Code hook with its first-party behaviour, the exact engine refusals, the spike record and the host/floor decision. The spike split `export const meta` off `.claude/workflows/council.js`, dropped `effort` from `agent()` options and ran it: `workflow "council" completed (6 agents)`, `decision: gather-evidence`. Across the nine catalog scripts the transform removes 35 options in 7 files and preserves every data occurrence named `effort` (cross-checked against an independent TypeScript-AST transform). The loader that implements the route is [#3011](https://github.com/automagik-dev/genie/pull/3011); its payload wiring and host smoke are [#3015](https://github.com/automagik-dev/genie/pull/3015), where `bun scripts/dsh-workflow-loader-smoke.ts` exits PASS on that branch with the row active in a booted Host, having caught two real loader defects before either could reach a profile (the PR is still in review).
+- **Transition:** Group 0's evidence is **accepted** (merged in #3008), and the re-plan above records what that does to Groups 1–4. **Status stays DRAFT:** a re-planned wish needs the re-review that gates the residual work before it starts, and the orchestrator sets the status — not the author of this block.
+
 ---
 
 ## Files to Create/Modify
 
 ```
-# automagik-dev/dsh_workflow (fork of omdsh-dev/dsh_workflow)
-README.md, NOTICE                                    (upstream attribution, genie purpose)
-package.json, pnpm-lock.yaml, compatibility.json     (npm devDependencies on DSH 0.1.x; {npmSeries, version, testedAt})
-vitest.config.ts                                     (resolve @deepseek-ai/* from node_modules)
-scripts/check-compatibility.mjs                      (npm version check, no snapshot git)
-scripts/check-dsh-workflow-projection.mjs            (same)
-scripts/run-conformance.mjs                          (fixture driver: stage into tmp .claude/workflows/, approvalMode never, output outside the run root)
-scripts/workflow-conformance.mjs                     (comparator)
-src/catalog.ts                                       (two Claude Code roots, by-root classification, collision rule)
-src/claude-dialect.ts                                (new: meta extraction + body transform)
-src/source-policy.ts                                 (accept the dialect)
-src/runtime.ts                                       (bare-global shim, clock ban, phase marker bridge, scriptPath, unknown-option policy)
-src/engine.ts                                        (phase marker bridge method, effort soft hint, journal writer)
-src/index.ts                                         (config parity defaults, wall timeout 0, adapters, systemPrompt injection)
-src/adapters/git-worktree.ts                         (new)
-tests/support/fake-subagents.mjs                     (extracted from tests/engine.spec.ts)
-tests/claude-dialect.spec.ts, tests/adapters.spec.ts, tests/conformance.spec.ts (new)
-conformance/fixtures/*.js, conformance/golden/<fixture>/{result-lines.jsonl,return.json,provenance.json}, conformance/CAPTURE.md
-conformance/integration/council-<date>.md            (the council run on DSH)
+# automagik-dev/genie — the loader route (all merged or in review as noted)
+plugins/dsh-workflow-loader/package.json, tsconfig.json, build.ts        (the row: bun/esbuild, one host bundle)
+plugins/dsh-workflow-loader/cordis.patch.yml, agent.cordis.yml          (profile and agent-preset rows)
+plugins/dsh-workflow-loader/src/index.ts                                 (row + the `workflow_run` tool, plain-object definition)
+plugins/dsh-workflow-loader/src/config.ts                                (idempotent resolver: cordis re-resolves what validate() returned)
+plugins/dsh-workflow-loader/src/catalog.ts                               (two roots, collision rule, by-name resolution)
+plugins/dsh-workflow-loader/src/dialect.ts                               (meta split, effort policy, absent-hook refusals)
+plugins/dsh-workflow-loader/src/run.ts                                   (bounded projection + the journal writer)
+plugins/dsh-workflow-loader/src/{dialect,tool}.test.ts                   (42 tests, incl. this repository's own catalog)
+scripts/dsh-workflow-loader-smoke.ts, .test.ts                           (boot smoke + its unit tests)   [#3015]
+scripts/build-binary.sh, scripts/release-payload-version{,.test}.ts      (payload member + version stamping)   [#3015]
+.genie/wishes/dsh-workflow-fork/WISH.md                                  (this document)
+.genie/wishes/dsh-workflow-fork/docs/seam-comparison.md                  (Group 0 comparison + spike record)
+.genie/INDEX.md                                                          (entry)
 
-# automagik-dev/genie
-.genie/wishes/dsh-workflow-fork/WISH.md              (this document)
-.genie/wishes/dsh-workflow-fork/docs/seam-comparison.md (Group 0 comparison + spike record)
-.genie/INDEX.md                                      (entry)
+# NOT created — the fork Group 0 did not choose
+# automagik-dev/dsh_workflow (fork of omdsh-dev/dsh_workflow): no repository, no snapshot detachment, no dialect fork.
 ```

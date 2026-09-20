@@ -124,7 +124,12 @@ export type GenieCommandResult =
   | { readonly ok: true; readonly mode: 'started'; readonly runId: string; readonly dispatchId: string }
   | {
       readonly ok: false;
-      readonly reason: 'no-active-workspace' | 'ambiguous-start' | 'slow-reads' | 'not-yet-available';
+      readonly reason:
+        | 'no-active-workspace'
+        | 'unreachable-workspace'
+        | 'ambiguous-start'
+        | 'slow-reads'
+        | 'not-yet-available';
     }
   | { readonly ok: false; readonly reason: 'error'; readonly code: string };
 
@@ -172,11 +177,21 @@ export interface ChosenAgentTerminal {
    * with a `term_` prefix the host does not use (design risk 1).
    */
   readonly terminalId: string;
-  readonly match: 'exact' | 'prefix-stripped';
+  readonly match: 'exact' | 'prefix-stripped' | 'first-host-terminal';
 }
 
-/** The workspace selector every palette handler addresses: the one the host just resolved. */
-const ACTIVE_WORKSPACE = 'active';
+/**
+ * Where the workspace comes from. `workspace.readContext` is the ONE thing
+ * that names the workspace the operator is looking at. The CLI's `active` and
+ * `current` are cwd shortcuts ("No Orca-managed worktree contains the current
+ * directory"), the plugin worker's cwd is never a workspace, and on a desktop
+ * paired to a remote runtime the local CLI cannot see that workspace at all.
+ * So the host context is the truth, and the adapter is an enrichment:
+ * `worktree show --worktree name:<displayName>`, accepted only when the record
+ * sits on the context's branch, adds the id, path, linked issue and agent.
+ * When it cannot, every handler still works from the context alone.
+ */
+const MAX_NAME_SELECTOR_CHARS = 256;
 const NOTIFICATION_TITLE = 'Genie';
 const MAX_NOTIFICATION_BODY = 300;
 /** Orca's `notifications.show` schema bounds `title` to 120 characters (body to 1 000); a longer title is `invalid_params`. */
@@ -496,6 +511,12 @@ export function composeSlashCommand(verb: string, workspace: GenieWorkspace): st
   return normalized(sanitizedLine(`/${verb} — ${segments.join('; ')}`));
 }
 
+function firstHostTerminal(terminalIds: readonly string[]): ChosenAgentTerminal | undefined {
+  const first = terminalIds[0];
+  if (first === undefined) return undefined;
+  return { terminal: { handle: first }, terminalId: first, match: 'first-host-terminal' };
+}
+
 function contextTerminalIds(context: unknown): string[] {
   const terminals = recordOf(context).terminals;
   if (!Array.isArray(terminals)) return [];
@@ -505,23 +526,85 @@ function contextTerminalIds(context: unknown): string[] {
   });
 }
 
-async function readWorkspace(deps: HandlerDeps): Promise<GenieWorkspace> {
-  const response = await deps.runtime.execute({ operation: 'worktree-show', worktree: ACTIVE_WORKSPACE });
-  const record = recordOf(resultOf(response).worktree);
+interface HostWorkspaceContext {
+  readonly branch: string | null;
+  readonly displayName: string;
+  readonly terminalIds: readonly string[];
+}
+
+function hostWorkspaceContext(context: unknown): HostWorkspaceContext {
+  const record = recordOf(context);
+  return Object.freeze({
+    branch: textOf(record.branch),
+    displayName: textOf(record.displayName) ?? 'this workspace',
+    terminalIds: contextTerminalIds(context),
+  });
+}
+
+/** The workspace as the host alone describes it: no id, no path, no issue, no agent. */
+function contextWorkspace(context: HostWorkspaceContext): GenieWorkspace {
+  return Object.freeze({
+    id: '',
+    path: '',
+    branch: context.branch,
+    displayName: context.displayName,
+    linkedIssue: null,
+    createdWithAgent: null,
+  });
+}
+
+function workspaceOf(record: Record<string, unknown>, fallbackName: string): GenieWorkspace {
   const linkedIssue = record.linkedIssue;
   return Object.freeze({
     id: textOf(record.id) ?? '',
     path: textOf(record.path) ?? '',
     branch: textOf(record.branch),
-    displayName: textOf(record.displayName) ?? 'this workspace',
+    displayName: textOf(record.displayName) ?? fallbackName,
     linkedIssue: typeof linkedIssue === 'number' ? linkedIssue : textOf(linkedIssue),
     createdWithAgent: textOf(record.createdWithAgent),
   });
 }
 
-async function readTerminals(deps: HandlerDeps): Promise<GenieTerminal[]> {
-  const response = await deps.runtime.execute({ operation: 'terminal-list', worktree: ACTIVE_WORKSPACE });
-  const terminals = resultOf(response).terminals;
+/**
+ * Enrich the host context through the adapter, or return null and say why.
+ * A `name:` selector can match a workspace of another repository with the
+ * same display name, so the record is accepted only on the context's branch;
+ * an unreachable runtime, an ambiguous or missing name, or a name outside the
+ * selector grammar all degrade to the context alone rather than to a failure.
+ */
+async function resolveWorkspace(deps: HandlerDeps, context: HostWorkspaceContext): Promise<GenieWorkspace | null> {
+  const name = context.displayName;
+  if (name.length === 0 || name.length > MAX_NAME_SELECTOR_CHARS || sanitizedLine(name) !== name) {
+    deps.log('genie: the workspace display name is outside the name: selector grammar; using the host context alone');
+    return null;
+  }
+  try {
+    const response = await deps.runtime.execute({ operation: 'worktree-show', worktree: `name:${name}` });
+    const workspace = workspaceOf(recordOf(resultOf(response).worktree), name);
+    if (workspace.id.length === 0 || bareBranch(workspace.branch) !== bareBranch(context.branch)) {
+      deps.log(`genie: name:${name} resolved a workspace on another branch; using the host context alone`);
+      return null;
+    }
+    return workspace;
+  } catch (error) {
+    deps.log(
+      `genie: the Orca CLI could not resolve workspace ${name} (${errorCode(error)}); using the host context alone`,
+    );
+    return null;
+  }
+}
+
+async function readTerminals(deps: HandlerDeps, workspaceId: string): Promise<GenieTerminal[]> {
+  let terminals: unknown;
+  try {
+    const response = await deps.runtime.execute({ operation: 'terminal-list', worktree: `id:${workspaceId}` });
+    terminals = resultOf(response).terminals;
+  } catch (error) {
+    deps.log(
+      `genie: the Orca CLI could not list the workspace terminals (${errorCode(error)}); using the host ids alone`,
+    );
+    return [];
+  }
   if (!Array.isArray(terminals)) return [];
   return terminals.flatMap((entry) => {
     const record = recordOf(entry);
@@ -612,11 +695,27 @@ async function runVerb(deps: HandlerDeps, command: GeniePaletteCommand, verb: st
     await notify(deps, 'Genie: no active workspace');
     return { ok: false, reason: 'no-active-workspace' };
   }
-  const workspace = await readWorkspace(deps);
-  const terminals = await readTerminals(deps);
-  const chosen = chooseAgentTerminal(contextTerminalIds(context), terminals);
+  const hostContext = hostWorkspaceContext(context);
+  const resolved = await resolveWorkspace(deps, hostContext);
+  const workspace = resolved ?? contextWorkspace(hostContext);
+  const terminals = resolved === null ? [] : await readTerminals(deps, resolved.id);
   const commandText = composeSlashCommand(verb, workspace);
+  // The agent terminal when the CLI can tell. When the CLI could not reach the
+  // workspace at all, the host's first terminal stands in (agent-first creation
+  // puts the agent there) — a worker cannot be started on a workspace the CLI
+  // cannot address. When the CLI did answer and found no agent terminal, a
+  // supervised worker is the honest route, never a plain shell.
+  const chosen =
+    chooseAgentTerminal(hostContext.terminalIds, terminals) ??
+    (resolved === null ? firstHostTerminal(hostContext.terminalIds) : undefined);
   if (chosen === undefined) {
+    if (resolved === null) {
+      await notify(
+        deps,
+        `Genie: ${workspace.displayName} has no terminal, and this machine's Orca CLI cannot reach it to start one; open a terminal there and retry`,
+      );
+      return { ok: false, reason: 'unreachable-workspace' };
+    }
     if (deps.now() - startedAt > READ_PHASE_DEADLINE_MS) {
       await notify(deps, `Genie: Orca answered too slowly to start a worker on ${workspace.displayName} safely; retry`);
       return { ok: false, reason: 'slow-reads' };
@@ -702,13 +801,14 @@ function doctorBody(summary: DoctorSummary): string {
 /** One read, one child process, one notification. Every failure is the same bounded line. */
 async function runDoctor(deps: HandlerDeps): Promise<GenieDoctorResult> {
   try {
-    const workspace = await readWorkspace(deps);
-    const process = await runGenieBinary(
-      deps,
-      ['doctor', '--json'],
-      DOCTOR_TIMEOUT_MS,
-      workspace.path.length > 0 ? workspace.path : undefined,
-    );
+    const context = await hostCall(deps.host, 'workspace.readContext', {});
+    const workspace =
+      context === null || context === undefined ? null : await resolveWorkspace(deps, hostWorkspaceContext(context));
+    if (workspace === null || workspace.path.length === 0) {
+      await notify(deps, 'Genie doctor: could not run (the workspace path is not known from this machine)');
+      return { ok: false, warn: 0, fail: 0 };
+    }
+    const process = await runGenieBinary(deps, ['doctor', '--json'], DOCTOR_TIMEOUT_MS, workspace.path);
     const summary = summarizeDoctor(parsedJson(process.stdout, 'genie doctor --json'));
     await notify(deps, doctorBody(summary));
     return { ok: summary.ok, warn: summary.warn, fail: summary.fail };
