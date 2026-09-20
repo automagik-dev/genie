@@ -325,30 +325,6 @@ export const DEFAULT_STALE_MS = 15 * 60 * 1000;
 
 export type WishGroupStatus = 'blocked' | 'ready' | 'in_progress' | 'done';
 
-/** A single hire-roster entry: one agent adapter hired into one wish. */
-export interface HireRosterRow {
-  /** Wish slug this hire belongs to. */
-  wish: string;
-  /** Agent adapter id (the runtime/provider slot) hired into the wish. */
-  agentAdapterId: string;
-  /** Optional provider profile; null when unset. */
-  profile: string | null;
-  /** Worktree binding for this hire. */
-  worktree: string;
-  hiredAt: number;
-  /** Free-form lifecycle state of the hire (defaults to `hired`). */
-  state: string;
-}
-
-export interface HireAgentInput {
-  wish: string;
-  agentAdapterId: string;
-  profile?: string;
-  worktree: string;
-  /** Lifecycle state to stamp. Defaults to `hired`. */
-  state?: string;
-}
-
 // ============================================================================
 // Declared routing roster (cross-agent-delegate W1)
 // ============================================================================
@@ -2052,85 +2028,6 @@ export function linkTaskToWish(
 }
 
 // ============================================================================
-// Hire roster (single-row upsert / delete)
-//
-// The retired `genie ui-bridge` was this surface's only shipped writer; the rows
-// remain part of exported/imported board state (roadmap sync excludes them as
-// machine-local), so the accessors stay.
-// ============================================================================
-
-interface RawHire {
-  wish: string;
-  agent_adapter_id: string;
-  profile: string | null;
-  worktree: string;
-  hired_at: number;
-  state: string;
-}
-
-function mapHire(row: RawHire): HireRosterRow {
-  return {
-    wish: row.wish,
-    agentAdapterId: row.agent_adapter_id,
-    profile: row.profile,
-    worktree: row.worktree,
-    hiredAt: row.hired_at,
-    state: row.state,
-  };
-}
-
-/**
- * Hire an agent adapter into a wish. Idempotent single-row upsert keyed on
- * `(wish, agent_adapter_id)`: a re-hire refreshes profile/worktree/state but
- * preserves the original `hired_at` by OMITTING `hired_at` from the `ON CONFLICT
- * DO UPDATE SET` list — an unset column keeps its stored value, so the first
- * hire's timestamp survives every re-hire and the call converges on one row.
- * RETURNING captures the result inside that same write statement, so a racing
- * unhire cannot remove the row between the upsert and a separate result read.
- * WAL + busy_timeout (see sqlite-open.ts) serializes concurrent writers.
- */
-export function hireAgent(db: Database, input: HireAgentInput): HireRosterRow {
-  const now = Date.now();
-  const state = input.state ?? 'hired';
-  const row = db
-    .query(
-      `INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(wish, agent_adapter_id) DO UPDATE SET
-       profile  = excluded.profile,
-       worktree = excluded.worktree,
-       state    = excluded.state
-     RETURNING *`,
-    )
-    .get(input.wish, input.agentAdapterId, input.profile ?? null, input.worktree, now, state) as RawHire;
-  return mapHire(row);
-}
-
-/**
- * Unhire an agent adapter from a wish. Idempotent single-row delete: removing an
- * absent hire is a no-op that returns false; a real removal returns true.
- */
-export function unhireAgent(db: Database, wish: string, agentAdapterId: string): boolean {
-  const res = db.query('DELETE FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?').run(wish, agentAdapterId);
-  return res.changes > 0;
-}
-
-export function getHire(db: Database, wish: string, agentAdapterId: string): HireRosterRow | null {
-  const row = db
-    .query('SELECT * FROM hire_roster WHERE wish = ? AND agent_adapter_id = ?')
-    .get(wish, agentAdapterId) as RawHire | null;
-  return row ? mapHire(row) : null;
-}
-
-/** Hires for a wish, or the whole roster when `wish` is omitted. Order-stable. */
-export function listHires(db: Database, wish?: string): HireRosterRow[] {
-  const rows = wish
-    ? (db.query('SELECT * FROM hire_roster WHERE wish = ? ORDER BY agent_adapter_id').all(wish) as RawHire[])
-    : (db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[]);
-  return rows.map(mapHire);
-}
-
-// ============================================================================
 // Full-state export
 // ============================================================================
 
@@ -2149,7 +2046,6 @@ export interface StateExport {
   stage_log: RawStage[];
   task_events: RawTaskEvent[];
   wish_groups: RawWishGroup[];
-  hire_roster: RawHire[];
 }
 
 interface RawBoard {
@@ -2192,7 +2088,6 @@ export function exportState(db: Database): StateExport {
     stage_log: db.query('SELECT * FROM stage_log ORDER BY id').all() as RawStage[],
     task_events: db.query('SELECT * FROM task_events ORDER BY id').all() as RawTaskEvent[],
     wish_groups: db.query('SELECT * FROM wish_groups ORDER BY wish, name').all() as RawWishGroup[],
-    hire_roster: db.query('SELECT * FROM hire_roster ORDER BY wish, agent_adapter_id').all() as RawHire[],
   };
 }
 
@@ -2224,7 +2119,6 @@ export interface ImportSummary {
   dependencies: number;
   events: number;
   wishGroups: number;
-  hires: number;
 }
 
 const SNAPSHOT_TABLE_KEYS = [
@@ -2235,8 +2129,21 @@ const SNAPSHOT_TABLE_KEYS = [
   'stage_log',
   'task_events',
   'wish_groups',
-  'hire_roster',
 ] as const;
+
+/**
+ * Snapshot schema versions BELOW the database's own that this build still
+ * imports, because every table it writes is identical at both versions.
+ *
+ * v1 -> v2 dropped `hire_roster` and changed nothing else. No snapshot genie
+ * ever published carried a hire row — `roadmapSnapshot` always emitted
+ * `hire_roster: []` — so a v1 snapshot's writable slice is byte-identical to a
+ * v2 one, and its extra `hire_roster` key is simply not in
+ * {@link SNAPSHOT_TABLE_KEYS} any more: unread, unvalidated, unwritten.
+ * Refusing it instead would have made every committed `.genie/roadmap.json` in
+ * every checkout unimportable the moment the binary updated.
+ */
+const LEGACY_IMPORTABLE_SNAPSHOT_VERSIONS: ReadonlySet<number> = new Set([1]);
 
 /**
  * Tables whose rows the import never writes. `wish_groups` is
@@ -2369,7 +2276,7 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
     }
   }
   const current = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version;
-  if (candidate.schemaVersion !== current) {
+  if (candidate.schemaVersion !== current && !LEGACY_IMPORTABLE_SNAPSHOT_VERSIONS.has(candidate.schemaVersion)) {
     throw new SnapshotFormatError(
       `Snapshot schemaVersion ${candidate.schemaVersion} does not match this database (${current}). Re-export the snapshot with a matching genie version.`,
     );
@@ -2378,15 +2285,9 @@ function validateSnapshot(db: Database, snapshot: unknown): StateExport {
   return candidate as unknown as StateExport;
 }
 
-/**
- * True when any operational table holds rows (meta alone does not count). By
- * default `hire_roster` counts; pass `includeHireRoster: false` for
- * roadmap-scoped decisions, where hires must never gate (their rows are
- * machine-local and excluded from the snapshot).
- */
-export function hasOperationalState(db: Database, opts: { includeHireRoster?: boolean } = {}): boolean {
+/** True when any operational table holds rows (meta alone does not count). */
+export function hasOperationalState(db: Database): boolean {
   const tables = ['boards', 'tasks', 'task_events', 'stage_log', 'wish_groups'];
-  if (opts.includeHireRoster !== false) tables.push('hire_roster');
   for (const table of tables) {
     const row = db.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
     if (row.n > 0) return true;
@@ -2458,13 +2359,6 @@ function insertSnapshotRows(db: Database, state: StateExport): void {
   // production-dead, so a legacy snapshot's rows are never re-inserted and
   // the surviving table stays empty. validateSnapshot still requires the key
   // (SNAPSHOT_TABLE_KEYS) so older binaries' snapshots import cleanly.
-
-  const hire = db.query(
-    'INSERT INTO hire_roster (wish, agent_adapter_id, profile, worktree, hired_at, state) VALUES (?, ?, ?, ?, ?, ?)',
-  );
-  for (const h of state.hire_roster) {
-    hire.run(h.wish, h.agent_adapter_id, h.profile ?? null, h.worktree, h.hired_at, h.state);
-  }
 }
 
 /** True when the failure is a row-schema problem (constraint, NOT NULL, datatype). */
@@ -2479,20 +2373,10 @@ function isRowSchemaError(err: unknown): boolean {
  * with only meta rows (e.g. the backfill marker a fresh open stamps) must not
  * merge stale keys into the snapshot's meta — a retained wish_sig marker would
  * misdescribe the imported rows as drifted. Children before parents so FK
- * cascades never fire mid-wipe; hire_roster sits with its parent tables, only
- * when it is not preserved.
+ * cascades never fire mid-wipe.
  */
-function wipeAllTables(db: Database, preserveHireRoster: boolean): void {
-  const wipe = [
-    'task_events',
-    'stage_log',
-    'task_dependencies',
-    'tasks',
-    ...(preserveHireRoster ? [] : ['hire_roster']),
-    'wish_groups',
-    'boards',
-    'meta',
-  ];
+function wipeAllTables(db: Database): void {
+  const wipe = ['task_events', 'stage_log', 'task_dependencies', 'tasks', 'wish_groups', 'boards', 'meta'];
   for (const table of wipe) {
     db.query(`DELETE FROM ${table}`).run();
   }
@@ -2515,12 +2399,6 @@ function rethrowImportFailure(err: unknown): never {
 /** Options controlling snapshot import. */
 export interface ImportOptions {
   replace?: boolean;
-  /**
-   * Leave the local hire_roster untouched (neither wiped nor inserted). Set for
-   * roadmap-scoped snapshots: hires carry machine-local worktree paths that
-   * must never travel between machines.
-   */
-  preserveHireRoster?: boolean;
 }
 
 /**
@@ -2529,19 +2407,16 @@ export interface ImportOptions {
  * database that already holds operational state unless `replace` is set, in
  * which case every table is cleared and rebuilt from the snapshot inside one
  * transaction. Row ids (including event/stage autoincrement ids) are preserved
- * exactly, so an export → import round-trip is lossless. The emptiness guard
- * skips `hire_roster` when it is preserved, since rows the import never touches
- * cannot justify a refusal.
+ * exactly, so an export → import round-trip is lossless.
  */
 export function importState(db: Database, snapshot: unknown, opts: ImportOptions = {}): ImportSummary {
   const state = validateSnapshot(db, snapshot);
-  const hires = opts.preserveHireRoster ? [] : state.hire_roster;
   const apply = db.transaction(() => {
-    if (hasOperationalState(db, { includeHireRoster: !opts.preserveHireRoster }) && !opts.replace) {
+    if (hasOperationalState(db) && !opts.replace) {
       throw new NonEmptyImportError();
     }
-    if (opts.replace) wipeAllTables(db, opts.preserveHireRoster ?? false);
-    insertSnapshotRows(db, { ...state, hire_roster: hires });
+    if (opts.replace) wipeAllTables(db);
+    insertSnapshotRows(db, state);
     // A legacy snapshot predates the task_events timeline: it carries
     // stage_log history and no events. The fresh open already stamped the
     // backfill marker, so the one-time migration would never mirror these
@@ -2584,6 +2459,5 @@ export function importState(db: Database, snapshot: unknown, opts: ImportOptions
     // the summary reports what was actually inserted — never the snapshot's
     // discarded row count.
     wishGroups: 0,
-    hires: hires.length,
   };
 }

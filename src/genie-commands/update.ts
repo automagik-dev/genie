@@ -41,11 +41,6 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
-  type LegacyIntegrationHomes,
-  type LegacyIntegrationRetirementResult,
-  runLegacyIntegrationRetirement,
-} from '../lib/legacy-integration-retirement.js';
-import {
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   type LifecycleLease,
@@ -2647,11 +2642,6 @@ export interface ManualUpdateConvergenceOptions {
   runSkills?: SkillsChannelRunner;
   /** Test seam for the workflows channel step (production writes `~/.claude/workflows`). */
   runWorkflows?: WorkflowsChannelRunner;
-  /**
-   * Agent-home overrides for the plugin-era retirement step. Production resolves
-   * the real `$HOME` / `$GENIE_HOME`; tests point every root at one fixture home.
-   */
-  retirementHomes?: LegacyIntegrationHomes;
 }
 
 export type SkillsChannelRunner = (
@@ -2703,17 +2693,12 @@ export interface ManualUpdateConvergenceResult {
    * workflows install must reach the exit code rather than be discarded.
    */
   workflows: WorkflowsChannelConvergenceResult | null;
-  /**
-   * The plugin-era integration retirement outcome, or `null` when it did not run
-   * — which is every case except a FRESH skills-channel install (see below).
-   */
-  retirement: LegacyIntegrationRetirementResult | null;
 }
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { skills: null, workflows: null, retirement: null };
+  if (selection === 'none') return { skills: null, workflows: null };
   // Skills FIRST: a host must never pass through a state with neither the
   // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2723,38 +2708,17 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
   // The client plugin refresh that used to sit here is gone: no Genie plugin
   // ships for any client runtime any more, so there is nothing to converge
-  // between the skills channel and retirement.
+  // between the two channels. The plugin-era integration retirement that ran
+  // here behind a fresh skills install left with v6 — its own compat window
+  // (assets written by releases `>= 5.260711.6`) closed three stable releases
+  // after `skills-everywhere-b` shipped, so `genie update` no longer emits an
+  // `integrations: ` line at all.
   //
-  // LAST, and only behind a FRESH skills-channel install: the plugin-era assets
-  // are retired exactly once the replacements are proven on disk. A `skipped` or
-  // `failed` channel deliberately leaves the legacy assets in place — a host must
-  // never pass through a state with neither channel's skills — and no other seam
-  // (install, doctor) ever runs this: retirement is an update-only mutation.
-  const retirement =
-    skills.status === 'installed'
-      ? runLegacyIntegrationRetirement({
-          homes: options.retirementHomes ?? { home: homedir(), genieHome: GENIE_HOME },
-          // Scoped like every `skills:` line above it. Unprefixed, this module's `nothing to retire`
-          // sat in the same transcript as the skills channel's own retirement lines and read as a
-          // verdict on them — which is exactly what hid the pre-record leftovers of issue #2927:
-          // the run had just archived nothing there either, and one unqualified line covered both.
-          log: (line) => emit(`integrations: ${line}`),
-        })
-      : null;
-  // The workflows channel runs after the skills channel (it writes its field
-  // into the record that channel just rewrote, and installs nothing at all when
-  // no readable record survives — wish decision 4) and after the plugin-era
-  // retirement, which owns the ONE file both touch: a `managed-clean`
-  // `~/.claude/workflows/council.js` and its `.genie-sync.json` sidecar are
-  // genie's own plugin-era asset, proven by digest and removed backup-first.
-  // Installing over it first would archive it as "not installed by genie" —
-  // false, and the exact mis-attribution the modified/foreign split exists to
-  // prevent — and would leave the sidecar reported `managed-modified` for ever.
-  // `genie install` runs NO retirement pass (it is an update-only mutation), so
-  // on that seam a plugin-era `council.js` IS archived as foreign — bytes backed
-  // up first, nothing lost: a known, bounded cosmetic on that one path.
+  // The workflows channel therefore runs immediately after the skills channel:
+  // it writes its field into the record that channel just rewrote, and installs
+  // nothing at all when no readable record survives (wish decision 4).
   const workflows = (options.runWorkflows ?? runUpdateWorkflowsChannel)(selection, emit);
-  return { skills, workflows, retirement };
+  return { skills, workflows };
 }
 
 /**

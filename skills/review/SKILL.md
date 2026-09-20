@@ -86,3 +86,4 @@ For repairs, the caller uses `fix`, preserving its budget `B` (default 2), attem
 ## Orca mode
 
 For explicitly selected Orca work, the coordinator dispatches a different agent with a read-only scope, exact artifact, criteria, and current validation evidence. Apply the same validation policy above; the integrated result must pass required checks before SHIP. Begin the response with `VERDICT: SHIP`, `VERDICT: FIX-FIRST`, or `VERDICT: BLOCKED`. Deliver it through Orca's current worker protocol. A completion notification proves delivery, not a passing verdict; the coordinator records evidence and handles resource cleanup.
+The coordinator relays the verdict to the workspace card with `genie orca mirror --to REVIEW --verdict <SHIP|FIX-FIRST|BLOCKED> --evidence "<group, head SHA, gap count>"`; the reviewer still writes nothing, to that card or to any other record.

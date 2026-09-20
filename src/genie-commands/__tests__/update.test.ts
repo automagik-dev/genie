@@ -21,24 +21,15 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  readlinkSync,
-  realpathSync,
   renameSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { computeDirDigest, computeFileDigest } from '../../lib/atomic-fs';
 import { acquireLifecycleLease, currentSyncLockHostId, lifecycleLockPath } from '../../lib/lifecycle-lease';
-import {
-  SKILLS_CLI_VERSION,
-  type SkillsChannelConvergenceResult,
-  releaseTag,
-  writeSkillsInstallRecord,
-} from '../../lib/skills-installer.js';
+import { SKILLS_CLI_VERSION, type SkillsChannelConvergenceResult, releaseTag } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
 import type { WorkflowsChannelConvergenceResult } from '../../lib/workflows-installer.js';
 import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-trees.js';
@@ -2452,7 +2443,6 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     // The workflows channel is a leg of its own, so a caller can give a failed
     // workflows install the same exit precedence a failed skills install gets.
     expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
-    expect(result.retirement).toBeNull();
   });
 
   test('a failed workflows install reaches the exit code, exactly as a failed skills install does', () => {
@@ -2491,7 +2481,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     }
   });
 
-  test('no client plugin refresh survives: every non-none selection is skills then retirement only', () => {
+  test('no client plugin refresh survives: every non-none selection is skills then workflows only', () => {
     // The Claude plugin refresh that once sat between the two left with the
     // client plugin integrations, so a `codex` selection is no longer special:
     // it is not `none`, so the skills channel runs (fixture-skipped here), and
@@ -2508,7 +2498,6 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       ).toEqual({
         skills: { status: 'skipped', reason: 'test fixture' },
         workflows: { status: 'skipped', warnings: [] },
-        retirement: null,
       });
     }
     // Consent `none` reaches NO channel: the workflows leg is null too, and the
@@ -2516,7 +2505,6 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
       skills: null,
       workflows: null,
-      retirement: null,
     });
 
     // Nothing in the update path can reach a client plugin registration.
@@ -2677,33 +2665,10 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     process.exitCode = previousExitCode ?? 0;
   });
 
-  test('installs skills BEFORE the plugin-era retirement (decision 2 ordering)', () => {
-    const calls: string[] = [];
-    runManualUpdateConvergence({
-      runWorkflows: noWorkflowsChannel,
-      expectedVersion: VERSION,
-      selection: 'all',
-      runSkills: (selection) => {
-        calls.push(`skills:${selection}`);
-        return { status: 'skipped', reason: 'test fixture' };
-      },
-      retirementHomes: {
-        home: mkdtempSync(join(tmpdir(), 'genie-converge-order-home-')),
-        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order-genie-')),
-      },
-      log: (line) => calls.push(`log:${line}`),
-    });
-    // A `skipped` channel deliberately leaves the legacy assets in place, so
-    // retirement never runs — skills is the first and only step it gates.
-    expect(calls).toEqual(['skills:all']);
-  });
-
-  test('the convergence runs skills, then the plugin-era retirement, then the workflows channel', () => {
-    // The ordering is load-bearing and was pinned by nothing: the plugin-era
-    // retirement owns `~/.claude/workflows/council.js` and its `.genie-sync.json`
-    // sidecar, so the workflows channel must not install over that file before
-    // the retirement has proven and archived it. Retirement marks its own
-    // position through the `integrations: ` prefix it emits.
+  test('the convergence runs the skills channel, then the workflows channel', () => {
+    // The ordering is load-bearing and was pinned by nothing: the workflows
+    // channel writes its field into the record the skills channel just rewrote,
+    // and installs nothing at all when no readable record survives.
     const steps: string[] = [];
     const result = runManualUpdateConvergence({
       expectedVersion: VERSION,
@@ -2725,17 +2690,35 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         steps.push('workflows');
         return { status: 'skipped', warnings: [] };
       },
-      retirementHomes: {
-        home: mkdtempSync(join(tmpdir(), 'genie-converge-order3-home-')),
-        genieHome: mkdtempSync(join(tmpdir(), 'genie-converge-order3-genie-')),
-      },
-      log: (line) => {
-        if (line.startsWith('integrations: ') && !steps.includes('retirement')) steps.push('retirement');
-      },
+      log: () => undefined,
     });
-    expect(steps).toEqual(['skills', 'retirement', 'workflows']);
-    expect(result.retirement).not.toBeNull();
+    expect(steps).toEqual(['skills', 'workflows']);
     expect(result.workflows).toEqual({ status: 'skipped', warnings: [] });
+  });
+
+  test('no `integrations: ` line survives: the plugin-era retirement left with v6', () => {
+    const lines: string[] = [];
+    runManualUpdateConvergence({
+      expectedVersion: VERSION,
+      selection: 'all',
+      runSkills: () => ({
+        status: 'installed',
+        record: {
+          ref: releaseTag(VERSION),
+          cliVersion: SKILLS_CLI_VERSION,
+          inventory: ['alpha'],
+          agentDirs: [],
+          installedAt: new Date('2026-09-18T00:00:00.000Z').toISOString(),
+        },
+      }),
+      runWorkflows: noWorkflowsChannel,
+      log: (line) => lines.push(line),
+    });
+    expect(lines.some((line) => line.startsWith('integrations: '))).toBe(false);
+    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
+    expect(source).not.toContain('legacy-integration-retirement');
+    expect(source).not.toContain('runLegacyIntegrationRetirement');
+    expect(existsSync(join(import.meta.dir, '..', '..', 'lib', 'legacy-integration-retirement.ts'))).toBe(false);
   });
 
   test('every non-none selection reaches the channel unnarrowed (decision 3)', () => {
@@ -2799,11 +2782,11 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
       log: () => undefined,
     });
     expect(calls).toEqual(['skills']);
-    expect(result.retirement).toBeNull();
+    expect(result.skills).toEqual({ status: 'failed', reason: 'skills CLI exited 1: boom' });
     expect(process.exitCode).toBe(1);
   });
 
-  test('the convergence is skills -> retirement, with no plugin refresh, sync step or throttle marker', () => {
+  test('the convergence is skills -> workflows, with no plugin refresh, sync step or throttle marker', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
     // The `~/.genie/.last-agent-sync` throttle marker and the engine that wrote
     // it are gone; nothing in the update path refreshes or reads either.
@@ -2814,11 +2797,13 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     const start = source.indexOf('export function runManualUpdateConvergence(');
     const body = source.slice(start, source.indexOf('\n}', start));
     const skillsIdx = body.indexOf('runUpdateSkillsChannel');
-    const retireIdx = body.indexOf('runLegacyIntegrationRetirement');
+    const workflowsIdx = body.indexOf('runUpdateWorkflowsChannel');
     expect(skillsIdx).toBeGreaterThan(-1);
-    expect(retireIdx).toBeGreaterThan(skillsIdx);
-    // The client plugin refresh that used to sit between them is gone.
+    expect(workflowsIdx).toBeGreaterThan(skillsIdx);
+    // The client plugin refresh and the plugin-era retirement that used to sit
+    // between them are both gone.
     expect(body).not.toContain('refreshUpdatePlugins');
+    expect(body).not.toContain('runLegacyIntegrationRetirement');
 
     // Every explicit mode runs behind the acquired lifecycle lease.
     const leaseIdx = source.indexOf('const lifecycleLease = acquireRequiredLifecycleLease();');
@@ -2963,357 +2948,5 @@ describe('--sync-only behind a live lifecycle lease (executed)', () => {
     // The live holder's record is untouched, and no steal guard was left.
     expect(readFileSync(lockPath, 'utf8')).toContain(`${process.pid}:`);
     expect(existsSync(`${lockPath}.steal`)).toBe(false);
-  });
-});
-
-describe('runManualUpdateConvergence — plugin-era retirement runs last, behind a fresh skills install', () => {
-  const MANAGED_ROLE_TOML = '# Managed by Genie. Remove with `genie uninstall`.\nname = "genie_reviewer"\n';
-  const COUNCIL_TEMPLATE = "export const meta = { name: 'council' };\nconst LENS_ROOT = '__GENIE_LENS_ROOT__';\n";
-  const RETIREMENT_NOW = new Date('2026-08-30T12:00:00.000Z');
-
-  interface RetirementFixture {
-    home: string;
-    genieHome: string;
-    pluginRoot: string;
-    codexHome: string;
-    claudeDir: string;
-    hermesHome: string;
-    piExtensionsDir: string;
-  }
-
-  const retirementRoots: string[] = [];
-
-  afterEach(() => {
-    while (retirementRoots.length > 0) rmSync(retirementRoots.pop() as string, { recursive: true, force: true });
-  });
-
-  function put(path: string, content: string): void {
-    mkdirSync(join(path, '..'), { recursive: true });
-    writeFileSync(path, content, 'utf8');
-  }
-
-  function putLink(linkPath: string, target: string): void {
-    mkdirSync(join(linkPath, '..'), { recursive: true });
-    mkdirSync(target, { recursive: true });
-    symlinkSync(target, linkPath);
-  }
-
-  function putManagedSkill(dir: string, body: string): void {
-    put(join(dir, 'SKILL.md'), body);
-    put(
-      join(dir, '.genie-sync.json'),
-      `${JSON.stringify(
-        {
-          managedBy: 'genie-agent-sync',
-          version: '9.9.9',
-          digest: computeDirDigest(dir),
-          syncedAt: RETIREMENT_NOW.toISOString(),
-          identityVersion: 2,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  }
-
-  /** The stamped council workflow plus its ownership sidecar, as the stamper left them. */
-  function putManagedCouncilWorkflow(workflowsDir: string, body: string): void {
-    const targetPath = join(workflowsDir, 'council.js');
-    put(targetPath, body);
-    chmodSync(targetPath, 0o644);
-    const manifestPath = join(workflowsDir, 'council.js.genie-sync.json');
-    put(
-      manifestPath,
-      `${JSON.stringify(
-        {
-          managedBy: 'genie-agent-sync',
-          version: '9.9.9',
-          digest: computeFileDigest(targetPath),
-          syncedAt: RETIREMENT_NOW.toISOString(),
-          identityVersion: 2,
-          targetMode: 0o644,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    chmodSync(manifestPath, 0o644);
-  }
-
-  /** Codex role agents plus the v2 ownership inventory, as the role writer left them. */
-  function putManagedCodexRoleAgents(codexHome: string, files: Record<string, string>): void {
-    const agentsDir = join(codexHome, 'agents');
-    const inventory: Record<string, { identity: { kind: 'regular'; mode: number; digest: string } }> = {};
-    for (const [name, content] of Object.entries(files)) {
-      const path = join(agentsDir, name);
-      put(path, content);
-      chmodSync(path, 0o644);
-      inventory[name] = { identity: { kind: 'regular', mode: 0o644, digest: computeFileDigest(path) } };
-    }
-    const inventoryPath = join(agentsDir, '.genie-role-agents.json');
-    put(
-      inventoryPath,
-      `${JSON.stringify({ version: 2, managedBy: 'genie-codex-role-agents', files: inventory }, null, 2)}\n`,
-    );
-    chmodSync(inventoryPath, 0o600);
-  }
-
-  /**
-   * A host carrying EVERY plugin-era surface, plus the skills.sh copies that
-   * already occupy the bare-name skill slots — the real post-channel state, and
-   * the reason the claude skills mirror stays inert instead of competing.
-   */
-  function makeRetirementFixture(): RetirementFixture {
-    const home = realpathSync(mkdtempSync(join(tmpdir(), 'genie-retire-pipeline-')));
-    retirementRoots.push(home);
-    const genieHome = join(home, '.genie');
-    const pluginRoot = join(genieHome, 'plugins', 'genie');
-    const fixture: RetirementFixture = {
-      home,
-      genieHome,
-      pluginRoot,
-      codexHome: join(home, '.codex'),
-      claudeDir: join(home, '.claude'),
-      hermesHome: join(home, '.hermes'),
-      piExtensionsDir: join(home, '.pi', 'agent', 'extensions'),
-    };
-
-    // Genie-owned payload: plugin source for all three adapters.
-    put(join(genieHome, 'VERSION'), '9.9.9\n');
-    put(join(pluginRoot, 'skills', 'alpha', 'SKILL.md'), '# alpha\n');
-    put(join(pluginRoot, 'agents', 'reviewer.md'), '# reviewer\n');
-    put(join(pluginRoot, 'workflows', 'council.js'), COUNCIL_TEMPLATE);
-    put(join(pluginRoot, 'codex-agents', 'genie-reviewer.toml'), MANAGED_ROLE_TOML);
-    put(join(genieHome, 'plugins', 'hermes-genie', 'plugin.json'), '{"name":"hermes-genie"}\n');
-    put(join(genieHome, 'plugins', 'pi-genie', 'package.json'), '{"name":"genie-pi-plugin"}\n');
-
-    // Codex plugin era.
-    put(join(fixture.codexHome, 'config.toml'), '[otel]\nkeep = true\n\n[plugins."genie@automagik"]\nenabled = true\n');
-    put(join(fixture.codexHome, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
-    putManagedCodexRoleAgents(fixture.codexHome, { 'genie-reviewer.toml': MANAGED_ROLE_TOML });
-    putManagedSkill(join(fixture.codexHome, 'skills', '.curated', 'alpha'), '# curated alpha\n');
-
-    // Claude plugin era.
-    put(
-      join(fixture.claudeDir, 'plugins', 'installed_plugins.json'),
-      `${JSON.stringify({ plugins: [{ id: 'genie@automagik' }, { id: 'other@market' }] }, null, 2)}\n`,
-    );
-    put(join(fixture.claudeDir, 'plugins', 'cache', 'automagik', 'genie', '9.9.9', 'plugin.json'), '{}\n');
-    putManagedCouncilWorkflow(
-      join(fixture.claudeDir, 'workflows'),
-      COUNCIL_TEMPLATE.replace('__GENIE_LENS_ROOT__', pluginRoot),
-    );
-    const agentPath = join(fixture.claudeDir, 'agents', 'reviewer.md');
-    put(agentPath, '# reviewer\n');
-    put(
-      join(fixture.claudeDir, 'agents', '.genie-sync.json'),
-      `${JSON.stringify(
-        {
-          managedBy: 'genie-agent-sync',
-          files: {
-            'reviewer.md': {
-              digest: computeFileDigest(agentPath),
-              version: '9.9.9',
-              syncedAt: RETIREMENT_NOW.toISOString(),
-            },
-          },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    putManagedSkill(join(fixture.claudeDir, 'skills', 'legacy-mirror'), '# legacy mirror\n');
-    // The skills.sh channel already owns the bare-name slot for every SOURCE skill.
-    put(join(fixture.claudeDir, 'skills', 'alpha', 'SKILL.md'), '# alpha from skills.sh\n');
-
-    // Hermes + pi plugin era.
-    putLink(join(fixture.hermesHome, 'plugins', 'genie'), join(genieHome, 'plugins', 'hermes-genie'));
-    put(
-      join(fixture.hermesHome, 'config.yaml'),
-      [
-        'mcp_servers:',
-        '  other:',
-        '    command: other',
-        '# genie:managed:mcp_servers.genie — begin (managed by genie; edit via genie only)',
-        '  genie:',
-        '    command: genie',
-        '# genie:managed:mcp_servers.genie — end',
-        'skills:',
-        '  external_dirs:',
-        '    - /operator/own/skills',
-        `    - ${join(genieHome, 'skills')}  # genie:managed:skills.external_dirs`,
-        '',
-      ].join('\n'),
-    );
-    putLink(join(fixture.piExtensionsDir, 'genie'), join(genieHome, 'plugins', 'pi-genie'));
-    mkdirSync(join(genieHome, 'skills', 'alpha'), { recursive: true });
-    put(join(genieHome, 'skills', 'alpha', 'SKILL.md'), '# alpha payload\n');
-    return fixture;
-  }
-
-  function plantRecord(fixture: RetirementFixture, ref: string): void {
-    writeSkillsInstallRecord(fixture.genieHome, {
-      ref,
-      cliVersion: SKILLS_CLI_VERSION,
-      inventory: ['alpha'],
-      agentDirs: [],
-      installedAt: RETIREMENT_NOW.toISOString(),
-    });
-  }
-
-  /** One full convergence pass against the fixture's homes. */
-  function converge(
-    fixture: RetirementFixture,
-    skills: SkillsChannelConvergenceResult,
-  ): {
-    lines: string[];
-    retirement: ReturnType<typeof runManualUpdateConvergence>['retirement'];
-  } {
-    const lines: string[] = [];
-    const result = runManualUpdateConvergence({
-      runWorkflows: noWorkflowsChannel,
-      expectedVersion: '9.9.9',
-      selection: 'all',
-      runSkills: () => skills,
-      retirementHomes: {
-        home: fixture.home,
-        genieHome: fixture.genieHome,
-        codexHome: fixture.codexHome,
-        claudeDir: fixture.claudeDir,
-        hermesHome: fixture.hermesHome,
-        piExtensionsDir: fixture.piExtensionsDir,
-      },
-      log: (line) => lines.push(line),
-    });
-    return { lines, retirement: result.retirement };
-  }
-
-  function installedSkills(): SkillsChannelConvergenceResult {
-    return {
-      status: 'installed',
-      record: {
-        ref: 'v9.9.9',
-        cliVersion: SKILLS_CLI_VERSION,
-        inventory: ['alpha'],
-        agentDirs: [],
-        installedAt: RETIREMENT_NOW.toISOString(),
-      },
-    };
-  }
-
-  function treeHash(root: string): string {
-    const parts: string[] = [];
-    const walk = (dir: string, rel: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-        const path = join(dir, entry.name);
-        const next = rel === '' ? entry.name : `${rel}/${entry.name}`;
-        if (entry.isSymbolicLink()) parts.push(`L ${next} ${readlinkSync(path)}`);
-        else if (entry.isDirectory()) {
-          parts.push(`D ${next}`);
-          walk(path, next);
-        } else parts.push(`F ${next} ${createHash('sha256').update(readFileSync(path)).digest('hex')}`);
-      }
-    };
-    walk(root, '');
-    return createHash('sha256').update(parts.join('\n')).digest('hex');
-  }
-
-  test('a fresh record: pass one retires every surface, pass two is a byte-for-byte no-op', () => {
-    const fixture = makeRetirementFixture();
-    plantRecord(fixture, releaseTag(VERSION));
-    // The two user-owned Claude registries the plugin era wrote one key into.
-    put(
-      join(fixture.claudeDir, 'plugins', 'known_marketplaces.json'),
-      `${JSON.stringify(
-        {
-          automagik: {
-            source: { source: 'directory', path: fixture.genieHome },
-            installLocation: fixture.genieHome,
-          },
-          'other-market': { source: { source: 'git', repo: 'someone/else' } },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    put(
-      join(fixture.claudeDir, 'settings.json'),
-      `${JSON.stringify({ enabledPlugins: { 'genie@automagik': true, 'other@market': true } }, null, 2)}\n`,
-    );
-
-    const first = converge(fixture, installedSkills());
-    expect(first.retirement?.failures).toEqual([]);
-    // Retirement now owns every plugin-era surface outright. Two of them —
-    // the bare-name claude skill mirror and the hermes MCP marker block — used
-    // to be cleaned by the per-agent convergence engine's own lanes before retirement
-    // ran; with that engine deleted they reach retirement still present, which
-    // is exactly the surface set a real post-deletion host presents.
-    expect(first.retirement?.removed.map((entry) => entry.surface).sort()).toEqual([
-      'claude-agent',
-      'claude-enabled-plugin',
-      'claude-marketplace-registration',
-      'claude-plugin-cache',
-      'claude-plugin-registry',
-      'claude-skill',
-      'claude-workflow',
-      'codex-legacy-curated-skill',
-      'codex-plugin-cache',
-      'codex-plugin-registration',
-      'codex-role-agent',
-      'codex-role-agent-inventory',
-      'hermes-mcp-server',
-      'hermes-plugin-link',
-      'hermes-skills-external-dir',
-      'pi-extension-link',
-    ]);
-    // The two user-owned Claude registries keep every key but genie's own.
-    expect(JSON.parse(readFileSync(join(fixture.claudeDir, 'plugins', 'known_marketplaces.json'), 'utf8'))).toEqual({
-      'other-market': { source: { source: 'git', repo: 'someone/else' } },
-    });
-    expect(JSON.parse(readFileSync(join(fixture.claudeDir, 'settings.json'), 'utf8'))).toEqual({
-      enabledPlugins: { 'other@market': true },
-    });
-    const afterFirst = treeHash(fixture.home);
-
-    const second = converge(fixture, installedSkills());
-    expect(second.retirement?.removed).toEqual([]);
-    // Scoped: the skills channel owns the `skills:` lines in this same transcript, and an
-    // unqualified `nothing to retire` read as a verdict on those too (issue #2927).
-    expect(second.lines).toContain('integrations: nothing to retire');
-    expect(second.lines).not.toContain('nothing to retire');
-    expect(treeHash(fixture.home)).toBe(afterFirst);
-  });
-
-  test('a non-installed channel skips retirement entirely', () => {
-    const fixture = makeRetirementFixture();
-    plantRecord(fixture, 'v0.0.1');
-
-    const run = converge(fixture, { status: 'failed', reason: 'skills CLI exited 1: boom' });
-    expect(run.retirement).toBeNull();
-    expect(run.lines).not.toContain('integrations: nothing to retire');
-
-    // Nothing was retired: every plugin-era asset is still exactly where it was.
-    expect(readFileSync(join(fixture.codexHome, 'config.toml'), 'utf8')).toContain('[plugins."genie@automagik"]');
-    expect(existsSync(join(fixture.claudeDir, 'workflows', 'council.js'))).toBe(true);
-    expect(existsSync(join(fixture.codexHome, 'skills', '.curated', 'alpha'))).toBe(true);
-    expect(existsSync(join(fixture.piExtensionsDir, 'genie'))).toBe(true);
-    expect(existsSync(join(fixture.genieHome, 'state-backups'))).toBe(false);
-  });
-
-  test('the retirement call sits after every other convergence step in update.ts', () => {
-    const source = readFileSync(join(import.meta.dir, '..', 'update.ts'), 'utf-8');
-    const body = source.slice(source.indexOf('export function runManualUpdateConvergence('));
-    const convergence = body.slice(0, body.indexOf('\n}\n'));
-    expect(convergence.indexOf('runLegacyIntegrationRetirement(')).toBeGreaterThan(
-      convergence.indexOf('runUpdateSkillsChannel)('),
-    );
-    expect(convergence).toContain("skills.status === 'installed'");
-    // Never at the install seam, never from doctor.
-    expect(readFileSync(join(import.meta.dir, '..', 'install.ts'), 'utf-8')).not.toContain(
-      'runLegacyIntegrationRetirement',
-    );
-    expect(readFileSync(join(import.meta.dir, '..', 'doctor.ts'), 'utf-8')).not.toContain(
-      'runLegacyIntegrationRetirement',
-    );
   });
 });

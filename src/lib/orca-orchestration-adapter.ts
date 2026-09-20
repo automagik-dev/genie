@@ -23,7 +23,25 @@ export const ORCA_ORCHESTRATION_VERBS = [
   'gate-resolve',
 ] as const;
 
-export type OrcaOrchestrationVerb = (typeof ORCA_ORCHESTRATION_VERBS)[number];
+/**
+ * Board-card verbs — argv root `worktree`, never `orchestration`. `worktree set`
+ * is the one write the lifecycle mirror needs; `worktree show` is its official
+ * read-back and the palette handlers' workspace read.
+ */
+export const ORCA_WORKTREE_VERBS = ['worktree-show', 'worktree-set'] as const;
+/** Terminal enumeration — argv root `terminal`. `terminal send` stays outside the plugin. */
+export const ORCA_TERMINAL_VERBS = ['terminal-list'] as const;
+/**
+ * The whole closed allowlist: 19 orchestration verbs, 2 worktree verbs, 1
+ * terminal verb (design `orca-plugin-genie`, the written amendment to
+ * `genie-dual-mode-orca-plugin/DESIGN.md:135`). Nothing else is ever spawned.
+ */
+export const ORCA_ADAPTER_OPERATIONS = [
+  ...ORCA_ORCHESTRATION_VERBS,
+  ...ORCA_WORKTREE_VERBS,
+  ...ORCA_TERMINAL_VERBS,
+] as const;
+export type OrcaAdapterOperationName = (typeof ORCA_ADAPTER_OPERATIONS)[number];
 
 export type OrcaAdapterErrorCode =
   | 'unsupported_platform'
@@ -49,7 +67,7 @@ export class OrcaAdapterError extends Error {
 
   constructor(
     readonly code: OrcaAdapterErrorCode,
-    readonly operation: OrcaOrchestrationVerb | 'runtime',
+    readonly operation: OrcaAdapterOperationName | 'runtime',
     readonly phase: 'validate' | 'resolve' | 'execute' | 'decode' | 'receipt' | 'readback',
     readonly retrySafety: RetrySafety,
     readonly recovery: string,
@@ -94,8 +112,61 @@ const messageType = z.enum([
 ]);
 const priority = z.enum(['low', 'normal', 'high', 'urgent']);
 const workerSource = z.enum(['auto', 'transcript', 'terminal']);
-const agent = z.enum(['claude', 'codex', 'cursor', 'droid', 'gemini', 'grok', 'opencode']);
+/** The closed set of agents `worker-start --agent` accepts; exported so a caller derives it rather than mirroring it. */
+export const ORCA_WORKER_AGENTS = ['claude', 'codex', 'cursor', 'droid', 'gemini', 'grok', 'opencode'] as const;
+const agent = z.enum(ORCA_WORKER_AGENTS);
 const effort = z.enum(['low', 'medium', 'high', 'xhigh']);
+/** Orca's four default board columns; a custom column id waits for a host that needs one. */
+const workspaceStatus = z.enum(['todo', 'in-progress', 'in-review', 'completed']);
+/** One line of bounded text: no C0 control character, no DEL. */
+const isOneLine = (value: string, max: number): boolean =>
+  value.length >= 1 &&
+  value.length <= max &&
+  !/[\uD800-\uDFFF]/u.test(value) &&
+  ![...value].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f);
+const isAbsolutePath = (value: string): boolean => isOneLine(value, 4096) && /^(?:\/|[A-Za-z]:\\)./.test(value);
+// The charset `git check-ref-format` accepts, bounded; no leading `-` (the
+// flag-shaped predicate would catch it later, but the grammar refuses first).
+const isRefName = (value: string): boolean =>
+  isOneLine(value, 256) &&
+  !value.includes(' ') &&
+  !/[~^:?*[\\]/.test(value) &&
+  !value.startsWith('-') &&
+  !value.includes('..') &&
+  !value.endsWith('.lock') &&
+  !value.includes('//') &&
+  !value.includes('@{') &&
+  !value.endsWith('/');
+/** A card comment is the card's one status line: the short-text domain, single line. */
+const oneLineText = shortText.refine((value) => isOneLine(value, 512), 'must be one line without control characters');
+/**
+ * Worktree selector — the one placement value a caller may name, because the
+ * plugin worker runs outside every terminal and `current` cannot address the
+ * active workspace from there. A closed grammar, validated before spawn:
+ * `current`, `active`, `id:<repoId>::<absolute path>`, `path:<absolute path>`,
+ * `branch:<ref>`, `name:<display name>`. `branch:` is `selector_ambiguous` on a
+ * host with two checkouts of one branch, so handlers use `active` then `id:`.
+ */
+const worktreeSelector = z
+  .string()
+  .max(4_400)
+  .refine((value) => value === value.normalize('NFC'), 'must be NFC-normalized')
+  .refine((value) => {
+    if (value === 'current' || value === 'active') return true;
+    if (value.startsWith('id:')) {
+      const rest = value.slice(3);
+      const separator = rest.indexOf('::');
+      return (
+        separator > 0 &&
+        /^[A-Za-z0-9_-]{1,128}$/.test(rest.slice(0, separator)) &&
+        isAbsolutePath(rest.slice(separator + 2))
+      );
+    }
+    if (value.startsWith('path:')) return isAbsolutePath(value.slice(5));
+    if (value.startsWith('branch:')) return isRefName(value.slice(7));
+    if (value.startsWith('name:')) return isOneLine(value.slice(5), 256);
+    return false;
+  }, 'worktree selector must be current, active, id:<repoId>::<abs path>, path:<abs path>, branch:<ref> or name:<display name>');
 const uniqueArray = <T extends z.ZodTypeAny>(member: T, maximum: number, minimum = 0) =>
   z
     .array(member)
@@ -118,7 +189,7 @@ const sendPayload = z
   .strict()
   .refine((value) => Object.keys(value).length > 0, 'payload must not be empty')
   .refine((value) => Buffer.byteLength(JSON.stringify(value)) <= 32_768);
-const base = <V extends OrcaOrchestrationVerb, T extends z.ZodRawShape>(verb: V, shape: T) =>
+const base = <V extends OrcaAdapterOperationName, T extends z.ZodRawShape>(verb: V, shape: T) =>
   z.object({ operation: z.literal(verb), ...shape }).strict();
 
 export const orcaOperationSchema = z.union([
@@ -140,14 +211,23 @@ export const orcaOperationSchema = z.union([
   }),
   base('task-update', { id, status: taskStatus, result: result.optional() }),
   base('worker-start', {
-    task: id,
+    task: id.optional(),
+    spec: longText.optional(),
+    title: shortText.optional(),
+    run: id.optional(),
+    worktree: worktreeSelector.optional(),
     agent,
     model: model.optional(),
     effort: effort.optional(),
     timeoutMs: timeout.optional(),
-  }).refine((value) => value.effort === undefined || value.model !== undefined, {
-    message: 'effort requires model',
-  }),
+  })
+    .refine((value) => (value.task === undefined) !== (value.spec === undefined), {
+      message: 'exactly one of task or spec is required',
+    })
+    .refine((value) => value.title === undefined || value.spec !== undefined, { message: 'title requires spec' })
+    .refine((value) => value.effort === undefined || value.model !== undefined, {
+      message: 'effort requires model',
+    }),
   base('worker-show', { dispatch: id }),
   base('worker-read', {
     dispatch: id,
@@ -200,6 +280,15 @@ export const orcaOperationSchema = z.union([
   }),
   base('gate-list', { task: id.optional(), status: gateStatus.optional() }),
   base('gate-resolve', { id, resolution: longText, task: id }),
+  base('worktree-show', { worktree: worktreeSelector }),
+  base('worktree-set', {
+    worktree: worktreeSelector,
+    workspaceStatus: workspaceStatus.optional(),
+    comment: oneLineText.optional(),
+  }).refine((value) => value.workspaceStatus !== undefined || value.comment !== undefined, {
+    message: 'worktree-set requires workspaceStatus or comment',
+  }),
+  base('terminal-list', { worktree: worktreeSelector }),
 ]);
 
 export type OrcaOperation = z.input<typeof orcaOperationSchema>;
@@ -242,13 +331,32 @@ export function buildOrcaOrchestrationArgv(input: unknown): readonly string[] {
   }
   const operation = parsed.data;
   const args = buildArguments(operation);
-  return Object.freeze(['orchestration', operation.operation, ...args, '--json']);
+  return Object.freeze([...argvRoot(operation.operation), ...args, '--json']);
 }
 
-function readOperation(input: unknown): OrcaOrchestrationVerb | undefined {
+/** The public spelling of an operation, for recovery hints: `orca worktree show`, `orca orchestration gate-list`. */
+function publicCommand(operation: OrcaAdapterOperationName): string {
+  return `orca ${argvRoot(operation).join(' ')}`;
+}
+
+/** argv root per verb: the orchestration group, the worktree pair, the terminal read. */
+function argvRoot(operation: OrcaAdapterOperationName): readonly string[] {
+  switch (operation) {
+    case 'worktree-show':
+      return ['worktree', 'show'];
+    case 'worktree-set':
+      return ['worktree', 'set'];
+    case 'terminal-list':
+      return ['terminal', 'list'];
+    default:
+      return ['orchestration', operation];
+  }
+}
+
+function readOperation(input: unknown): OrcaAdapterOperationName | undefined {
   if (typeof input !== 'object' || input === null || !('operation' in input)) return undefined;
   const operation = (input as { operation?: unknown }).operation;
-  return ORCA_ORCHESTRATION_VERBS.find((candidate) => candidate === operation);
+  return ORCA_ADAPTER_OPERATIONS.find((candidate) => candidate === operation);
 }
 
 function buildArguments(operation: ValidatedOrcaOperation): string[] {
@@ -283,9 +391,12 @@ function buildArguments(operation: ValidatedOrcaOperation): string[] {
       ];
     case 'worker-start':
       return [
-        ...flagValue('--task', operation.task),
-        '--worktree',
-        'current',
+        ...(operation.task === undefined
+          ? flagValue('--spec', operation.spec as string)
+          : flagValue('--task', operation.task)),
+        ...optionalFlag('--task-title', operation.title),
+        ...optionalFlag('--run', operation.run),
+        ...flagValue('--worktree', operation.worktree ?? 'current'),
         ...flagValue('--agent', operation.agent),
         ...optionalFlag('--model', operation.model),
         ...optionalFlag('--effort', operation.effort),
@@ -340,6 +451,15 @@ function buildArguments(operation: ValidatedOrcaOperation): string[] {
       return [...optionalFlag('--task', operation.task), ...optionalFlag('--status', operation.status)];
     case 'gate-resolve':
       return [...flagValue('--id', operation.id), ...flagValue('--resolution', operation.resolution)];
+    case 'worktree-show':
+    case 'terminal-list':
+      return flagValue('--worktree', operation.worktree);
+    case 'worktree-set':
+      return [
+        ...flagValue('--worktree', operation.worktree),
+        ...optionalFlag('--workspace-status', operation.workspaceStatus),
+        ...optionalFlag('--comment', operation.comment),
+      ];
   }
 }
 
@@ -597,7 +717,62 @@ const checkResult = receipt({
     .optional(),
   count: z.number().int().min(0).max(50).optional(),
 });
-const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
+/**
+ * Orca's worktree record is a 45-field UI projection that grows with every
+ * release, and a terminal row likewise. These receipts are strict on the fields
+ * genie reads and pass the rest through (design decision 4): a fully closed
+ * schema would turn each Orca release into `unexpected_response`. Passthrough is
+ * bounded by the 1 MiB stdout cap and the typed field bounds.
+ */
+const boundedText = (max: number) => z.string().max(max);
+/** C0, DEL and C1 — every character a terminal or a notification treats as a control, not as text. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching them IS the point — this class is the refusal's input domain, not an accidental escape.
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/;
+/**
+ * The two worktree fields that are typed into a terminal downstream. The Orca
+ * plugin composes `/<verb> — workspace <displayName>; … worktree <path>` and
+ * submits it with `enter: true`, and a display name is an agent-facing value
+ * (`orca worktree create --name`), so a newline in one would arrive in another
+ * agent's terminal as a second command. Orca's own records never carry control
+ * characters; a read that does is refused here, at the boundary, rather than
+ * sanitized into something that looks like Orca said it. Spaces, unicode and
+ * every other printable character are untouched — a real worktree path carries
+ * both.
+ */
+const controlFree = (schema: z.ZodString) =>
+  schema.refine((value) => !CONTROL_CHARACTERS.test(value), {
+    message: 'must not contain control characters',
+  });
+const worktreeRecord = z
+  .object({
+    id: z.string().min(1).max(2048),
+    path: controlFree(z.string().min(1).max(32_768)),
+    branch: boundedText(512).nullable().optional(),
+    displayName: controlFree(boundedText(512)),
+    comment: boundedText(4096).nullable().optional(),
+    workspaceStatus: boundedText(128).nullable().optional(),
+    createdWithAgent: boundedText(128).nullable().optional(),
+    linkedIssue: z
+      .union([z.number().int(), boundedText(256), z.object({}).passthrough()])
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+const terminalRecord = z
+  .object({
+    handle: z.string().min(1).max(256),
+    worktreeId: boundedText(2048).nullable().optional(),
+    agentIdentity: boundedText(128).nullable().optional(),
+    connected: z.boolean().optional(),
+    writable: z.boolean().optional(),
+    lastOutputAt: z.number().nullable().optional(),
+  })
+  .passthrough();
+const worktreeReceipt = z.object({ worktree: worktreeRecord }).passthrough();
+const terminalListResult = z
+  .object({ terminals: z.array(terminalRecord).max(500), truncated: z.boolean().optional() })
+  .passthrough();
+const responseSchemas: Readonly<Record<OrcaAdapterOperationName, z.ZodTypeAny>> = {
   'run-create': z.union([
     receipt({ runId: id }),
     receipt({ run: publicRunEntity, binding: bindingMetadata, mutation: mutationMetadata }),
@@ -629,7 +804,10 @@ const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
     }),
   ]),
   'task-update': z.union([receipt({ taskId: id }), receipt({ task: publicTaskEntity, mutation: mutationMetadata })]),
-  'worker-start': receipt({ dispatchId: id, taskId: id }),
+  // "The start receipt records which one ran" (worker-start --help on 1.4.205):
+  // the identity pair is required and the rest passes through, so a richer
+  // receipt never turns a committed start into a false ambiguity.
+  'worker-start': z.object({ dispatchId: id, taskId: id }).passthrough(),
   'worker-show': receipt({ dispatch: workerEntity }),
   'worker-read': receipt({ dispatchId: id, source: workerSource, output: longText, cursor: cursor.optional() }),
   'worker-release': receipt({ dispatchId: id }),
@@ -640,6 +818,9 @@ const responseSchemas: Readonly<Record<OrcaOrchestrationVerb, z.ZodTypeAny>> = {
   'gate-create': receipt({ gateId: id, taskId: id }),
   'gate-list': receipt({ gates: z.array(gateEntity).max(100) }),
   'gate-resolve': receipt({ gateId: id, taskId: id }),
+  'worktree-show': worktreeReceipt,
+  'worktree-set': worktreeReceipt,
+  'terminal-list': terminalListResult,
 };
 
 const envelopeSchema = z
@@ -653,7 +834,10 @@ const envelopeSchema = z
       .optional(),
     _meta: z
       .object({
-        runtimeId: id,
+        // Real Orca 1.4.205 answers a UUID here (`2e8238e3-…`), which the `id`
+        // domain's leading-letter rule rejected: every envelope on the host read
+        // as `unexpected_response`. Bounded text, as the status schema already had.
+        runtimeId: z.string().min(1).max(256),
         runtimeVersion: shortText.optional(),
         version: shortText.optional(),
         invokingTerminal: terminalId.optional(),
@@ -671,13 +855,13 @@ const envelopeSchema = z
 export type OrcaJsonEnvelope = z.infer<typeof envelopeSchema>;
 
 export interface OrcaMutationReceipt {
-  readonly verb: OrcaOrchestrationVerb;
+  readonly verb: OrcaAdapterOperationName;
   readonly ids: Readonly<Record<string, string>>;
   readonly runtimeId: string | null;
   readonly runtimeVersion: string | null;
   readonly startedAt: string;
   readonly completedAt: string;
-  readonly readbackVerb: OrcaOrchestrationVerb | null;
+  readonly readbackVerb: OrcaAdapterOperationName | null;
 }
 
 export type OrcaAdapterResponse = OrcaJsonEnvelope & { readonly receipt?: OrcaMutationReceipt };
@@ -693,7 +877,9 @@ const runtimeStatusSchema = z
           .object({
             running: z.literal(true),
             pid: z.number().int().positive(),
-            desktopWindowStatus: z.enum(['available', 'unavailable']),
+            // 1.4.205 answers `openable`; the value is informational, so it is
+            // bounded text rather than an enum that breaks on the next word.
+            desktopWindowStatus: z.string().min(1).max(64),
           })
           .strict(),
         runtime: z
@@ -711,7 +897,9 @@ const runtimeStatusSchema = z
               .strict(),
             capabilities: z.array(z.string().min(1).max(256)).max(256),
           })
-          .strict(),
+          // 1.4.205 added `connectionState`; the asserted fields stay strict and
+          // additions pass through so a runtime field is never a compatibility break.
+          .passthrough(),
         graph: z.object({ state: z.literal('ready') }).strict(),
       })
       .strict(),
@@ -723,7 +911,7 @@ const runtimeStatusSchema = z
 export type OrcaRuntimeStatus = z.infer<typeof runtimeStatusSchema>;
 
 function ambiguousMutationError(
-  operation: OrcaOrchestrationVerb,
+  operation: OrcaAdapterOperationName,
   phase: 'execute' | 'decode' | 'receipt',
   message: string,
 ): OrcaAdapterError {
@@ -737,7 +925,7 @@ function ambiguousMutationError(
   );
 }
 
-function parseEnvelope(operation: OrcaOrchestrationVerb, stdout: string, mutation: boolean): OrcaJsonEnvelope {
+function parseEnvelope(operation: OrcaAdapterOperationName, stdout: string, mutation: boolean): OrcaJsonEnvelope {
   let decoded: unknown;
   try {
     decoded = parseJsonRejectingDuplicateKeys(stdout);
@@ -835,7 +1023,7 @@ export interface OrcaOrchestrationAdapter {
   execute(input: unknown): Promise<OrcaAdapterResponse>;
 }
 
-const mutationVerbs = new Set<OrcaOrchestrationVerb>([
+const mutationVerbs = new Set<OrcaAdapterOperationName>([
   'run-create',
   'run-use',
   'task-create',
@@ -847,9 +1035,10 @@ const mutationVerbs = new Set<OrcaOrchestrationVerb>([
   'ask',
   'gate-create',
   'gate-resolve',
+  'worktree-set',
 ]);
 
-function hasAcknowledgement(operation: OrcaOrchestrationVerb, input: unknown): boolean {
+function hasAcknowledgement(operation: OrcaAdapterOperationName, input: unknown): boolean {
   return operation === 'check' && typeof input === 'object' && input !== null && 'ack' in input;
 }
 
@@ -873,7 +1062,7 @@ function entityId(value: unknown, key: 'run' | 'task'): unknown {
   return typeof entity === 'object' && entity !== null ? recordOf(entity).id : undefined;
 }
 
-function receiptIds(operation: OrcaOrchestrationVerb, value: unknown): Readonly<Record<string, string>> {
+function receiptIds(operation: OrcaAdapterOperationName, value: unknown): Readonly<Record<string, string>> {
   const result = recordOf(value);
   if (operation === 'run-create' || operation === 'run-use') {
     const runId = result.runId ?? entityId(result, 'run');
@@ -883,7 +1072,11 @@ function receiptIds(operation: OrcaOrchestrationVerb, value: unknown): Readonly<
     const taskId = result.taskId ?? entityId(result, 'task');
     return typeof taskId === 'string' ? Object.freeze({ taskId }) : Object.freeze({});
   }
-  const fields: Partial<Record<OrcaOrchestrationVerb, readonly string[]>> = {
+  if (operation === 'worktree-set') {
+    const worktreeId = recordOf(result.worktree).id;
+    return typeof worktreeId === 'string' ? Object.freeze({ worktreeId }) : Object.freeze({});
+  }
+  const fields: Partial<Record<OrcaAdapterOperationName, readonly string[]>> = {
     'run-create': ['runId'],
     'run-use': ['runId'],
     'task-create': ['taskId'],
@@ -996,17 +1189,36 @@ function readbackPlan(operation: ValidatedOrcaOperation, result: unknown): Readb
       },
     };
   }
+  if (operation.operation === 'worktree-set') {
+    const record = recordOf(recordOf(result).worktree);
+    const worktreeId = record.id;
+    return {
+      // The record's own id is `<repoId>::<absolute path>`, the `id:` selector form.
+      operation: { operation: 'worktree-show', worktree: `id:${String(worktreeId)}` },
+      matches: (readback) => {
+        const shown = recordOf(recordOf(readback).worktree);
+        return (
+          shown.id === worktreeId &&
+          (operation.workspaceStatus === undefined || shown.workspaceStatus === operation.workspaceStatus) &&
+          (operation.comment === undefined || shown.comment === operation.comment)
+        );
+      },
+    };
+  }
   if (operation.operation === 'worker-start') {
     const mutation = recordOf(result);
     const dispatchId = mutation.dispatchId;
+    // With `spec` the Task is created by the start itself, so the receipt's task
+    // id is the expected identity; with `task` the request names it.
+    const expectedTask = operation.task ?? mutation.taskId;
     return {
       operation: { operation: 'worker-show', dispatch: String(dispatchId) },
       matches: (readback) => {
         const worker = recordOf(recordOf(readback).dispatch);
         return (
-          mutation.taskId === operation.task &&
+          mutation.taskId === expectedTask &&
           worker.id === dispatchId &&
-          worker.taskId === operation.task &&
+          worker.taskId === expectedTask &&
           worker.agent === operation.agent &&
           worker.model === operation.model &&
           worker.effort === operation.effort
@@ -1054,7 +1266,7 @@ function taskResultMatches(readbackResult: unknown, operationResult: unknown): b
 }
 
 function processFailure(
-  operation: OrcaOrchestrationVerb,
+  operation: OrcaAdapterOperationName,
   input: unknown,
   result: OrcaProcessResult,
 ): OrcaAdapterError | undefined {
@@ -1105,7 +1317,7 @@ function processFailure(
 }
 
 function safeProcessError(
-  operation: OrcaOrchestrationVerb,
+  operation: OrcaAdapterOperationName,
   code: 'timeout' | 'output_limit' | 'process_exit',
   message: string,
 ): OrcaAdapterError {
@@ -1145,7 +1357,7 @@ function createAdapter(options: OrcaAdapterTestOptions = {}): OrcaOrchestrationA
   const now = options.now ?? (() => new Date());
   const executeProcess = async (
     argv: readonly string[],
-    operation: OrcaOrchestrationVerb | 'runtime',
+    operation: OrcaAdapterOperationName | 'runtime',
     timeoutMs = defaultTimeout,
   ) => {
     try {
@@ -1281,7 +1493,7 @@ async function finalizeMutation(
         operation.operation,
         'readback',
         'unsafe',
-        `Inspect state with orchestration ${plan.operation.operation}; do not retry the mutation automatically.`,
+        `Inspect state with ${publicCommand(plan.operation.operation)}; do not retry the mutation automatically.`,
         `${plan.operation.operation} disagreed with the mutation receipt`,
       );
     }
@@ -1301,7 +1513,7 @@ async function finalizeMutation(
 
 function mapReadbackFailure(
   mutation: ValidatedOrcaOperation,
-  readback: OrcaOrchestrationVerb,
+  readback: OrcaAdapterOperationName,
   error: unknown,
   env: Readonly<Record<string, string | undefined>>,
 ): OrcaAdapterError {
@@ -1311,7 +1523,7 @@ function mapReadbackFailure(
       mutation.operation,
       'readback',
       'unrecoverably-ambiguous',
-      `Inspect state with orchestration ${readback}; do not retry the mutation automatically.`,
+      `Inspect state with ${publicCommand(readback)}; do not retry the mutation automatically.`,
       `${readback} failed after Orca returned a valid mutation receipt`,
     );
   }
@@ -1320,7 +1532,7 @@ function mapReadbackFailure(
     mutation.operation,
     'readback',
     'readback-required',
-    `Repeat or inspect orchestration ${readback}; do not retry the mutation automatically.`,
+    `Repeat or inspect ${publicCommand(readback)}; do not retry the mutation automatically.`,
     sanitizeDiagnosticText(
       `${readback} failed after Orca returned a valid mutation receipt: ${error.message}`,
       mutation,
@@ -1383,7 +1595,15 @@ function receiptMatchesRequest(operation: ValidatedOrcaOperation, result: unknow
     case 'task-update':
       return (value.taskId ?? entityId(value, 'task')) === operation.id;
     case 'worker-start':
-      return value.taskId === operation.task;
+      return operation.task === undefined ? typeof value.taskId === 'string' : value.taskId === operation.task;
+    case 'worktree-set': {
+      const record = recordOf(value.worktree);
+      return (
+        typeof record.id === 'string' &&
+        (operation.workspaceStatus === undefined || record.workspaceStatus === operation.workspaceStatus) &&
+        (operation.comment === undefined || record.comment === operation.comment)
+      );
+    }
     case 'worker-release':
       return value.dispatchId === operation.dispatch;
     case 'reply':
@@ -1461,8 +1681,33 @@ function collectStringValues(value: unknown): string[] {
   return [];
 }
 
-export function createOrcaOrchestrationAdapter(): OrcaOrchestrationAdapter {
-  return createAdapter();
+export interface OrcaAdapterOptions {
+  /**
+   * Process wall clock per invocation, an integer 1_000–30_000 ms (default
+   * 30_000). A caller that itself runs inside a bounded host window tightens it:
+   * the Orca plugin worker has 30 s per command and spends up to three child
+   * processes in it. An operation's own `timeoutMs` (worker-start, check, ask)
+   * still widens the bound by its documented wait plus the grace.
+   */
+  timeoutMs?: number;
+}
+
+export function createOrcaOrchestrationAdapter(options: OrcaAdapterOptions = {}): OrcaOrchestrationAdapter {
+  const timeoutMs = options.timeoutMs;
+  if (
+    timeoutMs !== undefined &&
+    (!Number.isInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > DEFAULT_ORCA_TIMEOUT_MS)
+  ) {
+    throw new OrcaAdapterError(
+      'invalid_argument',
+      'runtime',
+      'validate',
+      'safe',
+      `Pass an integer timeoutMs between 1000 and ${DEFAULT_ORCA_TIMEOUT_MS}.`,
+      `timeoutMs out of range: ${String(timeoutMs)}`,
+    );
+  }
+  return createAdapter(timeoutMs === undefined ? {} : { timeoutMs });
 }
 
 /** Test-only dependency seam. Production callers must use createOrcaOrchestrationAdapter. */

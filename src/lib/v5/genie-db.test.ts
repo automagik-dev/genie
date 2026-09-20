@@ -1,7 +1,16 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveGlobalDbPath } from '../genie-home.js';
@@ -12,6 +21,7 @@ import {
   GenieDbError,
   GlobalDbPathError,
   MalformedDbError,
+  PendingMigrationError,
   STAGE_LOG_BACKFILL_KEY,
   isBusyError,
   isCurrentGenieDb,
@@ -21,14 +31,33 @@ import {
   resolveRepoRoot,
 } from './genie-db.js';
 import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
+import { exportState } from './task-state.js';
 
 let dir: string;
+/**
+ * Every v1 fixture in this file migrates on open, and the migration is
+ * backup-first — so without this the suite writes real
+ * `db-migration-<stamp>/` roots into the DEVELOPER's `~/.genie/state-backups`,
+ * a directory genie treats as a never-pruned archive. Isolated file-wide, not
+ * per test, because any future v1 fixture inherits the same behaviour.
+ */
+let genieHome: string;
+let previousGenieHome: string | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'genie-db-'));
+  genieHome = mkdtempSync(join(tmpdir(), 'genie-db-home-'));
+  previousGenieHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = genieHome;
 });
 
 afterEach(() => {
+  // Restoring an UNSET variable means REMOVING the key: assigning `undefined`
+  // to process.env stores the literal string "undefined", which the next test
+  // would then resolve as a GENIE_HOME path.
+  if (previousGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = previousGenieHome;
+  rmSync(genieHome, { recursive: true, force: true });
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -59,39 +88,30 @@ describe('openDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    expect(tables).toEqual([
-      'boards',
-      'hire_roster',
-      'meta',
-      'stage_log',
-      'task_dependencies',
-      'task_events',
-      'tasks',
-      'wish_groups',
-    ]);
+    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
   });
 
-  test('a fresh DB carries hire_roster', () => {
+  test('a fresh DB carries no hire_roster', () => {
     const path = join(dir, 'genie.db');
     const db = openDb({ path });
     const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
     db.close();
-    expect(has).not.toBeNull();
+    expect(has).toBeNull();
   });
 
-  test('adds hire_roster to a pre-existing current DB via the schemaIsCurrent path', () => {
+  test('re-creates a dropped table on a pre-existing current DB via the schemaIsCurrent path', () => {
     const path = join(dir, 'genie.db');
-    // Simulate a DB stamped by an earlier build: already at user_version=1 but
-    // missing the additive hire_roster table. schemaIsCurrent must return false
-    // (hire_roster ∈ EXPECTED_TABLES) so ensureSchema re-runs and creates it —
-    // no user_version bump.
+    // Simulate a DB stamped by an earlier build of THIS version: already at
+    // CURRENT_SCHEMA_VERSION but missing one additive table. schemaIsCurrent
+    // must return false (wish_groups in EXPECTED_TABLES) so ensureSchema
+    // re-runs and creates it — no user_version bump.
     const db1 = openDb({ path });
-    db1.exec('DROP TABLE hire_roster');
+    db1.exec('DROP TABLE wish_groups');
     db1.close();
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
 
     const db2 = openDb({ path });
-    const has = db2.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    const has = db2.query("SELECT name FROM sqlite_master WHERE type='table' AND name='wish_groups'").get();
     db2.close();
     expect(has).not.toBeNull();
     // Additive migration — the schema version is unchanged.
@@ -185,13 +205,378 @@ describe('openDb refusal', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The v1 -> v2 migration ladder (wish `v6-stable-cut`, design decision 4).
+//
+// v6 drops `hire_roster`, which is a DESTRUCTIVE schema change, so the stamped
+// version moves 1 -> 2. `initOrValidate` throws ForeignDbError on any version
+// it does not recognize, so a bump WITHOUT the ladder would make every operator
+// database on earth refuse to open. Every assertion below fails against a
+// bump-only change — that is the whole point of the group.
+// ---------------------------------------------------------------------------
+describe('v1 -> v2 migration ladder (hire_roster dropped)', () => {
+  /** A database exactly as a 5.x binary left it: stamped 1, carrying hires. */
+  function seedV1Db(path: string): void {
+    const seed = new Database(path);
+    seed.exec(`
+CREATE TABLE boards (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, lanes TEXT);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL,
+  claimed_by TEXT, claimed_at INTEGER, wish TEXT, group_name TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, lane TEXT, agent_kind TEXT,
+  heartbeat_at INTEGER, blocked_by TEXT, blocked_reason TEXT, block_kind TEXT,
+  assigned_agent TEXT, assigned_reason TEXT
+);
+CREATE TABLE task_dependencies (task_id TEXT NOT NULL, depends_on_id TEXT NOT NULL, PRIMARY KEY (task_id, depends_on_id));
+CREATE TABLE stage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, stage TEXT NOT NULL, note TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE task_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, kind TEXT NOT NULL,
+  note TEXT, author_kind TEXT, author TEXT, created_at INTEGER NOT NULL
+);
+CREATE TABLE wish_groups (
+  wish TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  depends_on TEXT NOT NULL DEFAULT '[]', assignee TEXT, started_at INTEGER, completed_at INTEGER,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (wish, name)
+);
+CREATE TABLE hire_roster (
+  wish TEXT NOT NULL, agent_adapter_id TEXT NOT NULL, profile TEXT, worktree TEXT NOT NULL,
+  hired_at INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (wish, agent_adapter_id)
+);
+`);
+    seed
+      .query(
+        "INSERT INTO tasks (id, title, status, created_at, updated_at) VALUES ('t1', 'carried over', 'ready', 1, 1)",
+      )
+      .run();
+    seed.query("INSERT INTO boards (id, name, created_at) VALUES ('b1', 'roadmap', 1)").run();
+    seed
+      .query(
+        "INSERT INTO hire_roster (wish, agent_adapter_id, worktree, hired_at, state) VALUES ('w1', 'claude', '/tmp/wt', 1, 'hired')",
+      )
+      .run();
+    seed.exec('PRAGMA user_version = 1');
+    seed.close();
+  }
+
+  test('a v1 DB carrying hire_roster rows opens, migrates to 2, and loses only that table', () => {
+    const path = join(dir, 'v1.db');
+    seedV1Db(path);
+    expect(userVersion(path)).toBe(1);
+
+    const db = openDb({ path });
+    const tables = db
+      .query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .all()
+      .map((row) => (row as { name: string }).name);
+    const tasks = db.query('SELECT id, title FROM tasks').all() as Array<{ id: string; title: string }>;
+    const boards = db.query('SELECT id FROM boards').all() as Array<{ id: string }>;
+    db.close();
+
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    expect(tables).not.toContain('hire_roster');
+    // Every other table survives the ladder untouched, rows and all.
+    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
+    expect(tasks).toEqual([{ id: 't1', title: 'carried over' }]);
+    expect(boards).toEqual([{ id: 'b1' }]);
+  });
+
+  test('a second open of a just-migrated DB is a no-op', () => {
+    const path = join(dir, 'v1-twice.db');
+    seedV1Db(path);
+    openDb({ path }).close();
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+    const db = openDb({ path });
+    const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
+    db.close();
+    expect(has).toBeNull();
+    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  test('the ladder falls through to the current-version branch, so additive backfills still apply', () => {
+    // A v1 DB the ladder brings to 2 must ALSO get whatever ensureSchema adds
+    // within version 2 — here the stage_log -> task_events backfill marker,
+    // which only the current-version branch writes. If the ladder returned
+    // early after re-stamping, a migrated DB would be permanently unbackfilled.
+    const path = join(dir, 'v1-backfill.db');
+    seedV1Db(path);
+    const seed = new Database(path);
+    seed.query("INSERT INTO stage_log (task_id, stage, note, created_at) VALUES ('t1', 'planned', 'kickoff', 1)").run();
+    seed.close();
+
+    const db = openDb({ path });
+    const mirrored = db.query('SELECT COUNT(*) AS n FROM task_events').get() as { n: number };
+    const marker = db.query('SELECT value FROM meta WHERE key = ?').get(STAGE_LOG_BACKFILL_KEY);
+    db.close();
+    expect(mirrored.n).toBeGreaterThan(0);
+    expect(marker).not.toBeNull();
+  });
+
+  test('the migration is backup-first: the pre-migration database is archived and named', () => {
+    // The ladder is forward-only and destructive, and a 5.x binary on the same
+    // machine refuses the migrated file. The backup is therefore unconditional
+    // — an operator who discovers the wrong binary migrated a shared database
+    // needs the bytes, not a flag nobody knew to pass.
+    const written: string[] = [];
+    const priorWrite = process.stderr.write;
+    process.stderr.write = ((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const path = join(dir, 'v1-backup.db');
+      seedV1Db(path);
+      // The CONTENT the migration is about to destroy, captured independently.
+      const control = new Database(path, { readonly: true });
+      const beforeHires = control.query('SELECT * FROM hire_roster').all();
+      const beforeTasks = control.query('SELECT id, title FROM tasks').all();
+      control.close();
+
+      openDb({ path }).close();
+
+      const root = join(genieHome, 'state-backups');
+      const roots = readdirSync(root).filter((entry) => entry.startsWith('db-migration-'));
+      expect(roots).toHaveLength(1);
+      const archived = join(root, roots[0] as string, 'v1-backup.db');
+      expect(existsSync(archived)).toBe(true);
+
+      // The archive IS the pre-migration database: same stamp, the table this
+      // run dropped, and its rows. (Byte identity against the pre-OPEN file is
+      // deliberately not asserted — `openSqlite` applies its WAL/synchronous
+      // pragmas to the live file before the ladder runs, so those bytes are
+      // already not the ones the migration replaced. What must survive is the
+      // content, and that is what this checks.) It is opened READ-ONLY on
+      // purpose: the archive is a self-contained rollback-journal file, not a
+      // copy of a WAL-mode file with no sidecars, which the system SQLite on
+      // macOS refuses to open this way.
+      const restored = new Database(archived, { readonly: true });
+      try {
+        expect(restored.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'delete' });
+        expect(restored.query('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
+        expect((restored.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+        expect(restored.query('SELECT * FROM hire_roster').all()).toEqual(beforeHires);
+        expect(restored.query('SELECT id, title FROM tasks').all()).toEqual(beforeTasks);
+      } finally {
+        restored.close();
+      }
+      // The live database really did lose it, so the archive is the only copy.
+      expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
+
+      // ONE line, naming the archive. A backup nobody is told about is useless.
+      const lines = written.join('').trimEnd().split('\n').filter(Boolean);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('schema v1 -> v2');
+      expect(lines[0]).toContain(archived);
+    } finally {
+      process.stderr.write = priorWrite;
+    }
+  });
+
+  test('a second open of a current database takes no backup', () => {
+    const path = join(dir, 'v1-once.db');
+    seedV1Db(path);
+    openDb({ path }).close();
+    const root = join(genieHome, 'state-backups');
+    expect(readdirSync(root).filter((e) => e.startsWith('db-migration-'))).toHaveLength(1);
+    // Already current: nothing to migrate, so nothing to archive.
+    openDb({ path }).close();
+    expect(readdirSync(root).filter((e) => e.startsWith('db-migration-'))).toHaveLength(1);
+  });
+
+  test('`migrate: false` observes without migrating — the doctor contract', () => {
+    // `genie doctor` must never perform a forward-only destructive change as a
+    // side effect of looking at a file: two hand-runs of it migrated the
+    // developer's own shared database before this switch existed.
+    const path = join(dir, 'v1-observed.db');
+    seedV1Db(path);
+    expect(() => openDb({ path, migrate: false })).toThrow(PendingMigrationError);
+    expect(userVersion(path)).toBe(1);
+    const db = new Database(path, { readonly: true });
+    try {
+      expect(db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get()).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('the migration notice goes to STDERR, so a piped stdout stays machine-readable', () => {
+    // `genie task export` writes ONE JSON document to stdout. A migration
+    // notice on the same stream corrupts exactly the run that migrates — the
+    // first one after an upgrade — and `JSON.parse` fails on
+    // `genie.db: schema v1 -> v2; …`. The notice is operator text; it belongs
+    // on stderr like every other diagnostic genie prints.
+    const outChunks: string[] = [];
+    const errChunks: string[] = [];
+    const priorOut = process.stdout.write;
+    const priorErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown) => {
+      outChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown) => {
+      errChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const path = join(dir, 'v1-streams.db');
+      seedV1Db(path);
+      const db = openDb({ path });
+      // What `task export` puts on stdout, on the very run that migrated.
+      process.stdout.write(JSON.stringify(exportState(db)));
+      db.close();
+    } finally {
+      process.stdout.write = priorOut;
+      process.stderr.write = priorErr;
+    }
+    // stdout is the payload and nothing else.
+    expect(() => JSON.parse(outChunks.join(''))).not.toThrow();
+    expect(outChunks.join('')).not.toContain('schema v1 -> v2');
+    // stderr carries the notice, once.
+    const notices = errChunks
+      .join('')
+      .trimEnd()
+      .split('\n')
+      .filter((line) => line.includes('schema v1 -> v2'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('state-backups');
+  });
+
+  test('six concurrent first-openers take exactly ONE backup and print exactly ONE line', async () => {
+    // `beforeMigrate` ran outside the write lock, after an unsynchronized
+    // version read: six racing processes each believed they were the migrator,
+    // so three backup roots appeared and the losers announced "previous
+    // database backed up" over a file already at v2 with no hire_roster — a
+    // receipt for bytes nobody archived.
+    const path = join(dir, 'v1-race.db');
+    seedV1Db(path);
+    const worker = join(dir, 'race-worker.ts');
+    writeFileSync(
+      worker,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+const db = openDb({ path: process.argv[2] });
+process.stdout.write(String((db.query('PRAGMA user_version').get()).user_version));
+db.close();
+`,
+    );
+    const runs = await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        const proc = Bun.spawn(['bun', 'run', worker, path], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: { ...process.env, GENIE_HOME: genieHome },
+        });
+        return {
+          out: await new Response(proc.stdout).text(),
+          err: await new Response(proc.stderr).text(),
+          code: await proc.exited,
+        };
+      }),
+    );
+    for (const run of runs) {
+      expect(run.code, run.err).toBe(0);
+      expect(run.out).toBe('2');
+    }
+    // ONE migrator: one archive, and one announcement across all six.
+    const roots = readdirSync(join(genieHome, 'state-backups')).filter((e) => e.startsWith('db-migration-'));
+    expect(roots).toHaveLength(1);
+    const announcements = runs
+      .flatMap((run) => `${run.out}${run.err}`.split('\n'))
+      .filter((line) => line.includes('schema v1 -> v2'));
+    expect(announcements).toHaveLength(1);
+    // And the one archive really is the pre-migration database.
+    const archived = new Database(join(genieHome, 'state-backups', roots[0] as string, 'v1-race.db'), {
+      readonly: true,
+    });
+    try {
+      expect((archived.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+      expect((archived.query('SELECT COUNT(*) AS n FROM hire_roster').get() as { n: number }).n).toBe(1);
+    } finally {
+      archived.close();
+    }
+  }, 30_000);
+
+  test('concurrent openers of a column-short database all succeed (additive-backfill race)', async () => {
+    // Found by the six-way test above, and older than this wish: the additive
+    // `tasks` backfill reads `PRAGMA table_info` and THEN runs `ALTER TABLE
+    // ADD COLUMN`, so two openers can both read a column as missing and both
+    // add it. The loser died with `duplicate column name`, taking an ordinary
+    // `genie task` invocation down with it. SQLite has no
+    // `ADD COLUMN IF NOT EXISTS`, so that error is the signal the column now
+    // exists — which is exactly the post-condition the backfill promises.
+    const path = join(dir, 'column-short.db');
+    const seed = new Database(path);
+    seed.exec(`
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY, board_id TEXT, title TEXT NOT NULL, status TEXT NOT NULL,
+  claimed_by TEXT, claimed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+`);
+    seed.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION}`);
+    seed.close();
+
+    const worker = join(dir, 'backfill-worker.ts');
+    writeFileSync(
+      worker,
+      `
+import { openDb } from ${JSON.stringify(join(import.meta.dir, 'genie-db.ts'))};
+const db = openDb({ path: process.argv[2] });
+process.stdout.write('ok');
+db.close();
+`,
+    );
+    const runs = await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        const proc = Bun.spawn(['bun', 'run', worker, path], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: { ...process.env, GENIE_HOME: genieHome },
+        });
+        return {
+          out: await new Response(proc.stdout).text(),
+          err: await new Response(proc.stderr).text(),
+          code: await proc.exited,
+        };
+      }),
+    );
+    for (const run of runs) {
+      expect(run.code, run.err).toBe(0);
+      expect(run.err).not.toContain('duplicate column name');
+    }
+    // One well-formed table, every column present exactly once.
+    const check = new Database(path, { readonly: true });
+    try {
+      const names = (check.query('PRAGMA table_info(tasks)').all() as Array<{ name: string }>).map((c) => c.name);
+      for (const column of ['wish', 'group_name', 'lane', 'agent_kind', 'assigned_agent', 'assigned_reason']) {
+        expect(names.filter((name) => name === column)).toHaveLength(1);
+      }
+      // `boards` is created WITHOUT `lanes` and every fresh opener ALTERs it in,
+      // so the same race lives there (it lost on darwin CI, 2026-09-20).
+      const boardNames = (check.query('PRAGMA table_info(boards)').all() as Array<{ name: string }>).map((c) => c.name);
+      expect(boardNames.filter((name) => name === 'lanes')).toHaveLength(1);
+    } finally {
+      check.close();
+    }
+  }, 30_000);
+
+  test('a version the ladder cannot bridge still throws ForeignDbError', () => {
+    const path = join(dir, 'unbridgeable.db');
+    const seed = new Database(path);
+    seed.exec('PRAGMA user_version = 7');
+    seed.exec('CREATE TABLE widgets (id INTEGER PRIMARY KEY)');
+    seed.close();
+    expect(() => openDb({ path })).toThrow(ForeignDbError);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Additive backfill on a pre-lanes DB: a DB stamped at user_version=1 by an
 // EARLIER build (no task_events table, no tasks.lane, no boards.lanes) must open
 // WITHOUT a version bump, backfill the additive columns/table via ensureSchema,
 // and preserve every existing row. This is the worktree-shared-DB rollout
 // guarantee — an older binary's DB opens clean under the new code.
 // ---------------------------------------------------------------------------
-describe('pre-lanes DB backfill (additive, no version bump)', () => {
+describe('pre-lanes DB backfill (additive columns, carried across the v1 -> v2 ladder)', () => {
   /** The exact `boards/tasks/...` schema that shipped BEFORE lifecycle lanes. */
   function seedOldSchemaDb(path: string): void {
     const seed = new Database(path);
@@ -288,7 +673,7 @@ describe('pre-lanes DB backfill (additive, no version bump)', () => {
 // omitting the columns from EXPECTED_SCHEMA: schemaIsCurrent would then return
 // true for the pre-upgrade shape and the backfill would be silently skipped.
 // ---------------------------------------------------------------------------
-describe('pre-assignment DB backfill (additive, no version bump)', () => {
+describe('pre-assignment DB backfill (additive columns, carried across the v1 -> v2 ladder)', () => {
   test('a full-schema DB missing only the assignment columns is not current and heals on open', () => {
     const path = join(dir, 'pre-assignment.db');
     const db1 = openDb({ path });

@@ -24,7 +24,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkWorktreeModes, classifyModeDrift, repairWorktreeModes, scanWorktreeModes } from './doctor-modes.js';
+import {
+  MAX_NAMED_MODE_DRIFT_ENTRIES,
+  checkWorktreeModes,
+  classifyModeDrift,
+  modeDriftLines,
+  repairWorktreeModes,
+  scanWorktreeModes,
+  summarizeModeDrift,
+} from './doctor-modes.js';
 import { cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import { doctorCommand } from './doctor.js';
 
@@ -132,6 +140,29 @@ function entriesFor(scan: ReturnType<typeof scanWorktreeModes>, worktree: string
   );
 }
 
+/**
+ * The aggregated check's per-entry payload — the `checks[].modeDrift.entries`
+ * contract `--json` carries. Since the check collapsed to ONE result, this is
+ * where a per-entry assertion reads its subject from.
+ */
+function driftEntries(root: string) {
+  return checkWorktreeModes(root)[0]?.modeDrift?.entries ?? [];
+}
+
+/** The named human sub-line mentioning `needle`, as `genie doctor` would print it. */
+function driftLineFor(root: string, needle: string): string | undefined {
+  return modeDriftLines(driftEntries(root)).find((line) => line.includes(needle));
+}
+
+/** Everything `genie doctor` prints for the check: the one status line plus its named entries. */
+function fullReport(root: string): string {
+  const checks = checkWorktreeModes(root);
+  return [
+    ...checks.map((check) => `${check.name} — ${check.detail} — ${check.suggestion ?? ''}`),
+    ...modeDriftLines(driftEntries(root)),
+  ].join('\n');
+}
+
 /** Run the `--fix` half against the fixture, capturing its log lines. */
 function runRepair(fixture: Fixture): string[] {
   const lines: string[] = [];
@@ -168,9 +199,7 @@ describe('wider drift is reported and tightened to the index mode', () => {
 
     const entry = entriesFor(scanWorktreeModes(fixture.root), wt, 'a.txt')[0];
     expect(entry).toMatchObject({ kind: 'file', disposition: 'wider', indexMode: '644', diskMode: '666' });
-    const report = checkWorktreeModes(fixture.root)
-      .map((check) => `${check.name} — ${check.detail} — ${check.suggestion ?? ''}`)
-      .join('\n');
+    const report = fullReport(fixture.root);
     expect(report).toContain('1 wider');
     expect(report).toContain('--fix tightens to 644');
     expect(report).toContain('genie doctor --fix');
@@ -219,9 +248,8 @@ describe('tighten-only: stricter modes survive --fix untouched', () => {
 
     const entry = entriesFor(scanWorktreeModes(fixture.root), wt, 'a.txt')[0];
     expect(entry).toMatchObject({ disposition: 'stricter', indexMode: '644', diskMode: '600' });
-    const itemLine = checkWorktreeModes(fixture.root).find((check) => check.name.includes('a.txt'));
-    expect(itemLine?.status).toBe('pass'); // informational, never a warning to fix
-    expect(itemLine?.detail).toContain('never widened');
+    expect(checkWorktreeModes(fixture.root)[0].status).toBe('pass'); // informational, never a warning to fix
+    expect(driftLineFor(fixture.root, 'a.txt')).toContain('never widened');
 
     expect(runRepair(fixture)).toEqual([]); // nothing wider ⇒ strict no-op
     expect(modeOf(join(wt, 'a.txt'))).toBe(0o600);
@@ -266,6 +294,97 @@ describe('tighten-only: stricter modes survive --fix untouched', () => {
   });
 });
 
+describe('the whole scan reports as ONE aggregated check', () => {
+  /** Plant `count` tracked files whose on-disk mode drifts from the index mode. */
+  function plantDrift(fixture: Fixture, count: number, mode: number): string {
+    const wt = addWorktree(fixture, 'wish/demo-flood');
+    withUmask(0o022, () => {
+      for (let index = 0; index < count; index += 1) {
+        const file = join(wt, `f${String(index).padStart(4, '0')}.txt`);
+        writeFileSync(file, `flood ${index}\n`);
+        chmodSync(file, 0o644);
+      }
+      git(wt, 'add', '-A');
+      git(wt, 'commit', '-q', '-m', 'flood');
+    });
+    for (let index = 0; index < count; index += 1) {
+      chmodSync(join(wt, `f${String(index).padStart(4, '0')}.txt`), mode);
+    }
+    return wt;
+  }
+
+  test('120 drifted entries yield one check whose JSON payload carries every one of them', () => {
+    const fixture = makeFixture();
+    plantDrift(fixture, 120, 0o600); // stricter: the shape that flooded the dogfood host
+
+    const checks = checkWorktreeModes(fixture.root);
+    expect(checks).toHaveLength(1);
+    expect(checks[0].name).toBe('mode drift');
+    expect(checks[0].detail).toContain('120 stricter');
+    expect(checks[0].modeDrift?.entries.length).toBe(120);
+  });
+
+  test('the human lines name at most five entries and count the remainder', () => {
+    const fixture = makeFixture();
+    plantDrift(fixture, 120, 0o600);
+
+    const lines = modeDriftLines(driftEntries(fixture.root));
+    expect(lines).toHaveLength(MAX_NAMED_MODE_DRIFT_ENTRIES + 1);
+    expect(
+      lines.slice(0, MAX_NAMED_MODE_DRIFT_ENTRIES).every((line) => /· (wider|stricter|mixed|refused): /.test(line)),
+    ).toBe(true);
+    expect(lines[MAX_NAMED_MODE_DRIFT_ENTRIES]).toContain('+115 more');
+    expect(lines[MAX_NAMED_MODE_DRIFT_ENTRIES]).toContain('--json');
+  });
+
+  test('the five named entries are the ones a human must act on, not the informational majority', () => {
+    const fixture = makeFixture();
+    const wt = plantDrift(fixture, 120, 0o600);
+    chmodSync(join(wt, 'a.txt'), 0o666); // one wider item buried under 120 stricter ones
+
+    const lines = modeDriftLines(driftEntries(fixture.root));
+    expect(lines.some((line) => line.includes('wider: ') && line.includes('a.txt'))).toBe(true);
+  });
+
+  test('an empty scan stays the single `none found` line with no payload', () => {
+    expect(summarizeModeDrift([])).toEqual({ name: 'mode drift', status: 'pass', detail: 'none found' });
+    expect(modeDriftLines([])).toEqual([]);
+  });
+
+  /**
+   * The only `stricter` entry anybody can act on is a tracked-755 FILE that
+   * lost its executable bit — `--fix` never widens, so a human must. Sorting
+   * it behind the benign 0700-vs-0755 directories left all 345 of the dogfood
+   * host's such entries unnamed.
+   */
+  test('a stricter file that lost its executable bit is named ahead of the benign stricter majority', () => {
+    const fixture = makeFixture();
+    const wt = plantDrift(fixture, 120, 0o600);
+    chmodSync(join(wt, 'bin', 'run.sh'), 0o644); // index 755, executable bit gone
+
+    const lines = modeDriftLines(driftEntries(fixture.root));
+    expect(lines[0]).toContain('bin/run.sh');
+    expect(lines[0]).toContain('chmod 755');
+    // …and the duplicated suffix is gone: the reason already ends in it.
+    expect(lines[1]).toContain('never widened'); // from entry.reason
+    expect(lines[1]?.match(/never widened/g)).toHaveLength(1);
+  });
+
+  test('every entry carries its own remedy under --json, so the cap never hides one', () => {
+    const fixture = makeFixture();
+    const wt = plantDrift(fixture, 120, 0o600);
+    chmodSync(join(wt, 'bin', 'run.sh'), 0o644);
+
+    const entries = driftEntries(fixture.root);
+    const remedied = entries.filter((entry) => entry.suggestion !== undefined);
+    expect(remedied).toHaveLength(1);
+    expect(remedied[0].relPath).toBe('bin/run.sh');
+    expect(remedied[0].suggestion).toContain('chmod 755');
+    // A benign stricter entry carries none — a remedy is evidence, not decoration.
+    expect(entries.find((entry) => entry.relPath === 'f0000.txt')?.suggestion).toBeUndefined();
+  });
+});
+
 describe('directory repair is included', () => {
   test('0777 worktree root and 0775 nested dir tighten to 0755', () => {
     const fixture = makeFixture();
@@ -301,8 +420,7 @@ describe('planted symlinks are never followed', () => {
     const entry = entriesFor(scanWorktreeModes(fixture.root), wt, 'a.txt')[0];
     expect(entry).toMatchObject({ disposition: 'refused', indexMode: '644' });
     expect(entry.reason).toContain('symlink');
-    const itemLine = checkWorktreeModes(fixture.root).find((check) => check.name.includes('a.txt'));
-    expect(itemLine?.detail).toContain('--fix will not touch it');
+    expect(driftLineFor(fixture.root, 'a.txt')).toContain('--fix will not touch it');
 
     runRepair(fixture);
     expect(lstatSync(join(wt, 'a.txt')).isSymbolicLink()).toBe(true);
@@ -485,9 +603,7 @@ describe('probe errors keep the item with a reason', () => {
     const entry = scanWorktreeModes(fixture.root).entries.find((e) => e.worktree === canonicalWt);
     expect(entry).toMatchObject({ relPath: null, kind: 'worktree', disposition: 'refused' });
     expect(entry?.reason).toBe('worktree directory no longer exists');
-    const report = checkWorktreeModes(fixture.root)
-      .map((check) => `${check.name} — ${check.detail} — ${check.suggestion ?? ''}`)
-      .join('\n');
+    const report = fullReport(fixture.root);
     expect(report).toContain('--fix will not touch it');
     expect(report).toContain('Run `git worktree prune`');
 
@@ -611,15 +727,48 @@ describe('doctor wiring', () => {
     const { output, exitCode } = await runDoctor(fixture, { json: true });
     expect(exitCode).toBe(0);
     const json = JSON.parse(output) as {
-      checks: Array<{ name: string; status: string; detail?: string }>;
+      checks: Array<{
+        name: string;
+        status: string;
+        detail?: string;
+        modeDrift?: { entries: Array<{ relPath: string | null; disposition: string }> };
+      }>;
     };
     const modeChecks = json.checks.filter((check) => check.name.startsWith('mode drift'));
+    // One check, whatever the drift count — the per-entry rows moved to the payload.
+    expect(modeChecks).toHaveLength(1);
     expect(modeChecks[0].detail).toContain('1 wider, 1 stricter');
-    expect(modeChecks.map((check) => check.detail).join('\n')).toContain('--fix tightens to 644');
-    expect(modeChecks.map((check) => check.detail).join('\n')).toContain('never widened');
+    const entries = modeChecks[0].modeDrift?.entries ?? [];
+    expect(entries).toContainEqual(expect.objectContaining({ relPath: 'a.txt', disposition: 'wider' }));
+    expect(entries).toContainEqual(expect.objectContaining({ relPath: 'sub', disposition: 'stricter' }));
     // Detect-only: reporting drift must not repair it — repair stays behind --fix.
     expect(modeOf(join(wt, 'a.txt'))).toBe(0o666);
     expect(modeOf(join(wt, 'sub'))).toBe(0o700);
+  });
+
+  test('a host with >100 drifted entries prints ONE mode drift line naming at most five', async () => {
+    const fixture = makeFixture();
+    isolate(fixture);
+    const wt = addWorktree(fixture, 'wish/demo-flood');
+    withUmask(0o022, () => {
+      for (let index = 0; index < 120; index += 1) {
+        const file = join(wt, `f${String(index).padStart(4, '0')}.txt`);
+        writeFileSync(file, `flood ${index}\n`);
+        chmodSync(file, 0o644);
+      }
+      git(wt, 'add', '-A');
+      git(wt, 'commit', '-q', '-m', 'flood');
+    });
+    for (let index = 0; index < 120; index += 1) chmodSync(join(wt, `f${String(index).padStart(4, '0')}.txt`), 0o600);
+
+    const { output } = await runDoctor(fixture, {});
+    const lines = output.split('\n');
+    // The whole point: 120 drifted entries used to be 120 lines (10,565 on the
+    // dogfood host). One status line, five named entries, one remainder.
+    expect(lines.filter((line) => line.includes('mode drift'))).toHaveLength(1);
+    const named = lines.filter((line) => /^ {6}· (wider|stricter|mixed|refused): /.test(line));
+    expect(named.length).toBe(MAX_NAMED_MODE_DRIFT_ENTRIES);
+    expect(lines.some((line) => line.includes('+115 more'))).toBe(true);
   });
 
   test('doctor --fix tightens only the wider items; stricter items survive; report reflects the post-fix state', async () => {

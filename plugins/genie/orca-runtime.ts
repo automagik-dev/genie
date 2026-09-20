@@ -1,13 +1,28 @@
 import {
   OrcaAdapterError,
+  type OrcaAdapterOptions,
   type OrcaAdapterResponse,
   type OrcaOperation,
   type OrcaOrchestrationAdapter,
   createOrcaOrchestrationAdapter,
 } from '../../src/lib/orca-orchestration-adapter';
 
-export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.192';
+export const ORCA_MINIMUM_RUNTIME_VERSION = '1.4.205';
 export const ORCA_REQUIRED_CONTRACT = 'orchestration.contract.v1';
+
+/**
+ * Process bound for every adapter call a palette handler makes. Orca rejects a
+ * plugin command after 30 000 ms (`invokeTimeoutMs`) — a ceiling, not a
+ * duration: each call is sub-second on a healthy host. The send path spends the
+ * once-per-worker probe plus two reads (ceiling 24 s); the start path adds
+ * `run-create` with its `run-show` read-back and `worker-start` (15 s + grace)
+ * with its `worker-show` read-back — six child processes, ceiling ≈ 68 s — so
+ * the handler checks a 20 s read-phase deadline before the first mutation. Past
+ * 30 s the host rejects the invoke and drops the late result but never kills
+ * the worker, whose closing notification still arrives; the plugin never
+ * retries a mutation.
+ */
+export const ORCA_PLUGIN_ADAPTER_TIMEOUT_MS = 8_000;
 
 export interface OrcaPluginCompatibility {
   readonly runtimeId: string;
@@ -38,8 +53,8 @@ interface ParsedVersion {
 
 /**
  * Semver parse. Build metadata is discarded (it never affects precedence); the
- * prerelease identifiers are kept, because dropping them made `1.4.192-rc.1`
- * compare equal to the released `1.4.192` and satisfy `>=1.4.192`.
+ * prerelease identifiers are kept, because dropping them made `1.4.205-rc.1`
+ * compare equal to the released `1.4.205` and satisfy `>=1.4.205`.
  */
 function parseVersion(value: string): ParsedVersion | undefined {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
@@ -96,13 +111,40 @@ async function probe(adapter: OrcaOrchestrationAdapter): Promise<OrcaPluginCompa
 }
 
 export function createOrcaPluginRuntime(
-  adapter: OrcaOrchestrationAdapter = createOrcaOrchestrationAdapter(),
+  adapter?: OrcaOrchestrationAdapter,
+  createAdapter: (options: OrcaAdapterOptions) => OrcaOrchestrationAdapter = createOrcaOrchestrationAdapter,
 ): OrcaPluginRuntime {
+  let resolved = adapter;
+  /**
+   * Built on first use, never while the module is being imported: an Orca host
+   * this plugin cannot support would otherwise make the whole plugin fail to
+   * load instead of turning one palette command into one notification.
+   */
+  const use = (): OrcaOrchestrationAdapter => {
+    resolved ??= createAdapter({ timeoutMs: ORCA_PLUGIN_ADAPTER_TIMEOUT_MS });
+    return resolved;
+  };
+  /**
+   * One probe per runtime instance (design decision 16). A per-call probe spent
+   * one of the few child processes the host's 30 s command window allows. A
+   * REJECTED probe is deliberately not remembered, so a host that becomes
+   * healthy is probed again on the next invocation.
+   */
+  let probed: Promise<OrcaPluginCompatibility> | undefined;
+  const compatibility = (): Promise<OrcaPluginCompatibility> => {
+    probed ??= probe(use()).catch((error: unknown) => {
+      probed = undefined;
+      throw error;
+    });
+    return probed;
+  };
   return Object.freeze({
-    probe: () => probe(adapter),
+    probe: compatibility,
     async execute(operation: OrcaOperation): Promise<OrcaAdapterResponse> {
-      await probe(adapter);
-      return adapter.execute(operation);
+      await compatibility();
+      // The operation passes through unchanged, so its own `timeoutMs` reaches
+      // the adapter and bounds that one child process.
+      return use().execute(operation);
     },
   });
 }

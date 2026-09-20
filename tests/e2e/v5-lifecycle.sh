@@ -299,8 +299,10 @@ step "export + verify"
 EXPORT="$SCRATCH/export.json"
 cli task export > "$EXPORT"
 
-assert export-schema-version-1
-[ "$(json_schema_version < "$EXPORT")" -eq 1 ] || die "export schemaVersion != 1"
+# v6 drops `hire_roster` behind a forward-only user_version 1 -> 2 ladder, so a
+# freshly created database stamps — and exports — schema 2.
+assert export-schema-version-2
+[ "$(json_schema_version < "$EXPORT")" -eq 2 ] || die "export schemaVersion != 2"
 
 assert export-task-count-3
 [ "$(json_task_count < "$EXPORT")" -eq 3 ] || die "export task count != 3"

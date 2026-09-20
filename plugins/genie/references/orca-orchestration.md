@@ -10,16 +10,18 @@ must finish the packaged-payload and runtime preflight before committing configu
 SQLite pre-open barrier rejects local lifecycle reads and writes, and the roadmap pre-write barrier rejects direct and
 indirect writes, syncs, and exports. Do not route around either barrier or serve stale local data as a convenience.
 
-The supported host boundary is the public Orca CLI with child-process execution, runtime version `>=1.4.192`, and the
+The supported host boundary is the public Orca CLI with child-process execution, runtime version `>=1.4.205`, and the
 `orchestration.contract.v1` capability. A host that cannot satisfy that contract returns `unsupported_environment`.
 No fallback to standalone or to another transport is permitted.
 
 ## Closed public CLI adapter
 
 The adapter accepts typed operations, validates them against per-verb closed schemas, and compiles them to an exact
-allowlist of `orca orchestration <verb> ... --json` argv. It owns the final `--json`, selects one deterministic
-executable, and spawns with `shell: false`. Callers cannot provide executable names, raw argv, flags, placement,
-routing, terminal handles, or recovery commands.
+allowlist of `orca orchestration <verb> ... --json` argv for the lifecycle verbs, `orca worktree <show|set> ... --json`
+for the board-card pair, and `orca terminal list ... --json` for the one terminal read. It owns the final `--json`,
+selects one deterministic executable, and spawns with `shell: false`. Callers cannot provide executable names, raw
+argv, flags, routing, terminal handles, or recovery commands, and no placement beyond the closed worktree selector
+grammar below.
 
 Runtime selection is fixed by platform and managed-terminal state: Linux outside an Orca terminal selects `orca-ide`,
 Windows selects `orca.exe`, and macOS or an Orca-managed terminal selects `orca`. Failure of that selected executable
@@ -28,12 +30,31 @@ is final—never probe a second candidate.
 The positive boundary currently contains these operations:
 
 ```text
-run-create run-list run-show run-current run-use
-task-create task-list task-update
-worker-start worker-show worker-read worker-release
-send check reply ask
-gate-create gate-list gate-resolve
+orchestration: run-create run-list run-show run-current run-use
+               task-create task-list task-update
+               worker-start worker-show worker-read worker-release
+               send check reply ask
+               gate-create gate-list gate-resolve
+worktree:      worktree-show worktree-set
+terminal:      terminal-list
 ```
+
+The three non-orchestration operations and the amended `worker-start` are the written amendment recorded in
+`.genie/brainstorms/orca-plugin-genie/DESIGN.md` (§ "The adapter amendment") to the frozen set of
+`genie-dual-mode-orca-plugin/DESIGN.md:135`:
+
+- A **worktree selector** is the one placement value a caller may name, because the plugin worker runs outside every
+  terminal: `current`, `active`, `id:<repoId>::<absolute path>`, `path:<absolute path>`, `branch:<ref>` (the charset
+  `git check-ref-format` accepts), `name:<display name>` — a closed grammar validated before spawn. `branch:` is
+  `selector_ambiguous` on a host with two checkouts of one branch; handlers use `active`, then `id:`.
+- `worktree-set {worktree, workspaceStatus?, comment?}` (at least one; status is one of Orca's four default columns,
+  the comment one line of the short-text domain) is a mutation whose receipt is the updated record and whose public
+  read-back is `worktree show --worktree id:<returned id>`; a disagreement is `readback_mismatch`, never retried.
+- `worker-start` takes `task` **or** `spec` (with an optional `title`), an optional `run`, and a selector that
+  defaults to `current`; with `spec` the receipt's task id is the identity the `worker-show` read-back proves.
+- Worktree and terminal receipts are strict on the fields genie reads and pass the rest through: Orca's worktree record
+  is a 45-field UI projection that grows per release, and a fully closed schema would turn each release into
+  `unexpected_response`. Passthrough is bounded by the stdout cap and the typed field bounds.
 
 Reject `terminal send`. Reject `--inject`. Reject `internal RPC`. Reject `private API`. Also reject caller-selected
 `--json`, generic command runners, shell strings, setup/worktree/repository placement, impersonation/routing flags, and
@@ -146,7 +167,7 @@ selecting an Orca lifecycle mode is separate from selecting a release channel.
 
 ## MCP retirement
 
-A7 retired the Genie MCP runtime, launchers, and only registrations whose Genie ownership is proven. `genie mcp` now
-exits non-zero with the stable diagnostic documented in the repository README and never starts a compatibility server.
-Unrelated user configuration and both authorities' lifecycle history remain untouched; use standalone task/board or
-roll back to a pre-A7 signed release when temporary MCP compatibility is required.
+A7 retired the Genie MCP runtime, launchers, and only registrations whose Genie ownership is proven; v6 then removed
+the `genie mcp` stub that had stood in for the runtime, so the verb no longer parses at all. Unrelated user
+configuration and both authorities' lifecycle history remain untouched; use standalone task/board, or roll back to a
+pre-A7 signed release when temporary MCP compatibility is required.

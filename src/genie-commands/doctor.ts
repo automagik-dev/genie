@@ -30,7 +30,6 @@ import {
 } from '../lib/codex-project-mcp.js';
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
-import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
@@ -50,6 +49,7 @@ import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
+  PendingMigrationError,
   type ProjectContext,
   openDb,
   resolveProjectContext,
@@ -61,7 +61,7 @@ import {
   shippedWorkflowNames,
   shippedWorkflowsRoot,
 } from '../lib/workflows-installer.js';
-import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
+import { type ModeDriftReportEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -88,6 +88,14 @@ export interface CheckResult {
    */
   indexLane?: { entries: IndexLaneEntry[] };
   /**
+   * Machine-readable payload rider (survives `--json` as
+   * `checks[].modeDrift.entries`). Only the aggregated `mode drift` check sets
+   * it: EVERY classified entry, uncapped, because the human report names at
+   * most `MAX_NAMED_MODE_DRIFT_ENTRIES` of them. Each entry carries its own
+   * `suggestion` where one exists, so the remedy survives the cap.
+   */
+  modeDrift?: { entries: ModeDriftReportEntry[] };
+  /**
    * Machine-readable payload rider (survives `--json` as `checks[].routeLayers`).
    * Only the `Codex Genie MCP registration` check sets it: the typed config-layer
    * findings (collision, shadowing, global same-key, trust states) from the
@@ -107,19 +115,6 @@ export interface CheckResult {
    * `skills: channel` line carries no agent and therefore no rider.
    */
   skillsChannel?: SkillsChannelStatus;
-  /**
-   * Machine-readable payload rider (survives `--json` as `checks[].legacyIntegrations`).
-   * Only the `legacy integrations` check sets it: the marker-owned assets still
-   * awaiting retirement. Doctor only OBSERVES them — retirement is `genie update`'s.
-   */
-  legacyIntegrations?: {
-    pending: Array<{ surface: string; path: string }>;
-    /**
-     * A classifier actually ran. `false` means the check could not observe
-     * anything, so an empty `pending` is ignorance, not proof of retirement.
-     */
-    available: boolean;
-  };
 }
 
 // ============================================================================
@@ -144,7 +139,8 @@ const MAX_UNLINKED_LINES = 5;
  * `jar: index-lane drift` — the INDEX entries an operator must open by name,
  * since a `broken`/`unlinked` count alone cannot be acted on. Every `broken`
  * entry is named; `unlinked` is the benign majority (a fresh clone has no
- * roadmap cards at all), so it is capped and the remainder counted.
+ * roadmap cards at all), so it is capped and the remainder counted. `mode
+ * drift` names its own capped entries the same way, from its own rider.
  */
 function renderCheckLines(r: CheckResult): string[] {
   const suffix = r.detail ? ` — ${r.detail}` : '';
@@ -156,6 +152,7 @@ function renderCheckLines(r: CheckResult): string[] {
     else if (e.state === 'unlinked' && unlinked++ < MAX_UNLINKED_LINES) lines.push(`      · unlinked: ${e.entry}`);
   }
   if (unlinked > MAX_UNLINKED_LINES) lines.push(`      · …and ${unlinked - MAX_UNLINKED_LINES} more unlinked`);
+  lines.push(...modeDriftLines(r.modeDrift?.entries ?? []));
   return lines;
 }
 
@@ -241,7 +238,13 @@ function checkDatabase(root: string | null): CheckResult[] {
     ];
   }
   try {
-    const db = openDb({ path: dbPath });
+    // `migrate: false` is load-bearing, not a nicety. The v1 -> v2 ladder is
+    // forward-only and destructive, and a 5.x binary on the same machine
+    // refuses a migrated file — so `genie doctor` performing it as a side
+    // effect of LOOKING would silently break every other checkout on the host
+    // (it did: two runs of this check migrated the developer's own shared
+    // database). Doctor observes; `genie task` / `genie board` migrate.
+    const db = openDb({ path: dbPath, migrate: false });
     try {
       const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
       const version = row?.user_version ?? 0;
@@ -259,6 +262,19 @@ function checkDatabase(root: string | null): CheckResult[] {
       db.close();
     }
   } catch (err) {
+    // A pending migration is not a broken database: it is a mutation doctor
+    // declined to perform. Warn with the remedy instead of failing the run.
+    if (err instanceof PendingMigrationError) {
+      return [
+        {
+          name: 'genie.db',
+          status: 'warn',
+          detail: `${dbPath} is at schema v${err.foundVersion}; this build expects v${err.expectedVersion}`,
+          suggestion:
+            'Run `genie task list` (or any lifecycle command) to migrate it — the previous database is backed up under `<GENIE_HOME>/state-backups/db-migration-<timestamp>-<pid>/` first. Older genie binaries on this host will refuse the migrated file.',
+        },
+      ];
+    }
     const detail = err instanceof GenieDbError ? err.message : err instanceof Error ? err.message : String(err);
     return [{ name: 'genie.db', status: 'fail', detail }];
   }
@@ -281,6 +297,13 @@ const PER_REPO_ONLY_TABLES = [
   'task_events',
   'stage_log',
   'wish_groups',
+  // RETIRED, and kept here on purpose. The v1 -> v2 ladder dropped
+  // `hire_roster` from the per-repo schema, but a global database contaminated
+  // BEFORE v6 still carries the table, and the ladder never runs on the global
+  // path — nothing opens that file with the per-repo opener any more. Dropping
+  // it from this list would leave that stray table on the host for ever, with
+  // doctor reporting the file clean. A table this build no longer creates is
+  // exactly the kind of stray `--fix-global-db` exists to remove.
   'hire_roster',
 ] as const;
 
@@ -964,112 +987,6 @@ export function checkWorkflowsChannel(options: { home?: string; genieHome?: stri
   const detail = `${present}/${total} in ${recorded.dir} @ ${recorded.ref}${staleSuffix}${driftSuffix}`;
   if (drift.length === 0 && !stale) return [{ name: WORKFLOWS_CHECK_NAME, status: 'pass', detail }];
   return [{ name: WORKFLOWS_CHECK_NAME, status: 'warn', detail, suggestion: WORKFLOWS_CHANNEL_SUGGESTION }];
-}
-
-// ============================================================================
-// Legacy marker-owned integration assets (wish `skills-everywhere`, group 3)
-// ============================================================================
-
-/** Classification of one marker-owned legacy asset. Mirrors the group-2 module. */
-export type LegacyIntegrationState = 'managed-clean' | 'managed-modified' | 'unmanaged' | 'absent';
-
-export interface LegacyIntegrationEntry {
-  surface: string;
-  path: string;
-  state: LegacyIntegrationState;
-}
-
-/**
- * The narrow shape doctor consumes: structurally satisfied by the real
- * `classifyLegacyIntegrations` (its `surface` union widens to `string` and its
- * extra optional homes are not required here), while staying injectable by
- * tests. Doctor observes the classification; it does not own the engine.
- */
-export type LegacyClassifier = (homes: { home: string; genieHome: string }) => { entries: LegacyIntegrationEntry[] };
-
-/**
- * Compile-time proof that the real group-2 export satisfies doctor's seam. If
- * `classifyLegacyIntegrations`'s signature or its `LegacyIntegrationState`
- * union ever drifts from doctor's, this assignment fails to typecheck.
- */
-const DEFAULT_LEGACY_CLASSIFIER: LegacyClassifier = classifyLegacyIntegrations;
-
-const LEGACY_RETIREMENT_SUGGESTION = 'Run `genie update` to retire them';
-/** How many pending paths the check names before summarizing the rest. */
-const MAX_LEGACY_PENDING_PATHS = 5;
-
-/**
- * The retirement module is a permanent fixture of the tree, so it is imported
- * statically: a non-literal dynamic specifier is invisible to `bun build`, and
- * the shipped single-file bundle would have degraded to a silent, permanent
- * "classifier unavailable" pass. `deps.legacyClassifier` remains the only seam
- * — `null` forces the unavailable path for tests of that branch.
- */
-function resolveLegacyClassifier(deps: DoctorDeps): LegacyClassifier | null {
-  if (deps.legacyClassifier !== undefined) return deps.legacyClassifier;
-  return DEFAULT_LEGACY_CLASSIFIER;
-}
-
-/**
- * The one shape of the unavailable answer: a pass (doctor never fails on its
- * own blindness) that still carries the rider, with `available:false` so a
- * machine reader can tell "nothing pending" from "nothing observed".
- */
-function unavailableLegacyResult(reason?: string): CheckResult {
-  return {
-    name: 'legacy integrations',
-    status: 'pass',
-    detail: reason === undefined ? 'classifier unavailable' : `classifier unavailable (${reason})`,
-    legacyIntegrations: { pending: [], available: false },
-  };
-}
-
-/**
- * Read-only classification of marker-owned legacy assets still on disk.
- * `managed-clean` is the ONLY pending state: a modified or unmanaged asset is
- * never genie's to retire, and an absent one is already gone.
- */
-export async function checkLegacyIntegrations(
-  deps: DoctorDeps = {},
-  options: { home?: string; genieHome?: string } = {},
-): Promise<CheckResult[]> {
-  const classifier = resolveLegacyClassifier(deps);
-  if (classifier === null) return [unavailableLegacyResult()];
-  let entries: LegacyIntegrationEntry[];
-  try {
-    entries = classifier({
-      home: resolveHostHome(options.home),
-      genieHome: options.genieHome ?? resolveGlobalGenieHome(),
-    }).entries;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return [unavailableLegacyResult(reason)];
-  }
-  const pending = entries
-    .filter((entry) => entry.state === 'managed-clean')
-    .map((entry) => ({ surface: entry.surface, path: entry.path }));
-  if (pending.length === 0) {
-    return [
-      {
-        name: 'legacy integrations',
-        status: 'pass',
-        detail: 'retired',
-        legacyIntegrations: { pending, available: true },
-      },
-    ];
-  }
-  const named = pending.slice(0, MAX_LEGACY_PENDING_PATHS).map((entry) => entry.path);
-  const remainder = pending.length - named.length;
-  const tail = remainder > 0 ? `${named.join(', ')}, …and ${remainder} more` : named.join(', ');
-  return [
-    {
-      name: 'legacy integrations',
-      status: 'warn',
-      detail: `${pending.length} marker-owned assets pending: ${tail}`,
-      suggestion: LEGACY_RETIREMENT_SUGGESTION,
-      legacyIntegrations: { pending, available: true },
-    },
-  ];
 }
 
 interface ParsedSemVer {
@@ -1876,12 +1793,6 @@ export interface DoctorDeps {
   projectContext?: ProjectContext | null;
   /** A3 public compatibility probe seam for Orca-mode diagnostics. */
   orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
-  /**
-   * Legacy marker-owned asset classifier. Omitted = the real statically-imported
-   * group-2 classifier; explicit `null` = force the "classifier unavailable"
-   * branch (tests only).
-   */
-  legacyClassifier?: LegacyClassifier | null;
 }
 
 export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
@@ -1988,7 +1899,6 @@ export async function doctorCommand(
     ...checkSkills(root),
     ...checkSkillsChannel(),
     ...checkWorkflowsChannel(),
-    ...(await checkLegacyIntegrations(deps)),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...(await checkBudgets()),
     ...checkSubagentModelOverride(),
