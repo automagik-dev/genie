@@ -86,9 +86,11 @@ afterEach(() => {
 describe('genie init', () => {
   test('fresh repo: scaffolds INDEX.md and appends all ignore rules', () => {
     initGitRepo(dir);
-    const { code, stdout } = runInit(dir);
+    const { code, stdout, stderr } = runInit(dir);
 
-    expect(code).toBe(0);
+    // The child's stderr is the diagnosis; without it a CI-only failure of
+    // this exit code is unreproducible (#3026).
+    expect(code, `genie init failed\n--- stderr ---\n${stderr}\n--- stdout ---\n${stdout}`).toBe(0);
     const indexPath = join(dir, '.genie', 'INDEX.md');
     expect(existsSync(indexPath)).toBe(true);
     const index = readFileSync(indexPath, 'utf-8');

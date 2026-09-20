@@ -347,6 +347,24 @@ function activeManifestError(manifest: unknown, expectedName: string, expectedVe
 }
 
 /**
+ * Attempts the git-root probe may use. A probe that answers — including the
+ * genuine "not a git repository" exit 128 — is never retried, so a repo-less
+ * directory still resolves (to null) in one fast round trip.
+ */
+const GIT_ROOT_PROBE_ATTEMPTS = 3;
+
+/**
+ * True when the probe child never returned a verdict. `execFileSync` surfaces
+ * a child that exited — even non-zero — with a numeric `status`; a timeout
+ * kill (ETIMEDOUT/SIGTERM) or a spawn failure under load (EAGAIN, ENOMEM,
+ * ENOENT) leaves `status` null/undefined. Only the latter are transient
+ * infrastructure noise, not an answer about the repository.
+ */
+function isUnansweredGitProbe(error: unknown): boolean {
+  return typeof (error as { status?: unknown } | null)?.status !== 'number';
+}
+
+/**
  * Resolve the root of the current Git working tree.
  *
  * `--show-toplevel` intentionally returns a linked worktree's own root (not
@@ -359,25 +377,39 @@ export function resolveGitProjectRoots(
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
   which: (name: string) => string | null = (name) => Bun.which(name),
 ): GitProjectRoots | null {
+  let gitCommand: string;
   try {
-    const gitCommand = resolveTrustedExecutable('git', cwd, which);
-    const output = exec(gitCommand, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: timeoutMs,
-    })
-      .trim()
-      .split('\n');
-    const worktreeRoot = output[0]?.trim();
-    const commonDir = output[1]?.trim();
-    if (!worktreeRoot || !commonDir) return null;
-    return {
-      worktreeRoot: normalizeGitPath(worktreeRoot),
-      commonRoot: normalizeGitPath(dirname(commonDir)),
-    };
+    gitCommand = resolveTrustedExecutable('git', cwd, which);
   } catch {
     return null;
+  }
+
+  // A probe that never ANSWERED used to collapse into the same null as a
+  // genuine "not a git repository", which made `genie init` exit 1 with that
+  // message on contended CI runners while the same commit passed elsewhere
+  // (darwin flake, #3026). Retry only the unanswered probe: a stalled-but-alive
+  // host answers on a later attempt, and a host that never answers keeps the
+  // null contract.
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const output = exec(gitCommand, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], {
+        cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: timeoutMs,
+      })
+        .trim()
+        .split('\n');
+      const worktreeRoot = output[0]?.trim();
+      const commonDir = output[1]?.trim();
+      if (!worktreeRoot || !commonDir) return null;
+      return {
+        worktreeRoot: normalizeGitPath(worktreeRoot),
+        commonRoot: normalizeGitPath(dirname(commonDir)),
+      };
+    } catch (error) {
+      if (attempt >= GIT_ROOT_PROBE_ATTEMPTS || !isUnansweredGitProbe(error)) return null;
+    }
   }
 }
 
