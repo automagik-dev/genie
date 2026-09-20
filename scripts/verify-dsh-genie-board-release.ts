@@ -35,6 +35,14 @@ export const DSH_PLUGIN_MEMBERS = [
   'dist/client.js',
 ] as const;
 
+/**
+ * The workflow-loader row shipped beside the board. Its `package.json` is one
+ * of the stamped top-level version files, so it is gated per tarball by
+ * `verifyReleasePayloadVersion`; these four members are staged by
+ * `scripts/build-binary.sh` and pinned here the same way as the board's.
+ */
+export const LOADER_PLUGIN_MEMBERS = ['agent.cordis.yml', 'cordis.patch.yml', 'README.md', 'dist/index.js'] as const;
+
 const repository = DELIVERY_EVIDENCE_REPOSITORY;
 
 /**
@@ -133,6 +141,11 @@ function verifyTarball(path: string, version: string): void {
       nonempty(
         join(root, 'plugins/dsh-genie-board', member),
         `payload member plugins/dsh-genie-board/${member} of ${path}`,
+      );
+    for (const member of LOADER_PLUGIN_MEMBERS)
+      nonempty(
+        join(root, 'plugins/dsh-workflow-loader', member),
+        `payload member plugins/dsh-workflow-loader/${member} of ${path}`,
       );
     verifyReleasePayloadVersion(root, version);
   } finally {

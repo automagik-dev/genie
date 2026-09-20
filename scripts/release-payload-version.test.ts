@@ -33,6 +33,7 @@ describe('release payload version contract', () => {
       version: '5.000000.0',
       minimumGenieVersion: '5.000000.0',
     });
+    writeJson(root, 'plugins/dsh-workflow-loader/package.json', { version: '5.000000.0' });
     return root;
   }
 
@@ -64,6 +65,9 @@ describe('release payload version contract', () => {
     for (const path of ['plugins/genie/package.json', 'plugins/genie/orca-plugin.json']) {
       expect(JSON.parse(readFileSync(join(root, path), 'utf8')).version).toBe(version);
     }
+    expect(JSON.parse(readFileSync(join(root, 'plugins/dsh-workflow-loader/package.json'), 'utf8')).version).toBe(
+      version,
+    );
     expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).metadata.version).toBe(
       'nested-must-not-change',
     );

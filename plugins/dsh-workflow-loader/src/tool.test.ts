@@ -11,7 +11,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveLoaderConfig } from './config';
-import { apply, workflowRunTool } from './index';
+import { apply, inject, workflowRunTool } from './index';
+import { journalDirectory } from './run';
 
 const REPO = join(import.meta.dir, '..', '..', '..');
 
@@ -261,6 +262,50 @@ describe('the workflow_run row', () => {
     } finally {
       h.cleanup();
     }
+  });
+
+  test('resolving a resolved config changes nothing', () => {
+    // Regression: cordis validates the patch through the row's `validate()`,
+    // which returns the RESOLVED object, and then hands that object to `apply`,
+    // which resolves again. A resolver that rejects its own output hangs the
+    // boot — the loader smoke found exactly that with `userRoot: ''`.
+    for (const input of [
+      {},
+      { toolName: 'run_saved_workflow', maxResultChars: 5000 },
+      { toolName: 'workflow_run', maxResultChars: 20000, journalDir: '', allowShadowing: false, userRoot: '' },
+      { journalDir: '/tmp/journals', userRoot: '/tmp/user-workflows', allowShadowing: true },
+    ]) {
+      const once = resolveLoaderConfig(input);
+      expect(resolveLoaderConfig(once)).toEqual(once);
+    }
+  });
+
+  test('accepts the shipped patch config verbatim', () => {
+    // Regression: the shipped cordis.patch.yml spelled the journal as '' and the
+    // resolver rejected an empty path, so the row failed to validate and the Host
+    // refused to load it — caught by scripts/dsh-workflow-loader-smoke.ts.
+    // The values are read from the shipped file itself, not restated here: the
+    // scalars under the row's `config:` mapping, while the commented-out
+    // journalDir means absent — '' is still passed to keep pinning the
+    // empty-path acceptance the smoke caught.
+    const shipped = readFileSync(join(import.meta.dir, '..', 'cordis.patch.yml'), 'utf8');
+    const scalar = (key: string): string | undefined =>
+      new RegExp(`^\\s*${key}: (\\S+)\\s*$`, 'm').exec(shipped)?.[1]?.replace(/^['"]|['"]$/g, '');
+    const config = resolveLoaderConfig({
+      toolName: scalar('toolName') as string,
+      maxResultChars: Number(scalar('maxResultChars')),
+      journalDir: scalar('journalDir') ?? '',
+      allowShadowing: scalar('allowShadowing') === 'true',
+    });
+    expect(config.journalDir).toBe('');
+    expect(journalDirectory(config.journalDir)).toMatch(/workflow-runs$/);
+  });
+
+  test('declares every service the row reads', () => {
+    // Regression: the row read `ctx.workflowEngine` without declaring it, and
+    // cordis refuses an undeclared service read AT CALL TIME — invisible to a
+    // stub-engine test, found by a live headless run.
+    expect(inject).toEqual(['tools', 'workflowEngine']);
   });
 
   test('apply() registers exactly one tool and returns its disposer', () => {

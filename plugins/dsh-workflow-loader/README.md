@@ -86,7 +86,7 @@ the next script, not a limitation today.
 - project: `<cwd>/.claude/workflows/<name>.js`
 - personal: `~/.claude/workflows/<name>.js` (override with `userRoot`)
 
-A name carried by **both** roots is refused by name, not resolved by luck: which
+A name carried by **both** roots is refused by default, naming both paths: which
 root wins is undocumented upstream, and on 2026-09-15 a stale personal copy
 shadowed a repository's own file (`workflows-catalog`). `allowShadowing: true`
 accepts the project copy instead.
@@ -122,13 +122,45 @@ drives the row with a stub `ctx.workflowEngine` that executes the submitted scri
 in-process, so resolution, the transform, journaling and the projection are
 covered without a host.
 
+### On an installed host this collision is the common case, not an edge case
+
+The workflows channel (`genie install` / `genie update`) delivers every catalog file
+this release ships into `~/.claude/workflows/`, so a repository that carries its own
+`.claude/workflows/council.js` has a personal copy of the same name beside it. A
+`workflow_run({"name": "council"})` from inside that repository is therefore refused
+until the operator either deletes the personal copy or sets `allowShadowing: true`
+(project wins, with a warning). Read that refusal as the feature it is — it is
+telling you two different files answer to one name — but expect to meet it.
+A live council run on 2026-09-20 raised this as its first usability finding
+(`decision: revise`, journal
+`<DSH_HOME>/workflow-runs/<ts>-council-<runId>.json`).
+
+## Verification
+
+- `bun test src/` — 45 tests: the dialect against this repository's own catalog,
+  and the row end to end with a stub engine.
+- `bun scripts/dsh-workflow-loader-smoke.ts` — boots a real `dsh web` in an
+  isolated `DSH_HOME`/`HOME`/`TMPDIR` tree with the row installed, asserts the
+  composed profile carries it, and holds the Host through the 10 s settle window
+  the boot audit needs. It found the two defects that would have broken a boot:
+  the shipped patch's own `journalDir: ''` and a resolver that was not idempotent.
+- A live headless session (`dsh --profile headless "<task>"`) on an isolated host
+  called `workflow_run` for real: `probe` returned `{ok: true, word: "ok"}` with
+  the stripped `effort` recorded in the journal, and `council` completed with six
+  agents in 304 s, `decision: revise`, and a 141 KB journal behind the bounded
+  projection. That run is what found the missing `workflowEngine` declaration —
+  cordis refuses an undeclared service read at CALL time, so registration and the
+  boot audit both pass and only a real call fails.
+
 ## Not done yet
 
-- **The release payload does not carry this plugin.** `scripts/build-binary.sh`
-  enumerates `plugins/dsh-genie-board/*` explicitly and `scripts/version.ts`
-  stamps the packages the tarball ships; adding a member is a release-contract
-  change and belongs to the group that wires it, not to this row's first cut.
-- **No host smoke.** The row is tested against a stub engine, not a running
-  profile. The board's `scripts/dsh-genie-board-smoke.ts` is the pattern to copy
-  once the payload carries it.
 - **No client half.** Discovery stays in the board's catalog panel.
+- **Not wired into the release tarball yet at the time of writing:** the payload
+  member and version stamping are in review
+  ([#3015](https://github.com/automagik-dev/genie/pull/3015)). Until that lands,
+  a profile install is a `link:` to a built checkout, and the checkout's `dist/`
+  must be rebuilt from a revision that carries the fixes above.
+- **The `effort` policy is a drop, not a mapping.** Effort is recorded in the
+  journal and not passed to dispatch; a mapping to a model tier is deferred until
+  a body needs it.
+

@@ -52,16 +52,22 @@ export function resolveLoaderConfig(input?: unknown): LoaderConfig {
     issues.push({ message: 'expected an integer between 1000 and 500000', path: ['maxResultChars'] });
   }
   const rawDir = source.journalDir;
-  if (rawDir !== undefined && (typeof rawDir !== 'string' || rawDir.length === 0)) {
-    issues.push({ message: 'expected a non-empty path', path: ['journalDir'] });
+  // `''` is the shipped patch's spelling for "not configured" and resolves to
+  // `<DSH_HOME>/workflow-runs`; only a non-string is a fault.
+  if (rawDir !== undefined && typeof rawDir !== 'string') {
+    issues.push({ message: 'expected a path string', path: ['journalDir'] });
   }
   const rawShadow = source.allowShadowing;
   if (rawShadow !== undefined && typeof rawShadow !== 'boolean') {
     issues.push({ message: 'expected a boolean', path: ['allowShadowing'] });
   }
   const rawUserRoot = source.userRoot;
-  if (rawUserRoot !== undefined && (typeof rawUserRoot !== 'string' || rawUserRoot.length === 0)) {
-    issues.push({ message: 'expected a non-empty path', path: ['userRoot'] });
+  // `''` is what this resolver itself emits for "not configured", so it must
+  // accept it back: cordis validates the patch through `validate()` and then
+  // hands the RESOLVED object to `apply`, which resolves again. A resolver that
+  // rejects its own output hangs the boot (found by the loader smoke).
+  if (rawUserRoot !== undefined && typeof rawUserRoot !== 'string') {
+    issues.push({ message: 'expected a path string', path: ['userRoot'] });
   }
   if (issues.length) {
     throw new ConfigError(issues.map((issue) => `${issue.message} (at ${issue.path.join('.')})`).join('; '), issues);
