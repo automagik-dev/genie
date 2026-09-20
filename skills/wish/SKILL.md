@@ -7,7 +7,7 @@ mutates: repo
 
 # Wish
 
-`/wish` is one task delivered, as soon as possible. Give it a decided, bounded objective and it comes back with a merge-ready PR against the base branch, or with a refusal that names the route the request needs instead. Everything else in the lifecycle — brainstorm, plan review, `work` over many groups, `fix`, `verify` — is auxiliary to that. `quick` is retired; this is its replacement.
+`/wish` is one task delivered, as soon as possible. Give it a decided, bounded objective and it comes back with a merge-ready PR against the base branch, or with a refusal that names the route the request needs instead. Everything else in the lifecycle — brainstorm, plan review, `work` over many groups, `fix`, `verify` — is auxiliary to that.
 
 The delivery is a saved workflow, not a procedure this skill performs inline. The single source of truth is `.claude/workflows/wish.js` in the genie repository's workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door and carries no stage roster of its own. On a runtime that runs saved workflows, run the script at `<repository root>/.claude/workflows/wish.js` when that file exists, otherwise `~/.claude/workflows/wish.js` (delivered by `genie install` / `genie update`); give the runtime that explicit script path, never a bare name — both scopes now carry these names and the order a name resolves in is undocumented — and relay the returned result unchanged. On a runtime that does not, or where neither file exists, follow the by-hand section below with the same briefs; it is complete enough to deliver the PR.
 
@@ -79,6 +79,9 @@ It reports structure only — template sections, the Status and Date metadata, t
 2. Obtain independent `review` of the completed plan. The caller appends its evidence under `## Review Results` and persists APPROVED, FIX-FIRST, or BLOCKED. `work` requires APPROVED on disk.
 3. Resolve the configured lifecycle authority before branching: `orchestration.mode` is an explicit setting and is never inferred from what is installed. In standalone mode, create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
 4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. In Orca mode, record the base branch and exact SHA in WISH.md and follow `work`'s Orca protocol; Genie owns the planning documents, Orca owns Run/Task/Dispatch state.
+   In Orca mode the step-2 verdict is persisted once the approve-wish gate resolves — the first row of the gate catalogue in `work`'s Orca coordinator reference, raised on the wish-level task from the coordinator terminal after `run-create`, its Run and task ids recorded in WISH.md — and an authorization the user already gave satisfies it.
+   Then mirror the persisted status onto the workspace card: `genie orca mirror --to APPROVED --evidence "<plan review verdict, reviewer, head SHA>"`.
+   That write is one-way — Orca's status and comment are a view of the documents, never lifecycle truth — and a failed mirror is reported, never retried blindly.
 
 ## Without a workflow surface
 

@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Deliver ONE task end to end — a read-only scout and a blind judge admit or refuse it, one executor works in a real worktree, a mechanical gate runs the full check, a different read-only agent reviews the exact commit, a bounded repair loop closes gaps, and one allowlisted agent pushes, opens the PR and reads the remote back; merging stays with the operator.',
   whenToUse:
-    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path that replaces quick. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp}, where gateModel/publishModel pick a cheaper runtime for the mechanical stages and unset inherits model — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
+    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp}, where gateModel/publishModel pick a cheaper runtime for the mechanical stages and unset inherits model — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
   phases: [
     {
       title: 'Admit',
@@ -55,7 +55,7 @@ export const meta = {
 // review SHIP, digest 25af2eae… at the revision this landed against),
 // .genie/brainstorms/wish-v6/FRAMEWORK-BRIEF.md,
 // .genie/brainstorms/wish-v6/WISH-DURATION-STUDY.md, .genie/brainstorms/wish-v6/COUNCIL.md,
-// skills/quick/SKILL.md, skills/wish/SKILL.md, skills/review/SKILL.md, skills/fix/SKILL.md,
+// skills/wish/SKILL.md, skills/review/SKILL.md, skills/fix/SKILL.md,
 // skills/work/SKILL.md and .claude/workflows/research-sweep.js.
 //
 // FROZEN: objective, issue, context, slug, base, repairBudget, model, gateModel, publishModel and

@@ -7,7 +7,6 @@
       "name": "roadmap"
     }
   ],
-  "hire_roster": [],
   "meta": [
     {
       "key": "stage_log_backfill_v1",
@@ -50,7 +49,7 @@
       "value": "{\"branch\":\"wish/workflows-multibody\",\"base\":\"67a8d08b14d0d628c92cd6bffb19b8b4dab0381d\",\"recordedAt\":1789496254369}"
     }
   ],
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage_log": [],
   "task_dependencies": [],
   "task_events": [

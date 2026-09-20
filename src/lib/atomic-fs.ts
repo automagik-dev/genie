@@ -328,9 +328,9 @@ function selectedNoClobberPlatform(deps: NoClobberDeps): NodeJS.Platform {
 // survive wish `skills-everywhere-b`. The private helpers travel with them
 // (a digest is defined by its traversal), and `MANIFEST_NAME` /
 // `PHYSICAL_TREE_IDENTITY_VERSION` come along because the digest grammar is
-// defined in terms of both. `legacy-integration-retirement.ts` is the only
-// surviving consumer of the wider set (`computeLegacyRegularTreeDigest`,
-// `physicalEntryKind`, `PhysicalTreeEntry`).
+// defined in terms of both. The wider legacy set that `legacy-integration-
+// retirement.ts` was the last consumer of (`computeLegacyRegularTreeDigest`)
+// left with that module in v6.
 
 /** Manifest marker written into every managed skill dir. Exported: single source of truth. */
 export const MANIFEST_NAME = '.genie-sync.json';
@@ -430,43 +430,6 @@ function updateLengthPrefixed(digest: ReturnType<typeof createHash>, value: stri
   digest.update(':');
   digest.update(bytes);
   digest.update('\0');
-}
-
-/**
- * Legacy v1 digest, accepted only when every physical entry is a regular file
- * or directory. A symlink or special entry in an old tree therefore revokes
- * deletion/update authority instead of recreating the legacy follow/skip bug.
- */
-export function computeLegacyRegularTreeDigest(dir: string): string | null {
-  const rootStat = lstatSync(dir);
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
-  const files: Array<{ rel: string; hash: string }> = [];
-  const visit = (current: string): boolean => {
-    for (const name of readdirSync(current)) {
-      const absolute = join(current, name);
-      const rel = relative(dir, absolute);
-      if (rel === MANIFEST_NAME) continue;
-      const stat = lstatSync(absolute);
-      if (stat.isDirectory() && !stat.isSymbolicLink()) {
-        if (!visit(absolute)) return false;
-      } else if (stat.isFile() && !stat.isSymbolicLink()) {
-        files.push({ rel, hash: hashFile(absolute) });
-      } else {
-        return false;
-      }
-    }
-    return true;
-  };
-  if (!visit(dir)) return null;
-  files.sort(byRel);
-  const digest = createHash('sha256');
-  for (const file of files) {
-    digest.update(file.rel);
-    digest.update('\0');
-    digest.update(file.hash);
-    digest.update('\0');
-  }
-  return digest.digest('hex');
 }
 
 function hashFile(path: string): string {

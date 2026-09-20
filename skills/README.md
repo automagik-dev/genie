@@ -77,7 +77,6 @@ bun scripts/skills-inventory-parity.ts --write
 | `genie` | routing | none | Route Genie questions, operations, bugs, and planned work. Resume related wishes; handle ordinary requests directly unless Genie planning or coordination adds value. |
 | `dream` | delivery | external | Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results. |
 | `merge` | delivery | repo | Resolve an in-progress merge or rebase by the intent of both sides, re-run the full gate on the merged tree, and finish the operation. |
-| `quick` | delivery | none | Retired: superseded by wish, which delivers one task end to end; this stub is removed after three measured runs. |
 | `report` | investigation | documents | Investigate a failure to its root cause with grounded evidence, hand the diagnosis to fix, and create a GitHub issue only when asked. |
 | `research` | investigation | documents | Investigate a question against primary sources, cite every claim, and write the findings into the repository's own notes. |
 | `authoring` | authoring | none | Write or revise a Genie skill so it survives the shipped contract — frontmatter, house size, starter card, and runtime-neutral voice. |

@@ -48,19 +48,17 @@ const WORKSPACE_EXEMPT = new Set([
   'install', // post-install finisher — invoked by install.sh from arbitrary cwd, before any workspace exists
   'uninstall',
   'shortcuts',
-  'team',
-  'version',
   'help',
-  // `task` / `board` / `launch` are the v5 sqlite-backed commands. They
-  // self-resolve their shared `.genie/genie.db` from the git common-dir (see
+  // `task` / `board` are the sqlite-backed state verbs. They self-resolve
+  // their shared `.genie/genie.db` from the git common-dir (see
   // src/lib/v5/genie-db.ts) and never read the v4 `.genie/workspace.json`, so
   // gating them on the legacy workspace concept is wrong — it made
-  // `genie task create` in a fresh repo exit 2, and `genie launch` die with a
-  // dead-end "run genie init" message on any clean machine/CI (v5 `genie init`
-  // deliberately never writes a workspace.json, so the gate could never be
-  // satisfied). This whole workspace gate is v4-legacy and dies with the
-  // harness in Group 3/5; exempting the v5 commands is the interim correct
-  // behavior.
+  // `genie task create` in a fresh repo exit 2 with a dead-end "run genie init"
+  // message on any clean machine/CI (`genie init` deliberately never writes a
+  // workspace.json, so the gate could never be satisfied). This whole workspace
+  // gate is v4-legacy; exempting the state verbs is the interim correct
+  // behavior. `launch`, `team` and `version` left this set with v6: none is a
+  // registered command any more, so exempting them named nothing.
   'task',
   'board',
   // `context` is the read-only spawn-context contract verb. Like `task`/
@@ -71,7 +69,6 @@ const WORKSPACE_EXEMPT = new Set([
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).
   'idea',
-  'launch',
   // `mikro` is the microagent runtime, whose whole point is that any repository
   // on a host with genie installed can run it. It reads a git checkout and
   // `<GENIE_HOME>/templates`, never `.genie/workspace.json`; gating it would
@@ -83,20 +80,17 @@ const WORKSPACE_EXEMPT = new Set([
   // (interactive) or exit 2 (CI, piped output) in exactly the repositories the
   // verb exists for. `src/lib/interactivity.test.ts` pins this membership.
   'wish',
-  // `mcp` is now a retirement stub: it writes the stable diagnostic to stderr and
-  // exits 1. It touches no workspace state, so the legacy workspace gate must not
-  // exit 2 and mask the retirement diagnostic callers are told to expect.
-  'mcp',
-  // `ui-bridge` is now a retirement stub too: the Orca integration replaced the
-  // UI-owned stdio bridge, so the command only writes its stable diagnostic to
-  // stderr and exits 1. It touches no workspace state, so the legacy workspace
-  // gate must not exit 2 and mask the diagnostic callers are told to expect.
-  'ui-bridge',
   // `config` is the read-only global-config reader. It resolves keys against
   // `<GENIE_HOME>/config.json` and the schema, never against a repo, so the
   // legacy per-repo workspace gate must not exit 2 on a machine that has a
   // config but no workspace — which is every fresh install.
   'config',
+  // `orca` writes genie's lifecycle onto an Orca workspace card through the
+  // Orca CLI. It reads no repo state at all — not `.genie/workspace.json`, not
+  // `genie.db` — so the v4 workspace gate would exit 2 on every Orca-managed
+  // worktree (none of which carries a workspace.json) and mask the verb's own
+  // 0/1/2 contract.
+  'orca',
 ]);
 
 /**

@@ -25,6 +25,9 @@ describe('the v4 workspace gate exempts every verb that must run outside a genie
     // in every repository it is meant for. Removing 'wish' from WORKSPACE_EXEMPT
     // fails here.
     ['wish', 'lint'],
+    // `orca mirror` writes an Orca workspace card through the Orca CLI and reads
+    // no repository state; an Orca-managed worktree carries no workspace.json.
+    ['orca', 'mirror'],
     // The microagent runtime, for the same reason.
     ['mikro', 'call'],
     // Lifecycle verbs that run before any workspace can exist.
@@ -41,11 +44,8 @@ describe('the v4 workspace gate exempts every verb that must run outside a genie
     ['board', undefined],
     ['context', undefined],
     ['idea', undefined],
-    // Read-only global config, and the two retirement stubs whose stable
-    // diagnostic the gate must not mask with its own exit 2.
+    // Read-only global config.
     ['config', 'get'],
-    ['mcp', undefined],
-    ['ui-bridge', undefined],
   ] as Array<[string, string | undefined]>)('genie %s %s requires no workspace', (root, sub) => {
     expect(commandRequiresWorkspace(actionCommand(root, sub))).toBe(false);
   });

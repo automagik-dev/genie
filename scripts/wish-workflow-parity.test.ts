@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
@@ -131,20 +131,18 @@ describe('wish skill fronts the wish workflow', () => {
     }
   });
 
-  test('quick is a one-line deprecation stub pointing at wish, and nothing pins the hour contract', () => {
-    const quick = read('skills/quick/SKILL.md');
-    const body = quick.slice(quick.indexOf('---', 4) + 3).trim();
-    expect(body).toBe(
-      'Retired: `quick` is superseded by `wish` (one task delivered); this stub is removed after three measured runs.',
-    );
+  test('the quick stub is gone and nothing pins the hour contract it carried', () => {
+    // v6 deleted `skills/quick/`: the deprecation stub outlived the three
+    // measured runs its own body set as its window.
+    expect(existsSync(join(ROOT, 'skills', 'quick'))).toBe(false);
     for (const rel of [
-      'skills/quick/SKILL.md',
-      'skills/quick/agents/openai.yaml',
+      'skills/wish/SKILL.md',
       'skills/genie/SKILL.md',
       'skills/genie/reference/lifecycle.md',
       'skills/README.md',
     ]) {
       expect(read(rel)).not.toMatch(/60 minutes|within one hour/);
+      expect(read(rel)).not.toMatch(/skills\/quick/);
     }
   });
 });
