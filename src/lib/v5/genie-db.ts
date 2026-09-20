@@ -604,6 +604,7 @@ const EXPECTED_SCHEMA = {
   boards: ['id', 'name', 'created_at', 'lanes'],
   meta: ['key', 'value'],
   stage_log: ['id', 'task_id', 'stage', 'note', 'created_at'],
+  task_checklist: ['id', 'task_id', 'position', 'text', 'checked_at', 'checked_by', 'evidence', 'created_at'],
   task_dependencies: ['task_id', 'depends_on_id'],
   task_events: ['id', 'task_id', 'kind', 'note', 'author_kind', 'author', 'created_at'],
   tasks: [
@@ -767,6 +768,26 @@ CREATE TABLE IF NOT EXISTS task_events (
   author      TEXT,
   created_at  INTEGER NOT NULL
 );
+
+-- Definition-of-done items for a card: an ordered checklist a claimant ticks off
+-- with evidence. Additive, so this stays within the current user_version — no
+-- destructive migration, no version bump. A row starts unchecked; checked_at
+-- NULL means open, non-NULL means done. Reopening clears the tick, its author and
+-- its evidence: the row is current state, and the checklist_check event already
+-- preserves what was claimed and by whom.
+CREATE TABLE IF NOT EXISTS task_checklist (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  position   INTEGER NOT NULL,
+  text       TEXT NOT NULL,
+  checked_at INTEGER,
+  checked_by TEXT,
+  evidence   TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS task_checklist_task_position
+  ON task_checklist (task_id, position);
 
 -- VESTIGIAL, pending drop: the wish-group execution machinery is production-dead
 -- (no writer exists). The DDL stays inert for schema compatibility — older

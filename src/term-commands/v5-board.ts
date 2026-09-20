@@ -430,7 +430,8 @@ function renderLaneAggregate(
     action: l.action ?? null,
     cards: byLane.get(l.name) ?? [],
   }));
-  const { json, eventLimit } = serializeBoardAggregate(scopeLabel, laneGroups, snapshot.board, advice);
+  const checklists = collectChecklists(db, laneGroups);
+  const { json, eventLimit } = serializeBoardAggregate(scopeLabel, laneGroups, snapshot.board, advice, checklists);
   // A degraded response is not a failure, but a human must be able to see that
   // this board is at the edge of the budget before its history silently thins.
   if (eventLimit < BOARD_JSON_EVENT_LIMIT) note(degradedNotice(snapshot.board, eventLimit));
@@ -473,11 +474,78 @@ function capCardHistory(card: BoardTaskAggregate, limit: number): BoardTaskAggre
  * does not fit even with no history at all is refused by name — an actionable
  * `Error:` line the caller can print, never an opaque truncation downstream.
  */
+/** One definition-of-done item as the aggregate carries it. */
+interface ChecklistJsonItem {
+  position: number;
+  text: string;
+  done: boolean;
+  checkedBy: string | null;
+  evidence: string | null;
+}
+
+/**
+ * Collect the checklists for the cards this response actually carries, keyed by
+ * task id. Cards without items are absent from the map rather than present-and-empty,
+ * so a board with no checklists adds only `"checklists": {}`.
+ *
+ * This rides the aggregate as a SIBLING key, never on the card: the card shape is
+ * frozen under `schemaVersion: 1` and the DSH board plugin validates it, so the
+ * additive side of the contract is the envelope, not the card.
+ */
+function collectChecklists(db: Database, lanes: AggregateLaneGroup[]): Record<string, ChecklistJsonItem[]> {
+  const ids = lanes.flatMap((lane) => lane.cards.map((card) => card.id));
+  if (ids.length === 0) return {};
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = db
+    .query(
+      `SELECT task_id, position, text, checked_at, checked_by, evidence
+         FROM task_checklist
+        WHERE task_id IN (${placeholders})
+        ORDER BY task_id, position`,
+    )
+    .all(...ids) as Array<{
+    task_id: string;
+    position: number;
+    text: string;
+    checked_at: number | null;
+    checked_by: string | null;
+    evidence: string | null;
+  }>;
+  const byTask: Record<string, ChecklistJsonItem[]> = {};
+  for (const row of rows) {
+    byTask[row.task_id] ??= [];
+    byTask[row.task_id].push({
+      position: row.position,
+      text: row.text,
+      done: row.checked_at !== null,
+      checkedBy: row.checked_by,
+      evidence: row.evidence,
+    });
+  }
+  return byTask;
+}
+
+/**
+ * Serialize the aggregate under the WHOLE-response budget, not just the per-card
+ * one. The per-card cap bounds a card's depth; a board is unbounded in card
+ * count too, so a thousand short cards overflow a fixed read budget with every
+ * card well inside the cap. The emitter therefore walks
+ * {@link BOARD_JSON_EVENT_LIMIT_STEPS} widest-first and emits the first response
+ * that fits {@link BOARD_JSON_MAX_BYTES}; the applied cap rides the payload as
+ * the root `eventLimit` so a client can say what it is not showing. A board that
+ * does not fit even with no history at all is refused by name — an actionable
+ * `Error:` line the caller can print, never an opaque truncation downstream.
+ *
+ * `checklists` is the additive sibling key: it hangs off the envelope so the
+ * frozen card shape stays frozen. It is part of the measured payload, so it
+ * counts against the budget like everything else.
+ */
 function serializeBoardAggregate(
   scopeLabel: string,
   lanes: AggregateLaneGroup[],
   board: BoardRow,
   advice: string,
+  checklists: Record<string, ChecklistJsonItem[]> = {},
 ): { json: string; eventLimit: number } {
   const cards = lanes.reduce((total, lane) => total + lane.cards.length, 0);
   return serializeWithinBudget(
@@ -487,7 +555,7 @@ function serializeBoardAggregate(
         ...lane,
         cards: lane.cards.map((card) => capCardHistory(card, eventLimit)),
       }));
-      return JSON.stringify({ schemaVersion: 1, scope: scopeLabel, eventLimit, lanes: capped }, null, 2);
+      return JSON.stringify({ schemaVersion: 1, scope: scopeLabel, eventLimit, lanes: capped, checklists }, null, 2);
     },
     (bytes) => boardTooLargeMessage(board, cards, bytes, advice),
   );

@@ -564,7 +564,10 @@ describe('scoped board JSON aggregate v1', () => {
     // `eventLimit` is the per-card history cap this response actually applied:
     // additive under schemaVersion 1, and always present so a client never has
     // to guess whether a missing key means "undegraded" or "old genie".
-    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'eventLimit', 'lanes']);
+    // `checklists` follows exactly that rule: it hangs off the envelope rather
+    // than the card (the card shape stays frozen for the DSH board plugin), and
+    // it is always present — `{}` when no card on this board has an item.
+    expect(Object.keys(payload)).toEqual(['schemaVersion', 'scope', 'eventLimit', 'lanes', 'checklists']);
     expect(payload.schemaVersion).toBe(1);
     expect(payload.eventLimit).toBe(BOARD_JSON_EVENT_LIMIT);
     expect(payload.scope).toBe('board "empty"');

@@ -88,7 +88,16 @@ describe('openDb schema init', () => {
     db2.close();
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
+    expect(tables).toEqual([
+      'boards',
+      'meta',
+      'stage_log',
+      'task_checklist',
+      'task_dependencies',
+      'task_events',
+      'tasks',
+      'wish_groups',
+    ]);
   });
 
   test('a fresh DB carries no hire_roster', () => {
@@ -276,7 +285,16 @@ CREATE TABLE hire_roster (
     expect(CURRENT_SCHEMA_VERSION).toBe(2);
     expect(tables).not.toContain('hire_roster');
     // Every other table survives the ladder untouched, rows and all.
-    expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
+    expect(tables).toEqual([
+      'boards',
+      'meta',
+      'stage_log',
+      'task_checklist',
+      'task_dependencies',
+      'task_events',
+      'tasks',
+      'wish_groups',
+    ]);
     expect(tasks).toEqual([{ id: 't1', title: 'carried over' }]);
     expect(boards).toEqual([{ id: 'b1' }]);
   });
