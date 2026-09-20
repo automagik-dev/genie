@@ -108,7 +108,23 @@ async function writeCatalog(repo: string): Promise<string> {
   return workflows;
 }
 
+function requireDsh(): void {
+  let exitCode: number | null = null;
+  try {
+    exitCode = Bun.spawnSync(['dsh', '--version'], { stdout: 'pipe', stderr: 'pipe' }).exitCode;
+  } catch {
+    exitCode = null;
+  }
+  if (exitCode !== 0) {
+    console.error(
+      'dsh is not on PATH: this smoke boots a real DSH Host and is operator-run (see plugins/dsh-workflow-loader/README.md)',
+    );
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
+  requireDsh();
   const temporary = await mkdtemp(join(tmpdir(), 'genie-loader-smoke-'));
   const repoRoot = join(import.meta.dir, '..');
   const repo = join(temporary, 'repo');

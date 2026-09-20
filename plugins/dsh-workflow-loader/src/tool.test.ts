@@ -284,11 +284,18 @@ describe('the workflow_run row', () => {
     // Regression: the shipped cordis.patch.yml spelled the journal as '' and the
     // resolver rejected an empty path, so the row failed to validate and the Host
     // refused to load it — caught by scripts/dsh-workflow-loader-smoke.ts.
+    // The values are read from the shipped file itself, not restated here: the
+    // scalars under the row's `config:` mapping, while the commented-out
+    // journalDir means absent — '' is still passed to keep pinning the
+    // empty-path acceptance the smoke caught.
+    const shipped = readFileSync(join(import.meta.dir, '..', 'cordis.patch.yml'), 'utf8');
+    const scalar = (key: string): string | undefined =>
+      new RegExp(`^\\s*${key}: (\\S+)\\s*$`, 'm').exec(shipped)?.[1]?.replace(/^['"]|['"]$/g, '');
     const config = resolveLoaderConfig({
-      toolName: 'workflow_run',
-      maxResultChars: 20000,
-      journalDir: '',
-      allowShadowing: false,
+      toolName: scalar('toolName') as string,
+      maxResultChars: Number(scalar('maxResultChars')),
+      journalDir: scalar('journalDir') ?? '',
+      allowShadowing: scalar('allowShadowing') === 'true',
     });
     expect(config.journalDir).toBe('');
     expect(journalDirectory(config.journalDir)).toMatch(/workflow-runs$/);
