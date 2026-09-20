@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -71,6 +71,20 @@ describe('CLAUDE.md v5 drift guard', () => {
   const content = readFileSync(CLAUDE_MD, 'utf8');
   const shared = readFileSync(AGENTS_MD, 'utf8');
 
+  /**
+   * The Claude overlay a session can actually load: CLAUDE.md always on, plus every
+   * path-scoped `.claude/rules/*.md` (issue #2967) — the skills-channel narratives
+   * moved there, so a claim may live in either half. Absent rules directory = the
+   * overlay is CLAUDE.md alone.
+   */
+  const overlay = [
+    content,
+    ...readdirSync(join(import.meta.dir, '..', '..', '.claude', 'rules'))
+      .filter((name) => name.endsWith('.md'))
+      .sort()
+      .map((name) => readFileSync(join(import.meta.dir, '..', '..', '.claude', 'rules', name), 'utf8')),
+  ].join('\n');
+
   test('keeps AGENTS.md canonical and CLAUDE.md as an overlay', () => {
     expect(content).toContain('canonical shared repository contract in `AGENTS.md`');
     expect(shared).toContain('runtime-neutral contributor contract');
@@ -83,7 +97,7 @@ describe('CLAUDE.md v5 drift guard', () => {
   });
 
   test('documents the one skills channel in both files', () => {
-    for (const file of [content, shared]) {
+    for (const file of [overlay, shared]) {
       expect(file).toContain('npx skills add automagik-dev/genie');
       expect(file).toContain('skills-install.json');
     }

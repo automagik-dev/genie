@@ -52,6 +52,16 @@ Open investigations feeding these conditions: [#2706](https://github.com/automag
 
 Biome enforces single quotes, two-space indentation, 120-column lines, and trailing commas. Use conventional commits. A cognitive-complexity score above 25 requires architectural review; do not extract meaningless helpers only to game the score.
 
+## Skills channel and release gotchas
+
+The full incident narratives are path-scoped for Claude Code in `.claude/rules/*.md` (loaded when a matching file is read); the always-on floor and the rules index live in CLAUDE.md `## Gotchas`. For every other runtime they are plain in-repo files — read the one that names the path you are about to touch. The invariants that bind every runtime:
+
+- The one skills channel: `genie install` / `genie update` run the pinned skills.sh CLI over the local delivered tree, never a GitHub ref, and retire what a release drops BEFORE the install pass, backup-first (`.claude/rules/skills-installer.md`).
+- `skills-install.json` is the one record and `genie uninstall`'s removal authority; an unreadable record fails closed, and a vanished recorded agent dir is kept in the record, never dropped.
+- Pre-record genie leftovers are proven by retired skill descriptions (`legacy-skills-catalog.ts`), never by name alone. `~/.agents/skills` is also the DSH body's skill source, so no DSH-side skills provider is ever added (`.claude/rules/dsh-skills-source.md`).
+- A `state-backups/` root is an archive: nothing genie writes there is removed by a later run.
+- `genie update` verifies a public release from its signed delivery evidence with NO GitHub credential (`gh attestation verify` is advisory only); a dev release that failed after its tag was pushed is republished only by the next merge to dev; post-delivery convergence is an argv-only handoff (`update --post-delivery-converge`), never an environment variable (`.claude/rules/release-pipeline.md`).
+
 ## Release contract
 
 Release tarballs contain the binary, the `plugins/genie` Orca payload, the `plugins/dsh-genie-board` and `plugins/dsh-workflow-loader` DSH payloads, `skills/`, `templates/`, and `VERSION`. Committed root and Orca package versions must agree. Staging stamps the immutable candidate into `VERSION`, every plugin package, the Orca manifest, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
