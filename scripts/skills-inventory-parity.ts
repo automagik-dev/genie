@@ -114,16 +114,37 @@ export function stripAnsi(text: string): string {
 }
 
 /**
+ * The banner the pinned CLI prints when it detects an agent harness
+ * (`Agent detected — installing non-interactively`, seen on every run started
+ * from a Claude Code session). It is chrome, never a skill row, and it is
+ * written like the spinner frames — with no trailing newline — so it glues
+ * itself onto the row that follows it and defeats the line-anchored row match.
+ * Non-interactive mode also prints no `Available Skills` header, so the header
+ * slice cannot discard it: the whole text is parsed and the hidden row is
+ * simply lost (issue #2919: `--list named []`, reported as parser drift).
+ *
+ * The leading `[^\n│]*` eats whatever glyph the banner is drawn with; the box
+ * rule is excluded so a banner drawn INSIDE the box leaves its rule behind as a
+ * bare, valueless row rather than swallowing the rule of a real row.
+ */
+const AGENT_BANNER_PATTERN = new RegExp(
+  `^[^\\n${BOX_RULE}]*Agent detected\\b[^\\n]*?installing non-interactively[ \\t]*`,
+  'gm',
+);
+
+/**
  * Parse the pinned CLI's human `--list` output.
  *
  * Rows look like:
  *   `│    architecture`            <- name, indent 4
  *   `│      Use when reviewing…`   <- description, indent 6
  * Only the `Available Skills` section is considered when that header is
- * present, so header/summary chrome can never be read as a skill name.
+ * present, so header/summary chrome can never be read as a skill name. The
+ * agent banner is removed before that slice, because the run that prints it
+ * prints no header either.
  */
 export function parseSkillsListOutput(rawText: string): SkillsListParse {
-  const text = stripAnsi(rawText);
+  const text = stripAnsi(rawText).replace(AGENT_BANNER_PATTERN, '');
   const declaredMatch = text.match(/Found\s+(\d+)\s+skills?\b/);
   const declaredCount = declaredMatch === null ? null : Number.parseInt(declaredMatch[1] as string, 10);
   const headerIndex = text.indexOf('Available Skills');

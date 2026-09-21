@@ -15,13 +15,13 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 ## Architecture
 
 - `src/genie.ts` is the Commander CLI entry point.
-- `src/lib/v5/` owns SQLite state. Per-repo `.genie/genie.db` stores task state; global `~/.genie/genie.db` stores Omni state. Never mix their path/schema modules.
-- `src/term-commands/` owns `init`, `context`, MCP, Omni, task, and board commands.
-- `plugins/genie/` is the Orca plugin payload: the native manifest, its entrypoint bundle, and `references/orca-orchestration.md`.
+- `src/lib/v5/` owns SQLite state. The per-repo `.genie/genie.db` stores task state and is the only database genie writes; the machine-scope `~/.genie/genie.db` path carries no genie state in v6, and the per-repo opener refuses it so the two can never merge.
+- `src/term-commands/` owns `init`, `context`, MCP, task, and board commands.
+- `plugins/genie/` is the Orca plugin payload: the native manifest (eight palette commands with keybindings, the agent-settle event, four `{kind}` capabilities), its entrypoint bundle, and `references/orca-orchestration.md`. Genie writes onto Orca — palette text through the host API, board status and card comments through `genie orca mirror` — and Orca never writes back into genie state.
 - `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
-- `.genie/` contains git-tracked wishes/brainstorms/index plus gitignored operational SQLite files.
+- `.genie/` contains git-tracked wishes, reviewed designs (`brainstorms/*/DESIGN.md`) and the index, plus gitignored brainstorm working notes and operational SQLite files.
 
-Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` bridge. Do not use telemetry presence as integration health.
+Genie is zero-daemon: every command is fork-and-exit and there is no resident process, optional or otherwise. Do not use telemetry presence as integration health.
 
 ## Engineering rules
 
@@ -35,7 +35,7 @@ Genie v5 is zero-daemon except for the explicitly launched `genie omni serve` br
 - Reviewer and engineer are different roles. Never accept self-review as independent evidence.
 - Codex agents inherit the active model; do not hardcode unstable model identifiers.
 - Workspace trust remains an explicit user decision. Genie installs no lifecycle hooks into any runtime.
-- The shared-workspace git-state freeze and the "agents merge to `dev`; `main` is humans-only" rule are operator policy carried in briefs and in this file, enforced by server-side branch protection on `main` and by nothing client-side. That is the answer to [#2705](https://github.com/automagik-dev/genie/issues/2705): no client-side guard enforces either rule.
+- The shared-workspace git-state freeze is operator policy carried in briefs and in this file, enforced by nothing client-side; that half of [#2705](https://github.com/automagik-dev/genie/issues/2705) stands. Merging is now guarded, but only as a guardrail: since 2026-09-17 `.claude/hooks/git-safety.sh` refuses the ordinary spellings of an API merge or protected-ref move and of a push aimed at `main`/`master`, and since 2026-09-19 it refuses `gh pr merge` by the PR's BASE rather than by the verb: the guard reads the base from the remote and refuses a merge into a protected branch — the operator's space-separated `GIT_SAFETY_PROTECTED_BRANCHES`, default `main master` — so an agent that reaches for a promotion is stopped and reports merge-ready, while a merge into `dev` that the operator asked for goes through. Only a top-level `gh [-R owner/repo] pr merge <number|url|branch>` whose every word the guard can decompose is judged that way, and the base is asked for from the directory the command will run in (the hook payload's `cwd`) or from the `--repo` it names; a merge inside a wrapper, one with no selector, a quoted or computed selector, a `#` (bash would drop the rest as a comment), a flag spelling the parser does not know (`-R=x`, `-Rx`, a short cluster such as `-db`), a `cd`/`GH_REPO` beside it, or a base that could not be read is refused. The hook decides what a merge may TARGET, never whether to merge: that stays the operator's call, and the wish workflow still stops at merge-ready. It matches text, so it is not a boundary: an alias, a token list handed to another interpreter, or a name split across quotes gets past it. The enforcement remains what it was — server-side protection on `main`, and the repository's own pre-push hook, which receives the refs a push updates rather than parsing a command line and refuses `main`/`master` for every `git push` spelling, once `bun install` has materialised it. The hook's most load-bearing rules are therefore the ones that keep those git hooks alive (`--no-verify`, `HUSKY=`, `core.hooksPath`). Two exceptions to the delegation, both verified: `git send-pack` is refused outright, because it pushes without the pre-push hook ever seeing the refs, and a direct write to `.git/config` is refused because that is where `core.hooksPath` lives. Ordinary pushes to `dev` are deliberately not guarded. One known asymmetry in the guard: a forbidden form quoted inside a message, body or title is prose and passes, but the same text inside a `sed` or `perl` script argument is judged, because a script argument is a program the tool runs, not prose — so rewriting these very sentences through a shell is refused, and the editor is the path.
 
 ### Flip conditions for the shared-workspace contract
 
@@ -52,9 +52,19 @@ Open investigations feeding these conditions: [#2706](https://github.com/automag
 
 Biome enforces single quotes, two-space indentation, 120-column lines, and trailing commas. Use conventional commits. A cognitive-complexity score above 25 requires architectural review; do not extract meaningless helpers only to game the score.
 
+## Skills channel and release gotchas
+
+The full incident narratives are path-scoped for Claude Code in `.claude/rules/*.md` (loaded when a matching file is read); the always-on floor and the rules index live in CLAUDE.md `## Gotchas`. For every other runtime they are plain in-repo files — read the one that names the path you are about to touch. The invariants that bind every runtime:
+
+- The one skills channel: `genie install` / `genie update` run the pinned skills.sh CLI over the local delivered tree, never a GitHub ref, and retire what a release drops BEFORE the install pass, backup-first (`.claude/rules/skills-installer.md`).
+- `skills-install.json` is the one record and `genie uninstall`'s removal authority; an unreadable record fails closed, and a vanished recorded agent dir is kept in the record, never dropped.
+- Pre-record genie leftovers are proven by retired skill descriptions (`legacy-skills-catalog.ts`), never by name alone. `~/.agents/skills` is also the DSH body's skill source, so no DSH-side skills provider is ever added (`.claude/rules/dsh-skills-source.md`).
+- A `state-backups/` root is an archive: nothing genie writes there is removed by a later run.
+- `genie update` verifies a public release from its signed delivery evidence with NO GitHub credential (`gh attestation verify` is advisory only); a dev release that failed after its tag was pushed is republished only by the next merge to dev; post-delivery convergence is an argv-only handoff (`update --post-delivery-converge`), never an environment variable (`.claude/rules/release-pipeline.md`).
+
 ## Release contract
 
-Release tarballs contain the binary, the `plugins/genie` Orca payload, the `plugins/dsh-genie-board` DSH payload, `skills/`, `templates/`, and `VERSION`. Committed root and Orca package versions must agree. Staging stamps the immutable candidate into `VERSION`, both plugin packages, the Orca manifest, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
+Release tarballs contain the binary, the `plugins/genie` Orca payload, the `plugins/dsh-genie-board` and `plugins/dsh-workflow-loader` DSH payloads, `skills/`, `templates/`, and `VERSION`. Committed root and Orca package versions must agree. Staging stamps the immutable candidate into `VERSION`, every plugin package, the Orca manifest, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
 
 ## Runtime-specific notes
 

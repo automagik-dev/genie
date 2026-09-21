@@ -1,7 +1,7 @@
 # DRAFT: Intent-to-Wish Compiler — Genie Product Operating Model
 
-**Parent:** [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md) · **Status:** Simmering
-**Related:** [brainstorm-domain-map](../brainstorm-domain-map/DRAFT.md) · [skill-absorbs](../skill-absorbs/DRAFT.md) (`pm` absorption)
+**Parent:** genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage) · **Status:** Simmering
+**Related:** [brainstorm-domain-map](../brainstorm-domain-map/DRAFT.md) · skill-absorbs (deleted in the 2026-09-19 triage) (`pm` absorption)
 **Started:** 2026-07-09
 
 ## Problem

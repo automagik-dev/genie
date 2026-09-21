@@ -16,8 +16,11 @@ Establish what is actually in progress before touching a file:
 ```bash
 git status
 git log --oneline --left-right --boundary HEAD...MERGE_HEAD
-git diff --name-only --diff-filter=U
+mapfile -t conflicted < <(git diff --name-only --diff-filter=U)
+printf '%s\n' "${conflicted[@]}"
 ```
+
+Record that list while the paths are still conflicted: once the markers are gone the same query returns nothing, and this is the list you stage at the end.
 
 A rebase and a merge present the sides in opposite orders, so confirm which operation you are in before reading any hunk. During a rebase the side labelled as yours is the upstream branch, and the side labelled as theirs is the commit being replayed.
 
@@ -51,10 +54,10 @@ That is typecheck, lint, dead-code, and tests in one command, and it is the only
 
 ## Finish
 
-Stage everything and complete the operation:
+Stage the paths you recorded as conflicted, nothing else, and complete the operation:
 
 ```bash
-git add -A
+git add -- "${conflicted[@]}"
 git commit -m 'chore: merge <source> into <target>'
 git rebase --continue   # when rebasing, until every commit is replayed
 ```

@@ -41,11 +41,6 @@ import {
 import { inspectPhysicalPath } from '../lib/install-transaction.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
-  type LegacyIntegrationHomes,
-  type LegacyIntegrationRetirementResult,
-  runLegacyIntegrationRetirement,
-} from '../lib/legacy-integration-retirement.js';
-import {
   LIFECYCLE_LEASE_OWNER_ENV,
   LIFECYCLE_LEASE_PATH_ENV,
   type LifecycleLease,
@@ -66,6 +61,7 @@ import { type SkillsChannelConvergenceResult, runSkillsChannelConvergence } from
 import { printOut, writeErr, writeOut } from '../lib/term-output.js';
 import { printUpdateCapabilities } from '../lib/update-capabilities.js';
 import { VERSION } from '../lib/version.js';
+import { type WorkflowsChannelConvergenceResult, runWorkflowsChannelConvergence } from '../lib/workflows-installer.js';
 import { GenieConfigSchema } from '../types/genie-config.js';
 import {
   type AuxiliaryTreeOperations,
@@ -101,6 +97,15 @@ const FETCH_LATEST_TIMEOUT_MS = 5_000;
 const RELEASES_OWNER = 'automagik-dev';
 const RELEASES_REPO = 'genie';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
+// The same published bytes, read through the public API. raw.githubusercontent.com
+// caches independently of the repository, so for minutes after a release publishes it
+// still serves the PREVIOUS manifest and `genie update` offers the previous version as
+// the newest one (issue #2947, reproduced on v5.260918.1 and .2). Neither source needs
+// a credential, so both are tried and the newer answer wins. The API is cached too —
+// measured 2026-09-18: CDN `max-age=300`, API `max-age=60, s-maxage=60` — so this
+// NARROWS the stale window by about five times, it does not close it. A recurrence
+// inside a minute of a publish is still possible and is not evidence against this path.
+const API_BASE_URL = 'https://api.github.com';
 const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
 const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
@@ -357,8 +362,21 @@ export interface LatestManifest {
  * Lives at `.well-known/` on the repo's `main` branch — see release-publish.yml.
  */
 export function manifestUrlForChannel(channel: ReleaseChannel): string {
-  const fileName = channel === 'stable' ? 'latest.json' : `${channel}.json`;
-  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${fileName}`;
+  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${manifestFileName(channel)}`;
+}
+
+/**
+ * The same manifest through the public contents API, whose cache is a minute deep
+ * rather than five. Requested with `Accept: application/vnd.github.raw`, so the
+ * bytes this returns are the file's own bytes and `manifestSha256` still
+ * describes the published manifest rather than an API envelope.
+ */
+export function manifestApiUrlForChannel(channel: ReleaseChannel): string {
+  return `${API_BASE_URL}/repos/${RELEASES_OWNER}/${RELEASES_REPO}/contents/.well-known/${manifestFileName(channel)}?ref=main`;
+}
+
+function manifestFileName(channel: ReleaseChannel): string {
+  return channel === 'stable' ? 'latest.json' : `${channel}.json`;
 }
 
 /**
@@ -489,6 +507,13 @@ interface FetchManifestOptions {
   /** Test seam: replaces the network round-trip with a synchronous stub. */
   fetcher?: (url: string) => Promise<string | null>;
   timeoutMs?: number;
+  /**
+   * Called when the two sources did not simply agree. Without it the fix is
+   * invisible: the API budget is 60 requests/hour PER IP, so on a CI runner or a
+   * NAT'd office address the API source can be rate-limited away and the command
+   * silently returns to the #2947 symptom with nothing to tell the operator.
+   */
+  onNote?: (message: string) => void;
 }
 
 /**
@@ -500,9 +525,68 @@ export async function fetchLatestManifest(
   channel: ReleaseChannel,
   opts: FetchManifestOptions = {},
 ): Promise<LatestManifest | null> {
-  const url = manifestUrlForChannel(channel);
   const fetcher = opts.fetcher ?? defaultManifestFetcher;
   const timeoutMs = opts.timeoutMs ?? FETCH_LATEST_TIMEOUT_MS;
+  // Both sources publish the same file; the CDN copy can be minutes stale, so a
+  // stale-but-valid answer must not win over a fresher one. One seam serves both
+  // URLs, so a test that stubs `fetcher` never reaches the network for either.
+  const [cdn, api] = await Promise.all([
+    fetchManifestFrom(manifestUrlForChannel(channel), channel, fetcher, timeoutMs),
+    fetchManifestFrom(manifestApiUrlForChannel(channel), channel, fetcher, timeoutMs),
+  ]);
+  const chosen = newerManifest(cdn, api);
+  if (opts.onNote) noteManifestSources(cdn, api, chosen, opts.onNote);
+  return chosen;
+}
+
+/** Report only what an operator could not otherwise see: a disagreement, or a source that never answered. */
+function noteManifestSources(
+  cdn: LatestManifest | null,
+  api: LatestManifest | null,
+  chosen: LatestManifest | null,
+  note: (message: string) => void,
+): void {
+  if (!chosen) return;
+  if (cdn && api) {
+    if (cdn.version !== api.version) {
+      note(
+        chosen === api
+          ? `manifest: api.github.com has ${api.version}; the CDN copy is still at ${cdn.version} (it caches for ~5 min)`
+          : `manifest: the CDN has ${cdn.version}; api.github.com is still at ${api.version}`,
+      );
+    }
+    return;
+  }
+  note(
+    cdn
+      ? 'manifest: api.github.com did not answer (offline, or the 60/hour unauthenticated budget is spent); using the CDN copy, which can lag a publish by ~5 min'
+      : 'manifest: the CDN did not answer; using api.github.com',
+  );
+}
+
+/**
+ * The newer of two answers; a tie keeps the CDN copy. Both versions parse by
+ * construction — `parseManifest` rejects a manifest whose version does not — so the
+ * two guards below are unreachable today; they are kept pointing at the side that
+ * still parses rather than deleted, because the alternative is an unvalidated answer
+ * winning if that ever stops being true.
+ */
+function newerManifest(cdn: LatestManifest | null, api: LatestManifest | null): LatestManifest | null {
+  if (!cdn) return api;
+  if (!api) return cdn;
+  const cdnVersion = parseGenieVersion(cdn.version);
+  const apiVersion = parseGenieVersion(api.version);
+  if (!cdnVersion) return apiVersion ? api : null;
+  if (!apiVersion) return cdn;
+  return compareParsedVersions(apiVersion, cdnVersion) > 0 ? api : cdn;
+}
+
+async function fetchManifestFrom(
+  url: string,
+  channel: ReleaseChannel,
+  fetcher: (url: string) => Promise<string | null>,
+  timeoutMs: number,
+): Promise<LatestManifest | null> {
   let raw: string | null = null;
   try {
     raw = await Promise.race([
@@ -513,6 +597,11 @@ export async function fetchLatestManifest(
     return null;
   }
   if (!raw) return null;
+  return parseManifest(raw, channel);
+}
+
+/** Validate the fetched bytes and bind the digest to them, before any reconstruction. */
+function parseManifest(raw: string, channel: ReleaseChannel): LatestManifest | null {
   try {
     const parsed = JSON.parse(raw) as Partial<LatestManifest>;
     if (
@@ -546,7 +635,12 @@ export async function fetchLatestManifest(
 async function defaultManifestFetcher(url: string): Promise<string | null> {
   // Use curl rather than fetch for parity with install.sh and to keep the
   // network surface obvious in offline-debugging traces (single -fsSL call).
-  const result = await runCommandSilent('curl', ['-fsSL', '--max-time', '5', url], undefined, FETCH_LATEST_TIMEOUT_MS);
+  // The API needs one header to answer with the file's own bytes; without it
+  // the response is a JSON envelope whose digest is not the manifest's.
+  const args = url.startsWith(`${API_BASE_URL}/`)
+    ? ['-fsSL', '--max-time', '5', '-H', 'Accept: application/vnd.github.raw', url]
+    : ['-fsSL', '--max-time', '5', url];
+  const result = await runCommandSilent('curl', args, undefined, FETCH_LATEST_TIMEOUT_MS);
   if (!result.success) return null;
   return result.output;
 }
@@ -1816,7 +1910,7 @@ function applyDowngradeGuard(
 
 /**
  * Map a convergence outcome to the process exit code:
- *   - a failed skills.sh install → exit 1 (retry)
+ *   - a failed skills.sh or workflows install → exit 1 (retry)
  *   - else success (exit 0), caller prints its own success line.
  *
  * The former action-required exit-2 arm left with the Codex plugin activation
@@ -1825,7 +1919,7 @@ function applyDowngradeGuard(
  * convergence either succeeds or is retryable.
  */
 export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult): void {
-  if (convergence.skills?.status === 'failed') {
+  if (convergence.skills?.status === 'failed' || convergence.workflows?.status === 'failed') {
     process.exitCode = 1;
   }
 }
@@ -2431,7 +2525,7 @@ export async function updateCommand(
   // Planning is read-only and deliberately happens before lifecycle lease
   // acquisition. Interactive users can consider the prompt without blocking
   // install/setup/uninstall in another process.
-  const manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel);
+  const manifest = await (dependencies.fetchManifest ?? fetchLatestManifest)(channel, { onNote: log });
   const plannedInstalledVersion = (dependencies.readInstalledVersion ?? resolveInstalledVersion)();
   const platform = (dependencies.resolvePlatform ?? resolveUpdatePlatformOrExit)();
   const latestVersion = announceUpdatePlanOrExit(channel, platform, plannedInstalledVersion, manifest?.version ?? null);
@@ -2546,11 +2640,8 @@ export interface ManualUpdateConvergenceOptions {
   selection?: IntegrationSelection;
   /** Test seam for the skills.sh channel step (production uses the pinned CLI). */
   runSkills?: SkillsChannelRunner;
-  /**
-   * Agent-home overrides for the plugin-era retirement step. Production resolves
-   * the real `$HOME` / `$GENIE_HOME`; tests point every root at one fixture home.
-   */
-  retirementHomes?: LegacyIntegrationHomes;
+  /** Test seam for the workflows channel step (production writes `~/.claude/workflows`). */
+  runWorkflows?: WorkflowsChannelRunner;
 }
 
 export type SkillsChannelRunner = (
@@ -2570,6 +2661,24 @@ export function runUpdateSkillsChannel(
   return runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
 }
 
+export type WorkflowsChannelRunner = (
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+) => WorkflowsChannelConvergenceResult;
+
+/**
+ * The workflows channel as `genie update` runs it. `<GENIE_HOME>/templates` is
+ * already converged by the time this executes — the OLD binary syncs the
+ * auxiliary trees before it spawns `update --post-delivery-converge` — so the
+ * catalog this reads is the freshly delivered one.
+ */
+export function runUpdateWorkflowsChannel(
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+): WorkflowsChannelConvergenceResult {
+  return runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
+}
+
 export interface ManualUpdateConvergenceResult {
   /**
    * The skills.sh channel outcome, or `null` when the channel never ran
@@ -2579,16 +2688,17 @@ export interface ManualUpdateConvergenceResult {
    */
   skills: SkillsChannelConvergenceResult | null;
   /**
-   * The plugin-era integration retirement outcome, or `null` when it did not run
-   * — which is every case except a FRESH skills-channel install (see below).
+   * The workflows channel outcome, or `null` when the channel never ran
+   * (consent `none`). Surfaced for the same reason as `skills`: a failed
+   * workflows install must reach the exit code rather than be discarded.
    */
-  retirement: LegacyIntegrationRetirementResult | null;
+  workflows: WorkflowsChannelConvergenceResult | null;
 }
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { skills: null, retirement: null };
+  if (selection === 'none') return { skills: null, workflows: null };
   // Skills FIRST: a host must never pass through a state with neither the
   // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2598,21 +2708,17 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   const skills = (options.runSkills ?? runUpdateSkillsChannel)(selection, emit);
   // The client plugin refresh that used to sit here is gone: no Genie plugin
   // ships for any client runtime any more, so there is nothing to converge
-  // between the skills channel and retirement.
+  // between the two channels. The plugin-era integration retirement that ran
+  // here behind a fresh skills install left with v6 — its own compat window
+  // (assets written by releases `>= 5.260711.6`) closed three stable releases
+  // after `skills-everywhere-b` shipped, so `genie update` no longer emits an
+  // `integrations: ` line at all.
   //
-  // LAST, and only behind a FRESH skills-channel install: the plugin-era assets
-  // are retired exactly once the replacements are proven on disk. A `skipped` or
-  // `failed` channel deliberately leaves the legacy assets in place — a host must
-  // never pass through a state with neither channel's skills — and no other seam
-  // (install, doctor) ever runs this: retirement is an update-only mutation.
-  const retirement =
-    skills.status === 'installed'
-      ? runLegacyIntegrationRetirement({
-          homes: options.retirementHomes ?? { home: homedir(), genieHome: GENIE_HOME },
-          log: emit,
-        })
-      : null;
-  return { skills, retirement };
+  // The workflows channel therefore runs immediately after the skills channel:
+  // it writes its field into the record that channel just rewrote, and installs
+  // nothing at all when no readable record survives (wish decision 4).
+  const workflows = (options.runWorkflows ?? runUpdateWorkflowsChannel)(selection, emit);
+  return { skills, workflows };
 }
 
 /**

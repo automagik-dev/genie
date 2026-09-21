@@ -1965,6 +1965,105 @@ describe('install record', () => {
   });
 });
 
+/**
+ * The workflows channel writes ONE optional field into this record (wish
+ * `global-workflows-local-mikro`, decision 4), and the skills channel — which
+ * runs FIRST and rewrites the whole document — must carry it forward. Both
+ * halves are regression tests: a required field would invalidate every record
+ * already on disk, and a dropped one would orphan every installed workflow file
+ * because `genie uninstall` removes only what the record names.
+ */
+describe('install record — the optional workflows field', () => {
+  const workflows = {
+    dir: '/home/u/.claude/workflows',
+    ref: 'v5.260918.9',
+    files: { 'wish.js': 'a'.repeat(64) },
+  };
+
+  /** The delivered tree, plus the post-install state the fake spawner cannot write. */
+  function seedInstalledSkill(): void {
+    fixtureSkillsTree(['wish']);
+    for (const parent of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')]) {
+      mkdirSync(join(parent, 'wish'), { recursive: true });
+      writeFileSync(join(parent, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    }
+  }
+
+  function legacyRecordWithoutWorkflows(): SkillsInstallRecord {
+    return {
+      ref: 'v5.260830.16',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(home, '.claude', 'skills')],
+      installedAt: '2026-08-30T12:00:00.000Z',
+    };
+  }
+
+  test('a record without the field still parses, and reads back without it', () => {
+    const legacy = legacyRecordWithoutWorkflows();
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(legacy), 'utf8');
+    const read = readSkillsInstallRecord(genieHome);
+    expect(read).toEqual(legacy);
+    expect(read?.workflows).toBeUndefined();
+  });
+
+  test('a record with the field round-trips', () => {
+    const record: SkillsInstallRecord = { ...legacyRecordWithoutWorkflows(), workflows };
+    writeSkillsInstallRecord(genieHome, record);
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+  });
+
+  test('the field is traversal-proof and digest-typed, or the record is malformed', () => {
+    for (const [invalid, field] of [
+      [{ ...workflows, dir: 'relative/workflows' }, 'workflows.dir'],
+      [{ ...workflows, dir: '/home/u/../../etc' }, 'workflows.dir'],
+      [{ ...workflows, files: { '../../evil.js': 'a'.repeat(64) } }, 'workflows.files'],
+      [{ ...workflows, files: { 'wish.md': 'a'.repeat(64) } }, 'workflows.files'],
+      [{ ...workflows, files: { 'wish.js': 'NOTADIGEST' } }, 'workflows.files'],
+    ] as const) {
+      writeFileSync(
+        skillsInstallRecordPath(genieHome),
+        JSON.stringify({ ...legacyRecordWithoutWorkflows(), workflows: invalid }),
+        'utf8',
+      );
+      const read = inspectSkillsInstallRecord(genieHome);
+      expect(read.status).toBe('invalid');
+      expect(read.status === 'invalid' ? read.error.field : '').toContain(field);
+    }
+  });
+
+  test('a skills-channel install carries an existing workflows value forward verbatim', () => {
+    writeSkillsInstallRecord(genieHome, { ...legacyRecordWithoutWorkflows(), workflows });
+    seedInstalledSkill();
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    // Rewritten document, untouched field — and it survives on disk, which is
+    // what `genie doctor` and `genie uninstall` read back.
+    expect(outcome.ok === true && outcome.record.workflows).toEqual(workflows);
+    expect(readSkillsInstallRecord(genieHome)?.workflows).toEqual(workflows);
+  });
+
+  test('a skills-channel install over a record without the field writes no field', () => {
+    seedInstalledSkill();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+    expect(outcome.ok === true && outcome.record.workflows).toBeUndefined();
+  });
+});
+
 describe('isSafeSkillName', () => {
   test('is the one traversal guard uninstall shares with the installer', () => {
     expect(isSafeSkillName('wish')).toBe(true);
@@ -2967,5 +3066,252 @@ describe('r3 rehearsal defects', () => {
     expect(collision).toBeLessThan(kept);
     // The summary is what the host HAS, so it comes last — always.
     expect(summary).toBe(lines.length - 1);
+  });
+});
+
+/**
+ * Issue #2927. The retirement pass could only name what the previous record
+ * named, so a plugin-era `genie-review` (2026-07-10) and a transaction dir a
+ * deleted runtime left in `~/.agents/skills` survived every `genie update` as
+ * `nothing to retire` — and `genie doctor` read the home as complete.
+ */
+describe('pre-record genie leftovers (issue #2927)', () => {
+  const PM_DESCRIPTION =
+    'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.';
+
+  function seedLeftovers(): { proven: string; marker: string; nameOnly: string } {
+    const agents = join(home, '.agents', 'skills');
+    const claude = join(home, '.claude', 'skills');
+    const proven = join(agents, 'genie-review');
+    mkdirSync(proven, { recursive: true });
+    writeFileSync(join(proven, 'SKILL.md'), `---\nname: genie-review\ndescription: "${PM_DESCRIPTION}"\n---\n# old\n`);
+    const marker = join(agents, '.genie-codex-fallback-retirement');
+    mkdirSync(join(marker, 'txn-1', 'quarantine'), { recursive: true });
+    writeFileSync(join(marker, 'txn-1', 'journal.json'), '{"version":1}\n');
+    const nameOnly = join(claude, 'brain');
+    mkdirSync(nameOnly, { recursive: true });
+    writeFileSync(join(nameOnly, 'SKILL.md'), '---\nname: brain\ndescription: Route Brain knowledge elsewhere\n---\n');
+    return { proven, marker, nameOnly };
+  }
+
+  function spawnDelivering(source: string): CommandRunner {
+    return () => {
+      for (const dir of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')]) {
+        cpSync(source, dir, { recursive: true });
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+  }
+
+  test('with NO install record, proven dirs and marker dirs are archived backup-first and a name-only match is only reported', () => {
+    const source = fixtureSkillsTree(['review']);
+    const { proven, marker, nameOnly } = seedLeftovers();
+    const markerDigest = computeSkillDirDigest(marker);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(proven)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+    // The third-party product that merely shares a retired genie NAME is untouched.
+    expect(existsSync(join(nameOnly, 'SKILL.md'))).toBe(true);
+
+    const roots = readdirSync(join(genieHome, 'state-backups')).filter((name) => name.startsWith('skills-retirement-'));
+    expect(roots).toHaveLength(1);
+    const backupRoot = join(genieHome, 'state-backups', roots[0] as string);
+    expect(readFileSync(join(backupRoot, '.agents', 'skills', 'genie-review', 'SKILL.md'), 'utf8')).toContain('# old');
+    expect(computeSkillDirDigest(join(backupRoot, '.agents', 'skills', '.genie-codex-fallback-retirement'))).toBe(
+      markerDigest,
+    );
+    expect(result.warnings).toEqual([
+      'skills: retired pre-record genie skill dir .genie-codex-fallback-retirement from 1 agent dir(s)',
+      'skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)',
+      `skills: retirement backups under ${backupRoot}`,
+      `skills: ${nameOnly} carries a retired genie skill name or description but not both, so genie does not claim it; nothing was moved — review it yourself if it is not a product you use`,
+      'skills: legacy leftovers: 2 archived, 0 preserved, 1 unproven (a retired genie name or description, not both) of 3 dir(s) predating the install record',
+    ]);
+    // A marker dir has a leading dot, which the record schema rejects: it is never recorded.
+    expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
+  });
+
+  test('with a record, the pass covers recorded homes too and is silent once the leftovers are gone', () => {
+    const source = fixtureSkillsTree(['review']);
+    const extra = join(home, '.openclaw', 'skills');
+    mkdirSync(join(extra, 'pm'), { recursive: true });
+    writeFileSync(join(extra, 'pm', 'SKILL.md'), `---\nname: pm\ndescription: ${PM_DESCRIPTION}\n---\n`);
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: SKILLS_CLI_AGENTS.length > 0 ? '1.5.23' : '1.5.23',
+      inventory: ['review'],
+      agentDirs: [join(home, '.claude', 'skills'), join(home, '.agents', 'skills'), extra],
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const install = () =>
+      runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: spawnDelivering(source),
+      });
+
+    const first = install();
+    expect(first.ok).toBe(true);
+    expect(existsSync(join(extra, 'pm'))).toBe(false);
+    expect(first.warnings).toContain('skills: retired pre-record genie skill dir pm from 1 agent dir(s)');
+
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect((second.warnings ?? []).filter((line) => line.includes('pre-record') || line.includes('legacy'))).toEqual(
+      [],
+    );
+  });
+
+  /**
+   * Codex review on PR #2928: a RECORDED skill this release drops still carries
+   * a retired description, so the legacy pass would have archived a locally
+   * edited install on its own current digest — bypassing the recorded-digest
+   * comparison that preserves it. Recorded paths are the record's business.
+   */
+  test('a recorded skill this release drops is judged by the recorded path, never by the legacy pass', () => {
+    const source = fixtureSkillsTree(['review']);
+    const claude = join(home, '.claude', 'skills');
+    const recorded = join(claude, 'pm');
+    mkdirSync(recorded, { recursive: true });
+    writeFileSync(join(recorded, 'SKILL.md'), `---\nname: pm\ndescription: "${PM_DESCRIPTION}"\n---\n# shipped\n`);
+    const digest = computeSkillDirDigest(recorded) as string;
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: '1.5.23',
+      inventory: ['pm'],
+      agentDirs: [claude, join(home, '.agents', 'skills')],
+      dirDigests: { [recorded]: digest },
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    // The user edited the body and kept the shipped frontmatter.
+    writeFileSync(join(recorded, 'SKILL.md'), `---\nname: pm\ndescription: "${PM_DESCRIPTION}"\n---\n# mine\n`);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(recorded, 'SKILL.md'), 'utf8')).toContain('# mine');
+    expect(result.warnings).toContain(
+      `skills: preserved retired skill ${recorded} (content changed since the recorded install); review it manually`,
+    );
+    expect((result.warnings ?? []).filter((line) => line.includes('pre-record'))).toEqual([]);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: claude, skill: 'pm', reason: 'content changed since the recorded install', digest },
+    ]);
+  });
+
+  /**
+   * A dir that could not be READ while its contents were being proven carries no digest, so the
+   * recorded-retirement path can only ever answer `no recorded content digest` for it. Before this,
+   * the operator who fixed the permission watched every later update skip it in silence, and the
+   * receipt in the record said `preserved` for ever.
+   */
+  test('a leftover preserved as unreadable is re-proven and archived once it can be read', () => {
+    const source = fixtureSkillsTree(['review']);
+    const { proven } = seedLeftovers();
+    const unreadable = join(proven, 'notes.txt');
+    writeFileSync(unreadable, 'x');
+    chmodSync(unreadable, 0o000);
+    const agents = join(home, '.agents', 'skills');
+    const install = () =>
+      runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: spawnDelivering(source),
+      });
+
+    const first = install();
+    expect(first.ok).toBe(true);
+    expect(existsSync(proven)).toBe(true);
+    expect(readSkillsInstallRecord(genieHome)?.preserved).toEqual([
+      { agentDir: agents, skill: 'genie-review', reason: 'unreadable while proving its contents' },
+    ]);
+
+    // The operator fixes the permission the reason named.
+    chmodSync(unreadable, 0o644);
+
+    const second = install();
+    expect(second.ok).toBe(true);
+    expect(existsSync(proven)).toBe(false);
+    expect(second.warnings).toContain('skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)');
+    expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
+  });
+
+  /**
+   * The reconciling line is the one line whose job is to add up. Counting a pre-record dir the
+   * legacy pass preserved against the RECORDED targets made it stop: `1 archived, 1 preserved,
+   * 1 already absent of 2 recorded target(s)` describes three dispositions of two targets.
+   */
+  test('the reconciling line counts recorded dispositions, and the legacy line counts its own', () => {
+    const source = fixtureSkillsTree(['review']);
+    const claude = join(home, '.claude', 'skills');
+    const recorded = join(claude, 'trace');
+    mkdirSync(recorded, { recursive: true });
+    writeFileSync(join(recorded, 'SKILL.md'), '# trace\n');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260914.1',
+      cliVersion: '1.5.23',
+      inventory: ['review', 'trace'],
+      agentDirs: [claude, join(home, '.agents', 'skills')],
+      dirDigests: { [recorded]: computeSkillDirDigest(recorded) as string },
+      installedAt: '2026-09-14T00:00:00.000Z',
+    });
+    const { proven } = seedLeftovers();
+    const unreadable = join(proven, 'notes.txt');
+    writeFileSync(unreadable, 'x');
+    chmodSync(unreadable, 0o000);
+
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toContain(
+      'skills: retirement: 1 archived, 0 preserved, 1 already absent of 2 recorded target(s)',
+    );
+    expect(result.warnings).toContain(
+      'skills: legacy leftovers: 1 archived, 1 preserved, 1 unproven (a retired genie name or description, not both) of 3 dir(s) predating the install record',
+    );
+    chmodSync(unreadable, 0o644);
+  });
+
+  /** Codex review on PR #2928: the `--all` era wrote registry homes the four-row known table never lists. */
+  test('with no record, every skills.sh registry home on disk is scanned, not only the known four', () => {
+    const source = fixtureSkillsTree(['review']);
+    const openclaw = join(home, '.openclaw', 'skills');
+    mkdirSync(join(openclaw, 'wizard'), { recursive: true });
+    writeFileSync(
+      join(openclaw, 'wizard', 'SKILL.md'),
+      '---\nname: wizard\ndescription: "Guided onboarding — scaffold workspace, shape agent identity, create first wish, execute, and celebrate."\n---\n',
+    );
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(join(openclaw, 'wizard'))).toBe(false);
+    expect(result.warnings).toContain('skills: retired pre-record genie skill dir wizard from 1 agent dir(s)');
   });
 });

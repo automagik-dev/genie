@@ -27,6 +27,12 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
+import {
+  ORCA_INVALID_AUTHORITY_MESSAGE,
+  ORCA_REFUSAL_MESSAGE,
+  isOrcaForbiddenInvocation,
+  orcaOwnsLifecycle,
+} from './lib/orchestration-mode.js';
 import { colorizeFor } from './lib/term-color.js';
 import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
@@ -34,11 +40,11 @@ import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
-import { registerMcpCommand } from './term-commands/mcp.js';
-import { registerOmniCommands } from './term-commands/omni.js';
-import { registerUiBridgeCommand } from './term-commands/ui-bridge.js';
+import { registerMikroCommands } from './term-commands/mikro.js';
+import { registerOrcaCommands } from './term-commands/orca.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
 import { registerV5TaskCommands } from './term-commands/v5-task.js';
+import { registerWishCommands } from './term-commands/wish.js';
 
 const program = new Command();
 
@@ -118,7 +124,7 @@ program
   )
   .option(
     '--fix-global-db',
-    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it (the omni approval queue and inbox are never touched). Runs this repair alone, not the other checks (idempotent)',
+    'Repair a contaminated global database: back up <GENIE_HOME>/genie.db, then drop ONLY the per-repo tables that do not belong in it. v6 writes nothing to that path, so on a clean host there is nothing to drop; anything else already in the file is left byte-for-byte alone. Runs this repair alone, not the other checks (idempotent)',
   )
   .action(doctorCommand);
 
@@ -255,14 +261,54 @@ shortcuts
 // ============================================================================
 
 registerInitCommand(program);
-registerMcpCommand(program);
-registerUiBridgeCommand(program);
 registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerContextCommand(program);
 registerConfigCommand(program);
 registerIdeaCommand(program);
-registerOmniCommands(program);
+registerMikroCommands(program);
+registerOrcaCommands(program);
+registerWishCommands(program);
+
+// ============================================================================
+// Orca lifecycle gate — refuses the verbs Orca owns before their handler runs
+// ============================================================================
+
+/**
+ * The verb path of the command about to run: the first name under `genie`, and
+ * the one below it. `genie task sync` → `['task', 'sync']`; `genie board` →
+ * `['board']`.
+ */
+function invocationPath(actionCommand: Command): [string, string | undefined] {
+  const chain: string[] = [];
+  let current: Command | undefined = actionCommand;
+  while (current?.parent) {
+    chain.unshift(current.name());
+    current = current.parent;
+  }
+  return [chain[0] ?? '', chain[1]];
+}
+
+/**
+ * A SECOND preAction hook, deliberately separate from `installWorkspaceCheck`.
+ * The workspace hook cannot carry this refusal: `WORKSPACE_EXEMPT`
+ * (`src/lib/interactivity.ts`) exempts `task`, `board` and `idea` by name — the
+ * exact verbs this gate exists to refuse — so its hook returns before it could
+ * ever look at lifecycle authority.
+ *
+ * The authority is resolved ONLY for a verb the closed list already names, so a
+ * standalone host and every other command read no configuration here at all.
+ */
+program.hook('preAction', (_thisCommand, actionCommand) => {
+  const [root, sub] = invocationPath(actionCommand);
+  if (!isOrcaForbiddenInvocation(root, sub)) return;
+  const verdict = orcaOwnsLifecycle();
+  if (verdict === false) return;
+  // Two reasons to refuse, two fixed lines, one exit code. Both are "the
+  // operator must act"; they differ in what genie can honestly claim to know.
+  printErr(verdict === 'orca' ? ORCA_REFUSAL_MESSAGE : ORCA_INVALID_AUTHORITY_MESSAGE);
+  process.exit(2);
+});
 
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it

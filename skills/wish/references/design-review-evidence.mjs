@@ -10,7 +10,7 @@
 // copies byte-for-byte, so edit this file and copy it over the other.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -218,7 +218,35 @@ export function runDesignReviewEvidenceCli() {
   process.stdout.write(`${designReviewDigest(stamped)}\n`);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Both sides are compared as REAL paths: reached through a symlinked directory
+// (or a symlinked launcher), the raw resolved argv[1] never equals the module's
+// own file URL, the CLI body never runs, and `verify` exits 0 having checked
+// nothing — the gate fails open. `realpathSync` can throw (argv[1] naming a
+// path that no longer exists, or an unresolvable link), so it falls back to the
+// path as given rather than escaping the module.
+function realPathOrGiven(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+// `import.meta.main` is asked FIRST because it is the only answer that survives
+// bundling: `genie wish lint` reaches this module through `scripts/wishes-lint.ts`,
+// and inside `dist/genie.js` every inlined module's `import.meta.url` is the
+// bundle's own URL — which argv[1] also names, so the realpath comparison below
+// matched and this CLI ran its usage banner on every genie command. A bundler
+// replaces the flag with a literal `false` for a module it did not make the entry
+// point; a runtime that does not define it at all (older Node) falls through to
+// the path comparison, which is still what handles a symlinked launcher.
+const invokedAsEntryPoint =
+  typeof import.meta.main === 'boolean'
+    ? import.meta.main
+    : Boolean(process.argv[1]) &&
+      realPathOrGiven(resolve(process.argv[1])) === realPathOrGiven(fileURLToPath(import.meta.url));
+
+if (invokedAsEntryPoint) {
   try {
     runDesignReviewEvidenceCli();
   } catch (error) {

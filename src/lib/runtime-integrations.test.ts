@@ -1,15 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   inspectRuntimeIntegrationEvidence,
   persistIntegrationConsent,
   readIntegrationConsent,
-  removeCodexPluginRegistration,
   removeRuntimeIntegrations as removeRuntimeIntegrationsWithTrustedResolution,
   runBoundedIntegrationCommand,
-  setCodexPluginEnabled,
 } from './runtime-integrations.js';
 import { VERSION } from './version.js';
 
@@ -28,7 +26,7 @@ function write(path: string, content: string): void {
   writeFileSync(path, content);
 }
 
-describe('bounded integration subprocess and Codex plugin state', () => {
+describe('bounded integration subprocess', () => {
   test('the default subprocess primitive bounds output and escalates TERM-resistant timeouts to KILL', () => {
     const overflow = runBoundedIntegrationCommand(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000))'], {
       timeoutMs: 1_000,
@@ -91,16 +89,6 @@ describe('bounded integration subprocess and Codex plugin state', () => {
       }
     }
     expect(alive).toBe(false);
-  });
-
-  test('restores an explicit Codex disabled state without touching other plugins', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-plugin-state-'));
-    const path = join(root, 'config.toml');
-    writeFileSync(path, '[plugins."genie@automagik"]\nenabled = true\n\n[plugins."other@market"]\nenabled = true\n');
-    setCodexPluginEnabled(false, path);
-    expect(readFileSync(path, 'utf8')).toBe(
-      '[plugins."genie@automagik"]\nenabled = false\n\n[plugins."other@market"]\nenabled = true\n',
-    );
   });
 });
 
@@ -235,179 +223,5 @@ describe('runtime integration removal reporting', () => {
     expect(result.steps).toEqual([
       expect.objectContaining({ runtime: 'codex', ok: false, detail: expect.stringContaining('CLI unavailable') }),
     ]);
-  });
-});
-
-describe('removeCodexPluginRegistration — plugin-era retirement preserves every unrelated byte', () => {
-  function configWith(body: string): string {
-    const root = mkdtempSync(join(tmpdir(), 'genie-codex-retire-'));
-    const path = join(root, 'config.toml');
-    writeFileSync(path, body, { encoding: 'utf8', mode: 0o600 });
-    return path;
-  }
-
-  test('drops the plugin table and both hooks.state shapes, keeping unrelated tables byte-for-byte', () => {
-    const path = configWith(
-      [
-        '# operator preamble',
-        'disable_paste_burst = true',
-        '',
-        '[otel]',
-        'exporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }',
-        '',
-        '[plugins."genie@automagik"]',
-        'enabled = true',
-        'version = "5.260830.19"',
-        '',
-        '[plugins."other@market"]  # keep me',
-        'enabled = true',
-        '',
-        '[hooks.state]',
-        '"genie@automagik:session_start" = "approved"',
-        '"other@market:pre_tool_use" = "approved"',
-        '',
-        '[hooks.state."genie@automagik:pre_tool_use"]',
-        'decision = "allow"',
-        '',
-        '[profiles.work]',
-        'model = "gpt-5"',
-        '',
-      ].join('\n'),
-    );
-
-    const result = removeCodexPluginRegistration(path);
-    expect(result).toMatchObject({ ok: true, status: 'removed' });
-    expect(result.removed).toEqual([
-      '[plugins."genie@automagik"]',
-      '"genie@automagik:session_start" = "approved"',
-      '[hooks.state."genie@automagik:pre_tool_use"]',
-    ]);
-    expect(readFileSync(path, 'utf8')).toBe(
-      [
-        '# operator preamble',
-        'disable_paste_burst = true',
-        '',
-        '[otel]',
-        'exporter = { otlp-http = { endpoint = "http://127.0.0.1:14318/v1/traces", protocol = "binary" } }',
-        '',
-        '[plugins."other@market"]  # keep me',
-        'enabled = true',
-        '',
-        '[hooks.state]',
-        '"other@market:pre_tool_use" = "approved"',
-        '',
-        '[profiles.work]',
-        'model = "gpt-5"',
-        '',
-      ].join('\n'),
-    );
-  });
-
-  test('a config without any genie registration round-trips byte-identically', () => {
-    const body = '[otel]\nexporter = "keep"\n\n[plugins."other@market"]\nenabled = true\n';
-    const path = configWith(body);
-    expect(removeCodexPluginRegistration(path)).toMatchObject({ ok: true, status: 'unchanged', removed: [] });
-    expect(readFileSync(path, 'utf8')).toBe(body);
-  });
-
-  test('a second run is a no-op: retirement is idempotent, and file mode survives', () => {
-    const path = configWith('[plugins."genie@automagik"]\nenabled = true\n');
-    expect(removeCodexPluginRegistration(path).status).toBe('removed');
-    const after = readFileSync(path, 'utf8');
-    expect(removeCodexPluginRegistration(path)).toMatchObject({ status: 'unchanged' });
-    expect(readFileSync(path, 'utf8')).toBe(after);
-    expect(lstatSync(path).mode & 0o777).toBe(0o600);
-  });
-
-  test('a multi-line string body that looks like the genie table never starts a drop', () => {
-    // Shape 1: the fake header lives inside an unrelated operator's multi-line
-    // value. A line-level scanner that ignores multi-line strings reads it as a
-    // real table header, starts dropping, and eats the rest of that value plus
-    // every line up to the next header — destroying a user-owned config.
-    const body = [
-      '[notes]',
-      'text = """',
-      '[plugins."genie@automagik"]',
-      'enabled = true',
-      '"""',
-      '',
-      '# a trailing comment',
-      '[profiles.work]',
-      'model = "gpt-5"',
-      '',
-    ].join('\n');
-    const path = configWith(body);
-    expect(removeCodexPluginRegistration(path)).toMatchObject({ ok: true, status: 'unchanged', removed: [] });
-    expect(readFileSync(path, 'utf8')).toBe(body);
-  });
-
-  test('a multi-line string inside the genie table cannot end its drop early', () => {
-    // Shape 2: the genie table's own value carries a line that looks like a
-    // header. Ending the drop there would leave `enabled = true` and the closing
-    // delimiter behind as orphaned top-level keys, and would mis-scope the
-    // following real table.
-    const path = configWith(
-      [
-        '[plugins."genie@automagik"]',
-        "description = '''",
-        '[profiles.decoy]',
-        'model = "decoy"',
-        "'''",
-        'enabled = true',
-        '',
-        '[profiles.work]  # keep me',
-        'model = "gpt-5"',
-        '',
-      ].join('\n'),
-    );
-    const result = removeCodexPluginRegistration(path);
-    expect(result).toMatchObject({ ok: true, status: 'removed' });
-    expect(result.removed).toEqual(['[plugins."genie@automagik"]']);
-    expect(readFileSync(path, 'utf8')).toBe(['[profiles.work]  # keep me', 'model = "gpt-5"', ''].join('\n'));
-  });
-
-  test('a hooks.state row that only appears inside a multi-line string is not dropped', () => {
-    const body = ['[hooks.state]', 'note = """', '"genie@automagik:session_start" = "approved"', '"""', ''].join('\n');
-    const path = configWith(body);
-    expect(removeCodexPluginRegistration(path)).toMatchObject({ ok: true, status: 'unchanged', removed: [] });
-    expect(readFileSync(path, 'utf8')).toBe(body);
-  });
-
-  test('a triple quote inside a single-line string or a comment opens nothing', () => {
-    const body = [
-      '[notes]',
-      'inline = "a \\"\\"\\" b"  # """ not an opener either',
-      '',
-      '[plugins."genie@automagik"]',
-      'enabled = true',
-      '',
-      '[profiles.work]',
-      'model = "gpt-5"',
-      '',
-    ].join('\n');
-    const path = configWith(body);
-    expect(removeCodexPluginRegistration(path)).toMatchObject({ ok: true, status: 'removed' });
-    expect(readFileSync(path, 'utf8')).toBe(
-      [
-        '[notes]',
-        'inline = "a \\"\\"\\" b"  # """ not an opener either',
-        '',
-        '[profiles.work]',
-        'model = "gpt-5"',
-        '',
-      ].join('\n'),
-    );
-  });
-
-  test('an absent config succeeds (nothing to retire); a symlinked one is refused untouched', () => {
-    const root = mkdtempSync(join(tmpdir(), 'genie-codex-retire-edge-'));
-    expect(removeCodexPluginRegistration(join(root, 'config.toml'))).toMatchObject({ ok: true, status: 'absent' });
-
-    const real = join(root, 'real.toml');
-    writeFileSync(real, '[plugins."genie@automagik"]\nenabled = true\n');
-    const link = join(root, 'config.toml');
-    symlinkSync(real, link);
-    expect(removeCodexPluginRegistration(link)).toMatchObject({ ok: false, status: 'error' });
-    expect(readFileSync(real, 'utf8')).toBe('[plugins."genie@automagik"]\nenabled = true\n');
   });
 });

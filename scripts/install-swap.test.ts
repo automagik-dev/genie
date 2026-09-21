@@ -325,6 +325,118 @@ describe('install.sh transactional binary promotion (F31a)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Dual-source manifest resolution (issue #2950): the raw CDN caches for ~5 min,
+// so a fresh install inside that window used to land the previous release. Every
+// case drives the real fetch_latest through the GENIE_INSTALL_SOURCE_ONLY seam
+// with a stub PATH curl that answers DIFFERENTLY per URL — nothing reaches
+// raw.githubusercontent.com or api.github.com.
+// ---------------------------------------------------------------------------
+
+describe('install.sh fetch_latest reads both the CDN and the contents API (#2950)', () => {
+  function manifest(version: string): string {
+    return JSON.stringify({
+      schema_version: 1,
+      channel: 'stable',
+      version,
+      released_at: '2026-09-18T00:00:00Z',
+      tarball_base: 'https://example.invalid/base',
+      platforms: ['linux-x64-glibc'],
+    });
+  }
+
+  /** A curl whose answer depends on the requested host. `apiBody: null` makes the
+   *  API request fail the way an outage or a spent 60/hour budget does. */
+  function stubCurl(root: string, opts: { cdnBody: string; apiBody: string | null }): string {
+    const stub = join(root, 'stub');
+    mkdirSync(stub, { recursive: true });
+    const apiBranch =
+      opts.apiBody === null
+        ? "printf 'curl: (22) The requested URL returned error: 403\\n' >&2; exit 22"
+        : `printf '%s\\n' ${JSON.stringify(opts.apiBody)}; exit 0`;
+    writeFileSync(
+      join(stub, 'curl'),
+      [
+        '#!/bin/sh',
+        'url=""',
+        'for arg in "$@"; do case "$arg" in https://*) url="$arg";; esac; done',
+        'case "$url" in',
+        `  https://api.github.com/*) ${apiBranch} ;;`,
+        `  *) printf '%s\\n' ${JSON.stringify(opts.cdnBody)}; exit 0 ;;`,
+        'esac',
+        '',
+      ].join('\n'),
+    );
+    chmodSync(join(stub, 'curl'), 0o755);
+    return stub;
+  }
+
+  function runFetchLatest(stub: string, root: string) {
+    return Bun.spawnSync(['bash', '-c', 'source "$1"; fetch_latest "$2"', 'bash', INSTALL_SH, 'stable'], {
+      env: {
+        PATH: `${stub}:${process.env.PATH ?? ''}`,
+        GENIE_INSTALL_SOURCE_ONLY: '1',
+        GENIE_HOME: join(root, 'home', '.genie'),
+        HOME: join(root, 'home'),
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+  }
+
+  test('the API copy wins while the CDN is still serving the previous release', () => {
+    const root = mkroot();
+    const stub = stubCurl(root, { cdnBody: manifest('5.260918.1'), apiBody: manifest('5.260918.9') });
+
+    const run = runFetchLatest(stub, root);
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.9'));
+    const stderr = run.stderr.toString();
+    expect(stderr).toContain('5.260918.9');
+    expect(stderr).toContain('5.260918.1');
+  });
+
+  test('the CDN copy wins when it is the newer of the two, compared field-wise as numbers', () => {
+    const root = mkroot();
+    // 5.260918.10 vs 5.260918.9 also pins that the comparison is numeric: string
+    // ordering would hand this to the API copy.
+    const stub = stubCurl(root, { cdnBody: manifest('5.260918.10'), apiBody: manifest('5.260918.9') });
+
+    const run = runFetchLatest(stub, root);
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.10'));
+    expect(run.stderr.toString()).toContain('the CDN has 5.260918.10; api.github.com is still at 5.260918.9');
+  });
+
+  test('an API request that fails degrades silently to the CDN payload', () => {
+    const root = mkroot();
+    const stub = stubCurl(root, { cdnBody: manifest('5.260918.1'), apiBody: null });
+
+    const run = runFetchLatest(stub, root);
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.1'));
+  });
+
+  test('a base64 envelope (or any other malformed API body) degrades to the CDN payload', () => {
+    const root = mkroot();
+    const envelope = JSON.stringify({
+      name: 'latest.json',
+      encoding: 'base64',
+      content: Buffer.from(manifest('5.260918.9')).toString('base64'),
+    });
+    const stub = stubCurl(root, { cdnBody: manifest('5.260918.1'), apiBody: envelope });
+
+    const run = runFetchLatest(stub, root);
+
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.1'));
+    expect(run.stdout.toString()).not.toContain('5.260918.9');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mismatched provenance: an unverified download never reaches extraction.
 // ---------------------------------------------------------------------------
 

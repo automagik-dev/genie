@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -19,6 +21,7 @@ import {
   inspectRetiredJsonMcpEntry,
   isRetiredGenieMcpServer,
   projectTrustState,
+  resolveGitProjectRoots,
   retireJsonMcpGenieEntry,
   retireProjectMcpConfigs,
 } from './codex-project-mcp.js';
@@ -30,6 +33,62 @@ beforeEach(() => {
 });
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+describe('resolveGitProjectRoots', () => {
+  /**
+   * A probe that never answered (timeout kill, fork pressure) used to collapse
+   * into the same null as a genuine "not a git repository", which made
+   * `genie init` exit 1 spuriously on contended CI runners while the same
+   * commit passed elsewhere (darwin flake, #3026). The retry contract below is
+   * what separates the two.
+   */
+  const whichGit = (name: string) => Bun.which(name);
+
+  test('a stalled probe (timeout kill, no verdict) is retried and a later answer wins', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      if (calls === 1) {
+        const stalled = new Error('spawnSync git ETIMEDOUT') as Error & { status: null; signal: string };
+        stalled.status = null;
+        stalled.signal = 'SIGTERM';
+        throw stalled;
+      }
+      return `${root}\n${root}/.git\n`;
+    }) as unknown as typeof execFileSync;
+
+    const roots = resolveGitProjectRoots(root, exec, 3_000, whichGit);
+
+    expect(calls).toBe(2);
+    expect(roots?.worktreeRoot).toBe(root);
+    expect(roots?.commonRoot).toBe(root);
+  });
+
+  test('a genuine "not a git repository" answer is returned once, never retried', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      const answered = new Error('Command failed: git rev-parse') as Error & { status: number; stderr: string };
+      answered.status = 128;
+      answered.stderr = 'fatal: not a git repository';
+      throw answered;
+    }) as unknown as typeof execFileSync;
+
+    expect(resolveGitProjectRoots(root, exec, 3_000, whichGit)).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  test('a probe that never answers exhausts its attempts and still resolves to null', () => {
+    let calls = 0;
+    const exec = (() => {
+      calls += 1;
+      throw new Error('spawnSync git EAGAIN');
+    }) as unknown as typeof execFileSync;
+
+    expect(resolveGitProjectRoots(root, exec, 3_000, whichGit)).toBeNull();
+    expect(calls).toBe(3);
+  });
+});
 
 describe('retireProjectMcpConfigs', () => {
   test('exports no registration or revival API', () => {
@@ -73,9 +132,11 @@ describe('retireProjectMcpConfigs', () => {
       join(root, '.codex', 'config.toml'),
       '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old"\n# END GENIE MCP FALLBACK\n',
     );
+    // The block was all the file held, so the file itself goes (issue #2927).
     expect(retireProjectMcpConfigs(root)[1]).toMatchObject({
-      action: 'updated',
-      detail: 'retired marker-owned project registration',
+      action: 'removed',
+      detail:
+        'retired marker-owned project registration; .codex/config.toml held nothing else and was removed (backup beside it: config.toml.genie-backup-<stamp>)',
     });
   });
 
@@ -240,9 +301,10 @@ describe('retireJsonMcpGenieEntry', () => {
   });
 
   test('preserves the file mode', () => {
-    writeFileSync(mcp(), '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]},"k":{"command":"k"}}}', {
-      mode: 0o644,
-    });
+    writeFileSync(mcp(), '{"mcpServers":{"genie":{"command":"/x/genie","args":["mcp"]},"k":{"command":"k"}}}');
+    // chmod, not a create mode: a create mode is filtered through the process umask, so under 0077 the
+    // fixture itself started at 0o600 and the test blamed the code for preserving it (issue #2963).
+    chmodSync(mcp(), 0o644);
     retireJsonMcpGenieEntry(root);
     expect(statSync(mcp()).mode & 0o777).toBe(0o644);
   });
@@ -453,5 +515,36 @@ describe('projectTrustState (bounded targeted parse)', () => {
 
   test('null config (absent/unreadable/oversized) is unknown', () => {
     expect(projectTrustState(null, root)).toEqual({ state: 'unknown' });
+  });
+});
+
+/** Issue #2927 (3): a config that held nothing but the marker block is genie's own artifact. */
+describe('retireProjectMcpConfigs: an emptied .codex/config.toml is removed, never left as a 0-byte file', () => {
+  const OWNED_ONLY = '# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old"\n# END GENIE MCP FALLBACK\n';
+
+  test('backs the file up beside itself, then removes it, and is idempotent', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'config.toml'), OWNED_ONLY);
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({
+      action: 'removed',
+      detail:
+        'retired marker-owned project registration; .codex/config.toml held nothing else and was removed (backup beside it: config.toml.genie-backup-<stamp>)',
+    });
+    expect(existsSync(join(root, '.codex', 'config.toml'))).toBe(false);
+    // Backup-first, like every other config retirement (Codex review on PR #2928).
+    const backups = readdirSync(join(root, '.codex')).filter((name) => name.startsWith('config.toml.genie-backup-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(root, '.codex', backups[0] as string), 'utf8')).toBe(OWNED_ONLY);
+    // Idempotent: the retired surface classifies absent.
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({ action: 'skipped' });
+  });
+
+  test('never touches anything else in .codex', () => {
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'config.toml'), `\n${OWNED_ONLY}\n`);
+    writeFileSync(join(root, '.codex', 'notes.txt'), 'theirs\n');
+    expect(retireProjectMcpConfigs(root)[1]).toMatchObject({ action: 'removed' });
+    expect(existsSync(join(root, '.codex', 'config.toml'))).toBe(false);
+    expect(readFileSync(join(root, '.codex', 'notes.txt'), 'utf8')).toBe('theirs\n');
   });
 });

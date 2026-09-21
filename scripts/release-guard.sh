@@ -34,11 +34,30 @@ set -euo pipefail
 # shellcheck source=scripts/gh-retry.sh
 source "$(dirname "$0")/gh-retry.sh"
 
-# Release publication uses Genie's exact numeric 5.YYMMDD.N scheme. Channels
+# Release publication uses Genie's exact numeric 6.YYMMDD.N scheme. Channels
 # carry dev/stable semantics, so suffix-bearing tags are rejected before any
 # asset upload or manifest reconciliation can begin.
-VERSION_RE='^5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
-TAG_REF_RE='^refs/tags/v5\.[0-9]{6}\.[1-9][0-9]{0,3}$'
+#
+# The major moved 5.→6. for the v6 stable cut. On dev this change is INERT,
+# and the generator can never disagree with it: BOTH sides load from main.
+# release.yml checks out the CONTROL ref — main — to run this guard, not
+# `source_sha` (release.yml:91-93), and version.yml's inline generator
+# (`prefix=`, the promotion-tag glob) runs from main too, because a
+# `workflow_run` trigger always executes the DEFAULT-BRANCH copy of the
+# workflow. `scripts/version.ts` is the local `npm run version` path only
+# (package.json:13); the release pipeline never reads it. So while this sits
+# on dev the only thing it binds is dev's own release-guard.test.ts.
+#
+# What merging it to dev DOES do: version.yml fires on the merge commit — its
+# `if` skips only `[auto-version]`/`[release-manifest]` tips (version.yml:75-76)
+# — so ONE FINAL, VALID 5.x dev release publishes from main's still-5
+# generator. That is expected and it publishes cleanly. The hazard is the dev
+# tip those pushes move: under main's ruleset (require_last_push_approval,
+# dismiss_stale_reviews_on_push) they dismiss the promotion PR's approval, so
+# #2935 may only be approved once that release's `[auto-version]` tip is dev's
+# head and no Version run is queued.
+VERSION_RE='^6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
+TAG_REF_RE='^refs/tags/v6\.[0-9]{6}\.[1-9][0-9]{0,3}$'
 
 fail()   { printf 'release-guard: %s\n' "$*" >&2; exit 3; }
 misuse() { printf 'release-guard: %s\n' "$*" >&2; exit 64; }
@@ -49,7 +68,7 @@ version_from_tag_ref() { printf '%s' "${1#refs/tags/v}"; }
 valid_release_version() {
   local version="$1" date_part year month day max_day counter
   [[ "$version" =~ $VERSION_RE ]] || return 1
-  date_part="${version#5.}"
+  date_part="${version#6.}"
   date_part="${date_part%.*}"
   counter="${version##*.}"
   year=$((2000 + 10#${date_part:0:2}))
@@ -244,6 +263,65 @@ check_dev_reachability() {
   note "ok — dev source ${source_sha} is on the ${dev_ref} first-parent chain"
 }
 
+# The control-CI predicate, shared by the listing document and the direct
+# by-SHA lookup below. Both reads must agree on exactly this shape: repository,
+# workflow path, completed, success, push, main, and the SHA under test.
+control_runs_contain_ci_run() {
+  local json="$1" sha="$2"
+  [[ -f "$json" ]] || return 1
+  jq -e \
+    --arg repo "${EXPECTED_REPO:-}" \
+    --arg workflow "${EXPECTED_WORKFLOW:-.github/workflows/ci.yml}" \
+    --arg sha "$sha" \
+    '.workflow_runs | any(
+      .repository.full_name == $repo and
+      .path == $workflow and
+      .status == "completed" and
+      .conclusion == "success" and
+      .event == "push" and
+      .head_branch == "main" and
+      .head_sha == $sha
+    )' "$json" >/dev/null
+}
+
+# Second, independently consistent read of the SAME predicate, addressed by
+# head SHA instead of by listing page.
+#
+# 2026-09-18 15:32Z, Version run 35362976343: the successful-main-CI listing
+# came back without main's tip (d9380232527c95c791227961b7433f4cc1cfb983,
+# CI run 35311183584 — completed/success since 05:32Z). The guard failed closed,
+# and because a dev release whose tag is already pushed cannot be re-run,
+# v5.260918.5 became an orphan tag. Twenty minutes later the identical listing
+# call matched, so the miss was listing lag, not a provenance fact.
+#
+# This never widens the gate: a run that is not a completed, successful main
+# push run for this repository's ci.yml is rejected by the same jq predicate.
+# Opt-in through CONTROL_HEAD_SHA_LOOKUP so `check-trusted-release` stays pure
+# (no network) for every caller that does not ask for it.
+CONTROL_HEAD_SHA_RETRY_SLEEP="${CONTROL_HEAD_SHA_RETRY_SLEEP:-3}"
+
+control_head_sha_lookup_confirms() {
+  local sha="$1" tmp attempt rc=1
+  [[ "${CONTROL_HEAD_SHA_LOOKUP:-false}" == "true" ]] || return 1
+  [[ -n "${EXPECTED_REPO:-}" ]] || return 1
+  command -v gh >/dev/null 2>&1 || return 1
+  tmp="$(mktemp)" || return 1
+  for attempt in 1 2; do
+    if gh_retry gh api -X GET "repos/${EXPECTED_REPO}/actions/workflows/ci.yml/runs" \
+        -f head_sha="$sha" -f event=push -f per_page=50 >"$tmp" &&
+      control_runs_contain_ci_run "$tmp" "$sha"; then
+      rc=0
+      break
+    fi
+    if [[ "$attempt" == 1 ]]; then
+      note "control CI run ${sha} is not visible by head_sha yet; retrying once in ${CONTROL_HEAD_SHA_RETRY_SLEEP}s"
+      sleep "$CONTROL_HEAD_SHA_RETRY_SLEEP"
+    fi
+  done
+  rm -f "$tmp"
+  return "$rc"
+}
+
 # Pure half of the trusted-release guard. The source run is addressed by an
 # explicit run id; the control-runs document is the successful main CI listing.
 # ACTUAL_TAG_SHA is resolved separately from the remote tag, never trusted from
@@ -287,20 +365,13 @@ check_trusted_release() {
       ;;
   esac
   [[ -f "$control_json" ]] || fail "control CI listing JSON not found: ${control_json}"
-  jq -e \
-    --arg repo "${EXPECTED_REPO:-}" \
-    --arg workflow "${EXPECTED_WORKFLOW:-.github/workflows/ci.yml}" \
-    --arg sha "$control_ci_sha" \
-    '.workflow_runs | any(
-      .repository.full_name == $repo and
-      .path == $workflow and
-      .status == "completed" and
-      .conclusion == "success" and
-      .event == "push" and
-      .head_branch == "main" and
-      .head_sha == $sha
-    )' "$control_json" >/dev/null ||
-    fail "trusted main control ancestor ${control_ci_sha} has no successful CI push run"
+  local control_lookup=listing
+  if ! control_runs_contain_ci_run "$control_json" "$control_ci_sha"; then
+    control_head_sha_lookup_confirms "$control_ci_sha" ||
+      fail "trusted main control ancestor ${control_ci_sha} has no successful CI push run (listing and head_sha lookups both missed)"
+    control_lookup=head_sha
+  fi
+  note "ok — control CI authority ${control_ci_sha} confirmed by ${control_lookup} lookup"
 
   note "ok — trusted main control ${control_sha} (CI authority ${control_ci_sha}) will release CI-approved ${SOURCE_BRANCH}@${SOURCE_SHA} as v${VERSION} (${CHANNEL})"
 }
@@ -375,6 +446,7 @@ guard_trusted_release() {
     DEV_REF_REACHABLE="$dev_ref_reachable" \
     CONTROL_CI_SHA="$control_ci_sha" \
     CONTROL_MANIFEST_ONLY_MATCH="$control_manifest_only_match" \
+    CONTROL_HEAD_SHA_LOOKUP=true \
     check_trusted_release "$source_tmp" "$control_tmp"
 
   rm -f "$source_tmp" "$control_tmp"

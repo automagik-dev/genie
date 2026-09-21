@@ -7,15 +7,26 @@
       "name": "roadmap"
     }
   ],
-  "hire_roster": [],
   "meta": [
     {
       "key": "stage_log_backfill_v1",
       "value": "1784758341375"
     },
     {
+      "key": "wish_base:dsh-genie-board",
+      "value": "{\"branch\":\"wish/dsh-genie-board\",\"base\":\"bdcb5ec8db2d51512477afe2b507e3e1b91ad037\",\"recordedAt\":1789520649469}"
+    },
+    {
       "key": "wish_base:dsh-workflow-fork",
       "value": "{\"branch\":\"wish/dsh-workflow-fork\",\"base\":\"67a8d08b14d0d628c92cd6bffb19b8b4dab0381d\",\"recordedAt\":1789498668096}"
+    },
+    {
+      "key": "wish_base:global-workflows-local-mikro",
+      "value": "{\"branch\":\"wish/global-workflows-local-mikro\",\"base\":\"1631d16acadbd7d0c91ec26dea03b34ba52a69b2\",\"recordedAt\":1789765683055}"
+    },
+    {
+      "key": "wish_base:observe-skill-bundle",
+      "value": "{\"branch\":\"wish/observe-skill-bundle\",\"base\":\"87a5b9221755334649391c6027c9a2639a5e03fc\",\"recordedAt\":1789663781815}"
     },
     {
       "key": "wish_base:skills-everywhere",
@@ -38,7 +49,7 @@
       "value": "{\"branch\":\"wish/workflows-multibody\",\"base\":\"67a8d08b14d0d628c92cd6bffb19b8b4dab0381d\",\"recordedAt\":1789496254369}"
     }
   ],
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "stage_log": [],
   "task_dependencies": [],
   "task_events": [
@@ -311,24 +322,6 @@
       "kind": "release",
       "note": "completed",
       "task_id": "t_msoqsd8sdb8df48b"
-    },
-    {
-      "author": "cli",
-      "author_kind": "human",
-      "created_at": 1786554116904,
-      "id": 78,
-      "kind": "claim",
-      "note": "claimed by engineer-trivial-a",
-      "task_id": "t_msp6a1qlaaa8acdc"
-    },
-    {
-      "author": "cli",
-      "author_kind": "human",
-      "created_at": 1786554590852,
-      "id": 79,
-      "kind": "release",
-      "note": "completed",
-      "task_id": "t_msp6a1qlaaa8acdc"
     },
     {
       "author": "cli",
@@ -1089,87 +1082,6 @@
     {
       "author": "cli",
       "author_kind": "claude-code",
-      "created_at": 1789503804735,
-      "id": 176,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrubw9a5949903cf"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503804796,
-      "id": 177,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrubw9bxa7f28dd8"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503804853,
-      "id": 178,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrubw9do9fc563c4"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503804911,
-      "id": 179,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrubw9ft4d20d980"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503804967,
-      "id": 180,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mruxc5gvd0c00325"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805024,
-      "id": 181,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mruxc5iv51303ef4"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805081,
-      "id": 182,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mruxc5l659685893"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805139,
-      "id": 183,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mruxc5mz0a9ee3f5"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805197,
-      "id": 184,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mruxc5ora3add7b8"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
       "created_at": 1789503805256,
       "id": 185,
       "kind": "move",
@@ -1184,33 +1096,6 @@
       "kind": "move",
       "note": "(none)→Done",
       "task_id": "t_mrv087ldf5bdb175"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805369,
-      "id": 187,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrvf2p7za43e792d"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805425,
-      "id": 188,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrvf2pam274f1741"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503805482,
-      "id": 189,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_mrvf2pd39e9349c2"
     },
     {
       "author": "cli",
@@ -1364,15 +1249,6 @@
       "kind": "move",
       "note": "(none)→Done",
       "task_id": "t_msoqsdde40b31ee9"
-    },
-    {
-      "author": "cli",
-      "author_kind": "claude-code",
-      "created_at": 1789503806501,
-      "id": 207,
-      "kind": "move",
-      "note": "(none)→Done",
-      "task_id": "t_msp6a1qlaaa8acdc"
     },
     {
       "author": "cli",
@@ -1719,78 +1595,6 @@
     {
       "author": "wish-status-sync",
       "author_kind": "genie",
-      "created_at": 1789503808729,
-      "id": 246,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mruxc5gvd0c00325"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808730,
-      "id": 247,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mruxc5iv51303ef4"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808730,
-      "id": 248,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mruxc5l659685893"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808730,
-      "id": 249,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mruxc5mz0a9ee3f5"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808730,
-      "id": 250,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mruxc5ora3add7b8"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808731,
-      "id": 251,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mrvf2p7za43e792d"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808731,
-      "id": 252,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mrvf2pam274f1741"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
-      "created_at": 1789503808731,
-      "id": 253,
-      "kind": "move",
-      "note": "Done→Work",
-      "task_id": "t_mrvf2pd39e9349c2"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
       "created_at": 1789503808731,
       "id": 254,
       "kind": "move",
@@ -1926,15 +1730,6 @@
     {
       "author": "wish-status-sync",
       "author_kind": "genie",
-      "created_at": 1789503808733,
-      "id": 269,
-      "kind": "move",
-      "note": "Done→Wish",
-      "task_id": "t_msp6a1qlaaa8acdc"
-    },
-    {
-      "author": "wish-status-sync",
-      "author_kind": "genie",
       "created_at": 1789503808734,
       "id": 270,
       "kind": "move",
@@ -1976,189 +1771,702 @@
       "kind": "move",
       "note": "Idea→Review",
       "task_id": "t_mu3bf6vc67fe3e8b"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789765697565,
+      "id": 275,
+      "kind": "comment",
+      "note": "dispatch: engineer-g1 (engineer, opus) — wave 1/group-1; scope: scripts/mikro/call.ts entry + agents-dir resolution, src/term-commands/mikro.ts, build-binary.sh staging of default agents, wish.js MIKRO_CALL, README/CLAUDE.md command count",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789765763262,
+      "id": 276,
+      "kind": "claim",
+      "note": "claimed by engineer-g1",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "engineer-g1",
+      "author_kind": "claude-code",
+      "created_at": 1789767134487,
+      "id": 277,
+      "kind": "report",
+      "note": "G1 DONE. 5 commits e8c9fb4..5d3ed80 on wish/global-workflows-local-mikro-g1; 16 files, +1111/-92 (the WISH.md rows are from the two base commits).\n\nLANDED\n- call.ts: import.meta.main becomes exported runCallCli(argv) returning an exit code, no top-level await. New exports: resolveAgentsDir, shippedAgentsRoot, resolveRunsDir, gitToplevel, unavailableReason. RunOptions gains cwd + genieHome; RunResult gains agentSource, also on the ledger row.\n- src/term-commands/mikro.ts + registration; mikro joins the v4 workspace-gate exemption, without which a repo with no .genie exits 2.\n- build-binary.sh stages .mikro/agents/{wish-context,review-prep}/{agent.yaml,SYSTEM.md} into STAGE/templates/mikro/agents, all four required; paths filter and release-docs pins updated.\n- wish.js MIKRO_CALL = genie mikro call, unavailable wording, reviewer line; pins, READMEs, CLAUDE.md, count 17.\n\nEVIDENCE\n1. mikro call --help -> exit 0, every flag listed; unregistered name -> exit 2 (mikro.test.ts).\n2. tmp git repo with no .mikro + fake GENIE_HOME carrying templates/mikro/agents/wish-context, injected opener -> agentSource=shipped, ledger keyed by the CHECKOUT, no .mikro created, payload untouched (call.test.ts).\n3. mikro off PATH -> ok:false JSON, exit 1, one unavailable: error, one attempt; classified by spawn code ENOENT/EACCES, not wording.\n4. bun scripts/mikro/call.ts still drives runAgent (ok:false, agentSource=repo, zero cost); bench-options/coach/boundary green and unchanged; call.test.ts only gained a describe.\n5. check:fast -> exit 0 (typecheck, biome, knip, skills, wishes, complexity 2/7 max 29/42).\n6. build-binary.sh --platform linux-x64-glibc -> tarball carries templates/mikro/agents/wish-context/SYSTEM.md; top level is the frozen 8.\n7. Full Validation command -> exit 0, 326 pass / 0 fail, 15 files.\n\nHOP ORACLE: PASS. New tarball extracted into a 0700 staging dir in scratch, staging/genie replaced by the installed 5.260918.9 binary, isolated HOME and GENIE_HOME, lease built exactly as acquire_lifecycle_lock does. __install-promote --staging-root ... --expected-version 5.260918.9 printed \"outcome\":\"committed\", exit 0; the promoted payload carries templates/mikro/agents/*; the real home was untouched. Extra: the COMPILED binary in a plain git repo against a converged GENIE_HOME/templates answered agentSource=shipped, so the /$bunfs default is gone.\n\nRULINGS\n- resolveAgentsDir takes agent: string, not AgentName -- runAgent.agent is string, so AgentName forces a cast at the one call site; the registry check stays in the CLI and a name that is not one directory name is refused before any join. Cost: a probe for an unregistered name returns null.\n- call declares no commander options; the flags are help text, with allowUnknownOption + passThroughOptions and enablePositionalOptions on the mikro group only, because a declared option is a consumed option. Cost: --help typed after the agent name reaches the runtime (exit 2).\n- mikro call with no agent exits 1 (commander missing argument) like every group; only a bad NAME is 2.\n- Ledger opt-in is .mikro tracked by git OR present with no git at all; without the second half the existing boundary tests, on non-git tmpdirs, would have moved their facts under GENIE_HOME.\n- Bundle prose: base 1.84 MiB vs 1.90 MiB now; README said 0.9 and CLAUDE.md 1.3, both stale; both now ~2 MB.\n- The MIKRO_AGENTS_DIR README sentence was corrected here because it described the default I removed; the boundary-mount row is left for G4.",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789767244778,
+      "id": 278,
+      "kind": "comment",
+      "note": "dispatch: engineer-g2 (engineer, opus) — wave 2/group-2; scope: build-binary.sh staging of templates/workflows, src/lib/workflows-installer.ts, optional workflows record field, install/update wiring; stacked on group-1 head 5d3ed800d while its review runs",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789767293469,
+      "id": 279,
+      "kind": "claim",
+      "note": "claimed by engineer-g2",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789768066733,
+      "id": 280,
+      "kind": "comment",
+      "note": "review: SHIP at 5d3ed800d with 2 medium required repairs — docs overclaim argv forwarded untouched (program-level -V/-h/--no-interactive still parsed); two safety rules unpinned (untracked .mikro ledger rule, agent-name traversal guard: both mutants survive). 7/7 criteria pass, validation 326/0, hop oracle committed. Routed to fix loop 1 of 2",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768403630,
+      "id": 281,
+      "kind": "move",
+      "note": "(none)→Work",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768403853,
+      "id": 282,
+      "kind": "move",
+      "note": "(none)→Work",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404064,
+      "id": 283,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404275,
+      "id": 284,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768404511,
+      "id": 285,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "engineer-g2",
+      "author_kind": "claude-code",
+      "created_at": 1789768533689,
+      "id": 286,
+      "kind": "report",
+      "note": "DONE — Group 2 (workflow catalog install channel), branch wish/global-workflows-local-mikro-g2, 5 commits on 5d3ed800d, 1115 insertions / 11 deletions across 11 files (ceiling 1500).\n\nWHAT: src/lib/workflows-installer.ts (+ test) is the channel: classifyWorkflowFile (current/replace/modified/missing/foreign) plus runWorkflowsChannelConvergence over one dir. skills-installer.ts gains the optional record field workflows {dir, ref, files: name -> sha256}, the WORKFLOW_FILE_NAME_PATTERN traversal guard, and carries an existing value forward when the skills channel rewrites the record. Wired in install.ts (after skills, before marker retirement) and in update.ts runManualUpdateConvergence, whose result gains a workflows leg; applyConvergenceExitSignal maps either channel failure to exit 1. build-binary.sh stages .claude/workflows/*.js into templates/workflows (README.md never), with pins in release-docs.test.ts and the build-tarballs paths filter.\n\nDECISIONS 4-6 AS BUILT: consent none skips; no ~/.claude skips and creates nothing; no readable record (absent OR malformed) installs nothing and says workflows: skipped (no install record — run genie update). Backup-first: modified/foreign archived under state-backups/workflows-collision-<compact ISO> (digest verified on arrival) then replaced; record-matching stale copy replaced silently; delivered-matching left alone, so a second run creates no backup root. A dropped name is archived+removed only while its digest matches the record, else preserved, reported, and KEPT in the record under its recorded digest so the next update retries it and uninstall still refuses it.\n\nRULINGS: (1) the channel is synchronous, not the Promise in the plan Interfaces line — runManualUpdateConvergence is sync and its exact shape is asserted at 4 call sites plus a runConvergence seam; async would ripple 5 sites for no gain. Cost if wrong: mechanical. (2) In update the channel runs AFTER the plugin-era retirement, which owns the one shared file: a managed-clean ~/.claude/workflows/council.js with its .genie-sync.json sidecar is genie own plugin-era asset removed backup-first; running first would archive it as not installed by genie (false) and leave the sidecar managed-modified for ever. Install has no retirement, so there it is straight after skills. (3) A missing delivered catalog is failed + exit 1 + the genie update remedy, not a silent skip. (4) The skip line names the resolved path: workflows: skipped (no ~/.claude — <dir> does not exist). (5) One backup root per run holds both replaced and retired files; the transcript wording distinguishes them.\n\nVALIDATION: umask 022 && bun run check:fast && bun test (workflows-installer, skills-installer, install, __tests__/update, release-docs, install-promotion) -> exit 0, 462 pass / 0 fail. bash scripts/build-binary.sh --platform linux-x64-glibc -> exit 0; tarball top level is exactly the frozen eight and carries templates/workflows/wish.js plus the other 8 catalog files.\n\nNOT TOUCHED (Group 3): doctor.ts, uninstall.ts, skills/**, *-workflow-parity.test.ts.",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789768921451,
+      "id": 287,
+      "kind": "comment",
+      "note": "review: SHIP at 50c03be71 — 0 gaps after fix loop 1; validation: check:fast + build + focused tests → pass (329/0); hop oracle committed; PR 2993",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789768921672,
+      "id": 288,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789768947026,
+      "id": 289,
+      "kind": "comment",
+      "note": "dispatch: engineer-g4 (engineer, opus) — wave 2/group-4; scope: scripts/mikro/trusted-source.ts, call.ts ref-based resolution and untrustedConfig, --agents-ref, bench.ts working-tree default, wish.js agents-ref, README trust section; stacked on group-1 head acd182aa8",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789769002192,
+      "id": 290,
+      "kind": "claim",
+      "note": "claimed by engineer-g4",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789769144308,
+      "id": 291,
+      "kind": "comment",
+      "note": "review: SHIP at c5c6b9f32 — 6/6 criteria, validation 462/0, tarball frozen eight; 2 medium repairs routed to fix loop 1 of 2: recorded name dropped from the record when the on-disk entry is not a regular file; workflows-after-retirement ordering pinned by no test",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789769618306,
+      "id": 292,
+      "kind": "comment",
+      "note": "dispatch: engineer-g3 (engineer, opus) — wave 3/group-3; scope: doctor checkWorkflowsChannel, uninstall removeWorkflowsChannelInstall, six front-door SKILL.md explicit-path sentence, seven workflow parity tests, workflows README Discovery, CLAUDE.md gotcha; stacked on group-2 head af6da53d3",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789769676266,
+      "id": 293,
+      "kind": "claim",
+      "note": "claimed by engineer-g3",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789769842293,
+      "id": 294,
+      "kind": "comment",
+      "note": "review: SHIP at af6da53d3 — 0 gaps after fix loop 1; validation: check:fast + six focused files → pass (467/0); PR 2995",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789769842509,
+      "id": 295,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "engineer-g4",
+      "author_kind": "claude-code",
+      "created_at": 1789770578880,
+      "id": 296,
+      "kind": "report",
+      "note": "Group 4 done at 90d675357, stacked on acd182aa8 (7 commits, 14 files, +1346/-156).\n\nVALIDATION (the exact group command, check:fast plus the four test targets): EXIT 0, 274 pass / 0 fail across 16 files. Zero model calls: every run is the injected opener answering /bin/false, or a refusal before any spawn.\n\nLANDED\n- scripts/mikro/trusted-source.ts: resolveTrustedRef / materializeAgent / readTrustedBlob / refFormatError. Default ref = the base branch origin/HEAD names, taken LOCAL when origin/<base> is an ancestor of it, else origin/<base>. git archive into a 0700 temp dir, every extracted file proven byte-equal to git show <ref>:<path> and the set against ls-tree, so an export-ignore or export-subst attribute cannot alter an agent.\n- call.ts: resolveAgentsDir order is flag -> repo AT THE REF -> shipped; the working tree is never consulted. agentSource is repo@<ref>, with agentSourceReason naming why a fallback happened. Temp material disposed on success, failure, refusal and throw. untrustedConfigAtRef compares the four .mikro files against the ref for EVERY --dir, invoking checkout included, on every source including shipped; the same-directory exemption survives only on the flag path and where no ref resolves. The refusal names --agents-dir as the escape. --agents-ref parsed, validated (malformed -> exit 2) and documented in help.\n- bench: benchAgentsDir hands runAgent <dir>/.mikro/agents when no flag was typed; parsed options untouched, so the record byte-identity test is green unchanged; coach.ts untouched.\n- wish.js: both offload lines pass --agents-ref origin/{job.base}; the pin test counts every occurrence in the code and refuses any other value.\n- README trust-boundary section rewritten (ref vs working tree per command, the removed bench refusal, local-base rule, MIKRO_AGENTS_DIR, boundary mount row, threat-model note, ledger root); CLAUDE.md resolution sentence corrected.\n- All four carried-forward items: escape wording (prefix the value with a space or use --prompt-file); delete process.env.GIT_DIR in the restore; citation probes through gitProbeEnv; ledger-root sentence.\n\nWATCHED FAILING FIRST\n- lookup pointed at the working tree: (a) \"the base ref wins over a committed PR change AND over an uncommitted one\" fails, got \"# C - not even committed\" for \"# A - the reviewed prompt\" (5 of 7 failed).\n- lookup pointed at --dir: (c) \"the INVOKING checkout decides, never --dir\" fails, got \"# D - the attacker base\".\n\nRULINGS\n1 A well-formed --agents-ref naming no commit degrades to shipped with the reason; only a malformed ref exits 2 - wish.js passes origin/<base> unconditionally. Cost: a ref typo runs the shipped agent; agentSourceReason names it.\n2 With no resolvable ref the old directory comparison is kept. Cost: a --dir whose config is byte-identical to the invoking checkout is accepted, which is the trusted content by definition.\n3 materializeAgent requires non-empty for agent.yaml and SYSTEM.md, byte-equality for every file. Cost: a legitimately empty auxiliary file at the ref is accepted rather than refusing the run.\n4 bench passes <dir>/.mikro/agents unconditionally, as Decision 8 words it. Cost: a bench over a repo with no .mikro/agents points at a missing dir; Group 5 owns portable bench.\n5 --agents-ref added to the two runnable offload lines only, not the allowlist mirror, which already lists a shorter form.\n6 gitProbeEnv moved into trusted-source.ts and re-exported from call.ts: one copy of the ambient-git strip.",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "engineer-g3",
+      "author_kind": "claude-code",
+      "created_at": 1789770758277,
+      "id": 297,
+      "kind": "report",
+      "note": "Group 3 complete. 4 commits on wish/global-workflows-local-mikro-g3 stacked on af6da53d3; 21 files, +721/-61. Nothing pushed, no merges.\n\nOUTCOME\n1. doctor: checkWorkflowsChannel() added after checkSkillsChannel() in doctorCommand; one read-only \"workflows: catalog\" line driven by the record field. Reuses classifyWorkflowFile and the installers lstat-based inspectOnDiskWorkflow (newly exported; no second digest, no second regular-file rule). Extracted describeWorkflowDrift keeps both functions well under the ceiling; complexity budget unchanged (2/7 warnings, hotspots 29 and 26 as before).\n2. uninstall: removeWorkflowsChannelInstall(genieHome) -> {removed, preserved:[{file,reason}], dirRemoved}. Deletes only a recorded file whose digest still matches; hand-edited, non-regular-file and failed-unlink entries become preserved and are reported; rmdir on the workflows dir only when it ends up empty. removeSkillsChannelInstall gained keepRecord, and the workflows sweep runs BEFORE it, because a clean skills sweep deletes the one record both channels share. Malformed record still fails closed, reported once through the skills leg. The batch-journal protected-path set gained the workflows dir.\n3. skills: six front doors state the explicit-script-path rule; seven parity tests now call one shared expectExplicitScriptPathRule (scripts/workflow-front-door-parity.ts) asserting the project path, the user-scope path, the phrase \"explicit script path\", and no bare-name instruction. observability-review parity left alone. wish stays runtime-neutral at 85/90 lines and its stale \"catalog is not shipped\" sentence is gone; workfly line 42 guidance updated.\n4. docs: workflows README Discovery rewritten; one CLAUDE.md gotcha bullet.\n\nVALIDATION (all exit 0)\n- bun run check:fast -> 0\n- bun test doctor.test.ts -> 113 pass / 0 fail\n- bun test uninstall.test.ts -> 82 pass / 0 fail\n- bun test $(ls scripts/*-workflow-parity.test.ts) -> 67 pass / 0 fail\n- extra: workflows-installer + skills-installer + install tests 192/0; release-docs + workflows-meta 58/0; skills:lint OK.\n\nSAMPLE DOCTOR LINES\nok workflows: catalog - 3/3 in <dir> @ v5.260918.12\n! workflows: catalog - 0/3 in <dir> @ v5.260918.12; council.js (modified); wish.js (missing); workfly.js (not a regular file)\n! workflows: catalog - 3/3 in <dir> @ v5.260901.1 (stale, binary is v5.260918.12)\nok workflows: catalog - (unrecorded)   /   ok workflows: catalog - not detected\nmalformed record: no workflows line at all.\n\nRULINGS\n- Ruling: malformed record prints no workflows doctor line - one fault, one remedy, already named by skills: channel - cost if wrong: an operator reading only the workflows line misses the broken receipt, which the skills line above it states.\n- Ruling: (unrecorded) and not detected are pass, not warn - nothing distinguishes never-installed from consent none, and a record-less host is already warned by skills: channel - cost if wrong: a host that silently lost the field warns one release later, at the next update.\n- Ruling: check name is \"workflows: catalog\", in the \"skills: ...\" family rather than a bare \"workflows\" - cost if wrong: cosmetic, one grep pattern.\n- Ruling: the detail names the recorded dir - the record may name a dir the current HOME no longer resolves to - cost if wrong: a longer line.\n- Ruling: removeWorkflowsChannelInstall widened by dirRemoved beyond the plan interface, for the transcript - cost if wrong: one unused field.\n- Ruling: the incomplete-uninstall note now reads \"channel removal was incomplete\" rather than naming skills - cost if wrong: prose only, no test pinned it.\n- Ruling: one shared parity assertion module instead of seven copies - cost if wrong: a skill needing a different rule must opt out explicitly.\n- Falsifiability watched: the new assertion fails on the pre-edit council SKILL.md for the right reason (missing ~/.claude path).",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789771338617,
+      "id": 298,
+      "kind": "comment",
+      "note": "review: SHIP at a0dac64ac — 0 required, 10/10 criteria; validation re-run by the reviewer (doctor 113/0, uninstall 82/0, parity 67/0, skills:lint ok); quality loop routed for 3 advisories: vacuous project-path parity assertion, unrecorded stale catalog file unobserved by doctor, silent rmdir of the workflows dir; PR 2997",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789771379826,
+      "id": 299,
+      "kind": "comment",
+      "note": "review: FIX-FIRST at b91d2bddb — 2 high, 2 medium: (1) repo with no resolvable trusted ref falls back to the directory comparison and its same-directory exemption, reopening the hole Decision 8 removes; (2) mikro 1.260909.1 also loads legacy .rlmx/ config from --dir, not compared; (3) a directory named .mikro/TOOLS.md throws EISDIR before dispose, leaking the temp agent; (4) wish.js allowlist line lacks --agents-ref. Mechanism, ref validation, archive fidelity and adversarial suite hold (3 mutants killed). Fix loop 1 of 2; PR 2996 stays draft",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789772417952,
+      "id": 300,
+      "kind": "comment",
+      "note": "review: SHIP at 6f76a5d25 — 0 gaps after one quality loop; validation: check:fast + doctor 117/0 + uninstall 83/0 + parity 73/0 + drift guard 52/0 → pass; PR 2997",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789772418170,
+      "id": 301,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789772499827,
+      "id": 302,
+      "kind": "comment",
+      "note": "review: SHIP at 69a718870 — both high findings closed and re-proven by probe; 285/0, drift guard 52/0; quality loop routed for 1 medium: a git failure inside a real checkout (safe.directory refusal, unreadable index, no git binary) lands in the non-git carve-out instead of failing closed; plus pin a stub PATH on the two runCli tests; PR 2996",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789772529684,
+      "id": 303,
+      "kind": "comment",
+      "note": "dispatch: engineer-g5 (engineer, opus) — wave 3/group-5; scope: genie mikro bench|coach|fixtures|init over scripts/mikro, fixture resolution, commit-derived fixtures, seeding, README growing-agents section, CLAUDE.md; stacked on group-4 head 69a718870 (a small call.ts quality commit lands on group 4 in parallel)",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789772610060,
+      "id": 304,
+      "kind": "claim",
+      "note": "claimed by engineer-g5",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789773754377,
+      "id": 305,
+      "kind": "comment",
+      "note": "review: SHIP at c8a363f01 — 0 gaps after fix loop 1, one quality loop and three follow-ups; validation: check:fast + focused tests 291/0 + drift guard 52/0 → pass; Decision 8a recorded; PR 2996",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789773754605,
+      "id": 306,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "engineer-g5",
+      "author_kind": "claude-code",
+      "created_at": 1789774295080,
+      "id": 307,
+      "kind": "report",
+      "note": "Group 5 done at faaacb425 (6 commits on wish/global-workflows-local-mikro-g5, stacked on 69a718870). Outcome: another repository can seed, measure and improve its own agents with the installed genie alone.\n\nWhat/where: genie mikro bench|coach|fixtures|init registered in src/term-commands/mikro.ts over exported runBenchCli (scripts/mikro/bench.ts), runCoachCli (coach.ts), runFixturesCli (new fixtures-from-commits.ts) and runInitCli (new init.ts); each verb and its bun script spelling are one code path, no process.exit inside. Fixture resolution is one resolveFixturesPath (bench-options.ts) per Decision 12: --fixtures then <dir>/.mikro/fixtures/<agent>.json then <dir>/scripts/mikro/fixtures/<agent>.json; genie has no .mikro/fixtures so its own rounds are unchanged and the no-flag bench RECORD stays byte-identical (bench-options.test.ts untouched). bench and coach now FAIL UPFRONT at zero cost on a missing fixture set or a missing <agent>/agent.yaml, naming the remedy (G4 advisory A1); the agents-dir check is gated on the round having a job, so a set filtered to nothing by --only still runs. buildCommitFixtures derives truth mechanically (git show --name-only, renames as the new path, id = first 12 chars of the sha, merge/root/empty/path-gone commits skipped with reasons, byte-stable output, refuses to overwrite without --force) and a test proves a built file loads through the bench own loader. seedAgents copies the shipped wish-context and review-prep, refuses existing dirs and symlinked .mikro/agents, ignores .mikro/runs once, writes nothing outside the repo, and prints the ordered next steps plus host prerequisites, with the push step PROBED via resolveTrustedRef. Coach prompt paths derive from the resolved locations and a missing EVIDENCE.md yields a prompt that says so and asks for null; benchCommand resolves how the two benches spawn (local scripts/mikro/bench.ts, sibling of Bun.main, bundled entry, then the compiled binary mikro bench; never /$bunfs). Carried advisory closed: status.ts and facts.ts host git spawns now run on gitProbeEnv, with a child-process test that fails when either strip is removed.\n\nRulings: (1) mikro-coach joins SHIPPED_AGENTS in build-binary.sh (two extra files inside templates/, frozen top level unchanged) but is never seeded; release-docs.test.ts pins the two lists. Cost if wrong: ~13KB of payload. (2) Coach still SPAWNS its benches rather than calling runBenchCli in-process, to keep the wall-clock kill and the streamed stdio. (3) --max caps kept fixtures and stops the scan there. (4) A range yielding no fixture writes nothing and exits 1. (5) seedAgents returns {written, refused} plus a gitignore action (superset of the declared shape). (6) init exits 0 on a second run; 1 only when the shipped agents are absent.\n\nValidation: umask 022 && bun run check:fast && bun run build && bun test scripts/mikro src/term-commands/mikro.test.ts scripts/release-docs.test.ts src/__tests__/claude-md-drift.test.ts -> exit 0, 389 pass / 0 fail; complexity budget unchanged at 2/7, max 29/42. Built-bundle smoke in a tmp git repo with three commits: init seeded and printed the sequence, fixtures --from-commits HEAD~2..HEAD wrote 2 fixtures, bench with a stub mikro on PATH gave a clean per-fixture failure (mikro mcp exited with code 7 before answering) with a record written and exit 1, and coach --null-control ran both benches through the bundle with exit 0 and no tracked change.",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789774932078,
+      "id": 308,
+      "kind": "comment",
+      "note": "review: FIX-FIRST at 329454b02 — 1 high, 3 medium: (1) genie mikro coach passes the embedded /$bunfs main to its bench subprocess on a compiled binary, so coach never works on an installed host, and the unit fixture contradicts the runtime; (2) fixtures-from-commits loses commits whose paths git quotes (non-ASCII, quotes) with a false reason — show lacks -z; (3) no injected-runner seam, acceptance 3a untested; (4) init writes through a symlinked .gitignore outside the repo. Merge verified clean, 405/0, budget intact. Fix loop 1 of 2; PR 2998 stays draft",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1789775733192,
+      "id": 309,
+      "kind": "comment",
+      "note": "review: SHIP at 0cc23d151 — 0 gaps after fix loop 1; validation: check:fast + build + focused tests 410/0 → pass; compiled-binary probe re-run by the reviewer; PR 2998",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789775733427,
+      "id": 310,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833755178,
+      "id": 311,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msi18po2a63fe11f"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833755426,
+      "id": 312,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msi18prp35883ce7"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833755671,
+      "id": 313,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msi18pv9b29465c2"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833755921,
+      "id": 314,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_msiyp3ua4e038e63"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833756161,
+      "id": 315,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_msiyp3x10655eab9"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833756395,
+      "id": 316,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_msiyp3zr6f65f0fc"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833756639,
+      "id": 317,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_msiyp42ib277f60a"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833756894,
+      "id": 318,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msnw1wva78ca40b7"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833757140,
+      "id": 319,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msnwyz4qff08ad29"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833757390,
+      "id": 320,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msnwyz7136c34cb2"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833757631,
+      "id": 321,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msnx6kz8c52d4762"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833757882,
+      "id": 322,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msnx6l1k7cddfcc0"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833758135,
+      "id": 323,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msoqsd8sdb8df48b"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833758384,
+      "id": 324,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msoqsdb5429d06e8"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833758665,
+      "id": 325,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_msoqsdde40b31ee9"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833759158,
+      "id": 326,
+      "kind": "move",
+      "note": "Work→Review",
+      "task_id": "t_mtlkd9ad80ce9781"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833759455,
+      "id": 327,
+      "kind": "move",
+      "note": "Work→Review",
+      "task_id": "t_mtlkd9g2aae24594"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833759713,
+      "id": 328,
+      "kind": "move",
+      "note": "Work→Review",
+      "task_id": "t_mtlkd9ln2f533934"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833759984,
+      "id": 329,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_mu3174bb10da1eb1"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833760233,
+      "id": 330,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_mu3174d0ca9591d1"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833760480,
+      "id": 331,
+      "kind": "move",
+      "note": "Wish→Idea",
+      "task_id": "t_mu3174eo09cf7ca6"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833760731,
+      "id": 332,
+      "kind": "move",
+      "note": "Wish→Idea",
+      "task_id": "t_mu3174gcda745047"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833760980,
+      "id": 333,
+      "kind": "move",
+      "note": "Wish→Idea",
+      "task_id": "t_mu3174hz53005eb7"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833761240,
+      "id": 334,
+      "kind": "move",
+      "note": "Wish→Idea",
+      "task_id": "t_mu3174jk5e83ecff"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833761494,
+      "id": 335,
+      "kind": "move",
+      "note": "Wish→Idea",
+      "task_id": "t_mu31lc4r672d3cad"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833761745,
+      "id": 336,
+      "kind": "move",
+      "note": "Review→Done",
+      "task_id": "t_mu3bf6tcafe4efb0"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833761996,
+      "id": 337,
+      "kind": "move",
+      "note": "Review→Done",
+      "task_id": "t_mu3bf6vc67fe3e8b"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833762249,
+      "id": 338,
+      "kind": "move",
+      "note": "Review→Done",
+      "task_id": "t_mu3bf6x8bb007675"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833762511,
+      "id": 339,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu5rlvkib49ed21c"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833762774,
+      "id": 340,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu5rlvmn451abf4a"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833763030,
+      "id": 341,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu5rlvogec57ee4c"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833763286,
+      "id": 342,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu5rlvq6e87b0df5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833763526,
+      "id": 343,
+      "kind": "move",
+      "note": "(none)→Wish",
+      "task_id": "t_mu5rlvrxcf377b52"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833763818,
+      "id": 344,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_mu7g9yhn091e7ed4"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833764070,
+      "id": 345,
+      "kind": "move",
+      "note": "Work→Done",
+      "task_id": "t_mu7g9ynr58dfed10"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833764328,
+      "id": 346,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_mu7g9yuida409ea5"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833764615,
+      "id": 347,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_mu7g9z1he13b1a91"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1789833764876,
+      "id": 348,
+      "kind": "move",
+      "note": "Wish→Done",
+      "task_id": "t_mu7g9z7vf07d0c68"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093821,
+      "id": 349,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9ad80ce9781"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093830,
+      "id": 350,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9g2aae24594"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789914093831,
+      "id": 351,
+      "kind": "move",
+      "note": "Review→Work",
+      "task_id": "t_mtlkd9ln2f533934"
     }
   ],
   "tasks": [
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784623891565,
-      "claimed_by": "engineer-complex",
-      "created_at": 1784618699261,
-      "group_name": "group-1",
-      "heartbeat_at": null,
-      "id": "t_mrubw9a5949903cf",
-      "lane": "Done",
-      "status": "done",
-      "title": "G1: shell substrate (fresh port + TerminalMirror salvage + grid/splits)",
-      "updated_at": 1789503804735,
-      "wish": "genie-ui"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784626730518,
-      "claimed_by": "engineer-standard",
-      "created_at": 1784618699325,
-      "group_name": "group-2",
-      "heartbeat_at": null,
-      "id": "t_mrubw9bxa7f28dd8",
-      "lane": "Done",
-      "status": "done",
-      "title": "G2: genie lane (wish menu + roster + worktree binding)",
-      "updated_at": 1789503804796,
-      "wish": "genie-ui"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784629252019,
-      "claimed_by": "engineer-complex",
-      "created_at": 1784618699388,
-      "group_name": "group-3",
-      "heartbeat_at": null,
-      "id": "t_mrubw9do9fc563c4",
-      "lane": "Done",
-      "status": "done",
-      "title": "G3: group chat drawer + ACP chat-face backend",
-      "updated_at": 1789503804852,
-      "wish": "genie-ui"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784630070055,
-      "claimed_by": "engineer-standard",
-      "created_at": 1784618699465,
-      "group_name": "group-4",
-      "heartbeat_at": null,
-      "id": "t_mrubw9ft4d20d980",
-      "lane": "Done",
-      "status": "done",
-      "title": "G4: residue confirm + docs + two-faces contract",
-      "updated_at": 1789503804910,
-      "wish": "genie-ui"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784660541667,
-      "claimed_by": "dash-g1-engineer",
-      "created_at": 1784654712751,
-      "group_name": "group-1",
-      "heartbeat_at": null,
-      "id": "t_mruxc5gvd0c00325",
-      "lane": "Work",
-      "status": "done",
-      "title": "Base branch + build proof",
-      "updated_at": 1789503808729,
-      "wish": "genie-ui-dash"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784661307439,
-      "claimed_by": "dash-g2-engineer",
-      "created_at": 1784654712823,
-      "group_name": "group-2",
-      "heartbeat_at": null,
-      "id": "t_mruxc5iv51303ef4",
-      "lane": "Work",
-      "status": "done",
-      "title": "Agent-adapter contract extraction (Claude = reference)",
-      "updated_at": 1789503808730,
-      "wish": "genie-ui-dash"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784664068582,
-      "claimed_by": "dash-g3-engineer",
-      "created_at": 1784654712906,
-      "group_name": "group-3",
-      "heartbeat_at": null,
-      "id": "t_mruxc5l659685893",
-      "lane": "Work",
-      "status": "done",
-      "title": "Codex, Hermes, rlmx adapters + per-task agent selection",
-      "updated_at": 1789503808730,
-      "wish": "genie-ui-dash"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784666347308,
-      "claimed_by": "dash-g4-engineer",
-      "created_at": 1784654712971,
-      "group_name": "group-4",
-      "heartbeat_at": null,
-      "id": "t_mruxc5mz0a9ee3f5",
-      "lane": "Work",
-      "status": "done",
-      "title": "Genie kanban lane (read-only)",
-      "updated_at": 1789503808730,
-      "wish": "genie-ui-dash"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784669605355,
-      "claimed_by": "dash-g5-engineer",
-      "created_at": 1784654713035,
-      "group_name": "group-5",
-      "heartbeat_at": null,
-      "id": "t_mruxc5ora3add7b8",
-      "lane": "Work",
-      "status": "done",
-      "title": "Hire roster — the single write path",
-      "updated_at": 1789503808730,
-      "wish": "genie-ui-dash"
-    },
     {
       "agent_kind": null,
       "assigned_agent": null,
@@ -2198,66 +2506,6 @@
       "title": "genie ui-bridge command (protocol + write tools + push + lifetime)",
       "updated_at": 1789503805312,
       "wish": "genie-ui-bridge"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784694196822,
-      "claimed_by": "ldl-g1-engineer",
-      "created_at": 1784684504879,
-      "group_name": "group-1",
-      "heartbeat_at": null,
-      "id": "t_mrvf2p7za43e792d",
-      "lane": "Work",
-      "status": "done",
-      "title": "Mock module + injection seam + watermark",
-      "updated_at": 1789503808731,
-      "wish": "live-dev-loop"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784697640859,
-      "claimed_by": "ldl-g2-engineer",
-      "created_at": 1784684504974,
-      "group_name": "group-2",
-      "heartbeat_at": null,
-      "id": "t_mrvf2pam274f1741",
-      "lane": "Work",
-      "status": "done",
-      "title": "dev:web — network Vite + dev-only CSP",
-      "updated_at": 1789503808731,
-      "wish": "live-dev-loop"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1784695629392,
-      "claimed_by": "ldl-g3-engineer",
-      "created_at": 1784684505063,
-      "group_name": "group-3",
-      "heartbeat_at": null,
-      "id": "t_mrvf2pd39e9349c2",
-      "lane": "Work",
-      "status": "done",
-      "title": "dev:live watcher + toast + ITERATE.md",
-      "updated_at": 1789503808731,
-      "wish": "live-dev-loop"
     },
     {
       "agent_kind": null,
@@ -2313,10 +2561,10 @@
       "group_name": "ready-fixes",
       "heartbeat_at": null,
       "id": "t_msi18po2a63fe11f",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "Land the ready fixes (gate zero + three commits + PR)",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833755177,
       "wish": "harness-audit-landing"
     },
     {
@@ -2333,10 +2581,10 @@
       "group_name": "completetask-fence",
       "heartbeat_at": null,
       "id": "t_msi18prp35883ce7",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "completeTask CAS fence with caller enumeration",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833755425,
       "wish": "harness-audit-landing"
     },
     {
@@ -2353,10 +2601,10 @@
       "group_name": "wishgroup-deletion",
       "heartbeat_at": null,
       "id": "t_msi18pv9b29465c2",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "Delete dead wish-group machinery (asymmetric)",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833755670,
       "wish": "harness-audit-landing"
     },
     {
@@ -2373,10 +2621,10 @@
       "group_name": "block-model",
       "heartbeat_at": null,
       "id": "t_msiyp3ua4e038e63",
-      "lane": "Work",
+      "lane": "Done",
       "status": "done",
       "title": "block-model: block kind + board JSON blocked fields",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833755920,
       "wish": "remotty-board-asks"
     },
     {
@@ -2393,10 +2641,10 @@
       "group_name": "index-lane-links",
       "heartbeat_at": null,
       "id": "t_msiyp3x10655eab9",
-      "lane": "Work",
+      "lane": "Done",
       "status": "done",
       "title": "index-lane-links: resolve link targets, broken state",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833756160,
       "wish": "remotty-board-asks"
     },
     {
@@ -2413,10 +2661,10 @@
       "group_name": "task-wish-verb",
       "heartbeat_at": null,
       "id": "t_msiyp3zr6f65f0fc",
-      "lane": "Work",
+      "lane": "Done",
       "status": "done",
       "title": "task-wish-verb: attach wish/group to existing card",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833756394,
       "wish": "remotty-board-asks"
     },
     {
@@ -2433,10 +2681,10 @@
       "group_name": "task-delete",
       "heartbeat_at": null,
       "id": "t_msiyp42ib277f60a",
-      "lane": "Work",
+      "lane": "Done",
       "status": "done",
       "title": "task-delete: scoped delete with sync-safe removal",
-      "updated_at": 1789503808731,
+      "updated_at": 1789833756639,
       "wish": "remotty-board-asks"
     },
     {
@@ -2453,10 +2701,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_msnw1wva78ca40b7",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "Cross-agent delegation — teammates on the board",
-      "updated_at": 1789503808732,
+      "updated_at": 1789833756893,
       "wish": "cross-agent-delegate"
     },
     {
@@ -2473,10 +2721,10 @@
       "group_name": "group-b",
       "heartbeat_at": null,
       "id": "t_msnwyz4qff08ad29",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "W1-B: lane-path board --json + byte-freeze regression",
-      "updated_at": 1789503808732,
+      "updated_at": 1789833757139,
       "wish": "cross-agent-delegate"
     },
     {
@@ -2493,10 +2741,10 @@
       "group_name": "group-c",
       "heartbeat_at": null,
       "id": "t_msnwyz7136c34cb2",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "W1-C: roadmap-sync lockstep + round-trip tests",
-      "updated_at": 1789503808732,
+      "updated_at": 1789833757390,
       "wish": "cross-agent-delegate"
     },
     {
@@ -2513,10 +2761,10 @@
       "group_name": "group-a1",
       "heartbeat_at": null,
       "id": "t_msnx6kz8c52d4762",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "W1-A1: schema core — columns, lockstep, roster",
-      "updated_at": 1789503808732,
+      "updated_at": 1789833757630,
       "wish": "cross-agent-delegate"
     },
     {
@@ -2533,10 +2781,10 @@
       "group_name": "group-a2",
       "heartbeat_at": null,
       "id": "t_msnx6l1k7cddfcc0",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "W1-A2: CLI verbs, timeline notes, docs",
-      "updated_at": 1789503808732,
+      "updated_at": 1789833757881,
       "wish": "cross-agent-delegate"
     },
     {
@@ -2553,10 +2801,10 @@
       "group_name": "group-1",
       "heartbeat_at": null,
       "id": "t_msoqsd8sdb8df48b",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "Write-capable server core",
-      "updated_at": 1789503808733,
+      "updated_at": 1789833758134,
       "wish": "mcp-write-tools"
     },
     {
@@ -2573,10 +2821,10 @@
       "group_name": "group-2",
       "heartbeat_at": null,
       "id": "t_msoqsdb5429d06e8",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "Operative write tools",
-      "updated_at": 1789503808733,
+      "updated_at": 1789833758383,
       "wish": "mcp-write-tools"
     },
     {
@@ -2593,31 +2841,11 @@
       "group_name": "group-3",
       "heartbeat_at": null,
       "id": "t_msoqsdde40b31ee9",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "done",
       "title": "E2e proof + read-only wording sweep",
-      "updated_at": 1789503808733,
+      "updated_at": 1789833758664,
       "wish": "mcp-write-tools"
-    },
-    {
-      "agent_kind": null,
-      "assigned_agent": null,
-      "assigned_reason": null,
-      "block_kind": null,
-      "blocked_by": null,
-      "blocked_reason": null,
-      "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1786554116904,
-      "claimed_by": "engineer-trivial-a",
-      "created_at": 1786483716429,
-      "group_name": "group-a",
-      "heartbeat_at": null,
-      "id": "t_msp6a1qlaaa8acdc",
-      "lane": "Wish",
-      "status": "done",
-      "title": "delegate-bridge A: W1 handoff docs + status polish",
-      "updated_at": 1789503808733,
-      "wish": "delegate-bridge"
     },
     {
       "agent_kind": null,
@@ -3056,7 +3284,7 @@
       "lane": "Work",
       "status": "done",
       "title": "Freeze structured CLI contract for DSH board",
-      "updated_at": 1789503808734,
+      "updated_at": 1789914093821,
       "wish": "dsh-genie-board"
     },
     {
@@ -3076,7 +3304,7 @@
       "lane": "Work",
       "status": "done",
       "title": "Build DSH Host adapter and kanban",
-      "updated_at": 1789503808734,
+      "updated_at": 1789914093830,
       "wish": "dsh-genie-board"
     },
     {
@@ -3096,7 +3324,7 @@
       "lane": "Work",
       "status": "in_progress",
       "title": "Package, smoke, and publish DSH discoverability",
-      "updated_at": 1789503807870,
+      "updated_at": 1789914093831,
       "wish": "dsh-genie-board"
     },
     {
@@ -3253,10 +3481,10 @@
       "group_name": "council-example",
       "heartbeat_at": null,
       "id": "t_mu3174bb10da1eb1",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "ready",
       "title": "council-example — council workflow + catalog README",
-      "updated_at": 1789503808328,
+      "updated_at": 1789833759983,
       "wish": "workflows-catalog"
     },
     {
@@ -3273,10 +3501,10 @@
       "group_name": "contract-check",
       "heartbeat_at": null,
       "id": "t_mu3174d0ca9591d1",
-      "lane": "Wish",
+      "lane": "Done",
       "status": "ready",
       "title": "contract-check — static test over .claude/workflows",
-      "updated_at": 1789503808385,
+      "updated_at": 1789833760232,
       "wish": "workflows-catalog"
     },
     {
@@ -3293,10 +3521,10 @@
       "group_name": "fork-bootstrap",
       "heartbeat_at": null,
       "id": "t_mu3174eo09cf7ca6",
-      "lane": "Wish",
+      "lane": "Idea",
       "status": "ready",
       "title": "fork-bootstrap — detach from the private DSH snapshot, pin 0.1.x",
-      "updated_at": 1789503808441,
+      "updated_at": 1789833760479,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3313,10 +3541,10 @@
       "group_name": "catalog-dialect",
       "heartbeat_at": null,
       "id": "t_mu3174gcda745047",
-      "lane": "Wish",
+      "lane": "Idea",
       "status": "ready",
       "title": "catalog-dialect — read and run Claude Code scripts from .claude/workflows",
-      "updated_at": 1789503808499,
+      "updated_at": 1789833760730,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3333,10 +3561,10 @@
       "group_name": "adapters",
       "heartbeat_at": null,
       "id": "t_mu3174hz53005eb7",
-      "lane": "Wish",
+      "lane": "Idea",
       "status": "ready",
       "title": "adapters — worktree, effort soft hint, AGENTS.md/CLAUDE.md injection",
-      "updated_at": 1789503808556,
+      "updated_at": 1789833760979,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3353,10 +3581,10 @@
       "group_name": "conformance",
       "heartbeat_at": null,
       "id": "t_mu3174jk5e83ecff",
-      "lane": "Wish",
+      "lane": "Idea",
       "status": "ready",
       "title": "conformance — fixtures, Claude Code goldens, comparator, council run",
-      "updated_at": 1789503808613,
+      "updated_at": 1789833761240,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3373,10 +3601,10 @@
       "group_name": "seam-comparison",
       "heartbeat_at": null,
       "id": "t_mu31lc4r672d3cad",
-      "lane": "Wish",
+      "lane": "Idea",
       "status": "ready",
       "title": "seam-comparison — fork vs first-party ctx.workflowEngine loader, host version, kill criterion",
-      "updated_at": 1789503808669,
+      "updated_at": 1789833761493,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3393,10 +3621,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6tcafe4efb0",
-      "lane": "Review",
+      "lane": "Done",
       "status": "ready",
       "title": "workflow: skill-audit as a sharded assess-only fan-out (workfly dogfood, council order 1)",
-      "updated_at": 1789522197264,
+      "updated_at": 1789833761745,
       "wish": null
     },
     {
@@ -3413,10 +3641,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6vc67fe3e8b",
-      "lane": "Review",
+      "lane": "Done",
       "status": "ready",
       "title": "workflow: research fan-out-core, split by source, injection fence in every agent (council order 2)",
-      "updated_at": 1789570412583,
+      "updated_at": 1789833761995,
       "wish": null
     },
     {
@@ -3433,10 +3661,10 @@
       "group_name": null,
       "heartbeat_at": null,
       "id": "t_mu3bf6x8bb007675",
-      "lane": "Review",
+      "lane": "Done",
       "status": "ready",
       "title": "workflow: docs audit half as a sharded read sweep; write half stays in the front door (council order 3)",
-      "updated_at": 1789569766601,
+      "updated_at": 1789833762249,
       "wish": null
     },
     {
@@ -3538,6 +3766,206 @@
       "title": "workflows: instrument one step inline vs as a workflow and record the real per-agent token bill (council condition)",
       "updated_at": 1789515663639,
       "wish": null
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789663781396,
+      "group_name": "group-1",
+      "heartbeat_at": null,
+      "id": "t_mu5rlvkib49ed21c",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "observe-skill-bundle: backfill.ts correctness",
+      "updated_at": 1789833762510,
+      "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789663781471,
+      "group_name": "group-2",
+      "heartbeat_at": null,
+      "id": "t_mu5rlvmn451abf4a",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "observe-skill-bundle: annotate.ts correctness",
+      "updated_at": 1789833762773,
+      "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789663781536,
+      "group_name": "group-3",
+      "heartbeat_at": null,
+      "id": "t_mu5rlvogec57ee4c",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "observe-skill-bundle: Portability",
+      "updated_at": 1789833763029,
+      "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789663781598,
+      "group_name": "group-4",
+      "heartbeat_at": null,
+      "id": "t_mu5rlvq6e87b0df5",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "observe-skill-bundle: Exports, endpoint, queries",
+      "updated_at": 1789833763285,
+      "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789663781661,
+      "group_name": "group-5",
+      "heartbeat_at": null,
+      "id": "t_mu5rlvrxcf377b52",
+      "lane": "Wish",
+      "status": "ready",
+      "title": "observe-skill-bundle: Relocate into the shipped observe skill",
+      "updated_at": 1789833763525,
+      "wish": "observe-skill-bundle"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789765763261,
+      "claimed_by": "engineer-g1",
+      "created_at": 1789765681883,
+      "group_name": "group-1",
+      "heartbeat_at": 1789765763261,
+      "id": "t_mu7g9yhn091e7ed4",
+      "lane": "Done",
+      "status": "done",
+      "title": "G1: genie mikro call + shipped default agents + wish.js MIKRO_CALL",
+      "updated_at": 1789833763817,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789767293468,
+      "claimed_by": "engineer-g2",
+      "created_at": 1789765682103,
+      "group_name": "group-2",
+      "heartbeat_at": 1789767293468,
+      "id": "t_mu7g9ynr58dfed10",
+      "lane": "Done",
+      "status": "done",
+      "title": "G2: workflow catalog install channel with digests",
+      "updated_at": 1789833764069,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789769676265,
+      "claimed_by": "engineer-g3",
+      "created_at": 1789765682346,
+      "group_name": "group-3",
+      "heartbeat_at": 1789769676265,
+      "id": "t_mu7g9yuida409ea5",
+      "lane": "Done",
+      "status": "done",
+      "title": "G3: workflow drift in doctor/uninstall + explicit-path skills",
+      "updated_at": 1789833764327,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789769002191,
+      "claimed_by": "engineer-g4",
+      "created_at": 1789765682597,
+      "group_name": "group-4",
+      "heartbeat_at": 1789769002191,
+      "id": "t_mu7g9z1he13b1a91",
+      "lane": "Done",
+      "status": "done",
+      "title": "G4: repo-first mikro agents behind a trusted ref",
+      "updated_at": 1789833764614,
+      "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": 1789772610059,
+      "claimed_by": "engineer-g5",
+      "created_at": 1789765682827,
+      "group_name": "group-5",
+      "heartbeat_at": 1789772610059,
+      "id": "t_mu7g9z7vf07d0c68",
+      "lane": "Done",
+      "status": "done",
+      "title": "G5: portable bench/coach, commit fixtures, mikro init",
+      "updated_at": 1789833764875,
+      "wish": "global-workflows-local-mikro"
     }
   ],
   "wish_groups": []

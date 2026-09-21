@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import {
   MAX_ORCA_STDERR_BYTES,
   MAX_ORCA_STDOUT_BYTES,
+  ORCA_ADAPTER_OPERATIONS,
+  ORCA_ORCHESTRATION_VERBS,
   OrcaAdapterError,
   type OrcaOperation,
   type OrcaProcessExecutor,
@@ -256,7 +258,15 @@ describe('runtime and executor boundary', () => {
 
   test('does not spawn on invalid input and owns all process controls', async () => {
     const requests: Parameters<OrcaProcessExecutor>[0][] = [];
+    // The executable is pinned by PLATFORM, not by the host running the suite:
+    // the default resolution is `orca-ide` on an unmanaged linux terminal and
+    // `orca` on darwin, so a literal host-shaped expectation here failed every
+    // macOS run (#2926). Resolve the same way the adapter does, from the same
+    // explicit platform the adapter is built with.
+    const platform: NodeJS.Platform = 'linux';
     const adapter = __orcaAdapterTestOnly.createAdapter({
+      platform,
+      managedTerminal: false,
       env: { SAFE: 'yes' },
       executor: async (request) => {
         requests.push(request);
@@ -268,7 +278,7 @@ describe('runtime and executor boundary', () => {
     await adapter.execute({ operation: 'run-list' });
     expect(requests).toEqual([
       {
-        executable: 'orca-ide',
+        executable: resolveOrcaExecutable({ platform, managedTerminal: false }),
         argv: ['orchestration', 'run-list', '--json'],
         shell: false,
         timeoutMs: 30_000,
@@ -731,7 +741,13 @@ describe('runtime and executor boundary', () => {
       'ask',
       'gate-create',
       'gate-resolve',
+      'worktree-set',
     ]);
+    const amended: OrcaOperation[] = [
+      { operation: 'worktree-show', worktree: 'active' },
+      { operation: 'worktree-set', worktree: 'active', comment: 'x' },
+      { operation: 'terminal-list', worktree: 'active' },
+    ];
     const failures = [
       { exitCode: 7, stdout: '', stderr: 'failed' },
       { exitCode: 0, stdout: 'not-json', stderr: '' },
@@ -744,7 +760,7 @@ describe('runtime and executor boundary', () => {
         stderr: '',
       },
     ];
-    for (const [, input] of cases) {
+    for (const input of [...cases.map(([, operation]) => operation), ...amended]) {
       for (const failure of failures) {
         const adapter = __orcaAdapterTestOnly.createAdapter({ executor: async () => failure });
         try {
@@ -1163,5 +1179,382 @@ describe('runtime and executor boundary', () => {
       });
       await expect(adapter.execute(scenario.input)).rejects.toMatchObject({ code: 'readback_mismatch' });
     }
+  });
+});
+
+/**
+ * The `orca-plugin-genie` amendment: two worktree verbs, one terminal read, and
+ * `worker-start` starting a Task from a `spec` on a named Run and workspace.
+ * These rows pin the per-verb argv root — the worktree pair and the terminal
+ * read never spawn under `orchestration`.
+ */
+describe('worktree, terminal and amended worker-start grammar', () => {
+  const ACTIVE_ID = 'id:25c9dad7-db54-4f46-bc79-142a560a965a::/home/genie/orca/workspaces/genie/orca-plugin-genie';
+  const rows: ReadonlyArray<[string, OrcaOperation, readonly string[]]> = [
+    ['worktree-show', { operation: 'worktree-show', worktree: 'active' }, ['worktree', 'show', '--worktree', 'active']],
+    [
+      'worktree-set',
+      { operation: 'worktree-set', worktree: 'current', workspaceStatus: 'in-review', comment: 'x' },
+      ['worktree', 'set', '--worktree', 'current', '--workspace-status', 'in-review', '--comment', 'x'],
+    ],
+    [
+      'worktree-set comment only',
+      { operation: 'worktree-set', worktree: ACTIVE_ID, comment: '2026-09-19 genie review: SHIP — ok' },
+      ['worktree', 'set', '--worktree', ACTIVE_ID, '--comment', '2026-09-19 genie review: SHIP — ok'],
+    ],
+    ['terminal-list', { operation: 'terminal-list', worktree: 'active' }, ['terminal', 'list', '--worktree', 'active']],
+    [
+      'worker-start from a spec on a run',
+      {
+        operation: 'worker-start',
+        spec: '/review — workspace x',
+        title: 'Genie: Review — x',
+        run: 'run_a',
+        worktree: ACTIVE_ID,
+        agent: 'claude',
+        timeoutMs: 15_000,
+      },
+      [
+        'orchestration',
+        'worker-start',
+        '--spec',
+        '/review — workspace x',
+        '--task-title',
+        'Genie: Review — x',
+        '--run',
+        'run_a',
+        '--worktree',
+        ACTIVE_ID,
+        '--agent',
+        'claude',
+        '--timeout-ms',
+        '15000',
+      ],
+    ],
+  ];
+  for (const [name, input, argv] of rows) {
+    test(name, () => {
+      expect(buildOrcaOrchestrationArgv(input)).toEqual([...argv, '--json']);
+    });
+  }
+
+  test('the allowlist is exactly the nineteen orchestration verbs, the worktree pair and the terminal read', () => {
+    expect([...ORCA_ADAPTER_OPERATIONS]).toEqual([
+      ...ORCA_ORCHESTRATION_VERBS,
+      'worktree-show',
+      'worktree-set',
+      'terminal-list',
+    ]);
+    expect(ORCA_ADAPTER_OPERATIONS).toHaveLength(22);
+  });
+
+  test('accepts every selector form of the closed grammar', () => {
+    for (const selector of [
+      'current',
+      'active',
+      ACTIVE_ID,
+      'id:repo_1::C:\\work\\genie',
+      'path:/home/genie/orca/workspaces/genie/x',
+      'branch:namastex888/orca-plugin-genie',
+      'branch:refs/heads/dev',
+      'name:orca-plugin-genie',
+    ]) {
+      expect(buildOrcaOrchestrationArgv({ operation: 'worktree-show', worktree: selector })[3]).toBe(selector);
+    }
+  });
+
+  test('rejects every selector outside the grammar before spawn', () => {
+    for (const selector of [
+      '',
+      'other',
+      '--worktree',
+      '-active',
+      'id:',
+      'id:repo::relative/path',
+      'id:re po::/abs',
+      'path:relative',
+      'path:/abs\nnext',
+      'branch:',
+      'branch:-lead',
+      'branch:a..b',
+      'branch:a.lock',
+      'branch:with space',
+      'branch:tilde~1',
+      'branch:end/',
+      'name:',
+      'name:two\nlines',
+      `name:${'x'.repeat(257)}`,
+      'name:lone\uD800surrogate',
+      'identity:wt2:local:abc',
+    ]) {
+      expect(() => buildOrcaOrchestrationArgv({ operation: 'worktree-show', worktree: selector })).toThrow(
+        OrcaAdapterError,
+      );
+    }
+  });
+
+  test('rejects terminal-send, an empty worktree-set, and an ill-formed worker-start', () => {
+    for (const input of [
+      { operation: 'terminal-send', terminal: 'term_a', text: 'hi' },
+      { operation: 'terminal-create', worktree: 'active' },
+      { operation: 'worktree-set', worktree: 'active' },
+      { operation: 'worktree-set', worktree: 'active', workspaceStatus: 'done' },
+      { operation: 'worktree-set', worktree: 'active', comment: 'a\nb' },
+      { operation: 'worktree-set', worktree: 'active', comment: '--comment' },
+      { operation: 'worker-start', agent: 'claude' },
+      { operation: 'worker-start', task: 'task_a', spec: 'x', agent: 'claude' },
+      { operation: 'worker-start', task: 'task_a', title: 't', agent: 'claude' },
+      { operation: 'worker-start', spec: 'x', agent: 'claude', worktree: 'branch:-x' },
+      { operation: 'worker-start', spec: 'x', agent: 'claude', run: '-run' },
+      { operation: 'terminal-list' },
+    ]) {
+      expect(() => buildOrcaOrchestrationArgv(input)).toThrow(OrcaAdapterError);
+    }
+  });
+
+  const activeRecord = (overrides: Record<string, unknown> = {}) => ({
+    id: ACTIVE_ID.slice(3),
+    path: '/home/genie/orca/workspaces/genie/orca-plugin-genie',
+    branch: 'refs/heads/namastex888/orca-plugin-genie',
+    displayName: 'orca-plugin-genie',
+    comment: '2026-09-19 genie review: SHIP — ok',
+    workspaceStatus: 'in-review',
+    createdWithAgent: 'claude',
+    linkedIssue: null,
+    // Real records carry ~45 fields; every one the adapter does not read passes through.
+    isArchived: false,
+    lineage: { parent: null },
+    ...overrides,
+  });
+  const envelope = (result: unknown) =>
+    JSON.stringify({ id: 'req', ok: true, result, _meta: { runtimeId: '2e8238e3-9667-4bf7-a58b-e25b75fcbed5' } });
+
+  test('worktree-set proves its receipt identity and reads the record back through worktree show by id', async () => {
+    const requests: string[][] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async (request) => {
+        requests.push([...request.argv]);
+        return { exitCode: 0, stdout: envelope({ worktree: activeRecord() }), stderr: '' };
+      },
+    });
+    const response = await adapter.execute({
+      operation: 'worktree-set',
+      worktree: 'current',
+      workspaceStatus: 'in-review',
+      comment: '2026-09-19 genie review: SHIP — ok',
+    });
+    expect(requests).toEqual([
+      [
+        'worktree',
+        'set',
+        '--worktree',
+        'current',
+        '--workspace-status',
+        'in-review',
+        '--comment',
+        '2026-09-19 genie review: SHIP — ok',
+        '--json',
+      ],
+      ['worktree', 'show', '--worktree', ACTIVE_ID, '--json'],
+    ]);
+    expect(response.receipt?.ids).toEqual({ worktreeId: ACTIVE_ID.slice(3) });
+    expect(response.receipt?.readbackVerb).toBe('worktree-show');
+    expect(response.receipt?.runtimeId).toBe('2e8238e3-9667-4bf7-a58b-e25b75fcbed5');
+  });
+
+  test('a worktree-set read-back that disagrees is an unsafe readback_mismatch, never retried', async () => {
+    const verbs: string[] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async (request) => {
+        verbs.push(request.argv[1] as string);
+        const record = request.argv[1] === 'set' ? activeRecord() : activeRecord({ workspaceStatus: 'todo' });
+        return { exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' };
+      },
+    });
+    try {
+      await adapter.execute({ operation: 'worktree-set', worktree: 'current', workspaceStatus: 'in-review' });
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as OrcaAdapterError).code).toBe('readback_mismatch');
+      expect((error as OrcaAdapterError).retrySafety).toBe('unsafe');
+      // The hint names the public spelling, never `orchestration worktree-show`.
+      expect((error as OrcaAdapterError).recovery).toContain('orca worktree show');
+    }
+    expect(verbs).toEqual(['set', 'show']);
+  });
+
+  test('a worktree-set receipt that echoes a different value or no id is refused before any read-back', async () => {
+    for (const [record, code] of [
+      [activeRecord({ comment: 'something else' }), 'readback_mismatch'],
+      [activeRecord({ id: undefined }), 'ambiguous_after_possible_commit'],
+    ] as const) {
+      const verbs: string[] = [];
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async (request) => {
+          verbs.push(request.argv[1] as string);
+          return { exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' };
+        },
+      });
+      try {
+        await adapter.execute({ operation: 'worktree-set', worktree: 'current', comment: activeRecord().comment });
+        throw new Error('expected failure');
+      } catch (error) {
+        expect((error as OrcaAdapterError).code).toBe(code);
+      }
+      expect(verbs).toEqual(['set']);
+    }
+  });
+
+  test('worktree-show and terminal-list decode real 1.4.205 shapes and pass unknown fields through', async () => {
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async (request) =>
+        request.argv[0] === 'worktree'
+          ? { exitCode: 0, stdout: envelope({ worktree: activeRecord() }), stderr: '' }
+          : {
+              exitCode: 0,
+              stdout: envelope({
+                terminals: [
+                  {
+                    handle: 'term_c0fe22ad-6680-44c6-a56c-25ccfd949b98',
+                    worktreeId: ACTIVE_ID.slice(3),
+                    agentIdentity: 'claude',
+                    connected: true,
+                    writable: true,
+                    lastOutputAt: 1789836837128,
+                    ptyId: 'opaque',
+                  },
+                ],
+                hostScope: 'local',
+                topologyRevisions: {},
+                totalCount: 1,
+                truncated: false,
+              }),
+              stderr: '',
+            },
+    });
+    const shown = await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+    expect((shown.result as { worktree: { isArchived: boolean } }).worktree.isArchived).toBe(false);
+    expect(shown.receipt).toBeUndefined();
+    const listed = await adapter.execute({ operation: 'terminal-list', worktree: 'active' });
+    const terminals = (listed.result as { terminals: Array<{ handle: string; ptyId: string }> }).terminals;
+    expect(terminals[0]?.handle).toBe('term_c0fe22ad-6680-44c6-a56c-25ccfd949b98');
+    expect(terminals[0]?.ptyId).toBe('opaque');
+  });
+
+  /**
+   * A worktree `displayName` is an agent-facing value (`orca worktree create
+   * --name`) and the Orca plugin types both of these fields into a terminal with
+   * `enter: true`. Orca's own records never carry control characters; one that
+   * does is refused at the read boundary rather than sanitized into something
+   * that reads as Orca's own output.
+   */
+  test('a control character in a worktree displayName or path is refused, not decoded', async () => {
+    for (const record of [
+      activeRecord({ displayName: 'orca\nrm -rf ~' }),
+      activeRecord({ displayName: 'orca\u001b[2J' }),
+      activeRecord({ path: '/home/genie/orca\ngit push --force' }),
+      activeRecord({ path: '/home/genie/orca\u0000' }),
+    ]) {
+      const adapter = __orcaAdapterTestOnly.createAdapter({
+        executor: async () => ({ exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' }),
+      });
+      try {
+        await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+        throw new Error('expected failure');
+      } catch (error) {
+        expect(error, JSON.stringify(record)).toBeInstanceOf(OrcaAdapterError);
+        expect((error as OrcaAdapterError).code, JSON.stringify(record)).toBe('unexpected_response');
+      }
+    }
+  });
+
+  test('spaces, unicode and a long real path still decode — only controls are refused', async () => {
+    const record = activeRecord({
+      displayName: 'wish — café ☕ (rev 2)',
+      path: '/home/genie/My Worktrees/wish—café/orca plugin',
+    });
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({ exitCode: 0, stdout: envelope({ worktree: record }), stderr: '' }),
+    });
+    const shown = await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+    expect((shown.result as { worktree: { displayName: string; path: string } }).worktree).toMatchObject({
+      displayName: 'wish — café ☕ (rev 2)',
+      path: '/home/genie/My Worktrees/wish—café/orca plugin',
+    });
+  });
+
+  test('a worker started from a spec is read back by the task id the receipt minted', async () => {
+    const verbs: string[] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async (request) => {
+        verbs.push(request.argv[1] as string);
+        const result =
+          request.argv[1] === 'worker-start'
+            ? { dispatchId: 'dispatch_a', taskId: 'task_minted', launchedVia: 'worker-launch-preferences' }
+            : { dispatch: { id: 'dispatch_a', taskId: 'task_minted', agent: 'claude' } };
+        return { exitCode: 0, stdout: envelope(result), stderr: '' };
+      },
+    });
+    const response = await adapter.execute({
+      operation: 'worker-start',
+      spec: '/wish — workspace x',
+      run: 'run_a',
+      worktree: ACTIVE_ID,
+      agent: 'claude',
+    });
+    expect(verbs).toEqual(['worker-start', 'worker-show']);
+    expect(response.receipt?.ids).toEqual({ dispatchId: 'dispatch_a', taskId: 'task_minted' });
+  });
+
+  test('decodes the real 1.4.205 status (openable window, connectionState, UUID runtime id)', async () => {
+    const status = {
+      id: 'local-status',
+      ok: true,
+      result: {
+        target: { kind: 'local' },
+        app: { running: true, pid: 738229, desktopWindowStatus: 'openable' },
+        runtime: {
+          state: 'ready',
+          reachable: true,
+          connectionState: 'connected',
+          runtimeId: '2e8238e3-9667-4bf7-a58b-e25b75fcbed5',
+          appVersion: '1.4.205',
+          remoteUpdateSupport: { installMode: 'interactive', automatic: false, reason: 'updater-unavailable' },
+          capabilities: ['runtime.status.compat.v1', 'orchestration.contract.v1'],
+        },
+        graph: { state: 'ready' },
+      },
+      _meta: { runtimeId: '2e8238e3-9667-4bf7-a58b-e25b75fcbed5' },
+    };
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({ exitCode: 0, stdout: JSON.stringify(status), stderr: '' }),
+    });
+    expect((await adapter.status()).result.runtime.appVersion).toBe('1.4.205');
+    const current = __orcaAdapterTestOnly.createAdapter({
+      executor: async () => ({ exitCode: 0, stdout: envelope({ run: null }), stderr: '' }),
+    });
+    expect((await current.execute({ operation: 'run-current' })).result).toEqual({ run: null });
+  });
+
+  test('the public factory bounds its process timeout and refuses one outside 1000–30000 ms', () => {
+    for (const timeoutMs of [999, 30_001, 1.5, Number.NaN]) {
+      expect(() => createOrcaOrchestrationAdapter({ timeoutMs })).toThrow(OrcaAdapterError);
+    }
+    expect(createOrcaOrchestrationAdapter({ timeoutMs: 8_000 }).executable).toBe(
+      createOrcaOrchestrationAdapter().executable,
+    );
+  });
+
+  test('a tightened default still honours an operation wait and never exceeds the ceiling', async () => {
+    const seen: number[] = [];
+    const adapter = __orcaAdapterTestOnly.createAdapter({
+      timeoutMs: 8_000,
+      executor: async (request) => {
+        seen.push(request.timeoutMs);
+        return { exitCode: 0, stdout: envelope({ worktree: activeRecord() }), stderr: '' };
+      },
+    });
+    await adapter.execute({ operation: 'worktree-show', worktree: 'active' });
+    expect(seen).toEqual([8_000]);
   });
 });

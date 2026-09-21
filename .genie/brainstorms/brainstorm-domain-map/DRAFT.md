@@ -1,6 +1,6 @@
 # DRAFT: brainstorm-domain-map (Domain E — umbrella G8)
 
-**Parent:** [genie-token-efficiency-program](../genie-token-efficiency-program/DESIGN.md) · **Status:** Simmering
+**Parent:** genie-token-efficiency-program (umbrella deleted in the 2026-09-19 triage) · **Status:** Simmering
 
 ## KNOWN (evidence)
 - Felipe's critique: /brainstorm tracks readiness (WRS) but never maps context domains and gaps — "which is effectively what must be filled by brainstorming, having a professional flawless specification."

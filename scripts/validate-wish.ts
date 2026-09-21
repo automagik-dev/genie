@@ -139,7 +139,7 @@ const CONTRACT = parseWishTemplateContract(wishTemplate);
 export const TEMPLATE_CONTRACT_DATE = '2026-07-29';
 
 /** Terminal statuses — a doc in one of these is completed. */
-const COMPLETED_STATUSES = new Set(['SHIPPED', 'DONE', 'EXECUTED']);
+const COMPLETED_STATUSES = new Set(['SHIPPED', 'SUPERSEDED', 'DONE', 'EXECUTED']);
 
 /** Normalise a status cell the way the corpus linter does: first token, annotations stripped. */
 export function normaliseStatus(raw: string | null | undefined): string | null {
@@ -492,10 +492,21 @@ function main(): number {
   return report(validateWish(content), failureExit);
 }
 
-// The .cjs bundle is required by tests and by the lint; only run the CLI when
-// this module is the invoked entry point (argv[1] names the script itself).
+// Only run the CLI when this module is the invoked entry point. `import.meta.main`
+// is asked FIRST because it is the only answer that survives bundling: this module
+// now reaches `dist/genie.js` through `scripts/wishes-lint.ts` and `genie wish lint`,
+// and a basename test alone would fire the moment anything named the binary
+// `validate-wish.ts` — whereupon `main()` READS STDIN, which would hang a genie
+// command waiting for a hook payload that is never coming. A bundler replaces the
+// flag with a literal `false` for a module it did not make the entry point; a
+// runtime that does not define it falls back to the name test, which is what still
+// covers the historical `validate-wish.cjs` invocation.
 const invokedScript = process.argv[1] ?? '';
 const scriptName = invokedScript.split(/[\\/]/).pop() ?? '';
-if (scriptName === 'validate-wish.cjs' || scriptName === 'validate-wish.ts') {
+const invokedAsEntryPoint =
+  typeof import.meta.main === 'boolean'
+    ? import.meta.main
+    : scriptName === 'validate-wish.cjs' || scriptName === 'validate-wish.ts';
+if (invokedAsEntryPoint) {
   process.exit(main());
 }

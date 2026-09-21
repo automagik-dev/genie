@@ -115,7 +115,7 @@ describe('config key resolution', () => {
   test('only schema keys are addressable', () => {
     expect(configSchemaHasKey('budgets.maxEscalationsPerGroup')).toBe(true);
     expect(configSchemaHasKey('budgets')).toBe(true);
-    expect(configSchemaHasKey('omni.approvals.pollBudgetMs')).toBe(true);
+    expect(configSchemaHasKey('otel.logPrompts')).toBe(true); // reaches through an OPTIONAL branch
     expect(configSchemaHasKey('budgets.nope')).toBe(false);
     expect(configSchemaHasKey('workerProfiles.anything')).toBe(false);
     expect(configSchemaHasKey('')).toBe(false);

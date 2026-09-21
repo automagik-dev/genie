@@ -69,9 +69,50 @@ bun build --compile \
 
 cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 bun run --cwd "${REPO_ROOT}/plugins/dsh-genie-board" build "${VERSION}" "${STAGE}/plugins/dsh-genie-board/dist"
+# The loader is host-only: one cordis row, one model-facing tool. It carries no
+# client bundle, so its dist is a single file.
+bun run --cwd "${REPO_ROOT}/plugins/dsh-workflow-loader" build "${VERSION}" "${STAGE}/plugins/dsh-workflow-loader/dist"
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
+
+# The default mikro agents ship INSIDE templates/, which already converges to
+# <GENIE_HOME>/templates on install and update. They are staged from the one
+# tracked copy in .mikro/agents rather than duplicated in the repository, and
+# the top-level member set below stays frozen. Only the two files the runtime
+# reads are staged: EVIDENCE.md is a bench record, not a payload.
+#
+# mikro-coach is here and is NOT one of the agents `genie mikro init` seeds
+# (SEEDED_AGENTS, scripts/mikro/init.ts): it is a TOOL that reads another agent's
+# prompt and evidence, so `genie mikro coach` must resolve it on a host whose
+# repository never carried it, while a repository specializes only the two
+# workers. scripts/release-docs.test.ts pins both lists against each other.
+SHIPPED_AGENTS=(wish-context review-prep mikro-coach)
+for agent in "${SHIPPED_AGENTS[@]}"; do
+  src="${REPO_ROOT}/.mikro/agents/${agent}"
+  dest="${STAGE}/templates/mikro/agents/${agent}"
+  mkdir -p "${dest}"
+  for file in agent.yaml SYSTEM.md; do
+    [[ -f "${src}/${file}" ]] || { echo "error: shipped mikro agent missing ${agent}/${file}" >&2; exit 1; }
+    cp "${src}/${file}" "${dest}/${file}"
+  done
+done
+# The workflow catalog ships inside templates/ for the same reason, and whole
+# (decision 13): a filter would be a second list to keep in parity, and a
+# workflow with no front-door skill is still invocable by path. Only top-level
+# *.js is staged -- README.md is documentation, never a delivered workflow --
+# and `genie install` / `genie update` copy it into ~/.claude/workflows.
+WORKFLOW_SOURCE="${REPO_ROOT}/.claude/workflows"
+mkdir -p "${STAGE}/templates/workflows"
+staged_workflows=0
+for workflow in "${WORKFLOW_SOURCE}"/*.js; do
+  [[ -f "${workflow}" ]] || continue
+  cp "${workflow}" "${STAGE}/templates/workflows/$(basename "${workflow}")"
+  staged_workflows=$(( staged_workflows + 1 ))
+done
+(( staged_workflows > 0 )) \
+  || { echo "error: no workflow catalog files found under ${WORKFLOW_SOURCE}" >&2; exit 1; }
+
 # Empty compatibility members. The promoter baked into every previously
 # installed binary validates the downloaded payload against an *exact*
 # top-level allowlist (src/lib/install-promotion.ts INSTALL_PAYLOAD_MEMBERS),
@@ -125,6 +166,14 @@ bun "${REPO_ROOT}/scripts/release-payload-version.ts" --stamp "${STAGE}" "${VERS
 
 for required in \
   "LICENSE" \
+  "templates/mikro/agents/wish-context/agent.yaml" \
+  "templates/mikro/agents/wish-context/SYSTEM.md" \
+  "templates/mikro/agents/review-prep/agent.yaml" \
+  "templates/mikro/agents/review-prep/SYSTEM.md" \
+  "templates/mikro/agents/mikro-coach/agent.yaml" \
+  "templates/mikro/agents/mikro-coach/SYSTEM.md" \
+  "templates/workflows/wish.js" \
+  "templates/workflows/council.js" \
   "plugins/genie/orca-plugin.json" \
   "plugins/genie/orca-entrypoint.min.js" \
   "plugins/dsh-genie-board/package.json" \
@@ -136,7 +185,12 @@ for required in \
   "plugins/dsh-genie-board/dist/board.js" \
   "plugins/dsh-genie-board/dist/skills.js" \
   "plugins/dsh-genie-board/dist/workflows.js" \
-  "plugins/dsh-genie-board/dist/client.js"; do
+  "plugins/dsh-genie-board/dist/client.js" \
+  "plugins/dsh-workflow-loader/package.json" \
+  "plugins/dsh-workflow-loader/agent.cordis.yml" \
+  "plugins/dsh-workflow-loader/cordis.patch.yml" \
+  "plugins/dsh-workflow-loader/README.md" \
+  "plugins/dsh-workflow-loader/dist/index.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 

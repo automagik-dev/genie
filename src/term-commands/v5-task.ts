@@ -24,6 +24,7 @@ import type { Database } from 'bun:sqlite';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
+import { orcaOwnsLifecycle } from '../lib/orchestration-mode.js';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
@@ -663,13 +664,12 @@ function isRoadmapSlicePath(path: string): boolean {
 /**
  * Emit the database as a snapshot — to stdout, or atomically to a file.
  *
- * EVERY export is {@link roadmapSnapshot}: the whole database except
- * `hire_roster`, whose rows carry machine-local worktree paths. A snapshot is a
- * publishable artifact wherever it is written — stdout gets piped into a gist, a
- * `--write /tmp/backup.json` gets attached to an issue — so the machine-local
- * slice must not depend on the caller having spelled the canonical path. The
- * rows stay in the db; `task import` never destroys local hires with a snapshot
- * that carries none.
+ * EVERY export is {@link roadmapSnapshot}, whatever the destination: a snapshot
+ * is a publishable artifact wherever it is written — stdout gets piped into a
+ * gist, a `--write /tmp/backup.json` gets attached to an issue — so the
+ * published slice must never depend on the caller having spelled the canonical
+ * path. Since v6 that slice is the whole database: `hire_roster`, the one table
+ * it ever excluded, was dropped by the v1 -> v2 migration.
  */
 function handleExport(opts: ExportOptions): void {
   run(() => {
@@ -711,14 +711,21 @@ interface ImportOptions {
   replace?: boolean;
 }
 
-/** Does this parsed snapshot bring hire rows of its own? */
-function snapshotCarriesHires(snapshot: unknown): boolean {
-  const rows = (snapshot as { hire_roster?: unknown } | null)?.hire_roster;
-  return Array.isArray(rows) && rows.length > 0;
-}
-
 function handleSync(): void {
   run(() => {
+    // The one carve-out from the orca gate in `src/genie.ts` (see
+    // `isOrcaForbiddenInvocation`). Orca owns lifecycle state, so there is no
+    // local board and no snapshot to reconcile and nothing to report about
+    // either: exit 0 with both streams empty. This sits BEFORE the workspace
+    // guard on purpose — an orca-mode repository that was never `genie init`-ed
+    // must be silent too, because `.husky/pre-commit` runs `task sync` on every
+    // commit and any line here is a warning the operator can do nothing about.
+    // `=== 'orca'` on purpose, not truthiness. Silence is right when Orca
+    // genuinely owns the state, because there is then nothing to reconcile and
+    // nothing the operator can act on. An authority genie could not PARSE is a
+    // real, repairable fault: it keeps the pre-existing typed refusal so it is
+    // seen and fixed, rather than being hidden behind a clean exit 0 forever.
+    if (orcaOwnsLifecycle() === 'orca') return;
     // Ask BEFORE openDb, which would create `.genie/genie.db` and with it the
     // very directory being tested. A directory that was never `genie init`-ed
     // has neither side of the pair to reconcile, and reporting it "in sync"
@@ -776,21 +783,14 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
     }
     const db = openDb();
     try {
-      // Local hires survive any import that does not bring replacements: every
-      // snapshot this build writes is the roadmap slice (`hire_roster: []`), so
-      // a `--replace` from a backup file must not wipe the machine-local roster
-      // it was never able to capture. A snapshot that DOES carry hires (a legacy
-      // full-state export, a hand-written file) still replaces them.
-      const sliced = isRoadmapSlicePath(source);
-      const canonical = sliced && samePath(source, resolveRoadmapPath());
-      const preserveHireRoster = sliced || !snapshotCarriesHires(snapshot);
+      const canonical = isRoadmapSlicePath(source) && samePath(source, resolveRoadmapPath());
       // ONE immediate transaction over import → baseline (importState's own
       // transaction nests as a savepoint): the baseline's post-import db
       // re-snapshot must not see another worktree's write, or the marker would
       // claim a db state the file never described and the next `task sync` would
       // report in-sync while that change stayed unpublished.
       const apply = db.transaction(() => {
-        const result = importState(db, snapshot, { replace: opts.replace, preserveHireRoster });
+        const result = importState(db, snapshot, { replace: opts.replace });
         if (canonical) recordImportBaseline(db, snapshot);
         return result;
       });
@@ -798,7 +798,7 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
       // knows the table/row/column, only this frame knows the path.
       const summary = runImport(apply, source);
       out(
-        `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups, ${summary.hires} hires from ${source}.`,
+        `Imported ${summary.tasks} tasks, ${summary.boards} boards, ${summary.dependencies} dependencies, ${summary.events} events, ${summary.wishGroups} wish groups from ${source}.`,
       );
     } finally {
       db.close();

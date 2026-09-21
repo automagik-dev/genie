@@ -9,7 +9,7 @@ mutates: repo
 
 Assess by default; write only when the request asks. Documentation is judged by use: a page that cannot be followed is worse than none. The live interface (the real `--help` output, routes, exports) is the truth; every README table, guide, and agent-context file is a claim to check against it.
 
-The assessment half is a saved workflow, not a procedure this skill performs inline. Its single source of truth is `.claude/workflows/docs-audit.js` in the genie repository's canonical workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door. On Claude Code, run the native Workflow tool with the saved name `docs-audit`, passing `{focus?, surfaces?, quorum?, model?, timestamp?}` — every key optional, and with no `surfaces` list the audit runs the full four-surface roster of the table below. The workflow probes read-only: it asks nothing, writes nothing, and moves no file. Relay the returned `report` unchanged, and list `notConvened` (agents that returned nothing) beside the `unread` (paths no auditor could read) and `unprobed` (documented claims no auditor could probe read-only) lists rather than filling any of the three gaps yourself.
+The assessment half is a saved workflow, not a procedure this skill performs inline. Its single source of truth is `.claude/workflows/docs-audit.js` in the genie repository's canonical workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door. On a runtime that runs saved workflows, run the script at `<repository root>/.claude/workflows/docs-audit.js` when that file exists, otherwise `~/.claude/workflows/docs-audit.js` (delivered by `genie install` / `genie update`); give the runtime that explicit script path, never a bare name — both scopes now carry these names and the order a name resolves in is undocumented. Pass `{focus?, surfaces?, quorum?, model?, timestamp?}` — every key optional, and with no `surfaces` list the audit runs the full four-surface roster of the table below. The workflow probes read-only: it asks nothing, writes nothing, and moves no file. Relay the returned `report` unchanged, and list `notConvened` (agents that returned nothing) beside the `unread` (paths no auditor could read) and `unprobed` (documented claims no auditor could probe read-only) lists rather than filling any of the three gaps yourself.
 
 ## When to use
 
@@ -24,7 +24,7 @@ The four keys are the audit's shard roster: `surfaces` narrows it, never grows i
 | Surface | Key | Where |
 |---|---|---|
 | README | `readme` | `README.md`, `*/README.md` |
-| Agent instructions | `agent-instructions` | `AGENTS.md` (governing), `CLAUDE.md` and kin (overlays; keep both current when both exist) |
+| Agent instructions | `agent-instructions` | `AGENTS.md` (governing), `CLAUDE.md` + `.claude/rules/*.md` (Claude overlays; keep current) |
 | Reference and architecture | `docs-architecture` | `docs/`, `ARCHITECTURE.md`, inline JSDoc/TSDoc |
 | Runtime DX | `runtime-dx` | `--help` text, error messages, onboarding path in README/CONTRIBUTING |
 
@@ -36,7 +36,7 @@ This stays here, with you, and never reaches the workflow. When onboarding is in
 
 ## Write
 
-When asked, fill gaps in the project's existing style through its documented docs workflow — in this repository, the docs submodule flow recorded in `CLAUDE.md`: edit under `docs/`, commit and push in the vendored submodule, open the pull request against the docs remote, then bump the superproject pointer once it merges. Never document features that do not exist; every referenced path, API, and behavior must be verified real. Write to the reader's decision boundary: what they need to decide, do, observe, and verify. Keep internal mechanism out of operator pages unless it changes a decision, a safety boundary, or a troubleshooting step.
+When asked, fill gaps in the project's existing style through its documented docs workflow, whatever that repository states it to be — in the genie repository, for instance, the vendored docs submodule flow its agent-instructions file records: edit under `docs/`, commit and push inside the submodule, open the pull request against the docs remote, then bump the superproject pointer once it merges. Never document features that do not exist; every referenced path, API, and behavior must be verified real. Write to the reader's decision boundary: what they need to decide, do, observe, and verify. Keep internal mechanism out of operator pages unless it changes a decision, a safety boundary, or a troubleshooting step.
 
 ## Without a workflow surface
 

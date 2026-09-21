@@ -98,6 +98,28 @@ describe('parseSkillsListOutput', () => {
     expect(parseSkillsListOutput(text).names).toEqual(['wish']);
   });
 
+  test('drops the agent banner a Claude Code session makes the CLI print', () => {
+    // Issue #2919. That run prints no `Available Skills` header, so the header slice
+    // cannot discard the banner — the whole text is parsed. The banner carries no
+    // trailing newline, exactly like the spinner frames, so it glues itself onto the
+    // first row and hides it from the line-anchored match.
+    const text = [
+      `${ESC}[?25l◇  Agent detected — installing non-interactively│    architecture`,
+      '│',
+      '│      Description for architecture.',
+      '│    wish',
+      '│',
+    ].join('\n');
+    expect(text).not.toContain('Available Skills');
+    expect(parseSkillsListOutput(text).names).toEqual(['architecture', 'wish']);
+  });
+
+  test('a banner on its own line is chrome, never a row, with or without the header', () => {
+    const banner = '◇  Agent detected — installing non-interactively';
+    expect(parseSkillsListOutput([banner, '│    wish', '│'].join('\n')).names).toEqual(['wish']);
+    expect(parseSkillsListOutput(`${banner}\n${listOutput(['wish', 'work'])}`).names).toEqual(['wish', 'work']);
+  });
+
   test('reports a null declared count when the CLI printed none', () => {
     expect(parseSkillsListOutput(listOutput(['wish'], { declared: null })).declaredCount).toBeNull();
   });
@@ -329,7 +351,7 @@ describe('skills/README.md catalog block', () => {
 
   test('derives the catalog from the tree, ordered by category then name', () => {
     const skillsRoot = skillsRootWith([
-      ['omni', ['description: "Wire a channel."', 'category: integration', 'mutates: external']],
+      ['wiring', ['description: "Wire a channel."', 'category: integration', 'mutates: external']],
       ['work', ['description: "Execute a wish."', 'category: lifecycle', 'mutates: repo']],
       ['fix', ['description: "Repair gaps."', 'category: lifecycle', 'mutates: repo']],
       ['stray', ['description: "No taxonomy yet."']],
@@ -337,7 +359,7 @@ describe('skills/README.md catalog block', () => {
     expect(readSkillCatalog(skillsRoot)).toEqual([
       { name: 'fix', category: 'lifecycle', mutates: 'repo', description: 'Repair gaps.' },
       { name: 'work', category: 'lifecycle', mutates: 'repo', description: 'Execute a wish.' },
-      { name: 'omni', category: 'integration', mutates: 'external', description: 'Wire a channel.' },
+      { name: 'wiring', category: 'integration', mutates: 'external', description: 'Wire a channel.' },
       // Absent keys are legal and sort last, rendered as an em dash.
       { name: 'stray', category: null, mutates: null, description: 'No taxonomy yet.' },
     ]);

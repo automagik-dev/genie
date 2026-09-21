@@ -14,6 +14,10 @@ Use when the problem, approach, or boundaries need decisions. Explore with the u
 Before the first question, say the classification out loud so the user can override it:
 
 - **Spike** — a feasibility question whose output is an answer, not code anyone keeps. State the question and the probe in two or three sentences, get a nod, find out as cheaply as correctness allows, and label anything built as throwaway. No design document.
+  - Order several probes by risk: the one most likely to kill the idea runs first, because proving the easy parts of an idea whose hard part fails buys nothing.
+  - Close each probe with one of three verdicts — validated, invalidated, or validated under named constraints. Name the constraints, since they are what a later wish has to plan around, and report an invalidated probe as a finished probe rather than a failure to soften.
+  - When two approaches answer the same question, probe both and close with one head-to-head comparison and a recommendation, not two separate verdicts.
+  - When the undecided thing is a screen, probe it with two or three throwaway variants that differ along one named stance axis — density, emphasis, aesthetic, layout, or grounding — so the user can say which they prefer and why. Variants that differ only in an accent colour compare nothing.
 - **Bounded** — a well-scoped change to a flow that already exists in this repository and can be read today. Ask only the questions that change the outcome, present a short design in the conversation, and stop there until the user accepts it.
 - **Architectural** — a new subsystem, a restructuring of how components fit, or a change to interfaces others depend on. Run the full path below through to a reviewed `DESIGN.md`.
 

@@ -9,7 +9,12 @@ import {
   DELIVERY_EVIDENCE_WORKFLOW_IDENTITY,
 } from '../src/lib/delivery-evidence-verify';
 import { stampReleasePayloadVersion } from './release-payload-version';
-import { DSH_PLUGIN_MEMBERS, runNetwork, verifyArtifacts } from './verify-dsh-genie-board-release';
+import {
+  DSH_PLUGIN_MEMBERS,
+  LOADER_PLUGIN_MEMBERS,
+  runNetwork,
+  verifyArtifacts,
+} from './verify-dsh-genie-board-release';
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -32,8 +37,10 @@ function fixture() {
     'plugins/dsh-genie-board/package.json',
   ])
     put(path, JSON.stringify({ version, minimumGenieVersion: version }));
+  put('plugins/dsh-workflow-loader/package.json', JSON.stringify({ version }));
   for (const path of DSH_PLUGIN_MEMBERS.filter((member) => member !== 'package.json'))
     put(`plugins/dsh-genie-board/${path}`, 'fixture');
+  for (const path of LOADER_PLUGIN_MEMBERS) put(`plugins/dsh-workflow-loader/${path}`, 'fixture');
   stampReleasePayloadVersion(payload, version);
   function pack() {
     for (const platform of platforms) {
@@ -74,6 +81,13 @@ for (const member of DSH_PLUGIN_MEMBERS)
   test(`every platform requires ${member}`, () => {
     const f = fixture();
     rmSync(join(f.payload, 'plugins/dsh-genie-board', member));
+    f.pack();
+    expect(() => verifyArtifacts(f.artifacts, version)).toThrow();
+  });
+for (const member of LOADER_PLUGIN_MEMBERS)
+  test(`every platform requires the workflow-loader ${member}`, () => {
+    const f = fixture();
+    rmSync(join(f.payload, 'plugins/dsh-workflow-loader', member));
     f.pack();
     expect(() => verifyArtifacts(f.artifacts, version)).toThrow();
   });
@@ -236,6 +250,13 @@ test('the staged release payload and the verifier share one plugin member list',
     'dist/workflows.js',
     'dist/client.js',
   ]);
+  for (const member of LOADER_PLUGIN_MEMBERS) {
+    expect(buildScript).toContain(`"plugins/dsh-workflow-loader/${member}"`);
+  }
+  // The loader row: four non-version members, staged beside the board's. Its
+  // package.json is a stamped top-level version file instead, gated per tarball
+  // by verifyReleasePayloadVersion rather than by this member list.
+  expect(LOADER_PLUGIN_MEMBERS).toHaveLength(4);
 });
 
 /**

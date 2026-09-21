@@ -29,31 +29,39 @@ import {
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
-import { resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
-import { classifyLegacyIntegrations } from '../lib/legacy-integration-retirement.js';
-import { resolveOmniRuntimeConfig } from '../lib/omni-config.js';
+import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
+import { findLegacySkillLeftovers, legacyScanHomes } from '../lib/legacy-skills.js';
 import {
   type AgentSkillHomeSpec,
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
+  type SkillsWorkflowsInstall,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
+  isSafeWorkflowFileName,
   releaseTag,
 } from '../lib/skills-installer.js';
 import { writeErr, writeOut } from '../lib/term-output.js';
 import {
   CURRENT_SCHEMA_VERSION,
   GenieDbError,
+  PendingMigrationError,
   type ProjectContext,
   openDb,
   resolveProjectContext,
 } from '../lib/v5/genie-db.js';
 import { VERSION } from '../lib/version.js';
-import { checkWorktreeModes, repairWorktreeModes } from './doctor-modes.js';
+import {
+  classifyWorkflowFile,
+  inspectOnDiskWorkflow,
+  shippedWorkflowNames,
+  shippedWorkflowsRoot,
+} from '../lib/workflows-installer.js';
+import { type ModeDriftReportEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -80,6 +88,14 @@ export interface CheckResult {
    */
   indexLane?: { entries: IndexLaneEntry[] };
   /**
+   * Machine-readable payload rider (survives `--json` as
+   * `checks[].modeDrift.entries`). Only the aggregated `mode drift` check sets
+   * it: EVERY classified entry, uncapped, because the human report names at
+   * most `MAX_NAMED_MODE_DRIFT_ENTRIES` of them. Each entry carries its own
+   * `suggestion` where one exists, so the remedy survives the cap.
+   */
+  modeDrift?: { entries: ModeDriftReportEntry[] };
+  /**
    * Machine-readable payload rider (survives `--json` as `checks[].routeLayers`).
    * Only the `Codex Genie MCP registration` check sets it: the typed config-layer
    * findings (collision, shadowing, global same-key, trust states) from the
@@ -99,19 +115,6 @@ export interface CheckResult {
    * `skills: channel` line carries no agent and therefore no rider.
    */
   skillsChannel?: SkillsChannelStatus;
-  /**
-   * Machine-readable payload rider (survives `--json` as `checks[].legacyIntegrations`).
-   * Only the `legacy integrations` check sets it: the marker-owned assets still
-   * awaiting retirement. Doctor only OBSERVES them — retirement is `genie update`'s.
-   */
-  legacyIntegrations?: {
-    pending: Array<{ surface: string; path: string }>;
-    /**
-     * A classifier actually ran. `false` means the check could not observe
-     * anything, so an empty `pending` is ignorance, not proof of retirement.
-     */
-    available: boolean;
-  };
 }
 
 // ============================================================================
@@ -136,7 +139,8 @@ const MAX_UNLINKED_LINES = 5;
  * `jar: index-lane drift` — the INDEX entries an operator must open by name,
  * since a `broken`/`unlinked` count alone cannot be acted on. Every `broken`
  * entry is named; `unlinked` is the benign majority (a fresh clone has no
- * roadmap cards at all), so it is capped and the remainder counted.
+ * roadmap cards at all), so it is capped and the remainder counted. `mode
+ * drift` names its own capped entries the same way, from its own rider.
  */
 function renderCheckLines(r: CheckResult): string[] {
   const suffix = r.detail ? ` — ${r.detail}` : '';
@@ -148,6 +152,7 @@ function renderCheckLines(r: CheckResult): string[] {
     else if (e.state === 'unlinked' && unlinked++ < MAX_UNLINKED_LINES) lines.push(`      · unlinked: ${e.entry}`);
   }
   if (unlinked > MAX_UNLINKED_LINES) lines.push(`      · …and ${unlinked - MAX_UNLINKED_LINES} more unlinked`);
+  lines.push(...modeDriftLines(r.modeDrift?.entries ?? []));
   return lines;
 }
 
@@ -233,7 +238,13 @@ function checkDatabase(root: string | null): CheckResult[] {
     ];
   }
   try {
-    const db = openDb({ path: dbPath });
+    // `migrate: false` is load-bearing, not a nicety. The v1 -> v2 ladder is
+    // forward-only and destructive, and a 5.x binary on the same machine
+    // refuses a migrated file — so `genie doctor` performing it as a side
+    // effect of LOOKING would silently break every other checkout on the host
+    // (it did: two runs of this check migrated the developer's own shared
+    // database). Doctor observes; `genie task` / `genie board` migrate.
+    const db = openDb({ path: dbPath, migrate: false });
     try {
       const row = db.query('PRAGMA user_version').get() as { user_version: number } | null;
       const version = row?.user_version ?? 0;
@@ -251,19 +262,33 @@ function checkDatabase(root: string | null): CheckResult[] {
       db.close();
     }
   } catch (err) {
+    // A pending migration is not a broken database: it is a mutation doctor
+    // declined to perform. Warn with the remedy instead of failing the run.
+    if (err instanceof PendingMigrationError) {
+      return [
+        {
+          name: 'genie.db',
+          status: 'warn',
+          detail: `${dbPath} is at schema v${err.foundVersion}; this build expects v${err.expectedVersion}`,
+          suggestion:
+            'Run `genie task list` (or any lifecycle command) to migrate it — the previous database is backed up under `<GENIE_HOME>/state-backups/db-migration-<timestamp>-<pid>/` first. Older genie binaries on this host will refuse the migrated file.',
+        },
+      ];
+    }
     const detail = err instanceof GenieDbError ? err.message : err instanceof Error ? err.message : String(err);
     return [{ name: 'genie.db', status: 'fail', detail }];
   }
 }
 
 /**
- * Tables that belong ONLY to a per-repo `.genie/genie.db`. The global
- * `<GENIE_HOME>/genie.db` carries the omni approval queue and inbox and nothing
- * else; a per-repo table sitting next to `approvals` is proof that some binary
- * once opened the global path with the per-repo opener (M7). Prevention landed
- * (the per-repo opener refuses the global path), but a host contaminated before
- * that fix stays contaminated forever, and both databases still report
- * `user_version = 1` — so a future numbered migration cannot tell them apart.
+ * Tables that belong ONLY to a per-repo `.genie/genie.db`. v6 writes NOTHING to
+ * the machine-scope `<GENIE_HOME>/genie.db` — the Omni runner owned every table
+ * that file ever held and left with it — so any per-repo table found there is
+ * proof that some binary once opened the global path with the per-repo opener
+ * (M7). Prevention landed (the per-repo opener refuses the global path), but a
+ * host contaminated before that fix stays contaminated forever, and both
+ * databases still report `user_version = 1` — so a future numbered migration
+ * cannot tell them apart.
  */
 const PER_REPO_ONLY_TABLES = [
   'boards',
@@ -272,6 +297,13 @@ const PER_REPO_ONLY_TABLES = [
   'task_events',
   'stage_log',
   'wish_groups',
+  // RETIRED, and kept here on purpose. The v1 -> v2 ladder dropped
+  // `hire_roster` from the per-repo schema, but a global database contaminated
+  // BEFORE v6 still carries the table, and the ladder never runs on the global
+  // path — nothing opens that file with the per-repo opener any more. Dropping
+  // it from this list would leave that stray table on the host for ever, with
+  // doctor reporting the file clean. A table this build no longer creates is
+  // exactly the kind of stray `--fix-global-db` exists to remove.
   'hire_roster',
 ] as const;
 
@@ -343,10 +375,12 @@ export interface GlobalDbRepairResult {
 /**
  * The ONE destructive act doctor performs, and only under its own explicit flag.
  * Backup-first and WAL-safe: the write-ahead log is folded back into the main
- * file before the byte copy, so the backup is complete even when `genie omni
- * serve` has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES}
- * that are actually present are dropped; the approval queue and inbox are never
- * touched. Idempotent — a repaired database reports `clean` on the next run.
+ * file before the byte copy, so the backup is complete even when another process
+ * has been writing to the same database. Only {@link PER_REPO_ONLY_TABLES} that
+ * are actually present are dropped; every other table in the file is left
+ * byte-for-byte alone — v6 puts none there itself, but the operator's own rows
+ * are not doctor's to delete. Idempotent — a repaired database reports `clean`
+ * on the next run.
  */
 export function repairGlobalDbContamination(options: { genieHome?: string } = {}): GlobalDbRepairResult {
   const dbPath = join(options.genieHome ?? resolveGlobalGenieHome(), 'genie.db');
@@ -374,7 +408,7 @@ export function repairGlobalDbContamination(options: { genieHome?: string } = {}
         dbPath,
         dropped: [],
         backupPath: null,
-        message: `${dbPath}: already clean (omni queue + inbox only) — nothing to repair.`,
+        message: `${dbPath}: already clean (no per-repo tables) — nothing to repair.`,
       };
     }
     db.run('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -416,7 +450,7 @@ export function repairGlobalDbContamination(options: { genieHome?: string } = {}
 export function evaluateGlobalDbTables(dbPath: string, tables: readonly string[]): CheckResult {
   const strays = PER_REPO_ONLY_TABLES.filter((name) => tables.includes(name));
   if (strays.length === 0) {
-    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (omni queue + inbox only)` };
+    return { name: GLOBAL_DB_CONTAMINATION_CHECK, status: 'pass', detail: `${dbPath} (no per-repo tables)` };
   }
   const remedy = globalDbContaminationRemedy();
   const detail =
@@ -643,6 +677,38 @@ function evaluatePreservedRetirements(record: SkillsInstallRecord | null): Check
   };
 }
 
+const SKILLS_LEGACY_LEFTOVERS_SUGGESTION =
+  'Run `genie update` — it archives the proven ones under state-backups and moves nothing else; an unproven dir is a name-or-description match genie does not claim, and stays listed until you remove it or it stops matching';
+
+/**
+ * Genie skill directories that predate the install record (see
+ * `src/lib/legacy-skills.ts`): the record names none of them, so the
+ * recorded-agent-dirs line above reads complete while `~/.agents/skills` still
+ * holds a 2026-07 `genie-review`. Scans the record's homes plus every skills.sh
+ * registry home on disk, so a host with NO record — the host most likely to
+ * carry them — is covered too. Read-only: `genie update` is what moves them.
+ */
+function evaluateLegacyLeftovers(
+  record: SkillsInstallRecord | null,
+  home: string,
+  inventory: readonly string[],
+): CheckResult | null {
+  const leftovers = findLegacySkillLeftovers(legacyScanHomes(home, record?.agentDirs ?? []), inventory);
+  if (leftovers.length === 0) return null;
+  const named = leftovers.map((entry) => `${join(entry.agentDir, entry.entry)} (${entry.kind})`);
+  // `proven` and `marker` are genie's own; `unproven` is a dir that matches a retired genie NAME or
+  // a retired genie DESCRIPTION and not both — `~/.claude/skills/brain` is a live third-party
+  // product that shares a name genie once shipped. Calling every row a genie skill dir told the
+  // operator their own product was genie's, about a dir genie will never touch.
+  const claimed = leftovers.filter((entry) => entry.kind !== 'unproven').length;
+  return {
+    name: 'skills: legacy leftovers',
+    status: 'warn',
+    detail: `${leftovers.length} dir(s) predate the install record — ${claimed} genie's own, ${leftovers.length - claimed} unproven (a retired genie name or description, not both; genie claims none of these): ${namedWithRemainder(named)}`,
+    suggestion: SKILLS_LEGACY_LEFTOVERS_SUGGESTION,
+  };
+}
+
 /** A backup root younger than this is news the operator has not seen yet. */
 const RECENT_COLLISION_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -765,6 +831,9 @@ export function checkSkillsChannel(
       ? record.inventory
       : inventoryFromSkillsDir(join(genieHome, 'skills'));
   const results: CheckResult[] = [];
+  // Leftovers are scanned BEFORE the no-record early return: a host that never
+  // wrote a record is exactly the host that carries pre-record genie dirs.
+  const legacy = evaluateLegacyLeftovers(record, home, inventory);
   if (record === null) {
     results.push({
       name: 'skills: channel',
@@ -772,7 +841,10 @@ export function checkSkillsChannel(
       detail: 'no install record',
       suggestion: SKILLS_CHANNEL_SUGGESTION,
     });
-    if (inventory.length === 0) return results;
+    if (inventory.length === 0) {
+      if (legacy !== null) results.push(legacy);
+      return results;
+    }
   }
   const context: SkillsChannelContext = {
     home,
@@ -787,115 +859,134 @@ export function checkSkillsChannel(
   if (agentDirs !== null) results.push(agentDirs);
   const retirement = evaluatePreservedRetirements(record);
   if (retirement !== null) results.push(retirement);
+  if (legacy !== null) results.push(legacy);
   const backups = evaluateCollisionBackups(record, (options.nowMs ?? Date.now)());
   if (backups !== null) results.push(backups);
   return results;
 }
 
 // ============================================================================
-// Legacy marker-owned integration assets (wish `skills-everywhere`, group 3)
+// Workflows channel (wish `global-workflows-local-mikro`, group 3)
 // ============================================================================
 
-/** Classification of one marker-owned legacy asset. Mirrors the group-2 module. */
-export type LegacyIntegrationState = 'managed-clean' | 'managed-modified' | 'unmanaged' | 'absent';
+const WORKFLOWS_CHANNEL_SUGGESTION = 'Run `genie update` to reinstall the workflow catalog';
 
-export interface LegacyIntegrationEntry {
-  surface: string;
-  path: string;
-  state: LegacyIntegrationState;
+/**
+ * ONE remedy for both unrecorded shapes, because both are answered by the same
+ * run: it must be true when files are named AND when none are, so it states the
+ * install and the backup rather than only the replacement.
+ */
+const WORKFLOWS_UNRECORDED_SUGGESTION =
+  'Run `genie update` to install and record the workflow catalog; a file already there is backed up under `<GENIE_HOME>/state-backups/` before it is replaced';
+
+/** The one name every workflows-channel line carries, in the `skills: …` family. */
+const WORKFLOWS_CHECK_NAME = 'workflows: catalog';
+
+/**
+ * Every recorded workflow file whose bytes no longer prove the recorded
+ * install, named with its state. `replace` is the ONLY verdict that proves the
+ * file on disk is still byte-for-byte what genie installed.
+ */
+function describeWorkflowDrift(recorded: SkillsWorkflowsInstall): { present: number; drift: string[] } {
+  let present = 0;
+  const drift: string[] = [];
+  for (const [name, digest] of Object.entries(recorded.files)) {
+    // The same traversal floor every other consumer of the record uses.
+    if (!isSafeWorkflowFileName(name)) continue;
+    const state = inspectOnDiskWorkflow(join(recorded.dir, name));
+    if (state.kind === 'other') {
+      drift.push(`${name} (not a regular file)`);
+      continue;
+    }
+    const verdict = classifyWorkflowFile({ recorded: digest, onDisk: state.digest });
+    if (verdict === 'replace') present += 1;
+    else drift.push(`${name} (${verdict === 'missing' ? 'missing' : 'modified'})`);
+  }
+  return { present, drift };
 }
 
 /**
- * The narrow shape doctor consumes: structurally satisfied by the real
- * `classifyLegacyIntegrations` (its `surface` union widens to `string` and its
- * extra optional homes are not required here), while staying injectable by
- * tests. Doctor observes the classification; it does not own the engine.
+ * Catalog names sitting in a user scope that NO record accounts for — the
+ * 2026-09-15 incident shape, on a host where the channel has not run yet.
+ *
+ * It walks the SHIPPED names and lstats each one, rather than listing the user
+ * directory: a workflow that is not genie's namespace is then structurally
+ * invisible here, and a symlink is named rather than resolved.
  */
-export type LegacyClassifier = (homes: { home: string; genieHome: string }) => { entries: LegacyIntegrationEntry[] };
-
-/**
- * Compile-time proof that the real group-2 export satisfies doctor's seam. If
- * `classifyLegacyIntegrations`'s signature or its `LegacyIntegrationState`
- * union ever drifts from doctor's, this assignment fails to typecheck.
- */
-const DEFAULT_LEGACY_CLASSIFIER: LegacyClassifier = classifyLegacyIntegrations;
-
-const LEGACY_RETIREMENT_SUGGESTION = 'Run `genie update` to retire them';
-/** How many pending paths the check names before summarizing the rest. */
-const MAX_LEGACY_PENDING_PATHS = 5;
-
-/**
- * The retirement module is a permanent fixture of the tree, so it is imported
- * statically: a non-literal dynamic specifier is invisible to `bun build`, and
- * the shipped single-file bundle would have degraded to a silent, permanent
- * "classifier unavailable" pass. `deps.legacyClassifier` remains the only seam
- * — `null` forces the unavailable path for tests of that branch.
- */
-function resolveLegacyClassifier(deps: DoctorDeps): LegacyClassifier | null {
-  if (deps.legacyClassifier !== undefined) return deps.legacyClassifier;
-  return DEFAULT_LEGACY_CLASSIFIER;
+function describeUnrecordedWorkflows(workflowsDir: string, catalog: readonly string[]): string[] {
+  const found: string[] = [];
+  for (const name of catalog) {
+    const state = inspectOnDiskWorkflow(join(workflowsDir, name));
+    if (state.kind === 'absent') continue;
+    found.push(state.kind === 'other' ? `${name} (not a regular file)` : name);
+  }
+  return found;
 }
 
 /**
- * The one shape of the unavailable answer: a pass (doctor never fails on its
- * own blindness) that still carries the rider, with `available:false` so a
- * machine reader can tell "nothing pending" from "nothing observed".
+ * The line for a host whose record carries no `workflows` field at all.
+ *
+ * `(unrecorded)` alone used to be the whole answer, and it was the one place
+ * this check was quieter than the skills leg, which lists pre-record leftovers
+ * BEFORE its no-record return. A stale `~/.claude/workflows/council.js` from
+ * the retired stamped install — exactly what shadowed the project copy on
+ * 2026-09-15 — sat in a user scope unnamed, because no record named it.
  */
-function unavailableLegacyResult(reason?: string): CheckResult {
+function unrecordedWorkflowsResult(claudeDir: string, genieHome: string): CheckResult {
+  if (!isDirectory(claudeDir)) {
+    // No product home: genie creates none, so there is nothing to say and
+    // nothing `genie update` would do here.
+    return { name: WORKFLOWS_CHECK_NAME, status: 'pass', detail: 'not detected' };
+  }
+  // The names come from what THIS release ships, never a list written down
+  // here: a hardcoded one goes stale the first time the catalog grows. With no
+  // shipped catalog on disk the channel cannot run, so nothing is claimed.
+  const catalog = shippedWorkflowNames(shippedWorkflowsRoot(genieHome));
+  const leftovers = describeUnrecordedWorkflows(join(claudeDir, 'workflows'), catalog);
+  if (leftovers.length > 0) {
+    return {
+      name: WORKFLOWS_CHECK_NAME,
+      status: 'warn',
+      detail: `(unrecorded) ${leftovers.length} file(s) genie did not record: ${namedWithRemainder(leftovers)}`,
+      suggestion: WORKFLOWS_UNRECORDED_SUGGESTION,
+    };
+  }
   return {
-    name: 'legacy integrations',
+    name: WORKFLOWS_CHECK_NAME,
     status: 'pass',
-    detail: reason === undefined ? 'classifier unavailable' : `classifier unavailable (${reason})`,
-    legacyIntegrations: { pending: [], available: false },
+    detail: '(unrecorded)',
+    ...(catalog.length > 0 ? { suggestion: WORKFLOWS_UNRECORDED_SUGGESTION } : {}),
   };
 }
 
 /**
- * Read-only classification of marker-owned legacy assets still on disk.
- * `managed-clean` is the ONLY pending state: a modified or unmanaged asset is
- * never genie's to retire, and an absent one is already gone.
+ * ONE line for the user-scope workflow catalog, read straight off the install
+ * record the workflows channel wrote — the same authority `genie uninstall`
+ * removes by, so the two can never disagree about what genie owns.
+ *
+ * Read-only, like every other doctor check and including under `--fix`: it
+ * lstats and digests, and repairs nothing. `genie update` is the only repair.
  */
-export async function checkLegacyIntegrations(
-  deps: DoctorDeps = {},
-  options: { home?: string; genieHome?: string } = {},
-): Promise<CheckResult[]> {
-  const classifier = resolveLegacyClassifier(deps);
-  if (classifier === null) return [unavailableLegacyResult()];
-  let entries: LegacyIntegrationEntry[];
-  try {
-    entries = classifier({
-      home: resolveHostHome(options.home),
-      genieHome: options.genieHome ?? resolveGlobalGenieHome(),
-    }).entries;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return [unavailableLegacyResult(reason)];
+export function checkWorkflowsChannel(options: { home?: string; genieHome?: string } = {}): CheckResult[] {
+  const genieHome = options.genieHome ?? resolveGlobalGenieHome();
+  const read = inspectSkillsInstallRecord(genieHome);
+  // A malformed record is ONE fault with ONE remedy, and `checkSkillsChannel`
+  // already names the offending field and the repair. Doctor says it once.
+  if (read.status === 'invalid') return [];
+  const recorded = read.status === 'ok' ? read.record.workflows : undefined;
+  if (recorded === undefined) {
+    const claudeDir = options.home === undefined ? resolveClaudeDir() : join(options.home, '.claude');
+    return [unrecordedWorkflowsResult(claudeDir, genieHome)];
   }
-  const pending = entries
-    .filter((entry) => entry.state === 'managed-clean')
-    .map((entry) => ({ surface: entry.surface, path: entry.path }));
-  if (pending.length === 0) {
-    return [
-      {
-        name: 'legacy integrations',
-        status: 'pass',
-        detail: 'retired',
-        legacyIntegrations: { pending, available: true },
-      },
-    ];
-  }
-  const named = pending.slice(0, MAX_LEGACY_PENDING_PATHS).map((entry) => entry.path);
-  const remainder = pending.length - named.length;
-  const tail = remainder > 0 ? `${named.join(', ')}, …and ${remainder} more` : named.join(', ');
-  return [
-    {
-      name: 'legacy integrations',
-      status: 'warn',
-      detail: `${pending.length} marker-owned assets pending: ${tail}`,
-      suggestion: LEGACY_RETIREMENT_SUGGESTION,
-      legacyIntegrations: { pending, available: true },
-    },
-  ];
+  const { present, drift } = describeWorkflowDrift(recorded);
+  const binaryTag = releaseTag(VERSION);
+  const stale = recorded.ref !== binaryTag;
+  const total = Object.keys(recorded.files).length;
+  const staleSuffix = stale ? ` (stale, binary is ${binaryTag})` : '';
+  const driftSuffix = drift.length === 0 ? '' : `; ${namedWithRemainder(drift)}`;
+  const detail = `${present}/${total} in ${recorded.dir} @ ${recorded.ref}${staleSuffix}${driftSuffix}`;
+  if (drift.length === 0 && !stale) return [{ name: WORKFLOWS_CHECK_NAME, status: 'pass', detail }];
+  return [{ name: WORKFLOWS_CHECK_NAME, status: 'warn', detail, suggestion: WORKFLOWS_CHANNEL_SUGGESTION }];
 }
 
 interface ParsedSemVer {
@@ -1327,92 +1418,6 @@ export function checkV4Residue(home?: string, genieHome?: string): CheckResult[]
 }
 
 // ============================================================================
-// Omni bridge health probe
-// ============================================================================
-
-/** omni CLI's own fallback API URL (packages/cli/src/commands/status.ts). */
-export const OMNI_BRIDGE_DEFAULT_URL = 'http://localhost:8882';
-/** Bounded probe budget — doctor is interactive; the bridge answers locally. */
-export const OMNI_BRIDGE_PROBE_TIMEOUT_MS = 3_000;
-
-/**
- * Evaluate the omni bridge health probe. Returns null when omni is not
- * configured (no check emitted). The probe moved here from the retired omni
- * plugin SessionStart health hook (hooks-v2#retire): `genie doctor` replaces
- * the hook's per-session health scan with an on-demand diagnostic — no
- * auto-install, no auto-recovery. Pure + exported for testing.
- */
-export function evaluateOmniBridgeHealth(params: {
-  configured: boolean;
-  apiStatus: string | null;
-  version?: string;
-  error?: string;
-}): CheckResult | null {
-  if (!params.configured) return null;
-  const name = 'omni bridge health';
-  const versionSuffix = params.version ? ` (v${params.version})` : '';
-  if (params.apiStatus === 'healthy') {
-    return { name, status: 'pass', detail: `omni bridge healthy${versionSuffix}` };
-  }
-  if (params.apiStatus !== null) {
-    return {
-      name,
-      status: 'warn',
-      detail: `omni bridge reports status "${params.apiStatus}"${versionSuffix}`,
-      suggestion: 'Inspect the bridge with `omni status`; `omni start` brings it up.',
-    };
-  }
-  return {
-    name,
-    status: 'warn',
-    detail: `omni bridge unreachable${params.error ? ` (${params.error})` : ''}`,
-    suggestion: 'Start the bridge with `omni start` (or `genie omni serve`), then re-run `genie doctor`.',
-  };
-}
-
-interface OmniBridgeHealthProbe {
-  status: string | null;
-  version?: string;
-  error?: string;
-}
-
-/** One bounded GET to the bridge's health endpoint; never throws. */
-async function fetchOmniBridgeHealth(apiUrl: string, fetchImpl: typeof fetch): Promise<OmniBridgeHealthProbe> {
-  try {
-    const response = await fetchImpl(`${apiUrl.replace(/\/+$/, '')}/api/v2/health`, {
-      headers: { 'Accept-Encoding': 'identity' },
-      signal: AbortSignal.timeout(OMNI_BRIDGE_PROBE_TIMEOUT_MS),
-    });
-    const health = (await response.json()) as { status?: unknown; version?: unknown };
-    return {
-      status: typeof health.status === 'string' ? health.status : 'unknown',
-      version: typeof health.version === 'string' ? health.version : undefined,
-    };
-  } catch (err) {
-    return { status: null, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-/**
- * Probe the configured omni bridge. Silent when omni is not configured
- * (no `apiUrl`/`apiKey` in genie config or env) so a machine that never uses
- * omni carries no probe noise. `fetchImpl` is a test seam; production uses
- * the global fetch.
- */
-export async function checkOmniBridgeHealth(fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
-  const rt = await resolveOmniRuntimeConfig();
-  if (rt.apiUrl === undefined && rt.apiKey === undefined) return []; // omni off → stay silent
-  const probe = await fetchOmniBridgeHealth(rt.apiUrl ?? OMNI_BRIDGE_DEFAULT_URL, fetchImpl);
-  const result = evaluateOmniBridgeHealth({
-    configured: true,
-    apiStatus: probe.status,
-    version: probe.version,
-    error: probe.error,
-  });
-  return result ? [result] : [];
-}
-
-// ============================================================================
 // jar: index-lane drift — INDEX.md sections vs roadmap board lanes
 //
 // One tracker: the `roadmap` board owns placement truth; `.genie/INDEX.md` prose
@@ -1788,12 +1793,6 @@ export interface DoctorDeps {
   projectContext?: ProjectContext | null;
   /** A3 public compatibility probe seam for Orca-mode diagnostics. */
   orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
-  /**
-   * Legacy marker-owned asset classifier. Omitted = the real statically-imported
-   * group-2 classifier; explicit `null` = force the "classifier unavailable"
-   * branch (tests only).
-   */
-  legacyClassifier?: LegacyClassifier | null;
 }
 
 export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
@@ -1899,7 +1898,7 @@ export async function doctorCommand(
     ...checkGlobalDbContamination(),
     ...checkSkills(root),
     ...checkSkillsChannel(),
-    ...(await checkLegacyIntegrations(deps)),
+    ...checkWorkflowsChannel(),
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...(await checkBudgets()),
     ...checkSubagentModelOverride(),
@@ -1913,7 +1912,6 @@ export async function doctorCommand(
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
     ...checkWorktreeModes(root),
-    ...(await checkOmniBridgeHealth()),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
     ...checkTrackedMachineState(root),
