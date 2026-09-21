@@ -4,8 +4,8 @@ import sourcePackage from '../../package.json';
 const [version = sourcePackage.version, output = 'dist', ...extra] = process.argv.slice(2);
 if (extra.length || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/.test(version)) throw new Error('invalid build version');
 const outdir = resolve(output);
-/** One host bundle per cordis row: the manager plus its three sub-rows. */
-export const HOST_ROWS = ['index', 'board', 'skills', 'workflows'] as const;
+/** One host bundle per cordis row: the manager plus its two sub-rows. */
+export const HOST_ROWS = ['index', 'board', 'workflows'] as const;
 for (const row of HOST_ROWS) {
   await build({
     entryPoints: [`src/${row}.ts`],

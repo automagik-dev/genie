@@ -1,7 +1,7 @@
 import { DEADLINE_MS, MAX_OUTPUT } from './process';
 
 /**
- * Per-row configuration for the four Genie rows, and the one place their
+ * Per-row configuration for the three Genie rows, and the one place their
  * defaults live.
  *
  * Every key has a default, so an operator who inserts a row with no `config`
@@ -38,10 +38,6 @@ export interface ManagerConfig {
 }
 export interface BoardConfig {
   order: number;
-}
-export interface SkillsConfig {
-  order: number;
-  groupBy: 'category' | 'name';
 }
 export interface WorkflowsConfig {
   order: number;
@@ -88,22 +84,6 @@ function integer(
   return raw;
 }
 
-function choice<T extends string>(
-  source: Record<string, unknown>,
-  key: string,
-  fallback: T,
-  allowed: readonly T[],
-  issues: ConfigIssue[],
-): T {
-  const raw = source[key];
-  if (raw === undefined) return fallback;
-  if (typeof raw !== 'string' || !allowed.includes(raw as T)) {
-    issues.push({ message: `expected one of ${allowed.join(', ')}`, path: [key] });
-    return fallback;
-  }
-  return raw as T;
-}
-
 function settled<T>(value: T, issues: ConfigIssue[]): T {
   if (issues.length) throw new ConfigError(issues);
   return value;
@@ -135,18 +115,6 @@ export function resolveBoardConfig(input?: unknown): BoardConfig {
   const source = fields(input);
   const issues: ConfigIssue[] = [];
   return settled({ order: integer(source, 'order', 10, 0, 1_000, issues) }, issues);
-}
-
-export function resolveSkillsConfig(input?: unknown): SkillsConfig {
-  const source = fields(input);
-  const issues: ConfigIssue[] = [];
-  return settled(
-    {
-      order: integer(source, 'order', 11, 0, 1_000, issues),
-      groupBy: choice(source, 'groupBy', 'category', ['category', 'name'] as const, issues),
-    },
-    issues,
-  );
 }
 
 export function resolveWorkflowsConfig(input?: unknown): WorkflowsConfig {

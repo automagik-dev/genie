@@ -35,19 +35,6 @@ export const IconBoard16 = ({ size = 16, className }: IconProps) =>
     <path key="k" d="M3.4 5h1M7.5 5h1M11.6 5h1M3.4 7.5h1M7.5 7.5h1M3.4 10h1" />,
   ]);
 
-/** Skill: a document with a sparkle, echoing DSH's own skill glyph. */
-export const IconSkills16 = ({ size = 16, className }: IconProps) =>
-  frame(size, className, [
-    <path key="d" d="M9.5 14.25H4.25a1.5 1.5 0 0 1-1.5-1.5v-9.5a1.5 1.5 0 0 1 1.5-1.5h5.75a1.5 1.5 0 0 1 1.5 1.5V8" />,
-    <path key="l" d="M5 5.5h4M5 8h3" />,
-    <path
-      key="s"
-      d="M12.25 9.5l.6 1.65 1.65.6-1.65.6-.6 1.65-.6-1.65-1.65-.6 1.65-.6z"
-      fill="currentColor"
-      stroke="none"
-    />,
-  ]);
-
 /** Workflow: nodes connected in a fan-out. */
 export const IconWorkflows16 = ({ size = 16, className }: IconProps) =>
   frame(size, className, [

@@ -56,22 +56,21 @@ function fakeCordis(host: Omit<HostContext, 'provide' | 'get' | 'inject'>): Host
 }
 
 /**
- * Mount the four rows the shipped `cordis.patch.yml` inserts, against one fake
+ * Mount the rows the shipped `cordis.patch.yml` inserts, against one fake
  * cordis context: the manager provides `genieRuntime`, each sub-row waits for
  * it and registers only its own routes. `rows` turns a row off exactly the way
  * a profile patch's `disabled: true` does — `manager: false` included, which is
  * the gesture that used to abort the whole DSH boot.
  */
-type RowConfigs = { manager?: unknown; board?: unknown; skills?: unknown; workflows?: unknown };
+type RowConfigs = { manager?: unknown; board?: unknown; workflows?: unknown };
 async function mountRows(
   host: Omit<HostContext, 'provide' | 'get' | 'inject'>,
-  rows: { manager?: boolean; board?: boolean; skills?: boolean; workflows?: boolean } = {},
+  rows: { manager?: boolean; board?: boolean; workflows?: boolean } = {},
   configs: RowConfigs = {},
 ): Promise<void> {
   const ctx = fakeCordis(host);
   // Sub-rows first, on purpose: `ctx.inject` must not care about row order.
   if (rows.board !== false) (await import('./board')).apply(ctx, configs.board);
-  if (rows.skills !== false) (await import('./skills')).apply(ctx, configs.skills);
   if (rows.workflows !== false) (await import('./workflows')).apply(ctx, configs.workflows);
   if (rows.manager !== false) await (await import('./index')).apply(ctx, configs.manager);
 }
@@ -748,7 +747,7 @@ test('a card claimed by someone else is never pulsed from here', async () => {
 async function hostRoutes(
   list: () => Workspace[],
   script = (version: string) => `#!/bin/sh\nprintf '${version}\\n'\n`,
-  rows: { board?: boolean; skills?: boolean; workflows?: boolean } = {},
+  rows: { board?: boolean; workflows?: boolean } = {},
 ) {
   const { createServer } = await import('node:http');
   const { writeFile } = await import('node:fs/promises');
@@ -821,8 +820,6 @@ describe('catalog document routes answer client faults with 400 and one vetted l
     const { mkdir, writeFile } = await import('node:fs/promises');
     const root = await realpath(await mkdtemp(join(tmpdir(), 'genie-catalog-routes-')));
     directories.push(root);
-    await mkdir(join(root, 'skills', 'alpha'), { recursive: true });
-    await writeFile(join(root, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: A skill\n---\n');
     await mkdir(join(root, '.claude', 'workflows'), { recursive: true });
     await writeFile(
       join(root, '.claude', 'workflows', 'alpha.js'),
@@ -831,15 +828,12 @@ describe('catalog document routes answer client faults with 400 and one vetted l
     return hostRoutes(() => [{ id: 'w1', path: root, title: 'Repo' }]);
   }
   const cases: [string, string, string][] = [
-    ['skills', 'workspaceId=w1&name=../../etc/passwd', 'Invalid name'],
-    ['skills', 'workspaceId=w1&name=Alpha', 'Invalid name'],
-    ['skills', 'workspaceId=w1&name=', 'Invalid name'],
-    ['skills', 'workspaceId=w1&name=nosuchskill', 'Document not found'],
-    ['skills', 'workspaceId=bogus&name=alpha', 'Unknown workspace'],
-    ['skills', 'name=alpha', 'workspaceId required'],
     ['workflows', 'workspaceId=w1&name=../../etc/passwd', 'Invalid name'],
+    ['workflows', 'workspaceId=w1&name=Alpha', 'Invalid name'],
+    ['workflows', 'workspaceId=w1&name=', 'Invalid name'],
     ['workflows', 'workspaceId=w1&name=nope', 'Document not found'],
     ['workflows', 'workspaceId=bogus&name=alpha', 'Unknown workspace'],
+    ['workflows', 'name=alpha', 'workspaceId required'],
   ];
   test('every invalid or unknown request is a 400 naming the reason, and no host path leaks', async () => {
     const host = await catalogHost();
@@ -858,11 +852,6 @@ describe('catalog document routes answer client faults with 400 and one vetted l
   test('a valid name still reads the document, and a real Host fault is still an opaque 500', async () => {
     const host = await catalogHost();
     try {
-      const skill = await fetch(`${host.origin}/api/genie-board/skills/document?workspaceId=w1&name=alpha`);
-      expect(skill.status).toBe(200);
-      expect((await skill.json()) as { text: string }).toEqual({
-        text: '---\nname: alpha\ndescription: A skill\n---\n',
-      });
       const workflow = await fetch(`${host.origin}/api/genie-board/workflows/document?workspaceId=w1&name=alpha`);
       expect(workflow.status).toBe(200);
       expect(((await workflow.json()) as { text: string }).text).toContain("name: 'alpha'");
@@ -873,7 +862,7 @@ describe('catalog document routes answer client faults with 400 and one vetted l
       throw new Error('registry exploded at /home/someone/secret');
     });
     try {
-      const response = await fetch(`${broken.origin}/api/genie-board/skills/document?workspaceId=w1&name=alpha`);
+      const response = await fetch(`${broken.origin}/api/genie-board/workflows/document?workspaceId=w1&name=alpha`);
       expect(response.status).toBe(500);
       expect(await response.json()).toEqual({ error: 'Genie board route failed' });
     } finally {
@@ -999,12 +988,12 @@ test('every row registers behind one fence, and health names the mounted rows an
       mounted: Record<string, boolean>;
       config: Record<string, Record<string, unknown>>;
     };
-    expect(health.mounted).toEqual({ board: true, skills: true, workflows: true });
+    expect(health.mounted).toEqual({ board: true, workflows: true });
     expect(health.config.manager).toEqual({ deadlineMs: DEADLINE_MS, outputBudgetBytes: MAX_OUTPUT });
-    expect(health.config.skills).toEqual({ order: 11, groupBy: 'category' });
+    expect(health.config.workflows).toEqual({ order: 12 });
     // Every route answers 403 to a cross-origin POST, so no sub-row can be
     // holding a fence of its own.
-    for (const path of ['workspaces', 'skills', 'workflows', 'skills/document', 'workflows/document']) {
+    for (const path of ['workspaces', 'workflows', 'workflows/document']) {
       const response = await fetch(`${host.origin}/api/genie-board/${path}`, {
         method: 'POST',
         headers: { origin: 'https://evil.test', 'content-type': 'application/json' },
@@ -1017,23 +1006,50 @@ test('every row registers behind one fence, and health names the mounted rows an
   }
 });
 
-test('a row disabled by id registers no route, and health reports it unmounted', async () => {
-  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'genie-disabled-row-')));
+/**
+ * The skills row is retired, not disabled: `@namastexlabs/dsh-skills` owns every
+ * skills surface, so this plugin must own none of it. Both of the row's paths
+ * are absent from the registration list, health never names it, and its module
+ * is gone from the package.
+ */
+test('the retired skills row registers no route and no row, and health never names it', async () => {
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'genie-retired-row-')));
   directories.push(workspace);
-  const host = await hostRoutes(() => [{ id: 'w', path: workspace, title: 'Workspace' }], undefined, { skills: false });
+  const host = await hostRoutes(() => [{ id: 'w', path: workspace, title: 'Workspace' }]);
   try {
     const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
       mounted: Record<string, boolean>;
       config: Record<string, unknown>;
     };
-    // This flag is exactly what the browser gates its Skills panel on.
-    expect(health.mounted).toEqual({ board: true, skills: false, workflows: true });
+    expect(health.mounted).toEqual({ board: true, workflows: true });
     expect(health.config.skills).toBeUndefined();
-    for (const path of ['skills', 'skills/document']) {
+    for (const path of ['skills', 'skills/document', 'skills/document?name=wish']) {
+      const response = await fetch(`${host.origin}/api/genie-board/${path}?workspaceId=w`);
+      expect([path, response.status]).toEqual([path, 404]);
+    }
+  } finally {
+    await host.close();
+  }
+});
+
+test('a row disabled by id registers no route, and health reports it unmounted', async () => {
+  const workspace = await realpath(await mkdtemp(join(tmpdir(), 'genie-disabled-row-')));
+  directories.push(workspace);
+  const host = await hostRoutes(() => [{ id: 'w', path: workspace, title: 'Workspace' }], undefined, {
+    workflows: false,
+  });
+  try {
+    const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
+      mounted: Record<string, boolean>;
+      config: Record<string, unknown>;
+    };
+    // This flag is exactly what the browser gates its Workflows panel on.
+    expect(health.mounted).toEqual({ board: true, workflows: false });
+    expect(health.config.workflows).toBeUndefined();
+    for (const path of ['workflows', 'workflows/document']) {
       expect((await fetch(`${host.origin}/api/genie-board/${path}?workspaceId=w`)).status).toBe(404);
     }
     // The rows that stayed enabled are untouched.
-    expect((await fetch(`${host.origin}/api/genie-board/workflows?workspaceId=w`)).status).toBe(200);
     expect((await fetch(`${host.origin}/api/genie-board/workspaces`)).status).toBe(200);
   } finally {
     await host.close();
@@ -1044,11 +1060,11 @@ test('a row disabled by id registers no route, and health reports it unmounted',
  * The manager row is disableable too (V1). DSH's boot audit fails the whole
  * Host on any enabled loader entry still PENDING once the tree settles, so a
  * row-level `inject` on a service the operator just turned off is a boot abort:
- * `3 entries did not activate / ...: pending (waiting for service:
+ * `2 entries did not activate / ...: pending (waiting for service:
  * genieRuntime)`. No sub-row may declare one.
  */
 test('no sub-row declares a row-level inject, which would park it pending and abort DSH boot', async () => {
-  for (const module of ['./board', './skills', './workflows']) {
+  for (const module of ['./board', './workflows']) {
     expect((await import(module)).inject).toBeUndefined();
   }
   // The manager's own injects are host services DSH always provides.
@@ -1076,7 +1092,7 @@ test('with the manager row disabled every sub-row activates cleanly and register
     // cordis' deferred inject: the manager never provides, so it never runs.
     inject: () => undefined,
   } as unknown as HostContext;
-  for (const module of ['./board', './skills', './workflows']) {
+  for (const module of ['./board', './workflows']) {
     const { apply } = await import(module);
     expect(() => apply(ctx)).not.toThrow();
   }
@@ -1093,7 +1109,7 @@ test('a sub-row mounted before its manager still gets its routes once the servic
     const health = (await (await fetch(`${host.origin}/api/genie-board/health`)).json()) as {
       mounted: Record<string, boolean>;
     };
-    expect(health.mounted).toEqual({ board: true, skills: true, workflows: true });
+    expect(health.mounted).toEqual({ board: true, workflows: true });
   } finally {
     await host.close();
   }

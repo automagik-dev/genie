@@ -15,12 +15,13 @@ const platforms = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-a
 
 /**
  * The single source of truth for the DSH plugin payload members a release must
- * carry. `scripts/build-binary.sh` stages the same ten paths; its list is
+ * carry. `scripts/build-binary.sh` stages the same nine paths; its list is
  * pinned against this one by `verify-dsh-genie-board-release.test.ts`.
  *
  * Every dist member is enumerated explicitly — never a glob. The suite is one
- * manager row plus three sub-rows, so the attested tarball gained three host
- * bundles; growing this list is a reviewed change, not a build detail.
+ * manager row plus two sub-rows, so the attested tarball carries two host
+ * bundles beside the manager's; growing this list is a reviewed change, not a
+ * build detail.
  */
 export const DSH_PLUGIN_MEMBERS = [
   'package.json',
@@ -30,7 +31,6 @@ export const DSH_PLUGIN_MEMBERS = [
   'NOTICE',
   'dist/index.js',
   'dist/board.js',
-  'dist/skills.js',
   'dist/workflows.js',
   'dist/client.js',
 ] as const;

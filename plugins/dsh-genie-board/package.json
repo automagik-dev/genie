@@ -8,7 +8,6 @@
   "exports": {
     ".": "./dist/index.js",
     "./board": "./dist/board.js",
-    "./skills": "./dist/skills.js",
     "./workflows": "./dist/workflows.js",
     "./client": "./dist/client.js",
     "./package.json": "./package.json"

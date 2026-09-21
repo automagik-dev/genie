@@ -8,7 +8,7 @@ import type { Registry } from './service';
 /**
  * The MANAGER row: the bare package `@automagik/genie-dsh-board`.
  *
- * It owns everything the three sub-rows must not each own a copy of — the one
+ * It owns everything the two sub-rows must not each own a copy of — the one
  * resolved Genie executable and its compatibility verdict, the one trust fence,
  * and workspace resolution — and publishes them as the cordis service
  * `genieRuntime`. It registers exactly one route of its own, `/health`, which
