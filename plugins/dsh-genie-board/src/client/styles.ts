@@ -72,8 +72,6 @@ export const css = `
 .gb-mono{font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;color:var(--dsw-alias-label-tertiary)}
 .gb-list{display:flex;flex-direction:column;width:340px;flex:none;min-height:0;border-right:1px solid var(--dsw-alias-border-l2);overflow:auto}
 .gb-list-search{position:sticky;top:0;z-index:1;padding:12px 12px 8px;background:var(--dsw-alias-bg-base)}
-.gb-group{display:flex;flex-direction:column}
-.gb-group-head{position:sticky;top:44px;padding:8px 16px 4px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-tertiary);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .gb-item{display:flex;flex-direction:column;gap:3px;width:100%;padding:10px 16px;border:0;border-bottom:1px solid var(--dsw-alias-border-l1);background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .gb-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .gb-item[aria-current=true]{background:var(--dsw-alias-interactive-bg-active)}
@@ -89,7 +87,6 @@ export const css = `
 .gb-phases li::before{counter-increment:phase;content:counter(phase);display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary);font-size:11px}
 .gb-phases small{color:var(--dsw-alias-label-tertiary)}
 .gb-pre{margin:0;padding:14px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-markdown-code-block,var(--dsw-alias-bg-layer-1));font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:12px;line-height:18px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
-.gb-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
 .gb-invoke{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 14px;padding:10px 12px;border:1px dashed var(--dsw-alias-border-l3);border-radius:10px;color:var(--dsw-alias-label-secondary);font-size:12px}
 .gb-invoke code{padding:1px 6px;border-radius:6px;background:var(--dsw-alias-bg-layer-2);font-family:var(--ds-font-family-code,ui-monospace,SFMono-Regular,Menlo,monospace);color:var(--dsw-alias-label-primary)}
 @media (prefers-reduced-motion:reduce){.gb-card,.gb-select{transition:none}.gb-card:hover,.gb-card:active{transform:none}}

@@ -67,7 +67,7 @@ test('a build that exits zero without producing a bundle still fails', async () 
   await expect(buildPluginDist(r.root, missing.run)).rejects.toThrow('plugin build produced no index.js');
 
   // Every row bundle is checked, not just the first: a build that wrote the
-  // manager and three sub-rows but truncated the client half is still a
+  // manager and two sub-rows but truncated the client half is still a
   // stale-dist smoke waiting to happen.
   const empty = runner((dist) => {
     mkdirSync(dist, { recursive: true });
@@ -133,7 +133,7 @@ test('the smoke sandboxes its children rather than building an env inline', () =
 
 /**
  * V1: disabling the manager row by id used to abort the whole DSH boot, because
- * the three sub-rows declared a hard `inject` on the manager's service. Phase
+ * the sub-rows declared a hard `inject` on the manager's service. Phase
  * three of the smoke is the end-to-end proof, so it must stay wired up — and it
  * must probe EVERY route the suite can own, or a new route could quietly
  * survive a disabled manager.
@@ -147,7 +147,7 @@ test('the smoke has a manager-disabled phase that probes every route the plugin 
   expect(source).toContain('await Bun.sleep(BOOT_SETTLE_MS)');
   expect(BOOT_SETTLE_MS).toBeGreaterThanOrEqual(5000);
 
-  const rows = ['index', 'board', 'skills', 'workflows'];
+  const rows = ['index', 'board', 'workflows'];
   const registered = new Set<string>();
   for (const row of rows) {
     const row_source = readFileSync(join(import.meta.dir, `../plugins/dsh-genie-board/src/${row}.ts`), 'utf8');
@@ -156,4 +156,33 @@ test('the smoke has a manager-disabled phase that probes every route the plugin 
   expect(registered.size).toBeGreaterThan(0);
   const probed = new Set(GENIE_ROUTES.map((route) => route.split('?')[0]));
   expect([...registered].filter((path) => !probed.has(path))).toEqual([]);
+});
+
+/**
+ * Phase two disables a row by its id, so its target has to be a row the shipped
+ * patch still inserts — a retirement that removed the target would leave the
+ * phase asserting a 404 the patch never caused. The retirement itself is pinned
+ * here too: the skills row is gone from the patch, the bundle list and the
+ * probed routes, not moved behind a flag.
+ */
+test('the disable-by-id phase targets a shipped row, and the retired skills row is gone from every half', () => {
+  const patch = readFileSync(join(import.meta.dir, '../plugins/dsh-genie-board/cordis.patch.yml'), 'utf8');
+  expect(patch).toContain('- id: genie-dsh-board-workflows');
+  // The patch may name the retired row in prose; it must not insert it.
+  const inserted = patch.split('\n').filter((line) => !line.trimStart().startsWith('#'));
+  expect(inserted.some((line) => line.includes('genie-dsh-board-skills'))).toBe(false);
+  expect(inserted.some((line) => line.includes('@automagik/genie-dsh-board/skills'))).toBe(false);
+  const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
+  expect(source).toContain('`${workspaceRow}- id: genie-dsh-board-workflows\\n  disabled: true\\n`');
+  expect(PLUGIN_BUNDLES).not.toContain('skills.js');
+  expect(GENIE_ROUTES.some((route) => route.startsWith('skills'))).toBe(false);
+  // ... nor from the package's own halves: the subpath export, the client
+  // panel registration and the row module itself.
+  const board = join(import.meta.dir, '../plugins/dsh-genie-board');
+  const exports = JSON.parse(readFileSync(join(board, 'package.json'), 'utf8')).exports as Record<string, string>;
+  expect(exports['./skills']).toBeUndefined();
+  const client = readFileSync(join(board, 'src/client/index.ts'), 'utf8');
+  expect(client).not.toContain('genie-skills');
+  expect(client).not.toContain('SkillsPanel');
+  expect(existsSync(join(board, 'src/skills.ts'))).toBe(false);
 });

@@ -1,15 +1,13 @@
-import { CatalogService } from './catalog';
+import { CatalogService, documentName } from './catalog';
 import { resolveWorkflowsConfig, schemaOf } from './config';
 import { type HostContext, whenRuntime } from './runtime';
-import { documentName } from './skills';
 
 /**
  * The WORKFLOWS sub-row: `@automagik/genie-dsh-board/workflows`.
  *
  * Reads `.claude/workflows/<name>.js` out of a registered workspace, listing
- * each script's phases and when-to-use guidance. Read-only, like the skills
- * row, and registered only through the manager's fence — and, like it, only
- * once `whenRuntime` hands it that fence.
+ * each script's phases and when-to-use guidance. Read-only, and registered only
+ * through the manager's fence — and only once `whenRuntime` hands it that fence.
  */
 
 export const name = 'genie-dsh-board-workflows';
@@ -24,7 +22,7 @@ export function apply(ctx: HostContext, rawConfig?: unknown): void {
         runtime.mount('workflows', { ...config }),
         runtime.route('/api/genie-board/workflows', 'GET', (req) => catalog.workflows(runtime.workspaceOf(req))),
         runtime.route('/api/genie-board/workflows/document', 'GET', async (req) => ({
-          text: await catalog.document(runtime.workspaceOf(req), 'workflow', documentName(req.url)),
+          text: await catalog.document(runtime.workspaceOf(req), documentName(req.url)),
         })),
       ];
       return () => {

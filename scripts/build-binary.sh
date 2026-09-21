@@ -183,7 +183,6 @@ for required in \
   "plugins/dsh-genie-board/NOTICE" \
   "plugins/dsh-genie-board/dist/index.js" \
   "plugins/dsh-genie-board/dist/board.js" \
-  "plugins/dsh-genie-board/dist/skills.js" \
   "plugins/dsh-genie-board/dist/workflows.js" \
   "plugins/dsh-genie-board/dist/client.js" \
   "plugins/dsh-workflow-loader/package.json" \

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
-/** The four host row bundles plus the one client bundle. */
-const HOST_BUNDLES = ['index.js', 'board.js', 'skills.js', 'workflows.js'] as const;
+/** The three host row bundles plus the one client bundle. */
+const HOST_BUNDLES = ['index.js', 'board.js', 'workflows.js'] as const;
 
 test('valid repeated builds regenerate identical Host and lazy browser bundles', async () => {
   const root = import.meta.dir;
