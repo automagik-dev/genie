@@ -19,7 +19,6 @@ const SHIPPED_SKILLS = [
   'council',
   'deslop',
   'docs',
-  'dream',
   'fix',
   'genie',
   'genie-hacks',
@@ -1031,7 +1030,7 @@ describe('Group E release and documentation contracts', () => {
     expect(root).not.toContain('digest-managed product-skill fallbacks');
   });
 
-  test('ships wish as the one-task delivery front door, with quick and pm both gone', () => {
+  test('ships wish as the one-task delivery front door, with quick, pm and dream all gone', () => {
     const wish = read('skills/wish/SKILL.md');
     const router = read('skills/genie/SKILL.md');
     const lifecycle = read('skills/genie/reference/lifecycle.md');
@@ -1043,12 +1042,15 @@ describe('Group E release and documentation contracts', () => {
     expect(wish).toContain('The workflow never deletes a worktree or a branch.');
     expect(skillNames).not.toContain('quick');
     expect(skillNames).not.toContain('pm');
-    expect(router).toContain('| `wish` or `dream` |');
+    expect(skillNames).not.toContain('dream');
+    expect(router).toContain('| One decided task to deliver now | `wish` |');
+    expect(router).not.toContain('`dream`');
     expect(router).not.toContain('"pm"');
     expect(lifecycle).toContain('`wish` delivers one admitted task');
     expect(lifecycle).not.toContain('| `pm` |');
     expect(overview).not.toContain('| `quick` |');
     expect(overview).not.toContain('`pm`');
+    expect(overview).not.toContain('| `dream` |');
   });
 
   test('lifecycle skills share persisted WISH state and keep reviewers read-only', () => {
@@ -1058,10 +1060,8 @@ describe('Group E release and documentation contracts', () => {
     }
     const brainstorm = read('skills/brainstorm/SKILL.md');
     const review = read('skills/review/SKILL.md');
-    const dream = read('skills/dream/SKILL.md');
     const wish = read('skills/wish/templates/wish-template.md');
 
-    expect(dream).toContain('Status field is exactly `APPROVED`');
     expect(brainstorm).toContain('Poured: an existing WISH.md has persisted APPROVED status');
     expect(brainstorm).toContain('`.genie/INDEX.md` is the single intake index');
     expect(brainstorm).toContain('legacy `.genie/brainstorm.md` idempotently');
@@ -1069,8 +1069,6 @@ describe('Group E release and documentation contracts', () => {
     expect(review).toContain('reviewer is different from the author and remains read-only');
     expect(wish).toContain('## Dependencies');
     expect(wish).toContain('**depends-on:** none');
-    expect(dream).toContain('wish-level `**depends-on:**`');
-    expect(dream).not.toContain('depends_on');
   });
 
   test('lifecycle treats simplicity as a hard gate and replans overdesigned work', () => {
@@ -1112,7 +1110,6 @@ describe('Group E release and documentation contracts', () => {
     for (const path of [
       'skills/review/SKILL.md',
       'skills/work/SKILL.md',
-      'skills/dream/SKILL.md',
       'skills/genie/reference/lifecycle.md',
       'skills/work/references/orca-coordinator.md',
     ]) {
@@ -1121,7 +1118,6 @@ describe('Group E release and documentation contracts', () => {
       expect(caller).not.toContain('## Escalation Diagnosis');
     }
     expect(read('skills/work/SKILL.md')).toContain('repair cap is one loop, separate from `B`');
-    expect(read('skills/dream/SKILL.md')).toMatch(/(?:max|at most|maximum) 3 (?:CI )?attempts/i);
   });
 
   test('router chooses lightweight handling before selecting a workflow', () => {
