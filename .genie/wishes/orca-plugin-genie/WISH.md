@@ -306,18 +306,18 @@ umask 022 && bun test src/term-commands/v5-task.test.ts
 
 ### Group 8: RF5 — nightly genie runs as Orca automations (designed only, not executed)
 
-**Goal:** `dream`, `skill-audit-sweep` and `research-sweep` run nightly as Orca automations whose precheck skips the run when there is nothing to do.
+**Goal:** `skill-audit-sweep` and `research-sweep` run nightly as Orca automations whose precheck skips the run when there is nothing to do.
 
 **Deliverables:**
-1. `genie orca precheck <dream|skill-audit-sweep|research-sweep>`: exit 0 when there is work (a SHIP-ready wish; skill or research drift), non-zero otherwise, one line of reason on stdout.
-2. Three `orca automations create --name "genie <job>" --trigger daily --time <HH:MM> --prompt "/<job>" --provider <agent> --workspace <selector> --precheck "genie orca precheck <job>"` recipes documented in the README, never created by genie itself.
+1. `genie orca precheck <skill-audit-sweep|research-sweep>`: exit 0 when there is work (skill or research drift), non-zero otherwise, one line of reason on stdout.
+2. Two `orca automations create --name "genie <job>" --trigger daily --time <HH:MM> --prompt "/<job>" --provider <agent> --workspace <selector> --precheck "genie orca precheck <job>"` recipes documented in the README, never created by genie itself.
 
 **Interfaces:**
 - Consumes: group 3's `registerOrcaCommands`.
 - Produces: the precheck exit contract.
 
 **Acceptance Criteria:**
-- [ ] `automations list` on a host that followed the recipe shows the three entries and `automations runs` records a skipped run when the precheck exits non-zero.
+- [ ] `automations list` on a host that followed the recipe shows the two entries and `automations runs` records a skipped run when the precheck exits non-zero.
 
 **Validation:**
 ```bash
