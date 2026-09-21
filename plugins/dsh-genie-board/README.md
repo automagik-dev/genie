@@ -1,7 +1,7 @@
 # Genie board for DSH Web
 
-The plugin adds three entries to the DSH Web sidebar, each a global panel in the
-main column: **Genie board**, **Skills** and **Workflows**. Every panel starts with
+The plugin adds two entries to the DSH Web sidebar, each a global panel in the
+main column: **Genie board** and **Workflows**. Every panel starts with
 a registered repository workspace picker.
 
 - **Genie board** shows a board's lanes, cards, owners, liveness, blocks,
@@ -9,29 +9,9 @@ a registered repository workspace picker.
   unblock, claim, release or complete it; Add creates a task on the selected board.
   Refresh and returning to the visible tab read a complete board again; there is no
   polling.
-- **Skills** lists the repository's `skills/<name>/SKILL.md` catalog with a filter,
-  the shipped resources of each skill, and the document body. Entries are grouped
-  under category headers in taxonomy order (lifecycle, routing, delivery,
-  investigation, authoring, verification, integration, skill-ops, then anything
-  uncategorized), read from the optional flat `category:` frontmatter key; the
-  optional `mutates:` key shows as a quiet tag. Both keys are optional and closed:
-  an unrecognised value is dropped rather than shown, so a typo never invents a
-  category header. The panel is a
-  read-only view of the git-tracked source; it does not feed the DSH model. The
-  DSH body already reads genie's skills through the one recorded channel: `genie
-  install`/`update` copy the pinned tree into `~/.agents/skills`, which DSH's stock
-  `skill-filesystem` discoverer (mounted by the `standard` and `ptc` agent presets)
-  serves as source `user-agents`, rank 500, with each skill directory as its
-  resource base. A council on 2026-09-15 decided against a plugin `ctx.skills`
-  provider: it would duplicate delivery outside the install record, bypass the
-  `--integrations none` consent, need its own invalidation, and couple the board
-  row to the skill service. To dogfood a checkout instead of the installed copy,
-  add a profile patch row — `id: skill-filesystem`, `config.customSkillDirs:
-  ['<checkout>/skills']` (rank 300, watched) — which shadows the release copy as an
-  explicit, visible operator choice.
 - **Workflows** lists the repository's `.claude/workflows/<name>.js` catalog (the
   canonical saved-workflow format), each script's phases and when-to-use guidance,
-  and the script body. Both catalogs are read-only: nothing is executed from the
+  and the script body. The catalog is read-only: nothing is executed from the
   panel.
 
 The panels are React components rendered through DSH's own slot system
@@ -39,15 +19,34 @@ The panels are React components rendered through DSH's own slot system
 active theme, and built against the frozen browser module table (React and
 `@deepseek-ai/dsh-client-ui-primitives`).
 
-## Four rows: one manager, three sub-plugins
+### The skills panel that used to live here (retired 2026-09-20)
 
-The Host half is four cordis rows, all from this one package:
+This package carried a third panel, **Skills**, listing the repository's
+`skills/<name>/SKILL.md` catalog with its shipped resources and document body,
+grouped under category headers. It is **deleted, not disabled**:
+`@namastexlabs/dsh-skills` owns every skills surface now, including the
+workspace-scoped read this row served (`GET /dsh-skills/api/workspace?workspace=…`
+answers with the same inventory), so the row, its two routes
+(`/api/genie-board/skills`, `/api/genie-board/skills/document`), its panel, its
+`./skills` export and its `dist/skills.js` bundle no longer exist. There is no
+second skills surface beside the replacement, and nothing here reads
+`skills/` any more.
+
+What the row's grouping and workspace read carried lives on where it belongs:
+the `category` / `mutates` taxonomy stays declared and enforced by this
+repository's own `scripts/skills-inventory-parity.ts` and `scripts/skills-lint.ts`
+(in `bun run check`), and `@namastexlabs/dsh-skills` is the surface that shows
+it. The taxonomy mirror this package kept (`src/taxonomy.ts`) existed only to
+render that panel, so it went with it.
+
+## Three rows: one manager, two sub-plugins
+
+The Host half is three cordis rows, all from this one package:
 
 | Row id | Package specifier | Registers |
 |---|---|---|
 | `genie-dsh-board` | `@automagik/genie-dsh-board` | the `genieRuntime` service and `/api/genie-board/health` |
 | `genie-dsh-board-board` | `@automagik/genie-dsh-board/board` | `/workspaces` and the one mutating `/action` |
-| `genie-dsh-board-skills` | `@automagik/genie-dsh-board/skills` | `/skills` and `/skills/document` |
 | `genie-dsh-board-workflows` | `@automagik/genie-dsh-board/workflows` | `/workflows` and `/workflows/document` |
 
 The **manager** row owns everything the sub-rows must not each own a copy of:
@@ -80,18 +79,17 @@ Health reports which sub-rows are mounted and the resolved config of each:
 ```json
 {
   "compatible": true, "version": "5.x.y", "executable": "/…/genie",
-  "mounted": { "board": true, "skills": true, "workflows": true },
+  "mounted": { "board": true, "workflows": true },
   "config": {
     "manager": { "deadlineMs": 10000, "outputBudgetBytes": 4194304 },
     "board": { "order": 10 },
-    "skills": { "order": 11, "groupBy": "category" },
     "workflows": { "order": 12 }
   }
 }
 ```
 
 Degraded mode is unchanged: a missing or incompatible binary records the error,
-health stays up, the read-only catalogs still serve, and only the mutating route
+health stays up, the read-only catalog still serves, and only the mutating route
 is withheld.
 
 ### Per-row config, and disabling a row
@@ -110,13 +108,12 @@ only a Standard Schema object, not that library specifically.
 | manager | `deadlineMs` | `10000` | the derived socket deadline is `deadlineMs + 5000` and must stay at or under the 120 s ceiling, so the socket timer always strictly outlives the handler budget |
 | manager | `outputBudgetBytes` | `4194304` | hard maximum of 4 MiB; a larger budget cannot help, because the whole answer is buffered before the browser sees any of it |
 | board | `order` | `10` | 0–1000 |
-| skills | `order` / `groupBy` | `11` / `category` | `category` or `name` |
 | workflows | `order` | `12` | 0–1000 |
 
 Any row can be turned off from a profile patch by its id:
 
 ```yaml
-- id: genie-dsh-board-skills
+- id: genie-dsh-board-workflows
   disabled: true
 ```
 
@@ -131,36 +128,45 @@ the whole suite with it:
   disabled: true
 ```
 
-DSH then boots normally with **no Genie surface at all**: the three sub-rows
+DSH then boots normally with **no Genie surface at all**: the two sub-rows
 activate cleanly and register nothing, so `/api/genie-board/health` is absent
-along with `/workspaces`, `/action`, `/skills`, `/skills/document`,
-`/workflows` and `/workflows/document` — every one of them a plain DSH 404 — and
-the browser half shows no Genie panels because it has no health to gate them on.
-This is the supported way to keep the plugin installed while turning it off.
+along with `/workspaces`, `/action`, `/workflows` and `/workflows/document` —
+every one of them a plain DSH 404 — and the browser half shows no Genie panels
+because it has no health to gate them on. This is the supported way to keep the
+plugin installed while turning it off.
 
 `scripts/dsh-genie-board-smoke.ts` mounts both patches as its acceptance proof:
-phase two disables `genie-dsh-board-skills` and phase three disables
+phase two disables `genie-dsh-board-workflows` and phase three disables
 `genie-dsh-board`, holding the Host up past the loader audit (a printed
 authenticated URL is *not* a boot — `dsh web` prints one before it audits the
 settled tree) and then proving every route 404s. `src/board.test.ts` asserts the
 same two shapes against a fake cordis context, plus the rule that keeps the
 manager-disabled case working: no sub-row module exports a row-level `inject`.
 
+The retired skills row must not be re-added behind a flag. `bun test
+scripts/dsh-genie-board-smoke.test.ts` pins that: the disable-by-id phase targets
+a row the shipped `cordis.patch.yml` still inserts, and the skills row is absent
+from the patch's insert list, the bundle list and the probed routes. A profile
+patch that still carries `- id: genie-dsh-board-skills` / `disabled: true` is
+harmless — DSH's `applyEntryPatches` warns `patch: entry … not found` and skips a
+patch whose id no longer exists, so the already-switched-off profile row can stay
+exactly as the operator wrote it.
+
 ### Why the client half is NOT split (2026-09-15)
 
-The Host is four rows; the browser bundle is deliberately still **one**, with a
+The Host is three rows; the browser bundle is deliberately still **one**, with a
 single `exports["./client"]`. DSH's own loader makes per-sub-plugin client
 entry points impossible today:
 
 - `dsh-client-modules/lib/index.js` l.825 keys the client module table by
-  **package name**, so three rows of one package cannot own three client halves.
+  **package name**, so rows of one package cannot own separate client halves.
 - `clientExportOf` (same file, l.155-165) resolves only `exports["./client"]`
   and nothing else.
 - `exactPackageSpecifier` (l.132-138) returns `undefined` for a three-segment
   scoped specifier, so on the non-`internal` path a subpath-only row resolves no
   client half at all.
 
-So `src/client/index.ts` splits its old panel loop into three labelled
+So `src/client/index.ts` splits its panel loop into labelled
 `ctx.effect` registrations inside the one bundle, and gates each on what the
 manager reports as `mounted` — never on loader row state. Each registration also
 refuses to own a panel id another plugin already holds: it checks slot occupancy
@@ -187,10 +193,10 @@ dsh plugin --profile web list --depth 0
 dsh web --no-open --host 127.0.0.1 --port 0
 ```
 
-The immutable artifacts are the four Host bundles — `dist/index.js`,
-`dist/board.js`, `dist/skills.js`, `dist/workflows.js` — and `dist/client.js`
+The immutable artifacts are the three Host bundles — `dist/index.js`,
+`dist/board.js`, `dist/workflows.js` — and `dist/client.js`
 (browser). Each is enumerated explicitly in `DSH_PLUGIN_MEMBERS`; the attested
-tarball gaining a member is a reviewed change, never a build detail.
+tarball gaining or losing a member is a reviewed change, never a build detail.
 Source builds use the root checkout version as their compatibility floor.
 Release packaging stamps `minimumGenieVersion` and package version together and
 rebuilds the Host with that exact candidate without changing checkout metadata. Startup
@@ -317,9 +323,9 @@ the smoke. It installs into a disposable DSH_HOME, registers a disposable
 repository through the real workspace registry, starts/stops/restarts DSH, verifies plugin
 listing and compatibility, creates and moves a task through Host routes, then
 removes the plugin and temporary state in `finally`. Personal profiles are not used.
-Its second phase relaunches the same profile with `genie-dsh-board-skills`
+Its second phase relaunches the same profile with `genie-dsh-board-workflows`
 disabled by id and asserts both halves of the contract: the row's routes are
-absent, and health reports `mounted.skills: false` — which is what the browser
+absent, and health reports `mounted.workflows: false` — which is what the browser
 gates its panel on. Its third phase relaunches with the **manager** row
 `genie-dsh-board` disabled instead, holds the Host up for ten seconds past the
 printed URL so the loader's settled-tree audit has run, and then requires a 404
@@ -329,8 +335,8 @@ guard for the boot abort described under *Per-row config, and disabling a row*.
 ## Release verification
 
 The release payload includes this document, NOTICE, both Cordis manifests,
-package metadata, the four Host row bundles and the browser bundle. The
-repository verifier requires all ten members independently on all four supported
+package metadata, the three Host row bundles and the browser bundle. The
+repository verifier requires all nine members independently on all four supported
 platforms:
 
 ```sh
