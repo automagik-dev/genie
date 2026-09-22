@@ -420,6 +420,9 @@ describe('wish.js gate and the repository hook system', () => {
     expect(gatePrompt).toContain('bun run check');
     expect(gatePrompt).toContain(REFUSAL);
     expect(gatePrompt).toContain('git config --get core.hooksPath');
+    // The run sentence runs the ONE command the classification selected, never `bun run check` unconditionally.
+    expect(gatePrompt).toContain('Then run the selected command exactly once');
+    expect(gatePrompt).not.toContain('Then run bun run check exactly once');
 
     // With no judge field, the scout plan's validation command is the frozen one.
     const fallback = await clean(canned('pass', validating(undefined, 'bun test src/lib/scout-fallback.test.ts')));
