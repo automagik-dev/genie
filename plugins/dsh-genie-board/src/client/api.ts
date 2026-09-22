@@ -1,7 +1,7 @@
-import type { SkillEntry, WorkflowEntry } from '../catalog';
+import type { WorkflowEntry } from '../catalog';
 import type { Aggregate } from '../schema';
 
-export type { Aggregate, SkillEntry, WorkflowEntry };
+export type { Aggregate, WorkflowEntry };
 export type Card = Aggregate['lanes'][number]['cards'][number];
 export interface Workspace {
   id: string;
@@ -19,7 +19,7 @@ export interface Health {
   minimumGenieVersion: string;
   error: string;
   /** Which sub-rows the manager row has mounted; absent on a pre-split Host. */
-  mounted?: { board?: boolean; skills?: boolean; workflows?: boolean };
+  mounted?: { board?: boolean; workflows?: boolean };
   /** The resolved per-row config, manager first. */
   config?: Record<string, Record<string, unknown>>;
 }
@@ -52,13 +52,11 @@ export const api = {
   load: (workspaceId: string, boardRef: string) => post<Aggregate>('action', { action: 'load', workspaceId, boardRef }),
   mutate: (workspaceId: string, boardRef: string, action: string, extra: Record<string, unknown>) =>
     post<Aggregate>('action', { action, workspaceId, boardRef, ...extra }),
-  skills: (workspaceId: string) => get<SkillEntry[]>('skills', { workspaceId }),
   workflows: (workspaceId: string) => get<WorkflowEntry[]>('workflows', { workspaceId }),
-  // Each catalog row owns its own document path: two cordis rows cannot share
-  // one exact route, and the split is what makes disable-by-id remove exactly
-  // that row's surface.
-  document: (workspaceId: string, kind: 'skill' | 'workflow', name: string) =>
-    get<{ text: string }>(`${kind === 'skill' ? 'skills' : 'workflows'}/document`, { workspaceId, name }),
+  // The workflows row owns its own document path rather than a shared
+  // `/document?kind=`: two cordis rows cannot share one exact route, and the
+  // split is what made disabling a row remove exactly that row's surface.
+  document: (workspaceId: string, name: string) => get<{ text: string }>('workflows/document', { workspaceId, name }),
 };
 
 /** Remembered per browser: the last workspace and board the person looked at. */

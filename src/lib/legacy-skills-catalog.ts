@@ -17,6 +17,7 @@ export const LEGACY_SKILL_NAMES: readonly string[] = [
   'code-quality',
   'council-router',
   'debug',
+  'dream',
   'dx-docs',
   'forge',
   'genie-base',
@@ -56,6 +57,7 @@ export const LEGACY_SKILL_NAMES: readonly string[] = [
 export const LEGACY_SKILL_DESCRIPTIONS: readonly string[] = [
   'Activate work mode. Enter focused session with clear context loading, goal orientation, and structured execution. Use when ready to tackle a task with full engagement.',
   'Agent knowledge vault — Obsidian-style brain managed via notesmd-cli. Use when an agent needs to store, search, or retrieve knowledge across sessions.',
+  'Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results.',
   "Bootstrap or migrate a Genie workspace into a new agent/body. Use when the user says 'new workspace', 'new body', 'wake up', 'divide yourself', or asks to carry progress forward.",
   "Bootstrap or migrate an OpenClaw personal-assistant workspace into a new agent/body while preserving the current Genie conventions, persona, and memory files. Use when the user says things like: 'new workspace', 'new body', 'wake up buddy', 'divide yourself', 'make a base agent', 'survive for good', or asks to carry progress forward into a reusable skill/template. Includes scripts to install/update AGENTS.md/SOUL.md/USER.md/TOOLS.md/MEMORY.md/HEARTBEAT.md/IDENTITY.md and daily memory notes, plus a post-migration sanity scan for stale paths and tmux/session conventions.'",
   'Brainstorm and critique with 10 specialist viewpoints. Use for architecture, plan reviews, or tradeoffs.',

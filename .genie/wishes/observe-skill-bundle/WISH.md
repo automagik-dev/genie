@@ -45,7 +45,7 @@ Fix the known gaps in the Phoenix observability tooling merged in #2936 so it wo
 | 5 | Tests at `scripts/observe-backfill.test.ts` and `scripts/observe-annotate.test.ts` after relocation | The release build never copies `scripts/`; tests under `skills/` would reach the public `npx skills add` path unstripped. Precedent: `scripts/design-review-evidence.test.ts:13` imports a skill helper. |
 | 6 | Invocation form in skill docs: `bun "<observe-skill-dir>/scripts/backfill.ts"` and `bash "<observe-skill-dir>/scripts/px-queries.sh"` | `scripts/skills-lint.ts:501` rejects `bun scripts/…ts` as `repo-script-invocation`; brainstorm SKILL.md:40 is the precedent. |
 | 7 | Keep the folder name `scripts/` inside the skill | Biome 1.9.4 `scripts/**` (biome.json:98) also matches `skills/observe/scripts/`; the same files under another folder raise 15 `noConsole` and 7 complexity errors (verified by the plan reviewer in a scratch copy). |
-| 8 | `agents/openai.yaml` sets `allow_implicit_invocation: false` | The description loads on every turn; dream and omni use the same setting. |
+| 8 | `agents/openai.yaml` sets `allow_implicit_invocation: false` | The description loads on every turn; the skill runs only when invoked by name. |
 
 ## Simplicity Case
 

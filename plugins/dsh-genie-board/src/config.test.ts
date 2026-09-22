@@ -7,7 +7,6 @@ import {
   SOCKET_MARGIN_MS,
   resolveBoardConfig,
   resolveManagerConfig,
-  resolveSkillsConfig,
   resolveWorkflowsConfig,
   schemaOf,
   socketDeadlineOf,
@@ -19,7 +18,6 @@ describe('every row config key has a default', () => {
     expect(resolveManagerConfig()).toEqual({ deadlineMs: DEADLINE_MS, outputBudgetBytes: MAX_OUTPUT });
     expect(resolveManagerConfig({})).toEqual({ deadlineMs: DEADLINE_MS, outputBudgetBytes: MAX_OUTPUT });
     expect(resolveBoardConfig()).toEqual({ order: 10 });
-    expect(resolveSkillsConfig()).toEqual({ order: 11, groupBy: 'category' });
     expect(resolveWorkflowsConfig()).toEqual({ order: 12 });
   });
 
@@ -28,7 +26,7 @@ describe('every row config key has a default', () => {
       deadlineMs: 30_000,
       outputBudgetBytes: MAX_OUTPUT,
     });
-    expect(resolveSkillsConfig({ groupBy: 'name' })).toEqual({ order: 11, groupBy: 'name' });
+    expect(resolveBoardConfig({ order: 3 })).toEqual({ order: 3 });
   });
 });
 
@@ -50,10 +48,10 @@ describe('the two manager refinements', () => {
     expect(() => resolveManagerConfig({ outputBudgetBytes: MIN_OUTPUT_BUDGET_BYTES - 1 })).toThrow('outputBudgetBytes');
   });
 
-  test('a non-integer, a non-object and an unknown enum value are all named, not coerced', () => {
+  test('a non-integer, a non-object and an out-of-range order are all named, not coerced', () => {
     expect(() => resolveManagerConfig({ deadlineMs: 10_000.5 })).toThrow('deadlineMs');
     expect(() => resolveManagerConfig([])).toThrow('expected an object');
-    expect(() => resolveSkillsConfig({ groupBy: 'colour' })).toThrow('category, name');
+    expect(() => resolveWorkflowsConfig({ order: 1_001 })).toThrow('expected an integer between 0 and 1000');
     // Every issue of one config is reported together.
     const failure = (() => {
       try {
@@ -68,8 +66,8 @@ describe('the two manager refinements', () => {
 
 describe('the Standard Schema the DSH loader validates against mirrors the pure resolver', () => {
   test('a valid config returns the resolved value; an invalid one returns cordis issues', () => {
-    const schema = schemaOf(resolveSkillsConfig);
-    expect(schema['~standard'].validate({ order: 3 })).toEqual({ value: { order: 3, groupBy: 'category' } });
+    const schema = schemaOf(resolveWorkflowsConfig);
+    expect(schema['~standard'].validate({ order: 3 })).toEqual({ value: { order: 3 } });
     const rejected = schema['~standard'].validate({ order: 'first' });
     expect('issues' in rejected && rejected.issues).toEqual([
       { message: 'expected an integer between 0 and 1000', path: ['order'] },

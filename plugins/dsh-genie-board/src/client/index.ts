@@ -1,10 +1,10 @@
 /**
- * Browser half of the Genie plugin for DSH Web. Registers three global panels:
- * Board, Skills and Workflows. Each is one `sidebar.panellist` icon entry plus
+ * Browser half of the Genie plugin for DSH Web. Registers two global panels:
+ * Board and Workflows. Each is one `sidebar.panellist` icon entry plus
  * one `main` keyed panel with the same id, exactly how the DSH sidebar shell
  * expects plugins to add navigation.
  *
- * ONE bundle, ONE `exports["./client"]`. The host half is four cordis rows, but
+ * ONE bundle, ONE `exports["./client"]`. The host half is three cordis rows, but
  * the client half deliberately is not: DSH's `dsh-client-modules` keys its
  * module table by PACKAGE name (lib/index.js l.825) and resolves only
  * `exports["./client"]` (`clientExportOf`, l.155-165), while
@@ -16,9 +16,9 @@
  */
 import { createElement } from 'react';
 import { BoardPanel } from './BoardPanel';
-import { SkillsPanel, WorkflowsPanel } from './CatalogPanel';
+import { WorkflowsPanel } from './CatalogPanel';
 import { api } from './api';
-import { IconBoard16, IconSkills16, IconWorkflows16 } from './icons';
+import { IconBoard16, IconWorkflows16 } from './icons';
 import { css } from './styles';
 
 interface IconOwnerProps {
@@ -44,11 +44,10 @@ interface ClientContext {
 /** Services required for slot registration. */
 export const inject = ['slots'];
 
-type PanelKey = 'board' | 'skills' | 'workflows';
+type PanelKey = 'board' | 'workflows';
 
 const PANELS = [
   { key: 'board', id: 'genie-board', order: 10, label: 'Genie board', icon: IconBoard16, panel: BoardPanel },
-  { key: 'skills', id: 'genie-skills', order: 11, label: 'Skills', icon: IconSkills16, panel: SkillsPanel },
   {
     key: 'workflows',
     id: 'genie-workflows',
@@ -106,14 +105,14 @@ async function mountedRows(): Promise<Record<PanelKey, boolean>> {
   try {
     const health = await api.health();
     const mounted = health.mounted;
-    // A Host older than the four-row split reports no `mounted` at all; its
-    // single row served every route, so every panel is correct there.
-    if (!mounted) return { board: true, skills: true, workflows: true };
-    return { board: !!mounted.board, skills: !!mounted.skills, workflows: !!mounted.workflows };
+    // A Host older than the row split reports no `mounted` at all; its single
+    // row served every route, so every panel is correct there.
+    if (!mounted) return { board: true, workflows: true };
+    return { board: !!mounted.board, workflows: !!mounted.workflows };
   } catch {
     // Health itself is unreachable. Register everything: the panels render
     // their own error state, which is more useful than an empty sidebar.
-    return { board: true, skills: true, workflows: true };
+    return { board: true, workflows: true };
   }
 }
 

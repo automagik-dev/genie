@@ -15,7 +15,6 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 | Cost | `cost` | Token optimization, model routing, budget control |
 | Integration | `integration` | External tools, APIs, CI/CD, Slack, etc. |
 | Debugging | `debugging` | Agent debugging, tracing, fixing bad behavior |
-| Batch | `batch` | Overnight execution, queued processing |
 | Other | `other` | Uncategorized community patterns |
 
 ## Hacks
@@ -38,7 +37,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **Title:** Multi-Wish Coordination
 - **Category:** teams
 - **Problem:** Several approved wishes depend on each other and running them one at a time wastes time.
-- **Solution:** Use `dream` to batch-execute `APPROVED` wishes in dependency order. Run independent work through the runtime's native subagents, steer a running thread with follow-up messaging, and give parallel writers disjoint files or isolated worktrees per `AGENTS.md` and the `work` skill.
+- **Solution:** Execute each `APPROVED` wish with `work`, ordered by its `depends-on` edges. Run independent wishes through the runtime's native subagents in parallel, steer a running thread with follow-up messaging, and give parallel writers disjoint files or isolated worktrees per `AGENTS.md` and the `work` skill.
 - **Code:**
   ```bash
   genie board --wish auth-refactor        # standalone: shared SQLite state, readable from any terminal
@@ -47,21 +46,6 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
   ```
 - **Benefit:** Independent wishes run in parallel with one shared view of state.
 - **When to use:** Several approved wishes queued, or sprint planning with parallelizable features.
-
-### hack: overnight-batch
-- **ID:** `overnight-batch`
-- **Title:** Overnight Batch Execution with dream
-- **Category:** batch
-- **Problem:** A backlog of approved wishes and limited hours to supervise execution.
-- **Solution:** Invoke the `dream` skill in the active client, pick the `APPROVED` wishes, confirm the dependency-ordered plan, and let it run. In the morning read the report.
-- **Code:**
-  ```bash
-  genie task list --status ready          # standalone: what is claimable
-  cat .genie/DREAM-REPORT.md              # next morning
-  gh pr list --author @me
-  ```
-- **Benefit:** Unattended execution of approved work, with PRs and a report ready for review.
-- **When to use:** End of day with approved wishes waiting.
 
 ### hack: custom-skills
 - **ID:** `custom-skills`
@@ -89,14 +73,14 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
 - **ID:** `cost-optimization`
 - **Title:** Cost Optimization Strategies
 - **Category:** cost
-- **Problem:** Agent usage costs add up with large teams or long dream runs.
+- **Problem:** Agent usage costs add up with large teams or long multi-wish runs.
 - **Solution:** Match model and reasoning effort to each named-agent role (an `implementor-low` role for bulk scaffolding), scope wishes tightly ("Extract auth middleware into src/middleware/auth.ts", not "Refactor the entire codebase"), run the `refine` skill on briefs before dispatch, and take cost evidence from the client's supported usage surface.
 - **Code:**
   ```bash
   codex exec --json "run the bounded task" | jq   # in automation, capture turn usage
   ```
 - **Benefit:** Spend follows task complexity; tighter scope means fewer fix loops. Measure your own savings; they vary by workload.
-- **When to use:** Budget-conscious teams, high agent concurrency, before scaling `dream` runs.
+- **When to use:** Budget-conscious teams, high agent concurrency, before scaling parallel `work` runs.
 
 ### hack: integration-patterns
 - **ID:** `integration-patterns`
@@ -129,7 +113,7 @@ The local registry powering `genie-hacks list|search|show|help`. Canonical publi
   genie task export                       # JSON state dump for a post-mortem
   ```
 - **Benefit:** Systematic investigation instead of guessing.
-- **When to use:** A slow agent, dropping output quality, a stalled run, or a post-mortem on a failed dream run.
+- **When to use:** A slow agent, dropping output quality, a stalled run, or a post-mortem on a failed run.
 
 ### hack: one-task-skips-the-plan
 - **ID:** `one-task-skips-the-plan`

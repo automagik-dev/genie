@@ -3,7 +3,6 @@
   "entry": [
     "plugins/dsh-genie-board/src/index.ts",
     "plugins/dsh-genie-board/src/board.ts",
-    "plugins/dsh-genie-board/src/skills.ts",
     "plugins/dsh-genie-board/src/workflows.ts",
     "plugins/dsh-genie-board/src/client/index.ts",
     "plugins/dsh-genie-board/build.ts",

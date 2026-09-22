@@ -37,7 +37,7 @@ export interface HostContext {
 }
 
 /** The sub-rows this package ships, in panel order. */
-export const SUB_ROWS = ['board', 'skills', 'workflows'] as const;
+export const SUB_ROWS = ['board', 'workflows'] as const;
 export type SubRow = (typeof SUB_ROWS)[number];
 
 export interface GenieRuntime {
@@ -265,7 +265,6 @@ export function createRuntime(ctx: HostContext, config: ManagerConfig, verdict: 
     },
     mounted: () => ({
       board: registered.has('board'),
-      skills: registered.has('skills'),
       workflows: registered.has('workflows'),
     }),
     rows: () => Object.fromEntries(registered) as Partial<Record<SubRow, Record<string, unknown>>>,

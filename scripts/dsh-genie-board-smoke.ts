@@ -8,10 +8,10 @@ export type Runner = (binary: string, args: string[], cwd?: string) => Promise<s
 
 /**
  * The bundles `dsh plugin add link:` loads out of the plugin directory: one
- * host bundle per cordis row (manager, board, skills, workflows) plus the one
+ * host bundle per cordis row (manager, board, workflows) plus the one
  * client bundle the whole suite shares.
  */
-export const PLUGIN_BUNDLES = ['index.js', 'board.js', 'skills.js', 'workflows.js', 'client.js'] as const;
+export const PLUGIN_BUNDLES = ['index.js', 'board.js', 'workflows.js', 'client.js'] as const;
 
 /**
  * Build the plugin the smoke is about to install.
@@ -76,8 +76,6 @@ export const GENIE_ROUTES = [
   'health',
   'workspaces',
   'action',
-  'skills?workspaceId=x',
-  'skills/document?workspaceId=x&name=wish',
   'workflows?workspaceId=x',
   'workflows/document?workspaceId=x&name=work',
 ] as const;
@@ -87,17 +85,17 @@ export const GENIE_ROUTES = [
  *
  * `dsh web` prints its authenticated URL BEFORE the loader audits the settled
  * plugin tree, so a URL is not a boot. The regression this phase owns exited
- * ~1.3 s after printing one, with `3 entries did not activate / ...: pending
+ * ~1.3 s after printing one, with `2 entries did not activate / ...: pending
  * (waiting for service: genieRuntime)`; ten seconds is that gap with room.
  */
 export const BOOT_SETTLE_MS = 10_000;
 
 /**
- * Acceptance proof for disable-by-id, against the REAL four-row patch.
+ * Acceptance proof for disable-by-id, against the REAL shipped patch.
  *
- * The profile turns `genie-dsh-board-skills` off by its id; the row must then
+ * The profile turns `genie-dsh-board-workflows` off by its id; the row must then
  * register no route at all, and the manager's health must report it unmounted
- * — that flag is exactly what the browser gates its Skills panel on, so an
+ * — that flag is exactly what the browser gates its Workflows panel on, so an
  * operator can never be left with a panel whose first request 404s.
  */
 async function assertDisabledRow(launchUrl: string): Promise<Record<string, boolean>> {
@@ -119,14 +117,13 @@ async function assertDisabledRow(launchUrl: string): Promise<Record<string, bool
     await Bun.sleep(100);
   }
   if (!mounted) throw new Error('Disabled-row launch never answered health');
-  if (mounted.skills !== false) throw new Error(`Disabled row still reports mounted: ${JSON.stringify(mounted)}`);
-  if (mounted.board !== true || mounted.workflows !== true)
-    throw new Error(`Disabling one row unmounted another: ${JSON.stringify(mounted)}`);
-  for (const path of ['skills?workspaceId=x', 'skills/document?workspaceId=x&name=wish']) {
+  if (mounted.workflows !== false) throw new Error(`Disabled row still reports mounted: ${JSON.stringify(mounted)}`);
+  if (mounted.board !== true) throw new Error(`Disabling one row unmounted another: ${JSON.stringify(mounted)}`);
+  for (const path of ['workflows?workspaceId=x', 'workflows/document?workspaceId=x&name=work']) {
     const response = await read(path);
     if (response.status !== 404) throw new Error(`Disabled row still serves /${path} (${response.status})`);
   }
-  // The rows that stayed enabled still answer through the one fence.
+  // The row that stayed enabled still answers through the one fence.
   if ((await read('workspaces')).status !== 200) throw new Error('Disabling one row broke the board row');
   return mounted;
 }
@@ -134,8 +131,8 @@ async function assertDisabledRow(launchUrl: string): Promise<Record<string, bool
 /**
  * Acceptance proof for V1: the MANAGER row disabled by its id.
  *
- * The three sub-rows used to declare `inject: ['genieRuntime']`, a HARD cordis
- * dependency, so turning the manager off parked all three loader entries in
+ * The sub-rows used to declare `inject: ['genieRuntime']`, a HARD cordis
+ * dependency, so turning the manager off parked every loader entry in
  * PENDING and DSH's boot audit killed the Host — an operator could disable one
  * plugin row and lose their whole shell. DSH must instead boot with the Genie
  * suite simply absent: no health route, no board routes, no catalog routes.
@@ -260,10 +257,10 @@ async function main(): Promise<void> {
     const workspaceRow = `- insert:\n    - id: smoke-workspace\n      name: ${JSON.stringify(fixture)}\n`;
     await writeFile(join(temporary, 'fixture.patch.yml'), workspaceRow);
     // The acceptance proof for disable-by-id: the same profile with one of the
-    // four rows turned off by its id, exactly as an operator would write it.
+    // sub-rows turned off by its id, exactly as an operator would write it.
     await writeFile(
       join(temporary, 'fixture-disabled.patch.yml'),
-      `${workspaceRow}- id: genie-dsh-board-skills\n  disabled: true\n`,
+      `${workspaceRow}- id: genie-dsh-board-workflows\n  disabled: true\n`,
     );
     // ... and the same profile with the MANAGER row off instead, which is the
     // one row every other row used to depend on to exist.
@@ -333,7 +330,7 @@ async function main(): Promise<void> {
       .find((entry: { id: string }) => entry.id === id);
     if (!commentCard?.comments.some((entry: { note: string }) => entry.note === '--help'))
       throw new Error('Option-shaped comment was not stored literally');
-    // Phase two: the same four-row patch with one SUB-row disabled by its id.
+    // Phase two: the same shipped patch with one SUB-row disabled by its id.
     await stop();
     const mounted = await assertDisabledRow(await start('fixture-disabled.patch.yml'));
     // Phase three: the same patch with the MANAGER row disabled by its id.
@@ -348,7 +345,7 @@ async function main(): Promise<void> {
         boardRef,
         id,
         lane,
-        mountedWithSkillsDisabled: mounted,
+        mountedWithWorkflowsDisabled: mounted,
         routesWithManagerDisabled: managerOff,
         result: 'PASS: install/list/restart/health/load/create/move/disable-by-id/disable-manager',
       }),
