@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `wish-gate-no-hook-system` |
 | **Date** | 2026-09-22 |
 | **Author** | Felipe Rosa |
@@ -173,6 +173,20 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Edits at review:** added Decision 7 (the gate never runs a validation command that pushes, merges, publishes or writes outside the worktree) with its acceptance criterion; removed a leftover template instruction.
 - **Open decisions settled:** `other` stays blocked; `hookSystem` optional and fail-closed; validation command on the contract with the scout fallback; no-reported-check is `pending`; non-bun portability and a repair-round latch stay out.
 - **Base:** `origin/dev` @ `4b3cf03ed85a65d4f50157fbbe887984cee4775a` (recorded here: `genie context` resolves the local `dev`, which is behind the remote on this host).
+
+
+### Execution review — 2026-09-22T17:42:58Z
+
+- **Reviewer:** an independent read-only agent (not the engineer), at `3fde77a37119c1a3e634f2257e66f106830fdfb1`.
+- **Verdict:** SHIP, 0 repair rounds; every Success Criterion and Group 1 Acceptance Criterion met with evidence (focused files green, `bun run check:fast` exit 0, the new cases red against the unpatched `wish.js`, the changed set equal to Files to Create/Modify).
+- **Findings:** two nits. (1) The command list still read as unconditional husky assertions for a no-hook repository — taken up by the final gate below. (2) The script trusts the gate's self-reported `hookSystem: 'none'` without requiring `hookEvidence`; accepted as the plan's Medium risk: a repository that has husky still runs its own pre-push hook on push, and read-back still requires green remote checks.
+
+### Final gate — 2026-09-22T17:42:58Z
+
+- **Orchestrator verdict at `3fde77a37`:** FIX-FIRST. After the no-hook paragraph the gate prompt still said "Then run `bun run check` exactly once", so a low-effort gate in a repository without a hook system could run the full check as well and turn the run red — the failure this wish removes.
+- **Repair:** `3770fa367` — the run sentence names the one command the classification selected (`bun run check` with a hook system, the frozen validation command with none, never both), the two liveness items say "with a hook system only", and a behavior assertion pins it (red first, then green). Diff read in full: 2 files, 6+/3−; the pinned `in the FOREGROUND under a bounded timeout` substring is intact.
+- **Integration:** `7489783da` merges `dev` after #3044; the one conflict (two appended `describe` blocks in `scripts/wish-workflow-behavior.test.ts`) keeps both; six focused files 140 pass / 0 fail on the merged tree.
+- **Verdict:** SHIP. **Status:** SHIPPED on merge of PR #3045 into `dev`, taken only after every required check (linux and darwin) passes on this head.
 
 
 ---
