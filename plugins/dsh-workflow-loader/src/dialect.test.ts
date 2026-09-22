@@ -9,7 +9,10 @@
  * TypeScript-AST transform (wish `dsh-workflow-fork`, Group 0, 2026-09-19) removed
  * the same 35 `effort` options from the same nine files. Byte equality with that
  * transform is deliberately NOT asserted — the two removers consume a different
- * adjacent comma, which is semantically identical.
+ * adjacent comma, which is semantically identical. `evidence-gate` (2026-09-22) is
+ * the tenth file and adds 3 more, taking the catalog total to 38; its count was
+ * read from this transform's own report rather than from the AST cross-check, which
+ * predates that file.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -27,6 +30,7 @@ const EXPECTED_REMOVALS: Record<string, number> = {
   'research-sweep': 4,
   'skill-audit-sweep': 4,
   'skill-intake': 5,
+  'evidence-gate': 3,
   wish: 9,
   workfly: 9,
 };
