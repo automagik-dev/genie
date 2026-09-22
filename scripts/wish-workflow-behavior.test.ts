@@ -28,6 +28,9 @@ type AgentOptions = { label?: string; schema?: Schema };
 type WishResult = {
   ok: boolean;
   state: string;
+  route: string;
+  stageReached: string;
+  notConvened: string[];
   blockedReason: string;
   report: string;
   diff: { files: number; insertions: number; measured: boolean; band: string } | null;
@@ -76,7 +79,11 @@ async function runWish(canned: Canned) {
       unexpected.push(label);
       return null;
     }
-    const value = structuredClone(canned[label]);
+    const answer = canned[label];
+    // An Error instance makes the stage throw; a null makes it answer nothing. Neither is schema-checked.
+    if (answer instanceof Error) throw answer;
+    if (answer === null) return null;
+    const value = structuredClone(answer);
     if (!options.schema) problems.push(`${label}: no schema passed`);
     else problems.push(...validate(options.schema, value).map((p) => `${label}: ${p}`));
     return value;
@@ -427,6 +434,66 @@ describe('wish.js gate and the repository hook system', () => {
     // With no judge field, the scout plan's validation command is the frozen one.
     const fallback = await clean(canned('pass', validating(undefined, 'bun test src/lib/scout-fallback.test.ts')));
     expect(fallback.prompts['gate:check'][0]).toContain('bun test src/lib/scout-fallback.test.ts');
+  });
+});
+
+// Admission failure paths: every early return before a stage's binding exists must still render.
+describe('wish.js admission failures report instead of crashing', () => {
+  const failing = (label: 'admit:scout' | 'admit:judge', answer: null | Error) => {
+    const data = canned();
+    data[label] = answer;
+    const later = ['work:executor', 'gate:check', 'review:diff', 'publish:pr'];
+    if (label === 'admit:scout') later.push('admit:judge');
+    for (const stage of later) delete data[stage];
+    return data;
+  };
+
+  test('(15) the scout answers nothing -> refused, route report, the scout named silent, a rendered report', async () => {
+    const { result, prompts } = await clean(failing('admit:scout', null));
+    expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
+      ok: false,
+      state: 'refused',
+      route: 'report',
+    });
+    expect(result.blockedReason).toContain('The scout returned nothing');
+    expect(result.notConvened).toEqual(['admit:scout']);
+    expect(prompts['admit:judge']).toBeUndefined();
+    expect(result.report).toContain('# Wish delivery');
+    expect(result.report).toContain('## Why this stopped');
+  });
+
+  test('(16) the scout throws -> missed at Admit with the thrown reason, a rendered report', async () => {
+    const { result } = await clean(failing('admit:scout', new Error('SCOUT-THROW-SENTINEL')));
+    expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
+      ok: false,
+      state: 'missed',
+      stageReached: 'Admit',
+    });
+    expect(result.blockedReason).toContain('The Admit stage threw: SCOUT-THROW-SENTINEL');
+    expect(result.report).toContain('Stage reached: Admit');
+  });
+
+  test('(17) the judge answers nothing -> refused, route report, the judge named silent', async () => {
+    const { result } = await clean(failing('admit:judge', null));
+    expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
+      ok: false,
+      state: 'refused',
+      route: 'report',
+    });
+    expect(result.blockedReason).toContain('The judge returned nothing');
+    expect(result.notConvened).toEqual(['admit:judge']);
+    expect(result.report).toContain('# Wish delivery');
+  });
+
+  test('(18) the judge throws -> missed at Admit with the thrown reason', async () => {
+    const { result } = await clean(failing('admit:judge', new Error('JUDGE-THROW-SENTINEL')));
+    expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
+      ok: false,
+      state: 'missed',
+      stageReached: 'Admit',
+    });
+    expect(result.blockedReason).toContain('The Admit stage threw: JUDGE-THROW-SENTINEL');
+    expect(result.report).toContain('Stage reached: Admit');
   });
 });
 

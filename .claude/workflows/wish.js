@@ -1023,6 +1023,7 @@ let mismatches = []
 let repairs = 0
 let blockedReason = ''
 let stageReached = 'Admit'
+let scoutMikro = null
 
 log(`wish on: ${job.objective.slice(0, 160)}${job.objective.length > 160 ? '…' : ''} (slug ${job.slug}, base ${job.base}, repair budget ${job.repairBudget})`)
 if (job.slugTruncated) log(`The slug was truncated to ${job.slug}; the branch and the worktree carry that exact name.`)
@@ -1073,6 +1074,7 @@ if (!scoutStep.value) {
 }
 
 const scout = objectOf(scoutStep.value)
+scoutMikro = scout.mikro
 collectInjections(scout.injectionAttempts)
 const scoutPlan = objectOf(scout.plan)
 const scoutFiles = texts(scoutPlan.files).map(repoRelative).filter(Boolean)
@@ -1560,7 +1562,7 @@ function finish(state, ok, extra) {
     sizeOverride,
     denylistOverride,
     designPreflight,
-    scoutMikro: offloadOrAbsent(scout.mikro, MIKRO_SCOUT_AGENT),
+    scoutMikro: offloadOrAbsent(scoutMikro, MIKRO_SCOUT_AGENT),
     diff,
     diffOutsideDeclared,
     head: headSha,
