@@ -18,7 +18,7 @@ export const meta = {
     {
       title: 'Gate',
       detail:
-        'a mechanical low-effort agent asserts the hooks are live before any push, runs the repository full check once, and passes only on exit 0 with a zero-fail summary; on darwin a failing set that is a subset of the six known-failing test names and fails the same way at the base of the branch is tolerated and said so in one line, a seventh failure or a known name that passes at the base is red, and every failing line is quoted verbatim into the problems list',
+        'a mechanical low-effort agent first classifies the repository hook system from tracked content, git config and the resolved hooks directory; with any hook system it asserts the hooks are live before any push, runs the repository full check once, and passes only on exit 0 with a zero-fail summary; with no hook system at all it runs the frozen contract validation command once instead, passes only on its exit 0, tolerates nothing, and leaves full verification to the remote CI checks read-back already requires — a missing validation command, or dead hooks in a repository that has them, ends the run blocked with nothing pushed; on darwin a failing set that is a subset of the six known-failing test names and fails the same way at the base of the branch is tolerated and said so in one line, a seventh failure or a known name that passes at the base is red, and every failing line is quoted verbatim into the problems list',
     },
     {
       title: 'Review',
@@ -73,7 +73,8 @@ export const meta = {
 // notConvened, report}; `ok` is true for that state alone. A non-success carries the same
 // trace with ok:false and state 'refused' (judged route, an over-maximum or unreported estimate,
 // or a null Admit agent — the objective was never admitted and nothing was created), 'blocked'
-// (adoption test, dead hooks, a BLOCKED verdict, or a read-back mismatch), 'missed' (a spent
+// (adoption test, dead hooks in a repository that has a hook system, no validation command in
+// one that has none, a BLOCKED verdict, or a read-back mismatch), 'missed' (a spent
 // repair budget over a red gate, a null agent from Work onward, or a guarded stage that
 // threw — carrying stageReached), or 'pr-open' (the PR exists and its checks are still
 // running). Intake failure is the one shape with no state: {ok: false, error,
@@ -290,6 +291,9 @@ const JUDGE_SCHEMA = obj(['route', 'reason', 'contract'], {
       `what proves the core is true — the focused test, or a command narrower than ${CHECK_COMMAND}; never ${CHECK_COMMAND} itself, which the script's gate already runs before publish`,
     ),
     files: notes('the declared file set, repository-relative; the executor may touch nothing else'),
+    validationCommand: note(
+      `the one command that proves the change in this repository — the scout plan's validation command or a narrower one, never ${CHECK_COMMAND}; the gate runs it in place of the full check only when the repository has no hook system, and the script freezes it now`,
+    ),
     acceptanceCriteria: notes(
       'written now, before any code exists; a different read-only agent scores each one from the commit and the diff alone, so none may depend on running the repository check or on its exit code',
     ),
@@ -314,7 +318,11 @@ const EXEC_SCHEMA = obj(['status', 'worktree', 'branch', 'filesChanged'], {
 
 // A parity test greps this required list verbatim: the gate cannot lose its hook assertion,
 // its exit code, its verdict, its quoted problems or its summary line without failing a test.
+// `hookSystem` is deliberately OPTIONAL and fail-closed: only the exact value `none` opens the
+// no-hook path, so an answer that omits it keeps the dead-hooks block.
 const GATE_SCHEMA = obj(['hooksLive', 'exitCode', 'pass', 'problems', 'summaryLine'], {
+  hookSystem: enumOf(['husky', 'other', 'none']),
+  hookEvidence: notes('one line per hook-system signal you checked and what it showed'),
   hooksLive: bool,
   hooksReason: note('what you checked and what you found, in one line'),
   exitCode: int,
@@ -709,19 +717,23 @@ function executorPrompt(job, contract, diagnostic) {
   ])
 }
 
-function gatePrompt(job, worktree, branch, headSha) {
+function gatePrompt(job, contract, worktree, branch, headSha) {
+  const validation = contract.validationCommand || '(none was frozen — run nothing, report pass false)'
   return join([
-    `You are the GATE of a single-task delivery run. You are mechanical: you assert, you run one command, you report. You make no judgement about whether the change is good, and you fix nothing.\n\nWorktree: ${worktree}\nBranch: ${branch}\nCommit under test: ${headSha}`,
+    `You are the GATE of a single-task delivery run. You are mechanical: you assert, you run one command, you report. You make no judgement about whether the change is good, and you fix nothing.\n\nWorktree: ${worktree}\nBranch: ${branch}\nCommit under test: ${headSha}\nFrozen validation command: ${validation}`,
     section('The only commands you may run, in this order', [
+      `git ls-files -- .husky .githooks .lefthook .pre-commit-config.yaml 'lefthook.*' '.lefthook.*' '.simple-git-hooks*', git config --get core.hooksPath and ls "$(git rev-parse --git-path hooks)" in the worktree — the hook-system classification, read-only`,
       `${INSTALL_COMMAND} in the worktree, if and only if the check fails for a missing or stale dependency`,
-      'test -f .husky/_/pre-push in the worktree — the hook file must exist',
-      'git config core.hooksPath and git rev-parse --git-path hooks — the configured hooks path must resolve inside this worktree',
-      `${CHECK_COMMAND} in the worktree, once`,
+      'test -f .husky/_/pre-push in the worktree — the hook file must exist — with a hook system only',
+      'git config --get core.hooksPath and git rev-parse --git-path hooks — the configured hooks path must resolve inside this worktree — with a hook system only',
+      `${CHECK_COMMAND} in the worktree, once — or, only when the hook system is none, the frozen validation command above, once`,
       `git merge-base HEAD origin/${job.base}, then ${SHORTSTAT_COMMAND} <that merge-base sha> HEAD in the worktree — the size measurement, read-only`,
       `Only when every failing TEST is one of the six named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
     ]),
-    'Assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
-    `Then run ${CHECK_COMMAND} exactly once in the worktree, in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 ${CHECK_COMMAND} > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground), and on that ONE shell call also set the shell tool's OWN timeout parameter to its maximum (600000 ms where the tool offers one): the timeout inside the command does not stop a harness from moving a call to the background once the tool's default expires (120 s — the check runs for minutes), and a check moved to the background is a backgrounded check — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
+    'Classify the hook system FIRST, from the classification commands above, and report each signal and what it showed in hookEvidence. hookSystem is none only when ALL of these are empty: the tracked paths git ls-files prints, the value git config --get core.hooksPath prints at any scope, and every entry of the resolved hooks directory whose name does not end in .sample. Otherwise it is husky when .husky/ is tracked, else other. Any doubt is a hook system, never none.',
+    `With no hook system (none): skip the liveness assertion, set hooksLive false and hookSystem none, and run the frozen validation command (${validation}) exactly once in place of ${CHECK_COMMAND}, under the same foreground and timeout rule below. Pass only on its exit code 0; the six darwin names below mean nothing here, so tolerate nothing and leave darwinTolerated false. The remote CI checks are the authority at read-back. A validation command that would push, merge, publish, or write outside the worktree is not run: answer pass false and name it in problems. With no validation command frozen, run nothing and answer pass false.`,
+    'With a hook system (husky or other): assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
+    `Then run the selected command exactly once in the worktree — ${CHECK_COMMAND} with a hook system (husky or other), the frozen validation command with none, never both — in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 <the selected command> > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground), and on that ONE shell call also set the shell tool's OWN timeout parameter to its maximum (600000 ms where the tool offers one): the timeout inside the command does not stop a harness from moving a call to the background once the tool's default expires (120 s — the check runs for minutes), and a check moved to the background is a backgrounded check — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
     section(
       'On darwin only, these six TESTS are known to fail for platform reasons — the file is where each one lives, and only the test name after it is tolerated',
       DARWIN_TOLERATED.map((known) => `${known.file} > ${known.test}`),
@@ -782,10 +794,10 @@ function fixPrompt(job, contract, worktree, branch, headSha, problems, round) {
   ])
 }
 
-function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, verdict) {
+function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, verdict, noHookSystem) {
   return join([
     `You are the PUBLISHER of a single-task delivery run. You are the one stage that touches the remote, and you work under a command allowlist. Worktree: ${worktree}. Branch: ${branch}. Local head: ${headSha}. Base: ${job.base}.`,
-    `Every command you run runs INSIDE that worktree, and the git ones are spelled with -C ${worktree} so they cannot land anywhere else. The gate proved the hooks live in that worktree and proved the check green on that tree; a push fired from the shared checkout would run the shared checkout's pre-push hook over the shared checkout's working tree, which is neither the tree that was gated nor a tree this run may operate on.`,
+    `Every command you run runs INSIDE that worktree, and the git ones are spelled with -C ${worktree} so they cannot land anywhere else. ${noHookSystem ? 'The gate found no hook system in that worktree and proved the frozen validation command green on that tree, and CI is the authority for everything else' : 'The gate proved the hooks live in that worktree and proved the check green on that tree'}; a push fired from the shared checkout would run the shared checkout's pre-push hook over the shared checkout's working tree, which is neither the tree that was gated nor a tree this run may operate on.`,
     section('The only commands you may run', [
       'command -v gh — FIRST, before anything else: a presence check that prints a path and reads nothing else',
       `gh pr list --head ${branch} --state open --json number,url,baseRefName — next, so a resumed or repeated run reuses the open PR and never opens a second one`,
@@ -806,13 +818,13 @@ function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, ve
       FORBIDDEN_GENIE_VERBS,
     ]),
     section('The PR body is composed from these four things and nothing else — no narration of your own', [
-      `Contract: core "${contract.core}", oracle "${contract.oracle}", declared files ${contract.files.join(', ')}`,
+      `Contract: core "${contract.core}", oracle "${contract.oracle}", validation command "${contract.validationCommand || '(none)'}", declared files ${contract.files.join(', ')}`,
       `Acceptance criteria: ${contract.acceptanceCriteria.join(' | ') || '(none recorded)'}`,
       `Gate: ${gateSummary}`,
       `Review verdict: ${verdict}`,
       job.issue ? `Issue: ${job.issue}` : 'Issue: (none supplied by the caller — link nothing)',
     ]),
-    `If the bounded checks watch does not resolve inside its timeout, or the timeout binary is unavailable, report checks pending. Never infer a green: pending is a real, reportable outcome and the script renders it as one.`,
+    `If the bounded checks watch does not resolve inside its timeout, or the timeout binary is unavailable, report checks pending. A PR with no reported check is checks pending, never pass. Never infer a green: pending is a real, reportable outcome and the script renders it as one.`,
     'Return the terminal checks state, the failing check names, the PR number and URL, the base ref, and the remote head SHA. prHead is the head BRANCH NAME (headRefName), never the OID — the OID goes in prHeadOid. prFiles is the PR file list as repository-relative path STRINGS mapped from files[].path, one string per changed file, never the objects gh returns: a file set the script cannot read is a file set that was never read back, and the run ends blocked on it. Never the watch stream, never a full file payload.',
     STRUCTURED_ONLY,
   ])
@@ -823,6 +835,7 @@ function contractSection(contract) {
     `## Contract (frozen before any code existed)\n${bullets([
       `Core: ${contract.core || '(not stated)'}`,
       `Oracle: ${contract.oracle || '(not stated)'}`,
+      `Validation command: ${contract.validationCommand || '(none frozen)'}`,
     ])}`,
     section('Cuttable', contract.cuttable),
     section('Declared file set', contract.files),
@@ -830,11 +843,17 @@ function contractSection(contract) {
   ])
 }
 
-function gateSection(gate) {
+function gateSection(gate, contract) {
   if (!gate) return '(the gate never ran)'
+  const evidence = gate.hookEvidence.length ? ` (${gate.hookEvidence.join('; ')})` : ''
   return join([
     bullets([
-      `Hooks live: ${gate.hooksLive ? 'yes' : `no — ${gate.hooksReason || '(no reason given)'}`}`,
+      gate.noHookSystem
+        ? `Hook system: none — no hook system was found${evidence}; ran ${objectOf(contract).validationCommand || '(no validation command was frozen)'} in place of ${CHECK_COMMAND}. CI is the authority: the remote checks must pass at read-back`
+        : `Hook system: ${gate.hookSystem || 'not reported, treated as a hook system'}${evidence}`,
+      gate.noHookSystem
+        ? 'Hooks live: not applicable — no hook system'
+        : `Hooks live: ${gate.hooksLive ? 'yes' : `no — ${gate.hooksReason || '(no reason given)'}`}`,
       `Exit code: ${gate.exitCode}`,
       `Summary: ${gate.summaryLine || '(no summary line returned)'}`,
       `Verdict: ${gate.pass ? 'pass' : 'red'}${gate.darwinTolerated ? ' (darwin-tolerated known failures; the ubuntu quality gate stays the authority)' : ''}`,
@@ -952,7 +971,7 @@ function render(view) {
       `Real (measured by the gate): ${realDiff}`,
       view.diffOutsideDeclared.length ? `Changed outside the declared set: ${view.diffOutsideDeclared.join(', ')}` : 'Every changed path is inside the declared set.',
     ])}`,
-    `## Gate\n${gateSection(view.gate)}`,
+    `## Gate\n${gateSection(view.gate, view.contract)}`,
     `## Review\n${reviewSection(view.review)}`,
     `## Repair rounds\n${roundsSection(view.rounds)}`,
     `## Read-back\n${readBackSection(view)}`,
@@ -1101,6 +1120,8 @@ contract = {
   core: text(judgedContract.core),
   cuttable: texts(judgedContract.cuttable),
   oracle: text(judgedContract.oracle),
+  // Frozen here, before any code exists, so the gate can never choose its own command.
+  validationCommand: text(judgedContract.validationCommand) || text(scoutPlan.validationCommand),
   files: declaredFiles,
   acceptanceCriteria: texts(judgedContract.acceptanceCriteria),
 }
@@ -1225,11 +1246,17 @@ function normalizeGate(raw) {
   const value = objectOf(raw)
   const failingTests = texts(value.failingTests)
   const baseReconfirmed = texts(value.baseReconfirmed)
+  // Fail closed: only the exact `none` is "no hook system"; absent or unknown is a hook system.
+  const noHookSystem = text(value.hookSystem) === 'none'
   const tolerated =
+    !noHookSystem &&
     Boolean(value.darwinTolerated) &&
     darwinTolerable(failingTests, baseReconfirmed, intOf(value.failCount, failingTests.length))
   const clean = intOf(value.exitCode, 1) === 0 && intOf(value.failCount, failingTests.length) === 0
   return {
+    hookSystem: ['husky', 'other', 'none'].includes(text(value.hookSystem)) ? text(value.hookSystem) : '',
+    noHookSystem,
+    hookEvidence: texts(value.hookEvidence),
     hooksLive: Boolean(value.hooksLive),
     hooksReason: text(value.hooksReason),
     exitCode: intOf(value.exitCode, -1),
@@ -1289,7 +1316,7 @@ function measureDiff(when) {
 phase('Gate')
 stageReached = 'Gate'
 const gateStep = await attempt('Gate', () =>
-  agent(gatePrompt(job, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
+  agent(gatePrompt(job, contract, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
 )
 if (!gateStep.ok) return finish('missed', false, { blockedReason: `The Gate stage threw: ${gateStep.reason}.` })
 if (!gateStep.value) {
@@ -1299,11 +1326,15 @@ if (!gateStep.value) {
 }
 gate = normalizeGate(gateStep.value)
 measureDiff('measured by gate:check')
-if (!gate.hooksLive) {
+if (gate.noHookSystem && !contract.validationCommand) {
+  log('Blocked in Gate: the repository has no hook system and the contract froze no validation command. Nothing is pushed unvalidated.')
+  return finish('blocked', false, { blockedReason: 'The repository has no hook system and the contract froze no validation command, so nothing proved the change before a push. Nothing was pushed.' })
+}
+if (!gate.noHookSystem && !gate.hooksLive) {
   log(`Blocked in Gate: the hooks are not live (${gate.hooksReason || 'no reason given'}). Nothing is pushed over dead hooks.`)
   return finish('blocked', false, { blockedReason: `The hooks are not live in the worktree: ${gate.hooksReason || 'the gate gave no reason'}. Nothing was pushed.` })
 }
-log(`Gate: exit ${gate.exitCode}, ${gate.failCount} fail — ${gate.pass ? 'pass' : 'red'}${gate.darwinTolerated ? ' (darwin-tolerated known failures)' : ''}.`)
+log(`Gate: ${gate.noHookSystem ? `no hook system, ran ${contract.validationCommand}; ` : ''}exit ${gate.exitCode}, ${gate.failCount} fail — ${gate.pass ? 'pass' : 'red'}${gate.darwinTolerated ? ' (darwin-tolerated known failures)' : ''}.`)
 
 phase('Review')
 stageReached = 'Review'
@@ -1377,7 +1408,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   diffOutsideDeclared = changed.filter((path) => !contract.files.includes(path)).concat(changedPaths.outside)
 
   const roundGateStep = await attempt('Repair', () =>
-    agent(gatePrompt(job, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
+    agent(gatePrompt(job, contract, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
   )
   if (!roundGateStep.ok) return finish('missed', false, { blockedReason: `The gate of repair round ${round} threw: ${roundGateStep.reason}.` })
   if (!roundGateStep.value) {
@@ -1388,7 +1419,11 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   }
   gate = normalizeGate(roundGateStep.value)
   measureDiff(`measured by gate:round-${round}`)
-  if (!gate.hooksLive) {
+  if (gate.noHookSystem && !contract.validationCommand) {
+    log(`Blocked in repair round ${round}: the repository has no hook system and the contract froze no validation command.`)
+    return finish('blocked', false, { blockedReason: `The repository has no hook system and the contract froze no validation command, so nothing proved repair round ${round} before a push. Nothing was pushed.` })
+  }
+  if (!gate.noHookSystem && !gate.hooksLive) {
     log(`Blocked in repair round ${round}: the hooks are not live (${gate.hooksReason || 'no reason given'}). Nothing is pushed over dead hooks.`)
     return finish('blocked', false, { blockedReason: `The hooks are not live in the worktree after repair round ${round}: ${gate.hooksReason || 'the gate gave no reason'}. Nothing was pushed.` })
   }
@@ -1426,7 +1461,7 @@ if (!gate.pass || review.verdict === 'FIX-FIRST')
 phase('Publish')
 stageReached = 'Publish'
 const publishStep = await attempt('Publish', () =>
-  agent(publishPrompt(job, contract, worktree, branch, headSha, gate.summaryLine || `exit ${gate.exitCode}, ${gate.failCount} fail`, review.verdict), {
+  agent(publishPrompt(job, contract, worktree, branch, headSha, `${gate.noHookSystem ? `no hook system — ran ${contract.validationCommand} in place of ${CHECK_COMMAND}; CI is the authority — ` : ''}${gate.summaryLine || `exit ${gate.exitCode}, ${gate.failCount} fail`}`, review.verdict, gate.noHookSystem), {
     label: 'publish:pr',
     phase: 'Publish',
     schema: PUBLISH_SCHEMA,
