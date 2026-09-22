@@ -79,6 +79,28 @@ the front door that runs this workflow and carries no lens roster of its own
 
 The static half of this contract is enforced by `scripts/workflows-meta.test.ts`.
 
+## When a new entry does not reach user scope
+
+`genie update` reads published GitHub Releases, and a release is published only when
+`release-publish.yml` runs — which is reachable ONLY through `release.yml`'s
+`workflow_call` from `version.yml` on `main`, or through a manual dispatch that offers
+`channel: stable` alone. Two consequences were observed on 2026-09-22 while landing
+`evidence-gate`:
+
+- **Promotion withholds publication by design.** The `dev → main` path tags the version
+  and then runs a step named `Require human initiation for stable release`, so the
+  `Release stable` job is `completed/skipped` and `.well-known` is not rewritten. A
+  promotion therefore moves the tree and the tag without moving the channel.
+- **An orphan tag is not recoverable by re-running.** When the tip of `dev` is an
+  `[auto-version]` commit whose CI result is a `pull_request` event that the merge
+  superseded, `version.yml` skips, and the version becomes a tag with no release. The
+  documented remedy is the next normal PR landed on `dev`: the following `Version` run
+  ships the same tree as the next build number.
+
+So: landing a workflow in this directory is necessary and not sufficient — the entry
+appears in `~/.claude/workflows/` only after a release is published, and the check that
+proves it is `ls ~/.claude/workflows/<name>.js` on the host, not the merge.
+
 ## Measured runs
 
 Token bills recorded so the break-even rule (convert a stage only when its agents consume or
