@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `wish-admit-scout-failure` |
 | **Date** | 2026-09-22 |
 | **Author** | Felipe Rosa |
@@ -136,6 +136,18 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Evidence:** triage reproduced both crashes against the `origin/dev` body (`scout-null` and `scout-throw` → `ReferenceError: Cannot access 'scout' before initialization`; the judge paths already resolve); the TDZ sweep of every binding `finish()`/`render()` read found `scout` as the only late one; regression origin e1fadf651 / 09e9f6556 (#2944); open issue #3040 is the same defect with no linked PR.
 - **Order:** this wish lands first; the sibling `wish-gate-no-hook-system` merges `dev` in after it.
 - **Base:** `origin/dev` @ `4b3cf03ed85a65d4f50157fbbe887984cee4775a` (recorded here: `genie context` resolves the local `dev`, which is behind the remote on this host).
+
+
+### Execution review — 2026-09-22T17:34:02Z
+
+- **Reviewer:** an independent read-only agent (not the engineer), at `9528551ef8ff188b3a460c5d2720e4747f0e90fc`.
+- **Verdict:** SHIP, 0 repair rounds. Every Success Criterion and Group 1 Acceptance Criterion met with evidence: the six plan test files 130 pass / 0 fail; `bun run check:fast` exit 0; in a throwaway copy with the `origin/dev` wish.js restored, cases (15) and (16) fail with `ReferenceError: Cannot access 'scout' before initialization`; the changed set equals Files to Create/Modify.
+- **Findings:** one nit, accepted: the Decision 2 offload line (`not reported by the stage`) for a silent scout is covered by the mikro test's literal pin rather than by a behavior assertion.
+
+### Final gate — 2026-09-22T17:34:02Z
+
+- **Orchestrator verdict:** SHIP. Diff read in full: three lines in `wish.js` (a hoisted `let scoutMikro`, its assignment after `const scout`, the `finish()` read), the fake agent's `null`/`Error` answers, four admission-failure cases whose later stages are absent from the canned set so any dispatch would surface as `unexpected`.
+- **Status:** SHIPPED on merge of PR #3044 into `dev`, which is taken only after every required check (linux and darwin) passes on this head. Closes #3040 on promotion to `main`.
 
 
 ---
