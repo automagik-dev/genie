@@ -318,8 +318,9 @@ const EXEC_SCHEMA = obj(['status', 'worktree', 'branch', 'filesChanged'], {
 
 // A parity test greps this required list verbatim: the gate cannot lose its hook assertion,
 // its exit code, its verdict, its quoted problems or its summary line without failing a test.
-// `hookSystem` is deliberately OPTIONAL and fail-closed: only the exact value `none` opens the
-// no-hook path, so an answer that omits it keeps the dead-hooks block.
+// `hookSystem` is deliberately OPTIONAL and fail-closed: only the exact value `none`, backed by at
+// least one `hookEvidence` line, opens the no-hook path, so an answer that omits either keeps the
+// dead-hooks block.
 const GATE_SCHEMA = obj(['hooksLive', 'exitCode', 'pass', 'problems', 'summaryLine'], {
   hookSystem: enumOf(['husky', 'other', 'none']),
   hookEvidence: notes('one line per hook-system signal you checked and what it showed'),
@@ -498,6 +499,24 @@ function baseRefusal(base) {
   if (!BRANCH_NAME.test(base) || base.includes('..') || base.includes('//') || base.endsWith('.lock')) return 'shape'
   return PROTECTED_BASE.test(base) ? 'protected' : ''
 }
+
+// The frozen validation command is agent-authored text from stages that read untrusted input, and in
+// a repository with no hook system the gate runs it verbatim. A command that reaches the remote or
+// publishes is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and no
+// gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
+const UNSAFE_VALIDATION = [
+  { rule: 'a git push', pattern: /\bgit\b[^;&|\n]*\spush(?=\s|$)/ },
+  {
+    rule: 'a gh verb that changes the remote',
+    pattern: /\bgh\b[^;&|\n]*\s(pr\s+(merge|create|close|edit|comment|review|ready|reopen)|release|repo|api|workflow|issue|secret|variable)(?=\s|$)/,
+  },
+  { rule: 'a package publish', pattern: /\b(npm|pnpm|yarn|bun)\b[^;&|\n]*\spublish(?=\s|$)/ },
+]
+function validationRefusal(command) {
+  const hit = UNSAFE_VALIDATION.find(({ pattern }) => pattern.test(command))
+  return hit ? hit.rule : ''
+}
+const refusalNote = (contract) => (contract.validationRefused ? ` it may run (refused at admission: ${contract.validationRefused})` : '')
 
 // Accept an object or a JSON-encoded string (some invocation paths stringify args); a bare
 // string degrades to the objective. `rejection` carries a refusal the caller must see with
@@ -835,7 +854,7 @@ function contractSection(contract) {
     `## Contract (frozen before any code existed)\n${bullets([
       `Core: ${contract.core || '(not stated)'}`,
       `Oracle: ${contract.oracle || '(not stated)'}`,
-      `Validation command: ${contract.validationCommand || '(none frozen)'}`,
+      `Validation command: ${contract.validationCommand || (contract.validationRefused ? `(none frozen — refused at admission: ${contract.validationRefused})` : '(none frozen)')}`,
     ])}`,
     section('Cuttable', contract.cuttable),
     section('Declared file set', contract.files),
@@ -1116,15 +1135,20 @@ const judged = objectOf(judgeStep.value)
 collectInjections(judged.injectionAttempts)
 const judgedContract = objectOf(judged.contract)
 const declaredFiles = texts(judgedContract.files).map(repoRelative).filter(Boolean)
+// Frozen here, before any code exists, so the gate can never choose its own command — and refused
+// here when it would reach the remote, so the gate never sees it.
+const proposedValidation = text(judgedContract.validationCommand) || text(scoutPlan.validationCommand)
+const refusedValidation = validationRefusal(proposedValidation)
 contract = {
   core: text(judgedContract.core),
   cuttable: texts(judgedContract.cuttable),
   oracle: text(judgedContract.oracle),
-  // Frozen here, before any code exists, so the gate can never choose its own command.
-  validationCommand: text(judgedContract.validationCommand) || text(scoutPlan.validationCommand),
+  validationCommand: refusedValidation ? '' : proposedValidation,
+  validationRefused: refusedValidation ? `${proposedValidation} — ${refusedValidation}` : '',
   files: declaredFiles,
   acceptanceCriteria: texts(judgedContract.acceptanceCriteria),
 }
+if (refusedValidation) log(`The proposed validation command was refused at admission (${refusedValidation}) and frozen empty: a repository with no hook system will stop at the gate.`)
 route = ROUTES.includes(text(judged.route)) ? text(judged.route) : 'report'
 routeReason = text(judged.reason)
 
@@ -1257,7 +1281,12 @@ function normalizeGate(raw) {
     darwinTolerable(failingTests, baseReconfirmed, intOf(value.failCount, failingTests.length))
   const clean = intOf(value.exitCode, 1) === 0 && intOf(value.failCount, failingTests.length) === 0
   return {
-    hookSystem: ['husky', 'other'].includes(reportedHookSystem) || noHookSystem ? reportedHookSystem : '',
+    hookSystem:
+      ['husky', 'other'].includes(reportedHookSystem) || noHookSystem
+        ? reportedHookSystem
+        : reportedHookSystem === 'none'
+          ? 'none claimed with no evidence, treated as a hook system'
+          : '',
     noHookSystem,
     hookEvidence,
     hooksLive: Boolean(value.hooksLive),
@@ -1331,7 +1360,7 @@ gate = normalizeGate(gateStep.value)
 measureDiff('measured by gate:check')
 if (gate.noHookSystem && !contract.validationCommand) {
   log('Blocked in Gate: the repository has no hook system and the contract froze no validation command. Nothing is pushed unvalidated.')
-  return finish('blocked', false, { blockedReason: 'The repository has no hook system and the contract froze no validation command, so nothing proved the change before a push. Nothing was pushed.' })
+  return finish('blocked', false, { blockedReason: `The repository has no hook system and the contract froze no validation command${refusalNote(contract)}, so nothing proved the change before a push. Nothing was pushed.` })
 }
 if (!gate.noHookSystem && !gate.hooksLive) {
   log(`Blocked in Gate: the hooks are not live (${gate.hooksReason || 'no reason given'}). Nothing is pushed over dead hooks.`)
@@ -1424,7 +1453,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   measureDiff(`measured by gate:round-${round}`)
   if (gate.noHookSystem && !contract.validationCommand) {
     log(`Blocked in repair round ${round}: the repository has no hook system and the contract froze no validation command.`)
-    return finish('blocked', false, { blockedReason: `The repository has no hook system and the contract froze no validation command, so nothing proved repair round ${round} before a push. Nothing was pushed.` })
+    return finish('blocked', false, { blockedReason: `The repository has no hook system and the contract froze no validation command${refusalNote(contract)}, so nothing proved repair round ${round} before a push. Nothing was pushed.` })
   }
   if (!gate.noHookSystem && !gate.hooksLive) {
     log(`Blocked in repair round ${round}: the hooks are not live (${gate.hooksReason || 'no reason given'}). Nothing is pushed over dead hooks.`)

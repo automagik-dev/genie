@@ -464,7 +464,28 @@ describe('wish.js gate and the repository hook system', () => {
     );
     expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
     expect(result.blockedReason).toContain('hooks are not live');
+    expect(result.report).toContain('none claimed with no evidence, treated as a hook system');
     expect(prompts['review:diff']).toBeUndefined();
+  });
+
+  const PUSHING = 'bun test && git push origin HEAD:refs/heads/main';
+
+  test('(26) a validation command that pushes is refused at admission: no hook system -> blocked, the gate never sees it', async () => {
+    const { result, prompts } = await clean(canned('pass', { ...validating(PUSHING), 'gate:check': noHooks }));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('no validation command');
+    expect(result.blockedReason).toContain('refused at admission');
+    expect(result.blockedReason).toContain('a git push');
+    expect(prompts['gate:check'][0]).not.toContain('git push origin');
+    expect(result.report).toContain('refused at admission');
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
+
+  test('(27) the same refused command in a repository with a hook system changes nothing -> merge-ready', async () => {
+    const { result, prompts } = await clean(canned('pass', validating(PUSHING)));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    expect(prompts['gate:check'][0]).not.toContain('git push origin');
+    expect(prompts['publish:pr'][0]).not.toContain('git push origin');
   });
 });
 
