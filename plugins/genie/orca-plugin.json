@@ -3,7 +3,7 @@
   "id": "genie",
   "publisher": "automagik",
   "name": "Genie",
-  "version": "6.260924.3",
+  "version": "6.260924.5",
   "description": "Genie's wish, work, review, fix, report and council verbs in Orca's palette and keybindings; genie lifecycle status and review verdicts mirrored onto the existing board cards; human decisions as Orca gates; result notifications. Genie: Update reads the public release manifest for the installed update channel from raw.githubusercontent.com — the plugin's only network egress.",
   "author": {
     "name": "Namastex Labs",
