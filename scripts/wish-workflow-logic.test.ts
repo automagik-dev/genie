@@ -29,6 +29,9 @@ const DECLARATIONS = [
   lift(/^const BRANCH_NAME = .*$/m),
   lift(/^const PROTECTED_BASE = .*$/m),
   lift(/^function baseRefusal\(base\) \{[\s\S]*?^\}$/m),
+  // The Admit-side refusal of a validation command that would reach the remote or publish.
+  lift(/^const UNSAFE_VALIDATION = \[[\s\S]*?^\]$/m),
+  lift(/^function validationRefusal\(command\) \{[\s\S]*?^\}$/m),
   // `normalizeGate` is the decision itself: it is what turns a gate's answer into `pass`.
   lift(/^const list = .*$/m),
   lift(/^const objectOf = .*$/m),
@@ -44,12 +47,13 @@ interface KnownFailure {
 }
 
 const api = new Function(
-  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal, normalizeGate }`,
+  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal, validationRefusal, normalizeGate }`,
 )() as {
   DARWIN_TOLERATED: KnownFailure[];
   toleratedIndex: (entry: string) => number;
   darwinTolerable: (failing: string[], reconfirmed: string[], failCount: number) => boolean;
   baseRefusal: (base: string) => string;
+  validationRefusal: (command: string) => string;
   normalizeGate: (raw: unknown) => {
     pass: boolean;
     darwinTolerated: boolean;
@@ -255,6 +259,47 @@ describe('a gate in a repository with no hook system', () => {
     for (const hookEvidence of [[], undefined, ['', '  ']]) {
       const gate = api.normalizeGate({ ...noHooks, hookEvidence });
       expect([hookEvidence, gate.noHookSystem]).toEqual([hookEvidence, false]);
+    }
+  });
+});
+
+describe('a validation command that would reach the remote is refused at admission', () => {
+  test('each rule names what it caught, in every spelling the gate could be handed', () => {
+    const refused: Array<[string, string]> = [
+      ['git push origin HEAD:refs/heads/main', 'a git push'],
+      ['git -C /tmp/elsewhere push', 'a git push'],
+      ['bun test && git push --force', 'a git push'],
+      ['gh pr merge 12 --merge', 'a gh verb that changes the remote'],
+      ['gh -R owner/repo pr create --fill', 'a gh verb that changes the remote'],
+      ['bun test | gh api repos/o/r/merges -f base=main', 'a gh verb that changes the remote'],
+      ['gh release create v1', 'a gh verb that changes the remote'],
+      ['npm publish', 'a package publish'],
+      ['bun run build && bun publish --tag next', 'a package publish'],
+      // A verb followed directly by a separator, a paren or a quote is still the verb.
+      ['git push;', 'a git push'],
+      ['git push&&true', 'a git push'],
+      ['bun test $(git push)', 'a git push'],
+      ["bash -c 'git push'", 'a git push'],
+      ['git "push" origin', 'a git push'],
+      ['bun test `git push`', 'a git push'],
+      ['npm publish;', 'a package publish'],
+      ['gh release create v1;', 'a gh verb that changes the remote'],
+    ];
+    for (const [command, rule] of refused) expect([command, api.validationRefusal(command)]).toEqual([command, rule]);
+  });
+
+  test('ordinary validation commands, including files named after the verbs, are not refused', () => {
+    for (const command of [
+      'bun test src/lib/fixture.test.ts --bail',
+      'bun test publish.test.ts',
+      'npm test -- push.spec.js',
+      'git diff --check',
+      'make check',
+      'pytest tests/test_publish.py',
+      'cargo test --package gh-push',
+      '',
+    ]) {
+      expect([command, api.validationRefusal(command)]).toEqual([command, '']);
     }
   });
 });
