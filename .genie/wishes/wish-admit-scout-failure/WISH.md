@@ -112,7 +112,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 - [ ] A `/wish` run whose scout agent fails (a transient upstream error) returns `missed` with `Stage reached: Admit` and a report, not a crash.
 - [ ] A normal `/wish` run on dev still reaches `merge-ready` or `pr-open` with the scout offload line in its Admission section.
-- [ ] `genie update` delivers the fixed `wish.js` to `~/.claude/workflows/wish.js` unchanged in shape (leading `export const meta` literal intact).
+- [x] `genie update` delivers the fixed `wish.js` to `~/.claude/workflows/wish.js` unchanged in shape (leading `export const meta` literal intact).
 
 ---
 
@@ -148,6 +148,12 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - **Orchestrator verdict:** SHIP. Diff read in full: three lines in `wish.js` (a hoisted `let scoutMikro`, its assignment after `const scout`, the `finish()` read), the fake agent's `null`/`Error` answers, four admission-failure cases whose later stages are absent from the canned set so any dispatch would surface as `unexpected`.
 - **Status:** SHIPPED on merge of PR #3044 into `dev`, which is taken only after every required check (linux and darwin) passes on this head. Closes #3040 on promotion to `main`.
+
+### QA — 2026-09-24 (issue #3047)
+
+- **Promotion:** merged to `main` in PR #3042 (merge commit `7462baa01`); #3040 closed on that merge.
+- **Delivery (QA 3), proven for the payload:** the published dev release `v6.260922.4` tarball (`genie-6.260922.4-linux-x64-glibc.tar.gz`) carries `templates/workflows/wish.js` with sha256 `a6382a73…9578f`, byte-equal to `.claude/workflows/wish.js` at `v6.260922.4`. It opens with the `export const meta` literal. The copy from templates to `~/.claude/workflows/` is unchanged since `v6.260922.2`. The dogfood host's installed `wish.js` is byte-equal to `v6.260922.2`'s (`386ef672…`), so that path is live. The stable channel moves only on a human-initiated stable release.
+- **Live runs (QA 1 and 2): not performed.** Behavior cases (22)–(25) run the shipped `wish.js` body end to end under fake stage agents, and read-back case (1) covers the normal `merge-ready` path with the offload line. That is harness evidence, not a live run, so those two boxes stay open.
 
 
 ---

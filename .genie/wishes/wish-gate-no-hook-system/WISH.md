@@ -146,7 +146,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 - [ ] A `/wish` run against a scratch repository with no hook system and a CI workflow reaches `pr-open` or `merge-ready`. Its report says no hook system was found, names the validation command that ran, and states that CI is the authority
 - [ ] A `/wish` run in genie still asserts `.husky/_/pre-push` and runs `bun run check` at the gate, and ends `blocked` when the hooks are removed from the worktree
-- [ ] The focused wish workflow test files pass on both the linux and darwin CI legs
+- [x] The focused wish workflow test files pass on both the linux and darwin CI legs
 
 ---
 
@@ -187,6 +187,13 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Repair:** `3770fa367` — the run sentence names the one command the classification selected (`bun run check` with a hook system, the frozen validation command with none, never both), the two liveness items say "with a hook system only", and a behavior assertion pins it (red first, then green). Diff read in full: 2 files, 6+/3−; the pinned `in the FOREGROUND under a bounded timeout` substring is intact.
 - **Integration:** `7489783da` merges `dev` after #3044; the one conflict (two appended `describe` blocks in `scripts/wish-workflow-behavior.test.ts`) keeps both; six focused files 140 pass / 0 fail on the merged tree.
 - **Verdict:** SHIP. **Status:** SHIPPED on merge of PR #3045 into `dev`, taken only after every required check (linux and darwin) passes on this head.
+
+### QA — 2026-09-24 (issue #3047)
+
+- **Promotion:** merged to `main` in PR #3042 (merge commit `7462baa01`).
+- **CI legs (QA 3):** at `f3fd7f3ae`, the PR #3042 head, `Unit (build + typecheck + lint + dead-code + test)`, `Unit (darwin — build + typecheck + test)` and `Quality Gate (typecheck + lint + test)` all passed, running the focused wish workflow files on linux and darwin.
+- **Live runs (QA 1 and 2): not performed.** Behavior cases (15)–(19) run the shipped `wish.js` body end to end under fake stage agents: dead hooks block for husky, other and absent; no hook system reaches `merge-ready`, `pr-open` or `blocked` from the remote checks; the gate prompt carries the frozen command and genie's `.husky/_/pre-push` + `bun run check` path. That is harness evidence, not a live run, so those two boxes stay open.
+- **Follow-ups:** #3049 (a `none` must carry hook evidence) and #3050 (unsafe validation commands refused at admission).
 
 
 ---
