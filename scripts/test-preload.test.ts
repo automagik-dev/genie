@@ -10,7 +10,8 @@ describe('the test preload makes the suite hermetic to inherited colour policy',
     const probe = spawnSync(
       process.execPath,
       ['test', './scripts/test-preload.test.ts', '-t', 'probe: FORCE_COLOR is absent'],
-      { cwd: ROOT, env: { ...process.env, FORCE_COLOR: '3' }, encoding: 'utf8' },
+      // A synchronous spawn cannot be interrupted by the test timer, so it carries its own bound.
+      { cwd: ROOT, env: { ...process.env, FORCE_COLOR: '3' }, encoding: 'utf8', timeout: 60_000 },
     );
     expect(`${probe.stdout}${probe.stderr}`).toContain('1 pass');
     expect(probe.status).toBe(0);
