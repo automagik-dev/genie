@@ -275,6 +275,15 @@ describe('a validation command that would reach the remote is refused at admissi
       ['gh release create v1', 'a gh verb that changes the remote'],
       ['npm publish', 'a package publish'],
       ['bun run build && bun publish --tag next', 'a package publish'],
+      // A verb followed directly by a separator, a paren or a quote is still the verb.
+      ['git push;', 'a git push'],
+      ['git push&&true', 'a git push'],
+      ['bun test $(git push)', 'a git push'],
+      ["bash -c 'git push'", 'a git push'],
+      ['git "push" origin', 'a git push'],
+      ['bun test `git push`', 'a git push'],
+      ['npm publish;', 'a package publish'],
+      ['gh release create v1;', 'a gh verb that changes the remote'],
     ];
     for (const [command, rule] of refused) expect([command, api.validationRefusal(command)]).toEqual([command, rule]);
   });

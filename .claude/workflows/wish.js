@@ -505,18 +505,20 @@ function baseRefusal(base) {
 // publishes is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and no
 // gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
 const UNSAFE_VALIDATION = [
-  { rule: 'a git push', pattern: /\bgit\b[^;&|\n]*\spush(?=\s|$)/ },
+  // A verb ends at whitespace, a shell separator, a closing paren or a quote, so `git push;`,
+  // `$(git push)` and `bash -c 'git push'` are caught as surely as `git push origin`.
+  { rule: 'a git push', pattern: /\bgit\b[^;&|\n]*\s["']?push(?=[\s;&|)'"`]|$)/ },
   {
     rule: 'a gh verb that changes the remote',
-    pattern: /\bgh\b[^;&|\n]*\s(pr\s+(merge|create|close|edit|comment|review|ready|reopen)|release|repo|api|workflow|issue|secret|variable)(?=\s|$)/,
+    pattern: /\bgh\b[^;&|\n]*\s["']?(pr\s+(merge|create|close|edit|comment|review|ready|reopen)|release|repo|api|workflow|issue|secret|variable)(?=[\s;&|)'"`]|$)/,
   },
-  { rule: 'a package publish', pattern: /\b(npm|pnpm|yarn|bun)\b[^;&|\n]*\spublish(?=\s|$)/ },
+  { rule: 'a package publish', pattern: /\b(npm|pnpm|yarn|bun)\b[^;&|\n]*\s["']?publish(?=[\s;&|)'"`]|$)/ },
 ]
 function validationRefusal(command) {
   const hit = UNSAFE_VALIDATION.find(({ pattern }) => pattern.test(command))
   return hit ? hit.rule : ''
 }
-const refusalNote = (contract) => (contract.validationRefused ? ` it may run (refused at admission: ${contract.validationRefused})` : '')
+const refusalNote = (contract) => (contract.validationRefused ? `: the proposed one was refused at admission (${contract.validationRefused})` : '')
 
 // Accept an object or a JSON-encoded string (some invocation paths stringify args); a bare
 // string degrades to the objective. `rejection` carries a refusal the caller must see with
