@@ -144,7 +144,7 @@ bun test scripts/wish-workflow-behavior.test.ts scripts/wish-workflow-logic.test
 
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
-- [ ] A `/wish` run against a scratch repository with no hook system and a CI workflow reaches `pr-open` or `merge-ready`. Its report says no hook system was found, names the validation command that ran, and states that CI is the authority
+- [x] A `/wish` run against a scratch repository with no hook system and a CI workflow reaches `pr-open` or `merge-ready`. Its report says no hook system was found, names the validation command that ran, and states that CI is the authority
 - [ ] A `/wish` run in genie still asserts `.husky/_/pre-push` and runs `bun run check` at the gate, and ends `blocked` when the hooks are removed from the worktree
 - [x] The focused wish workflow test files pass on both the linux and darwin CI legs
 
@@ -192,7 +192,10 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - **Promotion:** merged to `main` in PR #3042 (merge commit `7462baa01`).
 - **CI legs (QA 3):** at `f3fd7f3ae`, the PR #3042 head, `Unit (build + typecheck + lint + dead-code + test)`, `Unit (darwin — build + typecheck + test)` and `Quality Gate (typecheck + lint + test)` all passed, running the focused wish workflow files on linux and darwin.
-- **Live runs (QA 1 and 2): not performed.** Behavior cases (15)–(19) run the shipped `wish.js` body end to end under fake stage agents: dead hooks block for husky, other and absent; no hook system reaches `merge-ready`, `pr-open` or `blocked` from the remote checks; the gate prompt carries the frozen command and genie's `.husky/_/pre-push` + `bun run check` path. That is harness evidence, not a live run, so those two boxes stay open.
+- **Live runs — 2026-09-24, the delivered `~/.claude/workflows/wish.js` at stable `v6.260924.4`:**
+  - **QA 1, no hook system:** a private scratch repository (a bun project with a GitHub Actions CI job, no tracked hook paths, no `core.hooksPath`, only `.sample` hooks) ran `/wish` from its own session. It ended `merge-ready` with remote checks `pass`. The gate answered `hookSystem: none` with three evidence lines and ran the frozen `bun test src/math.test.ts` in place of `bun run check`. The report reads "Hook system: none — no hook system was found (…); ran bun test src/math.test.ts in place of bun run check. CI is the authority: the remote checks must pass at read-back".
+  - **QA 2, genie:** the genie run behind PR #3057 answered `hookSystem: husky`, found `.husky/_/pre-push` present and the hooks path inside the worktree, and ran `bun run check` green (3193 tests, exit 0).
+  - **QA 2, dead hooks:** in a run on the scratch repository's `qa-hooked` base, which tracks a `.pre-commit-config.yaml`, the gate answered `hookSystem: other` with no live pre-push hook. The run ended `blocked`: "The hooks are not live in the worktree … Nothing was pushed". The review never ran, and no branch reached the remote. This observes the dead-hooks stop on a repository that has a hook system; genie itself was not run with its hooks removed, because its executor reinstalls them before the first commit.
 - **Follow-ups:** #3049 (a `none` must carry hook evidence) and #3050 (unsafe validation commands refused at admission).
 
 
