@@ -1,4 +1,6 @@
 [test]
 # Preload removed in the v5 demolition: ./src/lib/test-setup.ts booted a pgserve
 # daemon for the v4 harness (now deleted). Zero-daemon v5 tests are SQLite-backed
-# and need no global preload.
+# and need no daemon. The one preload left strips inherited colour policy
+# (FORCE_COLOR) so the suite is hermetic under any host or agent harness.
+preload = ["./scripts/test-preload.ts"]
