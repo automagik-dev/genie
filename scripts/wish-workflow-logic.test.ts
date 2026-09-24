@@ -50,7 +50,13 @@ const api = new Function(
   toleratedIndex: (entry: string) => number;
   darwinTolerable: (failing: string[], reconfirmed: string[], failCount: number) => boolean;
   baseRefusal: (base: string) => string;
-  normalizeGate: (raw: unknown) => { pass: boolean; darwinTolerated: boolean; failCount: number };
+  normalizeGate: (raw: unknown) => {
+    pass: boolean;
+    darwinTolerated: boolean;
+    failCount: number;
+    noHookSystem: boolean;
+    hookEvidence: string[];
+  };
 };
 
 /** The gate reports as many failures as it names unless a test says otherwise. */
@@ -204,6 +210,45 @@ describe('the gate answer becomes a pass only where the script allows it', () =>
       api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false, pass: false }))
         .pass,
     ).toBe(false);
+  });
+});
+
+describe('a gate in a repository with no hook system', () => {
+  const noHooks = {
+    hookSystem: 'none',
+    hooksLive: false,
+    exitCode: 0,
+    failCount: 0,
+    failingTests: [],
+    problems: [],
+    summaryLine: 'ok',
+    pass: true,
+    hookEvidence: ['git ls-files: nothing tracked'],
+  };
+
+  test('never tolerates the six darwin names: they are genie tests, meaningless elsewhere', () => {
+    const gate = api.normalizeGate({
+      ...noHooks,
+      exitCode: 1,
+      failCount: ALL_NAMES.length,
+      failingTests: ALL_NAMES,
+      baseReconfirmed: ALL_NAMES,
+      darwinTolerated: true,
+    });
+    expect({ pass: gate.pass, darwinTolerated: gate.darwinTolerated }).toEqual({ pass: false, darwinTolerated: false });
+  });
+
+  test('passes on exit 0 of the validation command and is red on a non-zero exit', () => {
+    const green = api.normalizeGate(noHooks);
+    expect({ pass: green.pass, noHookSystem: green.noHookSystem }).toEqual({ pass: true, noHookSystem: true });
+    expect(green.hookEvidence).toEqual(['git ls-files: nothing tracked']);
+    expect(api.normalizeGate({ ...noHooks, exitCode: 2, failCount: 1 }).pass).toBe(false);
+  });
+
+  test('only the exact value none opens the no-hook path: absent, husky, other or unknown do not', () => {
+    for (const hookSystem of [undefined, 'husky', 'other', 'None', 'no']) {
+      expect([hookSystem, api.normalizeGate({ ...noHooks, hookSystem }).noHookSystem]).toEqual([hookSystem, false]);
+    }
   });
 });
 

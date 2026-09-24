@@ -28,6 +28,9 @@ type AgentOptions = { label?: string; schema?: Schema };
 type WishResult = {
   ok: boolean;
   state: string;
+  route: string;
+  stageReached: string;
+  notConvened: string[];
   blockedReason: string;
   report: string;
   diff: { files: number; insertions: number; measured: boolean; band: string } | null;
@@ -76,7 +79,11 @@ async function runWish(canned: Canned) {
       unexpected.push(label);
       return null;
     }
-    const value = structuredClone(canned[label]);
+    const answer = canned[label];
+    // An Error instance makes the stage throw; a null makes it answer nothing. Neither is schema-checked.
+    if (answer instanceof Error) throw answer;
+    if (answer === null) return null;
+    const value = structuredClone(answer);
     if (!options.schema) problems.push(`${label}: no schema passed`);
     else problems.push(...validate(options.schema, value).map((p) => `${label}: ${p}`));
     return value;
@@ -339,6 +346,154 @@ describe('wish.js admission narrowing', () => {
     expect(logs.some((line) => line.includes('Route overridden to plan'))).toBe(false);
     const advice = logs.find((line) => line.includes('Size advice (not a refusal)'));
     expect(advice).toContain('units 9');
+  });
+});
+
+// The gate tells "no hook system" apart from "dead hooks": a repository with no hook system at all is
+// validated with the frozen contract's validation command and CI is the authority at read-back, while
+// any hook system (husky, another manager, or an answer that does not say) keeps the dead-hooks block.
+const VALIDATION = 'bun test src/lib/fixture.test.ts --bail';
+const REFUSAL = 'would push, merge, publish, or write outside the worktree is not run';
+const noHooks = { ...gateResult(), hookSystem: 'none', hooksLive: false, hooksReason: 'no hook system found' };
+const deadHooks = (hookSystem?: string) => ({
+  ...gateResult(),
+  ...(hookSystem ? { hookSystem } : {}),
+  hooksLive: false,
+  hooksReason: 'no .husky/_/pre-push',
+});
+const validating = (judgeCommand: string | undefined, scoutCommand = 'bun test'): Canned => {
+  const base = canned();
+  const scout = structuredClone(base['admit:scout']) as { plan: Record<string, unknown> };
+  const judge = structuredClone(base['admit:judge']) as { contract: Record<string, unknown> };
+  scout.plan.validationCommand = scoutCommand;
+  if (judgeCommand !== undefined) judge.contract.validationCommand = judgeCommand;
+  return { 'admit:scout': scout, 'admit:judge': judge };
+};
+
+describe('wish.js gate and the repository hook system', () => {
+  for (const hookSystem of ['husky', 'other', undefined]) {
+    test(`(15) dead hooks with hookSystem ${hookSystem ?? 'absent'} -> blocked at gate:check, nothing reviewed`, async () => {
+      const { result, prompts } = await clean(canned('pass', { 'gate:check': deadHooks(hookSystem) }));
+      expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+      expect(result.blockedReason).toContain('hooks are not live');
+      expect(prompts['review:diff']).toBeUndefined();
+      expect(prompts['publish:pr']).toBeUndefined();
+    });
+  }
+
+  test('(16) dead hooks at gate:round-1 after a FIX-FIRST -> blocked naming repair round 1', async () => {
+    const data = canned('pass', {
+      'review:diff': reviewResult('FIX-FIRST'),
+      'repair:fix-1': { status: 'fixed', filesTouched: [FILES[0]], head: REPAIRED },
+      'gate:round-1': deadHooks('husky'),
+      'review:round-1': reviewResult(),
+    });
+    const { result, prompts } = await clean(data);
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('repair round 1');
+    expect(prompts['review:round-1']).toBeUndefined();
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
+
+  test('(17) no hook system: checks pass -> merge-ready, pending -> pr-open, fail -> blocked', async () => {
+    const pass = await clean(canned('pass', { ...validating(VALIDATION), 'gate:check': noHooks }));
+    expect({ ok: pass.result.ok, state: pass.result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    expect(pass.result.report).toContain('no hook system');
+    expect(pass.result.report).toContain(VALIDATION);
+    expect(pass.result.report).toContain('CI is the authority');
+    expect(pass.prompts['publish:pr'][0]).toContain('CI is the authority');
+    expect(pass.prompts['publish:pr'][0]).toContain('no reported check is checks pending, never pass');
+
+    const pending = await clean(canned('pending', { ...validating(VALIDATION), 'gate:check': noHooks }));
+    expect({ ok: pending.result.ok, state: pending.result.state }).toEqual({ ok: false, state: 'pr-open' });
+
+    const fail = await clean(canned('fail', { ...validating(VALIDATION), 'gate:check': noHooks }));
+    expect({ ok: fail.result.ok, state: fail.result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(fail.result.blockedReason).toContain(FAILING_CHECK);
+  });
+
+  test('(18) no hook system and no validation command frozen -> blocked, nothing published', async () => {
+    const { result, prompts } = await clean(canned('pass', { ...validating(undefined, ''), 'gate:check': noHooks }));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('no validation command');
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
+
+  test('(19) the gate prompt carries the frozen validation command, the hook path and the refusal', async () => {
+    const { prompts } = await clean(canned('pass', validating(VALIDATION)));
+    const gatePrompt = prompts['gate:check'][0];
+    expect(gatePrompt).toContain(VALIDATION);
+    expect(gatePrompt).toContain('test -f .husky/_/pre-push');
+    expect(gatePrompt).toContain('bun run check');
+    expect(gatePrompt).toContain(REFUSAL);
+    expect(gatePrompt).toContain('git config --get core.hooksPath');
+    // The run sentence runs the ONE command the classification selected, never `bun run check` unconditionally.
+    expect(gatePrompt).toContain('Then run the selected command exactly once');
+    expect(gatePrompt).not.toContain('Then run bun run check exactly once');
+
+    // With no judge field, the scout plan's validation command is the frozen one.
+    const fallback = await clean(canned('pass', validating(undefined, 'bun test src/lib/scout-fallback.test.ts')));
+    expect(fallback.prompts['gate:check'][0]).toContain('bun test src/lib/scout-fallback.test.ts');
+  });
+});
+
+// Admission failure paths: every early return before a stage's binding exists must still render.
+describe('wish.js admission failures report instead of crashing', () => {
+  const failing = (label: 'admit:scout' | 'admit:judge', answer: null | Error) => {
+    const data = canned();
+    data[label] = answer;
+    const later = ['work:executor', 'gate:check', 'review:diff', 'publish:pr'];
+    if (label === 'admit:scout') later.push('admit:judge');
+    for (const stage of later) delete data[stage];
+    return data;
+  };
+
+  test('(15) the scout answers nothing -> refused, route report, the scout named silent, a rendered report', async () => {
+    const { result, prompts } = await clean(failing('admit:scout', null));
+    expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
+      ok: false,
+      state: 'refused',
+      route: 'report',
+    });
+    expect(result.blockedReason).toContain('The scout returned nothing');
+    expect(result.notConvened).toEqual(['admit:scout']);
+    expect(prompts['admit:judge']).toBeUndefined();
+    expect(result.report).toContain('# Wish delivery');
+    expect(result.report).toContain('## Why this stopped');
+  });
+
+  test('(16) the scout throws -> missed at Admit with the thrown reason, a rendered report', async () => {
+    const { result } = await clean(failing('admit:scout', new Error('SCOUT-THROW-SENTINEL')));
+    expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
+      ok: false,
+      state: 'missed',
+      stageReached: 'Admit',
+    });
+    expect(result.blockedReason).toContain('The Admit stage threw: SCOUT-THROW-SENTINEL');
+    expect(result.report).toContain('Stage reached: Admit');
+  });
+
+  test('(17) the judge answers nothing -> refused, route report, the judge named silent', async () => {
+    const { result } = await clean(failing('admit:judge', null));
+    expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
+      ok: false,
+      state: 'refused',
+      route: 'report',
+    });
+    expect(result.blockedReason).toContain('The judge returned nothing');
+    expect(result.notConvened).toEqual(['admit:judge']);
+    expect(result.report).toContain('# Wish delivery');
+  });
+
+  test('(18) the judge throws -> missed at Admit with the thrown reason', async () => {
+    const { result } = await clean(failing('admit:judge', new Error('JUDGE-THROW-SENTINEL')));
+    expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
+      ok: false,
+      state: 'missed',
+      stageReached: 'Admit',
+    });
+    expect(result.blockedReason).toContain('The Admit stage threw: JUDGE-THROW-SENTINEL');
+    expect(result.report).toContain('Stage reached: Admit');
   });
 });
 
