@@ -250,6 +250,13 @@ describe('a gate in a repository with no hook system', () => {
       expect([hookSystem, api.normalizeGate({ ...noHooks, hookSystem }).noHookSystem]).toEqual([hookSystem, false]);
     }
   });
+
+  test('a bare none with no hook evidence is a hook system, never the no-hook path', () => {
+    for (const hookEvidence of [[], undefined, ['', '  ']]) {
+      const gate = api.normalizeGate({ ...noHooks, hookEvidence });
+      expect([hookEvidence, gate.noHookSystem]).toEqual([hookEvidence, false]);
+    }
+  });
 });
 
 describe('the base a run opens its PR against is refused before any agent runs', () => {
