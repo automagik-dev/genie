@@ -354,7 +354,13 @@ describe('wish.js admission narrowing', () => {
 // any hook system (husky, another manager, or an answer that does not say) keeps the dead-hooks block.
 const VALIDATION = 'bun test src/lib/fixture.test.ts --bail';
 const REFUSAL = 'would push, merge, publish, or write outside the worktree is not run';
-const noHooks = { ...gateResult(), hookSystem: 'none', hooksLive: false, hooksReason: 'no hook system found' };
+const noHooks = {
+  ...gateResult(),
+  hookSystem: 'none',
+  hookEvidence: ['git ls-files: nothing tracked', 'hooks path unset', 'hooks directory: only .sample files'],
+  hooksLive: false,
+  hooksReason: 'no hook system found',
+};
 const deadHooks = (hookSystem?: string) => ({
   ...gateResult(),
   ...(hookSystem ? { hookSystem } : {}),
@@ -435,6 +441,31 @@ describe('wish.js gate and the repository hook system', () => {
     const fallback = await clean(canned('pass', validating(undefined, 'bun test src/lib/scout-fallback.test.ts')));
     expect(fallback.prompts['gate:check'][0]).toContain('bun test src/lib/scout-fallback.test.ts');
   });
+
+  test('(20) a repair-round gate that answers none with no validation command frozen -> blocked, nothing published', async () => {
+    const data = canned('pass', {
+      ...validating(undefined, ''),
+      'review:diff': reviewResult('FIX-FIRST'),
+      'repair:fix-1': { status: 'fixed', filesTouched: [FILES[0]], head: REPAIRED },
+      'gate:round-1': noHooks,
+      'review:round-1': reviewResult(),
+    });
+    const { result, prompts } = await clean(data);
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('no validation command');
+    expect(result.blockedReason).toContain('repair round 1');
+    expect(prompts['review:round-1']).toBeUndefined();
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
+
+  test('(21) a bare none with no hook evidence is a hook system: dead hooks -> blocked at gate:check', async () => {
+    const { result, prompts } = await clean(
+      canned('pass', { ...validating(VALIDATION), 'gate:check': { ...noHooks, hookEvidence: [] } }),
+    );
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('hooks are not live');
+    expect(prompts['review:diff']).toBeUndefined();
+  });
 });
 
 // Admission failure paths: every early return before a stage's binding exists must still render.
@@ -448,7 +479,7 @@ describe('wish.js admission failures report instead of crashing', () => {
     return data;
   };
 
-  test('(15) the scout answers nothing -> refused, route report, the scout named silent, a rendered report', async () => {
+  test('(22) the scout answers nothing -> refused, route report, the scout named silent, a rendered report', async () => {
     const { result, prompts } = await clean(failing('admit:scout', null));
     expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
       ok: false,
@@ -462,7 +493,7 @@ describe('wish.js admission failures report instead of crashing', () => {
     expect(result.report).toContain('## Why this stopped');
   });
 
-  test('(16) the scout throws -> missed at Admit with the thrown reason, a rendered report', async () => {
+  test('(23) the scout throws -> missed at Admit with the thrown reason, a rendered report', async () => {
     const { result } = await clean(failing('admit:scout', new Error('SCOUT-THROW-SENTINEL')));
     expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
       ok: false,
@@ -473,7 +504,7 @@ describe('wish.js admission failures report instead of crashing', () => {
     expect(result.report).toContain('Stage reached: Admit');
   });
 
-  test('(17) the judge answers nothing -> refused, route report, the judge named silent', async () => {
+  test('(24) the judge answers nothing -> refused, route report, the judge named silent', async () => {
     const { result } = await clean(failing('admit:judge', null));
     expect({ ok: result.ok, state: result.state, route: result.route }).toEqual({
       ok: false,
@@ -485,7 +516,7 @@ describe('wish.js admission failures report instead of crashing', () => {
     expect(result.report).toContain('# Wish delivery');
   });
 
-  test('(18) the judge throws -> missed at Admit with the thrown reason', async () => {
+  test('(25) the judge throws -> missed at Admit with the thrown reason', async () => {
     const { result } = await clean(failing('admit:judge', new Error('JUDGE-THROW-SENTINEL')));
     expect({ ok: result.ok, state: result.state, stageReached: result.stageReached }).toEqual({
       ok: false,
