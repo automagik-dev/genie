@@ -2464,6 +2464,87 @@
       "kind": "move",
       "note": "Review→Work",
       "task_id": "t_mtlkd9ln2f533934"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789997799986,
+      "id": 352,
+      "kind": "move",
+      "note": "Idea→Wish",
+      "task_id": "t_mu3174eo09cf7ca6"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789997799997,
+      "id": 353,
+      "kind": "move",
+      "note": "Idea→Wish",
+      "task_id": "t_mu3174gcda745047"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789997799997,
+      "id": 354,
+      "kind": "move",
+      "note": "Idea→Wish",
+      "task_id": "t_mu3174hz53005eb7"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789997799997,
+      "id": 355,
+      "kind": "move",
+      "note": "Idea→Wish",
+      "task_id": "t_mu3174jk5e83ecff"
+    },
+    {
+      "author": "wish-status-sync",
+      "author_kind": "genie",
+      "created_at": 1789997799997,
+      "id": 356,
+      "kind": "move",
+      "note": "Idea→Wish",
+      "task_id": "t_mu31lc4r672d3cad"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790099037897,
+      "id": 357,
+      "kind": "comment",
+      "note": "SHIPPED to dev: PR #3044 merged at 6f41c075b (2026-09-22T17:41:40Z). Review SHIP at 9528551ef, final gate SHIP, all required checks green incl. darwin. Closes #3040 on promotion to main.",
+      "task_id": "t_mucy25y2412bc678"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790099038119,
+      "id": 358,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mucy25y2412bc678"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790099415433,
+      "id": 359,
+      "kind": "comment",
+      "note": "SHIPPED to dev: PR #3045 merged 23350b617. Review SHIP at 3fde77a37; final gate FIX-FIRST closed by 3770fa367; dev merged in at 7489783da; all 19 checks green incl. darwin.",
+      "task_id": "t_mucy2644da7ac132"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790099415659,
+      "id": 360,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_mucy2644da7ac132"
     }
   ],
   "tasks": [
@@ -3521,10 +3602,10 @@
       "group_name": "fork-bootstrap",
       "heartbeat_at": null,
       "id": "t_mu3174eo09cf7ca6",
-      "lane": "Idea",
+      "lane": "Wish",
       "status": "ready",
       "title": "fork-bootstrap — detach from the private DSH snapshot, pin 0.1.x",
-      "updated_at": 1789833760479,
+      "updated_at": 1789997799985,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3541,10 +3622,10 @@
       "group_name": "catalog-dialect",
       "heartbeat_at": null,
       "id": "t_mu3174gcda745047",
-      "lane": "Idea",
+      "lane": "Wish",
       "status": "ready",
       "title": "catalog-dialect — read and run Claude Code scripts from .claude/workflows",
-      "updated_at": 1789833760730,
+      "updated_at": 1789997799997,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3561,10 +3642,10 @@
       "group_name": "adapters",
       "heartbeat_at": null,
       "id": "t_mu3174hz53005eb7",
-      "lane": "Idea",
+      "lane": "Wish",
       "status": "ready",
       "title": "adapters — worktree, effort soft hint, AGENTS.md/CLAUDE.md injection",
-      "updated_at": 1789833760979,
+      "updated_at": 1789997799997,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3581,10 +3662,10 @@
       "group_name": "conformance",
       "heartbeat_at": null,
       "id": "t_mu3174jk5e83ecff",
-      "lane": "Idea",
+      "lane": "Wish",
       "status": "ready",
       "title": "conformance — fixtures, Claude Code goldens, comparator, council run",
-      "updated_at": 1789833761240,
+      "updated_at": 1789997799997,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3601,10 +3682,10 @@
       "group_name": "seam-comparison",
       "heartbeat_at": null,
       "id": "t_mu31lc4r672d3cad",
-      "lane": "Idea",
+      "lane": "Wish",
       "status": "ready",
       "title": "seam-comparison — fork vs first-party ctx.workflowEngine loader, host version, kill criterion",
-      "updated_at": 1789833761493,
+      "updated_at": 1789997799997,
       "wish": "dsh-workflow-fork"
     },
     {
@@ -3723,8 +3804,28 @@
       "id": "t_mu3bf72xf10695e4",
       "lane": "Idea",
       "status": "ready",
-      "title": "workflow (later): fix bounded repair loop as a script; shares the group gate with work",
-      "updated_at": 1790015778498,
+      "title": "workflow (later): fix bounded repair loop as a script; shares the group gate with work/dream",
+      "updated_at": 1789515663513,
+      "wish": null
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": "b_mu33ztqda7291be0",
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789515663573,
+      "group_name": null,
+      "heartbeat_at": null,
+      "id": "t_mu3bf74l80601898",
+      "lane": "Idea",
+      "status": "ready",
+      "title": "workflow (later): dream layers as phases, after a null-agent recovery for half-applied changes",
+      "updated_at": 1789515663573,
       "wish": null
     },
     {
@@ -3946,6 +4047,66 @@
       "title": "G5: portable bench/coach, commit fixtures, mikro init",
       "updated_at": 1789833764875,
       "wish": "global-workflows-local-mikro"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": null,
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1789924573173,
+      "group_name": null,
+      "heartbeat_at": null,
+      "id": "t_mua2vjsk62c19ba4",
+      "lane": null,
+      "status": "ready",
+      "title": "One skills plugin: replace @michengai/dsh-skills-manager (settings page), the @automagik/genie-dsh-board skills row, and @namastexlabs/skills-market — brief: .genie/handoffs/H2-skills-one-plugin.md",
+      "updated_at": 1789924573173,
+      "wish": null
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": null,
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1790097882266,
+      "group_name": "group-1",
+      "heartbeat_at": null,
+      "id": "t_mucy25y2412bc678",
+      "lane": null,
+      "status": "done",
+      "title": "wish-admit-scout-failure: a failed admission scout reports instead of crashing",
+      "updated_at": 1790099038117,
+      "wish": "wish-admit-scout-failure"
+    },
+    {
+      "agent_kind": null,
+      "assigned_agent": null,
+      "assigned_reason": null,
+      "block_kind": null,
+      "blocked_by": null,
+      "blocked_reason": null,
+      "board_id": null,
+      "claimed_at": null,
+      "claimed_by": null,
+      "created_at": 1790097882484,
+      "group_name": "group-1",
+      "heartbeat_at": null,
+      "id": "t_mucy2644da7ac132",
+      "lane": null,
+      "status": "done",
+      "title": "wish-gate-no-hook-system: the gate validates a repository with no hook system",
+      "updated_at": 1790099415658,
+      "wish": "wish-gate-no-hook-system"
     }
   ],
   "wish_groups": []
