@@ -10,6 +10,61 @@ For Orca installation, authority selection, recovery, compatibility, and contrib
 remains the default; the packaged Orca payload is inert until the operator explicitly selects Orca
 authority with `genie setup --orchestration-mode orca`.
 
+## Using the plugin
+
+Every command is in Orca's command palette while a workspace is active, and each one has its own chord. Toasts
+appear under the title `Genie`.
+
+| Command | Chord | What happens |
+|---------|-------|--------------|
+| `Genie: Wish` | `Ctrl+Alt+Shift+W` | Types `/wish` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Work` | `Ctrl+Alt+Shift+K` | Types `/work` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Review` | `Ctrl+Alt+Shift+R` | Types `/review` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Fix` | `Ctrl+Alt+Shift+F` | Types `/fix` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Report` | `Ctrl+Alt+Shift+P` | Types `/report` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Council` | `Ctrl+Alt+Shift+L` | Types `/council` into the workspace's agent terminal and confirms with a toast. |
+| `Genie: Doctor` | `Ctrl+Alt+Shift+D` | Runs `genie doctor --json` in the workspace and shows the result as a toast. |
+| `Genie: Update` | `Ctrl+Alt+Shift+U` | Compares the installed `genie --version` with the release manifest for this host's update channel and shows a toast. It installs nothing; run `genie update` yourself. |
+
+The six lifecycle commands (Wish, Work, Review, Fix, Report, Council) need an agent terminal. When the workspace has
+none, they start a supervised Orca worker with the same slash command instead. When this machine's `orca` CLI cannot
+reach the workspace — a desktop paired to a remote runtime — the command is typed into the workspace's first terminal;
+if that workspace has no terminal at all, nothing starts and a toast asks you to open one and retry.
+
+### What the plugin is allowed to do
+
+Orca asks for these once, when you enable the plugin, and again only if a later version changes the set:
+
+- `workspace:read` — read the active workspace's name, branch and terminals, so a command acts on the right one.
+- `terminal:send` — type the slash command into the workspace's agent terminal.
+- `notifications:show` — show the toasts described below and the result notifications.
+- `events:subscribe` — notice when a workspace's agent settles, so a new genie line on its card becomes a notification.
+
+The only network request is `Genie: Update` reading the public release manifest (see [Network egress](#network-egress)).
+
+### Orca mode
+
+Installing the plugin changes nothing on its own: genie stays in standalone mode. Running
+`genie setup --orchestration-mode orca` makes Orca the lifecycle authority. Agents then coordinate through Orca Runs,
+tasks and gates, and record progress on the workspace card with `genie orca mirror`. Genie's own `task`, `board` and
+`idea` commands are refused with exit 2. `genie setup --orchestration-mode standalone` switches back; it imports
+nothing from Orca.
+
+### First check
+
+With a workspace open, this takes under five minutes:
+
+1. `Genie: Doctor` (`Ctrl+Alt+Shift+D`) shows `Genie doctor: all checks pass`, or
+   `Genie doctor: <n> warn, <n> fail — <checks>` naming the checks to look at.
+2. `Genie: Update` (`Ctrl+Alt+Shift+U`) shows `Genie is up to date (<version>, <channel> channel)`, or
+   `Genie update available: …` with the command to run.
+3. One lifecycle command, for example `Genie: Review` (`Ctrl+Alt+Shift+R`), shows `Genie: sent /<verb> to <workspace>`
+   and the slash command appears in the agent terminal. With no agent terminal the toast reads
+   `Genie: no agent terminal — started <agent> on <workspace> for …` instead.
+
+If the workspace's path is not known from this machine (a remote runtime), Doctor shows
+`Genie doctor: could not run (the workspace path is not known from this machine)`.
+
 ## What ships here
 
 | File | Purpose |
