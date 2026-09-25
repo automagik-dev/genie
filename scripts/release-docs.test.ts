@@ -75,13 +75,13 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(workflow).not.toContain(forbidden);
     }
-    for (const path of ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json']) {
-      expect(workflow).toContain(path);
-    }
+    // package.json is always bumped; each plugins/genie file only while present.
+    expect(workflow).toContain('JSON_FILES=(package.json)');
+    expect(workflow).toContain('for path in plugins/genie/orca-plugin.json plugins/genie/package.json; do');
     // There is no repo-root Orca manifest to stamp: the Orca plugin ships as the
     // tree-only `plugins/genie` subtree ref, not from the repo root.
     expect(workflow).not.toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
-    expect(workflow).toContain('expected exactly three version files');
+    expect(workflow).toContain('expected exactly the ${#VERSION_PATHS[@]} present version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
