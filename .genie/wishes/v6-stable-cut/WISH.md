@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `v6-stable-cut` |
 | **Date** | 2026-09-19 |
 | **Author** | Felipe Rosa |
@@ -374,6 +374,14 @@ Independent plan reviewer (claude-opus-5), read-only, against dev at `94adc6e96`
 ### 2026-09-19 — plan review, round 2 — SHIP
 
 Same reviewer, same basis, against `69317d9be`. All sixteen round-1 findings verified resolved against code; no contradiction introduced; the plan is approved for execution. Nine bookkeeping items returned with the verdict and applied in this commit without re-review: the shared-file list gains `src/lib/interactivity.ts(+test)` and `skills/wish/SKILL.md` and loses Group 7's README/CLAUDE.md claim (its one doc line moves to Group 8); Group 0's Validation appends `check:fast` and its acceptance drops a transient check count for "merged"; Group 5's Interfaces cite `orchestration-mode.ts:7,28,57`; Group 6 names the `snapshotCarriesHires` (`:715`) and `preserveHireRoster` (`:786`) declarations and states that the migration ladder falls through to the current-version branch so additive backfills still apply; Group 2 names **PR #3007** (`412c724fd`) as its adopt subject and Group 7 mirrors Group 9's in-flight sentence for `front-doors-runtime-neutral`; Group 9's wave becomes "whenever its subject lands; merge slot 9". Status persisted by the orchestrator: **APPROVED**.
+
+### 2026-09-25 — closure (housekeeping) — SHIPPED
+
+- **Outcome proven by releases:** the version line is 6 on both channels. Stable `v6.260922.2`, `v6.260924.4` and `v6.260925.1` are published GitHub Releases (the last one is Latest, from Release run 36092640232 with every build, signing, SLSA and manifest job green), and `package.json`, `plugins/genie/package.json` and `plugins/genie/orca-plugin.json` read `6.x` on `main` and `dev`.
+- **Scope of this record:** the per-group acceptance boxes above were not re-ticked one by one at closure; the delivered releases are the evidence for the core outcome, and nothing in this plan is still being executed.
+- **Status:** SHIPPED.
+
+---
 
 ## Files to Create/Modify
 
