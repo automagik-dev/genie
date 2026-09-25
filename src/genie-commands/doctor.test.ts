@@ -22,7 +22,6 @@ import {
   type CheckResult,
   MINIMUM_BUN_VERSION,
   checkBudgets,
-  checkCodexProjectContext,
   checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkRetiredJsonMcpEntry,
@@ -1130,34 +1129,6 @@ describe('checkTrackedMachineState (committed machine-local .genie state)', () =
     const check = doc.checks.find((c) => c.name === 'git: machine-local .genie state');
     expect(check?.status).toBe('warn');
     expect(doc.ok).toBe(true);
-  });
-});
-
-// ============================================================================
-// Orca lifecycle authority — doctor never opens the local store
-// ============================================================================
-
-describe('checkCodexProjectContext under Orca', () => {
-  function writeOrchestrationMode(mode: string): void {
-    const home = process.env.GENIE_HOME as string;
-    mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode } }));
-  }
-
-  test('reports the authority without resolving context or opening genie.db', () => {
-    writeOrchestrationMode('orca');
-    const repoRoot = join(isolatedHome, 'repo');
-    const [check] = checkCodexProjectContext(repoRoot);
-    expect(check.status).toBe('pass');
-    expect(check.detail).toBe('not resolved — Orca is the selected lifecycle authority');
-    // The guard forbids the open, so nothing may have been created either.
-    expect(existsSync(join(repoRoot, '.genie', 'genie.db'))).toBe(false);
-  });
-
-  test('still resolves context in standalone mode', () => {
-    writeOrchestrationMode('standalone');
-    const [check] = checkCodexProjectContext(join(isolatedHome, 'repo'));
-    expect(check.detail).not.toContain('Orca is the selected lifecycle authority');
   });
 });
 

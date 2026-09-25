@@ -27,7 +27,7 @@ gates, not interchangeable uses of one generic review step.
 
 The design gate is durable: DESIGN.md carries reviewer identity, UTC timestamp, verdict, and the SHA-256 of its exact reviewed content (excluding only the bounded evidence block). Editing the design invalidates that evidence; `wish` and lint require a current SHIP digest for linked designs.
 
-The caller owns documents and completion evidence; author and reviewer are different agents. Standalone mode uses the per-repository task DB. Explicit Orca mode uses Orca lifecycle state through the conditional instructions in `wish` and `work`; it never falls back to the local DB on an authority refusal.
+The caller owns documents and completion evidence; author and reviewer are different agents. Lifecycle state lives in the per-repository task DB.
 
 ## Distribution contract
 
@@ -128,10 +128,10 @@ One rule earns the label rather than asserting it: `bun run skills:lint` fails a
 | `repo-hygiene` | `review` repository-hygiene lens |
 | `supply-chain` | `review` security/supply-chain lens |
 | `trace` | `report` investigation; issue creation remains explicit |
-| `genie-orca-wish` | `wish`, Orca mode |
-| `genie-orca-work` | `work`, Orca mode |
-| `genie-orca-review` | `review`, Orca mode |
+| `genie-orca-wish` | `wish` (Orca mode retired) |
+| `genie-orca-work` | `work` (Orca mode retired) |
+| `genie-orca-review` | `review` (Orca mode retired) |
 
 On a successful `genie update`, removed skills still matching the prior install record are moved to `~/.genie/state-backups/skills-retirement-*` before the new record is published. User-modified, unverified, or redirected copies remain with a notice for manual review, as do retired copies in a home whose replacement set could not be verified. No verified replacements anywhere, or a backup failure, preserves the previous record for retry; a backup on a different filesystem can require manual relocation. A manual skills.sh install has no Genie retirement record and needs manual review of old names.
 
-Skill and resource instructions are shortened together: no generic vendor blocks outside `refine`, fixed persona panels, numerical readiness rituals, or duplicate escalation tables. Templates, digest verification, ownership boundaries, independent review, and required validation remain. The removed prototype migration/retro scripts are not supported workflows; current Orca guides supply its command interface.
+Skill and resource instructions are shortened together: no generic vendor blocks outside `refine`, fixed persona panels, numerical readiness rituals, or duplicate escalation tables. Templates, digest verification, ownership boundaries, independent review, and required validation remain. The removed prototype migration/retro scripts are not supported workflows.

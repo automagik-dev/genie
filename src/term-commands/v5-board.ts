@@ -273,8 +273,7 @@ function reconcileWishLanes(db: Database, filter: TaskFilter, board: BoardRow, r
 
 function handleBoard(opts: BoardOptions): void {
   // The whole body runs inside `run` so a typed failure raised while OPENING
-  // the state — an unreadable DB, or `LocalLifecycleDisabledError` when Orca is
-  // the lifecycle authority — renders as the same one-line `Error: …` + exit 1
+  // the state — an unreadable DB — renders as the same one-line `Error: …` + exit 1
   // that `genie task` and `genie idea` print, never as a raw stack trace.
   run(() => handleBoardWithDb(opts));
 }

@@ -48,7 +48,6 @@ import {
   acquireLifecycleLease,
   acquireLifecycleLeaseWithWait,
 } from '../lib/lifecycle-lease.js';
-import { refreshOwnedOrcaPluginMetadata } from '../lib/orca-plugin-lifecycle.js';
 import {
   type HeldOrderedLifecycleLeases,
   acquireOrderedLifecycleLeases,
@@ -2721,31 +2720,6 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   return { skills, workflows };
 }
 
-/**
- * A4 ownership-marker refresh is advisory to delivery, never a delivery
- * invariant. It spawns the live Orca CLI (public A3 compatibility probe,
- * bounded at 30 s) and refuses on an unsafe marker, so it can fail for reasons
- * unrelated to the bytes just delivered: Orca closed, below the supported
- * range, or a corrupted marker. Before this the call sat unguarded between
- * the payload swap and `publishCodexDeliveryFacts`, so an Orca-mode operator
- * updating with Orca closed was left with a swapped binary and no delivery
- * record — the exact state the delivery contract exists to prevent. The
- * lifecycle function keeps its throwing contract (marker untouched on
- * failure); the updater reports and moves on, and `genie doctor` owns the
- * degraded case (`owned-modified` with a recovery line).
- */
-export async function refreshOrcaOwnershipAfterDelivery(
-  refresh: () => Promise<unknown> = refreshOwnedOrcaPluginMetadata,
-  report: (message: string) => void = log,
-): Promise<void> {
-  try {
-    await refresh();
-  } catch (cause) {
-    report(`⚠ Orca plugin ownership marker was not refreshed: ${errMsg(cause)}`);
-    report('  Delivery is complete. Run `genie doctor` to re-check the Orca plugin lifecycle.');
-  }
-}
-
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -3010,10 +2984,6 @@ async function runDelivery(
     if (installedBinarySha256 !== candidate.binarySha256) {
       throw new DeliveryPublicationError('installed binary differs from the verified delivery evidence');
     }
-    // A4: refresh only an existing Genie ownership claim. Runs after the
-    // delivery record is published and never fails the update — see
-    // refreshOrcaOwnershipAfterDelivery.
-    await refreshOrcaOwnershipAfterDelivery();
     return auxiliaryOutcomes;
   } finally {
     // The command boundary owns the lifecycle lease. This scope only closes

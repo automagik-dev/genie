@@ -24,11 +24,7 @@
  * boundary is unrecoverable from it (slugs may contain `-`).
  *
  * Every degradation exits non-zero with a machine-readable JSON line on
- * stderr: {"error":"<code>","reason":"<text>"}. When `orchestration.mode` is
- * `orca`, Orca — not this repo's SQLite — owns lifecycle state, so EVERY form
- * of the command (wishless, --wish, --group, --plan) degrades identically to
- * {"error":"local_lifecycle_disabled_in_orca_mode",...} with exit 1 before any
- * option is resolved. An empty `tasks` array is
+ * stderr: {"error":"<code>","reason":"<text>"}. An empty `tasks` array is
  * NOT a degradation: whenever branch+base resolve, the payload is emitted
  * with exit 0 — a group with no ready tasks (all claimed/done, or task rows
  * missing) still gets its base, so a resumed or re-spawned session never
@@ -60,11 +56,6 @@ import { Database } from 'bun:sqlite';
 import { existsSync, statSync } from 'node:fs';
 import type { Command } from 'commander';
 import { resolveGitWorktreeRoot } from '../lib/codex-project-mcp.js';
-import {
-  InvalidOrchestrationAuthorityError,
-  LocalLifecycleDisabledError,
-  assertLocalLifecycleEnabled,
-} from '../lib/orchestration-mode.js';
 import {
   type IntegrationBranch,
   peelCommit,
@@ -183,12 +174,7 @@ function failClosed(code: string, reason: string): never {
  * the tiny stat→open window can leave a fresh preview slightly stale, never
  * wrong about the resolved base policy.
  */
-export function openReadonlyHandle(dbPath: string, opts: { readOnlyPlan?: boolean } = {}): Database | null {
-  // The lifecycle gate is the default for every caller. `--wish <slug> --plan`
-  // is the ONE exception (see `contextCommand`): it answers a read-only
-  // question in orca mode, and this open is the read it needs. Anything that
-  // does not pass the flag still fails closed.
-  if (opts.readOnlyPlan !== true) assertLocalLifecycleEnabled();
+export function openReadonlyHandle(dbPath: string): Database | null {
   try {
     let walBytes = 0;
     try {
@@ -238,7 +224,7 @@ function openWishDb(options: ContextOptions, deps: ContextDeps, cwd: string): Da
     }
   }
   if (!existsSync(dbPath)) return null;
-  const db = openReadonlyHandle(dbPath, { readOnlyPlan: true });
+  const db = openReadonlyHandle(dbPath);
   if (db === null)
     failClosed('unreadable-db', `Cannot open genie state DB read-only at ${dbPath} (locked or malformed).`);
   let readable = false;
@@ -420,25 +406,6 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
   const write = deps.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const writeErr = deps.writeErr ?? ((line: string) => process.stderr.write(`${line}\n`));
   try {
-    // REVERSAL of PR #2830's "every form of `genie context` degrades
-    // identically", by explicit owner decision 2026-09-19 (design rev 4,
-    // decision 9). #2830 moved this gate ahead of option resolution because the
-    // three forms degraded three different ways by accident — the wishless form
-    // exited 0 with a standalone payload, `--wish` reported `unreadable-db`,
-    // `--plan` reported `internal`. That accident is still fixed: the gate is
-    // still resolved here, before any option validation, and every form it
-    // covers still degrades with the one stable code.
-    //
-    // What changed is WHICH forms it covers. `--wish <slug> --plan` is
-    // read-only by construction (`openWishDb` opens the existing file read-only
-    // or not at all, and `writeWishBase` is unreachable while `plan === true`),
-    // and it is the one question a wave base has to be able to ask in orca
-    // mode. Answering it is honest; refusing it was uniformity for its own
-    // sake. Exactly one form is let through — `--wish` TOGETHER WITH `--plan`.
-    // A wishless `--plan`, a `--wish` without `--plan`, and every other form
-    // keep refusing.
-    const readOnlyPlan = options.wish !== undefined && options.plan === true;
-    if (!readOnlyPlan) assertLocalLifecycleEnabled();
     if (options.group !== undefined && options.wish === undefined) {
       failClosed('group-requires-wish', '--group requires --wish.');
     }
@@ -450,14 +417,6 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
     write(JSON.stringify(payload));
     return 0;
   } catch (err) {
-    // Orchestration-authority errors keep their own stable code (never
-    // `internal`, never a DB-shaped code) so a consumer can branch on
-    // `local_lifecycle_disabled_in_orca_mode` — including on the defence-in-depth
-    // throws that still live deeper in the DB opens.
-    if (err instanceof LocalLifecycleDisabledError || err instanceof InvalidOrchestrationAuthorityError) {
-      writeErr(JSON.stringify({ error: err.code, reason: stripErrorCodePrefix(err.code, err.message) }));
-      return 1;
-    }
     const failure =
       err instanceof ContextError
         ? err
@@ -465,12 +424,6 @@ export function contextCommand(options: ContextOptions, deps: ContextDeps = {}):
     writeErr(JSON.stringify({ error: failure.code, reason: failure.message }));
     return 1;
   }
-}
-
-/** The payload's `reason` never repeats the `error` code the message is prefixed with. */
-function stripErrorCodePrefix(code: string, message: string): string {
-  const prefix = `${code}: `;
-  return message.startsWith(prefix) ? message.slice(prefix.length) : message;
 }
 
 /** Register `genie context` on the CLI program. */

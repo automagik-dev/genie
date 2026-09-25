@@ -23,7 +23,6 @@ import { basename, dirname, join, normalize, resolve } from 'node:path';
 // the refusal outlives it, because a host contaminated before the rule landed
 // still carries the file and both databases stamp `user_version = 1`.
 import { resolveGenieHome, resolveGlobalDbPath } from '../genie-home.js';
-import { assertLocalLifecycleEnabled } from '../orchestration-mode.js';
 import { printErr } from '../term-output.js';
 import { GenieDbError, type PreparedMigrationBackup, openSqlite } from './sqlite-open.js';
 
@@ -564,7 +563,6 @@ function reportDbMigration(line: string): void {
  * errors. Idempotent: safe to call on every CLI invocation.
  */
 export function openDb(opts: OpenOptions = {}): Database {
-  assertLocalLifecycleEnabled();
   const path = opts.path ?? resolveDbPath(opts.cwd);
   assertNotGlobalDbPath(path);
   return openSqlite({

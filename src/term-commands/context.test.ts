@@ -537,11 +537,11 @@ describe('wish context', () => {
 });
 
 // ============================================================================
-// Orchestration authority — Orca owns lifecycle state, so every form refuses
+// Retired Orca mode — a stale `orchestration` key in config.json is inert
 // ============================================================================
 
 /** Spawn `genie context ...` with a throwaway GENIE_HOME holding `config`. */
-async function cliWithMode(cwd: string, config: string, ...args: string[]): Promise<CliResult> {
+async function cliWithConfig(cwd: string, config: string, ...args: string[]): Promise<CliResult> {
   const home = mkdtempSync(join(tmpdir(), 'genie-context-home-'));
   scratchRoots.push(home);
   writeFileSync(join(home, 'config.json'), config);
@@ -557,96 +557,15 @@ async function cliWithMode(cwd: string, config: string, ...args: string[]): Prom
   return { stdout, stderr, code: await proc.exited };
 }
 
-const ORCA_CONFIG = '{"orchestration":{"mode":"orca"}}';
-
-describe('orca lifecycle authority', () => {
-  // SPLIT from a single four-form `test.each`, by explicit owner decision
-  // 2026-09-19 (design rev 4, decision 9). This REVERSES PR #2830's rule that
-  // "every form of `genie context` degrades identically".
-  //
-  // #2830 was fixing a real accident: the three forms degraded three DIFFERENT
-  // ways by chance, because the guard sat behind option resolution — the
-  // wishless form exited 0 with a standalone payload (it never opens the DB),
-  // `--wish` reported `unreadable-db`, and `--wish --plan` reported `internal`.
-  // That accident stays fixed: the guard is still resolved before any option
-  // validation, and every form it still covers degrades with the one stable
-  // code, asserted below.
-  //
-  // What the owner reversed is the SCOPE. `--wish <slug> --plan` is read-only
-  // by construction and is the one question a wave base must be able to ask in
-  // orca mode; refusing it was uniformity for its own sake. All four forms
-  // remain asserted here — three refusing, one answering — so neither half can
-  // be lost to a future edit.
-  test.each([[[]], [['--wish', 'foo']], [['--wish', 'foo', '--group', 'g']]])(
-    'refuses `genie context %j` with one stable machine-readable line',
-    async (args: string[]) => {
-      const fx = makeFixture();
-      seedTasks(fx, 'foo', ['g']);
-      const failure = failureOf(await cliWithMode(fx.root, ORCA_CONFIG, ...args));
-      expect(failure.error).toBe('local_lifecycle_disabled_in_orca_mode');
-      expect(failure.reason).toContain('orchestration.mode');
-      // The reason never repeats the code the consumer already branched on.
-      expect(failure.reason.startsWith('local_lifecycle_disabled_in_orca_mode')).toBe(false);
-    },
-  );
-
-  test('`--wish <slug> --plan` answers read-only in orca mode (the #2830 reversal)', async () => {
+describe('a stale orchestration.mode from the retired Orca mode', () => {
+  test.each(['orca', 'standalone', 'nonsense'])('`orchestration.mode: %s` changes nothing', async (mode) => {
     const fx = makeFixture();
     seedTasks(fx, 'foo', ['g']);
-    const result = await cliWithMode(fx.root, ORCA_CONFIG, '--wish', 'foo', '--plan');
+    const config = JSON.stringify({ orchestration: { mode } });
+    expect(payloadOf(await cliWithConfig(fx.root, config)).branch).toBe('dev');
+    const result = await cliWithConfig(fx.root, config, '--wish', 'foo', '--group', 'g');
     expect(result.code).toBe(0);
-    expect(result.stderr).toBe('');
-    const payload = payloadOf(result);
-    expect(payload.wish).toBe('foo');
-    expect(payload.branch).toBe('wish/foo');
-    expect(DEV_SHA_PATTERN.test(str(payload.base))).toBe(true);
-    // Read-only means read-only: `--plan` records no base, so orca mode gains
-    // no local lifecycle state from having answered.
-    expect(metaRow(fx, 'wish_base:foo')).toBeNull();
-  });
-
-  test('a wishless `--plan` still refuses — the carve-out is `--wish` WITH `--plan`', async () => {
-    const fx = makeFixture();
-    const failure = failureOf(await cliWithMode(fx.root, ORCA_CONFIG, '--plan'));
-    expect(failure.error).toBe('local_lifecycle_disabled_in_orca_mode');
-  });
-
-  // The carve-out is `--wish` + `--plan`, so these two ride through it today.
-  // Pinned because `--plan` is what makes them safe: `--group` only narrows the
-  // task list, and `--re-resolve` names a WRITE that `--plan` must keep
-  // unreachable. If either ever recorded a base in orca mode, the whole reason
-  // the reversal was acceptable would be gone.
-  test.each([[['--wish', 'foo', '--group', 'g', '--plan']], [['--wish', 'foo', '--plan', '--re-resolve']]])(
-    '`genie context %j` stays read-only in orca mode',
-    async (args: string[]) => {
-      const fx = makeFixture();
-      seedTasks(fx, 'foo', ['g']);
-      const result = await cliWithMode(fx.root, ORCA_CONFIG, ...args);
-      expect(result.code).toBe(0);
-      expect(result.stderr).toBe('');
-      expect(DEV_SHA_PATTERN.test(str(payloadOf(result).base))).toBe(true);
-      expect(metaRow(fx, 'wish_base:foo')).toBeNull();
-    },
-  );
-
-  test('the refusal precedes option validation, so a bad option cannot change the code', async () => {
-    const fx = makeFixture();
-    // `--group` without `--wish` is normally `group-requires-wish`.
-    expect((await cliWithMode(fx.root, ORCA_CONFIG, '--group', 'g')).stderr).toContain(
-      'local_lifecycle_disabled_in_orca_mode',
-    );
-  });
-
-  test('a malformed orchestration authority keeps its own code, never `internal`', async () => {
-    const fx = makeFixture();
-    const failure = failureOf(await cliWithMode(fx.root, '{"orchestration":{"mode":"nonsense"}}'));
-    expect(failure.error).toBe('invalid_orchestration_authority');
-  });
-
-  test('standalone mode is untouched — the payload still resolves', async () => {
-    const fx = makeFixture();
-    const payload = payloadOf(await cliWithMode(fx.root, '{"orchestration":{"mode":"standalone"}}'));
-    expect(payload.branch).toBe('dev');
+    expect(payloadOf(result).branch).toBe('wish/foo-g');
   });
 });
 
