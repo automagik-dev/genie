@@ -64,6 +64,7 @@ describe('openDb schema init', () => {
       'hire_roster',
       'meta',
       'stage_log',
+      'task_checklist',
       'task_dependencies',
       'task_events',
       'tasks',

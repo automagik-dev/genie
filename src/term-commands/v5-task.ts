@@ -525,6 +525,136 @@ function authoredBy(opts: AuthoredNoteOptions): { author: string; authorKind: st
   return { author: worker || base.author || 'cli', authorKind: base.authorKind ?? undefined };
 }
 
+interface ChecklistRow {
+  position: number;
+  text: string;
+  checked_at: number | null;
+  checked_by: string | null;
+  evidence: string | null;
+}
+
+/** Ordered definition-of-done items for one card. */
+function checklistRows(db: Database, id: string): ChecklistRow[] {
+  return db
+    .query(
+      'SELECT position, text, checked_at, checked_by, evidence FROM task_checklist WHERE task_id = ? ORDER BY position',
+    )
+    .all(id) as ChecklistRow[];
+}
+
+function requireChecklistItem(db: Database, id: string, raw: string): ChecklistRow {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isInteger(n) || n < 1) fail(`Checklist position must be a positive integer, got "${raw}".`);
+  const row = checklistRows(db, id).find((r) => r.position === n);
+  if (!row) fail(`Task ${id} has no checklist item ${n}.`);
+  return row;
+}
+
+function handleChecklist(id: string): void {
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const rows = checklistRows(db, id);
+      if (rows.length === 0) {
+        out(`No checklist items on ${id}.`);
+        return;
+      }
+      const done = rows.filter((r) => r.checked_at !== null).length;
+      out(`Checklist for ${id} (${done}/${rows.length} done):`);
+      for (const r of rows) {
+        const mark = r.checked_at === null ? 'open' : 'done';
+        const by = r.checked_by ? ` [${r.checked_by}]` : '';
+        const evidence = r.evidence ? ` — ${r.evidence}` : '';
+        out(`  ${r.position}. [${mark}] ${r.text}${by}${evidence}`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleChecklistAdd(id: string, text: string, opts: AuthoredNoteOptions): void {
+  const item = boundedNote(text, 'checklist item');
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const next = (
+        db.query('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM task_checklist WHERE task_id = ?').get(id) as {
+          p: number;
+        }
+      ).p;
+      db.query('INSERT INTO task_checklist (task_id, position, text, created_at) VALUES (?, ?, ?, ?)').run(
+        id,
+        next,
+        item,
+        Date.now(),
+      );
+      const author = authoredBy(opts);
+      appendTaskEvent(db, id, {
+        kind: 'checklist_add',
+        note: `${next}. ${item}`,
+        authorKind: author.authorKind,
+        author: author.author,
+      });
+      out(`Added checklist item ${next} to ${id}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleChecklistCheck(id: string, position: string, opts: AuthoredNoteOptions & { evidence?: string }): void {
+  const evidence = opts.evidence === undefined ? undefined : boundedNote(opts.evidence, 'checklist evidence');
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const item = requireChecklistItem(db, id, position);
+      const author = authoredBy(opts);
+      db.query(
+        'UPDATE task_checklist SET checked_at = ?, checked_by = ?, evidence = ? WHERE task_id = ? AND position = ?',
+      ).run(Date.now(), author.author, evidence ?? item.evidence, id, item.position);
+      appendTaskEvent(db, id, {
+        kind: 'checklist_check',
+        note: `${item.position}. ${item.text}${evidence ? ` — ${evidence}` : ''}`,
+        authorKind: author.authorKind,
+        author: author.author,
+      });
+      out(`Checked item ${item.position} on ${id}${evidence ? ' with evidence' : ''}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
+function handleChecklistUncheck(id: string, position: string, opts: AuthoredNoteOptions): void {
+  run(() => {
+    const db = openDb();
+    try {
+      if (!getTask(db, id)) throw new UnknownTaskError(id);
+      const item = requireChecklistItem(db, id, position);
+      const author = authoredBy(opts);
+      // Reopening clears the tick AND its evidence: the checklist row is current
+      // state, not history — the checklist_check event already preserves what was
+      // claimed and by whom.
+      db.query(
+        'UPDATE task_checklist SET checked_at = NULL, checked_by = NULL, evidence = NULL WHERE task_id = ? AND position = ?',
+      ).run(id, item.position);
+      appendTaskEvent(db, id, {
+        kind: 'checklist_uncheck',
+        note: `${item.position}. ${item.text}`,
+        authorKind: author.authorKind,
+        author: author.author,
+      });
+      out(`Reopened item ${item.position} on ${id}.`);
+    } finally {
+      db.close();
+    }
+  });
+}
+
 function handleComment(id: string, text: string, opts: AuthoredNoteOptions): void {
   const note = boundedNote(text, 'comment');
   run(() => {
@@ -953,6 +1083,32 @@ export, with two caveats:
     .command('unblock <id>')
     .description('Clear an enforced block from a card')
     .action((id: string) => handleUnblock(id));
+
+  task
+    .command('checklist <id>')
+    .description('Show the definition-of-done checklist for a card')
+    .action((id: string) => handleChecklist(id));
+
+  task
+    .command('checklist-add <id> <text>')
+    .description('Append a definition-of-done item to a card (appends a checklist event)')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, text: string, opts: AuthoredNoteOptions) => handleChecklistAdd(id, text, opts));
+
+  task
+    .command('checklist-check <id> <position>')
+    .description('Tick a definition-of-done item, recording who did it and optional evidence')
+    .option('--evidence <text>', 'Short evidence note recorded with the tick')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, position: string, opts: AuthoredNoteOptions & { evidence?: string }) =>
+      handleChecklistCheck(id, position, opts),
+    );
+
+  task
+    .command('checklist-uncheck <id> <position>')
+    .description('Reopen a definition-of-done item')
+    .option('--worker <name>', 'Speaker identity (defaults to $GENIE_AGENT_NAME or "cli")')
+    .action((id: string, position: string, opts: AuthoredNoteOptions) => handleChecklistUncheck(id, position, opts));
 
   task
     .command('release <id>')
