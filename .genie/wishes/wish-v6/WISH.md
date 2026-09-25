@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `wish-v6` |
 | **Date** | 2026-09-16 |
 | **Author** | Claude (session 8e0382e3) for Felipe |
@@ -155,6 +155,13 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Disposition — three PRs against dev, each gated and independently reviewed by an agent that did not write it: #2938 the delivery workflow's own correctness (exact test names, `failCount`, base refusal, repair-exit wording), #2939 the pre-record retirement of #2927 (an unreadable leftover is retried rather than frozen, legacy retirements are counted apart from recorded ones, `genie init` ignores its own `.codex` backup), #2940 the merge guard in every spelling plus the contract amendments below. Docs: automagik-dev/docs#83. Filed rather than fixed: #2941 (`design-review-evidence.mjs` fails open through a symlinked path — pre-existing, out of this wish's scope) and #2942 (the catalog `--check` is gated by nothing).
 - Operator decision, 2026-09-17: the hook stays narrow. It keeps refusing every merge spelling and every push that lands on main or master, and deliberately does not guard `dev`, so Scope IN and Success Criterion 4 above are amended to the narrower rule and `AGENTS.md` now calls the hook a guardrail against accident rather than a boundary — husky's pre-push, which sees refs instead of command lines, and server-side branch protection are the enforcement.
 - Stays IN_PROGRESS: SHIPPED only after an authorized merge of the three PRs and the promotion.
+
+### 2026-09-25 — closure (housekeeping) — SHIPPED
+
+- **Merged and promoted:** `.claude/workflows/wish.js` and the `wish` skill as its front door are on `main` and in the stable releases `v6.260922.2` onward; `quick` is retired (absent from `skills/`).
+- **Live QA (QA line 1):** on 2026-09-24, four live runs of the delivered `~/.claude/workflows/wish.js` (stable `v6.260924.4`) returned the documented states — `refused` on a failed scout, `pr-open` on a normal genie run (#3057, SHIP, merged), `merge-ready` in a repository with no hook system, `blocked` on dead hooks — recorded in `wish-admit-scout-failure` and `wish-gate-no-hook-system` (#3058).
+- **Scope of this record:** the remaining boxes above were not re-ticked one by one at closure; nothing in this plan is still being executed.
+- **Status:** SHIPPED.
 
 ---
 
