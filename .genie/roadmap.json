@@ -2545,6 +2545,24 @@
       "kind": "release",
       "note": "completed",
       "task_id": "t_mucy2644da7ac132"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790359376516,
+      "id": 361,
+      "kind": "release",
+      "note": "released",
+      "task_id": "t_mtlkd9ln2f533934"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790359376891,
+      "id": 362,
+      "kind": "comment",
+      "note": "parked for stability (council 2026-09-25): stale g3_implementation claim from 2026-09-07 released. Stable v6.260922.2 onward has shipped; the remaining publish/topic steps wait for the operator to resume dsh-genie-board.",
+      "task_id": "t_mtlkd9ln2f533934"
     }
   ],
   "tasks": [
@@ -3396,16 +3414,16 @@
       "blocked_by": null,
       "blocked_reason": null,
       "board_id": "b_mu33ztqda7291be0",
-      "claimed_at": 1788810299062,
-      "claimed_by": "g3_implementation",
+      "claimed_at": null,
+      "claimed_by": null,
       "created_at": 1788442298843,
       "group_name": "release",
       "heartbeat_at": null,
       "id": "t_mtlkd9ln2f533934",
       "lane": "Work",
-      "status": "in_progress",
+      "status": "ready",
       "title": "Package, smoke, and publish DSH discoverability",
-      "updated_at": 1789914093831,
+      "updated_at": 1790359376514,
       "wish": "dsh-genie-board"
     },
     {
