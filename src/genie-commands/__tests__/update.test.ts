@@ -57,7 +57,6 @@ import {
   manifestUrlForChannel,
   normalizeVersion,
   persistChannel,
-  refreshOrcaOwnershipAfterDelivery,
   resolveChannel,
   resolveLiveBinaryPath,
   resolvePlatformId,
@@ -1719,40 +1718,6 @@ describe('downloadAndVerifyTarball (G5)', () => {
     await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, { runner, skipAttestation: true });
     expect(calls).toHaveLength(1);
     expect(calls[0].args[0]).toBe('release');
-  });
-});
-
-// ============================================================================
-// A4 — the Orca ownership-marker refresh is advisory to delivery. It spawns
-// the live Orca CLI, so it can fail for reasons unrelated to the delivered
-// bytes (Orca closed, unsupported range, corrupted marker). It must never
-// abort an update whose delivery record is already published.
-// ============================================================================
-
-describe('refreshOrcaOwnershipAfterDelivery (A4 advisory marker refresh)', () => {
-  test('a failing probe is reported and does not reject', async () => {
-    const lines: string[] = [];
-    await expect(
-      refreshOrcaOwnershipAfterDelivery(
-        async () => {
-          throw new Error('Orca runtime probe timed out after 30000ms');
-        },
-        (line) => lines.push(line),
-      ),
-    ).resolves.toBeUndefined();
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toContain('ownership marker was not refreshed');
-    expect(lines[0]).toContain('probe timed out');
-    expect(lines[1]).toContain('genie doctor');
-  });
-
-  test('a successful refresh is silent', async () => {
-    const lines: string[] = [];
-    await refreshOrcaOwnershipAfterDelivery(
-      async () => 'refreshed',
-      (line) => lines.push(line),
-    );
-    expect(lines).toEqual([]);
   });
 });
 

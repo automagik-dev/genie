@@ -12,7 +12,6 @@ import {
 import { resolveGenieHome } from '../lib/genie-home.js';
 import { isInteractive } from '../lib/interactivity.js';
 import { acquireLifecycleLease } from '../lib/lifecycle-lease.js';
-import { type OrcaPluginCompatibilityResult, switchOrchestrationMode } from '../lib/orca-plugin-lifecycle.js';
 import type { readIntegrationConsent } from '../lib/runtime-integrations.js';
 import type { checkCommand } from '../lib/system-detect.js';
 import { printErr, printOut } from '../lib/term-output.js';
@@ -45,9 +44,17 @@ export interface SetupDeps {
   /** Test seam for the once-bound absolute executable path. */
   resolveExecutable?: (name: string, cwd: string) => string | null;
   cwd?: string;
-  /** A3 public compatibility probe seam for isolated Orca mode-switch tests. */
-  orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
 }
+
+/**
+ * `--orchestration-mode` is a one-release retirement stub: Orca mode is gone and
+ * genie always uses its own board. Neither answer touches `config.json`; a stale
+ * `orchestration` key there is stripped on read and dropped on the next write.
+ */
+const ORCHESTRATION_MODE_STALE_KEY_NOTE =
+  'A leftover `orchestration.mode` key in config.json is harmless: genie ignores it and drops it on the next config write. Nothing was changed.';
+export const ORCHESTRATION_MODE_STANDALONE_NOTICE = `Orca mode is retired; genie always uses its own board. ${ORCHESTRATION_MODE_STALE_KEY_NOTE}`;
+export const ORCHESTRATION_MODE_ORCA_NOTICE = `Orca mode is retired and can no longer be selected; genie always uses its own board. ${ORCHESTRATION_MODE_STALE_KEY_NOTE}`;
 
 /** The one stderr line a wizard section that cannot prompt gets, before exit 2. */
 export const SETUP_NON_INTERACTIVE_MESSAGE =
@@ -345,13 +352,11 @@ async function runSetupCommand(options: SetupOptions, deps: SetupDeps): Promise<
   }
 
   if (options.orchestrationMode !== undefined) {
-    if (options.orchestrationMode !== 'standalone' && options.orchestrationMode !== 'orca') {
-      throw new SetupIntegrationError('orchestration mode must be either "standalone" or "orca"');
-    }
-    const result = await switchOrchestrationMode(options.orchestrationMode, { probe: deps.orcaCompatibilityProbe });
-    const detail = result.changed ? 'changed' : 'already selected';
-    printOut(`\x1b[32m\u2713\x1b[0m Orchestration mode ${detail}: ${result.mode}`);
-    if (result.backupPath !== null) printOut(`  Previous config backed up at ${contractPath(result.backupPath)}`);
+    // `standalone` asks for what genie already is (exit 0); `orca` asks for
+    // something that no longer exists, so the caller must act (exit 2).
+    const orca = options.orchestrationMode !== 'standalone';
+    printErr(orca ? ORCHESTRATION_MODE_ORCA_NOTICE : ORCHESTRATION_MODE_STANDALONE_NOTICE);
+    if (orca) process.exitCode = 2;
     return;
   }
 

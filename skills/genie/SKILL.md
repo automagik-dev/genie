@@ -57,6 +57,6 @@ A ready design without an approved wish resumes at its recorded brainstorm/wish 
 
 ## Operations
 
-Read `genie --help` and the relevant namespace help before running CLI commands. Standalone mode uses `genie task` and `genie board`; Orca mode uses Orca’s native state and version-matched `orca-cli` / `orchestration` guides. Installing or opening Orca does not change the selected lifecycle authority. Never bypass an Orca-mode refusal by opening Genie’s local task DB.
+Read `genie --help` and the relevant namespace help before running CLI commands. Lifecycle state lives in `genie task` and `genie board`.
 
 Use structured status and native completion notifications. A worker’s completion claim still requires the workflow’s review and validation before its group is done.

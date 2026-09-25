@@ -43,61 +43,37 @@ Upgrading from a plugin-era release? The one-shot, backup-first retirement `geni
 
 From inside a trusted initialized repo, run `genie init` to scaffold state and retire proven-owned historical MCP routes. Then run `genie doctor` to confirm the install: it reports one `skills: <agent> <present>/<total> @ <ref>` line per known agent skill home, `not detected` for a home this host does not have, and a warning naming `genie update` when skills are missing or older than the running binary.
 
-## Standalone and Orca authority
+## Lifecycle authority
 
-Genie has two explicit lifecycle modes. `standalone` is the default, including when the configuration omits
-`orchestration.mode`; merely installing or opening Orca never changes authority. Standalone keeps the existing local
-task, board, and roadmap behavior. Select Orca only when you intend Orca to become the sole lifecycle authority:
+Genie has one lifecycle authority: its own per-repository board — `.genie/genie.db`, reconciled with the tracked
+`.genie/roadmap.json`. Orca mode is retired. For one release `genie setup --orchestration-mode` stays as a hidden
+stub: `standalone` prints a notice and exits 0, `orca` prints a retirement notice and exits 2, and neither writes
+configuration. A leftover `orchestration.mode` key in `~/.genie/config.json` is harmless — genie ignores it and drops
+it on the next config write.
 
-```bash
-genie setup --orchestration-mode orca
-genie doctor
-```
+### Update, rollback, and uninstall
 
-The switch first verifies the shipped plugin payload and a compatible Orca runtime (Orca `1.4.205` or newer with
-`orchestration.contract.v1`). Only after that probe succeeds does Genie back up its configuration and atomically select
-Orca. In Orca mode, Genie does not open `.genie/genie.db` for lifecycle reads or writes and refuses roadmap writes,
-syncs, and exports before they can create or change local files. Existing local history is preserved in place, but it is
-not imported, mirrored, or treated as current. The plugin keeps no fallback database: if Orca is unavailable, the
-operation fails instead of silently returning to standalone.
+Run `genie doctor` after installation or update before resuming lifecycle mutations.
+`genie update --rollback` checks the retained rollback state and prints signed-version reinstall guidance when a safe
+in-place rollback is unavailable; follow that guidance, then run `genie doctor`. A failed update or rollback leaves the
+prior configuration unchanged. `genie uninstall` removes only ownership-proven Genie artifacts and registrations.
+Modified or unproven files are preserved, and local Genie history is never deleted. Review the command's
+backup/recovery output before removing any retained files manually.
 
-In Orca mode the CLI is explicit about what it will and will not do, and three rules cover all of it:
+### MCP retirement
 
-- **`genie task`, `genie board` and `genie idea` exit 2** with one fixed line naming the remedy
-  (`genie setup --orchestration-mode standalone`). Exit 2 is Genie's "the operator must act" family — the same code the
-  workspace gate and `genie mikro call`'s usage refusals use — so it is never confused with a command that simply
-  failed. That closed list of three root verbs is the whole list.
-- **An unreadable `orchestration.mode` refuses at exit 2 too**, with its own message, because Genie cannot prove
-  standalone either. That message never claims Orca owns the host — nothing was successfully read, and Orca may not be
-  installed — it names the field, points at `genie doctor`, and gives the same remedy. Running
-  `genie setup --orchestration-mode standalone` repairs a config Genie could not parse: it backs the original bytes up
-  under `~/.genie/backups/orchestration-mode/` first, then writes a valid one, keeping every other key it could read.
-- **`genie task sync` exits 0 and prints nothing**, on stdout or stderr, whether or not the repository has a `.genie`
-  directory. Git hooks run it on every commit, merge and pull; in Orca mode there is no local board and no snapshot to
-  reconcile, so there is nothing to report and no `board snapshot not refreshed` warning on every commit. (An unreadable
-  config is not silenced — that one is worth fixing, so it still reports.)
-- **`genie context --wish <slug> --plan` still answers**, exit 0 with its JSON payload. It is strictly read-only — it
-  opens the database read-only or not at all and records no base — and it is the one question an agent needs answered to
-  cut a worktree. Every other form of `genie context`, including a wishless `--plan`, still refuses.
+The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
+parses. Use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or
+exact Genie-owned historical project registrations and preserves unrelated or unproven user configuration
+byte-for-byte. Rollback to a pre-A7 signed release remains the migration escape hatch for a host that still needs the
+verb to answer at all.
 
-Standalone mode is unchanged by all three: every one of those verbs behaves exactly as it always has.
-
-Switching back is also deliberate and does not import Orca state:
-
-```bash
-genie setup --orchestration-mode standalone
-genie doctor
-```
-
-`genie doctor` reports the selected authority, plugin ownership state, resolved runtime version, and compatibility.
-`unsupported_environment` means the host cannot provide the supported public CLI/child-process boundary; install or
-start a compatible Orca runtime and repeat the Orca selection. Do not work around it with a private API, internal RPC,
-terminal injection, or a local fallback.
+## The Orca plugin
 
 ### Installing the plugin in Orca
 
-`genie setup --orchestration-mode orca` selects Orca as Genie's lifecycle authority. It does **not** register the Genie
-plugin with Orca — that is a separate, Orca-side install. Orca accepts exactly two kinds of source:
+Genie does **not** register the Genie plugin with Orca — that is a separate, Orca-side install. Orca accepts
+exactly two kinds of source:
 
 - a **marketplace source**: a git repo whose *root* holds `orca-marketplace.json`;
 - a **plugin source**: a git repo whose *root* holds `orca-plugin.json`, or a local folder containing `orca-plugin.json`.
@@ -145,23 +121,14 @@ Once installed and enabled, the plugin rides Orca's own mechanisms — no second
 
 The manifest declares exactly the capabilities those handlers use (`workspace:read`, `terminal:send`,
 `notifications:show`, `events:subscribe`). Orca asks for consent once per plugin and capability set, so a release that
-changes that set asks once more on the next update; it never prompts per action. `genie orca mirror` works in standalone
-mode too — it is a write to a card, not a lifecycle-authority question — and refuses cleanly (exit 1, one JSON line on
+changes that set asks once more on the next update; it never prompts per action. `genie orca mirror` is a write to a card, not a
+lifecycle-authority question, and refuses cleanly (exit 1, one JSON line on
 stderr) outside an Orca-managed worktree.
 
-### Install, update, rollback, and uninstall
+### The plugin payload
 
 Signed release tarballs include `plugins/genie/orca-plugin.json` and the compiled Orca entrypoint on every supported
-platform. The normal installer stages and verifies that payload; authority remains standalone until the explicit setup
-command above. `genie update` preserves the selected mode and lifecycle history, verifies the replacement payload, and
-refreshes a prior Genie ownership claim only after an Orca compatibility probe. Run `genie doctor` after installation or
-update before resuming lifecycle mutations.
-
-`genie update --rollback` checks the retained rollback state and prints signed-version reinstall guidance when a safe
-in-place rollback is unavailable; follow that guidance, then run `genie doctor`. A failed update, rollback, or mode
-preflight leaves the prior configuration and authority unchanged. `genie uninstall` removes only ownership-proven Genie
-artifacts and registrations. Modified or unproven files are preserved, and neither local Genie history nor Orca records
-are deleted. Review the command's backup/recovery output before removing any retained files manually.
+platform. The normal installer stages and verifies that payload.
 
 ### Ambiguous Orca receipts and recovery
 
@@ -173,14 +140,6 @@ exceeds its output cap, or loses transport after launch without a complete ident
 the exact public read operation named by the error only when the identifier was known before launch; otherwise confirm
 the outcome with an Orca operator before deciding whether to issue a new mutation. Genie never guesses an identifier
 from a collection or infers success from a partial response.
-
-### MCP retirement
-
-The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
-parses. Use the standalone `genie task` and `genie board` commands instead. `genie init` removes only marker-owned or
-exact Genie-owned historical project registrations and preserves unrelated or unproven user configuration
-byte-for-byte. Rollback to a pre-A7 signed release remains the migration escape hatch for a host that still needs the
-verb to answer at all.
 
 Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
 before changing the adapter or its operator guidance.
@@ -229,7 +188,7 @@ genie --help
 | `genie install` | Finish a verified install and converge the skills channel under the recorded consent scope |
 | `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
-| `genie setup` | Configure Genie; `setup --orchestration-mode` selects the lifecycle authority |
+| `genie setup` | Configure Genie |
 | `genie orca` | Write genie's lifecycle onto the Orca workspace card, one-way — `orca mirror --to <transition> --evidence "…"` flips the board status and writes a dated comment |
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
@@ -360,8 +319,7 @@ route it finds.
 
 The UI-owned `genie ui-bridge` went the same way: there is no separate Genie UI any more, the Orca integration is the
 supported UI surface, and the private stdio transport, tool registry, and change watcher behind the bridge are
-deleted along with the verb. Standalone `genie task` and `genie board` retain their existing behavior in standalone
-mode; Orca mode continues to use the public `orca orchestration ... --json` adapter as its sole authority.
+deleted along with the verb. `genie task` and `genie board` retain their existing behavior.
 
 ## Roadmap
 

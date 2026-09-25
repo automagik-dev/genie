@@ -30,7 +30,6 @@ import {
 } from '../lib/codex-project-mcp.js';
 import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
-import { type OrcaPluginCompatibilityResult, inspectOrcaPluginLifecycle } from '../lib/orca-plugin-lifecycle.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
 import { findLegacySkillLeftovers, legacyScanHomes } from '../lib/legacy-skills.js';
@@ -223,10 +222,6 @@ function checkGit(root: string | null): CheckResult[] {
 }
 
 function checkDatabase(root: string | null): CheckResult[] {
-  const lifecycle = inspectOrcaPluginLifecycle();
-  if (lifecycle.mode === 'orca') {
-    return [{ name: 'genie.db', status: 'pass', detail: 'not opened — Orca is the selected lifecycle authority' }];
-  }
   const dbPath = join(root ?? process.cwd(), '.genie', 'genie.db');
   if (!existsSync(dbPath)) {
     return [
@@ -1160,19 +1155,6 @@ function codexProjectRouteCheck(root: string | null, probe: CodexPluginProbe, cw
  */
 export function checkCodexProjectContext(root: string | null, injected?: ProjectContext | null): CheckResult[] {
   if (root === null || injected === null) return [];
-  // Same stance as the `genie.db` check: under Orca the local store is not the
-  // lifecycle authority, so doctor neither resolves project context nor opens
-  // the database it would name — reporting a live DB there is a false claim,
-  // and opening it is exactly what the orca-mode guard forbids.
-  if (inspectOrcaPluginLifecycle().mode === 'orca') {
-    return [
-      {
-        name: 'Codex project context',
-        status: 'pass',
-        detail: 'not resolved — Orca is the selected lifecycle authority',
-      },
-    ];
-  }
   const context = injected ?? resolveProjectContext(root);
   if (context.kind === 'ok') {
     let db: Database | null = null;
@@ -1574,9 +1556,6 @@ function indexTargetExists(genieDir: string, relativePath: string): boolean {
  */
 export function checkIndexLaneDrift(root: string | null, databaseRoot: string | null): CheckResult[] {
   const name = 'jar: index-lane drift';
-  if (inspectOrcaPluginLifecycle().mode === 'orca') {
-    return [{ name, status: 'pass', detail: 'not read — Orca is the selected lifecycle authority' }];
-  }
   const base = root ?? process.cwd();
   const indexPath = join(base, '.genie', 'INDEX.md');
   if (!existsSync(indexPath)) {
@@ -1791,51 +1770,6 @@ export interface DoctorDeps {
   bunPath?: string | null;
   /** Injects the typed project-context fact (explicit `null` = skip the check). */
   projectContext?: ProjectContext | null;
-  /** A3 public compatibility probe seam for Orca-mode diagnostics. */
-  orcaCompatibilityProbe?: () => Promise<OrcaPluginCompatibilityResult>;
-}
-
-export async function checkOrcaLifecycle(deps: DoctorDeps, probeLiveRuntime = true): Promise<CheckResult[]> {
-  const state = inspectOrcaPluginLifecycle();
-  const payloadStatus =
-    state.payload === 'owned-clean' || (state.mode === 'standalone' && state.payload === 'unmanaged');
-  const results: CheckResult[] = [
-    {
-      name: 'orchestration authority',
-      status: state.mode === 'invalid' ? 'fail' : 'pass',
-      detail: `mode=${state.mode}; payload=${state.payload}; host_registration=${state.hostRegistration}`,
-      suggestion: state.recovery,
-    },
-  ];
-  if (state.mode !== 'orca') return results;
-  if (!payloadStatus) {
-    const authority = results[0];
-    if (authority !== undefined) results[0] = { ...authority, status: 'fail' };
-    return results;
-  }
-  if (!probeLiveRuntime && deps.orcaCompatibilityProbe === undefined) return results;
-  try {
-    const probe =
-      deps.orcaCompatibilityProbe ??
-      (async () => {
-        const { createOrcaPluginRuntime } = await import('../../plugins/genie/orca-runtime.js');
-        return createOrcaPluginRuntime().probe();
-      });
-    const compatibility = await probe();
-    results.push({
-      name: 'Orca compatibility',
-      status: 'pass',
-      detail: `runtime=${compatibility.runtimeVersion}; contract=${compatibility.contract}; runtime_id=${compatibility.runtimeId}`,
-    });
-  } catch (error) {
-    results.push({
-      name: 'Orca compatibility',
-      status: 'fail',
-      detail: error instanceof Error ? error.message : String(error),
-      suggestion: 'Use a supported Orca runtime, then retry `genie setup --orchestration-mode orca`.',
-    });
-  }
-  return results;
 }
 
 /**
@@ -1892,7 +1826,6 @@ export async function doctorCommand(
   const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
   const results: CheckResult[] = [
     ...checkGenieBinary(),
-    ...(await checkOrcaLifecycle(deps, !injectedRoot || deps.orcaCompatibilityProbe !== undefined)),
     ...checkGit(root),
     ...checkDatabase(databaseRoot),
     ...checkGlobalDbContamination(),

@@ -10,7 +10,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ORCA_REFUSAL_MESSAGE } from '../lib/orchestration-mode.js';
 import { CURRENT_SCHEMA_VERSION, openDb, resolveDbPath } from '../lib/v5/genie-db.js';
 import { serializeSnapshot } from '../lib/v5/roadmap-sync.js';
 import {
@@ -2069,60 +2068,35 @@ describe('per-repo verbs refuse the global database', () => {
 });
 
 // ============================================================================
-// Orca lifecycle authority — `task sync` is the one carve-out from the gate
+// Retired Orca mode — a stale `orchestration` key in config.json is inert
 // ============================================================================
 
-describe('orca lifecycle authority', () => {
-  /** A throwaway GENIE_HOME whose config hands lifecycle authority to Orca. */
-  function orcaHome(): string {
-    const home = mkdtempSync(join(tmpdir(), 'genie-task-orca-home-'));
-    homes.push(home);
-    writeFileSync(join(home, 'config.json'), '{"orchestration":{"mode":"orca"}}');
-    return home;
-  }
-
+describe('a stale orchestration.mode from the retired Orca mode', () => {
   const homes: string[] = [];
   afterEach(() => {
     for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
   });
 
-  test('`task sync` exits 0 in silence in an initialized orca repo', async () => {
-    // The fixture HAS a `.genie` workspace and a real card in it, so the only
-    // thing that can make this silent is the orca check itself — a standalone
-    // run over the same tree prints its reconcile line (asserted below).
-    // `.husky/pre-commit` runs `task sync` on every commit: one line here is a
-    // warning on every single commit that the operator cannot act on.
-    const db = openDb({ cwd: repo });
-    createTask(db, { title: 'a card the orca run must not mention' });
-    db.close();
-    expect(existsSync(join(repo, '.genie'))).toBe(true);
+  /** A throwaway GENIE_HOME whose config still carries the retired key. */
+  function staleHome(mode: string): string {
+    const home = mkdtempSync(join(tmpdir(), 'genie-task-stale-mode-home-'));
+    homes.push(home);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ orchestration: { mode } }));
+    return home;
+  }
 
-    const r = await cliEnv(repo, { GENIE_HOME: orcaHome() }, 'sync');
-    expect(r.code).toBe(0);
-    expect(r.stdout).toBe('');
-    expect(r.stderr).toBe('');
-  });
-
-  test('every other task subverb is refused with exit 2 and the one fixed line', async () => {
-    const home = orcaHome();
-    for (const args of [['list'], ['create', '--title', 'nope'], ['export'], ['status', 't_x']]) {
-      const r = await cliEnv(repo, { GENIE_HOME: home }, ...args);
-      expect(r.code).toBe(2);
-      expect(r.stdout).toBe('');
-      expect(r.stderr).toBe(`${ORCA_REFUSAL_MESSAGE}\n`);
-    }
-  });
-
-  test('standalone is untouched — `task sync` still reports the reconcile result', async () => {
-    const standalone = mkdtempSync(join(tmpdir(), 'genie-task-standalone-home-'));
-    homes.push(standalone);
-    writeFileSync(join(standalone, 'config.json'), '{"orchestration":{"mode":"standalone"}}');
-    const db = openDb({ cwd: repo });
-    createTask(db, { title: 'a card standalone still reconciles' });
-    db.close();
-
-    const r = await cliEnv(repo, { GENIE_HOME: standalone }, 'sync');
-    expect(r.code).toBe(0);
-    expect(r.stdout).not.toBe('');
-  });
+  test.each(['orca', 'standalone', 'nonsense'])(
+    '`orchestration.mode: %s` — task create and task sync work',
+    async (mode) => {
+      const home = staleHome(mode);
+      const created = await cliEnv(repo, { GENIE_HOME: home }, 'create', '--title', `card under ${mode}`);
+      expect(created.code).toBe(0);
+      const listed = await cliEnv(repo, { GENIE_HOME: home }, 'list');
+      expect(listed.code).toBe(0);
+      expect(listed.stdout).toContain(`card under ${mode}`);
+      const synced = await cliEnv(repo, { GENIE_HOME: home }, 'sync');
+      expect(synced.code).toBe(0);
+      expect(synced.stdout).not.toBe('');
+    },
+  );
 });

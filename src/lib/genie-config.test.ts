@@ -72,6 +72,28 @@ describe('genie-config GENIE_HOME resolution', () => {
     expect(saved.routing).toEqual({ maxAutoEffort: 'high', fableGateMaxAt: 9 });
   });
 
+  // Orca mode is retired and `orchestration` left the schema. A host config
+  // written while it existed must still parse whole — keeping every other value —
+  // and the stale key is dropped on the next write.
+  test.each(['orca', 'standalone', 'nonsense'])(
+    'a stale orchestration.mode (%s) parses and is dropped on save',
+    async (mode) => {
+      writeFileSync(
+        getGenieConfigPath(),
+        JSON.stringify({ orchestration: { mode }, budgets: { maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 } }),
+        'utf-8',
+      );
+      const config = await loadGenieConfig();
+      expect(config.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+      expect('orchestration' in config).toBe(false);
+
+      await saveGenieConfig(config);
+      const saved = JSON.parse(readFileSync(getGenieConfigPath(), 'utf-8')) as Record<string, unknown>;
+      expect(saved.orchestration).toBeUndefined();
+      expect(saved.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+    },
+  );
+
   test('falls back to ~/.genie when GENIE_HOME is unset', () => {
     Reflect.deleteProperty(process.env, 'GENIE_HOME');
     expect(getGenieDir()).toBe(join(homedir(), '.genie'));
