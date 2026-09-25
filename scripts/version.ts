@@ -31,7 +31,7 @@
  */
 
 import { execFileSync, execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { replaceTopLevelStringProperty } from './json-top-level-string.js';
@@ -126,10 +126,20 @@ const OPTIONAL_VERSION_FILES: ReadonlySet<string> = new Set([
   'plugins/genie/package.json',
 ]);
 
+/** Present means anything at the path, a dangling symlink included, so it fails loudly like `version.yml`'s `-e || -L`. */
+function isPresent(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The version files a bump targets: every required one, plus each optional one that exists. */
 export function versionFileTargets(rootDir: string): string[] {
   return VERSION_FILES.filter(
-    (relativePath) => !OPTIONAL_VERSION_FILES.has(relativePath) || existsSync(join(rootDir, relativePath)),
+    (relativePath) => !OPTIONAL_VERSION_FILES.has(relativePath) || isPresent(join(rootDir, relativePath)),
   );
 }
 

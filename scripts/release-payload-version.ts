@@ -7,7 +7,7 @@
  * plugin manifests disagreeing inside the artifact.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { replaceTopLevelStringProperty } from './json-top-level-string.js';
 
@@ -29,23 +29,21 @@ const OPTIONAL_PAYLOAD_VERSION_FILES: ReadonlySet<string> = new Set([
   'plugins/genie/orca-plugin.json',
 ]);
 
-function presentPayloadVersionFiles(payloadRoot: string): string[] {
-  return TOP_LEVEL_VERSION_FILES.filter(
-    (relativePath) => !OPTIONAL_PAYLOAD_VERSION_FILES.has(relativePath) || existsSync(join(payloadRoot, relativePath)),
-  );
+/** Present means anything at the path, a dangling symlink included, so it fails loudly like `version.yml`'s `-e || -L`. */
+function isPresent(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-/**
- * Committed files whose version must already equal package.json before a
- * release is staged. The plugin manifests are deliberately NOT gated here:
- * their shipped copies are stamped by `--stamp` (and re-verified by `--verify`)
- * inside the payload, so the committed values are advisory. Gating them would
- * also couple dev CI to the auto-version bump list of the workflow on `main` —
- * `workflow_run` jobs execute main's `version.yml`, so a bump field changed on
- * dev is inert until promotion, and every dev child in between failed this gate
- * (observed 2026-08-30, dev releases 5.260829.5–.8 never shipped).
- */
-const COMMITTED_VERSION_FILES = ['package.json'] as const;
+function presentPayloadVersionFiles(payloadRoot: string): string[] {
+  return TOP_LEVEL_VERSION_FILES.filter(
+    (relativePath) => !OPTIONAL_PAYLOAD_VERSION_FILES.has(relativePath) || isPresent(join(payloadRoot, relativePath)),
+  );
+}
 
 interface JsonObject {
   [key: string]: unknown;
@@ -83,15 +81,10 @@ export function verifyCommittedReleaseVersions(repoRoot: string): string {
   const expectedVersion = readObject(packagePath).version;
   if (typeof expectedVersion !== 'string') throw new Error(`metadata has no top-level string version: ${packagePath}`);
   assertReleaseVersion(expectedVersion);
-
-  for (const relativePath of COMMITTED_VERSION_FILES) {
-    const path = join(repoRoot, relativePath);
-    const actual = readObject(path).version;
-    if (actual !== expectedVersion) {
-      throw new Error(`committed version mismatch in ${path}: expected ${expectedVersion}, got ${actual}`);
-    }
-  }
-
+  // Only package.json is gated. The plugin manifests are stamped by `--stamp`
+  // (and re-verified by `--verify`) inside the payload, so their committed
+  // values are advisory; gating them coupled dev CI to main's `version.yml`
+  // (workflow_run runs main's copy) and blocked dev releases 5.260829.5–.8.
   return expectedVersion;
 }
 

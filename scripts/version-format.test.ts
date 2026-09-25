@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { synchronizeVersionFiles, updateJsonVersion, versionCheckReport } from './version.ts';
@@ -129,6 +129,15 @@ describe('manifest version formatting', () => {
       join(root, 'package.json'),
       join(root, 'plugins/genie/package.json'),
     ]);
+  });
+
+  test('--check fails a dangling plugin symlink instead of skipping it, like version.yml', async () => {
+    const root = synchronizationFixture();
+    rmSync(join(root, 'plugins/genie/orca-plugin.json'));
+    symlinkSync(join(root, 'nowhere.json'), join(root, 'plugins/genie/orca-plugin.json'));
+    const report = await versionCheckReport(root);
+    expect(report.targets).toContain(join(root, 'plugins/genie/orca-plugin.json'));
+    expect(report.failures.join('\n')).toContain('file is missing');
   });
 
   test('synchronization updates every required file or rejects the run', async () => {
