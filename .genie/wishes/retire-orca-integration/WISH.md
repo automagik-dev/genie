@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `retire-orca-integration` |
 | **Date** | 2026-09-25 |
 | **Author** | Felipe Rosa |
@@ -287,6 +287,10 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - the stub notes the stale config key;
   - the `--verify-source` wording;
   - the `genie orca` stub stays visible in `--help`.
+
+### Approval — 2026-09-25 — APPROVED
+
+- The owner approved the plan in chat ("plan approved, execute the whole thing autonomously end to end"). Status set to APPROVED at head `5ba0f772e`; base `origin/dev` `c20720a4f`.
 
 ---
 
