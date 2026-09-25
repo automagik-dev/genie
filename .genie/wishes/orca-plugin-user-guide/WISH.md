@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `orca-plugin-user-guide` |
 | **Date** | 2026-09-25 |
 | **Author** | Felipe Rosa |
@@ -142,6 +142,15 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Plan review — 2026-09-25T18:50Z — SHIP
+
+- Reviewer: a supervised Orca worker (Claude), Run `run_57bb467ea297`, Task `task_7888ae9d0795`, Dispatch `ctx_e95083634f2a`, delivered as `worker_done`, read-only.
+- Verdict: SHIP. No HIGH gaps; every plugin claim matches `orca-plugin.json` and `orca-entrypoint.ts`; the validation exits 1 on the current README and 0 on a complete section. One MEDIUM (titles and chords were checked separately, so a swapped chord passed) and four LOW (scope wording, exact toast strings, the remote-runtime fallback, heading anchoring), all folded into this plan before approval.
+
+### Approval — 2026-09-25 — APPROVED
+
+- Orca gate `gate_9954cd62cee1` on Task `task_49eede3f5961`, resolved `approve` by the operator. The operator typed the resolution in an Orca terminal not bound to the Run, which refused it, so the coordinator relayed the stated decision.
 
 ---
 
