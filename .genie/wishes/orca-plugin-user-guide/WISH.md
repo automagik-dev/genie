@@ -152,6 +152,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - Orca gate `gate_9954cd62cee1` on Task `task_49eede3f5961`, resolved `approve` by the operator. The operator typed the resolution in an Orca terminal not bound to the Run, which refused it, so the coordinator relayed the stated decision.
 
+### Execution review — 2026-09-25 — SHIP
+
+- Engineer: Orca worker Dispatch `ctx_99be3d56eca1` (Task `task_49eede3f5961`), commit `e1168a4d2`, `worker_done` outcome succeeded. The coordinator reran the Validation block independently (parity 12 pass, exit 0) and confirmed the diff is only `plugins/genie/README.md` and this WISH.md.
+- Reviewer: a different Orca worker, Dispatch `ctx_11a91b5b631f` (Task `task_dc76d586ea87`), read-only. SHIP: every title, chord, capability, toast string, fallback and exit code matches the manifest and the code, and a swapped Wish/Work chord makes the validation exit 1.
+- Accepted, not repaired (non-blocking):
+  - MEDIUM: the pairing check accepts any line, so swapping only the Doctor/Update table chords passes, because the First check list pairs them again. Tighten it to table rows, or move it into `scripts/orca-manifest-parity.test.ts`.
+  - LOW: the settle notification's title is `Genie — <workspace>`, not `Genie`.
+  - LOW: two rarer toasts (an ambiguous worker start, slow reads) are not listed.
+
 ---
 
 ## Files to Create/Modify
