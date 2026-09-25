@@ -84,11 +84,16 @@ The owner decided to retire both. This wish removes them while keeping standalon
 - [ ] `genie setup --orchestration-mode orca` exits 2 with the retirement notice; `--orchestration-mode standalone` exits 0; `genie orca mirror …` exits 2 with the retirement notice.
 - [ ] A locally built tarball's top-level members equal the 8 `INSTALL_PAYLOAD_MEMBERS`, and `plugins/` contains `genie/` (empty), `dsh-genie-board/` and `dsh-workflow-loader/`.
 - [ ] After G1 is promoted and G3 lands, the first dev auto-version run and its release (including the update-path smoke) are green.
-- [ ] No tracked file outside the retained stubs, the compat creation, historical records (`.genie/`, `commitlint.config.ts`, release notes) and `legacy-skills-catalog.ts` mentions Orca mode or the Orca plugin (checked with `git grep -i orca`).
+- [ ] No tracked file mentions Orca mode or the Orca plugin (checked with `git grep -i orca`), except:
+  - the retained stubs and `interactivity.ts`'s `'orca'` exemption;
+  - the compat creation;
+  - historical records (`.genie/`, `commitlint.config.ts`, release notes);
+  - `legacy-skills-catalog.ts`;
+  - `src/genie-commands/install.test.ts:753,762` (fixture only).
 
 ## Execution Strategy
 
-### Wave 1 (parallel, disjoint files)
+### Wave 1 (parallel; one shared file, sequenced)
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
@@ -101,10 +106,12 @@ The owner decided to retire both. This wish removes them while keeping standalon
 |-------|-------|------------|-------|-------------|
 | 3 | engineer | High: payload shape and the update path for old binaries | inherit | Remove the plugin, adapter, mirror and publishing; keep the compat directory; add the `genie orca` stub |
 
+**Shared file:** G1 owns `scripts/release-docs.test.ts:78-84`; G2 owns its `848-916` and `1110-1118` hunks. G1 merges into the wish branch first, and G2 rebases onto it before its gate.
+
 **Global constraints:**
 - Base is `origin/dev`; conventional commits; commit messages end with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 - `INSTALL_PAYLOAD_MEMBERS` must not change, and `plugins/genie/` must exist as a physical directory in every built payload.
-- G3 must not start before G1 is on `main` (check `git show origin/main:scripts/release-guard.sh`).
+- G3 must not start before G1 is on `main`: `git show origin/main:.github/workflows/version.yml` and `git show origin/main:scripts/release-guard.sh` must both carry G1's tolerant version lists.
 - Never bypass a hook, never force-push, never merge; the orchestrator integrates.
 - `bun run check` never runs concurrently with another full test run on this host (OOM); run `umask 022` in fresh worktrees.
 - Public text names no private repository or person.
@@ -133,7 +140,7 @@ The owner decided to retire both. This wish removes them while keeping standalon
 
 **Acceptance Criteria:**
 - [ ] Each changed script has a test for the "plugin files absent" case, and that test fails before the change.
-- [ ] With the files present, behaviour is byte-identical to today (existing tests unchanged in intent).
+- [ ] With the files present, `version.yml`, `release-guard.sh`, `version.ts` and payload stamping behave exactly as today. The one intended change: `--verify-source` stops requiring `plugins/genie/package.json`.
 - [ ] `bun scripts/version.ts --check` passes.
 
 **Validation:**
@@ -155,6 +162,7 @@ bun scripts/version.ts --check
 2. `src/genie.ts`: remove the Orca preAction gate and its imports. `--orchestration-mode` becomes a hidden, one-release stub:
    - `standalone`: prints "Orca mode is retired; genie always uses its own board" and exits 0;
    - `orca`: prints the retirement notice and exits 2.
+   - Either way, an old `orchestration` key stays in `config.json` until the next config write. It is harmless (stripped on read), and the notice says so.
 3. `src/genie-commands/setup.ts`: the switch branch is replaced by the stub.
 4. Remove the Orca carve-outs and guards in `src/term-commands/v5-task.ts`, `context.ts`, `src/lib/v5/genie-db.ts` and `roadmap-sync.ts`. Remove the Orca branches in `doctor.ts` (including `checkOrcaLifecycle` and its import of `plugins/genie/orca-runtime`) and `update.ts` (`refreshOrcaOwnershipAfterDelivery`).
 5. `src/types/genie-config.ts`: remove `OrchestrationConfigSchema` and its field. Add a regression test: a config with `orchestration.mode` set to `orca`, `standalone` or garbage parses, and `task create`, `task sync` and `board` work.
@@ -166,6 +174,8 @@ bun scripts/version.ts --check
 8. Docs:
    - README `## Standalone and Orca authority` (the Orca-mode half);
    - CLAUDE.md: the setup row and the lifecycle-authority gotcha;
+   - AGENTS.md: any Orca-mode text (G3 owns its plugin lines `:20,67`);
+   - `src/term-commands/v5-board.ts:276`: drop the stale `LocalLifecycleDisabledError` comment;
    - move any non-Orca strings pinned by `release-docs.test.ts:848-916` to their own section.
 
 **Interfaces:**
@@ -206,6 +216,11 @@ bun run skills:lint
    - `orca-marketplace.json` and `.github/workflows/orca-plugin-ref.yml`, in the same commit as the tree.
 4. `package.json`: drop `plugins/genie/` from `files`, drop `lint:orca-bundle` and its chaining. Also update `ci.yml:135-136`, `build-tarballs.yml:11-12,71`, `codex-project-mcp.test.ts:170-183`, `.coderabbit.yaml:25-26`, and `release-docs.test.ts` (the plugin pins).
 5. Docs: README (plugin install, update and rollback, the command row), CLAUDE.md (tree rows, the `genie orca` row, `### Orca subcommands`, the two plugin gotchas), AGENTS.md `:20,67`.
+6. References to deleted paths:
+   - `.claude/workflows/wish.js:113` DARWIN_TOLERATED: drop the adapter-test entry, and update `scripts/wish-workflow-logic.test.ts:76` to the new length;
+   - the mikro fixtures `scripts/mikro/fixtures/review-prep.json:44,126,163`, `issue-triage.json:47` and `scripts/mikro/triage.test.ts:180`: repoint or drop entries that name deleted files;
+   - `src/lib/interactivity.ts:88-93`: KEEP `'orca'` in WORKSPACE_EXEMPT while the stub exists (pinned by `interactivity.test.ts:28-30`).
+7. The `genie orca` stub stays VISIBLE in `--help`: `release-docs.test.ts:928-939` counts commands from the help output.
 
 **Interfaces:**
 - Consumes: G1 tooling on `main`, and G2's removal of `doctor.ts`'s plugin import.
@@ -244,7 +259,7 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| G3 lands before G1 reaches `main`, and dev versioning breaks | High | Global constraint and an explicit check of `origin/main:scripts/release-guard.sh` before G3 starts |
+| G3 lands before G1 reaches `main`, and dev versioning breaks | High | Global constraint and an explicit check of `origin/main` `version.yml` and `release-guard.sh` before G3 starts |
 | An old binary refuses the update because `plugins/genie` is missing | High | The permanent empty compat directory, with a local tarball check |
 | A host left in Orca mode silently switches back to the local board | Low | The one-release `--orchestration-mode` stub, plus the release note |
 | Existing Orca installs of the plugin keep running a pinned commit | Low | The owner uninstalls it in Orca; the refs are deleted after G3 |
@@ -254,6 +269,24 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Plan review — 2026-09-25 — SHIP
+
+- An independent read-only reviewer scored the plan at `14ba42433` against the code. Verified:
+  - old binaries need only a physical `plugins/genie` directory, and an empty one passes `scanPhysicalTree` (`update.ts:2237,2264`, `release-payload-proof.ts:79-97`, `build-delivery-evidence.ts:91-100`);
+  - `INSTALL_PAYLOAD_MEMBERS` includes `plugins`;
+  - `main`'s `version.yml` and `release-guard.sh` hardcode both plugin version files;
+  - the config schema is non-strict;
+  - the plugin/src import cycle is split correctly between G2 and G3;
+  - an old binary in Orca mode still updates.
+- Five MEDIUM and three LOW, all folded in:
+  - `release-docs.test.ts` hunk ownership and sequencing between G1 and G2;
+  - owners for the files that would otherwise be orphaned (`wish.js` DARWIN_TOLERATED, mikro fixtures, `interactivity.ts`, a `v5-board.ts` comment, `install.test.ts`);
+  - the pre-G3 check reads `origin/main` `version.yml` as well as `release-guard.sh`;
+  - AGENTS.md ownership split;
+  - the stub notes the stale config key;
+  - the `--verify-source` wording;
+  - the `genie orca` stub stays visible in `--help`.
 
 ---
 
