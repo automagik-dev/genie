@@ -389,6 +389,11 @@ An independent PR review of `8cfd00ccb` returned FIX-FIRST. Every finding is app
 - **Prose.** The coordinator reference now states that the card holds ONE genie status line (latest wins; the history belongs to the wish), and the PR body states that the RF3 gates are a convention the coordinator polls with `gate-list` (no mechanical wake) and that RF6's only proactive trigger is `agent.status.changed`.
 - Errata: `genie orca mirror` takes no `--json`, against the stamped design's synopsis.
 
+### 2026-09-25 — parked for stability
+
+- Not being worked on. Genie is parked on stable `v6.260925.1`; the status stays as recorded above and nothing in this plan executes until the operator resumes it.
+- Deferrals and their reasons: [`.genie/PARKED.md`](../../PARKED.md).
+
 ---
 
 ## Files to Create/Modify
