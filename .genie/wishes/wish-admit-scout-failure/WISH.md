@@ -111,8 +111,8 @@ bun test scripts/wish-workflow-behavior.test.ts scripts/wish-workflow-mikro.test
 _What must be verified on dev after merge. The QA agent tests each criterion._
 
 - [ ] A `/wish` run whose scout agent fails (a transient upstream error) returns `missed` with `Stage reached: Admit` and a report, not a crash.
-- [ ] A normal `/wish` run on dev still reaches `merge-ready` or `pr-open` with the scout offload line in its Admission section.
-- [ ] `genie update` delivers the fixed `wish.js` to `~/.claude/workflows/wish.js` unchanged in shape (leading `export const meta` literal intact).
+- [x] A normal `/wish` run on dev still reaches `merge-ready` or `pr-open` with the scout offload line in its Admission section.
+- [x] `genie update` delivers the fixed `wish.js` to `~/.claude/workflows/wish.js` unchanged in shape (leading `export const meta` literal intact).
 
 ---
 
@@ -153,7 +153,10 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - **Promotion:** merged to `main` in PR #3042 (merge commit `7462baa01`); #3040 closed on that merge.
 - **Delivery (QA 3), proven for the payload only; the box stays open until an installed read-back of `~/.claude/workflows/wish.js` after `genie update` is recorded:** the published dev release `v6.260922.4` tarball (`genie-6.260922.4-linux-x64-glibc.tar.gz`) carries `templates/workflows/wish.js` with sha256 `a6382a73…9578f`, byte-equal to `.claude/workflows/wish.js` at `v6.260922.4`. It opens with the `export const meta` literal. The copy from templates to `~/.claude/workflows/` is unchanged since `v6.260922.2`. The dogfood host's installed `wish.js` is byte-equal to `v6.260922.2`'s (`386ef672…`), so that path is live. The stable channel moves only on a human-initiated stable release.
-- **Live runs (QA 1 and 2): not performed.** Behavior cases (22)–(25) run the shipped `wish.js` body end to end under fake stage agents, and read-back case (1) covers the normal `merge-ready` path with the offload line. That is harness evidence, not a live run, so those two boxes stay open.
+- **Delivery (QA 3), installed read-back — 2026-09-24:** stable `v6.260924.4` was published (Release run 36038431013: every build, signing, SLSA provenance, update-path smoke and manifest job green). On the dogfood host, `genie update` moved `6.260922.2` to `6.260924.4` and reported `workflows: 10 workflow(s) in ~/.claude/workflows @ v6.260924.4 (1 written, 9 already current)`. The installed `~/.claude/workflows/wish.js` is sha256 `652b0856…db505`, byte-equal to `.claude/workflows/wish.js` at `v6.260924.4`. It opens with the `export const meta` literal and carries both the hoisted `scoutMikro` and the #3050 `UNSAFE_VALIDATION` guard. `genie doctor` reports `workflows: catalog — 10/10 … @ v6.260924.4`.
+- **Live runs — 2026-09-24, the delivered `~/.claude/workflows/wish.js` at stable `v6.260924.4`:**
+  - **QA 1, scout failure:** a run pinned a model that does not exist (`claude-nonexistent-qa-model`, workflow run `wf_463f8543-059`). The runtime turned the model error into an empty scout answer, not a throw. The run ended `refused`, route `report`, with `notConvened: ["admit:scout"]` and a full rendered report ("Offload: wish-context — not reported by the stage"). There was no crash; before the fix, this path died with `ReferenceError: Cannot access 'scout' before initialization`. The thrown-scout variant (`missed`, `Stage reached: Admit`) did not occur live; behavior case (23) pins it.
+  - **QA 2, normal run on dev:** a run in genie (`wf_3feb9d58-90b`, objective: move the drifted `dsh-workflow-fork` INDEX entry to Ready) ended `pr-open` with PR #3057 and a SHIP review. Its Admission section carries the scout offload line ("Offload: wish-context failed", with mikro's model returning nothing). #3057 was then merged into `dev` once every check passed. An earlier attempt went `missed` because the suite inherited `FORCE_COLOR=3` from the harness; #3056 made the suite hermetic.
 
 
 ---
