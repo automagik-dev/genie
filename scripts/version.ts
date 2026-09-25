@@ -11,9 +11,9 @@
  * how many v5 builds preceded it.
  *
  * Syncs versions across:
- * - package.json (root)
- * - plugins/genie/orca-plugin.json (Orca)
- * - plugins/genie/package.json (runtime payload metadata)
+ * - package.json (root, required)
+ * - plugins/genie/orca-plugin.json (Orca, only while present)
+ * - plugins/genie/package.json (runtime payload metadata, only while present)
  *
  * `--check` is the read-only mode: it reports that exact target set and whether
  * each file is bump-ready, then exits 0 without writing. The BARE command always
@@ -117,8 +117,24 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
  */
 export const VERSION_FILES = ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json'] as const;
 
+/**
+ * Members of `VERSION_FILES` that are skipped while absent (wish
+ * `retire-orca-integration` deletes them). `package.json` is always required.
+ */
+const OPTIONAL_VERSION_FILES: ReadonlySet<string> = new Set([
+  'plugins/genie/orca-plugin.json',
+  'plugins/genie/package.json',
+]);
+
+/** The version files a bump targets: every required one, plus each optional one that exists. */
+export function versionFileTargets(rootDir: string): string[] {
+  return VERSION_FILES.filter(
+    (relativePath) => !OPTIONAL_VERSION_FILES.has(relativePath) || existsSync(join(rootDir, relativePath)),
+  );
+}
+
 export function versionFilePaths(rootDir: string): string[] {
-  return VERSION_FILES.map((relativePath) => join(rootDir, relativePath));
+  return versionFileTargets(rootDir).map((relativePath) => join(rootDir, relativePath));
 }
 
 export interface VersionCheckReport {
@@ -176,7 +192,10 @@ export async function synchronizeVersionFiles(rootDir: string, version: string):
 async function runCheck(rootDir: string): Promise<void> {
   const report = await versionCheckReport(rootDir);
   console.log(`version --check: ${report.targets.length} version file(s), no writes performed`);
-  for (const relativePath of VERSION_FILES) console.log(`  • ${relativePath}`);
+  const targets = versionFileTargets(rootDir);
+  for (const relativePath of VERSION_FILES) {
+    console.log(targets.includes(relativePath) ? `  • ${relativePath}` : `  - ${relativePath} (absent, skipped)`);
+  }
   if (report.failures.length > 0) {
     throw new Error(`version files are not bump-ready:\n  ${report.failures.join('\n  ')}`);
   }

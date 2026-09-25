@@ -21,17 +21,31 @@ const TOP_LEVEL_VERSION_FILES = [
 ] as const;
 
 /**
- * Committed files whose version must already equal package.json before a
- * release is staged. The native Orca manifest is deliberately NOT gated here:
- * its shipped copy is stamped by `--stamp` (and re-verified by `--verify`)
- * inside the payload, which is the only copy Orca ever loads, so the committed
- * value is advisory. Gating it would also couple dev CI to the auto-version
- * bump list of the workflow on `main` — `workflow_run` jobs execute main's
- * `version.yml`, so a bump field added on dev is inert until promotion, and
- * every dev child in between failed this gate (observed 2026-08-30, dev
- * releases 5.260829.5–.8 never shipped).
+ * Payload files stamped and verified only while present: wish
+ * `retire-orca-integration` deletes them. Every other member stays required.
  */
-const COMMITTED_VERSION_FILES = ['package.json', 'plugins/genie/package.json'] as const;
+const OPTIONAL_PAYLOAD_VERSION_FILES: ReadonlySet<string> = new Set([
+  'plugins/genie/package.json',
+  'plugins/genie/orca-plugin.json',
+]);
+
+function presentPayloadVersionFiles(payloadRoot: string): string[] {
+  return TOP_LEVEL_VERSION_FILES.filter(
+    (relativePath) => !OPTIONAL_PAYLOAD_VERSION_FILES.has(relativePath) || existsSync(join(payloadRoot, relativePath)),
+  );
+}
+
+/**
+ * Committed files whose version must already equal package.json before a
+ * release is staged. The plugin manifests are deliberately NOT gated here:
+ * their shipped copies are stamped by `--stamp` (and re-verified by `--verify`)
+ * inside the payload, so the committed values are advisory. Gating them would
+ * also couple dev CI to the auto-version bump list of the workflow on `main` —
+ * `workflow_run` jobs execute main's `version.yml`, so a bump field changed on
+ * dev is inert until promotion, and every dev child in between failed this gate
+ * (observed 2026-08-30, dev releases 5.260829.5–.8 never shipped).
+ */
+const COMMITTED_VERSION_FILES = ['package.json'] as const;
 
 interface JsonObject {
   [key: string]: unknown;
@@ -84,7 +98,7 @@ export function verifyCommittedReleaseVersions(repoRoot: string): string {
 /** Stamp every version-bearing file in an already-copied release payload. */
 export function stampReleasePayloadVersion(payloadRoot: string, version: string): void {
   assertReleaseVersion(version);
-  for (const relativePath of TOP_LEVEL_VERSION_FILES) {
+  for (const relativePath of presentPayloadVersionFiles(payloadRoot)) {
     replaceTopLevelVersion(join(payloadRoot, relativePath), version);
   }
 
@@ -110,7 +124,7 @@ export function verifyReleasePayloadVersion(payloadRoot: string, expectedVersion
     throw new Error(`release payload version mismatch in ${stampPath}: expected ${expectedVersion}, got ${stamp}`);
   }
 
-  for (const relativePath of TOP_LEVEL_VERSION_FILES) {
+  for (const relativePath of presentPayloadVersionFiles(payloadRoot)) {
     const path = join(payloadRoot, relativePath);
     const actual = readObject(path).version;
     if (actual !== expectedVersion) {

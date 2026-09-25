@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { synchronizeVersionFiles, updateJsonVersion, versionCheckReport } from './version.ts';
+
+const PLUGIN_VERSION_FILES = ['plugins/genie/orca-plugin.json', 'plugins/genie/package.json'];
 
 describe('manifest version formatting', () => {
   const roots: string[] = [];
@@ -30,16 +32,17 @@ describe('manifest version formatting', () => {
     return { path, original };
   }
 
+  function writeJsonAt(root: string, relativePath: string, value: unknown): void {
+    const path = join(root, relativePath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  }
+
   function synchronizationFixture(): string {
     const root = mkdtempSync(join(tmpdir(), 'genie-version-sync-'));
     roots.push(root);
-    const writeJson = (relativePath: string, value: unknown) => {
-      const path = join(root, relativePath);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-    };
-    for (const path of ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json']) {
-      writeJson(path, { name: 'genie', version: '5.000000.0' });
+    for (const path of ['package.json', ...PLUGIN_VERSION_FILES]) {
+      writeJsonAt(root, path, { name: 'genie', version: '5.000000.0' });
     }
     return root;
   }
@@ -105,12 +108,27 @@ describe('manifest version formatting', () => {
   test('--check reports a malformed or missing target instead of rewriting it', async () => {
     const root = synchronizationFixture();
     writeFileSync(join(root, 'plugins/genie/orca-plugin.json'), '{"name":"genie"}\n');
-    rmSync(join(root, 'plugins/genie/package.json'));
+    rmSync(join(root, 'package.json'));
     const report = await versionCheckReport(root);
     expect(report.targets).toHaveLength(3);
     expect(report.failures).toHaveLength(2);
     expect(report.failures.join('\n')).toContain('top-level version must be a string');
     expect(report.failures.join('\n')).toContain('file is missing');
+  });
+
+  // Wish `retire-orca-integration` deletes the plugin files; absent ones are skipped, not failures.
+  test('--check skips absent plugin version files and still requires package.json', async () => {
+    const root = synchronizationFixture();
+    for (const path of PLUGIN_VERSION_FILES) rmSync(join(root, path));
+    const report = await versionCheckReport(root);
+    expect(report.targets).toEqual([join(root, 'package.json')]);
+    expect(report.failures).toEqual([]);
+
+    writeJsonAt(root, 'plugins/genie/package.json', { name: 'genie-plugin', version: '5.000000.0' });
+    expect((await versionCheckReport(root)).targets).toEqual([
+      join(root, 'package.json'),
+      join(root, 'plugins/genie/package.json'),
+    ]);
   });
 
   test('synchronization updates every required file or rejects the run', async () => {
@@ -128,11 +146,26 @@ describe('manifest version formatting', () => {
       expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).version).toBe('5.260711.3');
       expect(JSON.parse(readFileSync(join(root, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toBe('5.260711.3');
 
-      rmSync(join(root, 'plugins/genie/package.json'));
+      rmSync(join(root, 'package.json'));
       await expect(synchronizeVersionFiles(root, '5.260711.4')).rejects.toThrow(
         'version synchronization preflight failed',
       );
-      expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260711.3');
+      expect(JSON.parse(readFileSync(join(root, 'plugins/genie/package.json'), 'utf8')).version).toBe('5.260711.3');
+    } finally {
+      if (savedGithubActions === undefined) Reflect.deleteProperty(process.env, 'GITHUB_ACTIONS');
+      else process.env.GITHUB_ACTIONS = savedGithubActions;
+    }
+  });
+
+  test('synchronization bumps package.json alone when the plugin files are absent', async () => {
+    const savedGithubActions = process.env.GITHUB_ACTIONS;
+    Reflect.deleteProperty(process.env, 'GITHUB_ACTIONS');
+    try {
+      const root = synchronizationFixture();
+      for (const path of PLUGIN_VERSION_FILES) rmSync(join(root, path));
+      await synchronizeVersionFiles(root, '5.260711.5');
+      expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('5.260711.5');
+      for (const path of PLUGIN_VERSION_FILES) expect(existsSync(join(root, path))).toBe(false);
     } finally {
       if (savedGithubActions === undefined) Reflect.deleteProperty(process.env, 'GITHUB_ACTIONS');
       else process.env.GITHUB_ACTIONS = savedGithubActions;
