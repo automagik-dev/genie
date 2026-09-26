@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `retire-orca-integration` |
 | **Date** | 2026-09-25 |
 | **Author** | Felipe Rosa |
@@ -291,6 +291,18 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 ### Approval — 2026-09-25 — APPROVED
 
 - The owner approved the plan in chat ("plan approved, execute the whole thing autonomously end to end"). Status set to APPROVED at head `5ba0f772e`; base `origin/dev` `c20720a4f`.
+
+### Execution review — G1 and G2 — 2026-09-26 — SHIP
+
+- **G1** at `37178c871`: an independent read-only reviewer returned SHIP.
+  - 150/150 focused tests pass, and 12 fail with the four scripts reverted.
+  - Its LOW findings 1–2 were folded in by `6c08184fd`: a dangling plugin symlink now counts as present, like `version.yml`'s `-e || -L`, and the no-op `--verify-source` loop is gone.
+- **G2** at `f0e850acc`: an independent read-only reviewer returned SHIP.
+  - 688/688 focused tests pass.
+  - A bundle run with a stale `orchestration.mode: orca` config: idea, task, sync, board and context all exit 0, and the wish base is written.
+  - The stub exits 2 for orca and 0 for standalone, and writes nothing.
+  - Its LOW findings 1, 3 and 4 were folded in by `a58ff8b0e`. Finding 2 (the mikro fixtures) and the plugin README stay with G3, as planned.
+- **Integration** at `fe4b238e8`: `bun run check` gave 3153 pass and 5 fail. All five were 5 s timeouts at load average 140. Those files re-run at `e5308f8a5` with `--timeout 60000` gave 127/127.
 
 ---
 
