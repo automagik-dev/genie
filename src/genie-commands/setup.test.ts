@@ -4,12 +4,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
-import { SETUP_NON_INTERACTIVE_MESSAGE, setupCommand } from './setup.js';
+import {
+  ORCHESTRATION_MODE_ORCA_NOTICE,
+  ORCHESTRATION_MODE_STANDALONE_NOTICE,
+  SETUP_NON_INTERACTIVE_MESSAGE,
+  setupCommand,
+} from './setup.js';
 
 /**
  * `setup --codex` and the whole Codex activation path left with the Codex
  * plugin subsystem. What remains under test here is the surviving surface:
- * the explicit orchestration-mode switch, the read-only `--show`, and the
+ * the retired `--orchestration-mode` stub, the read-only `--show`, and the
  * lifecycle-lease contract every setup mutation still runs under.
  */
 describe('genie setup', () => {
@@ -60,35 +65,64 @@ describe('genie setup', () => {
     };
   }
 
-  test('the CLI surface no longer offers --codex', () => {
-    const help = Bun.spawnSync(['bun', join(import.meta.dir, '..', 'genie.ts'), 'setup', '--help'], {
+  function cli(...args: string[]): { stdout: string; stderr: string; exitCode: number } {
+    const result = Bun.spawnSync(['bun', join(import.meta.dir, '..', 'genie.ts'), ...args], {
       env: { ...process.env, NO_COLOR: '1' },
       stdout: 'pipe',
       stderr: 'pipe',
     });
-    const text = `${help.stdout.toString()}${help.stderr.toString()}`;
+    return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode ?? -1 };
+  }
+
+  test('the CLI surface no longer offers --codex, and hides the retired --orchestration-mode', () => {
+    const help = cli('setup', '--help');
+    const text = `${help.stdout}${help.stderr}`;
     expect(help.exitCode).toBe(0);
     expect(text).not.toContain('--codex');
-    expect(text).toContain('--orchestration-mode');
+    expect(text).not.toContain('--orchestration-mode');
   });
 
-  test('an unknown orchestration mode is refused without touching config', async () => {
-    const cap = capture();
-    await setupCommand({ orchestrationMode: 'bogus' as never });
-    const { err, exitCode } = cap.restore();
-    expect(exitCode).toBe(1);
-    expect(err).toContain('orchestration mode must be either "standalone" or "orca"');
-  });
+  // Orca mode is retired. The flag survives one release so a host script gets a
+  // named notice instead of `unknown option`; neither answer writes config.json.
+  describe('retired --orchestration-mode stub', () => {
+    const configPath = (): string => join(process.env.GENIE_HOME as string, 'config.json');
 
-  test('selecting standalone reports the resolved mode and returns before the wizard', async () => {
-    const cap = capture();
-    await setupCommand({ orchestrationMode: 'standalone' });
-    const { out, exitCode } = cap.restore();
-    expect(exitCode).toBe(0);
-    expect(out).toContain('Orchestration mode');
-    expect(out).toContain('standalone');
-    // The mode switch is not the wizard: no section banners were printed.
-    expect(out).not.toContain('Debug Options');
+    test('`standalone` prints the notice on stderr and exits 0 without touching config', () => {
+      mkdirSync(process.env.GENIE_HOME as string, { recursive: true });
+      const stale = '{"orchestration":{"mode":"orca"}}';
+      writeFileSync(configPath(), stale);
+      const result = cli('setup', '--orchestration-mode', 'standalone');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe(`${ORCHESTRATION_MODE_STANDALONE_NOTICE}\n`);
+      expect(result.stderr).toContain('orchestration.mode');
+      expect(readFileSync(configPath(), 'utf8')).toBe(stale);
+    });
+
+    test('`orca` prints the retirement notice on stderr and exits 2 without writing config', () => {
+      const result = cli('setup', '--orchestration-mode', 'orca');
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe(`${ORCHESTRATION_MODE_ORCA_NOTICE}\n`);
+      expect(result.stderr).toContain('Orca mode is retired');
+      expect(result.stderr).toContain('orchestration.mode');
+      expect(existsSync(configPath())).toBe(false);
+    });
+
+    test('a value outside the two retired choices is refused by the parser', () => {
+      const result = cli('setup', '--orchestration-mode', 'bogus');
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('bogus');
+    });
+
+    test('called directly, anything but `standalone` exits 2 and returns before the wizard', async () => {
+      const cap = capture();
+      await setupCommand({ orchestrationMode: 'bogus' as never });
+      const { out, err, exitCode } = cap.restore();
+      expect(exitCode).toBe(2);
+      expect(err).toBe(`${ORCHESTRATION_MODE_ORCA_NOTICE}\n`);
+      expect(out).not.toContain('Debug Options');
+    });
   });
 
   test('--show is read-only and prints the resolved configuration', async () => {

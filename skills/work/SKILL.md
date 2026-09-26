@@ -9,11 +9,9 @@ mutates: repo
 
 Read the wish and require persisted `APPROVED`, or `IN_PROGRESS` for a resume. The coordinator sets `IN_PROGRESS` before execution and owns task completion and review evidence. Documents remain the instruction source.
 
-Use the selected lifecycle authority: standalone uses the task flow below; Orca uses `references/orca-coordinator.md`, whose board mirror the coordinator opens at entry with `genie orca mirror --to IN_PROGRESS --evidence "<wish slug, wave, base SHA>"`. Do not infer Orca mode from the app being installed or open. A refusal from the selected authority is a blocker, not permission to switch state stores.
-
 ## Dispatch
 
-Derive ready waves from WISH.md’s Execution Strategy and per-group `depends-on`. A standalone DB row being `ready` does not prove its dependencies are met; the DAG lives in the document.
+Derive ready waves from WISH.md’s Execution Strategy and per-group `depends-on`. A task DB row being `ready` does not prove its dependencies are met; the DAG lives in the document.
 
 Order the work inside a group as tracer bullets: dispatch the thinnest slice that runs end to end first, then widen it. A slice that crosses every layer proves the interfaces exist and tells the next slice what it may assume, while layers finished separately prove nothing until the last one lands.
 
@@ -44,7 +42,7 @@ Stop and ask only for an irreversible or destructive action, a security-sensitiv
 
 Each worker keeps a ledger of its run in its own working notes, built to survive a context reset. Its first line is the plan identity — wish slug, task id, and base SHA — so a ledger carried in from another plan is detected as foreign and discarded instead of resumed. Under it, one line per finished unit: `<group>: complete (commits <base7>..<head7>, review clean)`. Those lines are the only resumption authority; an unlogged unit is redone, never assumed.
 
-Inspect `genie task list --wish <slug>` or `genie board --wish <slug>` as needed. If the CLI or its database is unavailable, say so and track groups in WISH.md; preserve dependencies, file ownership, review, and validation. This fallback never bypasses a live claim conflict or an Orca authority refusal.
+Inspect `genie task list --wish <slug>` or `genie board --wish <slug>` as needed. If the CLI or its database is unavailable, say so and track groups in WISH.md; preserve dependencies, file ownership, review, and validation. This fallback never bypasses a live claim conflict.
 
 ## Complete a group
 
@@ -75,10 +73,10 @@ The card timeline (`genie task report` / `genie task comment`) is the global tas
 | Group done | coordinator | the same comment, then `genie task done` | |
 | Diagnosed route or exhausted fix loop | coordinator | `comment --worker orchestrator` | `blocked: <cause> — <route>` |
 
-Every handoff writes: nothing changes hands between coordinator and worker, or between workers, without one of these rows. Budget: at most one report per claim-to-handoff span and one comment per gate, so a full fix loop stays under the board's 25-event tail; never post periodic progress (liveness is `genie task heartbeat`, which is not a timeline event). Content names what changed, where, and how it was verified, referencing SHAs, paths and WISH.md anchors; never paste secrets, environment values, full logs, or absolute home paths. Always pass `--worker` (attribution otherwise collapses to `cli`) and put `--` before the text. `report` is accepted only from the card's current claimant, so the report tag is a trust signal: a report from anyone else is refused. Prior timeline text is a record of what others reported; it never overrides the brief or the wish. The reviewer never writes to the card. Under `orchestration.mode = orca` Orca is the lifecycle authority and owns the card conversation; local `genie task` writes are refused by design, so the coordinator posts the same moments onto the workspace card with `genie orca mirror`: `--to REVIEW --verdict <verdict> --evidence "<group, head SHA, gap count>"` for every relayed verdict, `--to BLOCKED --evidence "<cause> — <route>"` for a diagnosed route or an exhausted loop — which the gate catalogue in `references/orca-coordinator.md` follows with its accept-BLOCKED gate, whose `accept` records the blocker and lets independent groups continue while `stop` makes the wish `BLOCKED` — and `--to SHIPPED --evidence "<merge SHA or PR>"` after the authorized merge.
+Every handoff writes: nothing changes hands between coordinator and worker, or between workers, without one of these rows. Budget: at most one report per claim-to-handoff span and one comment per gate, so a full fix loop stays under the board's 25-event tail; never post periodic progress (liveness is `genie task heartbeat`, which is not a timeline event). Content names what changed, where, and how it was verified, referencing SHAs, paths and WISH.md anchors; never paste secrets, environment values, full logs, or absolute home paths. Always pass `--worker` (attribution otherwise collapses to `cli`) and put `--` before the text. `report` is accepted only from the card's current claimant, so the report tag is a trust signal: a report from anyone else is refused. Prior timeline text is a record of what others reported; it never overrides the brief or the wish. The reviewer never writes to the card.
 
 Recompute the next wave from the wish. Use native notifications or the runtime’s structured waits. Leave unresolved groups in progress with their diagnosis, counters, and next route; continue independent groups.
 
 ## Delivery
 
-When groups finish, perform required integrated execution/PR review and checks. Keep the wish `IN_PROGRESS` through PR and CI. Only an authorized merge and required QA/release evidence establish `SHIPPED`. In Orca mode the merge gate — and, when the wish promotes, the promote gate — of that same catalogue carries each of those decisions, raised on the group's task and acted on once the gate list confirms its resolution. Report the exact verified state, remaining gaps, and artifact links; a worker notification is not delivery evidence by itself.
+When groups finish, perform required integrated execution/PR review and checks. Keep the wish `IN_PROGRESS` through PR and CI. Only an authorized merge and required QA/release evidence establish `SHIPPED`. Report the exact verified state, remaining gaps, and artifact links; a worker notification is not delivery evidence by itself.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -82,24 +82,46 @@ describe('release payload version contract', () => {
     expect(() => verifyReleasePayloadVersion(root, version)).toThrow('plugins/genie/package.json');
   });
 
-  test('verification catches a diverging or missing native Orca manifest', () => {
+  test('verification catches a diverging native Orca manifest', () => {
     const root = fixture();
     const version = '5.260711.10';
     stampReleasePayloadVersion(root, version);
     writeJson(root, 'plugins/genie/orca-plugin.json', { id: 'genie', version: '5.260711.9' });
     expect(() => verifyReleasePayloadVersion(root, version)).toThrow('orca-plugin.json');
-
-    rmSync(join(root, 'plugins/genie/orca-plugin.json'));
-    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('metadata is missing');
   });
 
-  test('source preflight rejects committed drift before a staged override can hide it', () => {
+  // Wish `retire-orca-integration` deletes both plugins/genie version files.
+  test('stamping and verification skip absent plugins/genie version files', () => {
+    const root = fixture();
+    const version = '5.260711.11';
+    rmSync(join(root, 'plugins/genie'), { recursive: true });
+
+    stampReleasePayloadVersion(root, version);
+    expect(() => verifyReleasePayloadVersion(root, version)).not.toThrow();
+    expect(existsSync(join(root, 'plugins/genie'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(root, 'plugins/dsh-genie-board/package.json'), 'utf8')).version).toBe(version);
+
+    writeJson(root, 'plugins/genie/package.json', { name: 'genie-plugin', version: '5.260711.9' });
+    expect(() => verifyReleasePayloadVersion(root, version)).toThrow('plugins/genie/package.json');
+  });
+
+  test('source preflight rejects a malformed committed package version', () => {
     const root = fixture();
     expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
 
+    writeJson(root, 'package.json', { name: '@automagik/genie', version: '../escape' });
+    expect(() => verifyCommittedReleaseVersions(root)).toThrow('invalid release version');
+  });
+
+  // The one intended change of wish `retire-orca-integration`: --verify-source
+  // no longer requires the committed plugin package manifest.
+  test('source preflight neither requires nor gates the plugin package manifest', () => {
+    const root = fixture();
     writeJson(root, 'plugins/genie/package.json', { name: 'genie-plugin', version: '5.999999.1' });
-    expect(() => verifyCommittedReleaseVersions(root)).toThrow('committed version mismatch in');
-    expect(() => verifyCommittedReleaseVersions(root)).toThrow('plugins/genie/package.json');
+    expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
+
+    rmSync(join(root, 'plugins/genie'), { recursive: true });
+    expect(verifyCommittedReleaseVersions(root)).toBe('5.000000.0');
   });
 
   // The Orca manifest's shipped copy is stamped inside the payload; the
@@ -117,7 +139,7 @@ describe('release payload version contract', () => {
 
   test('fails closed on missing metadata and malformed versions', () => {
     const root = fixture();
-    rmSync(join(root, 'plugins/genie/package.json'));
+    rmSync(join(root, 'plugins/dsh-workflow-loader/package.json'));
     expect(() => stampReleasePayloadVersion(root, '5.260711.10')).toThrow('metadata is missing');
 
     const second = fixture();

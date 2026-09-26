@@ -27,12 +27,6 @@ import {
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { installWorkspaceCheck } from './lib/interactivity.js';
-import {
-  ORCA_INVALID_AUTHORITY_MESSAGE,
-  ORCA_REFUSAL_MESSAGE,
-  isOrcaForbiddenInvocation,
-  orcaOwnsLifecycle,
-} from './lib/orchestration-mode.js';
 import { colorizeFor } from './lib/term-color.js';
 import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.js';
 import { VERSION } from './lib/version.js';
@@ -104,8 +98,10 @@ program
   .option('--terminal', 'Only configure terminal defaults')
   .option('--session', 'Only configure session settings')
   .addOption(
-    new Option('--orchestration-mode <mode>', 'Select lifecycle authority explicitly')
+    // Retired with Orca mode: a hidden one-release stub that prints the notice.
+    new Option('--orchestration-mode <mode>', 'Retired: Orca mode no longer exists')
       .choices(['standalone', 'orca'])
+      .hideHelp()
       .conflicts(['quick', 'shortcuts', 'terminal', 'session', 'reset', 'show']),
   )
   .option('--reset', 'Reset configuration to defaults')
@@ -269,46 +265,6 @@ registerIdeaCommand(program);
 registerMikroCommands(program);
 registerOrcaCommands(program);
 registerWishCommands(program);
-
-// ============================================================================
-// Orca lifecycle gate — refuses the verbs Orca owns before their handler runs
-// ============================================================================
-
-/**
- * The verb path of the command about to run: the first name under `genie`, and
- * the one below it. `genie task sync` → `['task', 'sync']`; `genie board` →
- * `['board']`.
- */
-function invocationPath(actionCommand: Command): [string, string | undefined] {
-  const chain: string[] = [];
-  let current: Command | undefined = actionCommand;
-  while (current?.parent) {
-    chain.unshift(current.name());
-    current = current.parent;
-  }
-  return [chain[0] ?? '', chain[1]];
-}
-
-/**
- * A SECOND preAction hook, deliberately separate from `installWorkspaceCheck`.
- * The workspace hook cannot carry this refusal: `WORKSPACE_EXEMPT`
- * (`src/lib/interactivity.ts`) exempts `task`, `board` and `idea` by name — the
- * exact verbs this gate exists to refuse — so its hook returns before it could
- * ever look at lifecycle authority.
- *
- * The authority is resolved ONLY for a verb the closed list already names, so a
- * standalone host and every other command read no configuration here at all.
- */
-program.hook('preAction', (_thisCommand, actionCommand) => {
-  const [root, sub] = invocationPath(actionCommand);
-  if (!isOrcaForbiddenInvocation(root, sub)) return;
-  const verdict = orcaOwnsLifecycle();
-  if (verdict === false) return;
-  // Two reasons to refuse, two fixed lines, one exit code. Both are "the
-  // operator must act"; they differ in what genie can honestly claim to know.
-  printErr(verdict === 'orca' ? ORCA_REFUSAL_MESSAGE : ORCA_INVALID_AUTHORITY_MESSAGE);
-  process.exit(2);
-});
 
 // ============================================================================
 // Universal workspace check — ensures workspace exists before commands that need it

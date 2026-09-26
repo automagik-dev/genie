@@ -33,6 +33,10 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'workers.json',
   'GENIE_IDLE_TIMEOUT_MS',
   'buildTeamLeadCommand',
+  // Orca lifecycle mode (retired by wish retire-orca-integration)
+  'ORCA_FORBIDDEN',
+  'orcaOwnsLifecycle',
+  'switchOrchestrationMode',
   'native-teams',
   'mailbox',
   // Plugin era, retired by `skills-everywhere-b` (RETIRED-9).

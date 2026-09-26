@@ -75,13 +75,13 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(workflow).not.toContain(forbidden);
     }
-    for (const path of ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json']) {
-      expect(workflow).toContain(path);
-    }
+    // package.json is always bumped; each plugins/genie file only while present.
+    expect(workflow).toContain('JSON_FILES=(package.json)');
+    expect(workflow).toContain('for path in plugins/genie/orca-plugin.json plugins/genie/package.json; do');
     // There is no repo-root Orca manifest to stamp: the Orca plugin ships as the
     // tree-only `plugins/genie` subtree ref, not from the repo root.
     expect(workflow).not.toMatch(/JSON_FILES=\(\n\s+package\.json\n\s+orca-plugin\.json\n/);
-    expect(workflow).toContain('expected exactly three version files');
+    expect(workflow).toContain('expected exactly the ${#VERSION_PATHS[@]} present version files');
     expect(workflow).toContain('git diff --cached --name-only');
     expect(workflow).toContain('git commit --no-verify');
     expect(workflow).toContain('git push --atomic origin "HEAD:refs/heads/dev"');
@@ -845,29 +845,32 @@ describe('Group E release and documentation contracts', () => {
     expect(archiveSmoke).toBeGreaterThan(extract);
   });
 
-  test('dual-mode docs preserve the operator and public Orca contributor contracts', () => {
+  test('operator docs keep one lifecycle authority, rollback, uninstall and MCP retirement', () => {
+    const operator = read('README.md');
+    for (const topic of [
+      '## Lifecycle authority',
+      'Orca mode is retired',
+      'A leftover `orchestration.mode` key',
+      'roadmap',
+      'genie doctor',
+      'genie update --rollback',
+      'genie uninstall',
+      'The legacy Genie MCP server is retired',
+      'pre-A7 signed release',
+    ]) {
+      expect(operator).toContain(topic);
+    }
+    for (const retired of ['Standalone and Orca authority', 'In Orca mode', 'backups/orchestration-mode']) {
+      expect(operator).not.toContain(retired);
+    }
+  });
+
+  test('Orca plugin docs preserve the operator and public contributor contracts', () => {
     const operator = read('README.md');
     const contributor = read('plugins/genie/references/orca-orchestration.md');
     const pluginReadme = read('plugins/genie/README.md');
 
-    for (const topic of [
-      '`standalone` is the default',
-      'genie setup --orchestration-mode orca',
-      'genie setup --orchestration-mode standalone',
-      'orchestration.contract.v1',
-      'genie doctor',
-      'ambiguous_after_possible_commit',
-      'unsupported_environment',
-      'genie update --rollback',
-      'genie uninstall',
-      'A7',
-    ]) {
-      expect(operator).toContain(topic);
-    }
-    expect(operator).toContain('Genie does not open `.genie/genie.db`');
-    expect(operator).toContain('roadmap');
-    expect(operator).toContain('The legacy Genie MCP server is retired');
-    expect(operator).toContain('pre-A7 signed release');
+    expect(operator).toContain('ambiguous_after_possible_commit');
     expect(operator).toContain('plugins/genie/references/orca-orchestration.md');
     // Registering the plugin with Orca is a separate, operator-side act, and the
     // route is the tree-only subtree ref — never a branch of this repo, whose
@@ -1107,12 +1110,7 @@ describe('Group E release and documentation contracts', () => {
       'effort_escalations=<used>/2',
     ])
       expect(fix).toContain(contract);
-    for (const path of [
-      'skills/review/SKILL.md',
-      'skills/work/SKILL.md',
-      'skills/genie/reference/lifecycle.md',
-      'skills/work/references/orca-coordinator.md',
-    ]) {
+    for (const path of ['skills/review/SKILL.md', 'skills/work/SKILL.md', 'skills/genie/reference/lifecycle.md']) {
       const caller = read(path);
       expect(caller).toContain('fix');
       expect(caller).not.toContain('## Escalation Diagnosis');

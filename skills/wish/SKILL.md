@@ -77,11 +77,8 @@ genie wish lint
 
 It reports structure only — template sections, the Status and Date metadata, the Execution Strategy routing columns, brainstorm links that resolve — writes nothing, and exits 0 clean or 1 with findings; `--dir <repo>` names another checkout. In the Genie repository the same linter is also a required stage of the repository gate, reached through its alias `grep -q '"wishes:lint"' package.json 2>/dev/null && bun run wishes:lint`. A linter the project does not provide is reported as a finding, and a linter that runs and fails blocks handoff.
 2. Obtain independent `review` of the completed plan. The caller appends its evidence under `## Review Results` and persists APPROVED, FIX-FIRST, or BLOCKED. `work` requires APPROVED on disk.
-3. Resolve the configured lifecycle authority before branching: `orchestration.mode` is an explicit setting and is never inferred from what is installed. In standalone mode, create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
-4. After APPROVED in standalone mode, run `genie context --wish <slug>` to record the wave base SHA. In Orca mode, record the base branch and exact SHA in WISH.md and follow `work`'s Orca protocol; Genie owns the planning documents, Orca owns Run/Task/Dispatch state.
-   In Orca mode the step-2 verdict is persisted once the approve-wish gate resolves — the first row of the gate catalogue in `work`'s Orca coordinator reference, raised on the wish-level task from the coordinator terminal after `run-create`, its Run and task ids recorded in WISH.md — and an authorization the user already gave satisfies it.
-   Then mirror the persisted status onto the workspace card: `genie orca mirror --to APPROVED --evidence "<plan review verdict, reviewer, head SHA>"`.
-   That write is one-way — Orca's status and comment are a view of the documents, never lifecycle truth — and a failed mirror is reported, never retried blindly.
+3. Create missing task rows per group (`genie task create --title "<group title>" --wish <slug> --group <group-name>`) and inspect for duplicates before retrying; an unavailable CLI is reported, never bypassed.
+4. After APPROVED, run `genie context --wish <slug>` to record the wave base SHA.
 
 ## Without a workflow surface
 

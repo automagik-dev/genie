@@ -404,6 +404,11 @@ Corrective route: resolve or formally clear the repository-baseline failures, th
 - **Cut lines applied:** pre-flight proved skills@1.5.23 lists and installs skills carrying `category`/`mutates` unchanged (57/57 copies). Shipped: flat `category` + advisory `mutates` keys with lint and a generated README catalog; five of nine absorbed skills (`authoring`, `verify`, `skill-audit`, `merge`, `research`; `tdd`, `prototype`, `lean`, `handoff` deferred against the consolidation precedent in skills/README.md); all eleven improve edits with contract tests extended, never weakened; the plugin's HOST half as one manager row plus three subpath rows under the existing package name with hand-validated per-row config; ONE live config knob (`genie config get budgets.maxEscalationsPerGroup`, echoed by doctor, resolved by the fix skill). Deferred to their own wishes: the client-half split (dsh-client-modules keys the module table by package name, resolves only `exports["./client"]`, and `exactPackageSpecifier` rejects three-segment scoped names — cited in the plugin README), `skills-policy.json`, the package rename, `metadata.verifiedAgainst`, a description cap, and the router-phrase lint.
 - **Commits:** `08ae21815` categories, `21f80207f` absorbed skills, `04e545370` improved skills, `e641eb312` config knob, `c251ea949` plugin restructure. Full gate green except the four dev-owned darwin failures already recorded on PR #2908.
 
+### 2026-09-25 — parked for stability
+
+- Not being worked on. Genie is parked on stable `v6.260925.1`; the status stays as recorded above and nothing in this plan executes until the operator resumes it.
+- Deferrals and their reasons: [`.genie/PARKED.md`](../../PARKED.md).
+
 ---
 
 ## Files to Create/Modify
