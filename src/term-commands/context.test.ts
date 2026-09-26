@@ -566,6 +566,7 @@ describe('a stale orchestration.mode from the retired Orca mode', () => {
     const result = await cliWithConfig(fx.root, config, '--wish', 'foo', '--group', 'g');
     expect(result.code).toBe(0);
     expect(payloadOf(result).branch).toBe('wish/foo-g');
+    expect(metaRow(fx, 'wish_base:foo')).not.toBeNull();
   });
 });
 
