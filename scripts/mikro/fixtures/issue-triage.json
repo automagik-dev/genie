@@ -44,14 +44,13 @@
       "truth": {
         "type": "bug",
         "files": [
-          "src/lib/orca-orchestration-adapter.test.ts",
           "src/genie-commands/doctor.test.ts",
           "src/genie-commands/__tests__/update.test.ts",
           "scripts/release-archive-safety.test.ts",
           "scripts/skills-retirement-restore.test.ts",
           "scripts/design-review-evidence.test.ts"
         ],
-        "notes": "Open. The six darwin-only failing tests named in the issue and in wish.js DARWIN_TOLERATED."
+        "notes": "Open. The darwin-only failing tests named in the issue and in wish.js DARWIN_TOLERATED; the sixth file, the Orca adapter test, was deleted with the Orca integration."
       }
     },
     {

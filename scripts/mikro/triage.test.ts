@@ -177,7 +177,7 @@ describe('boundary hits come from wish.js and fail closed', () => {
       '.github/workflows/version.yml',
       'src/lib/delivery-evidence-verify.ts',
       'package.json',
-      'plugins/genie/package.json',
+      'plugins/dsh-genie-board/package.json',
       'src/genie.ts',
       './src/genie.ts',
       'src/genie-commands/doctor.ts',
