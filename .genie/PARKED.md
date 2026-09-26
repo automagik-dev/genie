@@ -1,6 +1,6 @@
-# Parked for stability — 2026-09-25
+# Parked for stability — 2026-09-25, refreshed 2026-09-26
 
-Genie is parked: stable `v6.260925.1` is current, no issues are open, the only open PR is the auto-maintained rolling promotion (`dev` → `main`), and CI is green. A council (architecture, delivery, product, security and dissent lenses, all `support-with-conditions`) decided how to handle what was left. The operator approved. This page records each deferral and its reason, so the next session does not investigate them again.
+Genie is parked: stable `v6.260926.5` is current (the Orca integration was retired on 2026-09-26; see [retire-orca-integration](wishes/archive/retire-orca-integration/WISH.md)), no issues are open, the only open PR is the auto-maintained rolling promotion (`dev` → `main`), and CI is green. A council (architecture, delivery, product, security and dissent lenses, all `support-with-conditions`) decided how to handle what was left. The operator approved. This page records each deferral and its reason, so the next session does not investigate them again.
 
 ## Deferred — no code change while parked
 
@@ -9,7 +9,11 @@ Genie is parked: stable `v6.260925.1` is current, no issues are open, the only o
 | mikro offload (`wish-context`, `review-prep`) fails in Claude Code sessions | Leave off | `DEEPSEEK_API_KEY` is kept out of the session environment on purpose (it lives behind `~/.mikro/gate-env.sh`). `/wish` degrades cleanly: the offload costs about 0.1 s and 0 tokens, and correctness does not depend on it. mikro reports the missing key as "3 consecutive empty LLM responses"; that label is a mikro defect, not genie's | When the offload is wanted: load the key in the process that starts the session (never in every tool environment), and file the label upstream against mikro |
 | Complexity hotspot over the 25 warn threshold: `codexPluginSurfaceChecks` (26, `src/genie-commands/doctor.ts`). The other one, `parseJsonRejectingDuplicateKeys`, was deleted with the Orca adapter on 2026-09-26 | Leave | `bun run lint:complexity-budget` reports "OK: budget intact" | In a dedicated refactor wish only |
 | `UNSAFE_VALIDATION` in `.claude/workflows/wish.js` over-blocks harmless commands: `git stash push`, `git log --grep push`, `gh issue view`, `gh repo view`, `gh release view`, `npm run publish`, and a verb inside a quoted argument (`git commit -m "push fix"`) | Leave, no regex change | It fails closed (the run ends `blocked` with the rule named), only in repositories with no hook system, and it guards agent-authored commands built from untrusted input | Only when a real run hits it. Fix test-first: the list above becomes negative fixtures, and the existing refusals (`git push;`, `$(git push)`, `bash -c 'git push'`, `npm publish;`) stay as regression cases |
-| Records-only commits on `dev` but not `main` (#3059 board snapshot, #3060 wish closures) | Leave | No code is waiting for promotion, and promoting runs the version and release machinery. The auto-maintained rolling promotion PR already carries these commits | Merge that PR whenever the operator next promotes deliberately; nothing forces it sooner |
+| Records-only commits on `dev` but not `main` (#3069 retirement close-out, #3071 docs pointer, and this page) | Leave | No code is waiting for promotion, and promoting runs the version and release machinery. The auto-maintained rolling promotion PR already carries these commits | Merge that PR whenever the operator next promotes deliberately; nothing forces it sooner |
+
+## Due in the next release
+
+- **Remove the two retirement stubs.** They are `genie setup --orchestration-mode` (hidden; `orca` exits 2, `standalone` exits 0) and `genie orca` (visible, exits 2). Both shipped in `v6.260926.5` as one-release notices. Remove them with their tests, the drift-test pins that name them, and the `'orca'` entry in `WORKSPACE_EXEMPT` (`src/lib/interactivity.ts`). Keep `plugins/genie/` in the tarball as an empty directory **forever**: every older binary's `genie update` requires it, and `build-binary.sh` asserts it.
 
 ## Parked feature work
 
