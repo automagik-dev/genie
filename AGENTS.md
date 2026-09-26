@@ -17,7 +17,7 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 - `src/genie.ts` is the Commander CLI entry point.
 - `src/lib/v5/` owns SQLite state. The per-repo `.genie/genie.db` stores task state and is the only database genie writes; the machine-scope `~/.genie/genie.db` path carries no genie state in v6, and the per-repo opener refuses it so the two can never merge.
 - `src/term-commands/` owns `init`, `context`, MCP, task, and board commands.
-- `plugins/genie/` is the Orca plugin payload: the native manifest (eight palette commands with keybindings, the agent-settle event, four `{kind}` capabilities), its entrypoint bundle, and `references/orca-orchestration.md`. Genie writes onto Orca — palette text through the host API, board status and card comments through `genie orca mirror` — and Orca never writes back into genie state.
+- `plugins/genie/` is retired with the Orca integration: the source tree carries none, and release tarballs keep an empty `plugins/genie/` compat directory only because earlier binaries' update path requires it. `genie orca` is a one-release stub that prints a retirement notice and exits 2.
 - `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
 - `.genie/` contains git-tracked wishes, reviewed designs (`brainstorms/*/DESIGN.md`) and the index, plus gitignored brainstorm working notes and operational SQLite files.
 
@@ -64,7 +64,7 @@ The full incident narratives are path-scoped for Claude Code in `.claude/rules/*
 
 ## Release contract
 
-Release tarballs contain the binary, the `plugins/genie` Orca payload, the `plugins/dsh-genie-board` and `plugins/dsh-workflow-loader` DSH payloads, `skills/`, `templates/`, and `VERSION`. Committed root and Orca package versions must agree. Staging stamps the immutable candidate into `VERSION`, every plugin package, the Orca manifest, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. The root `orca-marketplace.json` is a source-only, versionless index that no tarball carries. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
+Release tarballs contain the binary, the `plugins/dsh-genie-board` and `plugins/dsh-workflow-loader` DSH payloads, an empty `plugins/genie/` compat directory, `skills/`, `templates/`, and `VERSION`. Staging stamps the immutable candidate into `VERSION`, every plugin package, and the DSH package compatibility floor; the DSH Host bundle is built with the same candidate. Source/linked Host builds use the checkout root version. Stable is the default channel; dev requires explicit selection. Build and verify every supported release tarball before promotion.
 
 ## Runtime-specific notes
 

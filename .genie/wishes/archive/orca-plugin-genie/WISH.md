@@ -2,14 +2,16 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SUPERSEDED — retired by `retire-orca-integration` (2026-09-26) |
 | **Slug** | `orca-plugin-genie` |
 | **Date** | 2026-09-19 |
 | **Author** | Claude Fable 5.1 (Orca worktree `orca-plugin-genie`) for Felipe Rosa |
 | **Appetite** | medium |
 | **Branch** | `namastex888/orca-plugin-genie` (the Orca worktree's own branch, cut from `dev`; the PR targets `dev`) |
 | **Repos touched** | automagik-dev/genie |
-| **Design** | [DESIGN.md](../../brainstorms/orca-plugin-genie/DESIGN.md) |
+| **Design** | [DESIGN.md](../../../brainstorms/orca-plugin-genie/DESIGN.md) |
+
+> **Truth (2026-09-26):** the plugin shipped on this wish's groups, then the owner retired the whole Orca integration after the 2026-09-25 dogfood (issue #3064). #3065 removed Orca mode and #3066 deleted `plugins/genie` (kept as an empty compat directory), the adapter and the card mirror.
 
 ## Summary
 
@@ -392,7 +394,7 @@ An independent PR review of `8cfd00ccb` returned FIX-FIRST. Every finding is app
 ### 2026-09-25 — parked for stability
 
 - Not being worked on. Genie is parked on stable `v6.260925.1`; the status stays as recorded above and nothing in this plan executes until the operator resumes it.
-- Deferrals and their reasons: [`.genie/PARKED.md`](../../PARKED.md).
+- Deferrals and their reasons: [`.genie/PARKED.md`](../../../PARKED.md).
 
 ---
 

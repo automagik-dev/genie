@@ -1,13 +1,13 @@
 {
   "name": "@automagik/genie",
-  "version": "6.260926.1",
+  "version": "6.260926.4",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://automagik.dev/genie/release-process",
   "license": "MIT",
   "type": "module",
   "bin": {
     "genie": "./dist/genie.js"
   },
-  "files": ["dist/", "skills/", "plugins/genie/", "templates/", "README.md", "LICENSE"],
+  "files": ["dist/", "skills/", "templates/", "README.md", "LICENSE"],
   "scripts": {
     "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
@@ -24,9 +24,8 @@
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
-    "lint:orca-bundle": "bun scripts/orca-bundle-parity.ts --check",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:orca-bundle && bun test",
-    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun run lint:orca-bundle",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun test",
+    "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget",
     "verify:release": "scripts/verify-release.sh",
     "build:plugin": "bun run --cwd plugins/dsh-genie-board build"
   },

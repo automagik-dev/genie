@@ -18,7 +18,7 @@ export const meta = {
     {
       title: 'Gate',
       detail:
-        'a mechanical low-effort agent first classifies the repository hook system from tracked content, git config and the resolved hooks directory; with any hook system it asserts the hooks are live before any push, runs the repository full check once, and passes only on exit 0 with a zero-fail summary; with no hook system at all it runs the frozen contract validation command once instead, passes only on its exit 0, tolerates nothing, and leaves full verification to the remote CI checks read-back already requires — a missing validation command, or dead hooks in a repository that has them, ends the run blocked with nothing pushed; on darwin a failing set that is a subset of the six known-failing test names and fails the same way at the base of the branch is tolerated and said so in one line, a seventh failure or a known name that passes at the base is red, and every failing line is quoted verbatim into the problems list',
+        'a mechanical low-effort agent first classifies the repository hook system from tracked content, git config and the resolved hooks directory; with any hook system it asserts the hooks are live before any push, runs the repository full check once, and passes only on exit 0 with a zero-fail summary; with no hook system at all it runs the frozen contract validation command once instead, passes only on its exit 0, tolerates nothing, and leaves full verification to the remote CI checks read-back already requires — a missing validation command, or dead hooks in a repository that has them, ends the run blocked with nothing pushed; on darwin a failing set that is a subset of the five known-failing test names and fails the same way at the base of the branch is tolerated and said so in one line, a sixth failure or a known name that passes at the base is red, and every failing line is quoted verbatim into the problems list',
     },
     {
       title: 'Review',
@@ -102,17 +102,14 @@ const DENYLIST = [
   'delivery-evidence-verify.ts',
 ]
 
-// The six darwin-only failures of issue #2926 (FRAMEWORK-BRIEF.md §4), each held as its FILE and
+// The five darwin-only failures of issue #2926 still live (FRAMEWORK-BRIEF.md §4; a sixth left with the
+// retired Orca adapter test), each held as its FILE and
 // its EXACT test name. Held ONCE, interpolated into the gate prompt, and re-checked script-side: a
 // tolerated set must be a subset of these BY NAME. Matching by file was the bug: `doctor.test.ts`
 // carries one known failure and a hundred other tests, so a file-level comparison tolerated any NEW
 // failure inside it — the gate passed the commit that broke it and the run published a red branch.
 // Ubuntu CI stays the authority at read-back. These names never appear in the front door.
 const DARWIN_TOLERATED = [
-  {
-    file: 'src/lib/orca-orchestration-adapter.test.ts',
-    test: 'runtime and executor boundary > does not spawn on invalid input and owns all process controls',
-  },
   {
     file: 'src/genie-commands/doctor.test.ts',
     test: 'global db contamination (r2 #6 / M7 operator half) > --fix-global-db backs up a database with a live WAL completely',
@@ -749,17 +746,17 @@ function gatePrompt(job, contract, worktree, branch, headSha) {
       'git config --get core.hooksPath and git rev-parse --git-path hooks — the configured hooks path must resolve inside this worktree — with a hook system only',
       `${CHECK_COMMAND} in the worktree, once — or, only when the hook system is none, the frozen validation command above, once`,
       `git merge-base HEAD origin/${job.base}, then ${SHORTSTAT_COMMAND} <that merge-base sha> HEAD in the worktree — the size measurement, read-only`,
-      `Only when every failing TEST is one of the six named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
+      `Only when every failing TEST is one of the five named below: git merge-base HEAD origin/${job.base}, then git worktree add <a fresh mktemp -d path> <that base sha>, ln -s <this worktree>/node_modules into it, bun test <the files those tests live in> there, and git worktree remove --force <that temp path> afterwards — the temp worktree holds no work, so creating and removing it is inside your read-only brief`,
     ]),
     'Classify the hook system FIRST, from the classification commands above, and report each signal and what it showed in hookEvidence. hookSystem is none only when ALL of these are empty: the tracked paths git ls-files prints, the value git config --get core.hooksPath prints at any scope, and every entry of the resolved hooks directory whose name does not end in .sample. Otherwise it is husky when .husky/ is tracked, else other. Any doubt is a hook system, never none, and a none with no hookEvidence line is read by the script as a hook system.',
-    `With no hook system (none): skip the liveness assertion, set hooksLive false and hookSystem none, and run the frozen validation command (${validation}) exactly once in place of ${CHECK_COMMAND}, under the same foreground and timeout rule below. Pass only on its exit code 0; the six darwin names below mean nothing here, so tolerate nothing and leave darwinTolerated false. The remote CI checks are the authority at read-back. A validation command that would push, merge, publish, or write outside the worktree is not run: answer pass false and name it in problems. With no validation command frozen, run nothing and answer pass false.`,
+    `With no hook system (none): skip the liveness assertion, set hooksLive false and hookSystem none, and run the frozen validation command (${validation}) exactly once in place of ${CHECK_COMMAND}, under the same foreground and timeout rule below. Pass only on its exit code 0; the five darwin names below mean nothing here, so tolerate nothing and leave darwinTolerated false. The remote CI checks are the authority at read-back. A validation command that would push, merge, publish, or write outside the worktree is not run: answer pass false and name it in problems. With no validation command frozen, run nothing and answer pass false.`,
     'With a hook system (husky or other): assert hook liveness FIRST. If the pre-push hook file is absent, or the configured hooks path resolves outside this worktree, set hooksLive false with hooksReason and stop: a push must never happen over dead hooks, and the script will end the run there.',
     `Then run the selected command exactly once in the worktree — ${CHECK_COMMAND} with a hook system (husky or other), the frozen validation command with none, never both — in the FOREGROUND under a bounded timeout (T=$(command -v timeout || command -v gtimeout); $T 1500 <the selected command> > <a log file in your scratch dir> 2>&1; echo EXIT=$? — GNU timeout on Linux, gtimeout from coreutils on macOS; with neither, run it unbounded in the foreground), and on that ONE shell call also set the shell tool's OWN timeout parameter to its maximum (600000 ms where the tool offers one): the timeout inside the command does not stop a harness from moving a call to the background once the tool's default expires (120 s — the check runs for minutes), and a check moved to the background is a backgrounded check — never as a background task, never through a monitor, wait or sleep loop: your structured result is due in this same turn, and a backgrounded check ends the turn with no result, which the run counts as missed. Then read the tail of the log and grep it for the failing lines. Pass only on exit code 0 with a zero-fail summary. Report the exit code, the fail count, the summary line verbatim, and every failing line quoted verbatim into problems — a summary sentence with no quoted line does not satisfy that field.`,
     section(
-      'On darwin only, these six TESTS are known to fail for platform reasons — the file is where each one lives, and only the test name after it is tolerated',
+      'On darwin only, these five TESTS are known to fail for platform reasons — the file is where each one lives, and only the test name after it is tolerated',
       DARWIN_TOLERATED.map((known) => `${known.file} > ${known.test}`),
     ),
-    'Report every failing test in failingTests, and make failCount equal that list: a count larger than the list says something failed that you did not name, and the script counts the whole set as red rather than tolerate an unnamed failure. If every failing test is one of those six BY NAME, re-confirm them at the base of this branch with the temp-worktree command above and list in baseReconfirmed the exact name of every test that ALSO fails there, spelled as you spelled it in failingTests. A test that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing test name is in baseReconfirmed, and say so in one line of problems naming them. A seventh test, ANOTHER test inside one of those six files, or any non-test failure is red regardless — the file is not the unit, the test is. The script re-checks both halves by exact name, so a set that fails either is simply counted as red.',
+    'Report every failing test in failingTests, and make failCount equal that list: a count larger than the list says something failed that you did not name, and the script counts the whole set as red rather than tolerate an unnamed failure. If every failing test is one of those five BY NAME, re-confirm them at the base of this branch with the temp-worktree command above and list in baseReconfirmed the exact name of every test that ALSO fails there, spelled as you spelled it in failingTests. A test that passes at the base was broken by this commit and is red. Set pass true and darwinTolerated true only when every failing test name is in baseReconfirmed, and say so in one line of problems naming them. A sixth test, ANOTHER test inside one of those five files, or any non-test failure is red regardless — the file is not the unit, the test is. The script re-checks both halves by exact name, so a set that fails either is simply counted as red.',
     `Then measure the committed diff with exactly ${SHORTSTAT_COMMAND} <merge-base sha> HEAD, the merge-base taken with origin/${job.base}, and return the files-changed count in changedFiles and the insertions count in insertions as integers copied from that one line (insertions 0 when the line names none). If the command fails, omit both fields: never estimate them, never copy a count from anywhere else.`,
     'The check output never leaves you: return the summary line, the failing names and the quoted failing lines, not the stream.',
     READ_ONLY,
@@ -1250,7 +1247,7 @@ function toleratedIndex(entry) {
   )
 }
 
-// Tolerance needs BOTH halves, by exact test identity: every failing test is one of the six known
+// Tolerance needs BOTH halves, by exact test identity: every failing test is one of the five known
 // darwin failures, and THAT SAME test was re-confirmed failing at the branch's base. A known test
 // that passes at the base was broken by this commit and stays red.
 // `failCount` is the run's own count of failures. When it exceeds the names the gate enumerated,
@@ -1398,7 +1395,7 @@ stageReached = 'Repair'
 while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBudget) {
   const round = repairs + 1
   const problems = [
-    // Only a RED gate contributes a repair problem. A darwin-tolerated pass reports its six
+    // Only a RED gate contributes a repair problem. A darwin-tolerated pass reports its five
     // platform failures through the same problems[] field, and those name files outside the
     // declared set that the fixer is forbidden to touch — handing them over under "these, and
     // nothing else" spends the round chasing failures the script already decided to tolerate.
