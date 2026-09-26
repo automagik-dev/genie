@@ -68,6 +68,14 @@ function fixture() {
   pack();
   return { root, payload, artifacts, pack, put };
 }
+// Wish `retire-orca-integration` deletes the plugins/genie version files.
+test('payloads without the plugins/genie version files still pass', () => {
+  const f = fixture();
+  rmSync(join(f.payload, 'plugins/genie'), { recursive: true });
+  stampReleasePayloadVersion(f.payload, version);
+  f.pack();
+  expect(() => verifyArtifacts(f.artifacts, version)).not.toThrow();
+});
 test('all four complete unsigned payloads pass; missing and extra platforms fail', () => {
   const f = fixture();
   expect(() => verifyArtifacts(f.artifacts, version)).not.toThrow();

@@ -170,21 +170,21 @@ check_ci_run_record() {
 # normalized documents prevents an allowlisted package.json from smuggling a
 # script or dependency change past the parent commit's successful CI run.
 #
-# The native Orca manifest is an OPTIONAL member of that delta: `workflow_run`
+# Both plugin version files are OPTIONAL members of that delta: `workflow_run`
 # executes the `version.yml` on main, so a bump field added on dev is inert
-# until promotion. A child that omits it is still the deterministic bump of
-# the workflow that produced it; when present it must be version-only like
-# every other member. Its shipped copy is stamped inside the payload anyway.
+# until promotion, and version.yml bumps a plugin file only while it exists
+# (wish `retire-orca-integration`). A child that omits one is still the
+# deterministic bump of the workflow that produced it; when present it must be
+# version-only like every other member. Shipped copies are stamped in the payload.
 version_child_matches_parent() {
   local parent_sha="$1" child_sha="$2" version="$3" path changed expected
-  local -a json_paths=(
-    package.json
-    plugins/genie/package.json
-  )
+  local -a json_paths=(package.json)
   changed="$(git diff --name-only "$parent_sha" "$child_sha" -- | LC_ALL=C sort)" || return 1
-  if grep -qx 'plugins/genie/orca-plugin.json' <<<"$changed"; then
-    json_paths+=(plugins/genie/orca-plugin.json)
-  fi
+  for path in plugins/genie/orca-plugin.json plugins/genie/package.json; do
+    if grep -qx "$path" <<<"$changed"; then
+      json_paths+=("$path")
+    fi
+  done
   expected="$(printf '%s\n' "${json_paths[@]}" | LC_ALL=C sort)"
   [[ "$changed" == "$expected" ]] || return 1
   [[ "$(git show -s --format=%s "$child_sha")" == "chore(version): bump to ${version} [auto-version]" ]] || return 1

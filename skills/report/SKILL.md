@@ -48,7 +48,7 @@ Two further outcomes are first-class, not failures to hide. **No correct seam:**
 4. Read the issue back and believe only the read-back: a create call that exits zero is not evidence that the body, the labels, or the target repository stored as you sent them, because permission to create an issue is routinely wider than permission to label one. A write that times out or answers ambiguously is not proof that nothing happened — find the record before retrying, or the retry files the issue twice. This holds for any external write, not only for an issue.
 5. If creation fails or authentication is missing, return the full report for manual submission.
 
-In standalone lifecycle mode, the bug can also go on the Genie board with `genie task create --title "bug: <title> (gh#<n>)" --agent <roster agent> --why "<reason>"`; skip it when there is no `.genie/genie.db`. Under explicitly selected Orca authority, a refusal is final: do not fall back to the local board.
+The bug can also go on the Genie board with `genie task create --title "bug: <title> (gh#<n>)" --agent <roster agent> --why "<reason>"`; skip it when there is no `.genie/genie.db`.
 
 ## Handoff
 

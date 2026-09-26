@@ -18,7 +18,7 @@ describe('card conversation contract in the skills', () => {
     expect(work).toContain('never post periodic progress');
     expect(work).toContain('The reviewer never writes to the card.');
     expect(work).toContain('is the global task state');
-    expect(work).toMatch(/orchestration\.mode = orca[^\n]*Orca is the lifecycle authority/);
+    expect(work).not.toMatch(/orca/i);
   });
 
   test('the orchestrator relays every gate as a comment before task done', () => {

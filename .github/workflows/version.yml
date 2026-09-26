@@ -11,9 +11,10 @@ name: Version
 # commit + tag + push back to dev, then call the main-controlled reusable
 # release workflow with the successful parent CI run. The release guard accepts
 # the child only when every changed version field is the deterministic version
-# bump — three files since wish `skills-everywhere-b` (`package.json`,
-# `plugins/genie/package.json`, `plugins/genie/orca-plugin.json`), of which the
-# guard requires the first two and accepts the third when it moved.
+# bump — `package.json`, plus `plugins/genie/package.json` and
+# `plugins/genie/orca-plugin.json` only while they exist (wish
+# `retire-orca-integration`). The guard requires `package.json` and accepts each
+# plugin file when it moved.
 #
 # On main promotion triggers, derive a fresh immutable release identity
 # without rewriting the source tree. The successful branch CI run and a new
@@ -189,17 +190,20 @@ jobs:
       # SECURITY: every command in this step is trusted workflow control loaded
       # from main. Do not run package scripts, dependency installers, hooks, or
       # any executable from the dev checkout in this write-capable workflow.
-      - name: Synchronize the exact three version fields
+      - name: Synchronize the present version fields
         if: steps.context.outputs.should_bump == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          JSON_FILES=(
-            package.json
-            plugins/genie/orca-plugin.json
-            plugins/genie/package.json
-          )
+          # package.json is required; each plugin file is bumped only while it
+          # exists. A symlink still counts as present so the guard rejects it.
+          JSON_FILES=(package.json)
+          for path in plugins/genie/orca-plugin.json plugins/genie/package.json; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              JSON_FILES+=("$path")
+            fi
+          done
 
           # Validate every input before the first write. Symlinks are rejected
           # so an allowlisted path cannot redirect a trusted rewrite.
@@ -236,7 +240,7 @@ jobs:
           EXPECTED="$(printf '%s\n' "${VERSION_PATHS[@]}" | LC_ALL=C sort)"
           ACTUAL="$(git diff --cached --name-only -- | LC_ALL=C sort)"
           if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error ::release-version.delta_untrusted expected exactly three version files"
+            echo "::error ::release-version.delta_untrusted expected exactly the ${#VERSION_PATHS[@]} present version files"
             printf 'expected:\n%s\nactual:\n%s\n' "$EXPECTED" "$ACTUAL" >&2
             exit 1
           fi

@@ -1,6 +1,6 @@
 # Genie Hacks Catalog
 
-The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs). Every entry is grounded on the live CLI (`genie --help` is the source of truth). `genie task` and `genie board` commands apply in standalone lifecycle mode; under explicitly selected Orca authority, Orca owns dispatch and task state.
+The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs). Every entry is grounded on the live CLI (`genie --help` is the source of truth).
 
 ## Categories
 
