@@ -49,7 +49,7 @@
 | 8 | Orca refusals exit **2**, not 1 | 2 is already genie's "operator must act" family — the v4 workspace gate and `mikro call`'s usage refusals both use it — while 1 stays "the command failed". The one fixed message, naming `orca` and `genie setup --orchestration-mode standalone`, is what disambiguates inside the family |
 | 9 | `genie wish lint` is **its own group (G10)** and wraps `scripts/wishes-lint.ts` imported in place, the `genie mikro` pattern | `skills/wish/SKILL.md:75,78` tells every repository to run a linter only this repository ships. The script has **no `import.meta.main` guard** — bare `main()` at `:474`, `process.exit` inside it, and `ROOT`/`DEFAULT_WISHES_DIR` derived from `import.meta.url` at `:19-20`, which resolves under `/$bunfs` in a compiled binary — so this is real work, not a registration, and it does not belong inside the bug-fix group |
 | 10 | Removing a retired verb is permitted at a major; `genie doctor` keeps observing the old host routes | A verb that still parses is a promise; the route observers are about host state, not the verb |
-| 11 | Group 9 **adopts** the Orca-plugin PR; it gates nothing | That work has its own wish (`.genie/wishes/orca-plugin-genie`), its own plan review and its own branch. If it lands first the cut adopts it; if not, v6 ships without it |
+| 11 | Group 9 **adopts** the Orca-plugin PR; it gates nothing | That work has its own wish (`.genie/wishes/archive/orca-plugin-genie`), its own plan review and its own branch. If it lands first the cut adopts it; if not, v6 ships without it |
 | 12 | **Reversed 2026-09-26:** D-B ("`plugins/genie`, `orca-marketplace.json` and `orca-plugin-ref.yml` are not deleted") and Decision 8's Orca refusals no longer hold | Explicit owner decision after the 2026-09-25 dogfood (issue #3064): wish `retire-orca-integration` retires Orca mode and deletes the plugin, keeping `plugins/genie` as a permanent empty compat directory. `plugins/dsh-genie-board` is unaffected. This wish stays SHIPPED as the record of what v6 cut. |
 
 ## Simplicity Case
@@ -301,7 +301,7 @@ This group **reverses** PR #2830's "every form of `genie context` degrades ident
 
 **Goal:** Review and adopt the Orca-plugin work authored elsewhere, so `plugins/genie` stops being one palette entry that prints the Run list.
 
-That work has **its own wish** (`.genie/wishes/orca-plugin-genie`), its own plan review, and its own branch `namastex888/orca-plugin-genie` in an Orca worktree: RF1/RF2/RF3/RF6 executed, RF4/RF5 designed only, eight palette verbs. This group does not author it and **does not gate Group 1 or Group 8** (Decision 11). Measured at `94adc6e96`: that branch is **not pushed to origin** and the wish document is not yet in the repository, so the adoption subject is still in flight.
+That work has **its own wish** (`.genie/wishes/archive/orca-plugin-genie`), its own plan review, and its own branch `namastex888/orca-plugin-genie` in an Orca worktree: RF1/RF2/RF3/RF6 executed, RF4/RF5 designed only, eight palette verbs. This group does not author it and **does not gate Group 1 or Group 8** (Decision 11). Measured at `94adc6e96`: that branch is **not pushed to origin** and the wish document is not yet in the repository, so the adoption subject is still in flight.
 
 **Deliverables:**
 1. Independent review of the incoming PR at its exact SHA against its own wish's acceptance criteria — not a re-plan — and a `## Review Results` entry recording whether it was adopted, or that v6 shipped without it.
