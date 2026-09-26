@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `retire-orca-integration` |
 | **Date** | 2026-09-25 |
 | **Author** | Felipe Rosa |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/retire-orca-integration` |
 | **Repos touched** | automagik-dev/genie (docs follow-up in automagik-dev/docs) |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-26):** shipped in stable `v6.260926.5` (release run 36242194959). G1 and G2 were merged in #3065 and promoted in #3061; G3 was merged in #3066 and promoted in #3068. The records are #3067.
 
 ## Summary
 
@@ -329,6 +331,23 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - `doctor` prints no Orca lines;
   - `config.json` stays byte-identical.
 
+### Stable release QA — v6.260926.5 — 2026-09-26 — SHIPPED
+
+- The owner approved the stable release, and it was published as Latest.
+- **The dogfood host:**
+  - `genie update --stable -y` from `6.260925.2` reached `✔ Genie v6.260926.5 verified`;
+  - `~/.genie/plugins/genie` is an empty directory;
+  - the installed `~/.claude/workflows/wish.js` sha256 (`abc9465c…`) equals the file at the tag;
+  - `genie doctor` reports `ok: true` with no Orca check. Its two warnings are the pre-existing skills legacy-leftovers and collision-backups.
+- **Owner follow-ups done:**
+  - the remote `orca-plugin` and `orca-plugin-dev` refs are deleted, preserved as `refs/archive/orca-plugin{,-dev}` and in `~/.genie/state-backups/orca-plugin-refs-2026-09-26.bundle`;
+  - issue #3064 is closed;
+  - docs PR automagik-dev/docs#86 is open.
+- **Still open:**
+  - merge docs#86, then bump `.docs-vendor`;
+  - uninstall the plugin in Orca on the Mac;
+  - remove the two stubs (`setup --orchestration-mode`, `genie orca`) in the next release.
+
 ---
 
 ## Files to Create/Modify
@@ -397,6 +416,6 @@ package.json
 README.md
 CLAUDE.md
 AGENTS.md
-.genie/wishes/retire-orca-integration/WISH.md
+.genie/wishes/archive/retire-orca-integration/WISH.md
 .genie/wishes/v6-stable-cut/WISH.md
 ```
