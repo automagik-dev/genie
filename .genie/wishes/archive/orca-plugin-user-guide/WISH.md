@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SUPERSEDED — retired by `retire-orca-integration` (2026-09-26) |
 | **Slug** | `orca-plugin-user-guide` |
 | **Date** | 2026-09-25 |
 | **Author** | Felipe Rosa |
@@ -10,6 +10,8 @@
 | **Branch** | `wish/orca-plugin-user-guide` |
 | **Repos touched** | automagik-dev/genie |
 | **Design** | _No brainstorm — direct wish_ |
+
+> **Truth (2026-09-26):** delivered as #3063, then made moot: #3066 deleted `plugins/genie/README.md` together with the plugin it documented (wish `retire-orca-integration`, issue #3064).
 
 ## Summary
 

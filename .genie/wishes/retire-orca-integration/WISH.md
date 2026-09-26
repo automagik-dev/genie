@@ -313,6 +313,22 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Blocker:** D4. The live `main` `version.yml` and `release-guard.sh` still hardcode both plugin version files, so G3 waits for promotion #3061.
 - **LOW 2 folded in by `1ce75cf39`:** `build-binary.sh` fails unless `plugins/genie` is an empty directory. The D-B reversal is recorded in `v6-stable-cut` (`82f227da0`).
 
+### Delivery QA — dev pre-release v6.260926.3 — 2026-09-26
+
+- **Sequencing held.** #3065 (G1+G2) was merged to dev and promoted to main in #3061 (`0358bfa48`). Main's `version.yml` and `release-guard.sh` then carried the present-only loops. #3066 (G3) was merged to dev (`d9bc44107`), and main's copy of `version.yml` bumped the plugin-less tree to `6.260926.3` and published the dev pre-release.
+- **Update hop, on a replica HOME:**
+  - `install.sh` from main installed stable `v6.260925.1`.
+  - With that old binary, `genie update --dev -y` reached `✔ Genie v6.260926.3 verified`.
+  - `plugins/genie/` converged to an empty directory.
+  - 18 skills and 10 workflows converged.
+- **The new binary with a stale `{"orchestration":{"mode":"orca"}}` config:**
+  - `init`, `task create`, `task list`, `board`, `idea`, `task sync` and `context` all exit 0;
+  - `setup --orchestration-mode orca` exits 2 and `standalone` exits 0, both with the retirement notice;
+  - `orca mirror …` exits 2 with the retirement notice;
+  - `--help` lists 16 commands, with `orca` shown as "Retired";
+  - `doctor` prints no Orca lines;
+  - `config.json` stays byte-identical.
+
 ---
 
 ## Files to Create/Modify
