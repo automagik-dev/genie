@@ -50,6 +50,7 @@
 | 9 | `genie wish lint` is **its own group (G10)** and wraps `scripts/wishes-lint.ts` imported in place, the `genie mikro` pattern | `skills/wish/SKILL.md:75,78` tells every repository to run a linter only this repository ships. The script has **no `import.meta.main` guard** — bare `main()` at `:474`, `process.exit` inside it, and `ROOT`/`DEFAULT_WISHES_DIR` derived from `import.meta.url` at `:19-20`, which resolves under `/$bunfs` in a compiled binary — so this is real work, not a registration, and it does not belong inside the bug-fix group |
 | 10 | Removing a retired verb is permitted at a major; `genie doctor` keeps observing the old host routes | A verb that still parses is a promise; the route observers are about host state, not the verb |
 | 11 | Group 9 **adopts** the Orca-plugin PR; it gates nothing | That work has its own wish (`.genie/wishes/orca-plugin-genie`), its own plan review and its own branch. If it lands first the cut adopts it; if not, v6 ships without it |
+| 12 | **Reversed 2026-09-26:** D-B ("`plugins/genie`, `orca-marketplace.json` and `orca-plugin-ref.yml` are not deleted") and Decision 8's Orca refusals no longer hold | Explicit owner decision after the 2026-09-25 dogfood (issue #3064): wish `retire-orca-integration` retires Orca mode and deletes the plugin, keeping `plugins/genie` as a permanent empty compat directory. `plugins/dsh-genie-board` is unaffected. This wish stays SHIPPED as the record of what v6 cut. |
 
 ## Simplicity Case
 
