@@ -343,10 +343,11 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - the remote `orca-plugin` and `orca-plugin-dev` refs are deleted, preserved as `refs/archive/orca-plugin{,-dev}` and in `~/.genie/state-backups/orca-plugin-refs-2026-09-26.bundle`;
   - issue #3064 is closed;
   - docs PR automagik-dev/docs#86 is open.
-- **Still open:**
-  - merge docs#86, then bump `.docs-vendor`;
-  - uninstall the plugin in Orca on the Mac;
-  - remove the two stubs (`setup --orchestration-mode`, `genie orca`) in the next release.
+- **Closed out 2026-09-26:**
+  - the owner merged docs#86, and `.docs-vendor` was bumped in #3071;
+  - the owner uninstalled the plugin in Orca on the Mac;
+  - the merged `wish/retire-orca-integration*` branches were deleted, leaving the remote with `dev` and `main` only.
+- **Still open:** remove the two stubs (`setup --orchestration-mode`, `genie orca`) in the next release. This is tracked in `.genie/PARKED.md`.
 
 ---
 
