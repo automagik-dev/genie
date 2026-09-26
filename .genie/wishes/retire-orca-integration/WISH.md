@@ -304,6 +304,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Its LOW findings 1, 3 and 4 were folded in by `a58ff8b0e`. Finding 2 (the mikro fixtures) and the plugin README stay with G3, as planned.
 - **Integration** at `fe4b238e8`: `bun run check` gave 3153 pass and 5 fail. All five were 5 s timeouts at load average 140. Those files re-run at `e5308f8a5` with `--timeout 60000` gave 127/127.
 
+### Execution review — G3 — 2026-09-26 — BLOCKED on sequencing only (becomes SHIP once G1 is on main)
+
+- The engineer's commits `47fe5592d` and `798a8fcd6` were scored by an independent read-only reviewer, who found no code defect.
+- **Update path:** a built `linux-x64-glibc` tarball has exactly the 8 `INSTALL_PAYLOAD_MEMBERS`, with `plugins/genie/` present and empty. `scanPhysicalTree` on the extracted tarball returns ok, and its digest matches `build-delivery-evidence`. An old binary's extract, promote, copyTree and canonical-root steps all accept an empty directory. The release-publish smoke uses `cp -R`, and no artifact upload ships a bare directory.
+- **Stub:** `genie orca` exits 2, writes nothing, stays visible in `--help`, and the command count stays at 16.
+- **Tests:** 348/348 focused tests pass. typecheck, dead-code and `version.ts --check` are clean.
+- **Blocker:** D4. The live `main` `version.yml` and `release-guard.sh` still hardcode both plugin version files, so G3 waits for promotion #3061.
+- **LOW 2 folded in by `1ce75cf39`:** `build-binary.sh` fails unless `plugins/genie` is an empty directory. The D-B reversal is recorded in `v6-stable-cut` (`82f227da0`).
+
 ---
 
 ## Files to Create/Modify
