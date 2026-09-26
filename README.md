@@ -29,13 +29,12 @@ Every release is cosign-signed (keyless OIDC) with SLSA provenance, and `genie u
 
 The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata.
 
-Genie ships exactly three surfaces, and nothing else:
+Genie ships exactly two surfaces, and nothing else:
 
 1. **The signed binary** — installed and updated by `install.sh` and `genie update`.
 2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — 57 of them materialized on the measured dogfood host (2026-08-30, re-confirmed 2026-09-01; only 4 were recorded, leaving 53 unrecorded homes).
-3. **The Orca plugin** — an optional lifecycle integration you register with Orca yourself (see below).
 
-There is no Claude marketplace plugin, no Codex plugin, no Genie-installed hooks, and no role-agent profiles.
+There is no Claude marketplace plugin, no Codex plugin, no Orca plugin, no Genie-installed hooks, and no role-agent profiles.
 
 `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel. Any value other than `none` installs to **every** detected agent skill home, because the skills CLI already installs per agent; `none` skips the channel entirely, writes no record, and reports `skills: skipped (consent: none)`. A failed skills install never rolls back the promoted binary — it prints the exact remedy command and sets a non-zero exit code.
 
@@ -68,81 +67,12 @@ exact Genie-owned historical project registrations and preserves unrelated or un
 byte-for-byte. Rollback to a pre-A7 signed release remains the migration escape hatch for a host that still needs the
 verb to answer at all.
 
-## The Orca plugin
+### Orca integration retired
 
-### Installing the plugin in Orca
-
-Genie does **not** register the Genie plugin with Orca — that is a separate, Orca-side install. Orca accepts
-exactly two kinds of source:
-
-- a **marketplace source**: a git repo whose *root* holds `orca-marketplace.json`;
-- a **plugin source**: a git repo whose *root* holds `orca-plugin.json`, or a local folder containing `orca-plugin.json`.
-
-**The genie repository root can never be the plugin tree.** Orca's loader rejects any install tree containing a symlink
-("unsafe file path or symlink") and caps an install at 2000 files / 50 MB. This repo has `docs -> .docs-vendor/genie`,
-runs to roughly 14,000 files in a dev checkout, and keeps its manifest nested at `plugins/genie/orca-plugin.json`, which
-a git plugin source never looks at. So the plugin is published as a **tree-only git ref whose root *is*
-`plugins/genie`** — symlink-free, ~132 files, ~1.3 MB:
-
-| Route | What to give Orca |
-|-------|-------------------|
-| Marketplace source | `https://github.com/automagik-dev/genie.git`, ref `main` — the index; the plugin itself resolves to ref `orca-plugin` |
-| Plugin git source | `https://github.com/automagik-dev/genie.git`, ref `orca-plugin` (stable) or `orca-plugin-dev` (pre-release) |
-| Local folder | `~/.genie/plugins/genie` (what `genie install`/`genie update` ships) |
-
-`.github/workflows/orca-plugin-ref.yml` republishes those refs: every push to `main` that touches `plugins/genie`
-force-pushes a parentless commit carrying that subtree to `refs/heads/orca-plugin`, and every such push to `dev` does the
-same to `refs/heads/orca-plugin-dev`. They are tree-only by design — no history, no shared ancestry with `main`, never
-merged back. Orca pins the commit it fetched, so a republish cannot retroactively change an existing install.
-
-The repo root carries only `orca-marketplace.json`, a source-only index no release tarball contains.
-`scripts/orca-manifest-parity.test.ts` fails the build if the index drifts from the plugin's identity, or if
-`plugins/genie` ever grows a symlink or crosses Orca's file cap.
-
-### What the plugin does inside Orca
-
-Once installed and enabled, the plugin rides Orca's own mechanisms — no second board, no task provider, no panel:
-
-- **Palette and keybindings.** Eight `Genie:` entries (`Wish`, `Work`, `Review`, `Fix`, `Report`, `Council`, `Doctor`,
-  `Update`) in the command palette of any workspace, each with a `Ctrl+Alt+Shift+<letter>` chord (`W`, `K`, `R`, `F`,
-  `P`, `L`, `D`, `U`). The six lifecycle verbs send their slash command, with the workspace's display name, branch,
-  linked issue and path filled in, into the workspace's active agent terminal; with no agent terminal they create a Run
-  and start a supervised worker whose task spec is that text. `Doctor` runs `genie doctor --json` and `Update` checks
-  the stable release manifest; both answer with a desktop notification.
-- **The board.** Orca's board columns are workspace statuses, so genie's lifecycle is mirrored one-way onto the
-  existing cards by `genie orca mirror`: `APPROVED → todo`, `IN_PROGRESS → in-progress`, a review verdict →
-  `in-review`, `SHIPPED → completed`, `BLOCKED → in-progress` (waiting on a human), each with a dated one-line card
-  comment naming the evidence. Orca's status is never read back as lifecycle truth; the documents stay the record.
-- **Gates.** The questions that used to stall the flow in chat — approve a wish, accept a BLOCKED group, merge,
-  promote — become Orca decision gates raised by the coordinator with the orchestration verbs the Orca guide already
-  owns; the human resolves them from Orca's UI, from any workspace.
-- **Notifications.** When a workspace's agent settles, a changed genie card comment (a review verdict, a pending gate)
-  becomes a desktop notification.
-
-The manifest declares exactly the capabilities those handlers use (`workspace:read`, `terminal:send`,
-`notifications:show`, `events:subscribe`). Orca asks for consent once per plugin and capability set, so a release that
-changes that set asks once more on the next update; it never prompts per action. `genie orca mirror` is a write to a card, not a
-lifecycle-authority question, and refuses cleanly (exit 1, one JSON line on
-stderr) outside an Orca-managed worktree.
-
-### The plugin payload
-
-Signed release tarballs include `plugins/genie/orca-plugin.json` and the compiled Orca entrypoint on every supported
-platform. The normal installer stages and verifies that payload.
-
-### Ambiguous Orca receipts and recovery
-
-The plugin invokes only a closed allowlist of official `orca ... --json` commands: the `orca orchestration` verbs,
-`worktree show` / `worktree set`, and `terminal list`. Successful mutations
-require a bounded receipt and, where the public CLI supports it, an immediate public read-back. If the process times out,
-exceeds its output cap, or loses transport after launch without a complete identifying receipt, Genie reports
-`ambiguous_after_possible_commit`. Do not automatically retry: Orca may already have committed the operation. Inspect
-the exact public read operation named by the error only when the identifier was known before launch; otherwise confirm
-the outcome with an Orca operator before deciding whether to issue a new mutation. Genie never guesses an identifier
-from a collection or infers success from a partial response.
-
-Maintainers should read the [public Orca boundary and verb-amendment contract](plugins/genie/references/orca-orchestration.md)
-before changing the adapter or its operator guidance.
+The Orca plugin, its adapter and the one-way card mirror are gone. For one release `genie orca` stays visible as a
+stub: any `genie orca …` call, `genie orca mirror` included, prints a retirement notice, writes nothing and exits 2.
+Release tarballs keep an empty `plugins/genie/` directory only so earlier binaries can still update; nothing reads
+it. An Orca install of the plugin keeps running the commit Orca pinned, so uninstall it from Orca yourself.
 
 ## Quickstart
 
@@ -189,7 +119,7 @@ genie --help
 | `genie mikro` | Run and grow mikro microagents in any repository — `mikro call <agent> --prompt "…"` returns validated JSON whose every citation is verified; `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine that repository's own agents |
 | `genie config` | Read the resolved global config — `config get budgets.maxEscalationsPerGroup` prints one schema key |
 | `genie setup` | Configure Genie |
-| `genie orca` | Write genie's lifecycle onto the Orca workspace card, one-way — `orca mirror --to <transition> --evidence "…"` flips the board status and writes a dated comment |
+| `genie orca` | Retired — a one-release stub that prints a retirement notice and exits 2; the Orca integration is gone |
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
@@ -211,7 +141,7 @@ Skills are the product. Invoke them as `/name` in Claude Code, or by name or pla
 
 Shared skill bodies use a runtime-neutral delegation contract: they name portable roles and let each runtime map them onto its own native subagents. Genie installs no custom agent profiles. Subagents share a workspace, so task claims own scope; worktree isolation, when required, is orchestrator-arranged per the dispatch contract. The engineer reports completion, an independent reviewer returns a verdict, and only the orchestrator runs `genie task done`. `/level-up` remains Claude-only because it evaluates Claude Code mastery.
 
-The [skill catalog](skills/README.md) lists all eighteen skills by category (lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops) with an advisory `mutates` axis, plus replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills handle both standalone and explicit Orca mode. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
+The [skill catalog](skills/README.md) lists all eighteen skills by category (lifecycle, routing, delivery, investigation, authoring, verification, integration, skill-ops) with an advisory `mutates` axis, plus replacement routes for consolidated names. Quality audits now use optional `review` lenses, `report` includes root-cause investigation, and the core lifecycle skills run on genie's own board. `refine --for openai` and `refine --for claude` choose prompting guidance based on the official Astra and Fable documentation linked in the skill.
 
 ### Where the skills land
 
@@ -317,8 +247,7 @@ with args exactly `["mcp"]`, plus the marker-owned `.codex/config.toml` route, b
 unowned same-name routes and every unrelated config key remain untouched, and `genie doctor` keeps reporting a dead
 route it finds.
 
-The UI-owned `genie ui-bridge` went the same way: there is no separate Genie UI any more, the Orca integration is the
-supported UI surface, and the private stdio transport, tool registry, and change watcher behind the bridge are
+The UI-owned `genie ui-bridge` went the same way: there is no separate Genie UI any more, and the private stdio transport, tool registry, and change watcher behind the bridge are
 deleted along with the verb. `genie task` and `genie board` retain their existing behavior.
 
 ## Roadmap

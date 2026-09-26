@@ -168,18 +168,12 @@ describe('retireProjectMcpConfigs', () => {
 });
 
 describe('shipped plugin payload', () => {
-  test('contains no Genie-owned MCP route, capability, launcher, or server', () => {
-    const plugin = join(import.meta.dir, '..', '..', 'plugins', 'genie');
-    // The Claude and Kimi manifests left with their payloads; the Orca manifest
-    // and the compatibility metadata beside it are what still ships.
-    const manifests = [join(plugin, 'orca-plugin.json'), join(plugin, 'plugin.json')];
-    for (const path of manifests) {
-      const text = readFileSync(path, 'utf8');
-      expect(text).not.toContain('mcpServers');
-      expect(text).not.toContain('mcp-launcher');
-    }
-    expect(existsSync(join(plugin, '.mcp.json'))).toBe(false);
-    expect(existsSync(join(plugin, 'scripts', 'mcp-launcher.cjs'))).toBe(false);
+  test('carries no genie plugin tree, so no Genie-owned MCP route can ship with one', () => {
+    // The Claude and Kimi manifests left with their payloads, and the Orca
+    // plugin was retired (wish `retire-orca-integration`). The release payload
+    // keeps only an EMPTY `plugins/genie` compat directory, created by
+    // scripts/build-binary.sh — the source tree carries none.
+    expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'))).toBe(false);
   });
 });
 

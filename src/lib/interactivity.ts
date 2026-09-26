@@ -85,11 +85,10 @@ const WORKSPACE_EXEMPT = new Set([
   // legacy per-repo workspace gate must not exit 2 on a machine that has a
   // config but no workspace — which is every fresh install.
   'config',
-  // `orca` writes genie's lifecycle onto an Orca workspace card through the
-  // Orca CLI. It reads no repo state at all — not `.genie/workspace.json`, not
-  // `genie.db` — so the v4 workspace gate would exit 2 on every Orca-managed
-  // worktree (none of which carries a workspace.json) and mask the verb's own
-  // 0/1/2 contract.
+  // `orca` is the one-release retirement stub of the removed Orca integration.
+  // It reads no repo state at all, and a host script calling it from an
+  // Orca-managed worktree (none of which carries a workspace.json) must get the
+  // retirement notice, not the v4 workspace gate. Leaves with the stub.
   'orca',
 ]);
 

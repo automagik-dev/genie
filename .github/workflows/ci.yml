@@ -132,9 +132,6 @@ jobs:
       - name: Complexity budget
         run: bun run lint:complexity-budget
 
-      - name: Native Orca bundle parity
-        run: bun run lint:orca-bundle
-
       - name: Fresh-install smoke
         run: bun run scripts/fresh-install-smoke.ts
 

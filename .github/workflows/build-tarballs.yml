@@ -8,8 +8,9 @@ name: Build Tarballs
 #
 # Tarball contents (per wish G1 deliverable 3):
 #   genie       — bun --compile static executable
-#   plugins/    — the Orca plugin payload: native manifest, entrypoint bundle,
-#                 and the Orca orchestration reference
+#   plugins/    — the DSH payloads (dsh-genie-board, dsh-workflow-loader) and
+#                 an empty plugins/genie compat directory that earlier
+#                 binaries' update path requires (the Orca plugin is retired)
 #   skills/     — canonical skills/<name>/SKILL.md + agents/openai.yaml/resources
 #   templates/  — wish-template, genie-config.template.json, the default mikro
 #                 agents (templates/mikro/agents/<name>/) staged from
@@ -68,7 +69,6 @@ on:
       - 'tsconfig.json'
       - 'scripts/build-binary.sh'
       - 'scripts/json-top-level-string.js'
-      - 'scripts/orca-bundle-parity.ts'
       - 'scripts/fresh-install-smoke.ts'
       - 'scripts/skills-lint.ts'
       - 'scripts/skills-inventory-parity.ts'

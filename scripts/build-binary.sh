@@ -53,7 +53,6 @@ TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $
   || { echo "error: invalid release version: ${VERSION}" >&2; exit 2; }
 
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts"
-bun "${REPO_ROOT}/scripts/orca-bundle-parity.ts" --check
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify-source "${REPO_ROOT}"
 
 STAGE="${DIST_DIR}/${PLATFORM}"
@@ -119,7 +118,15 @@ done
 # so the tarball's top-level set is frozen: dropping these directories broke
 # `genie update` on every 5.260831.x host (5.260901.1). They ship empty and
 # nothing reads them; only remove them together with a shape-tolerant promoter.
+#
+# `plugins/genie` joined them when the Orca plugin was retired (wish
+# `retire-orca-integration`): every earlier binary's update path requires a
+# physical `plugins/genie` directory in the payload (scanPhysicalTree), and an
+# empty one satisfies it. It is recreated empty here, so a stale untracked
+# `plugins/genie` left in a checkout never ships.
 mkdir -p "${STAGE}/.agents" "${STAGE}/.claude-plugin"
+rm -rf "${STAGE}/plugins/genie"
+mkdir -p "${STAGE}/plugins/genie"
 
 # Tests validate the source checkout; no language's test sources or discovery
 # directories belong in the runtime archive. Keep deletion and assertion
@@ -174,8 +181,6 @@ for required in \
   "templates/mikro/agents/mikro-coach/SYSTEM.md" \
   "templates/workflows/wish.js" \
   "templates/workflows/council.js" \
-  "plugins/genie/orca-plugin.json" \
-  "plugins/genie/orca-entrypoint.min.js" \
   "plugins/dsh-genie-board/package.json" \
   "plugins/dsh-genie-board/agent.cordis.yml" \
   "plugins/dsh-genie-board/cordis.patch.yml" \

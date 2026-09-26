@@ -41,12 +41,8 @@ describe('release payload version contract', () => {
     const packageVersion = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).version;
 
     expect(verifyCommittedReleaseVersions(repoRoot)).toBe(packageVersion);
-    // The committed native Orca manifest is advisory (stamped inside the payload);
-    // it only has to be a well-formed version string, not the package version —
-    // main's workflow_run bump list may lag dev's by a field.
-    expect(JSON.parse(readFileSync(join(repoRoot, 'plugins/genie/orca-plugin.json'), 'utf8')).version).toMatch(
-      /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/,
-    );
+    // The Orca plugin is retired: the checkout carries no plugins/genie version file.
+    expect(existsSync(join(repoRoot, 'plugins/genie'))).toBe(false);
   });
 
   test('stamps and verifies VERSION plus every copied version-bearing manifest', () => {
@@ -154,8 +150,9 @@ describe('release payload version contract', () => {
     expect(sourcePreflight).toBeLessThan(stageStamp);
     expect(buildScript).toContain('release-payload-version.ts" --stamp');
     expect(buildScript).toContain('release-payload-version.ts" --verify');
-    expect(buildScript).toContain('"plugins/genie/orca-plugin.json"');
-    expect(buildScript).toContain('"plugins/genie/orca-entrypoint.min.js"');
+    // The retired Orca plugin's files are no longer required payload members.
+    expect(buildScript).not.toContain('"plugins/genie/orca-plugin.json"');
+    expect(buildScript).not.toContain('"plugins/genie/orca-entrypoint.min.js"');
   });
 
   test('tarball builds are gated by source version verification', () => {
