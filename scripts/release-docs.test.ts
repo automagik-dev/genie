@@ -770,6 +770,7 @@ describe('Group E release and documentation contracts', () => {
     // earlier binary's update path requires the physical directory, and it is
     // recreated empty so a stale checkout copy never ships.
     expect(build).toContain('rm -rf "${STAGE}/plugins/genie"\nmkdir -p "${STAGE}/plugins/genie"');
+    expect(build).toContain('release payload plugins/genie must be an empty directory');
     expect(build).toContain("-iname '*.test.*'");
     expect(build).toContain("-iname 'test_*.*'");
     expect(build).toContain("-iname '*_test.*'");

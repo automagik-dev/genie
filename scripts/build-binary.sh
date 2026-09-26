@@ -197,6 +197,9 @@ for required in \
   "plugins/dsh-workflow-loader/dist/index.js"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
+# Old binaries need the compat directory present; nothing may ship inside it.
+[[ -d "${STAGE}/plugins/genie" && ! -L "${STAGE}/plugins/genie" && -z "$(ls -A "${STAGE}/plugins/genie")" ]] \
+  || { echo "error: release payload plugins/genie must be an empty directory" >&2; exit 1; }
 
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
   --skills-dir "${STAGE}/skills"
