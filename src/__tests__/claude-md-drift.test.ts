@@ -37,6 +37,13 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'ORCA_FORBIDDEN',
   'orcaOwnsLifecycle',
   'switchOrchestrationMode',
+  // Orca plugin, adapter, card mirror and their publishing (same wish, G3)
+  'orca-orchestration-adapter',
+  'orca-lifecycle-mirror',
+  'orca-marketplace',
+  'orca-plugin-ref',
+  'orca-plugin.json',
+  'lint:orca-bundle',
   'native-teams',
   'mailbox',
   // Plugin era, retired by `skills-everywhere-b` (RETIRED-9).

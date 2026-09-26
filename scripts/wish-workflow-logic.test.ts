@@ -72,15 +72,15 @@ const ALL_NAMES = KNOWN.map((known) => known.test);
 const DOCTOR = KNOWN.find((known) => known.file.endsWith('doctor.test.ts')) as KnownFailure;
 
 describe('darwin tolerance is decided by test name, never by file', () => {
-  test('the roster is six #2926 failures, each a file plus one exact test name', () => {
-    expect(KNOWN).toHaveLength(6);
+  test('the roster is the five live #2926 failures, each a file plus one exact test name', () => {
+    expect(KNOWN).toHaveLength(5);
     for (const known of KNOWN) {
       expect(known.file).toMatch(/\.test\.ts$/);
       expect(known.test.length).toBeGreaterThan(0);
       // A file path in the `test` slot would re-introduce the file-level match.
       expect(known.test).not.toMatch(/\.test\.ts$/);
     }
-    expect(new Set(ALL_NAMES).size).toBe(6);
+    expect(new Set(ALL_NAMES).size).toBe(5);
   });
 
   test('a known test counts only when that same test was re-confirmed at the base', () => {
@@ -185,14 +185,14 @@ describe('the gate answer becomes a pass only where the script allows it', () =>
     failCount: ALL_NAMES.length,
     failingTests: ALL_NAMES,
     baseReconfirmed: ALL_NAMES,
-    problems: ['six known darwin failures'],
+    problems: ['five known darwin failures'],
     summaryLine: '2614 pass, 6 fail',
     pass: true,
     darwinTolerated: true,
     ...over,
   });
 
-  test('the six known failures pass only while the gate itself claims the tolerance', () => {
+  test('the five known failures pass only while the gate itself claims the tolerance', () => {
     expect(api.normalizeGate(answer()).pass).toBe(true);
     // The gate did not claim it: the script never tolerates on its own initiative.
     expect(api.normalizeGate(answer({ darwinTolerated: false })).pass).toBe(false);
@@ -200,9 +200,9 @@ describe('the gate answer becomes a pass only where the script allows it', () =>
     expect(api.normalizeGate(answer({ darwinTolerated: false })).darwinTolerated).toBe(false);
   });
 
-  test('a seventh failure, or one never re-confirmed at the base, is red', () => {
-    const seventh = [...ALL_NAMES, 'some other suite > a new failure'];
-    expect(api.normalizeGate(answer({ failingTests: seventh, failCount: seventh.length })).pass).toBe(false);
+  test('a sixth failure, or one never re-confirmed at the base, is red', () => {
+    const sixth = [...ALL_NAMES, 'some other suite > a new failure'];
+    expect(api.normalizeGate(answer({ failingTests: sixth, failCount: sixth.length })).pass).toBe(false);
     expect(api.normalizeGate(answer({ baseReconfirmed: [] })).pass).toBe(false);
   });
 
@@ -230,7 +230,7 @@ describe('a gate in a repository with no hook system', () => {
     hookEvidence: ['git ls-files: nothing tracked'],
   };
 
-  test('never tolerates the six darwin names: they are genie tests, meaningless elsewhere', () => {
+  test('never tolerates the five darwin names: they are genie tests, meaningless elsewhere', () => {
     const gate = api.normalizeGate({
       ...noHooks,
       exitCode: 1,

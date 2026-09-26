@@ -231,7 +231,7 @@ jobs:
             fi
             # Promotion-tag predicate. version.yml mints a v* tag on exactly
             # two paths:
-            #   dev — it rewrites the three version fields, commits the
+            #   dev — it rewrites the version fields present, commits the
             #     version-only child `chore(version): bump to <version>
             #     [auto-version]` on top of the commit that passed CI, and
             #     pushes that child and `refs/tags/v<version>` to dev in one

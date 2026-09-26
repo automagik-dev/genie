@@ -25,8 +25,8 @@ describe('the v4 workspace gate exempts every verb that must run outside a genie
     // in every repository it is meant for. Removing 'wish' from WORKSPACE_EXEMPT
     // fails here.
     ['wish', 'lint'],
-    // `orca mirror` writes an Orca workspace card through the Orca CLI and reads
-    // no repository state; an Orca-managed worktree carries no workspace.json.
+    // The retired `orca` stub reads no repository state; a host script calling
+    // it from an Orca-managed worktree must reach its retirement notice.
     ['orca', 'mirror'],
     // The microagent runtime, for the same reason.
     ['mikro', 'call'],

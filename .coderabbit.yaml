@@ -23,6 +23,6 @@ reviews:
     - path: "src/**"
       instructions: "Core CLI source. Check for breaking changes to exported types."
     - path: "plugins/**"
-      instructions: "Orca plugin payload. Verify plugin manifest updates are consistent."
+      instructions: "DSH plugin payloads. Verify package metadata and built dist stay consistent."
     - path: ".github/workflows/**"
       instructions: "CI workflows. Check for hardcoded secrets, proper caching keys, and timeout settings."
