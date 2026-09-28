@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `sonnet-opus-worker-routing` |
 | **Date** | 2026-09-28 |
 | **Author** | Felipe Rosa |
@@ -252,6 +252,23 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Reviewer: claude-opus-5-5-design-reviewer (independent, read-only), against DESIGN.md digest `9116cf65f972763cc7518e46908e79c38d0269f1cffee98c64f393e05d171c04`.
 - Round 1 (20:32:05Z) FIX-FIRST, 3 blocking: the routing test failed during the parallel wave; Group 5 called the installed `genie`; `--summary` grouping contradicted D9. All three were fixed.
 - Round 2: SHIP. Minors applied (effort wording, Wave 2 label, Group 5 numbering, `claude.md` in Files). Groups 3 and 4 run `bun test scripts/` one after the other, never at the same time.
+
+### 2026-09-28T21:25:23Z — execution review (Groups 1–4) — SHIP
+
+- Reviewer: claude-opus-5-5-design-reviewer (independent, read-only), at `0263d0c37`.
+- **Gate:** `bun run check` exited 0 at `dca0441f8` (3016 pass / 0 fail).
+- **Round 1 — FIX-FIRST at `dca0441f8`.** One blocking finding: `skills/wish/SKILL.md` and the README `wish` row still said an unset model inherits the session model, which contradicts D1. Six non-blocking findings:
+  - `wish report` crashed on malformed input;
+  - missing stage fields were recorded as 0;
+  - a positional runId was silently ignored under `--record`;
+  - the routing test had no label→tier map;
+  - an unrelated log wording changed;
+  - four parity tests were edited, and all of them stayed equal or got stricter.
+  All were fixed in `16aecb9a8`.
+- **Round 2 — FIX-FIRST.** Refusing stages with no `tokens` or `durationMs` rejected 31 of the 254 real run records on this host, which are replayed or interrupted stages. Those fields are now nullable (`0263d0c37`), and a replay of all 254 records appends with 0 refused.
+- **Round 3 — SHIP.**
+- **Historical baseline** from the host's run records: 58 `wish` runs, 510,873 mean tokens, 22.1 mean minutes, merge-ready 14/58.
+- **Confound for Group 5:** the all-Opus control also runs the worker prompts' think-first line on Opus.
 
 ---
 
