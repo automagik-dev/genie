@@ -270,6 +270,26 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Historical baseline** from the host's run records: 58 `wish` runs, 510,873 mean tokens, 22.1 mean minutes, merge-ready 14/58.
 - **Confound for Group 5:** the all-Opus control also runs the worker prompts' think-first line on Opus.
 
+### 2026-09-28T22:10:00Z — Group 5 evaluation (orchestrator)
+
+- **Ledger** (`genie wish report --summary`, machine-local `<GENIE_HOME>/metrics/wish-runs.jsonl`):
+  - `wish routed n=1 389k tokens 17.7 min 1/1`
+  - `wish all-opus n=1 407k tokens 25.8 min 0/1`
+  - `research-sweep routed n=1 189k tokens 3.7 min`
+- **Routed arm** `wf_763cbdd1-8cb`:
+  - result: `merge-ready`, PR #3075 (merged into this branch), review SHIP;
+  - the run record shows `claude-sonnet-5-5` on scout, gate and publish, and `claude-opus-5-5` on judge, executor and review.
+- **Control** `wf_bcb0918c-c03`:
+  - result: `missed`, although review returned SHIP;
+  - cause: a host-load timeout in `install-promote.test.ts` during the gate (the file passes 17/17 alone). This is the environment, not the model.
+- **Reading, D7 (n = 1):**
+  - Tokens: across the five comparable stages (scout through review), routed used 327k and the control 347k (−5.5 %). The verdict was the same (SHIP), and routed reached merge-ready.
+  - Time: minutes are dominated by the gate's `bun run check` under host load (622 s vs 1,217 s), so the 1.2× guard holds but says little about the model.
+  - Direction: routing is accepted. Keep accumulating rows.
+- **Next optimization:** the gate is the largest cost in time. The next candidate is the scout's tokens (78k), even on Sonnet.
+- **Follow-up** (research-sweep `wf_e185bfde-33a`): the Sonnet overlay omits the rule to retry on `max_tokens` even when the JSON is valid, and the rule to parse the last JSON value for stages without structured outputs.
+- **Baseline before this wish:** 58 wish runs, 511k tokens and 22.1 min on average, merge-ready 14/58.
+
 ---
 
 ## Files to Create/Modify
