@@ -1,7 +1,9 @@
-import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
+import { dshVersion, resolveDshBinary, sandboxEnvironment, withPinnedDsh } from './dsh-genie-board-smoke';
+
+export { sandboxEnvironment };
 
 /** How the smoke runs a child process; injected so the build step is testable. */
 export type Runner = (binary: string, args: string[], cwd?: string) => Promise<string>;
@@ -20,39 +22,44 @@ export const PLUGIN_BUNDLES = ['index.js'] as const;
 /** The row id the composed profile must carry, and the package that provides it. */
 export const ROW_ID = 'genie-dsh-workflow-loader';
 export const PACKAGE_NAME = '@automagik/genie-dsh-workflow-loader';
+/** The tool the row registers with its shipped configuration. */
+export const TOOL_NAME = 'workflow_run';
 
 /**
- * How long a Host must stay up before the smoke believes it.
+ * The profile the smoke installs the row into.
  *
- * `dsh web` prints its authenticated URL BEFORE the loader audits the settled
- * plugin tree, so a URL is not a boot: the recorded regression exits ~1.3 s after
- * printing one, with `N entries did not activate` / `pending (waiting for
- * service: …)` in its output. This smoke owns exactly that risk for a row whose
- * only service is `tools`, so the window is the same one the board's smoke uses.
+ * The row injects `tools`, `workflowEngine` and `systemPrompt`, and it is a
+ * HOST row: its bundle patch inserts it at the Host root. `headless` composes
+ * `dsh-base` as it ships, whose Host root mounts `workflow-ptc` — the provider
+ * of `workflowEngine`. `web` does not: the web app disables that Host-root row
+ * and mounts `workflow-ptc` only inside each agent preset's isolated
+ * `delegation` group, so on `web` this row stays `pending (waiting for service:
+ * workflowEngine)` on every DSH version tried (0.1.7-rc.2 and 0.2.0-rc.1). The
+ * live run the README records was a `headless` one for the same reason.
  */
-export const BOOT_SETTLE_MS = 10_000;
+export const PROFILE = 'headless';
 
-/** The boot-audit failures that mean the row did not activate. */
+/** The boot-audit failures that mean a row did not activate. */
 export const ACTIVATION_FAILURES = ['did not activate', 'waiting for service'] as const;
 
 /**
- * Every writable location a child may touch lives under the run's own temp tree,
- * which the `finally` block removes. Without `TMPDIR`, `dsh` spills a
- * `dsh-spill-*` directory into the host's `TMPDIR`, where nothing the smoke owns
- * can clean it up. `TMP`/`TEMP` ride along for portability.
+ * The line a credential-less `headless` run ends on. The smoke boots the whole
+ * composition with a task and NO model credential, so the Host activates every
+ * row, prints its activation audit, and stops before any model call. Seeing this
+ * line is the proof that no model was reached; not seeing it fails the smoke.
  */
-export function sandboxEnvironment(temporary: string, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const temp = join(temporary, 'tmp');
-  return {
-    ...(base as Record<string, string>),
-    DSH_HOME: join(temporary, 'dsh'),
-    GENIE_HOME: join(temporary, 'genie-home'),
-    HOME: join(temporary, 'home'),
-    TMPDIR: temp,
-    TMP: temp,
-    TEMP: temp,
-    PATH: `${join(temporary, 'bin')}${delimiter}${base.PATH}`,
-  };
+export const NO_MODEL_MARKER = 'MISSING_CREDENTIAL';
+
+/**
+ * Every writable location a child may touch lives under the run's own temp tree
+ * (see `sandboxEnvironment`), and nothing that could reach a model rides along:
+ * every `*_API_KEY` is dropped, so a credential in the operator's shell can never
+ * turn the smoke into a paid run.
+ */
+export function smokeEnvironment(temporary: string, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env = sandboxEnvironment(temporary, base);
+  for (const key of Object.keys(env)) if (/_API_KEY$/.test(key)) delete env[key];
+  return env;
 }
 
 /** The directories `sandboxEnvironment` promises exist before any child runs. */
@@ -92,6 +99,51 @@ export function activationFailure(output: string): string | undefined {
   return undefined;
 }
 
+/**
+ * A fixture Host row that asks the real `tools` registry whether the loader's
+ * tool exists, and writes the answer to a file. An activation audit only says a
+ * row is not pending; this says the row did the one thing it exists for.
+ */
+export function probeModule(): string {
+  return [
+    "import { writeFileSync } from 'node:fs';",
+    "export const name = 'genie-loader-smoke-probe';",
+    "export const inject = ['tools'];",
+    'export function apply(ctx, config) {',
+    '  const started = Date.now();',
+    '  const report = (value) => writeFileSync(config.out, JSON.stringify({ tool: config.toolName, ...value }));',
+    '  const check = () => {',
+    '    let found;',
+    '    try {',
+    '      found = ctx.tools.get(config.toolName);',
+    '    } catch (error) {',
+    '      return report({ registered: false, error: String(error) });',
+    '    }',
+    '    if (found || Date.now() - started > 5000) return report({ registered: Boolean(found), ms: Date.now() - started });',
+    '    setTimeout(check, 25);',
+    '  };',
+    '  check();',
+    '}',
+    '',
+  ].join('\n');
+}
+
+/** The `--patch` overlay that mounts the probe beside the installed row. */
+export function probePatch(modulePath: string, outPath: string): string {
+  return [
+    '- insert:',
+    '    - id: genie-loader-smoke-probe',
+    `      name: ${JSON.stringify(modulePath)}`,
+    '      config:',
+    `        toolName: ${TOOL_NAME}`,
+    `        out: ${JSON.stringify(outPath)}`,
+    '',
+  ].join('\n');
+}
+
+/** The control overlay: the Host-root engine turned off, exactly as `web` does. */
+export const ENGINE_OFF_PATCH = '- id: workflow-ptc\n  disabled: true\n';
+
 /** A catalog the loader can see, so a booted host has something to resolve. */
 async function writeCatalog(repo: string): Promise<string> {
   const workflows = join(repo, '.claude', 'workflows');
@@ -108,29 +160,21 @@ async function writeCatalog(repo: string): Promise<string> {
   return workflows;
 }
 
-function requireDsh(): void {
-  let exitCode: number | null = null;
+async function main(): Promise<void> {
+  // Resolved before the temp tree exists, so a missing Host leaves nothing behind.
+  const dsh = resolveDshBinary();
+  let version: string;
   try {
-    exitCode = Bun.spawnSync(['dsh', '--version'], { stdout: 'pipe', stderr: 'pipe' }).exitCode;
-  } catch {
-    exitCode = null;
-  }
-  if (exitCode !== 0) {
-    console.error(
-      'dsh is not on PATH: this smoke boots a real DSH Host and is operator-run (see plugins/dsh-workflow-loader/README.md)',
-    );
+    version = dshVersion(dsh, 'plugins/dsh-workflow-loader/README.md');
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
-}
-
-async function main(): Promise<void> {
-  requireDsh();
+  console.log(`dsh: ${dsh} (version ${version})`);
   const temporary = await mkdtemp(join(tmpdir(), 'genie-loader-smoke-'));
   const repoRoot = join(import.meta.dir, '..');
   const repo = join(temporary, 'repo');
-  const env = sandboxEnvironment(temporary);
-  let server: ChildProcess | undefined;
-  let output = '';
+  const env = smokeEnvironment(temporary, withPinnedDsh(dsh));
 
   async function command(binary: string, args: string[], cwd = repoRoot): Promise<string> {
     const proc = Bun.spawn([binary, ...args], {
@@ -151,46 +195,33 @@ async function main(): Promise<void> {
     return stdout;
   }
 
-  async function stop(): Promise<void> {
-    const child = server;
-    server = undefined;
-    if (!child || child.exitCode !== null) return;
-    await new Promise<void>((resolveStop) => {
-      const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
-      child.once('close', () => {
-        clearTimeout(timer);
-        resolveStop();
-      });
-      child.kill('SIGTERM');
-    });
-  }
-
-  function start(): Promise<string> {
-    server = spawn('dsh', ['web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
+  /** Boot the whole `headless` composition once; it ends at the missing credential. */
+  async function boot(patches: string[]): Promise<string> {
+    const args = ['--profile', PROFILE, ...patches.flatMap((patch) => ['--patch', patch]), 'say ok'];
+    const proc = Bun.spawn([dsh, ...args], {
       cwd: repo,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 120_000,
+      killSignal: 'SIGKILL',
     });
-    const child = server;
-    return new Promise((resolveStart, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`DSH startup timeout\n${output}`));
-      }, 45_000);
-      const receive = (data: Buffer) => {
-        output += data.toString();
-        const url = /http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+/.exec(output)?.[0];
-        if (url) {
-          clearTimeout(timer);
-          resolveStart(url);
-        }
-      };
-      child.stdout?.on('data', receive);
-      child.stderr?.on('data', receive);
-      child.once('exit', (code) => {
-        clearTimeout(timer);
-        reject(new Error(`DSH exited ${code}\n${output}`));
-      });
-    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    const output = `${stdout}${stderr}`;
+    if (!output.includes(NO_MODEL_MARKER)) {
+      throw new Error(`the headless boot did not stop at ${NO_MODEL_MARKER}; refusing to trust it\n${output}`);
+    }
+    return output;
+  }
+
+  async function probe(out: string): Promise<{ registered?: boolean; ms?: number; error?: string } | undefined> {
+    const text = await readFile(out, 'utf8').catch(() => undefined);
+    return text === undefined ? undefined : JSON.parse(text);
   }
 
   try {
@@ -200,54 +231,50 @@ async function main(): Promise<void> {
     await buildLoaderDist(repoRoot, command);
     await writeCatalog(repo);
 
-    await command('dsh', [
+    await command(dsh, [
       'plugin',
       '--profile',
-      'web',
+      PROFILE,
       'add',
       `link:${join(repoRoot, 'plugins/dsh-workflow-loader')}`,
     ]);
-    const listed = await command('dsh', ['plugin', '--profile', 'web', 'list', '--depth', '0']);
+    const listed = await command(dsh, ['plugin', '--profile', PROFILE, 'list', '--depth', '0']);
     if (!listed.includes(PACKAGE_NAME)) throw new Error(`package not listed after install:\n${listed}`);
 
     // Composition proof, not just an install: the row must be in the tree the
     // Host will actually mount.
-    const composed = await command('dsh', ['--profile', 'web', '--dump-config']);
+    const composed = await command(dsh, ['--profile', PROFILE, '--dump-config']);
     if (!composed.includes(ROW_ID)) throw new Error(`row ${ROW_ID} is missing from the composed profile tree`);
     if (!composed.includes(PACKAGE_NAME)) throw new Error(`package ${PACKAGE_NAME} is missing from the composed tree`);
-    console.log(`composed profile carries ${ROW_ID}: OK`);
+    console.log(`composed ${PROFILE} profile carries ${ROW_ID}: OK`);
 
-    const launchUrl = await start();
-    const origin = new URL(launchUrl).origin;
-    const exchange = await fetch(launchUrl, { redirect: 'manual' });
-    const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
-    if (!cookie) throw new Error('DSH token exchange did not set a cookie');
+    const probePath = join(temporary, 'probe.mjs');
+    await writeFile(probePath, probeModule());
+    const out = join(temporary, 'probe.json');
+    await writeFile(join(temporary, 'probe.patch.yml'), probePatch(probePath, out));
+    await writeFile(join(temporary, 'engine-off.patch.yml'), ENGINE_OFF_PATCH);
 
-    // The Host is up when it answers with its auth wall; the point of the wait is
-    // that it is STILL up after the boot audit would have killed it.
-    let alive = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const response = await fetch(`${origin}/`, { headers: { cookie } }).catch(() => undefined);
-      if (response?.status === 401 || response?.ok) {
-        alive = true;
-        break;
-      }
-      await Bun.sleep(100);
-    }
-    if (!alive) throw new Error(`Host never answered at ${origin}\n${output}`);
-
-    await Bun.sleep(BOOT_SETTLE_MS);
+    // Phase one: the profile as it ships. Every row activates and the tool exists.
+    const output = await boot([join(temporary, 'probe.patch.yml')]);
     const failure = activationFailure(output);
     if (failure) throw new Error(`the loader row did not activate: ${failure}\n${output}`);
-    if (server?.exitCode !== null && server?.exitCode !== undefined) {
-      throw new Error(`Host exited ${server.exitCode} after boot\n${output}`);
+    const registered = await probe(out);
+    if (!registered?.registered) {
+      throw new Error(`${TOOL_NAME} is not in the Host tools registry: ${JSON.stringify(registered)}\n${output}`);
     }
-    const after = await fetch(`${origin}/`, { headers: { cookie } }).catch(() => undefined);
-    if (!after) throw new Error(`Host stopped answering after ${BOOT_SETTLE_MS} ms\n${output}`);
-    console.log(`loader row activated and the Host stayed up for ${BOOT_SETTLE_MS} ms: OK`);
-    console.log('dsh-workflow-loader smoke: PASS');
+    console.log(`loader row activated and registered ${TOOL_NAME} in ${registered.ms} ms, no model reached: OK`);
+
+    // Phase two, the control: the same boot with the Host-root engine off must
+    // leave the row pending on `workflowEngine`. A smoke that cannot see this
+    // difference is not measuring the row's dependency at all.
+    await rm(out, { force: true });
+    const control = await boot([join(temporary, 'probe.patch.yml'), join(temporary, 'engine-off.patch.yml')]);
+    const pending = control.split('\n').find((line) => line.includes(ROW_ID) && line.includes('workflowEngine'));
+    if (!pending) throw new Error(`with workflow-ptc off the row did not report waiting on workflowEngine\n${control}`);
+    if ((await probe(out))?.registered) throw new Error(`${TOOL_NAME} registered with no workflowEngine to run it`);
+    console.log(`control: with workflow-ptc off the row stays pending (${pending.trim()}): OK`);
+    console.log(`dsh-workflow-loader smoke: PASS (dsh ${version}, profile ${PROFILE})`);
   } finally {
-    await stop();
     await rm(temporary, { recursive: true, force: true });
   }
 }
