@@ -46,7 +46,12 @@ const TIER_MAP: Record<string, Record<string, 'worker' | 'reasoner'>> = {
     'verify:fidelity#*': 'reasoner',
     'repair#*': 'reasoner',
   },
-  'evidence-gate.js': { 'verify:*': 'worker', 'report:write': 'worker', 'synthesize:verdict': 'reasoner' },
+  'evidence-gate.js': {
+    'verify:files': 'worker',
+    'verify:*': 'worker',
+    'report:write': 'worker',
+    'synthesize:verdict': 'reasoner',
+  },
   'council.js': { 'lens:*': 'reasoner', synthesis: 'reasoner' },
   'pm-ledger-verify.js': { 'verify:*': 'reasoner' },
   'docs-audit.js': { 'locate:docs-home': 'worker', 'audit:*': 'worker', 'consolidate:audit-table': 'reasoner' },
