@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Weekly Claude Code observability review — measure the code-annotator/v1 session annotations in the cc-* Phoenix projects, diagnose the worst sessions, and propose rule changes that cite evidence ids; proposal-only, never edits a file.',
   whenToUse:
-    'Once a week, after scripts/observability/backfill.ts --verify and annotate.ts have landed the sessions in Phoenix. Pass {phoenix, rulesPath, projectPrefix?, since?, timestamp?} — phoenix is the Phoenix base URL, rulesPath the rules file the proposals are judged against (resolved by the caller, never home-relative), projectPrefix a cc-* project prefix (default cc-). The workflow reads Phoenix and the rules file, proposes rule changes with evidence ids, and never edits a file or writes to Phoenix; the operator approves and applies every change.',
+    'Once a week, after scripts/observability/backfill.ts --verify and annotate.ts have landed the sessions in Phoenix. Pass {phoenix, rulesPath, projectPrefix?, since?, model?, timestamp?} — phoenix is the Phoenix base URL, rulesPath the rules file the proposals are judged against (resolved by the caller, never home-relative), projectPrefix a cc-* project prefix (default cc-), model an optional model pinned for every stage (unset, each stage runs on its tier). The workflow reads Phoenix and the rules file, proposes rule changes with evidence ids, and never edits a file or writes to Phoenix; the operator approves and applies every change.',
   phases: [
     {
       title: 'Measure',
@@ -44,7 +44,7 @@ const PROJECT_PREFIX = 'cc-'
 const DEFAULT_SINCE = 7
 const MAX_SINCE = 90
 const INTAKE_ERROR =
-  'Pass {phoenix, rulesPath, projectPrefix?, since?, timestamp?}: phoenix is an http(s) Phoenix base URL, rulesPath the rules file (resolved by the caller, not home-relative), projectPrefix a cc-* project prefix.'
+  'Pass {phoenix, rulesPath, projectPrefix?, since?, model?, timestamp?}: phoenix is an http(s) Phoenix base URL, rulesPath the rules file (resolved by the caller, not home-relative), projectPrefix a cc-* project prefix.'
 
 const PROPOSAL_ONLY =
   'Proposal only. You never edit, create, move or delete any file — not the rules file, not a settings file, not any repository file — and you never write to Phoenix: no POST, no PUT, no PATCH, no DELETE, no annotation upsert. Read, measure and report; the operator approves and applies every rule change.'
@@ -119,6 +119,9 @@ const projectPrefix = text(job.projectPrefix) || PROJECT_PREFIX
 const sinceValue = Number(job.since ?? DEFAULT_SINCE)
 const since = Number.isInteger(sinceValue) && sinceValue > 0 && sinceValue <= MAX_SINCE ? sinceValue : DEFAULT_SINCE
 const windowEnd = text(job.timestamp)
+const MODEL = text(job.model)
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
 
 if (!/^https?:\/\/[^\s]+$/.test(phoenix)) return { ok: false, error: INTAKE_ERROR }
 if (!rulesPath || rulesPath.charAt(0) === '~' || rulesPath.indexOf('$') !== -1) {
@@ -144,8 +147,9 @@ For every such project, list the sessions that started within ${windowText}, wit
 ${ANNOTATIONS.join(', ')} written by identifier ${ANNOTATOR}.
 Return: the session count; how many of those sessions carry no ${ANNOTATOR} annotation (unannotatedSessions);
 totals (sum of total_usd and waste_usd, mean polling_share, mean tool_error_rate, sessions whose max_context exceeds 500000);
-and the 10 worst sessions by waste_usd with their project, session id and every annotation score.`,
-  { label: 'measure:annotations', schema: MEASURE_SCHEMA },
+and the 10 worst sessions by waste_usd with their project, session id and every annotation score.
+Think the problem through before you answer.`,
+  { label: 'measure:annotations', model: modelFor('worker'), schema: MEASURE_SCHEMA },
 )
 if (!measured) {
   notConvened.push('measure:annotations')
@@ -167,7 +171,7 @@ and span filters on metadata.bash_head, metadata.prompt_kind, metadata.skill, sp
 Stay inside projects whose name starts with "${projectPrefix}".
 Name each finding with the annotation it moves (one of ${ANNOTATIONS.join(', ')}), the concrete evidence ids,
 the cause, and your confidence.`,
-  { label: 'diagnose:sessions', schema: DIAGNOSE_SCHEMA },
+  { label: 'diagnose:sessions', model: modelFor('reasoner'), schema: DIAGNOSE_SCHEMA },
 )
 if (!diagnosed) {
   notConvened.push('diagnose:sessions')
@@ -191,7 +195,7 @@ the operator to approve. Each proposal names the finding it derives from by titl
 finding it relies on, says where the rule belongs (that rules file, the AGENTS.md of a named repository, or a named
 skill), the expected effect, and how next week's ${ANNOTATOR} annotations would show it worked. Also list rules the data
 says are already working (no change), each with its evidence ids. You only propose rule changes; you never edit files.`,
-  { label: 'propose:rules', schema: PROPOSE_SCHEMA },
+  { label: 'propose:rules', model: modelFor('reasoner'), schema: PROPOSE_SCHEMA },
 )
 if (!proposed) {
   notConvened.push('propose:rules')

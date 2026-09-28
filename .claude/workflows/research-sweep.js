@@ -66,6 +66,8 @@ const INJECTION_FENCE = `This rule is not optional and has no exception.
 
 const READ_ONLY =
   'Read only; change nothing. Create no file, edit no file, move no file, run no state-changing command, and recommend no mutation — this sweep reads and reports, and the caller decides.'
+// Worker stages (Sonnet 5.5) that return a schema after several steps end on this line.
+const THINK_FIRST = 'Think the problem through before you answer.'
 const FROZEN_RULE =
   'The question below is FROZEN. Answer it as asked: never re-ask it, never narrow it, never widen it, never paraphrase it into a different question, and never split it into sub-questions.'
 const CONFIDENCE_RULE =
@@ -213,6 +215,7 @@ function planPrompt(job, refs, readersExpected) {
     'Classify every entry: primary (the source that owns the fact — the specification, the first-party reference, the implementation itself), secondary (a pointer at a primary source), or unknown. For a secondary entry, the `why` names the primary source it points at.',
     'You open no source. Retrieving or reading a source is outside your brief: you are partitioning a list, and any claim about what a source says would be invented. Assign each source to exactly one shard, and put anything you will not assign in droppedSources[] with the reason — the list is frozen, so a plan that drops even one entry is refused outright and nothing is dispatched.',
     READ_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -229,7 +232,9 @@ function readPrompt(job, shard) {
     RETRIEVAL_RULE,
     `Return findings, never the bytes you read: the quote is the span that carries the claim, not a dump of the page or file. Every finding names a source from your own list, a locator a reader can jump to (a URL fragment, a section heading, or path:line), the quote, and a confidence. ${CONFIDENCE_RULE}`,
     'A source you report in unread[] cannot also carry a finding. Answer only from what you actually read.',
+    'Once every source in your list is read or reported unread, stop and report; a lead into a source outside your list is a finding to report, not a source to open.',
     READ_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -404,6 +409,8 @@ function render(view) {
 const job = normalizeInput(args)
 if (!job || !job.question || !job.sources.length) return { ok: false, error: INTAKE_ERROR }
 const MODEL = job.model
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
 // notConvened carries exactly one kind of entry: an agent that returned null, under the
 // agent's own label. Every other stop is reported through `error`.
 const notConvened = []
@@ -440,7 +447,7 @@ const readersExpected = Math.max(1, Math.min(job.maxReaders, Math.floor(kept.len
 if (readersExpected < job.maxReaders) log(`Fan-out degraded on purpose: ${kept.length} source(s) at ${MIN_SOURCES_PER_READER} per reader support ${readersExpected} reader(s), under the ${job.maxReaders} allowed.`)
 
 phase('Plan')
-const plan = await agent(planPrompt(job, kept.map((entry) => entry.ref), readersExpected), { label: 'plan:shard', phase: 'Plan', schema: PLAN_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
+const plan = await agent(planPrompt(job, kept.map((entry) => entry.ref), readersExpected), { label: 'plan:shard', phase: 'Plan', schema: PLAN_SCHEMA, model: modelFor('worker'), effort: 'low' })
 let planFallback = false
 let planUnderPartitioned = null
 let shards = []
@@ -558,7 +565,7 @@ log(`${kept.length} source(s) over ${readersDispatched} shard(s): ${shards.map((
 
 phase('Read')
 const rawReads = await parallel(
-  shards.map((shard) => () => agent(readPrompt(job, shard), { label: `read:shard-${shard.index}`, phase: 'Read', schema: READ_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'medium' })),
+  shards.map((shard) => () => agent(readPrompt(job, shard), { label: `read:shard-${shard.index}`, phase: 'Read', schema: READ_SCHEMA, model: modelFor('worker'), effort: 'medium' })),
 )
 const silentReaders = shards.filter((_, i) => !rawReads[i])
 for (const shard of silentReaders) notConvened.push(`read:shard-${shard.index}`)
@@ -672,7 +679,7 @@ for (const reader of readers)
   }
 
 phase('Synthesize')
-const synth = await agent(synthesizePrompt(job, readers, silentReaders, injectionAttempts), { label: 'synthesize:merge', phase: 'Synthesize', schema: SYNTH_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
+const synth = await agent(synthesizePrompt(job, readers, silentReaders, injectionAttempts), { label: 'synthesize:merge', phase: 'Synthesize', schema: SYNTH_SCHEMA, model: modelFor('reasoner'), effort: 'high' })
 if (!synth) {
   notConvened.push('synthesize:merge')
   log('No response from synthesize:merge; every reader finding returns in the trace so the fan-out is not wasted.')
@@ -739,7 +746,7 @@ if (uncitedClaims.length) {
   const named = new Set(uncitedClaims.flatMap((entry) => entry.citations.map((c) => c.source)).filter(Boolean))
   log(`${uncitedClaims.length} synthesized claim(s) match no reader citation; one bounded re-cite round over the findings for ${named.size} named source(s).`)
   const corpusFindings = readers.flatMap((reader) => reader.findings.filter((finding) => named.has(finding.source)))
-  const recited = await agent(recitePrompt(job, uncitedClaims, corpusFindings), { label: 'attribute:recite', phase: 'Attribute', schema: RECITE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' })
+  const recited = await agent(recitePrompt(job, uncitedClaims, corpusFindings), { label: 'attribute:recite', phase: 'Attribute', schema: RECITE_SCHEMA, model: modelFor('reasoner'), effort: 'high' })
   if (!recited) {
     notConvened.push('attribute:recite')
     log('No response from attribute:recite; the claims stay uncited with the defect named and none is dropped from the report.')
