@@ -337,7 +337,7 @@ function filesPrompt(job, files) {
     `You are the evidence verifier for EVERY declared file item of a frozen evidence contract, ${files.length} in all.`,
     `Working directory: ${job.cwd}`,
     `Declared file items:\n${listed.join('\n')}`,
-    `For each item, run a literal read-only check yourself as exactly ${cdPrefix(job.cwd)}followed by the check, and report that full command for that item. Report size or a count — never quote a file's contents, because this is an existence-and-size check, not a content review.`,
+    `For each item, run a literal read-only check yourself as exactly ${cdPrefix(job.cwd)}followed by a check that names that item's path literally, and report that full command for that item — a check that does not spell out the path is not accepted as evidence for it. Report size or a count — never quote a file's contents, because this is an existence-and-size check, not a content review.`,
     `Return one results entry per id above, carrying that id exactly: pass when the command you ran proves the item holds, fail when it proves the item does not, insufficient when you could not execute the check. Add no id that is not listed, and repeat none.`,
     FROZEN_BATCH,
     ITEM_RULE,

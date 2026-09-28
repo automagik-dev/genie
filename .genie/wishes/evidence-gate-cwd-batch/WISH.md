@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `evidence-gate-cwd-batch` |
 | **Date** | 2026-09-28 |
 | **Author** | Felipe Rosa |
@@ -145,6 +145,16 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - Round 1 (23:20:55Z) FIX-FIRST with five findings, all folded in: the dialect.test effort count, the undefined ceiling, the prompts contradicting the prefix, batch mapping, and the overlay duplicating line 21.
 - Round 2 SHIP. One non-blocking inconsistency about quoting, resolved: three quoting forms are accepted.
+
+### 2026-09-28T23:41:01Z — execution review — SHIP
+
+- **Gate:** `bun run check` passed at `953f31990` (3049 pass / 0 fail).
+- **Round 1 (23:38:36Z): SHIP**, with two fail-closed gaps.
+  - Batching let a file borrow another file's evidence.
+  - A pass was not compared against `expectExit`; this one predates the change.
+  - Both are closed in `d937a52cf`.
+- **Round 2: SHIP.** Its note 1 (the batch prompt now asks each check to name its path) is taken. Its note 2 (substring matching of paths) is deferred as narrow.
+- **Live QA (`wf_2cfdabeb-3e7`):** every item was pinned `cd '<egate>' && …`, and 4 agents ran in total (1 `verify:files`). The run took 229k tokens and 0.7 min, against 741k and 1.9 min before the change.
 
 ---
 
