@@ -10,7 +10,16 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 
@@ -261,6 +270,76 @@ describe('genie wish report', () => {
       expect(stderr).toContain(`has no ${field}`);
       expect(rows()).toEqual([]);
     }
+  });
+
+  test('a record that is not JSON, or not an object, exits 2 with one line and writes nothing', () => {
+    const { run, rows, workflows } = host([]);
+    for (const [name, body, reason] of [
+      ['wf_torn', '{"runId": "wf_torn",', 'is not valid JSON'],
+      ['wf_list', '[1, 2]', 'is not a JSON object'],
+    ]) {
+      const path = join(workflows, `${name}.json`);
+      writeFileSync(path, body as string);
+      const { code, stdout, stderr } = run(['--record', path, '--append']);
+      expect({ name, code }).toEqual({ name, code: 2 });
+      expect(stderr).toBe(`wish report: ${path} ${reason}; refused\n`);
+      expect(stdout).toBe('');
+    }
+    expect(rows()).toEqual([]);
+  });
+
+  test('a non-array workflowProgress exits 2 and writes nothing', () => {
+    const record = { ...FIXTURE, runId: 'wf_progress', workflowProgress: { type: 'workflow_agent' } };
+    const { run, rows } = host([record]);
+    const { code, stdout, stderr } = run(['wf_progress', '--append']);
+    expect(code).toBe(2);
+    expect(stderr).toContain('workflowProgress that is not an array; refused');
+    expect(stdout).toBe('');
+    expect(rows()).toEqual([]);
+  });
+
+  test('a stage missing tokens or durationMs exits 2 and is never recorded as 0', () => {
+    for (const field of ['tokens', 'durationMs']) {
+      const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
+      const stage = progress.find((entry: { type: string }) => entry.type === 'workflow_agent');
+      delete stage[field];
+      const record = { ...FIXTURE, runId: `wf_stage-${field}`, workflowProgress: progress };
+      const { run, rows } = host([record]);
+      const { code, stdout, stderr } = run([record.runId, '--append']);
+      expect({ field, code }).toEqual({ field, code: 2 });
+      expect(stderr).toContain(`stage ${stage.label} with no numeric ${field}; refused`);
+      expect(stdout).toBe('');
+      expect(rows()).toEqual([]);
+    }
+  });
+
+  test('a positional runId that differs from the --record runId exits 2 and writes nothing', () => {
+    const { run, rows, workflows } = host([FIXTURE]);
+    const path = join(workflows, `${FIXTURE.runId}.json`);
+    const { code, stdout, stderr } = run(['wf_other', '--record', path, '--append']);
+    expect(code).toBe(2);
+    expect(stderr).toBe(`wish report: ${path} holds runId ${FIXTURE.runId}, not wf_other; refused\n`);
+    expect(stdout).toBe('');
+    expect(rows()).toEqual([]);
+    expect(run([FIXTURE.runId, '--record', path]).code).toBe(0); // the matching pair still reads
+  });
+
+  test('a corrupt ledger line is skipped and named; --append and --summary still work', () => {
+    const records = [
+      { ...FIXTURE, runId: 'wf_a', totalTokens: 100, durationMs: 60000 },
+      { ...FIXTURE, runId: 'wf_b', totalTokens: 300, durationMs: 180000 },
+    ];
+    const { run, root } = host(records);
+    expect(run(['wf_a', '--append']).code).toBe(0);
+    const ledger = join(root, 'genie', 'metrics', 'wish-runs.jsonl');
+    appendFileSync(ledger, '{"runId": "wf_torn", "total\n');
+    const append = run(['wf_b', '--append']);
+    expect(append.code).toBe(0);
+    expect(append.stderr).toBe(`wish report: skipped corrupt line 2 of ${ledger}\n`);
+    const summary = run(['--summary']);
+    expect(summary.code).toBe(0);
+    expect(summary.stderr).toBe(`wish report: skipped corrupt line 2 of ${ledger}\n`);
+    expect(summary.stdout).toContain('wish\tunlabeled\t2\t200\t2.0\t2/2\n');
   });
 
   test('--append writes one D9 row, and a second --append of the same runId is refused', () => {
