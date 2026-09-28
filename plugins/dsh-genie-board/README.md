@@ -183,7 +183,15 @@ structure at zero release cost, while a rename would have to move
 ## Build and install
 
 Requires Bun (checkout builds), a Host-installed Genie CLI, and DSH
-**0.1.2-rc.1 or newer**. This floor was exercised with the actual installed Host.
+**0.1.2-rc.1 up to, not including, 0.3.0** — `dsh.engines.dsh` in `package.json`
+reads `>=0.1.2-rc.1 <0.3.0-0`. The floor was exercised with the Host installed at
+the time. The 0.2 line was exercised on 2026-09-28: the smoke below passed
+unchanged against a real `@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag
+`next`) and against `0.1.7-rc.2`, each pinned with `DSH_BIN` (see
+*Validation*). Every Host API the plugin calls is unchanged between those two
+versions. No DSH version reads `dsh.engines`, so the range records what was
+proven; it does not gate an install. The ceiling is the next minor that has not
+been exercised yet.
 
 ```sh
 bun run build:plugin
@@ -307,6 +315,20 @@ bun run build:plugin
 bun test plugins/dsh-genie-board
 bun scripts/dsh-genie-board-smoke.ts
 ```
+
+The smoke boots `dsh` from PATH, or the binary `DSH_BIN` names, and prints the
+resolved `dsh --version` first. To prove a specific Host version without
+touching your own DSH install, install it into a throwaway prefix with its
+install scripts off (nothing global, nothing under your `DSH_HOME`) and point the
+smoke at it:
+
+```sh
+npm install --prefix /tmp/dsh-0.2.0-rc.1 --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.1
+DSH_BIN=/tmp/dsh-0.2.0-rc.1/node_modules/.bin/dsh bun scripts/dsh-genie-board-smoke.ts
+```
+
+The pinned binary's directory also goes first on the children's PATH, so
+anything the Host itself spawns as `dsh` is the same version.
 
 `src/contract.test.ts` runs the REAL CLI (`bun <repo>/src/genie.ts`) against a
 seeded temporary repository through this plugin's own process layer and parses

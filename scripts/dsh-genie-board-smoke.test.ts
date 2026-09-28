@@ -243,3 +243,21 @@ describe('the Host the smoke boots', () => {
     expect(source).not.toMatch(/(?:spawn|command)\(\s*'dsh'/);
   });
 });
+
+/**
+ * The range both DSH plugins declare, and the READMEs that say what proved it.
+ * `dsh.engines.dsh` gates nothing on any Host version, so these files are the
+ * only place the claim lives.
+ */
+test('both DSH plugins declare the proven range, and their READMEs say so', () => {
+  for (const plugin of ['dsh-genie-board', 'dsh-workflow-loader']) {
+    const dir = join(import.meta.dir, '../plugins', plugin);
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    expect(manifest.dsh.engines.dsh).toBe('>=0.1.2-rc.1 <0.3.0-0');
+    const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+    expect(readme).toContain('`>=0.1.2-rc.1 <0.3.0-0`');
+    expect(readme).toContain('@deepseek-ai/dsh@0.2.0-rc.1');
+    expect(readme).toContain('DSH_BIN=');
+    expect(readme).toContain('npm install --prefix');
+  }
+});

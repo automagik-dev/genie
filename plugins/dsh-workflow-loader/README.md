@@ -109,6 +109,29 @@ lost its synthesis block exactly that way. So the full value goes to
 `<DSH_HOME>/workflow-runs/<timestamp>-<name>-<runId>.json` (deliberately outside
 the DSH run root) and the tool returns the head plus how much it left out.
 
+## Host requirements
+
+DSH **0.1.2-rc.1 up to, not including, 0.3.0** — `dsh.engines.dsh` in
+`package.json` reads `>=0.1.2-rc.1 <0.3.0-0`. The 0.2 line was exercised on
+2026-09-28: the smoke under *Verification* passed against a real
+`@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag `next`) and against
+`0.1.7-rc.2`, each pinned with `DSH_BIN`. Every Host API the row calls
+(`tools`, `workflowEngine.start`, `systemPrompt`) is unchanged between those two
+versions. No DSH version reads `dsh.engines`, so the range records what was
+proven; it does not gate an install.
+
+The row is a **Host** row, and it needs `workflowEngine` on the Host plane. The
+profile you install it into decides whether that exists:
+
+| Profile | `workflowEngine` at the Host root | The row |
+|---|---|---|
+| `headless` (and any profile that keeps `dsh-base`'s Host-root `workflow-ptc`) | yes — `dsh-base` mounts `workflow-ptc` there | activates and registers `workflow_run` |
+| `web` | no — the web app disables the Host-root `workflow-ptc` and mounts it only inside each agent preset's isolated `delegation` group | stays `pending (waiting for service: workflowEngine)`; the Host boots, the tool never appears |
+
+That is true of 0.1.7-rc.2 and 0.2.0-rc.1 alike. Mounting the row per preset on
+`web` would change how it ships, so it is listed under *Not done yet* rather than
+worked around.
+
 ## Configuration
 
 | Field | Default | Meaning |
@@ -152,11 +175,31 @@ a personal copy that has drifted from the project's.
 
 - `bun test src/` — 47 tests: the dialect against this repository's own catalog,
   and the row end to end with a stub engine.
-- `bun scripts/dsh-workflow-loader-smoke.ts` — boots a real `dsh web` in an
-  isolated `DSH_HOME`/`HOME`/`TMPDIR` tree with the row installed, asserts the
-  composed profile carries it, and holds the Host through the 10 s settle window
-  the boot audit needs. It found the two defects that would have broken a boot:
-  the shipped patch's own `journalDir: ''` and a resolver that was not idempotent.
+- `bun scripts/dsh-workflow-loader-smoke.ts` — installs the row into the
+  `headless` profile of an isolated `DSH_HOME`/`HOME`/`TMPDIR` tree, asserts the
+  composed profile carries it, then boots the whole composition with a task and
+  **no model credential**: every row activates, the activation audit prints, and
+  the run stops at `MISSING_CREDENTIAL` before any model call (every `*_API_KEY`
+  is stripped from the child environment, and a boot that does not stop there
+  fails the smoke). A fixture Host row asks the real `tools` registry for
+  `workflow_run` and must find it. A control boot then turns the Host-root
+  `workflow-ptc` off, as `web` does, and must see the row report `pending
+  (waiting for service: workflowEngine)` — the proof that the smoke measures the
+  dependency rather than passing around it. Earlier versions booted `dsh web`
+  and asserted a clean audit; that stopped being possible when the row began
+  declaring `workflowEngine`, and it is the reason for the profile table above.
+  The smoke found the two defects that would have broken a boot: the shipped
+  patch's own `journalDir: ''` and a resolver that was not idempotent.
+
+  It boots `dsh` from PATH, or the binary `DSH_BIN` names, and prints the
+  resolved `dsh --version` first. To prove a specific Host version without
+  touching your own DSH install, install it into a throwaway prefix with its
+  install scripts off and point the smoke at it:
+
+  ```sh
+  npm install --prefix /tmp/dsh-0.2.0-rc.1 --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.1
+  DSH_BIN=/tmp/dsh-0.2.0-rc.1/node_modules/.bin/dsh bun scripts/dsh-workflow-loader-smoke.ts
+  ```
 - The plugin is a **release payload member**: `scripts/build-binary.sh` stages its dist
   into the tarball, `scripts/release-payload-version.ts` stamps its `package.json` with
   the release version, and the release contract names it. An installed host loads the
@@ -172,6 +215,11 @@ a personal copy that has drifted from the project's.
 ## Not done yet
 
 - **No client half.** Discovery stays in the board's catalog panel.
+- **Not usable in the `web` profile.** The row mounts at the Host root, and `web`
+  keeps `workflowEngine` inside each agent preset (see *Host requirements*), so
+  on `web` the row stays pending and `workflow_run` never appears. Making it work
+  there means shipping a preset-scoped mount instead of, or beside, the Host row —
+  an owner decision about how the row ships, not a smoke fix.
 - **Four open conditions from the loader's live council review** (2026-09-20,
   `decision: revise` — revise means do not default this yet):
   - **Projection budget and ordering.** The projection is a head cut with an omission
