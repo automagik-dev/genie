@@ -1,0 +1,122 @@
+{
+  "runId": "wf_7b62c69f-433",
+  "timestamp": "2026-09-18T11:26:35.021Z",
+  "workflowName": "wish",
+  "status": "completed",
+  "durationMs": 1447595,
+  "totalTokens": 535630,
+  "totalToolCalls": 117,
+  "agentCount": 6,
+  "result": {
+    "ok": true,
+    "state": "merge-ready"
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Admit"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Work"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "Gate"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 4,
+      "title": "Review"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 5,
+      "title": "Repair"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 6,
+      "title": "Publish"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 7,
+      "title": "Read-back"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 8,
+      "title": "Render"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "admit:scout",
+      "phaseTitle": "Admit",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "tokens": 110220,
+      "toolCalls": 15,
+      "durationMs": 299296
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "admit:judge",
+      "phaseTitle": "Admit",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "tokens": 62236,
+      "toolCalls": 1,
+      "durationMs": 64652
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "work:executor",
+      "phaseTitle": "Work",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "tokens": 100295,
+      "toolCalls": 24,
+      "durationMs": 179117
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "gate:check",
+      "phaseTitle": "Gate",
+      "model": "claude-haiku-4-5-20251001",
+      "state": "done",
+      "tokens": 89696,
+      "toolCalls": 51,
+      "durationMs": 421744
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "review:diff",
+      "phaseTitle": "Review",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "tokens": 97313,
+      "toolCalls": 19,
+      "durationMs": 347658
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "publish:pr",
+      "phaseTitle": "Publish",
+      "model": "claude-sonnet-5",
+      "state": "done",
+      "tokens": 75870,
+      "toolCalls": 7,
+      "durationMs": 134718
+    }
+  ]
+}

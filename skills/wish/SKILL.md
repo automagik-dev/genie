@@ -21,7 +21,7 @@ The scout is read-only and estimates the work: files, insertions, independent un
 
 ## Relay
 
-A run returns `{ok, state, route?, contract, estimate, diff, head, branch, worktree, pr?, checks, review, gate, repairs, injectionAttempts, notConvened, report}`. Relay `report` unchanged. `state` is one of:
+A run returns `{ok, state, route?, contract, estimate, diff, head, branch, worktree, pr?, checks, review, gate, repairs, injectionAttempts, notConvened, report}`. Relay `report` unchanged. After every run, whatever its state, run `genie wish report <runId> --append` and relay its output: the run's tokens and time, per stage, and one row in the machine-local ledger. `state` is one of:
 
 - `merge-ready` — checks pass, the remote head equals the local head, the PR's base, head and file set equal the frozen contract, and the verdict is `SHIP`.
 - `pr-open` — the PR exists but the checks had not concluded; re-read them with `gh pr checks <n>` before acting.

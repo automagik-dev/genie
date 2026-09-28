@@ -90,7 +90,7 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `task` | Task state (SQLite, zero-daemon) |
 | `uninstall` | Remove the Genie CLI and the recorded skills-channel install (plus the pre-record genie skill dirs `legacy-skills.ts` proves are genie's). It no longer removes plugin-era host assets — the marker-owned retirement module was deleted in v6, so `~/.claude/plugins/`, `~/.codex/agents/genie-*.toml` and the rest are the operator's to remove (README: *Removing plugin-era leftovers by hand*) |
 | `update` | Update Genie CLI to the latest GitHub Release |
-| `wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` runs the structural lint over `<repo>/.genie/wishes` (0 clean / 1 findings), writes nothing, and never trips the workspace gate |
+| `wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` runs the structural lint over `<repo>/.genie/wishes` (0 clean / 1 findings), writes nothing, and never trips the workspace gate; `wish report [runId] [--append] [--summary] [--variant <name>] [--record <path>]` prints a workflow run's tokens and time per stage from its saved record, `--append` adds one row to `<GENIE_HOME>/metrics/wish-runs.jsonl` (a runId already there is refused), `--summary` averages that ledger per workflow and variant (exit 2: unknown runId, missing field, duplicate) |
 | `help` | `genie help [command]` |
 
 ### Task subcommands
