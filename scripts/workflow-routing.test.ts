@@ -211,10 +211,10 @@ describe('workflow model routing', () => {
     });
   }
 
-  test('scripts without const TIERS are reported as skipped', () => {
+  test('every catalog script declares TIERS — none is skipped', () => {
     const skips = files.filter((f) => checkRouting(f, readFileSync(join(WORKFLOWS, f), 'utf8')).status === 'skipped');
-    process.stderr.write(`workflow-routing: skipped ${skips.length}/${files.length}: ${skips.join(', ')}\n`);
     expect(files.length).toBeGreaterThan(0);
+    expect(skips).toEqual([]);
   });
 });
 
