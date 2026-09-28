@@ -20,29 +20,86 @@ import { join } from 'node:path';
 //     model: GATE_MODEL || modelFor('worker')      model: PUBLISH_MODEL || modelFor('worker')
 //
 // A routed script that still carries `...(MODEL ? { model: MODEL } : {})` fails.
+//
+// Each call's tier must also match its label in TIER_MAP (the routing contract's map, design D2).
+// A key ending in `*` matches by prefix; a template-literal label is matched by its static prefix,
+// the text before its first `${`, so `read:shard-${i}` needs a `read:shard-*` (or wider) key.
 
 const WORKFLOWS = join(import.meta.dir, '..', '.claude', 'workflows');
 
-type Verdict = { status: 'skipped' } | { status: 'checked'; failures: string[] };
+const TIER_MAP: Record<string, Record<string, 'worker' | 'reasoner'>> = {
+  'wish.js': {
+    'admit:scout': 'worker',
+    'gate:*': 'worker',
+    'publish:pr': 'worker',
+    'admit:judge': 'reasoner',
+    'work:executor': 'reasoner',
+    'review:*': 'reasoner',
+    'repair:fix-*': 'reasoner',
+  },
+  'workfly.js': {
+    'discover:*': 'worker',
+    'verify:static#*': 'worker',
+    'design:spec': 'reasoner',
+    'draft:script': 'reasoner',
+    'verify:semantics#*': 'reasoner',
+    'verify:fidelity#*': 'reasoner',
+    'repair#*': 'reasoner',
+  },
+  'evidence-gate.js': { 'verify:*': 'worker', 'report:write': 'worker', 'synthesize:verdict': 'reasoner' },
+  'council.js': { 'lens:*': 'reasoner', synthesis: 'reasoner' },
+  'pm-ledger-verify.js': { 'verify:*': 'reasoner' },
+  'docs-audit.js': { 'locate:docs-home': 'worker', 'audit:*': 'worker', 'consolidate:audit-table': 'reasoner' },
+  'research-sweep.js': {
+    'plan:shard': 'worker',
+    'read:shard-*': 'worker',
+    'synthesize:merge': 'reasoner',
+    'attribute:recite': 'reasoner',
+  },
+  'skill-audit-sweep.js': {
+    'signals:catalogue': 'worker',
+    'characterize:shard-*': 'worker',
+    'verdict:consolidate': 'reasoner',
+    'verdict:restate': 'reasoner',
+  },
+  'skill-intake.js': {
+    'facts:roster': 'worker',
+    'overlap:closest-shipped': 'worker',
+    'characterize:shard-*': 'worker',
+    'judge:dispositions': 'reasoner',
+    'judge:restate': 'reasoner',
+  },
+  'observability-review.js': {
+    'measure:annotations': 'worker',
+    'diagnose:sessions': 'reasoner',
+    'propose:rules': 'reasoner',
+  },
+};
 
-// Text of every `agent(...)` call: from the opening paren to its balanced close, skipping
-// strings, template literals (with `${}` nesting) and comments.
-function agentCalls(src: string): { line: number; text: string }[] {
-  const out: { line: number; text: string }[] = [];
-  const opener = /(?<![\w.$])agent\(/g;
-  for (let m = opener.exec(src); m; m = opener.exec(src)) {
-    const before = src.slice(Math.max(0, src.lastIndexOf('\n', m.index)), m.index);
-    if (/\/\/|function\s*$|^\s*\*/.test(before)) continue;
-    const start = m.index + m[0].length;
-    const end = closeParen(src, start);
-    if (end < 0) continue;
-    out.push({ line: src.slice(0, m.index).split('\n').length, text: src.slice(start, end) });
-  }
-  return out;
+// The label of one call: a quoted literal whole, or a template literal up to its first `${`.
+function callLabel(text: string): { label: string; template: boolean } | null {
+  const m = /\blabel:\s*(?:'([^']*)'|"([^"]*)"|`([^`$]*)(\$\{)?)/.exec(text);
+  if (!m) return null;
+  return { label: m[1] ?? m[2] ?? m[3] ?? '', template: m[4] !== undefined };
 }
 
-function closeParen(src: string, from: number): number {
-  let depth = 1;
+// The tier TIER_MAP assigns a label: an exact key, else the longest `*` key whose prefix the label starts with.
+// A template label matches a prefix key only, since its tail is not known statically.
+function tierFor(map: Record<string, 'worker' | 'reasoner'>, label: string, template: boolean) {
+  if (!template && map[label]) return map[label];
+  const keys = Object.keys(map)
+    .filter((key) => key.endsWith('*') && label.startsWith(key.slice(0, -1)))
+    .sort((a, b) => b.length - a.length);
+  return keys[0] === undefined ? undefined : map[keys[0]];
+}
+
+type Verdict = { status: 'skipped' } | { status: 'checked'; failures: string[] };
+
+// Walks `src` from `from`, calling `visit(i, top)` on every character that is code — outside
+// strings, the literal text of template literals, and comments. `top` is the innermost open
+// template `${` (or `{` inside one), undefined at the top level. A true return stops the walk
+// and returns `i`; the walk returns -1 when it reaches the end.
+function walkCode(src: string, from: number, visit: (i: number, top: string | undefined) => boolean): number {
   const stack: string[] = [];
   for (let i = from; i < src.length; i++) {
     const c = src[i] as string;
@@ -73,12 +130,35 @@ function closeParen(src: string, from: number): number {
       stack.push('{');
     } else if (c === '}' && (top === '${' || top === '{')) {
       stack.pop();
-    } else if (top === undefined || top === '${' || top === '{') {
-      if (c === '(') depth++;
-      else if (c === ')' && top === undefined && --depth === 0) return i;
+    } else if (visit(i, top)) {
+      return i;
     }
   }
   return -1;
+}
+
+// Text of every `agent(...)` call in code: from the opening paren to its balanced close. An
+// `agent(` inside a string, a template literal's text or a comment is prose, never a call.
+function agentCalls(src: string): { line: number; text: string }[] {
+  const out: { line: number; text: string }[] = [];
+  walkCode(src, 0, (i) => {
+    if (!src.startsWith('agent(', i) || /[\w.$]/.test(src[i - 1] ?? '')) return false;
+    const before = src.slice(Math.max(0, src.lastIndexOf('\n', i)), i);
+    if (/function\s*$/.test(before)) return false;
+    const start = i + 'agent('.length;
+    const end = closeParen(src, start);
+    if (end >= 0) out.push({ line: src.slice(0, i).split('\n').length, text: src.slice(start, end) });
+    return false;
+  });
+  return out;
+}
+
+function closeParen(src: string, from: number): number {
+  let depth = 1;
+  return walkCode(src, from, (i, top) => {
+    if (src[i] === '(') depth++;
+    return src[i] === ')' && top === undefined && --depth === 0;
+  });
 }
 
 function checkRouting(name: string, src: string): Verdict {
@@ -101,6 +181,15 @@ function checkRouting(name: string, src: string): Verdict {
     const override =
       name === 'wish.js' && /\bmodel:\s*(?:GATE_MODEL|PUBLISH_MODEL) \|\| modelFor\('worker'\)/.test(call.text);
     if (!routed && !override) failures.push(`${where}: agent() call has no \`model: modelFor('worker'|'reasoner')\``);
+    const map = TIER_MAP[name];
+    if (!map) continue;
+    const found = callLabel(call.text);
+    const tier = /modelFor\('(worker|reasoner)'\)/.exec(call.text)?.[1];
+    const expected = found ? tierFor(map, found.label, found.template) : undefined;
+    if (!found) failures.push(`${where}: agent() call has no string or template label`);
+    else if (!expected) failures.push(`${where}: label ${found.label} is not in the tier map`);
+    else if (tier !== expected)
+      failures.push(`${where}: label ${found.label} runs on ${tier}, the map says ${expected}`);
   }
   return { status: 'checked', failures };
 }
@@ -150,10 +239,28 @@ describe('the scanner itself', () => {
     expect(v.status === 'checked' && v.failures.length).toBe(1);
   });
   test('GATE_MODEL and PUBLISH_MODEL overrides are accepted in wish.js only', () => {
-    const src = `${head}await agent(p, { model: GATE_MODEL || modelFor('worker') })\nawait agent(p, { model: PUBLISH_MODEL || modelFor('worker') })`;
+    const src = `${head}await agent(p, { label: 'gate:check', model: GATE_MODEL || modelFor('worker') })\nawait agent(p, { label: 'publish:pr', model: PUBLISH_MODEL || modelFor('worker') })`;
     expect(checkRouting('wish.js', src)).toEqual({ status: 'checked', failures: [] });
     const other = checkRouting('x.js', src);
     expect(other.status === 'checked' && other.failures.length).toBe(2);
+  });
+  test("an `agent(` inside a string, a template's text or a comment is prose, not a call", () => {
+    const src = `${head}log(\`\${n} agent(s) silent\`)\nlog('one agent(s)')\n// agent(x)\nawait agent(p, { model: modelFor('worker') })`;
+    expect(checkRouting('x.js', src)).toEqual({ status: 'checked', failures: [] });
+  });
+  test('a label must run on the tier the map gives it; template labels match by static prefix', () => {
+    const ok = `${head}await agent(p, { label: \`read:shard-\${i}\`, model: modelFor('worker') })\nawait agent(p, { label: 'synthesize:merge', model: modelFor('reasoner') })`;
+    expect(checkRouting('research-sweep.js', ok)).toEqual({ status: 'checked', failures: [] });
+    for (const opts of [
+      "{ label: 'synthesize:merge', model: modelFor('worker') }",
+      "{ label: `read:shard-${i}`, model: modelFor('reasoner') }",
+      "{ label: 'read:unknown', model: modelFor('worker') }",
+      "{ label: `read:${i}`, model: modelFor('worker') }",
+      "{ model: modelFor('worker') }",
+    ]) {
+      const v = checkRouting('research-sweep.js', `${head}await agent(p, ${opts})`);
+      expect({ opts, n: v.status === 'checked' && v.failures.length }).toEqual({ opts, n: 1 });
+    }
   });
   test('missing declarations fail', () => {
     const v = checkRouting('x.js', "const TIERS = { worker: 1 }\nawait agent(p, { model: modelFor('worker') })");

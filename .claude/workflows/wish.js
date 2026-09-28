@@ -772,7 +772,6 @@ function gatePrompt(job, contract, worktree, branch, headSha) {
     READ_ONLY,
     FORBIDDEN_GENIE_VERBS,
     STRUCTURED_ONLY,
-    THINK_FIRST,
   ])
 }
 
@@ -859,7 +858,6 @@ function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, ve
     `If the bounded checks watch does not resolve inside its timeout, or the timeout binary is unavailable, report checks pending. A PR with no reported check is checks pending, never pass. Never infer a green: pending is a real, reportable outcome and the script renders it as one.`,
     'Return the terminal checks state, the failing check names, the PR number and URL, the base ref, and the remote head SHA. prHead is the head BRANCH NAME (headRefName), never the OID — the OID goes in prHeadOid. prFiles is the PR file list as repository-relative path STRINGS mapped from files[].path, one string per changed file, never the objects gh returns: a file set the script cannot read is a file set that was never read back, and the run ends blocked on it. Never the watch stream, never a full file payload.',
     STRUCTURED_ONLY,
-    THINK_FIRST,
   ])
 }
 
@@ -1633,7 +1631,7 @@ function finish(state, ok, extra) {
   }
   phase('Render')
   const report = render(view)
-  log(`wish ${state}${route ? ` (route ${route})` : ''}: ${STATES.includes(state) ? 'terminal' : 'unknown'} — ${repairs} repair round(s), ${notConvened.length} silent agent${notConvened.length === 1 ? '' : 's'}, ${injectionAttempts.length} injection attempt(s).`)
+  log(`wish ${state}${route ? ` (route ${route})` : ''}: ${STATES.includes(state) ? 'terminal' : 'unknown'} — ${repairs} repair round(s), ${notConvened.length} agent(s) silent, ${injectionAttempts.length} injection attempt(s).`)
   return {
     ok,
     state,

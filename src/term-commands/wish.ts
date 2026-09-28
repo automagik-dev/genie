@@ -96,10 +96,18 @@ function ledgerPath(): string {
 function readLedger(): WishRunRow[] {
   const path = ledgerPath();
   if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8')
+  const rows: WishRunRow[] = [];
+  readFileSync(path, 'utf8')
     .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => JSON.parse(line) as WishRunRow);
+    .forEach((line, index) => {
+      if (line.trim() === '') return;
+      try {
+        rows.push(JSON.parse(line) as WishRunRow);
+      } catch {
+        process.stderr.write(`wish report: skipped corrupt line ${index + 1} of ${path}\n`);
+      }
+    });
+  return rows;
 }
 
 /** `<claude>/projects/<project>/<session>/workflows/<runId>.json`, or null when no project holds it. */
@@ -131,11 +139,19 @@ function gitRepoName(): string | null {
   }
 }
 
-/** The D9 row of one record, or the name of the first required field it lacks. */
+/** The D9 row of one record, or the reason it is refused. */
 function toRow(record: Record<string, unknown>, path: string, variant: string): WishRunRow | string {
-  for (const field of REQUIRED) if (record[field] === undefined || record[field] === null) return field;
+  for (const field of REQUIRED) if (record[field] === undefined || record[field] === null) return `has no ${field}`;
+  if (!Array.isArray(record.workflowProgress)) return 'has a workflowProgress that is not an array';
   const result = record.result as { state?: unknown } | null | undefined;
-  const progress = record.workflowProgress as Array<Record<string, unknown>>;
+  const agents = (record.workflowProgress as Array<Record<string, unknown>>).filter(
+    (entry) => entry?.type === 'workflow_agent',
+  );
+  for (const entry of agents) {
+    for (const field of ['tokens', 'durationMs']) {
+      if (typeof entry[field] !== 'number') return `has a stage ${String(entry.label)} with no numeric ${field}`;
+    }
+  }
   return {
     runId: record.runId as string,
     sessionId: basename(dirname(dirname(path))),
@@ -148,15 +164,13 @@ function toRow(record: Record<string, unknown>, path: string, variant: string): 
     totalTokens: record.totalTokens as number,
     totalToolCalls: (record.totalToolCalls as number | undefined) ?? null,
     agentCount: record.agentCount as number,
-    stages: progress
-      .filter((entry) => entry.type === 'workflow_agent')
-      .map((entry) => ({
-        label: entry.label as string,
-        model: (entry.model as string | undefined) ?? null,
-        tokens: (entry.tokens as number | undefined) ?? 0,
-        toolCalls: (entry.toolCalls as number | undefined) ?? null,
-        durationMs: (entry.durationMs as number | undefined) ?? 0,
-      })),
+    stages: agents.map((entry) => ({
+      label: entry.label as string,
+      model: (entry.model as string | undefined) ?? null,
+      tokens: entry.tokens as number,
+      toolCalls: (entry.toolCalls as number | undefined) ?? null,
+      durationMs: entry.durationMs as number,
+    })),
   };
 }
 
@@ -209,9 +223,24 @@ function runWishReport(runId: string | undefined, options: ReportOptions): numbe
     process.stderr.write(`wish report: no run record ${where}\n`);
     return 2;
   }
-  const row = toRow(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>, path, options.variant);
+  let record: unknown;
+  try {
+    record = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    process.stderr.write(`wish report: ${path} is not valid JSON; refused\n`);
+    return 2;
+  }
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) {
+    process.stderr.write(`wish report: ${path} is not a JSON object; refused\n`);
+    return 2;
+  }
+  const row = toRow(record as Record<string, unknown>, path, options.variant);
   if (typeof row === 'string') {
-    process.stderr.write(`wish report: ${path} has no ${row}; refused\n`);
+    process.stderr.write(`wish report: ${path} ${row}; refused\n`);
+    return 2;
+  }
+  if (runId !== undefined && row.runId !== runId) {
+    process.stderr.write(`wish report: ${path} holds runId ${row.runId}, not ${runId}; refused\n`);
     return 2;
   }
   process.stdout.write(formatRow(row));
