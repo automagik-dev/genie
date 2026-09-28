@@ -77,7 +77,13 @@ interface WishRunRow {
   totalTokens: number;
   totalToolCalls: number | null;
   agentCount: number;
-  stages: Array<{ label: string; model: string | null; tokens: number; toolCalls: number | null; durationMs: number }>;
+  stages: Array<{
+    label: string;
+    model: string | null;
+    tokens: number | null;
+    toolCalls: number | null;
+    durationMs: number | null;
+  }>;
 }
 
 interface ReportOptions {
@@ -147,9 +153,14 @@ function toRow(record: Record<string, unknown>, path: string, variant: string): 
   const agents = (record.workflowProgress as Array<Record<string, unknown>>).filter(
     (entry) => entry?.type === 'workflow_agent',
   );
+  // A replayed (cached) or interrupted stage carries no tokens/durationMs: it is recorded as null,
+  // never refused, so resumed and crashed runs still reach the ledger (D9). A present non-number is refused.
   for (const entry of agents) {
     for (const field of ['tokens', 'durationMs']) {
-      if (typeof entry[field] !== 'number') return `has a stage ${String(entry.label)} with no numeric ${field}`;
+      const value = entry[field];
+      if (value !== undefined && value !== null && typeof value !== 'number') {
+        return `has a stage ${String(entry.label)} with a non-numeric ${field}`;
+      }
     }
   }
   return {
@@ -167,9 +178,9 @@ function toRow(record: Record<string, unknown>, path: string, variant: string): 
     stages: agents.map((entry) => ({
       label: entry.label as string,
       model: (entry.model as string | undefined) ?? null,
-      tokens: entry.tokens as number,
+      tokens: (entry.tokens as number | undefined) ?? null,
       toolCalls: (entry.toolCalls as number | undefined) ?? null,
-      durationMs: entry.durationMs as number,
+      durationMs: (entry.durationMs as number | undefined) ?? null,
     })),
   };
 }
@@ -182,8 +193,8 @@ function formatRow(row: WishRunRow): string {
     'stage\tmodel\ttokens\ttoolCalls\tseconds',
   ];
   for (const stage of row.stages) {
-    const seconds = Math.round(stage.durationMs / 1000);
-    lines.push(`${stage.label}\t${stage.model ?? '-'}\t${stage.tokens}\t${stage.toolCalls ?? '-'}\t${seconds}`);
+    const seconds = stage.durationMs === null ? '-' : Math.round(stage.durationMs / 1000);
+    lines.push(`${stage.label}\t${stage.model ?? '-'}\t${stage.tokens ?? '-'}\t${stage.toolCalls ?? '-'}\t${seconds}`);
   }
   return `${lines.join('\n')}\n`;
 }

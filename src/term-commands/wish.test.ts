@@ -298,19 +298,32 @@ describe('genie wish report', () => {
     expect(rows()).toEqual([]);
   });
 
-  test('a stage missing tokens or durationMs exits 2 and is never recorded as 0', () => {
-    for (const field of ['tokens', 'durationMs']) {
-      const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
-      const stage = progress.find((entry: { type: string }) => entry.type === 'workflow_agent');
-      delete stage[field];
-      const record = { ...FIXTURE, runId: `wf_stage-${field}`, workflowProgress: progress };
-      const { run, rows } = host([record]);
-      const { code, stdout, stderr } = run([record.runId, '--append']);
-      expect({ field, code }).toEqual({ field, code: 2 });
-      expect(stderr).toContain(`stage ${stage.label} with no numeric ${field}; refused`);
-      expect(stdout).toBe('');
-      expect(rows()).toEqual([]);
-    }
+  test('a replayed (cached) stage with no tokens or durationMs appends as null, never as 0', () => {
+    const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
+    const index = progress.findIndex((entry: { type: string }) => entry.type === 'workflow_agent');
+    const { tokens: _tokens, durationMs: _durationMs, ...stage } = progress[index];
+    progress[index] = { ...stage, cached: true };
+    const record = { ...FIXTURE, runId: 'wf_cached', workflowProgress: progress };
+    const { run, rows } = host([record]);
+    const { code, stdout } = run([record.runId, '--append']);
+    expect(code).toBe(0);
+    expect(stdout).toContain(`${stage.label}\t${stage.model}\t-\t`);
+    const [row] = rows();
+    expect(row.totalTokens).toBe(FIXTURE.totalTokens);
+    expect(row.stages[0]).toMatchObject({ label: stage.label, tokens: null, durationMs: null });
+  });
+
+  test('a stage whose tokens is present but not a number exits 2 and writes nothing', () => {
+    const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
+    const stage = progress.find((entry: { type: string }) => entry.type === 'workflow_agent');
+    stage.tokens = '110220';
+    const record = { ...FIXTURE, runId: 'wf_stage-string', workflowProgress: progress };
+    const { run, rows } = host([record]);
+    const { code, stdout, stderr } = run([record.runId, '--append']);
+    expect(code).toBe(2);
+    expect(stderr).toContain(`stage ${stage.label} with a non-numeric tokens; refused`);
+    expect(stdout).toBe('');
+    expect(rows()).toEqual([]);
   });
 
   test('a positional runId that differs from the --record runId exits 2 and writes nothing', () => {
