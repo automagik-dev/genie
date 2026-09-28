@@ -99,7 +99,7 @@ Re-run `genie board` any time for a current snapshot of task state on the kanban
 - **Spawn-context contract.** `genie context --wish <slug> [--group g] [--plan]` emits one line of versioned JSON — composed branch + resolved base SHA + ready tasks — that a spawn consumes. `--plan` previews the same payload without side effects; the wishless form resolves the repo's integration branch for plain spawns.
 - **Saved workflows.** A catalog of scripts for the procedures worth running the same way twice — `council`, `docs-audit`, `observability-review`, `pm-ledger-verify`, `research-sweep`, `skill-audit-sweep`, `skill-intake`, `wish`, `workfly` — delivered to `~/.claude/workflows` on every install and update, alongside the skills.
 - **Microagents.** `genie mikro` runs narrow, repository-local agents defined by a prompt and an answer schema, returning validated JSON whose every citation is verified against the tree. `init`, `fixtures --from-commits`, `bench` and `coach` seed, measure and refine a repository's own agents, and every agent resolves repo-first behind a trusted root.
-- **A linter for the plan itself.** `genie wish lint [--dir <repo>]` checks any repository's `.genie/wishes` for structure, writes nothing, and exits 0 clean, 1 findings, or 2 when `--dir` is refused — so a malformed plan fails in CI instead of after a wasted execution wave.
+- **A linter for the plan itself.** `genie wish lint [--dir <repo>]` checks any repository's `.genie/wishes` for structure, writes nothing, and exits 0 clean, 1 findings, or 2 when `--dir` is refused — so a malformed plan fails in CI instead of after a wasted execution wave. Its sibling `genie wish report <runId>` reads the workflow run record the runtime writes and reports tokens and time only; `--append` writes one row to the machine-local `<GENIE_HOME>/metrics/wish-runs.jsonl` ledger.
 - **Zero daemons, no Postgres.** Nothing runs in the background between invocations.
 
 ## Commands
@@ -123,7 +123,7 @@ genie --help
 | `genie doctor` | Run diagnostic checks on the installation (`--fix-global-db` repairs a contaminated machine-scope database, backup-first) |
 | `genie shortcuts` | Manage terminal keyboard shortcuts |
 | `genie update` | Update Genie to the latest GitHub release |
-| `genie wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` lints `<repo>/.genie/wishes` for structure, writes nothing, and exits 0 clean / 1 findings / 2 refused root |
+| `genie wish` | Wish-document verbs for any repository — `wish lint [--dir <repo>]` lints `<repo>/.genie/wishes` for structure, writes nothing, and exits 0 clean / 1 findings / 2 refused root; `genie wish report <runId> [--append] [--summary] [--variant <name>] [--record <path>]` reads the workflow run record the runtime writes and reports tokens and time only — `--append` writes one row to the machine-local `<GENIE_HOME>/metrics/wish-runs.jsonl` ledger (not in the repository) |
 | `genie uninstall` | Remove Genie, the recorded skills install, and plugin-era leftovers proven to be Genie-owned |
 | `genie help` | Show help for any command |
 

@@ -1,6 +1,6 @@
 # Claude refiner
 
-Baseline: Claude Fable 5.1. This selects guidance, not a runtime model. Official sources checked 2026-09-15: [Fable 5.1 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1) and [Claude prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices). The following is our concise adaptation, not vendor quotation.
+Baseline: Claude Opus 5.5. This selects guidance, not a runtime model. Official sources checked 2026-09-28: [Opus 5.5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5) and [Claude prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices). The following is our concise adaptation, not vendor quotation.
 
 ## Refiner contract
 

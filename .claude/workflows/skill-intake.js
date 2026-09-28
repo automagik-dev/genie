@@ -294,6 +294,8 @@ const READ_ONLY =
   'Read only; change nothing. Create no file, edit no file, move no file, install nothing, and recommend no mutation — this intake assesses and proposes, and the caller decides.'
 const NO_INVENTION =
   'A file you could not read goes in the list for unread names, naming the path and one reason. Never infer a record for it, never guess at its contents, and never retry in a loop.'
+// Worker stages (Sonnet 5.5) that return a schema after several steps end on this line.
+const THINK_FIRST = 'Think the problem through before you answer.'
 const DISPOSITION_RULE = `The closed disposition set is ${DISPOSITIONS.join(' | ')}. ABSORB: becomes a new shipped skill after a rewrite to the contract, naming a category and a mutates value. MERGE: its distinctive method is folded into a NAMED shipped skill. IMPROVE-EXISTING: not taken, but it exposes a concrete gap in a named shipped skill, stated as a change request. PERSONAL: valuable to its owner, wrong for the product, stays user-owned. DROP: a duplicate of what the runtimes or Genie already provide, or no durable value.`
 const REASON_RULE = `Every reason is self-contained: name the defect, what covers the same need instead, and the target. "Duplicate" and "low value" are not reasons, and a reason under ${REASON_MIN} characters cannot carry all three.`
 const OVERLAP_RULE =
@@ -324,6 +326,7 @@ function factsPrompt(job, requestedNames) {
     ATTEMPT_RULE,
     NO_INVENTION,
     `A candidate you cannot read goes in unreadable[] by name. ${READ_ONLY}`,
+    THINK_FIRST,
   ])
 }
 
@@ -356,7 +359,9 @@ function characterizePrompt(job, shard, catalogue, facts) {
     `${REASON_RULE} Your disposition is provisional: one judge sees every shard at once and decides.`,
     'Per shard also return clusters[] ({candidates[], claim, survivor}) for candidates in YOUR slice that make the same claim, and outOfRosterDeps[] for anything a candidate depends on that is not in this roster.',
     `${ATTEMPT_RULE} Name only a candidate from your own slice: an attempt you attribute to another shard is rendered as your unverified claim, never as fact.`,
+    'Once every candidate in your slice has a record or an unread entry, stop and report.',
     `${NO_INVENTION} ${READ_ONLY}`,
+    THINK_FIRST,
   ])
 }
 
@@ -607,6 +612,8 @@ function render(view) {
 const job = normalizeInput(args)
 if (!job) return { ok: false, error: 'Pass {candidatesDir, candidates?, shippedDir?, priorRanking?, overlapPass?, shardCount?, quorum?, model?, timestamp?}.' }
 const MODEL = job.model
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
 // notConvened carries exactly one kind of entry: an agent that returned null, spelled
 // with that agent own label. Every other stop is reported through `error`.
 const notConvened = []
@@ -646,7 +653,7 @@ const factsAnswer = await agent(factsPrompt(job, uniqueRequested), {
   label: 'facts:roster',
   phase: 'Facts',
   schema: FACTS_SCHEMA,
-  ...(MODEL ? { model: MODEL } : {}),
+  model: modelFor('worker'),
   effort: 'low',
 })
 if (!factsAnswer) {
@@ -725,7 +732,7 @@ if (!overlapWanted) {
     label: 'overlap:closest-shipped',
     phase: 'Facts',
     schema: OVERLAP_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('worker'),
     effort: 'low',
   })
   if (!overlapAnswer) {
@@ -793,7 +800,7 @@ const rawShards = await parallel(
       label: `characterize:shard-${entry.index}`,
       phase: 'Characterize',
       schema: CHARACTERIZE_SCHEMA,
-      ...(MODEL ? { model: MODEL } : {}),
+      model: modelFor('worker'),
       effort: 'medium',
     }),
   ),
@@ -912,7 +919,7 @@ const judged = await agent(judgePrompt(job, respondedShards, absentShards, facts
   label: 'judge:dispositions',
   phase: 'Dispositions',
   schema: JUDGE_SCHEMA,
-  ...(MODEL ? { model: MODEL } : {}),
+  model: modelFor('reasoner'),
   effort: 'high',
 })
 if (!judged) {
@@ -968,7 +975,7 @@ if (rejected.length) {
     label: 'judge:restate',
     phase: 'Dispositions',
     schema: RESTATE_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('reasoner'),
     effort: 'high',
   })
   if (!restated) {

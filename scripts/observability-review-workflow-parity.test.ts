@@ -43,12 +43,18 @@ describe('observability-review workflow', () => {
     expect(JS).not.toMatch(/https?:\/\/(?:127\.0\.0\.1|localhost)/);
   });
 
-  test('stamps no home-relative or absolute path and pins no model', () => {
+  test('stamps no home-relative or absolute path and pins no model outside TIERS', () => {
     expect(JS).not.toContain('~/');
     expect(JS).not.toMatch(/\$\{?HOME\b/);
     expect(JS).not.toMatch(/\/(?:Users|home|opt|var|tmp)\//);
     expect(JS).not.toContain('DEFAULT_MODEL');
-    expect(JS).not.toMatch(/\bmodel\s*:/);
+    // The model comes from args or the TIERS table (scripts/workflow-routing.test.ts owns the per-call shape).
+    expect(JS).toContain('const MODEL = text(job.model)');
+    const outsideTiers = JS.replace(/^const TIERS = .*$/m, '').replace(
+      /\bmodel: modelFor\('(?:worker|reasoner)'\)/g,
+      '',
+    );
+    expect(outsideTiers).not.toMatch(/\bmodel\s*:/);
   });
 
   test('every agent prompt is proposal-only and demands evidence ids', () => {
@@ -64,7 +70,7 @@ describe('observability-review workflow', () => {
   test('the catalog README carries the entry and its args', () => {
     const row = README.split('\n').find((line) => line.startsWith('| `observability-review` |'));
     expect(row).toBeDefined();
-    expect(row).toContain('`{phoenix, rulesPath, projectPrefix?, since?, timestamp?}`');
+    expect(row).toContain('`{phoenix, rulesPath, projectPrefix?, since?, model?, timestamp?}`');
     expect(row).toContain('cc-*');
   });
 });
