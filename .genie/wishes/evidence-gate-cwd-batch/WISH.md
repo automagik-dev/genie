@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `evidence-gate-cwd-batch` |
 | **Date** | 2026-09-28 |
 | **Author** | Felipe Rosa |
@@ -155,6 +155,10 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - Both are closed in `d937a52cf`.
 - **Round 2: SHIP.** Its note 1 (the batch prompt now asks each check to name its path) is taken. Its note 2 (substring matching of paths) is deferred as narrow.
 - **Live QA (`wf_2cfdabeb-3e7`):** every item was pinned `cd '<egate>' && …`, and 4 agents ran in total (1 `verify:files`). The run took 229k tokens and 0.7 min, against 741k and 1.9 min before the change.
+
+### 2026-09-28 — SHIPPED
+
+- PR #3077 merged into dev as `cb03c14e5`, with all 19 checks green (linux and darwin).
 
 ---
 
