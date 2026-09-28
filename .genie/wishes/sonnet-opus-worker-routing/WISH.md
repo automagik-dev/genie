@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `sonnet-opus-worker-routing` |
 | **Date** | 2026-09-28 |
 | **Author** | Felipe Rosa |
@@ -289,6 +289,10 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Next optimization:** the gate is the largest cost in time. The next candidate is the scout's tokens (78k), even on Sonnet.
 - **Follow-up** (research-sweep `wf_e185bfde-33a`): the Sonnet overlay omits the rule to retry on `max_tokens` even when the JSON is valid, and the rule to parse the last JSON value for stages without structured outputs.
 - **Baseline before this wish:** 58 wish runs, 511k tokens and 22.1 min on average, merge-ready 14/58.
+
+### 2026-09-28 — SHIPPED
+
+- PR #3074 merged into dev as `9837b61d7`. All 19 checks passed (linux and darwin). Final gate at `83cf99270`: `bun run check` 3024 pass / 0 fail.
 
 ---
 
