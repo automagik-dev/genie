@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Deliver ONE task end to end — a read-only scout and a blind judge admit or refuse it, one executor works in a real worktree, a mechanical gate runs the full check, a different read-only agent reviews the exact commit, a bounded repair loop closes gaps, and one allowlisted agent pushes, opens the PR and reads the remote back; merging stays with the operator.',
   whenToUse:
-    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp}, where gateModel/publishModel pick a cheaper runtime for the mechanical stages and unset inherits model — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
+    'One decided, bounded objective that should become a green PR against dev in a single pass — the fast-delivery path. Pass {objective, issue?, context?, slug?, base?, repairBudget?, model?, gateModel?, publishModel?, timestamp}, where gateModel/publishModel pick a runtime for the mechanical stages and unset falls back to model, then to the stage tier (worker stages sonnet, reasoner stages opus) — objective is required and every key arrives FROZEN: no stage re-asks, narrows or widens the objective or the context. Admission is by consequence and by script-side size arithmetic on the scout estimate, so anything larger, anything touching a trust-boundary path, an open product decision or an unknown cause comes back refused with a route — plan, brainstorm or report — and nothing created. Merge, SHIPPED, dev to main promotion, worktree and branch removal, the retry decision, the direct plan entry and the by-hand fallback stay with the caller in the wish front door; the workflow reports merge-ready, it never merges.',
   phases: [
     {
       title: 'Admit',
@@ -215,6 +215,12 @@ const WORK_DISCIPLINE = [
   'Issue independent read-only calls as separate tool calls in one response, never as one command that concatenates several files; install, add and commit stay sequential.',
   'Name the worktree in every command (git -C <worktree>, absolute paths, or cd inside the same command), because the working directory does not persist between calls.',
 ]
+// The two mutating stages also share the verification and scope rules below (the refine overlays):
+// a change is checked by a real run before it is reported, and nothing unasked rides along.
+const VERIFY_CHANGE = `Before you commit, run the check that exercises your change — the focused test the contract's oracle names, or the changed command — and read its result. A syntax-only check, or a test that failed to start, does not count. If only a declared dependency is missing, ${INSTALL_COMMAND} in the worktree is the remedy, never sudo or a system package manager. If no real check can run, say which one did not run and why — in changeNote when you are the fixer, in blockedReason if you return blocked — and never describe the change as tested.`
+const SCOPE_STOP =
+  'Once the work is done and checked, commit and report. Add no feature, test, doc or refactor the contract does not ask for, even inside the declared set.'
+const THINK_FIRST = 'Think the problem through before you answer.'
 
 const str = { type: 'string' }
 const int = { type: 'integer' }
@@ -669,6 +675,7 @@ function scoutPrompt(job) {
     `Return findings, never file bodies: path plus a line range plus the extracted fact, a bounded excerpt of an issue body, counts rather than diffs, the preflight verdict rather than the design text. ${NO_INVENTION}`,
     READ_ONLY,
     STRUCTURED_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -730,6 +737,9 @@ function executorPrompt(job, contract, diagnostic) {
       'main and master: you never check them out, never commit to them and never push to them',
       FORBIDDEN_GENIE_VERBS,
     ]),
+    VERIFY_CHANGE,
+    SCOPE_STOP,
+    'Carry the work through to the commit and your structured answer in this one turn. Do not stop to announce a next step instead of taking it, to offer to continue, or because a milestone passed; the only early returns are the blocked outcomes named above.',
     'Return the branch, the 40-character head SHA, the worktree path, whether you adopted or created it, whether the install ran, the changed-path list and the insertion count — never the diff, never the install output, never file contents. The reviewer re-reads your commit by SHA itself.',
     STRUCTURED_ONLY,
   ])
@@ -762,6 +772,7 @@ function gatePrompt(job, contract, worktree, branch, headSha) {
     READ_ONLY,
     FORBIDDEN_GENIE_VERBS,
     STRUCTURED_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -807,6 +818,9 @@ function fixPrompt(job, contract, worktree, branch, headSha, problems, round) {
     'You have no authority to widen scope: edit exactly the files above and no other. A diff that leaves that set makes the next review BLOCKED and ends the run, so a problem you cannot close inside the set goes in stillOpen with the reason, and you return status unable rather than reaching outside.',
     'Stage by path and commit once, conventionally, header at most 100 characters. No push, no rebase, no reset, no stash, no branch switch, and never main.',
     'Never bypass a hook: --no-verify is forbidden on every command, and so is a HUSKY= environment prefix or a -c core.hooksPath override. A commit-msg or pre-commit rejection is a message to fix, not a hook to skip.',
+    VERIFY_CHANGE,
+    SCOPE_STOP,
+    'Carry every problem above through to the commit in this one turn; do not stop to announce a next step or to offer to continue. The only early return is status unable, for a problem the declared set cannot close.',
     'Return the paths you touched, the new 40-character SHA and a one-line change note — not the repair diff, not the command output.',
     STRUCTURED_ONLY,
   ])
@@ -845,6 +859,7 @@ function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, ve
     `If the bounded checks watch does not resolve inside its timeout, or the timeout binary is unavailable, report checks pending. A PR with no reported check is checks pending, never pass. Never infer a green: pending is a real, reportable outcome and the script renders it as one.`,
     'Return the terminal checks state, the failing check names, the PR number and URL, the base ref, and the remote head SHA. prHead is the head BRANCH NAME (headRefName), never the OID — the OID goes in prHeadOid. prFiles is the PR file list as repository-relative path STRINGS mapped from files[].path, one string per changed file, never the objects gh returns: a file set the script cannot read is a file set that was never read back, and the run ends blocked on it. Never the watch stream, never a full file payload.',
     STRUCTURED_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -958,7 +973,7 @@ function render(view) {
     `Worktree: ${view.worktree || '(none created)'}`,
     `Head: ${view.head || '(no commit)'}`,
     `Repairs: ${view.repairs} of ${view.repairBudget}`,
-    `Models: session=${view.sessionModel || 'inherit'} gate=${view.gateModel || 'inherit'} publish=${view.publishModel || 'inherit'}`,
+    `Models: session=${view.sessionModel || 'tiered (worker sonnet, reasoner opus)'} gate=${view.gateModel || 'inherit'} publish=${view.publishModel || 'inherit'}`,
     view.stageReached ? `Stage reached: ${view.stageReached}` : '',
   ].filter(Boolean))
   const admission = bullets([
@@ -1009,13 +1024,16 @@ const job = normalizeInput(args)
 if (!job) return { ok: false, error: INTAKE_ERROR, notConvened: [] }
 if (job.rejection) return { ok: false, error: job.rejection, notConvened: [] }
 const MODEL = job.model
-// The mechanical stages may run on a cheaper runtime than the reasoning ones: the gate runs the
-// repository's full check and reads an exit code, the publisher runs an allowlisted push/PR
-// sequence and reads the remote back — neither judges anything. `text()` normalizes an absent key
-// to '', so `||` here is the inherit rule, not a default: pass neither key and every stage runs on
-// exactly the model a caller pins today, and pinning nothing still inherits the session model.
-const GATE_MODEL = job.gateModel || job.model
-const PUBLISH_MODEL = job.publishModel || job.model
+// Every stage runs on its tier's model: worker stages (scout, gate, publisher) on sonnet, reasoner
+// stages (judge, executor, review, fix) on opus. A caller `model` pins every stage. The mechanical
+// stages take their own optional key on top: the gate runs the repository's full check and reads an
+// exit code, the publisher runs an allowlisted push/PR sequence and reads the remote back — neither
+// judges anything. Precedence: gateModel/publishModel > model > TIERS. `text()` normalizes an absent
+// key to '', so the `||` at each call site is the fallback rule.
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
+const GATE_MODEL = job.gateModel
+const PUBLISH_MODEL = job.publishModel
 
 const notConvened = []
 const injectionAttempts = []
@@ -1077,7 +1095,7 @@ const scoutStep = await attempt('Admit', () =>
     label: 'admit:scout',
     phase: 'Admit',
     schema: SCOUT_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('worker'),
     effort: 'high',
   }),
 )
@@ -1116,7 +1134,7 @@ const judgeStep = await attempt('Admit', () =>
     label: 'admit:judge',
     phase: 'Admit',
     schema: JUDGE_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('reasoner'),
     effort: 'high',
   }),
 )
@@ -1190,7 +1208,7 @@ const workStep = await attempt('Work', () =>
     label: 'work:executor',
     phase: 'Work',
     schema: EXEC_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('reasoner'),
     effort: 'high',
   }),
 )
@@ -1347,7 +1365,7 @@ function measureDiff(when) {
 phase('Gate')
 stageReached = 'Gate'
 const gateStep = await attempt('Gate', () =>
-  agent(gatePrompt(job, contract, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
+  agent(gatePrompt(job, contract, worktree, branch, headSha), { label: 'gate:check', phase: 'Gate', schema: GATE_SCHEMA, model: GATE_MODEL || modelFor('worker'), effort: 'low' }),
 )
 if (!gateStep.ok) return finish('missed', false, { blockedReason: `The Gate stage threw: ${gateStep.reason}.` })
 if (!gateStep.value) {
@@ -1370,7 +1388,7 @@ log(`Gate: ${gate.noHookSystem ? `no hook system, ran ${contract.validationComma
 phase('Review')
 stageReached = 'Review'
 const reviewStep = await attempt('Review', () =>
-  agent(reviewPrompt(job, contract, headSha, worktree, 0), { label: 'review:diff', phase: 'Review', schema: REVIEW_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' }),
+  agent(reviewPrompt(job, contract, headSha, worktree, 0), { label: 'review:diff', phase: 'Review', schema: REVIEW_SCHEMA, model: modelFor('reasoner'), effort: 'high' }),
 )
 if (!reviewStep.ok) return finish('missed', false, { blockedReason: `The Review stage threw: ${reviewStep.reason}.` })
 if (!reviewStep.value) {
@@ -1408,7 +1426,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
       label: `repair:fix-${round}`,
       phase: 'Repair',
       schema: FIX_SCHEMA,
-      ...(MODEL ? { model: MODEL } : {}),
+      model: modelFor('reasoner'),
       effort: 'high',
     }),
   )
@@ -1439,7 +1457,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   diffOutsideDeclared = changed.filter((path) => !contract.files.includes(path)).concat(changedPaths.outside)
 
   const roundGateStep = await attempt('Repair', () =>
-    agent(gatePrompt(job, contract, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, ...(GATE_MODEL ? { model: GATE_MODEL } : {}), effort: 'low' }),
+    agent(gatePrompt(job, contract, worktree, branch, headSha), { label: `gate:round-${round}`, phase: 'Repair', schema: GATE_SCHEMA, model: GATE_MODEL || modelFor('worker'), effort: 'low' }),
   )
   if (!roundGateStep.ok) return finish('missed', false, { blockedReason: `The gate of repair round ${round} threw: ${roundGateStep.reason}.` })
   if (!roundGateStep.value) {
@@ -1460,7 +1478,7 @@ while ((!gate.pass || review.verdict === 'FIX-FIRST') && repairs < job.repairBud
   }
 
   const roundReviewStep = await attempt('Repair', () =>
-    agent(reviewPrompt(job, contract, headSha, worktree, round), { label: `review:round-${round}`, phase: 'Repair', schema: REVIEW_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'high' }),
+    agent(reviewPrompt(job, contract, headSha, worktree, round), { label: `review:round-${round}`, phase: 'Repair', schema: REVIEW_SCHEMA, model: modelFor('reasoner'), effort: 'high' }),
   )
   if (!roundReviewStep.ok) return finish('missed', false, { blockedReason: `The review of repair round ${round} threw: ${roundReviewStep.reason}.` })
   if (!roundReviewStep.value) {
@@ -1496,7 +1514,7 @@ const publishStep = await attempt('Publish', () =>
     label: 'publish:pr',
     phase: 'Publish',
     schema: PUBLISH_SCHEMA,
-    ...(PUBLISH_MODEL ? { model: PUBLISH_MODEL } : {}),
+    model: PUBLISH_MODEL || modelFor('worker'),
     effort: 'low',
   }),
 )
@@ -1582,8 +1600,8 @@ function finish(state, ok, extra) {
     objective: job.objective,
     timestamp: job.timestamp,
     sessionModel: MODEL,
-    gateModel: GATE_MODEL,
-    publishModel: PUBLISH_MODEL,
+    gateModel: GATE_MODEL || modelFor('worker'),
+    publishModel: PUBLISH_MODEL || modelFor('worker'),
     state,
     route,
     routeReason,
@@ -1615,7 +1633,7 @@ function finish(state, ok, extra) {
   }
   phase('Render')
   const report = render(view)
-  log(`wish ${state}${route ? ` (route ${route})` : ''}: ${STATES.includes(state) ? 'terminal' : 'unknown'} — ${repairs} repair round(s), ${notConvened.length} agent(s) silent, ${injectionAttempts.length} injection attempt(s).`)
+  log(`wish ${state}${route ? ` (route ${route})` : ''}: ${STATES.includes(state) ? 'terminal' : 'unknown'} — ${repairs} repair round(s), ${notConvened.length} silent agent${notConvened.length === 1 ? '' : 's'}, ${injectionAttempts.length} injection attempt(s).`)
   return {
     ok,
     state,

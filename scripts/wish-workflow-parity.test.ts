@@ -123,8 +123,8 @@ describe('wish skill fronts the wish workflow', () => {
     }
   });
 
-  test('the script pins no model, reads no clock, and keeps the denylist the skill describes', () => {
-    expect(script).not.toMatch(/model: 'opus'|DEFAULT_MODEL/);
+  test('the script pins no model outside its TIERS table, reads no clock, and keeps the denylist the skill describes', () => {
+    expect(script.replace(/^const TIERS = .*$/m, '')).not.toMatch(/model: 'opus'|DEFAULT_MODEL/);
     expect(script).not.toMatch(/Date\.now|Math\.random/);
     for (const path of ['.github/', '.husky/', '.claude/hooks/', 'scripts/release-*', 'delivery-evidence-verify.ts']) {
       expect(script).toContain(`'${path}'`);
@@ -166,44 +166,63 @@ describe('wish.js guards that must not drift', () => {
     );
   });
 
-  test('exactly nine model spreads, split per stage, no model literal, and no required/advisory check split', () => {
-    // Nine agent() calls, nine conditional spreads — but no longer all from one variable: the two
-    // mechanical stages read their own. 6 reasoning (scout, judge, executor, review:diff, repair:fix,
-    // review:round) + 2 gate (gate:check, gate:round-N) + 1 publish must still total the nine calls.
-    const spreads = (name: string): number => script.split(`...(${name} ? { model: ${name} } : {})`).length - 1;
-    expect(spreads('MODEL')).toBe(6);
-    expect(spreads('GATE_MODEL')).toBe(2);
-    expect(spreads('PUBLISH_MODEL')).toBe(1);
-    expect(spreads('MODEL') + spreads('GATE_MODEL') + spreads('PUBLISH_MODEL')).toBe(9);
-    expect(script).not.toMatch(/model: ['"`]/);
+  test('exactly nine routed model options, split per stage, no model literal, and no required/advisory check split', () => {
+    // Nine agent() calls, nine model options routed through TIERS (design D1/D2): 1 worker (scout),
+    // 5 reasoner (judge, executor, review:diff, repair:fix, review:round), 2 gate (gate:check,
+    // gate:round-N) and 1 publish, the two mechanical stages reading their own key first.
+    const count = (option: string): number => script.split(option).length - 1;
+    const OPTIONS = {
+      worker: "model: modelFor('worker')",
+      reasoner: "model: modelFor('reasoner')",
+      gate: "model: GATE_MODEL || modelFor('worker')",
+      publish: "model: PUBLISH_MODEL || modelFor('worker')",
+    };
+    expect(count(OPTIONS.worker)).toBe(1);
+    expect(count(OPTIONS.reasoner)).toBe(5);
+    expect(count(OPTIONS.gate)).toBe(2);
+    expect(count(OPTIONS.publish)).toBe(1);
+    expect(script).not.toContain('? { model:');
+    // The one-line TIERS table is the only model literal the script spells.
+    expect(script).toMatch(/^const TIERS = \{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \} \}$/m);
+    expect(script.replace(/^const TIERS = .*$/m, '')).not.toMatch(/model: ['"`]/);
     expect(script).not.toContain('--required');
   });
 
-  test('each labelled agent call carries the stage variable its label names', () => {
-    // The 6/2/1 split above still passes with the spreads on the WRONG stages. Pin the mapping by
-    // label: every `gate:` call carries GATE_MODEL, the `publish:` call carries PUBLISH_MODEL, and
-    // every other stage carries MODEL — read from the option object that follows each label.
-    const spreadOf = (name: string): string => `...(${name} ? { model: ${name} } : {})`;
+  test('each labelled agent call carries the model option its stage tier names', () => {
+    // The 1/5/2/1 split above still passes with the options on the WRONG stages. Pin the mapping by
+    // label: `admit:scout` is a worker, every `gate:` call carries GATE_MODEL first, the `publish:`
+    // call carries PUBLISH_MODEL first, and every other stage is a reasoner — read from the option
+    // object that follows each label.
+    const OPTIONS: Record<string, string> = {
+      worker: "model: modelFor('worker')",
+      reasoner: "model: modelFor('reasoner')",
+      gate: "model: GATE_MODEL || modelFor('worker')",
+      publish: "model: PUBLISH_MODEL || modelFor('worker')",
+    };
     const calls = script
       .split(/\bagent\(/)
       .slice(1)
       .filter((chunk) => /\blabel: ['`]/.test(chunk));
     expect(calls).toHaveLength(9);
     for (const call of calls) {
-      const label = /\blabel: ['`]([a-z]+):/.exec(call)?.[1];
-      const expected = label === 'gate' ? 'GATE_MODEL' : label === 'publish' ? 'PUBLISH_MODEL' : 'MODEL';
-      const carried = ['MODEL', 'GATE_MODEL', 'PUBLISH_MODEL'].filter((name) => call.includes(spreadOf(name)));
+      const label = /\blabel: ['`]([a-z]+:[a-z]+)/.exec(call)?.[1] ?? '';
+      const stage = label.split(':')[0];
+      const expected =
+        stage === 'gate' ? 'gate' : stage === 'publish' ? 'publish' : label === 'admit:scout' ? 'worker' : 'reasoner';
+      const options = call.slice(0, call.indexOf('effort:'));
+      const carried = Object.keys(OPTIONS).filter((tier) => options.includes(OPTIONS[tier] as string));
       expect({ label, carried }).toEqual({ label, carried: [expected] });
     }
   });
 
-  test('gateModel and publishModel are optional and fall back to job.model, so unset inherits', () => {
+  test('gateModel and publishModel are optional and fall back to model, then to the worker tier', () => {
     // `text()` normalizes an absent key to '', so the fallback must be `||` — `??` would keep the
-    // empty string, the spread would drop out, and an unset key would silently STOP inheriting.
+    // empty string and pin a blank model on an unset key. Precedence: stage key > model > TIERS.
     expect(script).toContain('gateModel: text(input.gateModel),');
     expect(script).toContain('publishModel: text(input.publishModel),');
-    expect(script).toMatch(/^const GATE_MODEL = job\.gateModel \|\| job\.model$/m);
-    expect(script).toMatch(/^const PUBLISH_MODEL = job\.publishModel \|\| job\.model$/m);
+    expect(script).toMatch(/^const GATE_MODEL = job\.gateModel$/m);
+    expect(script).toMatch(/^const PUBLISH_MODEL = job\.publishModel$/m);
+    expect(script).toMatch(/^const modelFor = \(tier\) => MODEL \|\| TIERS\[tier\]\.model$/m);
     // The report names what each stage ran on; no agent reads it.
     expect(script).toContain('Models: session=${view.sessionModel ||');
     expect(script).toContain('gate=${view.gateModel ||');
