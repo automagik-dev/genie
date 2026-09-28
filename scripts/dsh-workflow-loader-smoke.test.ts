@@ -121,8 +121,8 @@ describe('the loader smoke', () => {
 
 /**
  * The row injects `workflowEngine`, and only a profile that mounts
- * `workflow-ptc` at the Host root provides one there. `web` keeps it inside each
- * agent preset, which is why the smoke used to fail on every Host version with
+ * `workflow-ptc` at the Host root provides one there. `web` keeps it inside the
+ * `standard`/`ptc` web presets' isolated `delegation` group, which is why the smoke used to fail on every Host version with
  * `pending (waiting for service: workflowEngine)`.
  */
 describe('where the smoke exercises the row', () => {
@@ -174,25 +174,42 @@ describe('where the smoke exercises the row', () => {
     );
     const probe = await import(module);
     expect(probe.inject).toEqual(['tools']);
-    probe.apply(
-      { tools: { get: (name: string) => (name === TOOL_NAME ? {} : undefined) } },
-      { toolName: TOOL_NAME, out },
-    );
-    expect(JSON.parse(readFileSync(out, 'utf8'))).toMatchObject({ tool: TOOL_NAME, registered: true });
-    // An inactive context throws on read; that is an answer, not a crash.
-    probe.apply(
-      {
-        tools: {
-          get: () => {
-            throw new Error('inactive context');
-          },
+    type Probe = { registered?: boolean; disposed?: boolean; error?: string; tool?: string };
+    const answer = (): Probe => JSON.parse(readFileSync(out, 'utf8'));
+    /** A context stand-in whose dispose hooks the test fires by hand. */
+    const context = (get: (name: string) => unknown) => {
+      const disposers: (() => void)[] = [];
+      return {
+        ctx: { tools: { get }, on: (event: string, hook: () => void) => event === 'dispose' && disposers.push(hook) },
+        dispose: () => {
+          for (const hook of disposers) hook();
         },
-      },
+      };
+    };
+
+    const present = context((name) => (name === TOOL_NAME ? {} : undefined));
+    probe.apply(present.ctx, { toolName: TOOL_NAME, out });
+    expect(answer()).toMatchObject({ tool: TOOL_NAME, registered: true });
+    // One answer only: a later dispose does not overwrite it.
+    present.dispose();
+    expect(answer()).toMatchObject({ registered: true });
+
+    // An inactive context throws on read; that is an answer, not a crash.
+    rmSync(out);
+    probe.apply(
+      context(() => {
+        throw new Error('inactive context');
+      }).ctx,
       { toolName: TOOL_NAME, out },
     );
-    expect(JSON.parse(readFileSync(out, 'utf8'))).toMatchObject({
-      registered: false,
-      error: 'Error: inactive context',
-    });
+    expect(answer()).toMatchObject({ registered: false, error: 'Error: inactive context' });
+
+    // The control boot's case: the Host disposes the context while the probe is
+    // still polling, so the file must exist and say "absent", never be missing.
+    rmSync(out);
+    const absent = context(() => undefined);
+    probe.apply(absent.ctx, { toolName: TOOL_NAME, out });
+    absent.dispose();
+    expect(answer()).toMatchObject({ registered: false, disposed: true });
   });
 });

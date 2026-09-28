@@ -32,8 +32,8 @@ export const TOOL_NAME = 'workflow_run';
  * HOST row: its bundle patch inserts it at the Host root. `headless` composes
  * `dsh-base` as it ships, whose Host root mounts `workflow-ptc` — the provider
  * of `workflowEngine`. `web` does not: the web app disables that Host-root row
- * and mounts `workflow-ptc` only inside each agent preset's isolated
- * `delegation` group, so on `web` this row stays `pending (waiting for service:
+ * and mounts `workflow-ptc` only inside the `standard`/`ptc` web presets'
+ * isolated `delegation` group, so on `web` this row stays `pending (waiting for service:
  * workflowEngine)` on every DSH version tried (0.1.7-rc.2 and 0.2.0-rc.1). The
  * live run the README records was a `headless` one for the same reason.
  */
@@ -103,6 +103,12 @@ export function activationFailure(output: string): string | undefined {
  * A fixture Host row that asks the real `tools` registry whether the loader's
  * tool exists, and writes the answer to a file. An activation audit only says a
  * row is not pending; this says the row did the one thing it exists for.
+ *
+ * It answers exactly once, and it ALWAYS answers: when the tool appears, after
+ * five seconds without it, on a read the context refuses, or — the case the
+ * credential-less boot hits first — when the Host disposes the context before
+ * any of those. A missing file therefore means the probe never mounted, never
+ * that the tool was absent.
  */
 export function probeModule(): string {
   return [
@@ -111,15 +117,22 @@ export function probeModule(): string {
     "export const inject = ['tools'];",
     'export function apply(ctx, config) {',
     '  const started = Date.now();',
-    '  const report = (value) => writeFileSync(config.out, JSON.stringify({ tool: config.toolName, ...value }));',
+    '  let answered = false;',
+    '  const report = (value) => {',
+    '    if (answered) return;',
+    '    answered = true;',
+    '    writeFileSync(config.out, JSON.stringify({ tool: config.toolName, ms: Date.now() - started, ...value }));',
+    '  };',
+    "  ctx.on('dispose', () => report({ registered: false, disposed: true }));",
     '  const check = () => {',
+    '    if (answered) return;',
     '    let found;',
     '    try {',
     '      found = ctx.tools.get(config.toolName);',
     '    } catch (error) {',
     '      return report({ registered: false, error: String(error) });',
     '    }',
-    '    if (found || Date.now() - started > 5000) return report({ registered: Boolean(found), ms: Date.now() - started });',
+    '    if (found || Date.now() - started > 5000) return report({ registered: Boolean(found) });',
     '    setTimeout(check, 25);',
     '  };',
     '  check();',
@@ -219,7 +232,9 @@ async function main(): Promise<void> {
     return output;
   }
 
-  async function probe(out: string): Promise<{ registered?: boolean; ms?: number; error?: string } | undefined> {
+  async function probe(
+    out: string,
+  ): Promise<{ registered?: boolean; ms?: number; error?: string; disposed?: boolean } | undefined> {
     const text = await readFile(out, 'utf8').catch(() => undefined);
     return text === undefined ? undefined : JSON.parse(text);
   }
@@ -271,8 +286,12 @@ async function main(): Promise<void> {
     const control = await boot([join(temporary, 'probe.patch.yml'), join(temporary, 'engine-off.patch.yml')]);
     const pending = control.split('\n').find((line) => line.includes(ROW_ID) && line.includes('workflowEngine'));
     if (!pending) throw new Error(`with workflow-ptc off the row did not report waiting on workflowEngine\n${control}`);
-    if ((await probe(out))?.registered) throw new Error(`${TOOL_NAME} registered with no workflowEngine to run it`);
-    console.log(`control: with workflow-ptc off the row stays pending (${pending.trim()}): OK`);
+    const absent = await probe(out);
+    if (!absent) throw new Error(`the probe row gave no answer on the control boot\n${control}`);
+    if (absent.registered !== false) throw new Error(`${TOOL_NAME} registered with no workflowEngine to run it`);
+    console.log(
+      `control: with workflow-ptc off the row stays pending (${pending.trim()}) and the probe answers ${JSON.stringify(absent)}: OK`,
+    );
     console.log(`dsh-workflow-loader smoke: PASS (dsh ${version}, profile ${PROFILE})`);
   } finally {
     await rm(temporary, { recursive: true, force: true });
