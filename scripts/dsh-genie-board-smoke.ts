@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 /** How the smoke runs a child process; injected so the build step is testable. */
 export type Runner = (binary: string, args: string[], cwd?: string) => Promise<string>;
@@ -61,6 +61,47 @@ export function sandboxEnvironment(temporary: string, base: NodeJS.ProcessEnv = 
     TEMP: temp,
     PATH: `${join(temporary, 'bin')}${delimiter}${base.PATH}`,
   };
+}
+
+/**
+ * The DSH Host binary the smoke boots: `DSH_BIN` when set, else `dsh` on PATH.
+ *
+ * Pinning a host version is how a compatibility claim gets proven without
+ * touching an operator's own install: `npm install --prefix <tmp> --ignore-scripts
+ * @deepseek-ai/dsh@<version>`, then `DSH_BIN=<tmp>/node_modules/.bin/dsh`. A path
+ * is made absolute so every child resolves the same binary whatever its cwd.
+ */
+export function resolveDshBinary(env: NodeJS.ProcessEnv = process.env): string {
+  const pinned = env.DSH_BIN?.trim();
+  if (!pinned) return 'dsh';
+  return isAbsolute(pinned) || !pinned.includes('/') ? pinned : resolve(pinned);
+}
+
+/**
+ * The base environment with a pinned binary's directory first on PATH, so
+ * anything the Host itself spawns as `dsh` is the same version. `dsh` from PATH
+ * leaves the environment as it is.
+ */
+export function withPinnedDsh(binary: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (!isAbsolute(binary)) return base;
+  return { ...base, PATH: `${dirname(binary)}${delimiter}${base.PATH ?? ''}` };
+}
+
+/** `dsh --version` of the resolved binary, or a refusal naming how to fix it. */
+export function dshVersion(binary: string, readme: string): string {
+  let result: { exitCode: number | null; stdout: string } | undefined;
+  try {
+    const run = Bun.spawnSync([binary, '--version'], { stdout: 'pipe', stderr: 'pipe' });
+    result = { exitCode: run.exitCode, stdout: run.stdout.toString() };
+  } catch {
+    result = undefined;
+  }
+  if (result?.exitCode !== 0 || !result.stdout.trim()) {
+    throw new Error(
+      `${binary === 'dsh' ? 'dsh is not on PATH' : `DSH_BIN=${binary} does not run`}: this smoke boots a real DSH Host and is operator-run (see ${readme})`,
+    );
+  }
+  return result.stdout.trim();
 }
 
 /** The directories `sandboxEnvironment` promises exist before any child runs. */
@@ -169,10 +210,14 @@ async function assertManagerDisabled(
 
 const root = resolve(import.meta.dir, '..');
 async function main(): Promise<void> {
+  // Resolved before the temp tree exists, so a missing Host leaves nothing behind.
+  const dsh = resolveDshBinary();
+  const version = dshVersion(dsh, 'plugins/dsh-genie-board/README.md');
+  console.log(`dsh: ${dsh} (version ${version})`);
   const temporary = await mkdtemp(join(tmpdir(), 'genie-dsh-smoke-'));
   const repo = join(temporary, 'repo');
   const bin = join(temporary, 'bin');
-  const env = sandboxEnvironment(temporary);
+  const env = sandboxEnvironment(temporary, withPinnedDsh(dsh));
   let server: ChildProcess | undefined;
   let installed = false;
   async function command(binary: string, args: string[], cwd = root): Promise<string> {
@@ -207,15 +252,11 @@ async function main(): Promise<void> {
     });
   }
   async function start(patch = 'fixture.patch.yml'): Promise<string> {
-    server = spawn(
-      'dsh',
-      ['web', '--patch', join(temporary, patch), '--no-open', '--host', '127.0.0.1', '--port', '0'],
-      {
-        cwd: repo,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+    server = spawn(dsh, ['web', '--patch', join(temporary, patch), '--no-open', '--host', '127.0.0.1', '--port', '0'], {
+      cwd: repo,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const child = server;
     return new Promise((resolveStart, reject) => {
       let output = '';
@@ -268,12 +309,12 @@ async function main(): Promise<void> {
       join(temporary, 'fixture-manager-disabled.patch.yml'),
       `${workspaceRow}- id: genie-dsh-board\n  disabled: true\n`,
     );
-    await command('dsh', ['plugin', '--profile', 'web', 'add', `link:${join(root, 'plugins/dsh-genie-board')}`]);
+    await command(dsh, ['plugin', '--profile', 'web', 'add', `link:${join(root, 'plugins/dsh-genie-board')}`]);
     installed = true;
     await start();
     console.log('First launch authenticated URL received');
     await stop();
-    const listed = await command('dsh', ['plugin', '--profile', 'web', 'list', '--depth', '0']);
+    const listed = await command(dsh, ['plugin', '--profile', 'web', 'list', '--depth', '0']);
     if (!listed.includes('@automagik/genie-dsh-board')) throw new Error('Installed plugin missing from list');
     const launchUrl = await start();
     const origin = new URL(launchUrl).origin;
@@ -338,7 +379,7 @@ async function main(): Promise<void> {
     const managerOff = await assertManagerDisabled(await start('fixture-manager-disabled.patch.yml'), () => server);
     console.log(
       JSON.stringify({
-        dsh: await command('dsh', ['--version']),
+        dsh: version,
         health,
         origin,
         workspaceId,
@@ -353,7 +394,7 @@ async function main(): Promise<void> {
   } finally {
     await stop();
     try {
-      if (installed) await command('dsh', ['plugin', '--profile', 'web', 'remove', '@automagik/genie-dsh-board']);
+      if (installed) await command(dsh, ['plugin', '--profile', 'web', 'remove', '@automagik/genie-dsh-board']);
     } finally {
       await rm(temporary, { recursive: true, force: true });
       console.log('Temporary profile/repository removed');
