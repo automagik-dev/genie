@@ -206,6 +206,8 @@ function normalizeInput(raw) {
 
 // Shared prompt clauses: each contract sentence is written once and reused verbatim.
 const READ_ONLY = 'Read only; change nothing. Create no file, edit no file, move no file, and recommend no mutation — this sweep assesses and proposes, and the caller decides.'
+// Worker stages (Sonnet 5.5) that return a schema after several steps end on this line.
+const THINK_FIRST = 'Think the problem through before you answer.'
 const HOUSE_RANGE = `${HOUSE_MIN} to ${HOUSE_MAX} lines is the house range`
 const FRONTMATTER_RULE = 'frontmatter carries no key outside name, description, category and mutates, in that order — name and description are required, category and mutates are optional and a skill carrying neither is legal — with name equal to the directory name character for character'
 const PRECEDENT = 'The consolidation table in the catalogue README is the precedent: audit lenses collapsed into one review entrypoint, investigation collapsed into one report entrypoint. Prefer the same move, and every retired name keeps a row naming its current route.'
@@ -242,7 +244,9 @@ function characterizePrompt(job, shard, findings) {
     `Per skill return: skill (the directory name), path, purpose (one sentence naming the workflow this entrypoint owns), category from the closed enum ${CATEGORIES.join(' | ')} — the frontmatter key is optional, so return category "none" for a skill whose frontmatter carries none rather than inventing a value the catalogue lint rejects; category is a required field of every record, so never omit it and never return an empty string — mutates from ${MUTATES.join(' | ')}, overlapCandidates[] (other skill names this one may duplicate, each naming the overlapping need), stalenessSignals[] (text the repository has moved past), lineCount, houseSizeDrift (${HOUSE_RANGE}: under | in-range | over), and frontmatterDrift[] against the contract that ${FRONTMATTER_RULE}.`,
     'Quote line ranges rather than whole files; a record that pastes the file back is a record nobody can act on. A file you could not read belongs in the top-level unread[] — a sibling of skills[], naming the path — and never in an inferred record.',
     section('Signals findings for the skills in this shard', findings),
+    'Once every file in this shard has a record or an unread[] entry, stop and report.',
     READ_ONLY,
+    THINK_FIRST,
   ])
 }
 
@@ -417,6 +421,8 @@ function render(view) {
 const job = normalizeInput(args)
 if (!job) return { ok: false, error: 'Pass {focus?, skills?, searchPass?, skillsDir?, shardCount?, quorum?, model?, timestamp?}.' }
 const MODEL = job.model
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
 // notConvened carries exactly one kind of entry: an agent that returned null. Every
 // other stop is reported through `error`, so the list keeps a single meaning.
 const notConvened = []
@@ -424,7 +430,7 @@ log(`skill-audit-sweep over ${job.skillsDir}/: ${job.focus ? job.focus.slice(0, 
 if (job.droppedSkillsDir) log(`Skills directory ${job.droppedSkillsDir} does not resolve inside the repository; using ${job.skillsDir}.`)
 
 phase('Signals')
-const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
+const signals = await agent(signalsPrompt(job), { label: 'signals:catalogue', phase: 'Signals', schema: SIGNALS_SCHEMA, model: modelFor('worker'), effort: 'low' })
 if (!signals) {
   notConvened.push('signals:catalogue')
   log('No response from signals:catalogue; the run continues with empty per-shard findings and nothing is inferred.')
@@ -526,7 +532,7 @@ const rawShards = await parallel(
       label: `characterize:shard-${entry.index}`,
       phase: 'Characterize',
       schema: CHARACTERIZE_SCHEMA,
-      ...(MODEL ? { model: MODEL } : {}),
+      model: modelFor('worker'),
       effort: 'medium',
     }),
   ),
@@ -600,7 +606,7 @@ const judged = await agent(verdictPrompt(job, respondedShards, absentShards, sig
   label: 'verdict:consolidate',
   phase: 'Verdicts',
   schema: VERDICT_SCHEMA,
-  ...(MODEL ? { model: MODEL } : {}),
+  model: modelFor('reasoner'),
   effort: 'high',
 })
 if (!judged) {
@@ -643,7 +649,7 @@ if (rejected.length) {
     label: 'verdict:restate',
     phase: 'Verdicts',
     schema: RESTATE_SCHEMA,
-    ...(MODEL ? { model: MODEL } : {}),
+    model: modelFor('reasoner'),
     effort: 'high',
   })
   if (!restated) {

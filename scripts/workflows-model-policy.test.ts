@@ -25,6 +25,12 @@ const STAGE_PINNED: Record<string, string[]> = {
 };
 
 const read = (name: string): string => readFileSync(join(CATALOG, name), 'utf8');
+// A routed script (sonnet-opus-worker-routing) names its two tier models in ONE `const TIERS` line
+// and passes `model: modelFor(tier)`, which still returns the caller's `model` first; the literal
+// aliases are legal on that line only. scripts/workflow-routing.test.ts owns the per-call shape.
+const TIERS_LINE = /^const TIERS = .*$/m;
+const routed = (code: string): boolean => TIERS_LINE.test(code);
+const withoutTiers = (code: string): string => code.replace(TIERS_LINE, '');
 
 describe('no catalog script pins a default model', () => {
   test('the catalog is non-empty and holds every caller-pinned script', () => {
@@ -34,7 +40,7 @@ describe('no catalog script pins a default model', () => {
 
   for (const name of SCRIPTS) {
     test(`${name} carries neither DEFAULT_MODEL nor a literal opus model`, () => {
-      expect(read(name)).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
+      expect(withoutTiers(read(name))).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
     });
   }
 });
@@ -49,6 +55,13 @@ describe('the caller-pinned scripts spread the model only when one was pinned', 
     });
 
     test(`${name} spreads the model conditionally and never as a bare key`, () => {
+      if (routed(code)) {
+        expect(code).toMatch(/^const modelFor = \(tier\) => MODEL \|\| TIERS\[tier\]\.model$/m);
+        expect(code).not.toContain(SPREAD);
+        expect(code).not.toMatch(/\bmodel: MODEL\b/);
+        expect(withoutTiers(code)).not.toMatch(/\bmodel: '[^']+'/);
+        return;
+      }
       expect(code).toContain(SPREAD);
       // A `model: MODEL` outside the spread would pin an empty string on an unpinned run.
       expect(code.replaceAll(SPREAD, '')).not.toMatch(/\bmodel: MODEL\b/);
