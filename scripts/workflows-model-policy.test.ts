@@ -25,6 +25,13 @@ const STAGE_PINNED: Record<string, string[]> = {
 };
 
 const read = (name: string): string => readFileSync(join(CATALOG, name), 'utf8');
+// A script that declares `const TIERS` routes every agent() through TIERS/modelFor
+// (sonnet-opus-worker-routing, design D1); scripts/workflow-routing.test.ts owns that per-call
+// contract. The one-line TIERS table is the only place such a script may spell a model literal, and
+// the caller's `model` still wins over it, so it is stripped before the literal checks below.
+const routed = (code: string): boolean => /^const TIERS = /m.test(code);
+const TIERS_TABLE = /\{ worker: \{ model: '[^']+' \}, reasoner: \{ model: '[^']+' \} \}/g;
+const withoutTiers = (code: string): string => code.replace(TIERS_TABLE, '');
 
 describe('no catalog script pins a default model', () => {
   test('the catalog is non-empty and holds every caller-pinned script', () => {
@@ -33,8 +40,8 @@ describe('no catalog script pins a default model', () => {
   });
 
   for (const name of SCRIPTS) {
-    test(`${name} carries neither DEFAULT_MODEL nor a literal opus model`, () => {
-      expect(read(name)).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
+    test(`${name} carries neither DEFAULT_MODEL nor a literal opus model outside its TIERS table`, () => {
+      expect(withoutTiers(read(name))).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
     });
   }
 });
@@ -48,7 +55,14 @@ describe('the caller-pinned scripts spread the model only when one was pinned', 
       expect(code).not.toMatch(/model: [^\n]*\|\|/);
     });
 
-    test(`${name} spreads the model conditionally and never as a bare key`, () => {
+    test(`${name} spreads the model conditionally and never as a bare key (or routes through TIERS)`, () => {
+      if (routed(code)) {
+        // Routed: the caller model reaches agent() only through modelFor, never as a spread or a bare key.
+        expect(code).not.toContain(SPREAD);
+        expect(code).not.toMatch(/\bmodel: MODEL\b/);
+        expect(withoutTiers(code)).not.toMatch(/\bmodel: '[^']+'/);
+        return;
+      }
       expect(code).toContain(SPREAD);
       // A `model: MODEL` outside the spread would pin an empty string on an unpinned run.
       expect(code.replaceAll(SPREAD, '')).not.toMatch(/\bmodel: MODEL\b/);
@@ -61,8 +75,18 @@ describe('the stage-pinned scripts keep one caller key per stage group', () => {
   for (const [name, variables] of Object.entries(STAGE_PINNED)) {
     const code = read(name);
 
-    test(`${name} is in the catalog and every stage model spreads conditionally`, () => {
+    test(`${name} is in the catalog and every stage model spreads conditionally (or routes through TIERS)`, () => {
       expect(SCRIPTS).toContain(name);
+      if (routed(code)) {
+        // Routed: the stage keys come first, then the caller model, then the worker tier.
+        for (const variable of variables.slice(1)) {
+          expect(code).toContain(`model: ${variable} || modelFor('worker')`);
+          expect(code).not.toContain(`...(${variable} ? { model: ${variable} } : {})`);
+        }
+        expect(code).not.toContain(SPREAD);
+        expect(withoutTiers(code)).not.toMatch(/\bmodel: '[^']+'/);
+        return;
+      }
       for (const variable of variables) {
         expect(code).toContain(`...(${variable} ? { model: ${variable} } : {})`);
       }
@@ -75,12 +99,16 @@ describe('the stage-pinned scripts keep one caller key per stage group', () => {
       expect(code).not.toMatch(/\bmodel: '[^']+'/);
     });
 
-    test(`${name} takes every stage model from the caller and inherits when one is unset`, () => {
+    test(`${name} takes every stage model from the caller and falls back when one is unset`, () => {
       expect(code).toMatch(/model: text\(input\.model\),/);
       for (const variable of variables.slice(1)) {
         const key = variable.toLowerCase().replace(/_(.)/g, (_m, c: string) => c.toUpperCase());
         expect(code).toMatch(new RegExp(`${key}: text\\(input\\.${key}\\),`));
-        expect(code).toMatch(new RegExp(`^const ${variable} = job\\.${key} \\|\\| job\\.model$`, 'm'));
+        // Routed: the stage key alone, with the fallback at the call site; otherwise `|| job.model`.
+        const declared = routed(code)
+          ? `^const ${variable} = job\\.${key}$`
+          : `^const ${variable} = job\\.${key} \\|\\| job\\.model$`;
+        expect(code).toMatch(new RegExp(declared, 'm'));
       }
     });
   }
