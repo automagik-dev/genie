@@ -177,7 +177,7 @@ describe('the batch answer mapped back onto its files', () => {
   const files = [file(1), file(2), file(3)];
   const row = (id: unknown, extra: Record<string, unknown> = {}) => ({
     id,
-    ...pass(`cd '${CWD}' && test -f x`),
+    ...pass(`cd '${CWD}' && test -f ${String(id).replace('file#', 'f')}`),
     ...extra,
   });
 
@@ -255,6 +255,27 @@ const synthesis = {
   conflicts: [],
 };
 
+describe('review hardening', () => {
+  test('a file check that never names its own path is insufficient', () => {
+    expect(api.readVerifier(CWD, file(1), pass(`cd '${CWD}' && test -s f2`)).status).toBe('insufficient');
+    expect(api.readVerifier(CWD, file(1), pass(`cd '${CWD}' && test -s f1`)).status).toBe('pass');
+  });
+
+  test('a pass whose exit code differs from expectExit is insufficient', () => {
+    const run = 'bun test';
+    expect(api.readVerifier(CWD, cmd(1, run), { ...pass(`cd '${CWD}' && ${run}`), exitCode: 1 }).status).toBe(
+      'insufficient',
+    );
+    expect(api.readVerifier(CWD, cmd(1, run), { ...pass(`cd '${CWD}' && ${run}`), exitCode: -1 }).status).toBe(
+      'insufficient',
+    );
+    expect(
+      api.readVerifier(CWD, { ...cmd(1, run), expectExit: 1 }, { ...pass(`cd '${CWD}' && ${run}`), exitCode: 1 })
+        .status,
+    ).toBe('pass');
+  });
+});
+
 describe('the shipped script end to end', () => {
   const contract = { files: ['a', 'b', { path: 'c', mustBeNonEmpty: true }], commands: ['bun test', 'bun run lint'] };
 
@@ -262,7 +283,11 @@ describe('the shipped script end to end', () => {
     const { labels, logs, result } = await runScript({ contract, cwd: CWD }, (prompt, opts) => {
       if (opts.label === 'verify:files')
         return {
-          results: ['file#1', 'file#2', 'file#3'].map((id) => ({ id, ...pass(`cd '${CWD}' && test -s x`) })),
+          results: [
+            ['file#1', 'a'],
+            ['file#2', 'b'],
+            ['file#3', 'c'],
+          ].map(([id, path]) => ({ id, ...pass(`cd '${CWD}' && test -s ${path}`) })),
         };
       if (opts.label.startsWith('verify:cmd#')) {
         const run = opts.label === 'verify:cmd#1' ? 'bun test' : 'bun run lint';

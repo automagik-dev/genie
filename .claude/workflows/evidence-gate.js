@@ -234,6 +234,10 @@ function cwdRefusal(cwd, item, command) {
   if (item.kind === 'command' && rest !== item.run)
     return `the reported command after ${prefix}is ${JSON.stringify(rest)}, not the declared run ${JSON.stringify(item.run)}`
   if (item.kind !== 'command' && !rest.trim()) return `the reported command is the bare ${prefix}with no check after it`
+  // One batch agent answers for every file, so a check must name its own path: otherwise one
+  // file's evidence could be pinned onto another.
+  if (item.kind !== 'command' && !rest.includes(item.path))
+    return `the reported check ${JSON.stringify(rest)} never names ${JSON.stringify(item.path)}, so it is not evidence for this file`
   return ''
 }
 
@@ -246,7 +250,14 @@ function readVerifier(cwd, item, result) {
   const asked = ITEM_STATUSES.includes(result.status) ? result.status : 'insufficient'
   const reason = String(result.reason || '').trim()
   const command = String(result.command || '').trim()
-  const refusal = asked === 'insufficient' ? '' : cwdRefusal(cwd, item, command)
+  const exitCode = Number.isInteger(result.exitCode) ? result.exitCode : -1
+  // A pass must carry the exit code the contract declared; a verifier that says pass beside any
+  // other code contradicts itself, and the only safe reading is insufficient.
+  const exitRefusal =
+    asked === 'pass' && item.kind === 'command' && exitCode !== item.expectExit
+      ? `the verifier said pass but reported exit ${exitCode}, not the declared ${item.expectExit}`
+      : ''
+  const refusal = asked === 'insufficient' ? '' : cwdRefusal(cwd, item, command) || exitRefusal
   const base =
     asked === result.status
       ? reason || 'the verifier gave no reason'
@@ -255,7 +266,7 @@ function readVerifier(cwd, item, result) {
     ...item,
     status: refusal ? 'insufficient' : asked,
     command,
-    exitCode: Number.isInteger(result.exitCode) ? result.exitCode : -1,
+    exitCode,
     observedOutput: String(result.observedOutput || '').trim(),
     reason: refusal ? `${refusal}; the verifier said ${asked} (${base}), read as insufficient` : base,
   }
