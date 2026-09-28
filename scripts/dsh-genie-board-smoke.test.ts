@@ -245,17 +245,32 @@ describe('the Host the smoke boots', () => {
 });
 
 /**
- * The range both DSH plugins declare, and the READMEs that say what proved it.
- * `dsh.engines.dsh` gates nothing on any Host version, so these files are the
- * only place the claim lives.
+ * The range both DSH plugins declare, where DSH's manifest contract puts it —
+ * top-level `engines.dsh` (`@deepseek-ai/dsh-package-manifest`
+ * `DshEnginesManifest`; `package.json.dsh` has no `engines`) — and the READMEs
+ * that say what proved it. No DSH installer or loader enforces the range yet,
+ * so these files are the only place the claim lives.
  */
-test('both DSH plugins declare the proven range, and their READMEs say so', () => {
+test('both DSH plugins declare the proven range as engines.dsh, and their READMEs say so', () => {
+  const range = '>=0.1.2-rc.1 <0.3.0-0';
+  // Default semver: the release versions of both proven lines match, the next
+  // minor does not. The proven prereleases match only with prereleases included,
+  // which is what the READMEs tell a reader.
+  expect(Bun.semver.satisfies('0.1.7', range)).toBe(true);
+  expect(Bun.semver.satisfies('0.2.0', range)).toBe(true);
+  expect(Bun.semver.satisfies('0.3.0', range)).toBe(false);
   for (const plugin of ['dsh-genie-board', 'dsh-workflow-loader']) {
     const dir = join(import.meta.dir, '../plugins', plugin);
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-    expect(manifest.dsh.engines.dsh).toBe('>=0.1.2-rc.1 <0.3.0-0');
+    expect(manifest.engines.dsh).toBe(range);
+    expect(manifest.dsh.engines).toBeUndefined();
     const readme = readFileSync(join(dir, 'README.md'), 'utf8');
-    expect(readme).toContain('`>=0.1.2-rc.1 <0.3.0-0`');
+    expect(readme).toContain(`\`${range}\``);
+    expect(readme).toContain('top-level `engines.dsh`');
+    expect(readme).toContain('`includePrerelease`');
+    expect(readme).toContain('`0.1.7-rc.2` and\n`0.2.0-rc.1`');
+    expect(readme).toContain('README.md:93');
+    expect(readme).not.toContain('No DSH version reads');
     expect(readme).toContain('@deepseek-ai/dsh@0.2.0-rc.1');
     expect(readme).toContain('DSH_BIN=');
     expect(readme).toContain('npm install --prefix');

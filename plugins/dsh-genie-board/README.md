@@ -183,15 +183,21 @@ structure at zero release cost, while a rename would have to move
 ## Build and install
 
 Requires Bun (checkout builds), a Host-installed Genie CLI, and DSH
-**0.1.2-rc.1 up to, not including, 0.3.0** — `dsh.engines.dsh` in `package.json`
-reads `>=0.1.2-rc.1 <0.3.0-0`. The floor was exercised with the Host installed at
+**0.1.2-rc.1 up to, not including, 0.3.0** — top-level `engines.dsh` in
+`package.json` (where DSH's manifest contract puts it) reads
+`>=0.1.2-rc.1 <0.3.0-0`. The floor was exercised with the Host installed at
 the time. The 0.2 line was exercised on 2026-09-28: the smoke below passed
 unchanged against a real `@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag
 `next`) and against `0.1.7-rc.2`, each pinned with `DSH_BIN` (see
 *Validation*). Every Host API the plugin calls is unchanged between those two
-versions. No DSH version reads `dsh.engines`, so the range records what was
-proven; it does not gate an install. The ceiling is the next minor that has not
-been exercised yet.
+versions. Evaluate the range with prereleases
+included (`includePrerelease`): under default npm semver it matches only release
+versions, and the exact versions proven are the prereleases `0.1.7-rc.2` and
+`0.2.0-rc.1`. DSH's own manifest contract says nothing enforces the range yet —
+`@deepseek-ai/dsh-package-manifest` README.md:93 (0.2.0-rc.1): "Current
+installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`" —
+so the range records what was proven; it does not gate an install. The
+ceiling is the next minor that has not been exercised yet.
 
 ```sh
 bun run build:plugin

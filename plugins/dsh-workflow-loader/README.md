@@ -111,14 +111,20 @@ the DSH run root) and the tool returns the head plus how much it left out.
 
 ## Host requirements
 
-DSH **0.1.2-rc.1 up to, not including, 0.3.0** — `dsh.engines.dsh` in
-`package.json` reads `>=0.1.2-rc.1 <0.3.0-0`. The 0.2 line was exercised on
+DSH **0.1.2-rc.1 up to, not including, 0.3.0** — top-level `engines.dsh` in
+`package.json` (where DSH's manifest contract puts it) reads
+`>=0.1.2-rc.1 <0.3.0-0`. The 0.2 line was exercised on
 2026-09-28: the smoke under *Verification* passed against a real
 `@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag `next`) and against
 `0.1.7-rc.2`, each pinned with `DSH_BIN`. Every Host API the row calls
 (`tools`, `workflowEngine.start`, `systemPrompt`) is unchanged between those two
-versions. No DSH version reads `dsh.engines`, so the range records what was
-proven; it does not gate an install.
+versions. Evaluate the range with prereleases
+included (`includePrerelease`): under default npm semver it matches only release
+versions, and the exact versions proven are the prereleases `0.1.7-rc.2` and
+`0.2.0-rc.1`. DSH's own manifest contract says nothing enforces the range yet —
+`@deepseek-ai/dsh-package-manifest` README.md:93 (0.2.0-rc.1): "Current
+installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`" —
+so the range records what was proven; it does not gate an install.
 
 The row is a **Host** row, and it needs `workflowEngine` on the Host plane. The
 profile you install it into decides whether that exists:
@@ -126,7 +132,7 @@ profile you install it into decides whether that exists:
 | Profile | `workflowEngine` at the Host root | The row |
 |---|---|---|
 | `headless` (and any profile that keeps `dsh-base`'s Host-root `workflow-ptc`) | yes — `dsh-base` mounts `workflow-ptc` there | activates and registers `workflow_run` |
-| `web` | no — the web app disables the Host-root `workflow-ptc` and mounts it only inside each agent preset's isolated `delegation` group | stays `pending (waiting for service: workflowEngine)`; the Host boots, the tool never appears |
+| `web` | no — the web app disables the Host-root `workflow-ptc` and mounts it only inside the `standard`/`ptc` web presets' isolated `delegation` group | stays `pending (waiting for service: workflowEngine)`; the Host boots, the tool never appears |
 
 That is true of 0.1.7-rc.2 and 0.2.0-rc.1 alike. Mounting the row per preset on
 `web` would change how it ships, so it is listed under *Not done yet* rather than
@@ -216,7 +222,8 @@ a personal copy that has drifted from the project's.
 
 - **No client half.** Discovery stays in the board's catalog panel.
 - **Not usable in the `web` profile.** The row mounts at the Host root, and `web`
-  keeps `workflowEngine` inside each agent preset (see *Host requirements*), so
+  keeps `workflowEngine` inside the `standard`/`ptc` web presets' isolated
+  `delegation` group (see *Host requirements*), so
   on `web` the row stays pending and `workflow_run` never appears. Making it work
   there means shipping a preset-scoped mount instead of, or beside, the Host row —
   an owner decision about how the row ships, not a smoke fix.

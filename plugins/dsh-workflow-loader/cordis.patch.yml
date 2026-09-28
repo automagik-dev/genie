@@ -13,8 +13,8 @@
 #
 # The row injects `workflowEngine`, so the profile must provide one at the Host
 # root: `headless` does (dsh-base's `workflow-ptc`); `web` does not — it keeps
-# the engine inside each agent preset — and there the row stays pending. See the
-# README's "Host requirements".
+# the engine inside the `standard`/`ptc` web presets' isolated `delegation`
+# group — and there the row stays pending. See the README's "Host requirements".
 - insert:
     - id: genie-dsh-workflow-loader
       # Node-resolvable package name — must stay in sync with package.json
