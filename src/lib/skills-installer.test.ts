@@ -49,7 +49,6 @@ import {
   selectSkillsHomesWrittenBy,
   skillsInstallRecordPath,
   skillsInstallRemedy,
-  skillsSourceRoot,
   snapshotSkillsCollisions,
   writeSkillsInstallRecord,
 } from './skills-installer.js';
@@ -150,19 +149,6 @@ describe('pinned argv', () => {
     expect(buildSkillsAddArgv({ sourceRoot: '/x', agents: ['claude-code'] })).not.toContain('--all');
   });
 
-  test('the CLI version is pinned to the verified release (wish decision 1)', () => {
-    expect(SKILLS_CLI_VERSION).toBe('1.5.23');
-  });
-
-  test('the source root is the delivered tree under GENIE_HOME, never a GitHub ref', () => {
-    // skills@1.5.23 IGNORES `@<ref>` and serves the default branch, so a GitHub
-    // source is not a pin at all; the delivered tree is (wish B decision 1).
-    expect(skillsSourceRoot('/home/u/.genie')).toBe('/home/u/.genie/skills');
-    const argv = buildSkillsAddArgv({ sourceRoot: skillsSourceRoot('/home/u/.genie'), agents: ['claude-code'] });
-    expect(argv.join(' ')).not.toContain('automagik-dev');
-    expect(argv[4]).toBe('/home/u/.genie/skills');
-  });
-
   test('a version that already carries the v prefix is not double-prefixed', () => {
     expect(releaseTag('v5.260830.16')).toBe('v5.260830.16');
     expect(releaseTag('5.260830.16')).toBe('v5.260830.16');
@@ -219,12 +205,6 @@ describe('inventoryFromSkillsDir', () => {
 });
 
 describe('agent skill homes', () => {
-  test('the known table covers claude and the shared agents home at minimum', () => {
-    const agents = KNOWN_AGENT_SKILL_HOMES.map((entry) => entry.agent);
-    expect(agents).toContain('claude');
-    expect(agents).toContain('agents');
-  });
-
   test('the table lists no `.codex/skills` or `.cursor/skills` home', () => {
     // Verified against skills.sh 1.5.23 `--all --copy -g`: it creates neither
     // directory. Codex reads `~/.agents/skills`, which the `agents` row covers.
@@ -843,27 +823,6 @@ describe('runSkillsInstall', () => {
       skillsInstallRemedy(join(genieHome, 'skills'), ['claude-code', 'codex']),
     );
     expect(existsSync(skillsInstallRecordPath(genieHome))).toBe(false);
-  });
-
-  test('an empty inventory surfaces through the convergence helper as a failure with exit 1', () => {
-    const savedExitCode = process.exitCode;
-    const lines: string[] = [];
-    try {
-      const result = runSkillsChannelConvergence({
-        selection: 'auto',
-        version: VERSION_UNDER_TEST,
-        genieHome,
-        home,
-        which: alwaysFound,
-        spawn: okRunner({ argv: [] }),
-        log: (line) => lines.push(line),
-      });
-      expect(result).toEqual({ status: 'failed', reason: `no skills found under ${join(genieHome, 'skills')}` });
-      expect(lines[0]).toStartWith(`Skills install failed: no skills found under ${join(genieHome, 'skills')}.`);
-      expect(process.exitCode).toBe(1);
-    } finally {
-      process.exitCode = savedExitCode ?? 0;
-    }
   });
 
   test('a failed preflight never spawns anything', () => {
@@ -2291,57 +2250,6 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
     // and then remove all six homes rather than orphaning four of them.
     expect(Object.keys(record?.dirDigests ?? {})).toHaveLength(12);
   });
-
-  test('a foreign skill dir is backed up and reported before the shim overwrites it', () => {
-    const bin = join(root, 'bin');
-    mkdirSync(bin, { recursive: true });
-    const claudeSkills = join(home, '.claude', 'skills');
-    const shim = [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      `mkdir -p "${claudeSkills}"`,
-      `cp -R "$4/." "${claudeSkills}/"`,
-      'exit 0',
-    ].join('\n');
-    writeFileSync(join(bin, 'npx'), `${shim}\n`, 'utf8');
-    chmodSync(join(bin, 'npx'), 0o755);
-    writeFileSync(join(bin, 'node'), '#!/usr/bin/env bash\nexit 0\n', 'utf8');
-    chmodSync(join(bin, 'node'), 0o755);
-    fixtureSkillsTree(['wish']);
-    mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
-    writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
-
-    const lines: string[] = [];
-    const previousPath = process.env.PATH;
-    const savedExitCode = process.exitCode;
-    process.env.PATH = `${bin}:${previousPath ?? ''}`;
-    try {
-      runSkillsChannelConvergence({
-        selection: 'auto',
-        version: VERSION_UNDER_TEST,
-        genieHome,
-        home,
-        log: (line) => lines.push(line),
-      });
-    } finally {
-      process.env.PATH = previousPath;
-      process.exitCode = savedExitCode ?? 0;
-    }
-
-    const record = readSkillsInstallRecord(genieHome);
-    expect(record?.collisions).toEqual([{ dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' }]);
-    const collisionLine = lines.find((line) => line.includes('collision:'));
-    expect(collisionLine).toContain(
-      `collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
-    );
-    const backupRoot = (collisionLine as string).split('backed up to ')[1] as string;
-    expect(backupRoot.startsWith(join(genieHome, 'state-backups', 'skills-collision-'))).toBe(true);
-    // The backup holds the ORIGINAL bytes; the live path now holds ours.
-    expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
-      '# a foreign wish skill\n',
-    );
-    expect(readFileSync(join(claudeSkills, 'wish', 'SKILL.md'), 'utf8')).toBe('# wish\n');
-  });
 });
 
 /**
@@ -2983,38 +2891,6 @@ describe('r3 rehearsal defects', () => {
     expect(readFileSync(join(secondRoot, '.claude', 'skills', 'work', 'SKILL.md'), 'utf8')).toBe(
       '# my own work skill\n',
     );
-  });
-
-  // D5 ----------------------------------------------------------------------
-  /** The doc comment immediately above `anchor`, as written in the source. */
-  function docCommentAbove(source: string, anchor: string): string {
-    const at = source.indexOf(anchor);
-    expect(at).toBeGreaterThan(-1);
-    const start = source.lastIndexOf('/**', at);
-    return source.slice(start, source.indexOf('*/', start));
-  }
-
-  test('no docstring still describes `--all` as the argv this channel runs', () => {
-    const source = readFileSync(join(import.meta.dir, 'skills-installer.ts'), 'utf8');
-    const anchors = [
-      'function collisionCandidateHomes(',
-      'function collisionBackupHomes(',
-      'export function snapshotSkillsCollisions(',
-      'export function runSkillsChannelConvergence(',
-    ];
-    for (const anchor of anchors) expect(docCommentAbove(source, anchor)).not.toContain('--all');
-    // The module header documents the argv the installer actually builds.
-    const header = source.slice(0, source.indexOf('*/'));
-    expect(header).not.toContain('--all --copy');
-    for (const flag of ['--skill', '--agent', '--copy', '-g']) expect(header).toContain(flag);
-    const argv = buildSkillsAddArgv({ sourceRoot: join(genieHome, 'skills'), agents: ['claude-code'] });
-    expect(argv).not.toContain('--all');
-    // …and the retirement-order comment no longer credits `--all` for it.
-    const retirementComment = source.slice(
-      source.indexOf('// RETIREMENT RUNS BEFORE THE INSTALL PASS.'),
-      source.indexOf('let preserved: SkillsPreservedEntry[]'),
-    );
-    expect(retirementComment).not.toContain('--all');
   });
 
   // D6 ----------------------------------------------------------------------

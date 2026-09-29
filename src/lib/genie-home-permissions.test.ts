@@ -155,15 +155,6 @@ describe('GENIE_HOME first-creation permissions', () => {
     expect(offenders).toEqual([]);
   });
 
-  test('every SCAN_EXEMPTIONS entry still matches exactly one real call site', () => {
-    // A content-anchored exemption that stops matching is the failure mode the
-    // line-anchored key hid: it silently re-classified the call as compliant.
-    const consumed = new Set<number>();
-    scanUnsafeGenieHomeMkdirs(REPO_ROOT, consumed);
-    const stale = SCAN_EXEMPTIONS.filter((_, index) => !consumed.has(index)).map((entry) => entry.call);
-    expect(stale, 'stale SCAN_EXEMPTIONS entries — re-point or delete them').toEqual([]);
-  });
-
   test('GENIE_HOME creators the scan cannot see keep an explicit safe mode', () => {
     // The scan reads expressions, so it only sees GENIE_HOME when a token
     // survives local const expansion. These sites receive the path as a

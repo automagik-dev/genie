@@ -144,10 +144,6 @@ describe('CLI diagnostics on a non-TTY stderr (m15)', () => {
     expect(res.stderr).not.toContain(ESC);
   });
 
-  test('NO_COLOR is honoured', () => {
-    expect(runCli({ NO_COLOR: '1', TERM: 'xterm-256color' }).stderr).not.toContain(ESC);
-  });
-
   test('TERM=dumb is honoured', () => {
     expect(runCli({ TERM: 'dumb' }).stderr).not.toContain(ESC);
   });

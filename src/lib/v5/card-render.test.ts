@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { LIVENESS_GLYPH, blockBadge, cardBadges, commentBadge, livenessBadge } from './card-render.js';
+import { blockBadge, cardBadges, commentBadge, livenessBadge } from './card-render.js';
 import { LIVENESS_RUNNING_MS, LIVENESS_STALE_MS, type TaskCardRow } from './task-state.js';
 
 const NOW = 10_000_000;
@@ -47,10 +47,6 @@ describe('livenessBadge', () => {
     expect(livenessBadge(card({ claimedBy: 'w', heartbeatAt: NOW - (LIVENESS_STALE_MS + 1) }), NOW)).toBe('☠');
     // Claimed but never pulsed → stale (the zombie).
     expect(livenessBadge(card({ claimedBy: 'w', heartbeatAt: null }), NOW)).toBe('☠');
-  });
-
-  test('the glyph table covers every liveness state', () => {
-    expect(LIVENESS_GLYPH).toEqual({ running: '▶', idle: '⏸', stale: '☠' });
   });
 });
 

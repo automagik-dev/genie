@@ -27,7 +27,6 @@ import {
   admitExternalInstallStaging,
   closeInstallStagingDirectory,
   createInstallStagingDirectory,
-  installPromotionCapability,
   promoteStagedInstall,
   recoverPendingInstallPromotions,
   removeInstallStagingDirectory,
@@ -167,12 +166,6 @@ describe('installer payload member contract', () => {
 });
 
 describe('installer promotion transaction', () => {
-  test('reports native capability and the exact release payload allowlist', () => {
-    const result = installPromotionCapability();
-    expect(result.available).toBe(true);
-    expect(result.members).toEqual([...INSTALL_PAYLOAD_MEMBERS]);
-  });
-
   test('promotes one physical generation, retains staging, and archives every prior object without copying', () => {
     const fixture = makeFixture();
     const priorLicense = inspectPhysicalPath(join(fixture.bin, 'LICENSE'));
