@@ -9,9 +9,18 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFi
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import type { AgentDefaults } from './defaults.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/** Agent configuration defaults. Runtime values can be any string. */
+export interface AgentDefaults {
+  model: string;
+  promptMode: string;
+  color: string;
+  effort: string;
+  thinking: string;
+  permissionMode: string;
+}
 
 /** Tmux transport configuration. */
 export interface TmuxConfig {
