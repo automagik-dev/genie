@@ -13,7 +13,9 @@
  * the tenth file and added 3 more, taking the catalog total to 38; its count was
  * read from this transform's own report rather than from the AST cross-check, which
  * predates that file. Its `verify:files` batch verifier (wish `evidence-gate-cwd-batch`,
- * 2026-09-28) adds a fourth, taking the catalog total to 39.
+ * 2026-09-28) adds a fourth, taking the catalog total to 39. `test-simplify` (2026-09-29)
+ * adds 5 (inventory, lanes, refuters, planner, tree guard), read from this transform's
+ * own report, taking the catalog total to 44.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -34,6 +36,7 @@ const EXPECTED_REMOVALS: Record<string, number> = {
   'evidence-gate': 4,
   wish: 9,
   workfly: 9,
+  'test-simplify': 5,
 };
 
 const catalogFiles = readdirSync(CATALOG)
