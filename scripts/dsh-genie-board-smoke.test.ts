@@ -1,15 +1,18 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import {
   BOOT_SETTLE_MS,
   GENIE_ROUTES,
   PLUGIN_BUNDLES,
   type Runner,
   buildPluginDist,
+  dshVersion,
+  resolveDshBinary,
   sandboxDirectories,
   sandboxEnvironment,
+  withPinnedDsh,
 } from './dsh-genie-board-smoke';
 
 const roots: string[] = [];
@@ -127,7 +130,7 @@ test('a spilling child leaves nothing behind once the run tree is removed', () =
 
 test('the smoke sandboxes its children rather than building an env inline', () => {
   const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
-  expect(source).toContain('const env = sandboxEnvironment(temporary)');
+  expect(source).toContain('const env = sandboxEnvironment(temporary, withPinnedDsh(dsh))');
   expect(source).toContain('for (const directory of sandboxDirectories(temporary))');
 });
 
@@ -185,4 +188,91 @@ test('the disable-by-id phase targets a shipped row, and the retired skills row 
   expect(client).not.toContain('genie-skills');
   expect(client).not.toContain('SkillsPanel');
   expect(existsSync(join(board, 'src/skills.ts'))).toBe(false);
+});
+
+/**
+ * A compatibility claim is only as good as the Host it was proven on, so the
+ * smoke boots the binary `DSH_BIN` names when one is set, and says which one.
+ */
+describe('the Host the smoke boots', () => {
+  test('is dsh on PATH unless DSH_BIN names another', () => {
+    expect(resolveDshBinary({})).toBe('dsh');
+    expect(resolveDshBinary({ DSH_BIN: '   ' })).toBe('dsh');
+    expect(resolveDshBinary({ DSH_BIN: '/opt/dsh-0.2/node_modules/.bin/dsh' })).toBe(
+      '/opt/dsh-0.2/node_modules/.bin/dsh',
+    );
+    // A relative path is pinned to where the operator ran the smoke, not to a
+    // child's cwd.
+    expect(resolveDshBinary({ DSH_BIN: 'pinned/node_modules/.bin/dsh' })).toBe(
+      join(process.cwd(), 'pinned/node_modules/.bin/dsh'),
+    );
+  });
+
+  test('puts a pinned binary first on the children PATH, and leaves PATH alone otherwise', () => {
+    const base = { PATH: '/usr/bin', HOME: '/home/someone' };
+    expect(withPinnedDsh('dsh', base)).toBe(base);
+    const pinned = withPinnedDsh('/opt/dsh/node_modules/.bin/dsh', base);
+    expect(pinned.PATH).toBe(`/opt/dsh/node_modules/.bin${delimiter}/usr/bin`);
+    expect(pinned.HOME).toBe('/home/someone');
+    // The sandbox bin still wins, so a stub can stand in for anything.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-smoke-pin-'));
+    roots.push(root);
+    expect(sandboxEnvironment(root, pinned).PATH).toBe(
+      `${join(root, 'bin')}${delimiter}/opt/dsh/node_modules/.bin${delimiter}/usr/bin`,
+    );
+  });
+
+  test('reports the version it will boot, and refuses a binary that does not run', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-smoke-version-'));
+    roots.push(root);
+    const fake = join(root, 'dsh');
+    writeFileSync(fake, '#!/bin/sh\necho 0.2.0-rc.1\n', { mode: 0o755 });
+    expect(dshVersion(fake, 'README.md')).toBe('0.2.0-rc.1');
+    expect(() => dshVersion(join(root, 'missing'), 'README.md')).toThrow(/DSH_BIN=.*missing does not run/);
+    const broken = join(root, 'broken');
+    writeFileSync(broken, '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+    expect(() => dshVersion(broken, 'README.md')).toThrow(/does not run.*README\.md/);
+  });
+
+  test('prints the resolved version before it builds anything', () => {
+    const source = readFileSync(join(import.meta.dir, 'dsh-genie-board-smoke.ts'), 'utf8');
+    const printed = source.indexOf('console.log(`dsh: ${dsh} (version ${version})`)');
+    expect(printed).toBeGreaterThan(-1);
+    expect(printed).toBeLessThan(source.indexOf('await buildPluginDist(root, command)'));
+    // Every Host invocation goes through the resolved binary.
+    expect(source).not.toMatch(/(?:spawn|command)\(\s*'dsh'/);
+  });
+});
+
+/**
+ * The range both DSH plugins declare, where DSH's manifest contract puts it —
+ * top-level `engines.dsh` (`@deepseek-ai/dsh-package-manifest`
+ * `DshEnginesManifest`; `package.json.dsh` has no `engines`) — and the READMEs
+ * that say what proved it. No DSH installer or loader enforces the range yet,
+ * so these files are the only place the claim lives.
+ */
+test('both DSH plugins declare the proven range as engines.dsh, and their READMEs say so', () => {
+  const range = '>=0.1.2-rc.1 <0.3.0-0';
+  // Default semver: the release versions of both proven lines match, the next
+  // minor does not. The proven prereleases match only with prereleases included,
+  // which is what the READMEs tell a reader.
+  expect(Bun.semver.satisfies('0.1.7', range)).toBe(true);
+  expect(Bun.semver.satisfies('0.2.0', range)).toBe(true);
+  expect(Bun.semver.satisfies('0.3.0', range)).toBe(false);
+  for (const plugin of ['dsh-genie-board', 'dsh-workflow-loader']) {
+    const dir = join(import.meta.dir, '../plugins', plugin);
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    expect(manifest.engines.dsh).toBe(range);
+    expect(manifest.dsh.engines).toBeUndefined();
+    const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+    expect(readme).toContain(`\`${range}\``);
+    expect(readme).toContain('top-level `engines.dsh`');
+    expect(readme).toContain('`includePrerelease`');
+    expect(readme).toContain('`0.1.7-rc.2` and\n`0.2.0-rc.1`');
+    expect(readme).toContain('README.md:93');
+    expect(readme).not.toContain('No DSH version reads');
+    expect(readme).toContain('@deepseek-ai/dsh@0.2.0-rc.1');
+    expect(readme).toContain('DSH_BIN=');
+    expect(readme).toContain('npm install --prefix');
+  }
 });

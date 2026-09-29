@@ -10,6 +10,11 @@
 # Install: `dsh plugin --profile <name> add <this package>` (npm or a local
 # path). The `dsh plugin` command pnpm-installs the package into the profile and
 # reconciles it into the profile's `dsh.profile.bundles` layer list.
+#
+# The row injects `workflowEngine`, so the profile must provide one at the Host
+# root: `headless` does (dsh-base's `workflow-ptc`); `web` does not — it keeps
+# the engine inside the `standard`/`ptc` web presets' isolated `delegation`
+# group — and there the row stays pending. See the README's "Host requirements".
 - insert:
     - id: genie-dsh-workflow-loader
       # Node-resolvable package name — must stay in sync with package.json

@@ -25,7 +25,8 @@
 
 ## Poured
 
-- [WISH: retire-orca-integration](wishes/retire-orca-integration/WISH.md) — **IN_PROGRESS**: retire the Orca plugin and Orca lifecycle mode (issue #3064). G1+G2 merged in #3065 and promoted in #3061; G3 merged in #3066. The stable release and its QA are still pending.
+- [evidence-gate-cwd-batch](wishes/evidence-gate-cwd-batch/WISH.md) — **SHIPPED 2026-09-28** (PR #3077; plan SHIP after 2, execution SHIP after 2): evidence-gate verifiers pinned to `cwd` and checked by the script, all file checks batched into one agent, file checks must name their path, and a pass must match `expectExit`. A live run dropped from 741k tokens and 1.9 min to 229k and 0.7 min.
+- [sonnet-opus-worker-routing — DESIGN](brainstorms/sonnet-opus-worker-routing/DESIGN.md) → [WISH](wishes/sonnet-opus-worker-routing/WISH.md) — **SHIPPED 2026-09-28** (PR #3074; design SHIP after 2 rounds, plan SHIP after 2, execution SHIP after 3): route every saved workflow's agents by tier (Sonnet 5.5 workers, Opus 5.5 reasoners), with each prompt refined for its model through `refine --target`; `genie wish report` records the tokens and time of every run in a machine-local ledger; one paired run evaluates the routing.
 - [genie-v6-corpo-leve — DESIGN rev. 4](brainstorms/genie-v6-corpo-leve/DESIGN.md) · [COUNCIL](brainstorms/genie-v6-corpo-leve/COUNCIL.md) · [Orca research](brainstorms/genie-v6-corpo-leve/orca-integration-research.md) → [WISH: v6-stable-cut](wishes/v6-stable-cut/WISH.md) — **SHIPPED 2026-09-25** (first stable v6.260922.2; design SHIP after 3 rounds; plan SHIP after 2): the first stable v6 = dev + this cut; Omni out (#3004), darwin gate (#3003) landed; board frozen and made honest in orca; `genie wish lint`; the `5.`→`6.` bump lands last, promotion #2935 opens right after.
 - [wish-v6 — DESIGN](brainstorms/wish-v6/DESIGN.md) · [TIMELINE](brainstorms/wish-v6/TIMELINE.md) · [WISH-DURATION-STUDY](brainstorms/wish-v6/WISH-DURATION-STUDY.md) · [COUNCIL](brainstorms/wish-v6/COUNCIL.md) → [WISH](wishes/wish-v6/WISH.md) — **SHIPPED 2026-09-25**: `/wish` = one task delivered, ASAP — one saved workflow (`.claude/workflows/wish.js`) Admit → one executor in one worktree → mechanical gate → blind review → bounded repair → publish PR to dev and read it back. The body is on dev (PRs #2931, #2932, #2938–#2940 merged 2026-09-16) with its parity tests; **the open promotion PR [#2935](https://github.com/automagik-dev/genie/pull/2935) (dev→main) is the v6 stable cut**
 - [dsh-genie-board — DESIGN](brainstorms/dsh-genie-board/DESIGN.md) → [WISH](wishes/dsh-genie-board/WISH.md) — **IN_PROGRESS**: the genie board as a DSH plugin. Built, gated and already riding the release payload (PRs #2895/#2897/#2903/#2908; 34 tracked files under `plugins/dsh-genie-board/`, the frozen `schemaVersion: 1` aggregate at `v5-board.ts:490`, three smoke/verify scripts). The tail is running `scripts/verify-dsh-genie-board-release.ts` against PUBLISHED stable assets rather than local candidates — which the v6 stable cut produces anyway
@@ -34,6 +35,7 @@
 
 > Archived under [wishes/archive/](wishes/archive/) on 2026-09-19. Every entry below was verified against dev: a merged PR or a named commit is cited in the wish's own Truth line. Group cards stay on the board as execution history in the Done lane.
 
+- [retire-orca-integration](wishes/archive/retire-orca-integration/WISH.md) — SHIPPED 2026-09-26 · #3065, #3066 → stable v6.260926.5 — the Orca plugin and Orca mode retired; `plugins/genie` is kept as an empty compat directory
 - [boards-first-class](wishes/archive/boards-first-class/WISH.md) — SHIPPED 2026-07-21 · PR #2611 — the lifecycle kanban and the jar↔INDEX drift lint
 - [cross-agent-delegate](wishes/archive/cross-agent-delegate/WISH.md) — SHIPPED 2026-08-11 · PR #2766 — declared agent routing on the card
 - [genie-dual-mode-orca-plugin](wishes/archive/genie-dual-mode-orca-plugin/WISH.md) — SHIPPED 2026-08-30 · #2808–#2838 — Orca lifecycle authority; MCP retired
@@ -67,7 +69,7 @@
 
 > Archived under [wishes/archive/](wishes/archive/) on 2026-09-19. Each of these shipped or was executed and then had its subject deleted or replaced; the wish's own Truth line names what did it. Nothing here is open work.
 
-- [orca-plugin-genie](wishes/archive/orca-plugin-genie/WISH.md) — SUPERSEDED 2026-09-26 · the Orca plugin; retired by [retire-orca-integration](wishes/retire-orca-integration/WISH.md) (#3065, #3066)
+- [orca-plugin-genie](wishes/archive/orca-plugin-genie/WISH.md) — SUPERSEDED 2026-09-26 · the Orca plugin; retired by [retire-orca-integration](wishes/archive/retire-orca-integration/WISH.md) (#3065, #3066)
 - [orca-plugin-user-guide](wishes/archive/orca-plugin-user-guide/WISH.md) — SUPERSEDED 2026-09-26 · merged #3063; its README was deleted with the plugin in #3066
 - [agent-sync](wishes/archive/agent-sync/WISH.md) — SUPERSEDED 2026-09-19 · merged #2541; `agent-sync.ts` deleted in `699a48bbd`
 - [agent-sync-hardening](wishes/archive/agent-sync-hardening/WISH.md) — SUPERSEDED 2026-09-19 · its anchors died with the hook runtime `e250b9463`

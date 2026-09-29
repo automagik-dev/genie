@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 // Three script-side decisions of `.claude/workflows/wish.js` are tested here: the darwin tolerance
 // (issue #2926), the base refusal, and what `normalizeInput` makes of the caller's args — including
-// the per-stage model keys, where an unset key must keep inheriting. No module can import them — the
+// the per-stage model keys, where an unset key falls back to `model` and then to the stage tier. No module can import them — the
 // runtime executes the script — so, as `scripts/workflows-model-policy.test.ts` already does with
 // workfly's clamp, each declaration is lifted out of the shipped source and evaluated here. The
 // behaviour under test is therefore the text that ships, never a copy of it.
@@ -403,29 +403,41 @@ interface Job {
 
 const normalizeInput = new Function(`${INTAKE_DECLARATIONS}\nreturn normalizeInput`)() as (raw: unknown) => Job | null;
 
-/** The stage models the script resolves from a normalized job, spelled exactly as wish.js does. */
-const stageModels = (job: Job): { session: string; gate: string; publish: string } => ({
-  session: job.model,
-  gate: job.gateModel || job.model,
-  publish: job.publishModel || job.model,
-});
+// The shipped TIERS table and modelFor, lifted so the tier models under test are the ones that ship.
+const ROUTING = [lift(/^const TIERS = .*$/m), lift(/^const modelFor = .*$/m)].join('\n');
+const routingFor = new Function('MODEL', `${ROUTING}\nreturn modelFor`) as (model: string) => (tier: string) => string;
 
-describe('per-stage models resolve from the caller args, and an unset key inherits', () => {
-  test('no model key at all leaves every stage inheriting the session model', () => {
+/**
+ * The stage models the script resolves from a normalized job, spelled exactly as wish.js does:
+ * gateModel/publishModel > model > TIERS. `worker` is the scout, `reasoner` the judge, executor,
+ * reviewer and fixer.
+ */
+const stageModels = (job: Job): { worker: string; reasoner: string; gate: string; publish: string } => {
+  const modelFor = routingFor(job.model);
+  return {
+    worker: modelFor('worker'),
+    reasoner: modelFor('reasoner'),
+    gate: job.gateModel || modelFor('worker'),
+    publish: job.publishModel || modelFor('worker'),
+  };
+};
+
+describe('per-stage models resolve from the caller args, and an unset key falls back to the tier', () => {
+  test('no model key at all runs every stage on its tier model', () => {
     const job = normalizeInput({ objective: 'do one thing' });
     if (!job) throw new Error('normalizeInput refused a valid objective');
     expect(job.model).toBe('');
     expect(job.gateModel).toBe('');
     expect(job.publishModel).toBe('');
-    // Empty at every stage is what makes the conditional spread drop out, which is how an
-    // unpinned run inherits the session model — the behaviour that must not change.
-    expect(stageModels(job)).toEqual({ session: '', gate: '', publish: '' });
+    // Empty at every key is what lets each stage fall through to its tier: sonnet for the worker
+    // stages (scout, gate, publisher), opus for the reasoner stages.
+    expect(stageModels(job)).toEqual({ worker: 'sonnet', reasoner: 'opus', gate: 'sonnet', publish: 'sonnet' });
   });
 
   test('model alone still pins all three stages, so an existing caller sees no change', () => {
     const job = normalizeInput({ objective: 'do one thing', model: 'opus' });
     if (!job) throw new Error('normalizeInput refused a valid objective');
-    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'opus', publish: 'opus' });
+    expect(stageModels(job)).toEqual({ worker: 'opus', reasoner: 'opus', gate: 'opus', publish: 'opus' });
   });
 
   test('gateModel and publishModel override only their own stages', () => {
@@ -436,13 +448,13 @@ describe('per-stage models resolve from the caller args, and an unset key inheri
       publishModel: 'sonnet',
     });
     if (!job) throw new Error('normalizeInput refused a valid objective');
-    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'haiku', publish: 'sonnet' });
+    expect(stageModels(job)).toEqual({ worker: 'opus', reasoner: 'opus', gate: 'haiku', publish: 'sonnet' });
   });
 
-  test('one stage key without model pins that stage and leaves the rest inheriting', () => {
+  test('one stage key without model pins that stage and leaves the rest on their tiers', () => {
     const job = normalizeInput({ objective: 'do one thing', gateModel: 'haiku' });
     if (!job) throw new Error('normalizeInput refused a valid objective');
-    expect(stageModels(job)).toEqual({ session: '', gate: 'haiku', publish: '' });
+    expect(stageModels(job)).toEqual({ worker: 'sonnet', reasoner: 'opus', gate: 'haiku', publish: 'sonnet' });
   });
 
   test('a whitespace or non-string stage key normalizes to unset rather than to a pinned blank', () => {
@@ -450,7 +462,7 @@ describe('per-stage models resolve from the caller args, and an unset key inheri
     if (!job) throw new Error('normalizeInput refused a valid objective');
     expect(job.gateModel).toBe('');
     expect(job.publishModel).toBe('');
-    expect(stageModels(job)).toEqual({ session: 'opus', gate: 'opus', publish: 'opus' });
+    expect(stageModels(job)).toEqual({ worker: 'opus', reasoner: 'opus', gate: 'opus', publish: 'opus' });
   });
 
   test('the stage keys change nothing else about intake', () => {

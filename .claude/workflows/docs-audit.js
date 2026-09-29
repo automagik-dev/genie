@@ -300,6 +300,8 @@ const EVIDENCE_RULE =
 const SEVERITY_RULE = `Severity is exactly one of ${SEVERITIES.join(' | ')}: onboarding-blocker (a reader following the written path stops here), drift (documented and actual disagree), misfiling (right content, wrong Diataxis kind or wrong page), polish (message or wording quality). Nothing outside that closed set.`
 const NO_ECHO =
   'Return findings, never material: no documentation body, no raw command output beyond the quoted line you are comparing, and no list of paths that yielded nothing. A path you could not read belongs in unread[]; a documented command you could not probe read-only belongs in unprobed[].'
+// Worker stages (Sonnet 5.5) that return a schema after several steps end on this line.
+const THINK_FIRST = 'Think the problem through before you answer.'
 // Each surface declares its own floor: one global number let a README documenting sixteen
 // commands pass on three checks.
 const checksRule = (surface) =>
@@ -327,6 +329,7 @@ const locatePrompt = (job) =>
     ]),
     'Every claim carries the read-only command that proved it in evidence[] as {claim, command}. Report no file contents: this stage resolves routing, not drift.',
     READ_ONLY,
+    THINK_FIRST,
   ])
 
 function docsBlock(docs) {
@@ -367,6 +370,8 @@ function auditPrompt(job, surface, docs) {
     NO_ECHO,
     NO_CONTRIBUTOR_TEST,
     READ_ONLY,
+    'Once every claim on your surface is checked, stop and report. Surface anything outside it in a finding for the consolidator rather than auditing it yourself.',
+    THINK_FIRST,
   ])
 }
 
@@ -542,6 +547,8 @@ function render(view) {
 const job = normalizeInput(args)
 if (!job) return { ok: false, error: 'Pass {focus?, surfaces?, quorum?, model?, timestamp?}.' }
 const MODEL = job.model
+const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }
+const modelFor = (tier) => MODEL || TIERS[tier].model
 // notConvened carries exactly one kind of entry: an agent that returned null. Every
 // other stop is reported through `error`, so the list keeps a single meaning.
 const notConvened = []
@@ -582,7 +589,7 @@ if (narrowedOut.length) log(`Narrowed to ${roster.join(', ')}; ${narrowedOut.joi
 log(`${surfacesExpected} surface(s) on the roster; quorum ${quorum}.`)
 
 phase('Locate')
-const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, ...(MODEL ? { model: MODEL } : {}), effort: 'low' })
+const located = await agent(locatePrompt(job), { label: 'locate:docs-home', phase: 'Locate', schema: LOCATE_SCHEMA, model: modelFor('worker'), effort: 'low' })
 if (!located) {
   notConvened.push('locate:docs-home')
   log('No response from locate:docs-home; the auditors are told the docs home is unresolved and every fix is marked unrouted.')
@@ -618,7 +625,7 @@ const rawAudits = await parallel(
       label: `audit:${surface.key}`,
       phase: 'Audit',
       schema: AUDIT_SCHEMA,
-      ...(MODEL ? { model: MODEL } : {}),
+      model: modelFor('worker'),
       effort: surface.effort,
     }),
   ),
@@ -716,7 +723,7 @@ const judged = await agent(consolidatePrompt(job, responded, silent.map((surface
   label: 'consolidate:audit-table',
   phase: 'Consolidate',
   schema: CONSOLIDATE_SCHEMA,
-  ...(MODEL ? { model: MODEL } : {}),
+  model: modelFor('reasoner'),
   effort: 'high',
 })
 if (!judged) {
