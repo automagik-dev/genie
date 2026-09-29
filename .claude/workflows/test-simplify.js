@@ -38,10 +38,10 @@ export const meta = {
 // owner-boundary batches (deletion and consolidation) with measured evidence; it never
 // deletes tests on its own.
 //
-// Declared sources (repo-relative):
-//   .genie/brainstorms/test-simplify/SKILL.md
-//   .genie/brainstorms/test-simplify/CAMPAIGN.md
-//   .genie/brainstorms/test-simplify/TEST-AUDIT.md
+// Adapted from the test-audit skill in openclaw/openclaw (.agents/skills/test-audit,
+// SKILL.md and CAMPAIGN.md), MIT License, Copyright (c) 2026 OpenClaw Foundation.
+// The junk patterns, retention bar and campaign lanes below restate that skill.
+// Also informed by a read-only 4-lane audit of this repository (2026-09-29).
 // Drafted 2026-09-29T17:10:00Z; full coverage, campaign output, consolidation and seeds
 // added the same day after the first run read 695 of 2616 cases.
 //
