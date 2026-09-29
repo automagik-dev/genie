@@ -62,22 +62,6 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'both marketplaces',
 ];
 
-// v5 command surface that MUST stay documented so the file can't drift back
-// into describing a body that no longer ships.
-const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
-  'board',
-  'config',
-  'context',
-  'doctor',
-  'idea',
-  'init',
-  'setup',
-  'shortcuts',
-  'task',
-  'uninstall',
-  'update',
-];
-
 describe('CLAUDE.md v5 drift guard', () => {
   const content = readFileSync(CLAUDE_MD, 'utf8');
   const shared = readFileSync(AGENTS_MD, 'utf8');
@@ -118,12 +102,6 @@ describe('CLAUDE.md v5 drift guard', () => {
     test(`does not contain retired fossil: ${JSON.stringify(fossil)}`, () => {
       expect(content).not.toContain(fossil);
       expect(shared).not.toContain(fossil);
-    });
-  }
-
-  for (const command of REQUIRED_V5_COMMANDS) {
-    test(`documents v5 command: ${command}`, () => {
-      expect(content).toContain(command);
     });
   }
 

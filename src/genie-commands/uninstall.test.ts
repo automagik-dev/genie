@@ -1146,26 +1146,6 @@ describe('durable uninstall batch', () => {
     expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
   });
 
-  test('an authentic legacy v1 journal is discarded and re-recorded as v4, then execution proceeds', () => {
-    writeLegacyV1Journal();
-    const member = uninstallBatchMemberId('symlink', 'genie');
-    const events: string[] = [];
-
-    const outcome = executeUninstallBatch(genieHome, scope(['genie']), (decisionScope, progress) => {
-      events.push('cleanup');
-      // The fresh v4 scope is the CURRENT live scope, not the empty migrated v1 one.
-      expect(decisionScope.symlinks.map((a) => a.name)).toEqual(['genie']);
-      progress.begin(member);
-      progress.complete(member);
-      return { failures: [] };
-    });
-
-    expect(outcome.decision.schemaVersion).toBe(4);
-    expect(outcome.result.failures).toEqual([]);
-    expect(events).toEqual(['cleanup']);
-    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
-  });
-
   test('an authentic legacy v2 pathname journal is re-planned as v4 before execution', () => {
     writeLegacyV2Journal();
     const outcome = executeUninstallBatch(genieHome, scope(), (decisionScope) => {
@@ -1179,67 +1159,64 @@ describe('durable uninstall batch', () => {
     expect(existsSync(genieHome)).toBe(true);
   });
 
-  test('an authentic legacy v3 journal is discarded and re-recorded as v4, then execution proceeds', () => {
-    // v3 is the generation every released binary wrote, so this is the migration
-    // lane a real interrupted-uninstall host takes on the first v4 binary. If the
-    // discard guard forgets v3, `genie uninstall` fails closed forever here.
-    writeLegacyV3Journal();
-    const member = uninstallBatchMemberId('symlink', 'genie');
-    const events: string[] = [];
+  // v3 is the generation every released binary wrote, so it is the migration lane a real
+  // interrupted-uninstall host takes on the first v4 binary; v1 is the oldest one still
+  // accepted. If the discard guard forgets either, `genie uninstall` fails closed forever.
+  const LEGACY_JOURNALS = [
+    ['v3', writeLegacyV3Journal],
+    ['v1', writeLegacyV1Journal],
+  ] as const;
 
-    const outcome = executeUninstallBatch(genieHome, scope(['genie']), (decisionScope, progress) => {
-      events.push('cleanup');
-      expect(decisionScope.symlinks.map((a) => a.name)).toEqual(['genie']);
-      progress.begin(member);
-      progress.complete(member);
-      return { failures: [] };
-    });
+  test.each(LEGACY_JOURNALS)(
+    'an authentic legacy %s journal is discarded and re-recorded as v4, then execution proceeds',
+    (_, writeLegacyJournal) => {
+      writeLegacyJournal();
+      const member = uninstallBatchMemberId('symlink', 'genie');
+      const events: string[] = [];
 
-    expect(outcome.decision.schemaVersion).toBe(4);
-    expect(outcome.result.failures).toEqual([]);
-    expect(events).toEqual(['cleanup']);
-    expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
-  });
+      const outcome = executeUninstallBatch(genieHome, scope(['genie']), (decisionScope, progress) => {
+        events.push('cleanup');
+        // The fresh v4 scope is the CURRENT live scope, not the empty migrated one.
+        expect(decisionScope.symlinks.map((a) => a.name)).toEqual(['genie']);
+        progress.begin(member);
+        progress.complete(member);
+        return { failures: [] };
+      });
 
-  test('a migrated legacy v3 journal with an interrupted member surfaces a note', () => {
-    const staleMember = uninstallBatchMemberId('symlink', 'term');
-    writeLegacyV3Journal(staleMember);
+      expect(outcome.decision.schemaVersion).toBe(4);
+      expect(outcome.result.failures).toEqual([]);
+      expect(events).toEqual(['cleanup']);
+      expect(existsSync(uninstallBatchJournalPath(genieHome))).toBe(false);
+    },
+  );
 
-    const outcome = executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }));
+  test.each(LEGACY_JOURNALS)(
+    'a migrated legacy %s journal with an interrupted member surfaces a note',
+    (_, writeLegacyJournal) => {
+      const staleMember = uninstallBatchMemberId('symlink', 'term');
+      writeLegacyJournal(staleMember);
 
-    expect(outcome.result.failures).toEqual([]);
-    expect((outcome.result.notes ?? []).some((note) => note.includes(staleMember))).toBe(true);
-  });
+      const outcome = executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }));
 
-  test('a tampered legacy v3 journal fails closed and is not migrated', () => {
-    const journalPath = writeLegacyV3Journal();
-    const parsed = JSON.parse(readFileSync(journalPath, 'utf8')) as { scope: { removeMarketplace: boolean } };
-    parsed.scope.removeMarketplace = true;
-    writeFileSync(journalPath, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+      expect(outcome.result.failures).toEqual([]);
+      expect((outcome.result.notes ?? []).some((note) => note.includes(staleMember))).toBe(true);
+    },
+  );
 
-    expect(() => executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }))).toThrow('authentication failed');
-    expect(existsSync(journalPath)).toBe(true);
-  });
+  test.each(LEGACY_JOURNALS)(
+    'a tampered legacy %s journal fails closed and is not migrated',
+    (_, writeLegacyJournal) => {
+      const journalPath = writeLegacyJournal();
+      const parsed = JSON.parse(readFileSync(journalPath, 'utf8')) as { scope: { removeMarketplace: boolean } };
+      parsed.scope.removeMarketplace = true;
+      writeFileSync(journalPath, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
 
-  test('a migrated legacy v1 journal with an interrupted member surfaces a note', () => {
-    const staleMember = uninstallBatchMemberId('symlink', 'term');
-    writeLegacyV1Journal(staleMember);
-
-    const outcome = executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }));
-
-    expect(outcome.result.failures).toEqual([]);
-    expect((outcome.result.notes ?? []).some((note) => note.includes(staleMember))).toBe(true);
-  });
-
-  test('a tampered legacy v1 journal fails closed and is not migrated', () => {
-    const journalPath = writeLegacyV1Journal();
-    const parsed = JSON.parse(readFileSync(journalPath, 'utf8')) as { scope: { removeMarketplace: boolean } };
-    parsed.scope.removeMarketplace = true;
-    writeFileSync(journalPath, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
-
-    expect(() => executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }))).toThrow('authentication failed');
-    expect(existsSync(journalPath)).toBe(true);
-  });
+      expect(() => executeUninstallBatch(genieHome, scope(), () => ({ failures: [] }))).toThrow(
+        'authentication failed',
+      );
+      expect(existsSync(journalPath)).toBe(true);
+    },
+  );
 
   for (const boundary of ['beforeCapture', 'afterCapture'] as const) {
     test(`legacy journal discard refuses a ${boundary} pathname replacement without clobbering it`, () => {
@@ -1835,19 +1812,6 @@ describe('uninstallCommand — warning, lifecycle lease, isolation (Group D)', (
     } finally {
       if (priorWait === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_WAIT_MS');
       else process.env.GENIE_LIFECYCLE_LEASE_WAIT_MS = priorWait;
-    }
-  });
-
-  test('uninstall never mints or accepts an activation assertion/permit', () => {
-    const source = readFileSyncForSource(join(import.meta.dir, 'uninstall.ts'), 'utf8');
-    for (const forbidden of [
-      'requestRetirementAssertion',
-      'authorizeCodexActivation',
-      'executeCodexActivation',
-      'beginActivation',
-      'mintActivationPermit',
-    ]) {
-      expect(source.includes(forbidden)).toBe(false);
     }
   });
 

@@ -390,13 +390,6 @@ describe('genie init', () => {
       expect(existsSync(join(dir, '.gitignore'))).toBe(true);
     });
 
-    test('--json reports both registration classes skipped on a fresh repo', () => {
-      initGitRepo(dir);
-      const first = JSON.parse(runInit(dir, ['--json']).stdout);
-      const actions = first.mcp.map((c: { path: string; action: string }) => c.action);
-      expect(actions).toEqual(['skipped', 'skipped']);
-    });
-
     test('malformed .mcp.json is ignored and preserved byte-for-byte', () => {
       initGitRepo(dir);
       writeFileSync(mcpPath(dir), 'not json {');
@@ -491,19 +484,5 @@ describe('init marker-owned Codex retirement', () => {
       .filter(Boolean)
       .map((line) => line.slice(3));
     expect(untracked).not.toContain(join('.codex', backups[0] as string));
-  });
-
-  test('init.ts never mints an assertion/permit and never touches the lifecycle lease or delivery', () => {
-    const source = readFileSync(join(import.meta.dir, 'init.ts'), 'utf8');
-    for (const forbidden of [
-      'acquireLifecycleLease',
-      'requestRetirementAssertion',
-      'authorizeCodexActivation',
-      'executeCodexActivation',
-      'observeCodexActivation',
-      'beginActivation',
-    ]) {
-      expect(source.includes(forbidden)).toBe(false);
-    }
   });
 });

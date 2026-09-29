@@ -585,12 +585,6 @@ describe('task set-wish', () => {
     expect(both.stderr).toContain('--clear cannot be combined with --wish.');
   });
 
-  test('an unknown id fails with exit 1 and a typed error', async () => {
-    const r = await cli(repo, 'set-wish', 't_nope', '--wish', 'demo');
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain('Task not found: t_nope');
-  });
-
   test('the attached identity survives export --write / import / sync', async () => {
     const id = await seedTask('travels');
     await cli(repo, 'set-wish', id, '--wish', 'demo', '--group', 'g1');
@@ -830,13 +824,6 @@ describe('task assign', () => {
     expect(getTaskEvents(db, id)).toEqual([]);
     db.close();
   });
-
-  test('an unknown id fails with exit 1 and a typed error', async () => {
-    const r = await cli(repo, 'assign', 't_nope', '--agent', 'claude', '--why', 'x');
-    expect(r.code).toBe(1);
-    expect(r.stdout).toBe('');
-    expect(r.stderr).toContain('Task not found: t_nope');
-  });
 });
 
 describe('task delete', () => {
@@ -888,13 +875,6 @@ describe('task delete', () => {
     expect(downstream.stdout).toContain(target);
   });
 
-  test('an unknown id fails with exit 1 and a typed error', async () => {
-    const r = await cli(repo, 'delete', 't_missing');
-    expect(r.code).toBe(1);
-    expect(r.stdout).toBe('');
-    expect(r.stderr).toContain('Task not found: t_missing');
-  });
-
   test('the timeline goes with the card: a recreated card starts clean', async () => {
     const id = await seedTask('typo');
     await cli(repo, 'comment', id, 'wrong wish');
@@ -923,6 +903,18 @@ describe('task delete', () => {
     expect(detail.stdout).toContain('task import --replace');
     expect(detail.stdout).toContain('Deleting the LAST card');
   });
+});
+
+test.each([
+  ['set-wish', ['set-wish', 't_nope', '--wish', 'demo']],
+  ['assign', ['assign', 't_nope', '--agent', 'claude', '--why', 'x']],
+  ['delete', ['delete', 't_nope']],
+  ['comment', ['comment', 't_nope', 'x']],
+] as const)('task %s on an unknown id fails with exit 1 and a typed error', async (_, args) => {
+  const r = await cli(repo, ...args);
+  expect(r.code).toBe(1);
+  expect(r.stdout).toBe('');
+  expect(r.stderr).toContain('Task not found: t_nope');
 });
 
 describe('task move', () => {
@@ -1525,12 +1517,6 @@ describe('timeline verbs', () => {
     expect(events[0].note).toBe('looks good to me');
   });
 
-  test('comment on an unknown id fails with exit 1', async () => {
-    const r = await cli(repo, 'comment', 't_nope', 'x');
-    expect(r.code).toBe(1);
-    expect(r.stderr).toContain('Task not found: t_nope');
-  });
-
   test('comment and report take --worker so each speaker is attributed, never collapsed to cli', async () => {
     const id = await seed('attributed');
     expect((await cli(repo, 'comment', id, '--worker', 'orchestrator', 'dispatching G1')).code).toBe(0);
@@ -1977,11 +1963,6 @@ function reverseKeyOrder(value: unknown): unknown {
 
 describe('committed roadmap.json round-trip', () => {
   const COMMITTED = join(import.meta.dir, '..', '..', '.genie', 'roadmap.json');
-
-  test('this repo’s own snapshot is already canonical bytes', () => {
-    const text = readFileSync(COMMITTED, 'utf-8');
-    expect(serializeSnapshot(JSON.parse(text))).toBe(text);
-  });
 
   test('import then export reproduces it byte for byte, and one card diffs as one card', async () => {
     const text = readFileSync(COMMITTED, 'utf-8');

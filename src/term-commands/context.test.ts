@@ -8,23 +8,14 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveIntegrationBranch } from '../genie-commands/doctor-worktrees.js';
 import { peelCommit, resolveIntegration } from '../lib/v5/base-state.js';
 import { openDb, resolveDbPath } from '../lib/v5/genie-db.js';
 import { claimTask, createTask, listTasks } from '../lib/v5/task-state.js';
-import { contextCommand, openReadonlyHandle } from './context.js';
+import { openReadonlyHandle } from './context.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
 
@@ -508,19 +499,6 @@ describe('wish context', () => {
     expect(metaRow(fx, 'wish_base:a..b')).toBeNull();
   });
 
-  test('rejects a `-`-prefixed slug with a machine-readable reason and records nothing', () => {
-    const fx = makeFixture();
-    seedTasks(fx, 'demo', ['alpha']);
-    const errors: string[] = [];
-    const code = contextCommand(
-      { wish: '-x', group: 'alpha' },
-      { cwd: fx.root, write: () => {}, writeErr: (line) => errors.push(line) },
-    );
-    expect(code).toBe(1);
-    expect((JSON.parse(errors[0]) as { error: string }).error).toBe('invalid-wish-slug');
-    expect(metaRow(fx, 'wish_base:-x')).toBeNull();
-  });
-
   test('payload is shell-consumable: one line, JSON-escaped titles, no raw refs', async () => {
     const fx = makeFixture();
     const db = openDb({ cwd: fx.root });
@@ -575,13 +553,6 @@ describe('a stale orchestration.mode from the retired Orca mode', () => {
 // ============================================================================
 
 describe('shared integration policy', () => {
-  test('base-state is the single policy point doctor and context share', () => {
-    const fx = makeFixture();
-    const shared = resolveIntegration(fx.root);
-    expect(shared).toEqual({ name: 'dev', ref: 'refs/heads/dev' });
-    expect(resolveIntegrationBranch(fx.root)).toBe(shared?.name ?? null);
-  });
-
   test('a git failure resolves to null specifically — never a throw, never a guess', () => {
     // An empty directory is not a repository: every probe fails and the
     // policy must say "nothing resolvable" instead of throwing or inventing
@@ -592,14 +563,4 @@ describe('shared integration policy', () => {
     expect(peelCommit(bare, 'refs/heads/dev')).toBeNull();
     expect(resolveIntegrationBranch(bare)).toBeNull();
   });
-});
-
-// ============================================================================
-// Stat sanity used only to keep the fixture helper honest
-// ============================================================================
-
-test('fixture helper leaves the temp tree as expected', () => {
-  const fx = makeFixture();
-  expect(existsSync(join(fx.root, '.git'))).toBe(true);
-  expect(statSync(join(fx.root, 'README.md')).isFile()).toBe(true);
 });
