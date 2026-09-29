@@ -353,13 +353,16 @@ const REFUTE_SCHEMA = obj(['shardId', 'head', 'headMatchesSha', 'verdicts'], {
 })
 
 const SELECT_SCHEMA = obj(['batches'], {
-  batches: listOf(['groupId', 'candidateIds', 'trimmed', 'moveRegressions', 'newTests', 'rationale'], {
+  batches: listOf(['groupId', 'candidateIds', 'trimmed', 'moveRegressions', 'newTests', 'landsBefore'], {
     groupId: str,
     candidateIds: strList,
     trimmed: listOf(['id', 'why'], { id: str, why: str }),
     moveRegressions: listOf(['candidateId', 'to'], { candidateId: str, to: note('repo-relative canonical owner test file') }),
     newTests: listOf(['name', 'distinctRisk'], { name: str, distinctRisk: str }),
-    rationale: str,
+    landsBefore: listOf(['groupId', 'why'], {
+      groupId: note('a group whose batch must land AFTER this one'),
+      why: note('the dependency: what this batch removes that the later batch\'s tests or code still use'),
+    }),
   }),
 })
 
@@ -445,9 +448,13 @@ function normalizeInput(raw) {
   }
 }
 
-// The focused command for one test file, from the inventory template.
+// The focused command for one or more test files, from the inventory template.
 function focusedCommand(template, file) {
-  const quoted = /^[A-Za-z0-9_./@+-]+$/.test(file) ? file : `'${file}'`
+  return focusedCommandMany(template, [file])
+}
+
+function focusedCommandMany(template, files) {
+  const quoted = files.map((f) => (/^[A-Za-z0-9_./@+-]+$/.test(f) ? f : `'${f}'`)).join(' ')
   return template.includes('<paths>') ? template.replace('<paths>', quoted) : `${template} ${quoted}`
 }
 
@@ -606,7 +613,7 @@ function refutePrompt(shard, ctx) {
     '2. Try to refute it: look for the retention clause that keeps it. If one applies, mark R and give that clause id in retentionClause with why. An R without a clause from the closed list is not accepted. For M, `distinct-diagnostics` keeps cases a table would blur.',
     '3. Re-derive the non-test callers of the covered seam by grep yourself; list every one in nonTestCallers. Do not copy the record.',
     '4. For C or D, confirm the keeper exists and would go red under one stated mutation of the production owner (keeper, keeperVerified, mutation). Reason about the mutation; never apply it. Where no contract exists, say why in noContractReason in your own words; leave it empty otherwise.',
-    '5. For M, check the plan in consolidation against the file: every assertion of every member must survive in the merged form (consolidationConfirmed "true"), and testLoc is the net line delta you count yourself. An M that would lose an assertion is R or F, never M.',
+    '5. For M, check the plan in consolidation against the file: every assertion of every member must survive in the merged form (consolidationConfirmed "true"), and testLoc is the net line delta. A merge you have not written out line by line is an estimate: label it "estimate", which is accepted and reported as such; "measured" only when you counted the merged form. An M that would lose an assertion is R or F, never M.',
     '6. Read the history (git log, git blame) for why the test or seam exists.',
     '7. If the assertion is right to keep but vacuous or wrong, mark F.',
     `8. Measure: ${LOC_RULE} deadRegions are the exact production or support line ranges (path, startLine, endLine, symbol) that become dead when the test goes and nothing else calls them, import lines included; deadFiles are files dead in full, with their line count; never name a whole file whose other lines are still live. productionLocUnlocked is the sum of those lines; deletionUnlocked states the same ranges in words, with no "about" or "estimated" hedge. All of these are empty or zero when any non-test caller remains.`,
@@ -653,9 +660,10 @@ function selectPrompt(ranked, groupRanking) {
     'Return one batch per owner group, in the order the campaign should land them: batch 1 is the one to do first. Put a batch that deletes a seam or production region another batch\'s tests still import after that batch; otherwise prefer high keeper-verified LOC and low risk first. Name every group exactly once.',
     'Each batch lists candidateIds from its own group only. Every candidate of the group is either in candidateIds or in trimmed with a why; never add one from another group, and never pad. Do not trim to look cautious: trim only a row whose removal would conflict with another row or needs an owner decision.',
     'moveRegressions: a chosen C row whose assertion should move to its canonical owner rather than be deleted ({candidateId, to}). newTests: only with a distinctRisk the owner cannot otherwise reach; never a replacement that restates the same implementation.',
-    'The script builds each edit shape, keeper mutation, validation command and LOC figure from the rows; do not restate them.',
+    'landsBefore: each group whose batch must land after this one, with the concrete dependency. Order the batches so every landsBefore holds.',
+    'Write no rationale: the script derives each batch\'s rationale from the ranking and builds each edit shape, keeper mutation, validation command and LOC figure from the rows.',
     '',
-    'Return the schema object only: batches[] of {groupId, candidateIds[], trimmed[], moveRegressions[], newTests[], rationale}.',
+    'Return the schema object only: batches[] of {groupId, candidateIds[], trimmed[], moveRegressions[], newTests[], landsBefore[]}.',
   ].join('\n')
 }
 
@@ -824,6 +832,11 @@ function fromLane(c, lane, laneOrder, index) {
   const keeper = (c && c.keeper) || {}
   const file = pathKey(c && c.file)
   const name = normName(c && c.testName)
+  // A fold whose target is the file itself is a same-file merge: relabel it table-driven
+  // rather than refusing a plan whose only fault is its label.
+  const consolidation = readConsolidation(c)
+  const relabeled = consolidation.kind === 'fold-into-owner' && consolidation.into === file
+  if (relabeled) consolidation.kind = 'table-driven'
   return {
     // Only a record with both a file and a test name can be a duplicate; a location-less one
     // gets a key of its own so it lands in notReady instead of collapsing into another.
@@ -838,7 +851,8 @@ function fromLane(c, lane, laneOrder, index) {
     ownerBoundary: pathKey(c && c.ownerBoundary),
     keeper: { path: pathKey(keeper.path), testName: text(keeper.testName) },
     noContractReason: text(c && c.noContractReason),
-    consolidation: readConsolidation(c),
+    consolidation,
+    relabeled,
     testLoc: nonNegInt(c && c.testLoc),
     testLocBasis: LOC_BASIS.includes(c && c.testLocBasis) ? c.testLocBasis : 'estimate',
     productionLocUnlocked: nonNegInt(c && c.productionLocUnlocked),
@@ -876,6 +890,7 @@ function mergeTwo(a, b) {
     keeper: p.keeper.path ? p.keeper : s.keeper,
     noContractReason: p.noContractReason || s.noContractReason,
     consolidation: p.consolidation.kind ? p.consolidation : s.consolidation,
+    relabeled: p.consolidation.kind ? p.relabeled : s.relabeled,
     testLoc: p.testLoc || s.testLoc,
     testLocBasis: p.testLoc ? p.testLocBasis : s.testLocBasis,
     productionLocUnlocked: p.productionLocUnlocked || s.productionLocUnlocked,
@@ -907,7 +922,6 @@ function missingFields(r) {
     if (!k.kind) missing.push('consolidation-kind')
     if (!k.into || !repoRelative(k.into)) missing.push('consolidation-into')
     if (k.kind === 'table-driven' && k.members.length < 2) missing.push('consolidation-members')
-    if (k.kind === 'fold-into-owner' && k.into === r.file) missing.push('consolidation-fold-into-itself')
     if (!r.testLoc) missing.push('consolidation-loc-delta')
   }
   return missing
@@ -1146,8 +1160,8 @@ function enforceShard(shard, response, ctx, buckets) {
         drop('consolidation-not-confirmed')
         continue
       }
-      if (!refMeasured) {
-        drop('consolidation-delta-not-measured')
+      if (!refTestLoc && !m.testLoc) {
+        drop('consolidation-delta-missing')
         continue
       }
     }
@@ -1184,8 +1198,10 @@ function enforceShard(shard, response, ctx, buckets) {
       refuterHistory: text(v.history),
       refuterCallers: callers,
       evidence: { ...m.evidence, nonTestCallers: callers, deletionUnlocked: claim.unlocked, validationCommand: expected },
-      testLoc: refMeasured ? refTestLoc : m.testLoc,
-      testLocBasis: refMeasured ? 'measured' : m.testLocBasis,
+      // A confirmed merge keeps the refuter's delta even when it is an estimate: it is labelled
+      // so and counted on the estimated side of every total.
+      testLoc: refMeasured || (mark === 'M' && refTestLoc) ? refTestLoc : m.testLoc,
+      testLocBasis: refMeasured ? 'measured' : mark === 'M' && refTestLoc ? 'estimate' : m.testLocBasis,
       deadRegions: claim.regions,
       deadFiles: claim.files,
       seams: claim.seams,
@@ -1224,18 +1240,24 @@ function emptyBatch(emptyReason) {
   return {
     index: 0,
     groupId: null,
+    groupIds: [],
     ownerBoundary: null,
     candidates: [],
     trimmed: [],
     editShape: { deleteTests: [], consolidate: [], moveRegressions: [], deleteSeams: [], deleteProductionRegions: [], deleteProductionFiles: [] },
     testLocDelta: 0,
+    testLocMeasured: 0,
+    testLocEstimated: 0,
     testLocBasis: 'measured',
     productionLocDelta: 0,
+    productionLocMeasured: 0,
+    productionLocEstimated: 0,
     productionLocBasis: 'measured',
     unlocalizedProduction: [],
     newTests: [],
     keeperMutations: [],
     validationCommands: [],
+    landsBefore: [],
     rationale: '',
     planNote: '',
     emptyReason,
@@ -1268,8 +1290,10 @@ function checkEntry(entry, pool) {
 }
 
 // The edit shape, keeper mutations, validation commands and LOC of one batch all come from
-// the refuted rows, never from the planner's prose.
-function buildBatch(index, group, chosen, extra) {
+// the refuted rows, never from the planner's prose. Every LOC figure is split into its
+// measured and estimated parts, so a total never hides an estimate. A batch that merges
+// several groups runs one focused command over all of its files.
+function buildBatch(index, groups, boundary, chosen, extra) {
   const moveById = new Map(extra.moves.map((mv) => [mv.candidateId, mv.to]))
   const removal = chosen.filter((r) => r.mark !== 'M')
   const merges = chosen.filter((r) => r.mark === 'M')
@@ -1277,18 +1301,28 @@ function buildBatch(index, group, chosen, extra) {
   const files = [...new Map(chosen.flatMap((r) => r.deadFiles).map((f) => [f.path, f])).values()].sort((a, b) => cmp(a.path, b.path))
   const seams = [...new Map(chosen.flatMap((r) => r.seams).map((s) => [`${s.path}::${s.symbol}`, s])).values()]
   const unlocalized = chosen.filter((r) => r.unlocalized)
-  const productionLoc = regionLoc(regions) + files.reduce((n, f) => n + f.loc, 0) + unlocalized.reduce((n, r) => n + r.productionLocUnlocked, 0)
+  const productionMeasured = regionLoc(regions) + files.reduce((n, f) => n + f.loc, 0)
+  const productionEstimated = unlocalized.reduce((n, r) => n + r.productionLocUnlocked, 0)
+  const testMeasured = chosen.filter((r) => r.testLocBasis === 'measured').reduce((n, r) => n + r.testLoc, 0)
+  const testEstimated = chosen.filter((r) => r.testLocBasis !== 'measured').reduce((n, r) => n + r.testLoc, 0)
+  const testFiles = (r) => [r.file, ...(r.mark === 'M' && r.consolidation.into !== r.file ? [r.consolidation.into] : [])]
   // One entry per distinct command, naming every candidate it validates.
   const commands = new Map()
   const addCommand = (command, id) => commands.set(command, [...new Set([...(commands.get(command) || []), id])])
-  for (const r of chosen) {
-    addCommand(r.baseline.command, r.id)
-    if (r.mark === 'M' && r.consolidation.into !== r.file) addCommand(extra.focused(r.consolidation.into), r.id)
+  if (groups.length > 1) {
+    const all = [...new Set(chosen.flatMap(testFiles))].sort(cmp)
+    for (const r of chosen) addCommand(extra.focusedMany(all), r.id)
+  } else {
+    for (const r of chosen) {
+      addCommand(r.baseline.command, r.id)
+      if (r.mark === 'M' && r.consolidation.into !== r.file) addCommand(extra.focused(r.consolidation.into), r.id)
+    }
   }
   return {
     index,
-    groupId: group.id,
-    ownerBoundary: group.boundary,
+    groupId: groups.map((g) => g.id).join('+'),
+    groupIds: groups.map((g) => g.id),
+    ownerBoundary: boundary,
     candidates: chosen,
     trimmed: extra.trimmed,
     editShape: {
@@ -1299,23 +1333,88 @@ function buildBatch(index, group, chosen, extra) {
       deleteProductionRegions: regions,
       deleteProductionFiles: files,
     },
-    testLocDelta: -chosen.reduce((n, r) => n + r.testLoc, 0),
-    testLocBasis: sumBasis(chosen.map((r) => r.testLocBasis)),
-    productionLocDelta: -productionLoc,
-    productionLocBasis: unlocalized.length ? 'estimate' : 'measured',
+    testLocDelta: -(testMeasured + testEstimated),
+    testLocMeasured: -testMeasured,
+    testLocEstimated: -testEstimated,
+    testLocBasis: testEstimated ? 'estimate' : 'measured',
+    productionLocDelta: -(productionMeasured + productionEstimated),
+    productionLocMeasured: -productionMeasured,
+    productionLocEstimated: -productionEstimated,
+    productionLocBasis: productionEstimated ? 'estimate' : 'measured',
     unlocalizedProduction: unlocalized.map((r) => ({ id: r.id, loc: r.productionLocUnlocked, claim: r.evidence.deletionUnlocked })),
     newTests: extra.newTests,
     keeperMutations: chosen.filter((r) => r.keeper).map((r) => ({ candidateId: r.id, keeper: `${r.keeper.path} :: ${r.keeper.testName}`, mutation: r.mutation })),
     validationCommands: [...commands].map(([command, ids]) => ({ candidateIds: ids.sort(cmp), command })).sort((a, b) => cmp(a.candidateIds[0], b.candidateIds[0]) || cmp(a.command, b.command)),
-    rationale: extra.rationale,
+    landsBefore: extra.landsBefore,
+    rationale: '',
     planNote: extra.planNote,
     emptyReason: '',
   }
 }
 
-// Every eligible group becomes one batch. The planner orders them and may trim with a reason;
-// a group it skips or shapes invalidly still lands, whole, in rank order, with a note.
-function planCampaign(sel, ranked, groupRanking, focused) {
+// The directory a boundary lives in: a file boundary's parent, a directory boundary itself.
+function ownerDirectory(boundary) {
+  const parts = boundary.split('/')
+  if (!/\.[A-Za-z0-9]+$/.test(parts[parts.length - 1])) return boundary
+  return parts.slice(0, -1).join('/') || '.'
+}
+
+// Single-candidate batches that share an owner directory become one batch at the position
+// of the first of them, validated by one focused command over all their files. A batch that
+// takes part in a landing dependency keeps its own place, and nothing merges when the focused
+// template cannot take several paths at once.
+function mergeSingles(batches, template, build) {
+  if (!template.includes('<paths>')) return { batches, notes: [] }
+  const pinned = new Set(batches.flatMap((b) => [...(b.landsBefore.length ? b.groupIds : []), ...b.landsBefore.map((l) => l.groupId)]))
+  const single = (b) => b.candidates.length === 1 && !b.trimmed.length && b.groupIds.length === 1 && !pinned.has(b.groupIds[0])
+  const byDir = new Map()
+  for (const b of batches.filter(single)) {
+    const dir = ownerDirectory(b.ownerBoundary)
+    byDir.set(dir, [...(byDir.get(dir) || []), b])
+  }
+  const notes = []
+  const absorbed = new Set()
+  const replacement = new Map()
+  for (const [dir, members] of byDir) {
+    if (members.length < 2) continue
+    replacement.set(members[0], build(members, dir))
+    for (const b of members.slice(1)) absorbed.add(b)
+    notes.push(`merged ${members.length} single-candidate groups under ${dir} (${members.map((b) => b.groupId).join(', ')}) into one batch`)
+  }
+  const out = batches.filter((b) => !absorbed.has(b)).map((b) => replacement.get(b) || b)
+  out.forEach((b, i) => {
+    b.index = i + 1
+  })
+  return { batches: out, notes }
+}
+
+// The rationale is derived from the ranked figures, never written by the planner, so it
+// cannot claim a superlative another batch holds.
+function deriveRationale(b, batches, groupRanking) {
+  const n = groupRanking.length
+  const rankOf = (id) => groupRanking.findIndex((g) => g.id === id) + 1
+  const parts = [
+    b.groupIds.length === 1
+      ? `group ${b.groupId} ranks ${rankOf(b.groupId)} of ${n} by eligible LOC`
+      : `${b.groupIds.length} single-candidate groups under ${b.ownerBoundary}, merged (ranks ${b.groupIds.map(rankOf).join(', ')} of ${n} by eligible LOC)`,
+  ]
+  const prod = -b.productionLocDelta
+  const most = batches.reduce((best, x) => (-x.productionLocDelta > -best.productionLocDelta ? x : best), batches[0])
+  const mostProd = -most.productionLocDelta
+  if (!prod) parts.push('frees no production code')
+  else if (prod === mostProd) parts.push(`frees ${prod} production LOC, the most of any batch`)
+  else parts.push(`frees ${prod} production LOC (batch ${most.index}, ${most.groupId}, frees the most: ${mostProd})`)
+  const verified = b.candidates.filter((c) => c.keeperVerified).length
+  const merges = b.candidates.filter((c) => c.mark === 'M').length
+  parts.push(`${verified} of ${b.candidates.length} keeper-verified${merges ? `, ${merges} merge(s) keep their own assertions` : ''}`)
+  parts.push(`risk ${RISK_LEVELS.map((r) => [r, b.candidates.filter((c) => c.riskLevel === r).length]).filter(([, k]) => k).map(([r, k]) => `${k} ${r}`).join(', ')}`)
+  return parts.join('; ')
+}
+
+// Every eligible group becomes a batch. The planner orders them, may trim with a reason and
+// names landing dependencies; a group it skips or shapes invalidly still lands, whole, in rank
+// order, with a note. Single-candidate groups sharing a directory are then merged.
+function planCampaign(sel, ranked, groupRanking, commands) {
   const notes = []
   const entries = new Map()
   const order = []
@@ -1338,7 +1437,20 @@ function planCampaign(sel, ranked, groupRanking, focused) {
       order.push(g.id)
     }
   }
-  const batches = order.map((gid, i) => {
+  // A landing dependency stands only when it names a known group placed later.
+  const landsBefore = new Map()
+  for (const [gid, e] of entries) {
+    const kept = []
+    for (const l of arr(e.landsBefore)) {
+      const target = text(l && l.groupId)
+      const why = text(l && l.why)
+      if (order.indexOf(target) > order.indexOf(gid) && why) kept.push({ groupId: target, why })
+      else notes.push(`${gid}: landsBefore ${JSON.stringify(target)} dropped (${!why ? 'no why' : order.includes(target) ? 'the planner placed it earlier' : 'unknown group'})`)
+    }
+    landsBefore.set(gid, kept)
+  }
+  const extras = { focused: commands.focused, focusedMany: commands.focusedMany }
+  const planned = order.map((gid, i) => {
     const group = groupRanking.find((g) => g.id === gid)
     const pool = ranked.filter((r) => r.groupId === gid)
     const entry = entries.get(gid)
@@ -1348,16 +1460,33 @@ function planCampaign(sel, ranked, groupRanking, focused) {
     const planNote = !sel ? 'planner did not respond; whole group in rank order' : !entry ? 'planner left this group out; whole group' : checked.error ? `planner entry refused (${checked.error}); whole group` : ''
     if (planNote && entry) notes.push(`${gid}: ${planNote}`)
     const chosen = pool.filter((r) => use.ids.includes(r.id))
-    return buildBatch(i + 1, group, chosen, {
+    return buildBatch(i + 1, [group], group.boundary, chosen, {
+      ...extras,
       trimmed: use.trimmed.map((t) => ({ ...t, row: pool.find((r) => r.id === t.id) })),
       moves: use.moves,
       newTests: use.newTests,
-      rationale: entry && !planNote ? text(entry.rationale) : '',
+      landsBefore: landsBefore.get(gid) || [],
       planNote,
-      focused,
     })
   })
-  return { batches, notes }
+  const merged = mergeSingles(planned, commands.template, (members, dir) =>
+    buildBatch(
+      0,
+      members.map((b) => groupRanking.find((g) => g.id === b.groupId)),
+      dir,
+      members.flatMap((b) => b.candidates),
+      {
+        ...extras,
+        trimmed: [],
+        moves: members.flatMap((b) => b.candidates.filter((c) => b.editShape.moveRegressions.some((mv) => mv.id === c.id)).map((c) => ({ candidateId: c.id, to: b.editShape.moveRegressions.find((mv) => mv.id === c.id).to }))),
+        newTests: members.flatMap((b) => b.newTests),
+        landsBefore: [],
+        planNote: [...new Set(members.map((b) => b.planNote).filter(Boolean))].join('; '),
+      },
+    ),
+  )
+  for (const b of merged.batches) b.rationale = deriveRationale(b, merged.batches, groupRanking)
+  return { batches: merged.batches, notes: [...notes, ...merged.notes] }
 }
 
 // ---- Render (pure) ----------------------------------------------------------------
@@ -1382,12 +1511,28 @@ function editShapeLines(b) {
   ]
 }
 
-const batchLoc = (b) => `test LOC delta ${b.testLocDelta} (${b.testLocBasis}); production LOC delta ${b.productionLocDelta} (${b.productionLocBasis})`
+// A delta with its basis; a mixed one names its measured and estimated parts.
+const locWithBasis = (total, measured, estimated) =>
+  !estimated ? `${total} (measured)` : !measured ? `${total} (estimate)` : `${total} (${measured} measured, ${estimated} estimated)`
+const testLocText = (b) => locWithBasis(b.testLocDelta, b.testLocMeasured, b.testLocEstimated)
+const productionLocText = (b) => locWithBasis(b.productionLocDelta, b.productionLocMeasured, b.productionLocEstimated)
+// The derived rationale, the landing dependencies and any planner fallback of one batch.
+function batchContextLines(b, batches) {
+  const out = [`- Rationale (derived from the ranking): ${b.rationale}`]
+  for (const l of b.landsBefore) {
+    const later = batches.find((x) => x.groupIds.includes(l.groupId))
+    out.push(`- Lands before ${l.groupId}${later ? ` (batch ${later.index})` : ''}: ${l.why}`)
+  }
+  if (b.planNote) out.push(`- Plan note: ${b.planNote}`)
+  return out
+}
+
+const batchLoc = (b) => `test LOC delta ${testLocText(b)}; production LOC delta ${productionLocText(b)}`
 
 function candidateLines(c) {
   const out = [`### ${c.id} ${c.mark}: ${c.file} :: ${c.testName}${c.line ? ` (line ${c.line})` : ''}`]
   out.push(`- Junk patterns: ${c.junkPatterns.map((p) => `\`${p}\``).join(', ')}; confidence ${c.confidence}; test LOC ${c.testLoc} (${c.testLocBasis}); production LOC unlocked ${c.productionLocUnlocked} (${c.locBasis})`)
-  if (c.mark === 'M') out.push(`- Consolidation: ${c.consolidation.kind} into ${c.consolidation.into}${c.consolidation.members.length ? ` [${c.consolidation.members.join(' / ')}]` : ''}`)
+  if (c.mark === 'M') out.push(`- Consolidation: ${c.consolidation.kind}${c.relabeled ? ' (relabeled from a same-file fold-into-owner)' : ''} into ${c.consolidation.into}${c.consolidation.members.length ? ` [${c.consolidation.members.join(' / ')}]` : ''}`)
   for (const f of EVIDENCE_FIELDS) {
     const v = c.evidence[f]
     out.push(`- ${f}: ${Array.isArray(v) ? (v.length ? v.join(', ') : '(none found)') : v}`)
@@ -1411,7 +1556,11 @@ function render(s) {
   const cov = s.coverage
   out.push('## Coverage')
   out.push(`- Test files read: ${cov.filesRead} / ${cov.filesInScope} in scope (${pct(cov.filesRead, cov.filesInScope)})`)
-  out.push(`- Cases examined: ${cov.casesExamined} / ${cov.casesInScope} in scope (${pct(cov.casesExamined, cov.casesInScope)})`)
+  // Lanes count table rows and nested declarations differently from the inventory, so an
+  // overcount is shown capped at the scope and explained, never as more than 100%.
+  if (cov.casesExamined > cov.casesInScope) {
+    out.push(`- Cases examined: ${cov.casesInScope} / ${cov.casesInScope} in scope (100.0%); the lanes counted ${cov.casesExamined}, ${cov.casesExamined - cov.casesInScope} more than the inventory, because they count table rows and nested declarations differently. Every file was read either way.`)
+  } else out.push(`- Cases examined: ${cov.casesExamined} / ${cov.casesInScope} in scope (${pct(cov.casesExamined, cov.casesInScope)})`)
   out.push(`- Lanes: ${cov.directoryLanes} directory (at most ${s.brief.maxLaneTestLoc} test LOC each) + 1 pattern; refuter shards: ${cov.shards} covering ${cov.groups} owner group(s)`)
   if (cov.gaps.length) {
     out.push(`- **COVERAGE GAP: the run is incomplete and returns ok: false.** ${cov.gaps.length} gap(s):`)
@@ -1495,8 +1644,7 @@ function render(s) {
   else {
     out.push(`- Batch 1 of ${s.batches.length}: group ${first.groupId} (${first.ownerBoundary})`)
     out.push(`- ${batchLoc(first)}`)
-    if (first.planNote) out.push(`- Plan note: ${first.planNote}`)
-    if (first.rationale) out.push(`- Rationale: ${first.rationale}`)
+    out.push(...batchContextLines(first, s.batches))
     for (const c of first.candidates) {
       out.push('')
       out.push(...candidateLines(c))
@@ -1513,18 +1661,17 @@ function render(s) {
     out.push(row(['---', '---', '---', '---', '---', '---']))
     for (const b of s.batches) {
       const marks = REMOVAL_MARKS.map((k) => [k, b.candidates.filter((c) => c.mark === k).length]).filter(([, n]) => n).map(([k, n]) => `${n}${k}`).join(' ')
-      out.push(row([b.index, b.groupId, b.ownerBoundary, `${b.candidates.length} (${marks})`, `${b.testLocDelta} (${b.testLocBasis})`, `${b.productionLocDelta} (${b.productionLocBasis})`]))
+      out.push(row([b.index, b.groupId, b.ownerBoundary, `${b.candidates.length} (${marks})`, testLocText(b), productionLocText(b)]))
     }
     const ct = s.campaignTotal
     out.push('')
-    out.push(`- Campaign total: ${ct.batches} batch(es), ${ct.candidates} candidate(s); test LOC delta ${ct.testLocDelta} (${ct.testLocBasis}); production LOC delta ${ct.productionLocDelta} (${ct.productionLocBasis})`)
+    out.push(`- Campaign total: ${ct.batches} batch(es), ${ct.candidates} candidate(s); test LOC delta ${testLocText(ct)}; production LOC delta ${productionLocText(ct)}`)
     if (s.planNotes.length) out.push(section('Planner notes', s.planNotes))
     for (const b of s.batches.slice(1)) {
       out.push('')
       out.push(`### Batch ${b.index}: ${b.groupId} (${b.ownerBoundary})`)
       out.push(`- ${batchLoc(b)}`)
-      if (b.planNote) out.push(`- Plan note: ${b.planNote}`)
-      if (b.rationale) out.push(`- Rationale: ${b.rationale}`)
+      out.push(...batchContextLines(b, s.batches))
       out.push(
         ...b.candidates.map(
           (c) =>
@@ -1702,6 +1849,8 @@ log(
   `Merged ${m.raw} proposal(s) into ${m.merged.length} (${m.duplicatesMerged} duplicate(s)); ${m.overCap.length} over lane cap, ${m.notReady.length} not ready, ${m.repairs.length} repair(s), ${m.ready.length} C/D/M in ${m.groups.length} owner group(s).`,
 )
 if (m.overCap.length) gaps.push({ kind: 'over-lane-cap', detail: `${m.overCap.length} proposal(s) past maxCandidatesPerLane ${brief.maxCandidatesPerLane} were never refuted: ${m.overCap.map((r) => r.id).join(', ')}` })
+const relabeled = m.merged.filter((r) => r.relabeled).map((r) => r.id)
+if (relabeled.length) log(`Relabeled ${relabeled.length} same-file fold-into-owner merge(s) as table-driven: ${relabeled.join(', ')}.`)
 if (m.notReady.length) log(`Not ready: ${m.notReady.map((r) => `${r.id} (${r.missing.join(', ')})`).join('; ')}.`)
 const seeds = checkSeeds(brief, inv.seedLane, laneResults, m.merged)
 for (const x of seeds.filter((x) => x.status === 'unanswered')) gaps.push({ kind: 'seed-unanswered', detail: `${x.id} ${x.seed}: ${x.detail}` })
@@ -1733,7 +1882,12 @@ log(`Verification: ${buckets.eligible.length} eligible, ${buckets.retained.lengt
 phase('Rank and campaign')
 const ranked = rankEligible(buckets.eligible)
 const groupRanking = rankGroups(ranked, m.groups)
-const focusedFor = (file) => focusedCommand(inv.commands.focused.template, file)
+const template = inv.commands.focused.template
+const campaignCommands = {
+  template,
+  focused: (file) => focusedCommand(template, file),
+  focusedMany: (files) => focusedCommandMany(template, files),
+}
 let campaign = { batches: [], notes: [] }
 if (!ranked.length) log('Nothing is eligible; the planner is not called.')
 else {
@@ -1748,7 +1902,7 @@ else {
     nonResponders.selector = true
     log('The planner returned nothing; every eligible group becomes a batch in rank order.')
   }
-  campaign = planCampaign(sel, ranked, groupRanking, focusedFor)
+  campaign = planCampaign(sel, ranked, groupRanking, campaignCommands)
   if (campaign.notes.length) log(`Planner: ${campaign.notes.join('; ')}.`)
 }
 const batches = campaign.batches
@@ -1759,8 +1913,12 @@ const campaignTotal = {
   batches: batches.length,
   candidates: batches.reduce((n, b) => n + b.candidates.length, 0),
   testLocDelta: batches.reduce((n, b) => n + b.testLocDelta, 0),
+  testLocMeasured: batches.reduce((n, b) => n + b.testLocMeasured, 0),
+  testLocEstimated: batches.reduce((n, b) => n + b.testLocEstimated, 0),
   testLocBasis: sumBasis(batches.map((b) => b.testLocBasis)),
   productionLocDelta: batches.reduce((n, b) => n + b.productionLocDelta, 0),
+  productionLocMeasured: batches.reduce((n, b) => n + b.productionLocMeasured, 0),
+  productionLocEstimated: batches.reduce((n, b) => n + b.productionLocEstimated, 0),
   productionLocBasis: sumBasis(batches.map((b) => b.productionLocBasis)),
 }
 log(`Campaign: ${campaignTotal.batches} batch(es), ${campaignTotal.candidates} candidate(s), test ${campaignTotal.testLocDelta}, production ${campaignTotal.productionLocDelta}.`)
@@ -1830,18 +1988,24 @@ const inventory = {
 const ledgerBatch = (b) => ({
   index: b.index,
   groupId: b.groupId,
+  groupIds: b.groupIds,
   ownerBoundary: b.ownerBoundary,
   candidateIds: b.candidates.map((c) => c.id),
   trimmed: b.trimmed.map((t) => ({ id: t.id, why: t.why })),
   editShape: b.editShape,
   testLocDelta: b.testLocDelta,
+  testLocMeasured: b.testLocMeasured,
+  testLocEstimated: b.testLocEstimated,
   testLocBasis: b.testLocBasis,
   productionLocDelta: b.productionLocDelta,
+  productionLocMeasured: b.productionLocMeasured,
+  productionLocEstimated: b.productionLocEstimated,
   productionLocBasis: b.productionLocBasis,
   unlocalizedProduction: b.unlocalizedProduction,
   newTests: b.newTests,
   keeperMutations: b.keeperMutations,
   validationCommands: b.validationCommands,
+  landsBefore: b.landsBefore,
   rationale: b.rationale,
   planNote: b.planNote,
 })
