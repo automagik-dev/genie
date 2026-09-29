@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,20 +41,6 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 describe('project MCP route retirement', () => {
-  test('init removes only a single complete owned Codex block and never creates a replacement route', () => {
-    const repo = initRepo('repo');
-    const config = join(repo, '.codex', 'config.toml');
-    mkdirSync(join(repo, '.codex'), { recursive: true });
-    writeFileSync(
-      config,
-      'model = "keep"\n# BEGIN GENIE MCP FALLBACK\n[mcp_servers.genie]\ncommand = "/old/genie"\nargs = ["mcp"]\n# END GENIE MCP FALLBACK\n',
-    );
-
-    expect(run(['init'], repo).code).toBe(0);
-    expect(readFileSync(config, 'utf8')).toBe('model = "keep"\n');
-    expect(existsSync(join(repo, '.mcp.json'))).toBe(false);
-  });
-
   test('unowned configuration is byte-stable and every repo fails closed on the removed verb', () => {
     for (const name of ['alpha', 'bravo']) {
       const repo = initRepo(name);

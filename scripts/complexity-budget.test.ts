@@ -138,32 +138,27 @@ describe('evaluateBudget', () => {
     expect(verdict.failures).toEqual([]);
   });
 
-  test('fails when warning count regresses', () => {
-    const report = fakeReport({
-      warnings: new Array(BUDGET.maxWarningCount + 1).fill(0).map((_, i) => ({
-        file: 'src/x.ts',
-        line: i,
-        column: 1,
-        score: 26,
-      })),
-    });
-    const verdict = evaluateBudget(report);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.failures.join('\n')).toMatch(/retained warning count/);
-  });
+  const regressions: Array<[string, Parameters<typeof fakeReport>[0], RegExp]> = [
+    [
+      'warning count',
+      {
+        warnings: new Array(BUDGET.maxWarningCount + 1).fill(0).map((_, i) => ({
+          file: 'src/x.ts',
+          line: i,
+          column: 1,
+          score: 26,
+        })),
+      },
+      /retained warning count/,
+    ],
+    ['max score', { maxScore: BUDGET.maxScore + 1 }, /max score/],
+    ['suppression count', { suppressionCount: BUDGET.maxSuppressionCount + 1 }, /suppression count/],
+  ];
 
-  test('fails when max score regresses', () => {
-    const report = fakeReport({ maxScore: BUDGET.maxScore + 1 });
-    const verdict = evaluateBudget(report);
+  test.each(regressions)('fails when %s regresses', (_, overrides, failure) => {
+    const verdict = evaluateBudget(fakeReport(overrides));
     expect(verdict.ok).toBe(false);
-    expect(verdict.failures.join('\n')).toMatch(/max score/);
-  });
-
-  test('fails when suppression count regresses', () => {
-    const report = fakeReport({ suppressionCount: BUDGET.maxSuppressionCount + 1 });
-    const verdict = evaluateBudget(report);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.failures.join('\n')).toMatch(/suppression count/);
+    expect(verdict.failures.join('\n')).toMatch(failure);
   });
 
   test('reports every regressing metric, not just the first', () => {

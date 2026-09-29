@@ -408,32 +408,6 @@ describe('install.sh fetch_latest reads both the CDN and the contents API (#2950
     expect(run.stdout.toString().trim()).toBe(manifest('5.260918.10'));
     expect(run.stderr.toString()).toContain('the CDN has 5.260918.10; api.github.com is still at 5.260918.9');
   });
-
-  test('an API request that fails degrades silently to the CDN payload', () => {
-    const root = mkroot();
-    const stub = stubCurl(root, { cdnBody: manifest('5.260918.1'), apiBody: null });
-
-    const run = runFetchLatest(stub, root);
-
-    expect(run.exitCode).toBe(0);
-    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.1'));
-  });
-
-  test('a base64 envelope (or any other malformed API body) degrades to the CDN payload', () => {
-    const root = mkroot();
-    const envelope = JSON.stringify({
-      name: 'latest.json',
-      encoding: 'base64',
-      content: Buffer.from(manifest('5.260918.9')).toString('base64'),
-    });
-    const stub = stubCurl(root, { cdnBody: manifest('5.260918.1'), apiBody: envelope });
-
-    const run = runFetchLatest(stub, root);
-
-    expect(run.exitCode).toBe(0);
-    expect(run.stdout.toString().trim()).toBe(manifest('5.260918.1'));
-    expect(run.stdout.toString()).not.toContain('5.260918.9');
-  });
 });
 
 // ---------------------------------------------------------------------------

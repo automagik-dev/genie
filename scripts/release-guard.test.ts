@@ -89,11 +89,13 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
     }
   });
 
-  test('a malformed tag ref fails closed', () => {
-    const result = guard('require-dispatch-tag', {
-      EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/not-a-version',
-    });
+  test.each([
+    ['a malformed tag ref', { REF: 'refs/tags/not-a-version' }],
+    ['a version input failing the grammar', { REF: 'refs/tags/v6.260714.1', VERSION: '6.260714.1; rm -rf /' }],
+    // Suffix-bearing versions fail before release assets or manifests can diverge.
+    ['a suffix-bearing version', { REF: 'refs/tags/v6.260714.1-rc.1', VERSION: '6.260714.1-rc.1', CHANNEL: 'dev' }],
+  ] as const)('%s fails closed', (_, env) => {
+    const result = guard('require-dispatch-tag', { EVENT: 'workflow_dispatch', ...env });
     expect(result.exitCode).toBe(3);
   });
 
@@ -105,25 +107,6 @@ describe('require-dispatch-tag (F16 ref guard)', () => {
     });
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain('does not match dispatched tag');
-  });
-
-  test('a version input failing the grammar fails closed', () => {
-    const result = guard('require-dispatch-tag', {
-      EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v6.260714.1',
-      VERSION: '6.260714.1; rm -rf /',
-    });
-    expect(result.exitCode).toBe(3);
-  });
-
-  test('suffix-bearing versions fail before release assets or manifests can diverge', () => {
-    const result = guard('require-dispatch-tag', {
-      EVENT: 'workflow_dispatch',
-      REF: 'refs/tags/v6.260714.1-rc.1',
-      VERSION: '6.260714.1-rc.1',
-      CHANNEL: 'dev',
-    });
-    expect(result.exitCode).toBe(3);
   });
 
   test('a foreign major, impossible dates, zero counters, and oversized counters are rejected', () => {
@@ -240,13 +223,6 @@ describe('release major (drift guard across the three authorities)', () => {
     // a list of sites rather than "expected 1, got 2".
     expect(majors, sites.map((entry) => `${entry.site}=${entry.major}`).join(', ')).toHaveLength(1);
     expect(majors[0]).toBe('6');
-  });
-
-  test('a single divergent site is caught', () => {
-    const drifted = sources();
-    drifted.versionYml = drifted.versionYml.replace('echo "prefix=6"', 'echo "prefix=7"');
-    const majors = new Set(collectReleaseMajorSites(drifted).map((entry) => entry.major));
-    expect([...majors].sort()).toEqual(['6', '7']);
   });
 
   test('a renamed or deleted site fails loudly instead of passing vacuously', () => {

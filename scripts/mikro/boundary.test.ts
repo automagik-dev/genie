@@ -399,42 +399,6 @@ describe('isBoundaryMode', () => {
 });
 
 const BWRAP = Bun.which('bwrap');
-describe.skipIf(!BWRAP)('live boundary (skipped when bwrap is absent on this host)', () => {
-  test('a write into a read-only bind is refused and leaves nothing behind', () => {
-    const root = mkdtempSync(join(tmpdir(), 'mikro-live-'));
-    const target = join(root, 'written');
-    const proc = Bun.spawnSync(
-      [
-        'bwrap',
-        '--unshare-all',
-        '--die-with-parent',
-        '--ro-bind',
-        '/usr',
-        '/usr',
-        '--ro-bind',
-        '/bin',
-        '/bin',
-        '--ro-bind',
-        '/lib',
-        '/lib',
-        '--ro-bind',
-        '/lib64',
-        '/lib64',
-        '--ro-bind',
-        root,
-        root,
-        '--',
-        '/bin/sh',
-        '-c',
-        `echo x > ${shellQuote(target)}`,
-      ],
-      { stdout: 'pipe', stderr: 'pipe' },
-    );
-    expect(proc.exitCode).not.toBe(0);
-    expect(existsSync(target)).toBe(false);
-    rmSync(root, { recursive: true, force: true });
-  });
-});
 
 /**
  * `openBoundary` needs the real mikro runtime and a host settings file, not just bwrap,

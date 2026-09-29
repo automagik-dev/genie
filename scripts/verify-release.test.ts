@@ -92,18 +92,16 @@ describe('verify-release.sh (F31b — real asset scheme)', () => {
     expect(run.stderr.toString()).toContain('SLSA provenance verification failed');
   });
 
-  test('a missing cosign bundle exits 5', () => {
-    const { stub, tarball } = fixture({ bundle: false });
-    const run = verifyLocal(stub, tarball);
-    expect(run.exitCode).toBe(5);
-    expect(run.stderr.toString()).toContain('.bundle');
-  });
+  const missingAssets: Array<[string, Parameters<typeof fixture>[0], string]> = [
+    ['cosign bundle', { bundle: false }, '.bundle'],
+    ['per-tarball SLSA provenance', { intoto: false }, '.intoto.jsonl'],
+  ];
 
-  test('a missing per-tarball SLSA provenance exits 5', () => {
-    const { stub, tarball } = fixture({ intoto: false });
+  test.each(missingAssets)('a missing %s exits 5', (_, missing, named) => {
+    const { stub, tarball } = fixture(missing);
     const run = verifyLocal(stub, tarball);
     expect(run.exitCode).toBe(5);
-    expect(run.stderr.toString()).toContain('.intoto.jsonl');
+    expect(run.stderr.toString()).toContain(named);
   });
 
   test('no arguments prints usage and exits 64', () => {

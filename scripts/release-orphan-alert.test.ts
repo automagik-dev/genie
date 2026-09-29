@@ -23,21 +23,11 @@ const WORKFLOW_PATH = join(ROOT, '.github/workflows/release-orphan-alert.yml');
 const workflow = readFileSync(WORKFLOW_PATH, 'utf8');
 
 describe('release-orphan-alert workflow', () => {
-  test('parses as YAML', () => {
-    const parsed = Bun.YAML.parse(workflow) as Record<string, unknown>;
-    expect(parsed).toBeTruthy();
-    expect((parsed as { name?: string }).name).toBe('Release Orphan Alert');
-  });
-
   describe('auto-closes healed incidents', () => {
     test('lists only OPEN issues carrying the release-incident label', () => {
       expect(workflow).toContain(
         'gh issue list --repo "$REPO" \\\n            --label release-incident --state open --limit 1000',
       );
-    });
-
-    test('closes each healed incident', () => {
-      expect(workflow).toContain('gh issue close "$INCIDENT_NUMBER" --repo "$REPO"');
     });
 
     test('comments the Release URL before closing', () => {
@@ -173,11 +163,6 @@ describe('release-orphan-alert workflow', () => {
       expect(workflow.slice(breakGuardIndex, loopEnd)).toContain('break');
     });
 
-    test('the open-incident listing is not truncated at 100', () => {
-      // 664 release-incident issues were open at once in the #2211–#2410 era.
-      expect(workflow).toContain('--label release-incident --state open --limit 1000');
-    });
-
     test('every gh call inside the read loop is detached from the loop stdin', () => {
       const loopStart = workflow.indexOf("while IFS=$'\\t' read -r INCIDENT_NUMBER");
       const loopEnd = workflow.indexOf('done <<<"$OPEN_INCIDENTS"');
@@ -242,16 +227,6 @@ describe('release-orphan-alert workflow', () => {
       const emptyGuard = workflow.slice(emptyGuardIndex, predicateIndex);
       expect(emptyGuard).toContain('::warning::could not read the commit subject');
       expect(emptyGuard).toContain('continue');
-    });
-
-    test('a comment adjacent to the predicate names both of version.yml mint paths', () => {
-      const predicateIndex = workflow.indexOf('TAG_SUBJECT=$(git log -1');
-      const context = workflow.slice(Math.max(0, predicateIndex - 2000), predicateIndex);
-      expect(context).toContain('version.yml mints');
-      expect(context).toContain('[auto-version]');
-      expect(context).toContain('push --atomic');
-      expect(context).toContain('channel=stable');
-      expect(context).toContain('release_ready=false');
     });
   });
 

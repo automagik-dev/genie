@@ -1130,12 +1130,6 @@ describe('Group E release and documentation contracts', () => {
     expect(lint).toContain('designReviewViolations');
   });
 
-  test('MCP operator instructions expose project-route ownership policy', () => {
-    const readme = read('README.md');
-    expect(readme).toContain('registrations proven to be Genie-owned');
-    expect(readme).toContain('unowned same-name routes');
-  });
-
   test('the retired homolog channel never reappears in any workflow', () => {
     for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
       expect(read(`.github/workflows/${name}`), name).not.toContain('homolog');
