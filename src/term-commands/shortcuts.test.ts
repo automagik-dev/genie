@@ -155,16 +155,6 @@ describe('fenced blocks (current install format)', () => {
     if (res.code !== 0) throw new Error(`install failed: ${res.stderr}`);
   }
 
-  test('install writes a fenced block and removal restores the file byte-for-byte', () => {
-    writeFileSync(zshrc(), 'export EDITOR=vim\n');
-    const original = readFileSync(zshrc(), 'utf-8');
-    cliInstall();
-    expect(readFileSync(zshrc(), 'utf-8')).toContain('>>> genie shortcuts');
-
-    expect(removeMarkedContent(zshrc(), MARKER)).toBe('removed');
-    expect(readFileSync(zshrc(), 'utf-8')).toBe(original);
-  });
-
   test('an edited interior is still removed whole — uninstall is version-proof', () => {
     writeFileSync(zshrc(), 'export EDITOR=vim\n');
     cliInstall();

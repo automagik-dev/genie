@@ -233,7 +233,10 @@ describe('strict native no-clobber transaction primitive', () => {
     expect(lstatSync(held).ino).not.toBe(lstatSync(target).ino);
   });
 
-  test('an exception after the native commit reconciles the exact moved inode and never retries', () => {
+  test.each([
+    ['an exception', 'throw'],
+    ['a non-zero return', 'return'],
+  ] as const)('%s after the native commit reconciles the exact moved inode and never retries', (_, after) => {
     const root = fixture();
     const source = join(root, 'source');
     const target = join(root, 'target');
@@ -245,7 +248,8 @@ describe('strict native no-clobber transaction primitive', () => {
       linuxOpener: () => (_sourceParentFd, sourceBuffer, _targetParentFd, targetBuffer) => {
         calls += 1;
         renameSync(join(root, decode(sourceBuffer)), join(root, decode(targetBuffer)));
-        throw new Error('ffi wrapper failed after commit');
+        if (after === 'throw') throw new Error('ffi wrapper failed after commit');
+        return -1;
       },
     });
 
@@ -319,61 +323,43 @@ describe('strict native no-clobber transaction primitive', () => {
     expect(readFileSync(target, 'utf8')).toBe('payload');
   });
 
-  test('an afterInvoke exception is returned as post-commit evidence, never thrown as an uncommitted outcome', () => {
-    const root = fixture();
-    const source = join(root, 'source');
-    const target = join(root, 'target');
-    writeFileSync(source, 'payload');
-    const expected = inspectPhysicalPath(source);
-    if (expected === null) throw new Error('source missing');
-    const postCommit = new Error('post-native crash seam');
-
-    const result = renamePathNoClobber(
-      source,
-      target,
-      expected,
-      injectedNative(root, {
-        afterInvoke: () => {
-          throw postCommit;
+  test.each([
+    ['an Error', new Error('post-native crash seam'), 'post-native crash seam'],
+    [
+      'an unprintable value',
+      {
+        toString: () => {
+          throw new Error('cannot stringify');
         },
-      }),
-    );
+      },
+      'post-invoke callback threw an unprintable value',
+    ],
+  ] as const)(
+    'an afterInvoke that throws %s is returned as post-commit evidence, never thrown as an uncommitted outcome',
+    (_, thrown, message) => {
+      const root = fixture();
+      const source = join(root, 'source');
+      const target = join(root, 'target');
+      writeFileSync(source, 'payload');
+      const expected = inspectPhysicalPath(source);
+      if (expected === null) throw new Error('source missing');
 
-    expect(result.committed).toBe(true);
-    expect(result.postInvokeError).toEqual({ name: 'Error', message: 'post-native crash seam' });
-    expect(readFileSync(target, 'utf8')).toBe('payload');
-  });
+      const result = renamePathNoClobber(
+        source,
+        target,
+        expected,
+        injectedNative(root, {
+          afterInvoke: () => {
+            throw thrown;
+          },
+        }),
+      );
 
-  test('an unprintable afterInvoke value is serialized without escaping after commit', () => {
-    const root = fixture();
-    const source = join(root, 'source');
-    const target = join(root, 'target');
-    writeFileSync(source, 'payload');
-    const expected = inspectPhysicalPath(source);
-    if (expected === null) throw new Error('source missing');
-
-    const result = renamePathNoClobber(
-      source,
-      target,
-      expected,
-      injectedNative(root, {
-        afterInvoke: () => {
-          throw {
-            toString: () => {
-              throw new Error('cannot stringify');
-            },
-          };
-        },
-      }),
-    );
-
-    expect(result.committed).toBe(true);
-    expect(result.postInvokeError).toEqual({
-      name: 'Error',
-      message: 'post-invoke callback threw an unprintable value',
-    });
-    expect(readFileSync(target, 'utf8')).toBe('payload');
-  });
+      expect(result.committed).toBe(true);
+      expect(result.postInvokeError).toEqual({ name: 'Error', message });
+      expect(readFileSync(target, 'utf8')).toBe('payload');
+    },
+  );
 
   test('a held-parent fsync failure is returned as committed but not durable', () => {
     const root = fixture();
@@ -400,28 +386,6 @@ describe('strict native no-clobber transaction primitive', () => {
       { parent: 'source', name: 'Error', message: 'directory durability unavailable' },
     ]);
     expect(readFileSync(target, 'utf8')).toBe('payload');
-  });
-
-  test('a non-zero return after the native commit also reconciles without a retry', () => {
-    const root = fixture();
-    const source = join(root, 'source');
-    const target = join(root, 'target');
-    writeFileSync(source, 'payload');
-    const expected = inspectPhysicalPath(source);
-    if (expected === null) throw new Error('source missing');
-    let calls = 0;
-    const dependencies = injectedNative(root, {
-      linuxOpener: () => (_sourceParentFd, sourceBuffer, _targetParentFd, targetBuffer) => {
-        calls += 1;
-        renameSync(join(root, decode(sourceBuffer)), join(root, decode(targetBuffer)));
-        return -1;
-      },
-    });
-
-    renamePathNoClobber(source, target, expected, dependencies);
-
-    expect(calls).toBe(1);
-    expect(inspectPhysicalPath(target)).toEqual(expected);
   });
 
   test('moves a complete physical directory and binds every descendant inode and byte', () => {

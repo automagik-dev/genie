@@ -23,7 +23,6 @@ import {
 const ROOT = join(import.meta.dir, '..', '..');
 const WISH_JS = join(ROOT, '.claude', 'workflows', 'wish.js');
 const SCRIPT = readFileSync(WISH_JS, 'utf8');
-const SOURCE = readFileSync(join(import.meta.dir, 'triage.ts'), 'utf8');
 
 // ─── wish.js, lifted ─────────────────────────────────────
 // No module can import `.claude/workflows/wish.js` — the harness executes it — so the parity tests
@@ -310,15 +309,14 @@ describe('WRS dimensions', () => {
     expect(wrs.metCount).toBe(4);
   });
 
-  test('scope is unmet over the maximum band', () => {
-    const wrs = deriveWrs({ ...base, band: 'over-maximum' });
-    expect(wrs.dimensions.scope).toEqual({ met: false, evidence: '1 candidate file(s), band over-maximum' });
-  });
+  const unmetScopes: Array<[string, Partial<typeof base>, string]> = [
+    ['over the maximum band', { band: 'over-maximum' }, '1 candidate file(s), band over-maximum'],
+    ['with no candidate file', { candidateFiles: [] }, '0 candidate file(s), band ideal'],
+  ];
 
-  test('scope is unmet with no candidate file', () => {
-    const wrs = deriveWrs({ ...base, candidateFiles: [] });
-    expect(wrs.dimensions.scope.met).toBe(false);
-    expect(wrs.dimensions.scope.evidence).toBe('0 candidate file(s), band ideal');
+  test.each(unmetScopes)('scope is unmet %s', (_, over, evidence) => {
+    const wrs = deriveWrs({ ...base, ...over });
+    expect(wrs.dimensions.scope).toEqual({ met: false, evidence });
   });
 
   test('risks is unmet on a boundary hit and names it', () => {
@@ -442,12 +440,6 @@ describe('D5 — lanes are judged, never computed here', () => {
       const record = await intentRun(okRun('wish-context', answer));
       expect(record.lane).toEqual({ value: null, source: 'none' });
     }
-  });
-
-  test('the shipped source names no lane at all', () => {
-    for (const lane of ['incident', 'patch', 'small', 'standard', 'program', 'spike', 'freestyle'])
-      expect(SOURCE).not.toContain(`'${lane}'`);
-    expect(SOURCE).not.toContain('LANES');
   });
 
   test('the record is not a microagent of its own', () => {

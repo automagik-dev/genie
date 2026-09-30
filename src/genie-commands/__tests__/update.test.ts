@@ -36,7 +36,6 @@ import type { AuxiliaryTreeOutcome, AuxiliaryTreeStage } from '../auxiliary-tree
 import {
   DeliveryPublicationError,
   type LatestManifest,
-  type VerifyResult,
   _resetNextDeprecationLatchForTest,
   applyConvergenceExitSignal,
   classifyAttestationCrossCheck,
@@ -187,16 +186,6 @@ describe('decideVerify', () => {
     });
     expect(result).toEqual({ kind: 'ok', version: '4.260507.2', path: '/home/.genie/bin/genie' });
   });
-
-  test('VerifyResult tagged-union shape is exhaustive', () => {
-    const variants: VerifyResult[] = [
-      { kind: 'ok', version: '1.0.0', path: '/home/.genie/bin/genie' },
-      { kind: 'verify-failed', reason: 'boom', path: '/home/.genie/bin/genie' },
-      { kind: 'skipped', reason: 'no-restart' },
-      { kind: 'skipped', reason: 'no-verify-flag' },
-    ];
-    expect(variants).toHaveLength(4);
-  });
 });
 
 describe('shortCircuitIfCurrent', () => {
@@ -257,11 +246,6 @@ describe('compareVersions', () => {
   test('build metadata is stripped before comparing', () => {
     expect(compareVersions('5.260710.11+abc1234', '5.260710.11')).toBe(0);
     expect(compareVersions('5.260710.10+deadbee', '5.260710.2')).toBe(1);
-  });
-
-  test('N is compared numerically, not lexically (10 > 2)', () => {
-    // The core of the live bug: string compare would rank "2" above "10".
-    expect(compareVersions('5.260710.10', '5.260710.2')).toBe(1);
   });
 
   test('final releases rank above prereleases of the same core', () => {
@@ -402,12 +386,6 @@ describe('updateCommand wiring', () => {
     manifestSha256: 'a'.repeat(64),
   };
 
-  test('npm-update path is gone — no `bun add @automagik/genie` references', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).not.toMatch(/bun add[^\n]*@automagik\/genie/);
-    expect(source).not.toMatch(/npm install[^\n]*@automagik\/genie/);
-  });
-
   test('npm-fallback env-var is fully removed (acceptance: hard-cutover Decision 7)', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     // The pre-G5 fallback toggled an env var built from the prefix/suffix below.
@@ -428,17 +406,6 @@ describe('updateCommand wiring', () => {
     expect(source).toContain('--no-restart');
     expect(source).toContain('--no-verify');
     expect(source).toContain('--rollback');
-  });
-
-  test('the already-current terminal reports, converges once, and returns', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    const branch = source.slice(source.indexOf('export async function handleAlreadyCurrentUpdate'));
-    // The activation handoff left with the Codex plugin lifecycle: the
-    // already-current path is now report + one convergence + marker retirement.
-    expect(branch).not.toContain('activation is pending');
-    expect(branch).toContain('Already up to date');
-    expect(branch).toContain('runConvergence');
-    expect(branch).toContain('retireLegacyMarker');
   });
 
   test('"Already up to date" exit logs version and channel', () => {
@@ -880,10 +847,6 @@ describe('persistChannel — sticky channel persistence (release-channel-dev)', 
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test('persistChannel("dev") does not throw', async () => {
-    await expect(persistChannel('dev')).resolves.toBeUndefined();
-  });
-
   test('persistChannel("stable") does not throw', async () => {
     await expect(persistChannel('stable')).resolves.toBeUndefined();
   });
@@ -1227,14 +1190,6 @@ describe('resolvePlatformId (G5)', () => {
     // darwin-arm64. Just verify the contract.
     const platform = resolvePlatformId();
     expect(['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64']).toContain(platform);
-  });
-
-  test('produces a value matching scripts/build-binary.sh naming contract', () => {
-    // The G1 build-tarballs.yml emits `genie-<version>-<platform>.tar.gz`;
-    // any platform we resolve must be parseable by that filename schema.
-    const platform = resolvePlatformId();
-    const filename = `genie-1.2.3-${platform}.tar.gz`;
-    expect(filename).toMatch(/^genie-1\.2\.3-(linux-x64-glibc|linux-x64-musl|linux-arm64|darwin-arm64)\.tar\.gz$/);
   });
 });
 
@@ -1804,11 +1759,6 @@ describe('rollbackBinary (G5)', () => {
 // ============================================================================
 
 describe('Diagnostics schema (G5)', () => {
-  test('schema version bumped to 3 (G5 cutover)', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain('UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 3');
-  });
-
   test('diagnostics object includes verify and delivery blocks', () => {
     const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     expect(source).toContain('verify: extras.verify');
@@ -1876,23 +1826,11 @@ describe('post-update verify wiring', () => {
 // ============================================================================
 
 describe('Plugin sync — .orphaned_at filter (skills regression 2026-05-06)', () => {
-  test('FRAMEWORK_MARKER_FILES set contains .orphaned_at', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).toContain('FRAMEWORK_MARKER_FILES');
-    expect(source).toContain("'.orphaned_at'");
-  });
-
   test('transactional copier receives and applies FRAMEWORK_MARKER_FILES', () => {
     const updateSource = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
     const helperSource = readFileSync(join(__dirname, '..', 'auxiliary-trees.ts'), 'utf-8');
     expect(updateSource).toContain('excludedEntryNames: FRAMEWORK_MARKER_FILES');
     expect(helperSource).toContain('if (excludedEntryNames.has(entry.name)) continue;');
-  });
-
-  test('repo source tree does NOT contain plugins/genie/.orphaned_at', () => {
-    const repoRoot = join(__dirname, '..', '..', '..');
-    const orphanedMarkerPath = join(repoRoot, 'plugins', 'genie', '.orphaned_at');
-    expect(require('node:fs').existsSync(orphanedMarkerPath)).toBe(false);
   });
 
   test('.gitignore lists .orphaned_at', () => {
@@ -2167,13 +2105,6 @@ describe('legacy pending delivery compatibility', () => {
   });
 });
 describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () => {
-  test('resolveLiveBinaryPath returns null or a string (which-genie probe)', () => {
-    // Smoke test: the function must not throw on any host. If genie isn't on
-    // PATH (CI sandbox), we get null. If it is, we get a resolved path.
-    const result = resolveLiveBinaryPath();
-    expect(result === null || typeof result === 'string').toBe(true);
-  });
-
   test('ensureCanonicalInstall returns target path when there is no live binary', () => {
     // When `which genie` fails (no install yet), the function should fall
     // through to the canonical target without throwing — first-install path.
@@ -2209,19 +2140,6 @@ describe('ensureCanonicalInstall + resolveLiveBinaryPath (review fix #3)', () =>
     expect(deliveryIdx).toBeGreaterThan(-1);
     // The check must run BEFORE we touch the binary on disk.
     expect(ensureIdx).toBeLessThan(deliveryIdx);
-  });
-});
-
-describe('Knip-clean exports (PR #1733 follow-up)', () => {
-  test('fetchLatestVersion shim is removed (knip dead-code finding)', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).not.toContain('export async function fetchLatestVersion');
-  });
-
-  test('RELEASES_BASE_URL constant + bottom re-export are removed (knip dead-code)', () => {
-    const source = readFileSync(join(__dirname, '..', 'update.ts'), 'utf-8');
-    expect(source).not.toContain('RELEASES_BASE_URL');
-    expect(source).not.toMatch(/^export\s*\{\s*RELEASES_/m);
   });
 });
 

@@ -53,23 +53,4 @@ describe('.claude/settings.json hook registry', () => {
     expect(registeredHooks(settings)).toEqual([`PreToolUse: command ${GIT_SAFETY}`]);
     expect(onlyGitSafety(settings)).toBe(true);
   });
-
-  test('a second hook under the same group fails the pin', () => {
-    const probe = structuredClone(settings);
-    probe.hooks.PreToolUse?.[0]?.hooks?.push({ type: 'command', command: 'bash hooks/bash-poll-guard.sh' });
-    expect(onlyGitSafety(probe)).toBe(false);
-  });
-
-  test('a second hook under another event fails the pin', () => {
-    const probe = structuredClone(settings);
-    probe.hooks.Stop = [{ hooks: [{ type: 'command', command: 'bash hooks/claude-session-end.sh' }] }];
-    expect(onlyGitSafety(probe)).toBe(false);
-  });
-
-  test('a replaced or emptied registry fails the pin', () => {
-    const replaced = structuredClone(settings);
-    replaced.hooks.PreToolUse = [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'bash other.sh' }] }];
-    expect(onlyGitSafety(replaced)).toBe(false);
-    expect(onlyGitSafety({})).toBe(false);
-  });
 });

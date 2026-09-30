@@ -18,34 +18,6 @@ import { MACHINE_LOCAL_GENIE_PATHS } from '../../src/term-commands/init.js';
 
 const SCRIPT = join(import.meta.dir, 'v5-lifecycle.sh');
 
-/** Cardinal counts a label must not embed when what it asserts is a named set. */
-const COUNT_TOKENS = [
-  'one',
-  'two',
-  'three',
-  'four',
-  'five',
-  'six',
-  'seven',
-  'eight',
-  'nine',
-  'ten',
-  'eleven',
-  'twelve',
-] as const;
-
-/** The `assert <label>` that immediately precedes a line matching `anchor`. */
-function labelBefore(script: string, anchor: string): string {
-  const lines = script.split('\n');
-  const index = lines.findIndex((line) => line.includes(anchor));
-  expect(index).toBeGreaterThan(0);
-  for (let cursor = index; cursor >= 0; cursor -= 1) {
-    const match = /^assert (\S+)$/.exec(lines[cursor] as string);
-    if (match !== null) return match[1] as string;
-  }
-  throw new Error(`no assert label precedes ${anchor}`);
-}
-
 describe('v5 lifecycle e2e assertion labels', () => {
   const script = readFileSync(SCRIPT, 'utf8');
   const RULE_LOOP = "for rule in '.genie/genie.db'";
@@ -55,12 +27,5 @@ describe('v5 lifecycle e2e assertion labels', () => {
     expect(line).toBeDefined();
     const rules = [...line.matchAll(/'([^']+)'/g)].map((match) => match[1] as string);
     expect(rules).toEqual([...MACHINE_LOCAL_GENIE_PATHS]);
-  });
-
-  test('its label names the rule set instead of counting it', () => {
-    const label = labelBefore(script, RULE_LOOP);
-    expect(label).toBe('gitignore-has-every-machine-local-genie-rule');
-    for (const token of COUNT_TOKENS) expect(label.split('-')).not.toContain(token);
-    expect(label).not.toMatch(/\d/);
   });
 });

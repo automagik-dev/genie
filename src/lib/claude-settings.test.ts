@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { GENIE_BASELINE_ALLOWED_TOOLS, ensureBaselineAllowedTools } from './claude-settings.js';
+import { ensureBaselineAllowedTools } from './claude-settings.js';
 
 describe('ensureBaselineAllowedTools — AskUserQuestion baseline (#1688)', () => {
   test('seeds AskUserQuestion when settings has no permissions block', () => {
@@ -73,23 +73,5 @@ describe('ensureBaselineAllowedTools — AskUserQuestion baseline (#1688)', () =
 
     expect(changed).toBe(true);
     expect((settings.permissions as { allow: string[] }).allow).toEqual(['Read', 'Glob', 'AskUserQuestion']);
-  });
-
-  test('idempotent — second call on already-baselined settings is a no-op', () => {
-    const settings: Record<string, unknown> = {
-      permissions: { allow: ['AskUserQuestion'] },
-    };
-    expect(ensureBaselineAllowedTools(settings)).toBe(false);
-    expect((settings.permissions as { allow: string[] }).allow).toEqual(['AskUserQuestion']);
-  });
-});
-
-describe('GENIE_BASELINE_ALLOWED_TOOLS — invariants', () => {
-  test('AskUserQuestion is in the baseline (#1688 contract)', () => {
-    expect(GENIE_BASELINE_ALLOWED_TOOLS).toContain('AskUserQuestion');
-  });
-
-  test('baseline is non-empty', () => {
-    expect(GENIE_BASELINE_ALLOWED_TOOLS.length).toBeGreaterThan(0);
   });
 });

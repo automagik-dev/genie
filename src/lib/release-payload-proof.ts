@@ -46,20 +46,6 @@ export function parseReleaseVersion(raw: unknown): ParsedReleaseVersion | null {
   return { major, ymd, n, canonical: `${major}.${match[2]}.${n}` };
 }
 
-/** Total numeric order over validated versions. */
-export function compareReleaseVersions(a: ParsedReleaseVersion, b: ParsedReleaseVersion): -1 | 0 | 1 {
-  if (a.major !== b.major) return a.major < b.major ? -1 : 1;
-  if (a.ymd !== b.ymd) return a.ymd < b.ymd ? -1 : 1;
-  if (a.n !== b.n) return a.n < b.n ? -1 : 1;
-  return 0;
-}
-
-/** Strip ANSI CSI and OSC control sequences from modeled diagnostics/output. */
-export function stripControl(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally matching ESC/BEL control bytes.
-  return text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '');
-}
-
 // ============================================================================
 // Physical-tree scanning (symlink-rejecting, bounded)
 // ============================================================================

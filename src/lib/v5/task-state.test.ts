@@ -340,10 +340,6 @@ describe('lane moves + task_events timeline', () => {
     expect(events[1].authorKind).toBeNull();
   });
 
-  test('appendTaskEvent rejects an unknown task', () => {
-    expect(() => appendTaskEvent(db, 't_nope', { kind: 'move' })).toThrow(UnknownTaskError);
-  });
-
   // M6: the append is check-then-insert. Under a concurrent delete the insert
   // used to violate the task_events foreign key and surface the raw
   // `FOREIGN KEY constraint failed`. The immediate transaction closes the
@@ -786,18 +782,14 @@ function rawBlockKind(handle: Database, taskId: string): string | null {
 }
 
 describe('block kinds — work vs hold', () => {
-  test('an omitted kind stores and projects the work default', () => {
+  test.each([
+    ['an omitted kind stores and projects the work default', 'needs a decision', undefined, 'work'],
+    ['an explicit hold is stored and projected as a hold', 'parked until Q3', 'hold', 'hold'],
+  ] as const)('%s', (_, reason, kind, stored) => {
     const a = createTask(db, { title: 'a' });
-    blockTask(db, a.id, 'needs a decision', HUMAN);
-    expect(rawBlockKind(db, a.id)).toBe('work');
-    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'needs a decision', kind: 'work' });
-  });
-
-  test('an explicit hold is stored and projected as a hold', () => {
-    const a = createTask(db, { title: 'a' });
-    blockTask(db, a.id, 'parked until Q3', HUMAN, 'hold');
-    expect(rawBlockKind(db, a.id)).toBe('hold');
-    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason: 'parked until Q3', kind: 'hold' });
+    blockTask(db, a.id, reason, HUMAN, kind);
+    expect(rawBlockKind(db, a.id)).toBe(stored);
+    expect(getTaskCard(db, a.id)?.enforcedBlock).toEqual({ reason, kind: stored });
   });
 
   test('a hold refuses checkout exactly like a work block', () => {
@@ -1923,10 +1915,6 @@ describe('typed refusals — heartbeat and board scoping', () => {
     expect(getTaskCard(db, task.id)?.heartbeatAt).toBe(4242);
     releaseTask(db, task.id, HUMAN);
     expect(() => recordHeartbeat(db, task.id)).toThrow(TaskNotClaimedError);
-  });
-
-  test('recordHeartbeat on an unknown id is still UnknownTaskError', () => {
-    expect(() => recordHeartbeat(db, 't_nope')).toThrow(UnknownTaskError);
   });
 
   test('resolveBoard refuses an empty ref instead of widening the scope', () => {

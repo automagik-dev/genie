@@ -436,10 +436,6 @@ function hashFile(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-export function computeFileDigest(path: string): string {
-  return hashFile(path);
-}
-
 // ============================================================================
 // Bounded reads + durable writes — moved verbatim out of
 // the retired Codex activation persistence module

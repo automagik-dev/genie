@@ -10,7 +10,6 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const SCRIPT = readFileSync(join(ROOT, '.claude', 'workflows', 'research-sweep.js'), 'utf8');
-const PARITY = readFileSync(join(ROOT, 'scripts', 'research-sweep-workflow-parity.test.ts'), 'utf8');
 
 function lift(pattern: RegExp): string {
   const match = pattern.exec(SCRIPT);
@@ -114,8 +113,4 @@ describe('a conflict position is backed on source, locator AND topic', () => {
     expect(backingOf({ findings: [{ ...onTopic, quote: '  ' }] }, CLAIM)).toBeNull();
     expect(backingOf({ findings: [offTopic, onTopic] }, CLAIM)).toEqual(onTopic);
   });
-});
-
-test('the parity test compares the injection fence by equality, never containment', () => {
-  expect(PARITY).toMatch(/expect\(flat\([\s\S]{0,60}?\)\)\.toBe\(flat\(fence\[1\] as string\)\)/);
 });

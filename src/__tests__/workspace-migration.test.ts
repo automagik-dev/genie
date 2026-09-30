@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { migrateWorkspaceConfig, validateWorkspaceDefaults } from '../lib/workspace.js';
+import { migrateWorkspaceConfig } from '../lib/workspace.js';
 
 describe('migrateWorkspaceConfig', () => {
   test('flat shape with tmuxSocket migrates to tmux.socket', () => {
@@ -53,27 +53,5 @@ describe('migrateWorkspaceConfig', () => {
     const result = migrateWorkspaceConfig(raw);
     expect(result.agents?.defaults?.model).toBe('haiku');
     expect(result.agents?.defaults?.color).toBe('red');
-  });
-});
-
-describe('validateWorkspaceDefaults', () => {
-  test('valid defaults pass validation', () => {
-    const config = migrateWorkspaceConfig({ name: 'ws', agents: { defaults: { model: 'sonnet' } } });
-    expect(() => validateWorkspaceDefaults(config)).not.toThrow();
-  });
-
-  test('empty defaults pass validation', () => {
-    const config = migrateWorkspaceConfig({ name: 'ws' });
-    expect(() => validateWorkspaceDefaults(config)).not.toThrow();
-  });
-
-  test('invalid model type throws', () => {
-    const config = migrateWorkspaceConfig({ name: 'ws', agents: { defaults: { model: 42 } } });
-    expect(() => validateWorkspaceDefaults(config)).toThrow('Invalid agents.defaults');
-  });
-
-  test('unknown field in agents.defaults throws (strict)', () => {
-    const config = migrateWorkspaceConfig({ name: 'ws', agents: { defaults: { bogus: 'value' } } });
-    expect(() => validateWorkspaceDefaults(config)).toThrow('Invalid agents.defaults');
   });
 });

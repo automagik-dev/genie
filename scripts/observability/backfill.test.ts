@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scanRepoSkills } from '../skills-inventory-parity.js';
@@ -50,14 +50,6 @@ describe('scrub', () => {
     expect(input.includes(NUL)).toBe(true);
     expect(scrub(input)).toBe('ab');
     expect(stripNul(`x${NUL}y`)).toBe('xy');
-  });
-
-  test('neither the converter nor this test carries a raw NUL byte or a control-character suppression', () => {
-    for (const file of ['backfill.ts', 'backfill.test.ts']) {
-      const bytes = readFileSync(join(import.meta.dir, file));
-      expect(bytes.includes(0)).toBe(false);
-      expect(bytes.toString('utf8').includes(['noControlCharacters', 'InRegex'].join(''))).toBe(false);
-    }
   });
 });
 

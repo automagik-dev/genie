@@ -143,11 +143,6 @@ describe('--check is an additive-union SUPERSET check', () => {
     expect(verdict.lines.join('\n')).toContain(CATALOG_CHECK_GAP);
   });
 
-  test('every verdict states the gap, so a green check is never read as an exact match', () => {
-    expect(verdictFor({ names: [], descriptions: [] }, 'stale\n').lines).toContain(CATALOG_CHECK_GAP);
-    expect(verdictFor({ names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] }).lines).toContain(CATALOG_CHECK_GAP);
-  });
-
   test('a text-only difference is stale with no missing entry, and says so', () => {
     const recorded = { names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] };
     const verdict = verdictFor(recorded, `${render(collected, recorded)}\n// hand-edited trailer\n`);

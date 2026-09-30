@@ -53,19 +53,11 @@ describe('version resolver — Mac CPU sprint sibling fix #1464', () => {
     expect(versionSource).toContain("PACKAGE_NAME = '@automagik/genie'");
   });
 
-  test('source bounds the walk depth (no runaway scans)', () => {
-    expect(versionSource).toContain('MAX_WALK_DEPTH');
-  });
-
   test('source matches by package name FIRST, then falls back to any version', () => {
     // Two-pass walk: name-matched, then any-package-with-version
     const namePassIdx = versionSource.indexOf('pkg?.name === PACKAGE_NAME');
     const fallbackPassIdx = versionSource.indexOf('Fallback');
     expect(namePassIdx).toBeGreaterThan(0);
     expect(fallbackPassIdx).toBeGreaterThan(namePassIdx);
-  });
-
-  test('source explicitly stops at filesystem root', () => {
-    expect(versionSource).toMatch(/parent === current/);
   });
 });

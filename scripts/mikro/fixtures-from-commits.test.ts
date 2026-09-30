@@ -15,7 +15,6 @@ import { loadFixtureSet } from './bench';
 import {
   FixturesUsageError,
   buildCommitFixtures,
-  commitPrompt,
   fixtureSetDocument,
   rangeError,
   runFixturesCli,
@@ -174,13 +173,6 @@ describe('buildCommitFixtures', () => {
     expect(twice).toBe(once);
     expect(once).not.toContain(root);
     expect(once).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
-  });
-
-  test('commitPrompt is the one place the two recipes live', () => {
-    expect(commitPrompt('wish-context', 'abc123', 'fix: thing')).toBe('Intent: fix: thing');
-    expect(commitPrompt('review-prep', 'abc123', 'fix: thing')).toBe(
-      'Prepare the review of commit abc123 against abc123^',
-    );
   });
 });
 

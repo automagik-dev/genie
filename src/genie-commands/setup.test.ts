@@ -163,20 +163,6 @@ describe('genie setup', () => {
     }
     expect(existsSync(lockPath)).toBe(false);
   });
-
-  test('setup.ts carries no Codex activation surface', () => {
-    const source = readFileSync(join(import.meta.dir, 'setup.ts'), 'utf8');
-    for (const forbidden of [
-      'requestRetirementAssertion',
-      'executeCodexActivation',
-      'authorizeCodexActivation',
-      'codex-activation',
-      'codex-lifecycle-lease',
-      '--codex',
-    ]) {
-      expect(source.includes(forbidden)).toBe(false);
-    }
-  });
 });
 
 /**

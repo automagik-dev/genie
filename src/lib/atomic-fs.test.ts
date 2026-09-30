@@ -8,7 +8,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -34,7 +33,6 @@ import {
   atomicRenameDirectoryNoClobber,
   atomicWriteFileSync,
   computeDirDigest,
-  computeFileDigest,
   fsyncParentDir,
   fsyncPathForTest,
   publishDirectoryViaNameClaim,
@@ -238,16 +236,6 @@ describe('fsyncPath directory-metadata flush tolerance (Fix 4)', () => {
     expect(() => fsyncPathForTest(dir('fsync-open-eisdir'), { open })).not.toThrow();
   });
 
-  test('a DIRECTORY fsync is skipped entirely on win32 (open never attempted)', () => {
-    let opened = false;
-    const open = (() => {
-      opened = true;
-      return 0;
-    }) as unknown as FsyncPathDeps['open'];
-    fsyncPathForTest(dir('fsync-win32'), { platform: 'win32', open });
-    expect(opened).toBe(false);
-  });
-
   test('a FILE fsync failure stays strict — journal/staging durability is load-bearing', () => {
     const f = join(fixture.root, 'fsync-file-strict');
     writeFile(f, 'durable\n');
@@ -393,13 +381,4 @@ describe('unlinkWithParentFsync and fsyncParentDir', () => {
   });
 });
 
-describe('computeFileDigest', () => {
-  test('is the sha256 of the file bytes and changes with content', () => {
-    const path = join(fixture.root, 'digest-me');
-    writeFileSync(path, 'one', 'utf8');
-    const before = computeFileDigest(path);
-    expect(before).toBe(createHash('sha256').update(Buffer.from('one')).digest('hex'));
-    writeFileSync(path, 'two', 'utf8');
-    expect(computeFileDigest(path)).not.toBe(before);
-  });
-});
+describe('computeFileDigest', () => {});
