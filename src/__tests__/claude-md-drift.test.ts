@@ -86,6 +86,14 @@ describe('CLAUDE.md v5 drift guard', () => {
     expect(shared).toContain('delivered to every agent home by the skills channel');
   });
 
+  test('AGENTS.md scopes an owner answer to the question it answers', () => {
+    const section = shared.split('\n## Owner approvals\n')[1]?.split('\n## ')[0] ?? '';
+    expect(section).toContain('An answer settles only the question it answers.');
+    expect(section).toContain('including any edit to something they already approved, goes in its own question');
+    expect(section).toContain('reopened only by a question that quotes it and shows old → new');
+    expect(section).toContain('wait for their answer');
+  });
+
   test('does not resurrect the dead Genie loopback relay', () => {
     expect(content).not.toContain('relay is load-bearing');
     expect(shared).toContain('Do not use telemetry presence as integration health');
