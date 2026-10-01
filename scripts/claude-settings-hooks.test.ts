@@ -7,7 +7,9 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
 const SETTINGS_PATH = join(ROOT, '.claude', 'settings.json');
-const GIT_SAFETY = 'bash .claude/hooks/git-safety.sh';
+// Anchored on CLAUDE_PROJECT_DIR: a relative path only resolves while the session's cwd is the repo
+// root, and a non-blocking "No such file" error means the guard silently did not run for that command.
+const GIT_SAFETY = 'bash "${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/git-safety.sh"';
 
 interface HookEntry {
   type?: string;
