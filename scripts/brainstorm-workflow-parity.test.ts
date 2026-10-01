@@ -93,10 +93,10 @@ describe('brainstorm.js carries the spine the design fixes', () => {
     expect(carried).toBe(rule);
   });
 
-  test('the result names the agents that returned nothing `silent`, and the header says so', () => {
-    expect(script).toContain('    silent: silent.slice(),');
-    expect(script).toContain('`silent` lists the');
-    expect(script).not.toContain('notConvened');
+  test('the result names the agents that returned null `notConvened`, as every catalog workflow does', () => {
+    expect(script).toContain('    notConvened: notConvened.slice(),');
+    expect(script).toContain('`notConvened`\n// lists the label of every agent that returned null or threw');
+    expect(script).not.toMatch(/\bsilent: /);
   });
 
   test('every phase the script enters is a meta phase, and every meta phase is entered', () => {

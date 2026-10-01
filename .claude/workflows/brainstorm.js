@@ -33,8 +33,9 @@ export const meta = {
 // writes as JSON (argv arrays, payload files, ordering guards), so the commands are the script's and
 // the agent only executes and reports. Every later ledger command passes the round `apply` returned.
 //
-// Result: {state, round, wrs, questions, plan, draft, design, route, notes, silent}. `silent` lists the
-// label of every agent that returned nothing or threw, in dispatch order.
+// Result: {state, round, wrs, questions, plan, draft, design, route, notes, notConvened}. `notConvened`
+// lists the label of every agent that returned null or threw, in dispatch order, as in every other
+// catalog workflow.
 // `state` is one of STATES. `questions` carries the open Asked questions (ids and kinds kept outside
 // the harness payload) for `round` and `blocked`; a question nobody answered stays Asked and is shown
 // again. `plan` is the dispatch plan as run, with every agent label dispatched. Agent budgets: a
@@ -331,7 +332,7 @@ function normalizeInput(raw) {
 // ---------------------------------------------------------------- run state
 
 const notesOut = []
-const silent = []
+const notConvened = []
 const dispatched = []
 const planView = { mode: 'none', reason: '', scouts: [], council: null, agents: 0, labels: [] }
 let round = 0
@@ -364,7 +365,7 @@ async function guard(label, run) {
   } catch (error) {
     addNote(`${label} threw: ${(error && error.message) || 'no message'}`)
   }
-  silent.push(label)
+  notConvened.push(label)
   return null
 }
 
@@ -540,9 +541,11 @@ function fitBatch(first, rest, capacity) {
 const capacityNow = () => BATCH_LIMIT - openQuestions.length
 
 function approvalQuestion(view, count) {
+  const empty = ledger.councils.filter((entry) => texts(entry.decided).length === 0).length
+  const emptyNote = empty ? ` (${empty === count ? 'all' : empty} by a convening that decided nothing)` : ''
   return {
     kind: 'council-approval',
-    question: `The lead wants the Socratic council on: ${oneLine(view.decision)}. ${count} of the ${job.councilCeiling} council(s) this brainstorm allows without asking are used. Convene it anyway in the next run?`,
+    question: `The lead wants the Socratic council on: ${oneLine(view.decision)}. ${count} of the ${job.councilCeiling} council(s) this brainstorm allows without asking are used${emptyNote}. Convene it anyway in the next run?`,
     header: 'Council',
     multiSelect: false,
     options: [
@@ -835,7 +838,7 @@ function planPrompt(settle) {
       ? `The request of the owner${round === 1 ? '' : ' this run'}, in their words:\n${job.request || '(none given: work from the slug and ask the owner what the idea is)'}`
       : '',
     settle
-      ? `The owner chose to settle the open design-review findings themselves (${settle.id}). Their question listed them:\n${settle.question}\nPut each finding that needs a decision to the owner as a question this round.`
+      ? `The owner chose to settle the open design-review findings themselves (${settle.id}). Their question listed them:\n${settle.question}\nPut each of these findings not yet answered in Settled to the owner as a question; once all are, plan the design.`
       : '',
     block('Ledger state (written only by the round ledger)', { round, ...ledger }),
     section('What this round leaves in the DRAFT', [
@@ -964,10 +967,11 @@ function reviewPrompt() {
   ])
 }
 
-function repairPrompt(findings, choice) {
+function repairPrompt(findings, choice, checkFindings) {
   return join([
     `You are the lead of the brainstorm \`${job.slug}\` in the repository at ${job.repo}. The design review returned FIX-FIRST. Repair ${job.design} against the findings below so a fresh review can score it; this run has one repair.`,
     findings.length ? block('Open findings (each id is citable as reviewer <id>)', findings) : '',
+    checkFindings.length ? block('Findings of the last traceability check (round-ledger check-design)', checkFindings) : '',
     choice ? `The owner chose to repair again (${choice.id}). The findings, as their question listed them:\n${choice.question}` : '',
     `Edit DESIGN.md in place, changing what the findings need and nothing else; the Settled answers are in the DRAFT at ${job.draft}. Keep the design-review evidence block exactly once: the next stamp replaces it. A row you change or add cites its Source like every row: a Settled id, a council decision P<n>, reviewer <id> for the finding that drove it, or a backticked path that exists.`,
     `A finding only the owner can settle is not yours to guess: repair everything else, then return status needs-owner with one question per such finding (at most ${Math.max(0, capacityNow())}). Otherwise return status repaired.`,
@@ -1118,6 +1122,10 @@ async function convene(council, capacity) {
 // One committed step: ok with its output, a ledger refusal (the owner resolves it), or a failure to run.
 // The note and the render only inform: the ledger block is already written when they run.
 function stepResult(step, run) {
+  if (run && run.skipped && list(step.onlyAfter).length) {
+    addNote(`${step.step} was skipped: ${list(step.onlyAfter).join(', ')} did not succeed.`)
+    return {}
+  }
   if (!run || run.skipped) return { failed: `${step.step} did not run` }
   if (step.append !== undefined || step.step === 'render') {
     if (run.exitCode !== 0) addNote(`${step.step} did not succeed: ${ledgerError(run, parseJson(run.stdout))}`)
@@ -1272,9 +1280,10 @@ async function checkDesign() {
   if (!run || !out || !Array.isArray(out.findings) || ![0, 1].includes(run.exitCode)) {
     return { result: finish('failed', { note: `check-design did not run: ${ledgerError(run, out)}` }) }
   }
-  const blocking = out.findings.map(objectOf).filter((finding) => finding.blocking)
+  const findings = out.findings.map(objectOf)
+  const blocking = findings.filter((finding) => finding.blocking)
   if (blocking.length) addNote(`check-design found ${blocking.length} blocking finding(s); they go to the owner as one question instead of a review.`)
-  return { blocking }
+  return { blocking, findings }
 }
 
 async function reviewDesign() {
@@ -1319,10 +1328,10 @@ async function stampVerdict(review, repaired) {
   return {}
 }
 
-async function repairDesign(findings, choice) {
+async function repairDesign(findings, choice, checkFindings) {
   phase('Repair')
   const answer = await guard('lead:repair', () =>
-    agent(repairPrompt(findings, choice), { label: 'lead:repair', phase: 'Repair', schema: REPAIR_SCHEMA, model: modelFor('reasoner'), effort: 'high' }),
+    agent(repairPrompt(findings, choice, checkFindings), { label: 'lead:repair', phase: 'Repair', schema: REPAIR_SCHEMA, model: modelFor('reasoner'), effort: 'high' }),
   )
   if (!answer) return { result: finish('failed', { note: 'lead:repair returned nothing; the FIX-FIRST design stands unrepaired.' }) }
   designTouched = true
@@ -1371,7 +1380,7 @@ async function reviewCycle(repairedFirst, ratchet) {
     if (stamped.result) return stamped.result
     const ended = await afterVerdict(review, repaired, ratchet)
     if (ended) return ended
-    const fix = await repairDesign(review.findings, null)
+    const fix = await repairDesign(review.findings, null, check.findings)
     if (fix.result) return fix.result
     repaired = true
   }
@@ -1402,22 +1411,34 @@ async function resumeRepair(choice) {
   }
   const last = ledger.reviews.length ? ledger.reviews[ledger.reviews.length - 1] : {}
   const findings = texts(last.findings).map((id) => ({ id }))
-  const fix = await repairDesign(findings, choice)
+  const fix = await repairDesign(findings, choice, [])
   if (fix.result) return fix.result
   return await reviewCycle(true, null)
 }
 
 // ---------------------------------------------------------------- after apply: the closed set of entries
 
+// The round a question was asked in, read from its id (R<round>-<n>); 0 for an id of another shape.
+const askedRound = (entry) => Number((text(entry.id).match(/^R(\d+)-/) || [])[1] || 0)
+
+const isSettleChoice = (choice) => !asList(choice.value).includes(STOP) && !asList(choice.value).includes(REPAIR_AGAIN)
+
 // A review-findings answer settled after the last recorded review still waits to be acted on, even when
 // the run that settled it ended for another reason: "Repair again" and "Stop" are never lost. Once a
-// review is recorded after it (the repair it asked for ran), it is spent.
+// review is recorded after it (the repair it asked for ran), it is spent. "I settle them" (or a free
+// answer) is pending only until the first question asked after it: the lead turns the findings into
+// questions once, and from then on they live in Asked and Settled like any other decision. A question
+// asked in the run that settled it carries that run's round, so the comparison is "at or after".
 function pendingReviewChoice() {
   const lastReview = Math.max(0, ...ledger.reviews.map((entry) => Number(entry.round) || 0))
   const choices = ledger.settled.filter(
     (entry) => entry.kind === 'review-findings' && !entry.reopenedBy && (Number(entry.round) || 0) > lastReview,
   )
-  return choices.length ? choices[choices.length - 1] : null
+  const choice = choices.length ? choices[choices.length - 1] : null
+  if (!choice || !isSettleChoice(choice)) return choice
+  const since = Number(choice.round) || 0
+  const askedSince = [...ledger.asked, ...ledger.settled].some((entry) => entry.id !== choice.id && askedRound(entry) >= since)
+  return askedSince ? null : choice
 }
 
 function afterApply(applied) {
@@ -1456,7 +1477,7 @@ function finish(state, extra) {
     design: designTouched ? job.design : '',
     route: state === 'done' ? 'wish' : '',
     notes: notesOut.slice(),
-    silent: silent.slice(),
+    notConvened: notConvened.slice(),
   }
 }
 

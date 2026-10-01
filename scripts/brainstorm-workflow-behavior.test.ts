@@ -63,7 +63,7 @@ type Result = {
   design: string;
   route: string;
   notes: string[];
-  silent: string[];
+  notConvened: string[];
 };
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
@@ -767,7 +767,7 @@ describe('the Socratic council', () => {
     const env = newEnv();
     const first = await clean(env, { 'lead:plan': wantingCouncil([question(1)]), ...silentProposal });
     expect(first.result.state).toBe('round');
-    expect(first.result.silent).toEqual(['socrates:proposal']);
+    expect(first.result.notConvened).toEqual(['socrates:proposal']);
     expect(blockOf(env.draft).councils).toEqual([{ run: 'round-1', round: 1, decided: [] }]);
     expect(first.result.questions.map((q) => q.question)).toEqual(['Decision 1: keep the helper small?']);
     expect(first.result.notes).toContain(
@@ -777,6 +777,9 @@ describe('the Socratic council', () => {
     const next = await clean(env, { 'lead:plan': wantingCouncil() });
     expect(next.labels.some((l) => l.startsWith('lens:'))).toBe(false);
     expect(next.result.questions.map((q) => q.kind)).toEqual(['decision', 'council-approval']);
+    expect(next.result.questions[1]?.question).toContain(
+      '1 of the 1 council(s) this brainstorm allows without asking are used (all by a convening that decided nothing).',
+    );
   });
 
   test('HIGH-1: an approved convening spends its approval even when Socrates names nothing', async () => {
@@ -809,6 +812,25 @@ describe('the Socratic council', () => {
     expect(second.labels.some((l) => l.startsWith('lens:'))).toBe(false);
     expect(second.result.questions.map((q) => q.id)).toEqual([approval.id]);
     expect(second.result.notes.join('\n')).toContain(`${approval.id} already asks the owner and is shown again`);
+  });
+
+  test('a council the ledger refuses leaves no council note in the DRAFT', async () => {
+    const env = newEnv();
+    cli('apply', '--draft', env.draft);
+    // A recorded run id that this round's convening would reuse makes the ledger refuse the council step.
+    cli('council', '--draft', env.draft, '--round', '1', '--run', 'round-2', '--ceiling', '3', '--decided', '[]');
+    const { result, labels } = await clean(
+      env,
+      { 'lead:plan': wantingCouncil(), ...councilFakes(['P1']) },
+      {
+        councilCeiling: 3,
+      },
+    );
+    expect(labels.filter((l) => l.startsWith('lens:'))).toEqual(['lens:a', 'lens:b', 'lens:dissent']);
+    expect(result.state).toBe('blocked');
+    expect(result.notes.join('\n')).toContain('council run round-2 is already recorded');
+    expect(readFileSync(env.draft, 'utf8')).not.toContain('## Council round-2');
+    expect(blockOf(env.draft).councils).toHaveLength(1);
   });
 
   test('a reopened approval approves nothing: a new approval question, no lens', async () => {
@@ -1039,6 +1061,61 @@ describe('crystallize, review and the repair budget', () => {
     expect(calls.find((c) => c.label === 'lead:plan')?.prompt).toContain(
       'The owner chose to settle the open design-review findings',
     );
+    expect(calls.find((c) => c.label === 'lead:plan')?.prompt).toContain(
+      'findings not yet answered in Settled to the owner as a question; once all are, plan the design.',
+    );
+  });
+
+  test('NEW-1: "I settle them" reaches the lead only until it asks the first question after it', async () => {
+    const { env, choice } = await fixFirstRound();
+    const settling = await clean(
+      env,
+      { 'lead:plan': plan({ questions: [question(4)] }) },
+      {
+        answers: [answerTo(choice, 'I settle them')],
+      },
+    );
+    const asked = settling.result.questions[0] as Out;
+    const SETTLE_LINE = 'The owner chose to settle the open design-review findings';
+    for (const answers of [[], [answerTo(asked, 'Yes (Recommended)')]]) {
+      const later = await clean(env, { 'lead:plan': plan({ questions: [] }) }, { answers });
+      expect(later.labels.slice(0, 2)).toEqual(['ledger:apply', 'lead:plan']);
+      expect(later.calls.find((c) => c.label === 'lead:plan')?.prompt).not.toContain(SETTLE_LINE);
+    }
+  });
+
+  test('a reopened review-findings answer is not acted on', async () => {
+    const { env, choice } = await fixFirstRound();
+    const stop = cli('apply', '--draft', env.draft, '--answers', JSON.stringify([answerTo(choice, 'Stop')]));
+    expect(stop.code).toBe(0);
+    const reopenText = `${choice.id} was "Stop" → go on with the brainstorm?`;
+    const reopen = {
+      kind: 'decision',
+      question: reopenText,
+      header: 'Reopen',
+      multiSelect: false,
+      reopens: choice.id,
+      options: [
+        { label: 'Go on', description: '', value: 'go-on' },
+        { label: 'Stay stopped', description: '', value: 'stay' },
+      ],
+    };
+    const asked = cli(
+      'ask',
+      '--draft',
+      env.draft,
+      '--round',
+      String(stop.out.round),
+      '--questions',
+      JSON.stringify([reopen]),
+    );
+    expect(asked.code).toBe(0);
+    const goOn = [{ id: asked.out.asked[0].id, question: reopenText, answer: 'Go on' }];
+    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(goOn)).code).toBe(0);
+
+    const { result, labels } = await clean(env, { 'lead:plan': plan({ questions: [] }) });
+    expect(result.state).toBe('round');
+    expect(labels.slice(0, 2)).toEqual(['ledger:apply', 'lead:plan']);
   });
 
   test('with a repair budget of 0 the first FIX-FIRST ends blocked with no repair', async () => {
@@ -1183,7 +1260,7 @@ describe('the closed state set', () => {
     const env = newEnv();
     const { result } = await clean(env, { 'lead:plan': null });
     expect(result.state).toBe('failed');
-    expect(result.silent).toEqual(['lead:plan']);
+    expect(result.notConvened).toEqual(['lead:plan']);
   });
 
   test('failed: intake without tool paths dispatches nothing', async () => {
