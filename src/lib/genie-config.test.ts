@@ -41,14 +41,18 @@ describe('genie-config GENIE_HOME resolution', () => {
   test('load returns isolated defaults, save/load round-trips inside GENIE_HOME', async () => {
     expect(genieConfigExists()).toBe(false);
     const config = await loadGenieConfig();
-    expect(config.budgets).toEqual({ maxFableCallsPerWish: 3, maxEscalationsPerGroup: 2 });
+    expect(config.budgets).toEqual({ maxFableCallsPerWish: 3, maxEscalationsPerGroup: 2, maxCouncilsPerBrainstorm: 1 });
     expect(config.routing).toEqual({ maxAutoEffort: 'xhigh', fableGateMaxAt: 7 });
     config.setupComplete = true;
     await saveGenieConfig(config);
     expect(genieConfigExists()).toBe(true);
     const reloaded = await loadGenieConfig();
     expect(reloaded.setupComplete).toBe(true);
-    expect(reloaded.budgets).toEqual({ maxFableCallsPerWish: 3, maxEscalationsPerGroup: 2 });
+    expect(reloaded.budgets).toEqual({
+      maxFableCallsPerWish: 3,
+      maxEscalationsPerGroup: 2,
+      maxCouncilsPerBrainstorm: 1,
+    });
     expect(reloaded.routing).toEqual({ maxAutoEffort: 'xhigh', fableGateMaxAt: 7 });
   });
 
@@ -56,19 +60,19 @@ describe('genie-config GENIE_HOME resolution', () => {
     writeFileSync(
       getGenieConfigPath(),
       JSON.stringify({
-        budgets: { maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 },
+        budgets: { maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4, maxCouncilsPerBrainstorm: 2 },
         routing: { maxAutoEffort: 'high', fableGateMaxAt: 9 },
       }),
       'utf-8',
     );
 
     const config = await loadGenieConfig();
-    expect(config.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+    expect(config.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4, maxCouncilsPerBrainstorm: 2 });
     expect(config.routing).toEqual({ maxAutoEffort: 'high', fableGateMaxAt: 9 });
 
     await saveGenieConfig(config);
     const saved = JSON.parse(readFileSync(getGenieConfigPath(), 'utf-8')) as Record<string, unknown>;
-    expect(saved.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+    expect(saved.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4, maxCouncilsPerBrainstorm: 2 });
     expect(saved.routing).toEqual({ maxAutoEffort: 'high', fableGateMaxAt: 9 });
   });
 
@@ -80,17 +84,28 @@ describe('genie-config GENIE_HOME resolution', () => {
     async (mode) => {
       writeFileSync(
         getGenieConfigPath(),
-        JSON.stringify({ orchestration: { mode }, budgets: { maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 } }),
+        JSON.stringify({
+          orchestration: { mode },
+          budgets: { maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4, maxCouncilsPerBrainstorm: 2 },
+        }),
         'utf-8',
       );
       const config = await loadGenieConfig();
-      expect(config.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+      expect(config.budgets).toEqual({
+        maxFableCallsPerWish: 5,
+        maxEscalationsPerGroup: 4,
+        maxCouncilsPerBrainstorm: 2,
+      });
       expect('orchestration' in config).toBe(false);
 
       await saveGenieConfig(config);
       const saved = JSON.parse(readFileSync(getGenieConfigPath(), 'utf-8')) as Record<string, unknown>;
       expect(saved.orchestration).toBeUndefined();
-      expect(saved.budgets).toEqual({ maxFableCallsPerWish: 5, maxEscalationsPerGroup: 4 });
+      expect(saved.budgets).toEqual({
+        maxFableCallsPerWish: 5,
+        maxEscalationsPerGroup: 4,
+        maxCouncilsPerBrainstorm: 2,
+      });
     },
   );
 
@@ -105,13 +120,18 @@ describe('budget ceilings', () => {
   test('a budget past its schema ceiling is rejected, not clamped', () => {
     expect(() => GenieConfigSchema.parse({ budgets: { maxEscalationsPerGroup: 6 } })).toThrow();
     expect(() => GenieConfigSchema.parse({ budgets: { maxFableCallsPerWish: 11 } })).toThrow();
+    expect(() => GenieConfigSchema.parse({ budgets: { maxCouncilsPerBrainstorm: 4 } })).toThrow();
   });
 
   test('a budget at its ceiling is accepted', () => {
     const config = GenieConfigSchema.parse({
-      budgets: { maxEscalationsPerGroup: 5, maxFableCallsPerWish: 10 },
+      budgets: { maxEscalationsPerGroup: 5, maxFableCallsPerWish: 10, maxCouncilsPerBrainstorm: 3 },
     });
-    expect(config.budgets).toEqual({ maxEscalationsPerGroup: 5, maxFableCallsPerWish: 10 });
+    expect(config.budgets).toEqual({
+      maxEscalationsPerGroup: 5,
+      maxFableCallsPerWish: 10,
+      maxCouncilsPerBrainstorm: 3,
+    });
   });
 });
 

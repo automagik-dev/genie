@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
 // Single-source guard for .claude/workflows/brainstorm.js (brainstorm-workflow WISH.md, Group 3): the
 // spine the design fixes must stay in the script's text, where a refactor cannot quietly drop it. The
@@ -103,5 +105,76 @@ describe('brainstorm.js carries the spine the design fixes', () => {
     const entered = [...new Set([...script.matchAll(/\bphase\('([A-Za-z-]+)'\)/g)].map((m) => m[1]))].sort();
     const declared = [...script.matchAll(/\{ title: '([A-Za-z-]+)'/g)].map((m) => m[1]).sort();
     expect(entered).toEqual(declared);
+  });
+});
+
+// The /brainstorm front door (WISH.md Group 4): the skill runs this script by explicit path, hands it the
+// args its intake declares, carries the same per-question rule, and the design template it ships beside
+// the ledger has the exact shape `round-ledger.mjs check-design` reads.
+describe('the /brainstorm front door runs brainstorm.js, and its template feeds check-design', () => {
+  const skill = read('skills/brainstorm/SKILL.md');
+  const template = read('skills/brainstorm/references/design-template.md');
+
+  test('the skill names the workflow by explicit script path, never a bare name', () => {
+    expectExplicitScriptPathRule(skill, 'brainstorm');
+  });
+
+  test('the skill passes the args the intake declares, with the tools resolved beside it', () => {
+    const intake = /const INTAKE =\s*'Pass (\{[^']+\}) with absolute paths\.'/.exec(script)?.[1];
+    expect(intake).toBeDefined();
+    expect(skill).toContain(`Pass \`${intake}\` through args`);
+    for (const tool of ['references/round-ledger.mjs', 'references/design-review-evidence.mjs', 'review/SKILL.md'])
+      expect(skill).toContain(`\`${tool}\``);
+    // The script derives the template from tools.ledger, so it must stay beside the ledger.
+    expect(script).toContain("template: tools.ledger.replace(/[^/]+$/, 'design-template.md')");
+    expect(skill).toContain('`references/design-template.md` beside the ledger');
+  });
+
+  test('the skill carries the per-question rule the script carries, verbatim', () => {
+    const carried = /const PER_QUESTION_RULE =\s*'([^']+)'/.exec(script)?.[1];
+    expect(carried).toBeDefined();
+    expect(skill).toContain(`"${carried}"`);
+  });
+
+  test('a design written from the template by filling only its placeholders passes check-design', () => {
+    const source = '<Settled id, council decision, reviewer finding or path>';
+    const files = '<each file it changes, in backticks, marked new when created>';
+    // Scope IN, Scope OUT and Decisions each carry a Source; Scope IN carries its files.
+    expect(template.split(source).length - 1).toBe(3);
+    expect(template).toContain(files);
+    const filled = template
+      .replaceAll(source, 'R1-1')
+      .replaceAll(files, '`README.md`')
+      .replace('YYYY-MM-DD', '2026-10-01')
+      .replace(/<[A-Za-z][^<>]*>/g, 'filled');
+    const dir = mkdtempSync(join(tmpdir(), 'genie-brainstorm-template-'));
+    try {
+      const check = (text: string) => {
+        const design = join(dir, 'DESIGN.md');
+        writeFileSync(design, text);
+        const run = Bun.spawnSync(
+          [
+            'node',
+            join(ROOT, 'skills', 'brainstorm', 'references', 'round-ledger.mjs'),
+            'check-design',
+            '--design',
+            design,
+            '--draft',
+            join(ROOT, 'scripts', 'fixtures', 'brainstorm-workflow', 'DRAFT.md'),
+            '--root',
+            ROOT,
+          ],
+          { stdout: 'pipe', stderr: 'pipe' },
+        );
+        return { code: run.exitCode, findings: JSON.parse(run.stdout.toString()).findings as Array<{ kind: string }> };
+      };
+      expect(check(filled)).toEqual({ code: 0, findings: [] });
+      // An unfilled template never reaches review: its placeholders are blocking findings.
+      const raw = check(template);
+      expect(raw.code).toBe(1);
+      expect(raw.findings.map((finding) => finding.kind)).toContain('placeholder');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

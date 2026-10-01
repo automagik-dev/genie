@@ -10,8 +10,8 @@
  *
  * The rule is therefore the PATH, not the name: the project file when the
  * repository carries it, the user-scope file otherwise, passed as the explicit
- * script path. Seven parity tests pin it; this is the single assertion they
- * share, so the rule cannot drift between six skills and seven tests.
+ * script path. Eight parity tests pin it; this is the single assertion they
+ * share, so the rule cannot drift between seven skills and eight tests.
  */
 import { expect } from 'bun:test';
 
