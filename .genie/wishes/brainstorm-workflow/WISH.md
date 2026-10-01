@@ -280,6 +280,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Non-blocking: M1 model names only shape-checked; M2 (pre-existing) label/model read from raw call text, follow-up outside this wish; L1 two rulings without self-tests; L2 README wording. Quality pass: three maintainability LOWs.
 - One quality loop at `973756f8a`: model names pinned (`sonnet`/`opus`, `judge: 'fable'` in brainstorm.js only), the two self-tests added, clamp occurrence and value-use message fixed, README wording. Coordinator re-ran validation: 75 pass, 0 fail. Merged `--no-ff` into `wish/brainstorm-workflow`.
 
+### Group 1 review — 2026-10-01T18:34:43Z — SHIP
+- Reviewer `review-g1-opus-5.5` on `82de04167`; validation 41 pass; fixture DESIGN.md byte-identical to the frozen design; fixture ids traced to the real reviewer replies (nothing invented); CLI driven by hand against the G3 contract; 8 of 9 mutations caught.
+- Rulings 1-11 accepted (notably: round = 1 + highest round recorded anywhere; downgrade approved only by an unused Settled answer of value `size:<P|M|G>` or `scope-drop:<item>`).
+- Non-blocking: A (MEDIUM) reopen quote matched any substring; B (MEDIUM) a second open reopen of the same id could never be answered; L1-L7. Quality pass: non-atomic DRAFT write; unused exports.
+- One quality loop at `71f684294`: A, B, L1, L2, L3 fixed and the DRAFT write made atomic; L4-L7 accepted as is. Coordinator re-ran validation: 48 pass, 0 fail, biome clean, skills-lint OK. Merged `--no-ff` into `wish/brainstorm-workflow`.
+- For G3: the council and downgrade rules must also be checked before convening, from `apply`'s returned ledger; Socrates numbers decisions after the existing `P<n>`; the lead writes `size:`/`scope-drop:` and `convene` option values exactly.
+- For G4: the template needs the exact headings, an IN table with "Files changed" and "Source" columns, and OUT bullets ending "(Source: …)".
+
 ---
 
 ## Files to Create/Modify
