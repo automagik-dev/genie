@@ -288,6 +288,13 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - For G3: the council and downgrade rules must also be checked before convening, from `apply`'s returned ledger; Socrates numbers decisions after the existing `P<n>`; the lead writes `size:`/`scope-drop:` and `convene` option values exactly.
 - For G4: the template needs the exact headings, an IN table with "Files changed" and "Source" columns, and OUT bullets ending "(Source: …)".
 
+### Group 3 review — 2026-10-01T19:35:31Z — FIX-FIRST → repair 1 → 2026-10-01T20:08:28Z — SHIP
+- Reviewer `review-g3-opus-5.5` on `cdc6ce08c`: FIX-FIRST. HIGH-1: a council whose `socrates:proposal` returned null was never counted, so it could be convened every run past the owner's ceiling of 1 (shown: five convenings against a ceiling of 1). MEDIUM-1: 7 surviving mutants on approval validity. MEDIUM-2: 2,598 insertions against the plan's 1,200-1,900 and the 2,000 band.
+- Repair 1 at `c8b102ee2`: a convening counts as soon as any lens is sent and spends its approval; the 7 mutants caught; review-findings choices survive a blocked run; council note gated; payload files written without a shell. Re-review SHIP: scenarios A-D now send lenses once; 0 blocking.
+- One quality loop at `0be2820fa`: a settle choice is pending only until the first question after it; `notConvened` kept (catalog convention); mutants m3c and l3 caught; the approval question names convenings that decided nothing; check-design findings reach the repair prompt. Coordinator re-ran validation: 163 pass, 0 fail.
+- MEDIUM-2 accepted by the coordinator: 2,892 insertions in total; the excess over the band is stage prompts, schemas and the fake-agent test harness, not machinery; reported to the owner.
+- For G4: an empty `round` is a valid result (invoke again); "Stop" is permanent for the slug, so resuming needs a new slug or a deliberate reopen; the design template stays at `references/design-template.md` beside the ledger (the script derives its path from `tools.ledger`).
+
 ---
 
 ## Files to Create/Modify
