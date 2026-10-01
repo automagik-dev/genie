@@ -1102,6 +1102,27 @@ describe('Group E release and documentation contracts', () => {
     expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
 
+  test('refine accepts sonnet, opus and fable after --for claude, each loading its own overlay', () => {
+    const refine = read('skills/refine/SKILL.md');
+    const overlays = { sonnet: 'claude-sonnet-5-5.md', opus: 'claude-opus-5-5.md', fable: 'claude-fable-5-1.md' };
+    for (const [target, file] of Object.entries(overlays)) {
+      expect(refine).toContain(`| \`--for claude --target ${target}\` | \`prompts/claude.md\` + \`prompts/${file}\` |`);
+      expect(read(`skills/refine/prompts/${file}`)).toContain(`(\`--target ${target}\`)`);
+    }
+    for (const mode of ['@path/to/file.md', '<text>'])
+      expect(refine).toContain(`refine [--for openai|claude [--target sonnet|opus|fable]] ${mode}`);
+    expect(refine).toContain(
+      'Accept one `--target sonnet`, `--target opus` or `--target fable`, only after `--for claude`.',
+    );
+    expect(refine).toContain('list `sonnet`, `opus` and `fable`');
+    expect(refine).toMatch(/^Checked: \d{4}-\d{2}-\d{2}$/m);
+    const claude = read('skills/refine/prompts/claude.md');
+    expect(claude).toContain('leave the method to the model');
+    expect(claude).toContain(
+      'Explicit requirements in the prompt (required checks, approval gates, exact formats, a required model) always survive.',
+    );
+  });
+
   test('design completion requires independent review before wish planning', () => {
     const brainstorm = read('skills/brainstorm/SKILL.md');
     expect(brainstorm).toContain('do not implement');
