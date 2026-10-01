@@ -295,6 +295,18 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - MEDIUM-2 accepted by the coordinator: 2,892 insertions in total; the excess over the band is stage prompts, schemas and the fake-agent test harness, not machinery; reported to the owner.
 - For G4: an empty `round` is a valid result (invoke again); "Stop" is permanent for the slug, so resuming needs a new slug or a deliberate reopen; the design template stays at `references/design-template.md` beside the ledger (the script derives its path from `tools.ledger`).
 
+### Live round (success criterion 7) — 2026-10-01T21:26Z — coordinator
+- Run `wf_50d1ecb9-9de` of this branch's `brainstorm.js` and tools, from a scratch repository created with `git init` under the session scratchpad (no remote), owner-approved. Request: generate the README skill cards from each `skills/*/SKILL.md`.
+- Result: `state: round`, round 1, 4 questions R1-1..R1-4, each with the recommended option first; WRS 37/100; the lead dispatched 0 scouts and no council ("the facts this round needed are in hand").
+- `genie wish report wf_50d1ecb9-9de`: 3 agents, 209,049 tokens, 3.1 min — `ledger:apply` claude-sonnet-5-5 59,182; `lead:plan` claude-opus-5-5 84,264; `ledger:commit` claude-sonnet-5-5 65,603.
+- The DRAFT's ledger block and the five owned sections match G1's contract (verified by review-g4).
+- Cost note: each ledger agent costs ~60k tokens to run one CLI step; the first place to slim later.
+
+### Group 4 review — 2026-10-01T21:37:45Z — SHIP
+- Reviewer `review-g4-opus-5.5` on `da97a3080`; focused validation 85 pass; full `bun run check` 2975 pass, 0 fail (reused from the engineer's log, timestamps checked); all 11 existing release-docs anchors verbatim, no removed `expect` line; criterion 7 met by the live round.
+- Non-blocking: MEDIUM-1 four front-door clauses unpinned (mutants M4, M8, M9, M11 survived); MEDIUM-2 budgets described as text (a string "0" would become 1); LOW-1..LOW-6; one security LOW (payload files location).
+- One quality loop at `135d16429`: seven new anchors (all four mutants now fail), budgets passed as integers, relay list names descriptions and multiSelect, by-hand path fixed (ratchet `--approved`, crystallize wording, payloads under `mktemp -d`), INDEX lane for answered/blocked/failed, `wish report` fallback, config template key, CLAUDE.md ceiling list. `bun run check` 2975 pass, 0 fail. Merged `--no-ff` into `wish/brainstorm-workflow`.
+
 ---
 
 ## Files to Create/Modify
