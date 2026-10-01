@@ -32,9 +32,9 @@ const read = (name: string): string => readFileSync(join(CATALOG, name), 'utf8')
 // brainstorm.js alone declares the three-key table with a `judge` tier (brainstorm-workflow DESIGN,
 // routing contract), so only its three-key table is stripped; anywhere else that table stays and fails.
 const routed = (code: string): boolean => /^const TIERS = /m.test(code);
-const TIERS_TABLE = /\{ worker: \{ model: '[^']+' \}, reasoner: \{ model: '[^']+' \} \}/g;
+const TIERS_TABLE = /\{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \} \}/g;
 const JUDGE_TIERS_TABLE =
-  /\{ worker: \{ model: '[^']+' \}, reasoner: \{ model: '[^']+' \}, judge: \{ model: '[^']+' \} \}/g;
+  /\{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \}, judge: \{ model: 'fable' \} \}/g;
 const withoutTiers = (name: string, code: string): string =>
   code.replace(name === 'brainstorm.js' ? JUDGE_TIERS_TABLE : TIERS_TABLE, '');
 
@@ -50,11 +50,14 @@ describe('no catalog script pins a default model', () => {
     });
   }
 
-  test('the three-key TIERS table is stripped for brainstorm.js only', () => {
+  test('the three-key TIERS table is stripped for brainstorm.js only, and only with the pinned models', () => {
     const line =
       "const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' }, judge: { model: 'fable' } }";
     expect(withoutTiers('brainstorm.js', line)).toBe('const TIERS = ');
     for (const name of ['council.js', 'wish.js']) expect(withoutTiers(name, line)).toMatch(/model: 'opus'/);
+    expect(withoutTiers('brainstorm.js', line.replace("'fable'", "'opus'"))).toMatch(/model: 'opus'/);
+    const twoKey = "const TIERS = { worker: { model: 'haiku' }, reasoner: { model: 'opus' } }";
+    expect(withoutTiers('council.js', twoKey)).toMatch(/model: 'opus'/);
   });
 });
 

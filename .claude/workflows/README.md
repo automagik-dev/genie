@@ -83,8 +83,9 @@ on `reasoner`. Its `scout:*` stages run on the `lead-chosen` tier: the lead's pl
 `worker`, so a scout never runs on the judge tier. `args.model` still pins both. The scanner
 rejects the three-key table, `modelFor('judge')` and `modelFor(scoutTier(…))` in every other
 script, `judge` on a label that is not `socrates:*`, `scoutTier` on a label that is not
-`scout:*`, a scout call whose clamp line is missing, altered or shadowed, and any other
-variable tier such as `modelFor(s.tier)`. The Workflow runtime accepted `'fable'` in
+`scout:*`, a scout call whose clamp line is missing or altered (common shadowing forms are
+rejected too), `scoutTier` used as a value instead of called, and any other variable tier
+such as `modelFor(s.tier)`. The Workflow runtime accepted `'fable'` in
 `wf_24aa02c5-abd`. Whether the DSH executor (`dsh-workflow-fork`) accepts it is unverified
 until a zero-agent probe runs there.
 

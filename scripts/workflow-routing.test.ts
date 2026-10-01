@@ -44,9 +44,9 @@ const WORKFLOWS = join(import.meta.dir, '..', '.claude', 'workflows');
 type Tier = 'worker' | 'reasoner' | 'judge' | 'lead-chosen';
 
 const BRAINSTORM = 'brainstorm.js';
-const TIERS_LINE = /^const TIERS = \{ worker: \{ model: '\w[\w.-]*' \}, reasoner: \{ model: '\w[\w.-]*' \} \}$/m;
+const TIERS_LINE = /^const TIERS = \{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \} \}$/m;
 const JUDGE_TIERS_LINE =
-  /^const TIERS = \{ worker: \{ model: '\w[\w.-]*' \}, reasoner: \{ model: '\w[\w.-]*' \}, judge: \{ model: '\w[\w.-]*' \} \}$/m;
+  /^const TIERS = \{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \}, judge: \{ model: 'fable' \} \}$/m;
 const SCOUT_TIER_LINE = "const scoutTier = (t) => (t === 'reasoner' ? 'reasoner' : 'worker')";
 
 const TIER_MAP: Record<string, Record<string, Tier>> = {
@@ -208,25 +208,48 @@ function codeOnly(src: string): string {
   return out.join('');
 }
 
-// The scout clamp holds when SCOUT_TIER_LINE is a code line of the script and every other code
-// mention of `scoutTier` is a call: no second declaration, parameter, destructuring or reference
-// can shadow the clamp that `modelFor(scoutTier(…))` relies on.
-function clampDeclared(src: string): boolean {
-  const lines = src.split('\n');
-  const at = lines.indexOf(SCOUT_TIER_LINE);
-  if (at < 0) return false;
-  const declared = lines.slice(0, at).join('\n').length + (at > 0 ? 1 : 0) + 'const '.length;
-  const code = codeOnly(src);
-  let sawDeclaration = false;
-  for (const m of code.matchAll(/(?<![\w$.])scoutTier(?![\w$])/g)) {
-    if (m.index === declared) sawDeclaration = true;
-    else if (
-      !/^\s*\(/.test(code.slice(m.index + 'scoutTier'.length)) ||
-      /\bfunction\s*\*?\s*$/.test(code.slice(0, m.index))
-    )
-      return false;
+// How a script binds the scout clamp that `modelFor(scoutTier(…))` relies on:
+// - `ok`: an exact SCOUT_TIER_LINE is a code line (any occurrence, not only the first) and every
+//   other code mention of `scoutTier` is a call;
+// - `binding`: no such line, or a common shadowing form binds the name again;
+// - `value`: the clamp is passed or stored as a value (`.map(scoutTier)`) instead of called.
+type Clamp = 'ok' | 'binding' | 'value';
+
+function clampState(src: string): Clamp {
+  const declarations = new Set<number>();
+  let offset = 0;
+  for (const line of src.split('\n')) {
+    if (line === SCOUT_TIER_LINE) declarations.add(offset + 'const '.length);
+    offset += line.length + 1;
   }
-  return sawDeclaration;
+  const code = codeOnly(src);
+  let declared = false;
+  let value = false;
+  for (const m of code.matchAll(/(?<![\w$.])scoutTier(?![\w$])/g)) {
+    const before = code.slice(Math.max(0, m.index - 200), m.index);
+    const after = code.slice(m.index + 'scoutTier'.length);
+    if (declarations.has(m.index)) declared = true;
+    else if (/^\s*\(/.test(after) && !/\bfunction\s*\*?\s*$/.test(before)) continue;
+    else if (rebinds(before, after)) return 'binding';
+    else value = true;
+  }
+  if (!declared) return 'binding';
+  return value ? 'value' : 'ok';
+}
+
+// The common shadowing forms for a mention that is not a call: a declaration, function or class of
+// that name, a destructuring declaration, an assignment, a bare arrow parameter, or a parameter list
+// (the enclosing parentheses close onto `=>` or `{`). A heuristic over code, not a parser.
+function rebinds(before: string, after: string): boolean {
+  if (/\b(?:function\s*\*?|const|let|var|class)\s*$/.test(before)) return true;
+  if (/\b(?:const|let|var)\s*[{[][^;=]*$/.test(before)) return true;
+  if (/^\s*(?:=(?![=>])|=>)/.test(after)) return true;
+  let depth = 0;
+  for (let i = 0; i < after.length; i++) {
+    if (after[i] === '(') depth++;
+    else if (after[i] === ')' && depth-- === 0) return /^\s*(?:=>|\{)/.test(after.slice(i + 1));
+  }
+  return false;
 }
 
 // The tier one call's `model:` option routes on, and whether it came through wish.js's stage override.
@@ -240,7 +263,7 @@ function modelSpelling(text: string): { tier: Tier; override: boolean } | null {
   return { tier: m[3] ? 'lead-chosen' : (m[2] as Tier), override: m[1] !== undefined };
 }
 
-function spellingProblem(name: string, spelled: ReturnType<typeof modelSpelling>, clamp: boolean): string | null {
+function spellingProblem(name: string, spelled: ReturnType<typeof modelSpelling>, clamp: Clamp): string | null {
   const none =
     name === BRAINSTORM
       ? "agent() call has no `model: modelFor('worker'|'reasoner'|'judge')` or `model: modelFor(scoutTier(…))`"
@@ -250,20 +273,22 @@ function spellingProblem(name: string, spelled: ReturnType<typeof modelSpelling>
   if (spelled.tier === 'judge' && name !== BRAINSTORM) return "`modelFor('judge')` is brainstorm.js only";
   if (spelled.tier !== 'lead-chosen') return null;
   if (name !== BRAINSTORM) return '`modelFor(scoutTier(…))` is brainstorm.js only';
-  return clamp ? null : `\`modelFor(scoutTier(…))\` needs \`${SCOUT_TIER_LINE}\` as the one binding of scoutTier`;
+  if (clamp === 'value') return '`scoutTier` is used as a value; call the clamp in the form `modelFor(scoutTier(x))`';
+  if (clamp === 'binding')
+    return `\`modelFor(scoutTier(…))\` needs \`${SCOUT_TIER_LINE}\` as the one binding of scoutTier`;
+  return null;
 }
 
 function tiersProblem(name: string, src: string): string | null {
-  const judge = JUDGE_TIERS_LINE.test(src);
   if (name === BRAINSTORM) {
-    return judge
+    return JUDGE_TIERS_LINE.test(src)
       ? null
-      : "`const TIERS = { worker: { model: '...' }, reasoner: { model: '...' }, judge: { model: '...' } }` not declared as one line";
+      : "`const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' }, judge: { model: 'fable' } }` not declared as one line";
   }
-  if (judge) return 'the three-key TIERS with a `judge` tier is brainstorm.js only';
+  if (/^const TIERS = .*\bjudge:/m.test(src)) return 'the three-key TIERS with a `judge` tier is brainstorm.js only';
   return TIERS_LINE.test(src)
     ? null
-    : "`const TIERS = { worker: { model: '...' }, reasoner: { model: '...' } }` not declared as one line";
+    : "`const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }` not declared as one line";
 }
 
 function checkRouting(name: string, src: string): Verdict {
@@ -277,7 +302,7 @@ function checkRouting(name: string, src: string): Verdict {
   if (src.includes('...(MODEL ? { model: MODEL } : {})')) {
     failures.push(`${name}: still carries \`...(MODEL ? { model: MODEL } : {})\``);
   }
-  const clamp = name === BRAINSTORM && clampDeclared(src);
+  const clamp: Clamp = name === BRAINSTORM ? clampState(src) : 'binding';
   for (const call of agentCalls(src)) {
     const where = `${name}:${call.line}`;
     const spelled = modelSpelling(call.text);
@@ -462,8 +487,33 @@ describe('the scanner on brainstorm.js: the judge and lead-chosen tiers', () => 
     ]);
     // And brainstorm.js, given the two-key table, fails on the table too.
     expect(failuresOf(BRAINSTORM, script([call("'lead:plan'", "modelFor('reasoner')")], [twoKey, MODEL_FOR]))).toEqual([
-      `${BRAINSTORM}: \`const TIERS = { worker: { model: '...' }, reasoner: { model: '...' }, judge: { model: '...' } }\` not declared as one line`,
+      `${BRAINSTORM}: \`${TIERS3}\` not declared as one line`,
     ]);
+  });
+
+  test('the TIERS tables are pinned to sonnet, opus and fable', () => {
+    const swapped = TIERS3.replace("'fable'", "'opus'");
+    expect(failuresOf(BRAINSTORM, script([call("'lead:plan'", "modelFor('reasoner')")], [swapped, MODEL_FOR]))).toEqual(
+      [`${BRAINSTORM}: \`${TIERS3}\` not declared as one line`],
+    );
+    expect(failuresOf('x.js', script([], [swapped, MODEL_FOR]))).toEqual([
+      'x.js: the three-key TIERS with a `judge` tier is brainstorm.js only',
+    ]);
+    const haiku = "const TIERS = { worker: { model: 'haiku' }, reasoner: { model: 'opus' } }";
+    expect(failuresOf('x.js', script([], [haiku, MODEL_FOR]))).toEqual([
+      "x.js: `const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' } }` not declared as one line",
+    ]);
+  });
+
+  test('rejects a scout on a fixed tier and Socrates on reasoner or worker', () => {
+    for (const tier of ['worker', 'reasoner']) {
+      expect(failuresOf(BRAINSTORM, script([call('`scout:${i}`', `modelFor('${tier}')`)]))).toEqual([
+        `${BRAINSTORM}:5: label scout: runs on ${tier}, the map says lead-chosen`,
+      ]);
+      expect(failuresOf(BRAINSTORM, script([call("'socrates:proposal'", `modelFor('${tier}')`)]))).toEqual([
+        `${BRAINSTORM}:5: label socrates:proposal runs on ${tier}, the map says judge`,
+      ]);
+    }
   });
 
   test('rejects `modelFor(scoutTier(…))` on every label not mapped lead-chosen', () => {
@@ -475,8 +525,14 @@ describe('the scanner on brainstorm.js: the judge and lead-chosen tiers', () => 
     }
   });
 
-  test('rejects a scout call when the scoutTier line is missing, altered, or shadowed', () => {
-    const needs = `${BRAINSTORM}:SCOUT: \`modelFor(scoutTier(…))\` needs \`${SCOUT_TIER_LINE}\` as the one binding of scoutTier`;
+  // The failure a scout call gets when the script around it carries `lines`.
+  const scoutFailures = (lines: string[]) => {
+    const src = script([...lines, scouts], [TIERS3, MODEL_FOR]);
+    const at = src.split('\n').findIndex((l) => l.includes('plan.scouts.map')) + 1;
+    return { at, failures: failuresOf(BRAINSTORM, src) };
+  };
+
+  test('rejects a scout call when the scoutTier line is missing or altered, or a common form shadows it', () => {
     const clamps: Record<string, string[]> = {
       missing: [],
       'identity clamp': ['const scoutTier = (t) => t'],
@@ -484,27 +540,51 @@ describe('the scanner on brainstorm.js: the judge and lead-chosen tiers', () => 
       'double quotes': ['const scoutTier = (t) => (t === "reasoner" ? "reasoner" : "worker")'],
       'let binding': ["let scoutTier = (t) => (t === 'reasoner' ? 'reasoner' : 'worker')"],
       'trailing space': [`${SCOUT_TIER_LINE} `],
-      'shadowed by a function': [SCOUT_TIER_LINE, 'function pick(scoutTier) { return scoutTier }'],
+      'function parameter': [SCOUT_TIER_LINE, 'function pick(scoutTier) { return scoutTier }'],
+      'arrow parameter': [SCOUT_TIER_LINE, 'const pick = (s, scoutTier) => scoutTier(s)'],
+      'bare arrow parameter': [SCOUT_TIER_LINE, 'const pick = scoutTier => scoutTier(1)'],
+      destructuring: [SCOUT_TIER_LINE, 'if (x) { const { scoutTier } = helpers }'],
+      'catch parameter': [SCOUT_TIER_LINE, 'try { f() } catch (scoutTier) { g() }'],
       'redeclared in a block': [SCOUT_TIER_LINE, 'if (x) { function scoutTier(t) { return t } }'],
       'verbatim only in a template': ['const note = `', SCOUT_TIER_LINE, '`'],
       'verbatim only in a comment': [`/*\n${SCOUT_TIER_LINE}\n*/`],
     };
     for (const [why, lines] of Object.entries(clamps)) {
-      const src = script([...lines, scouts], [TIERS3, MODEL_FOR]);
-      const at = src.split('\n').findIndex((l) => l.includes('plan.scouts.map')) + 1;
-      expect({ why, failures: failuresOf(BRAINSTORM, src) }).toEqual({
+      const { at, failures } = scoutFailures(lines);
+      expect({ why, failures }).toEqual({
         why,
-        failures: [needs.replace('SCOUT', String(at))],
+        failures: [
+          `${BRAINSTORM}:${at}: \`modelFor(scoutTier(…))\` needs \`${SCOUT_TIER_LINE}\` as the one binding of scoutTier`,
+        ],
       });
     }
   });
 
-  test('the clamp tolerates calls and comments that name scoutTier', () => {
+  test('rejects scoutTier used as a value, with a message naming the call form', () => {
+    const uses: Record<string, string> = {
+      'map callback': 'const tiers = plan.tiers.map(scoutTier)',
+      alias: 'const pick = scoutTier',
+      'object value': 'const tools = { tier: scoutTier }',
+    };
+    for (const [why, use] of Object.entries(uses)) {
+      const { at, failures } = scoutFailures([SCOUT_TIER_LINE, use]);
+      expect({ why, failures }).toEqual({
+        why,
+        failures: [
+          `${BRAINSTORM}:${at}: \`scoutTier\` is used as a value; call the clamp in the form \`modelFor(scoutTier(x))\``,
+        ],
+      });
+    }
+  });
+
+  test('the clamp tolerates calls and comments that name scoutTier, and a verbatim line after a quoted one', () => {
     const extra = [
       '// scoutTier clamps the tier the lead chose',
       'log(`scout ${i} runs on ${scoutTier(s.tier)}`)',
       'const effective = plan.scouts.map((s) => scoutTier(s.tier))',
+      "if (scoutTier(s.tier) === 'reasoner') { log('reasoner scout') }",
     ];
     expect(failuresOf(BRAINSTORM, script([...extra, scouts]))).toEqual([]);
+    expect(scoutFailures(['const note = `', SCOUT_TIER_LINE, '`', SCOUT_TIER_LINE]).failures).toEqual([]);
   });
 });
