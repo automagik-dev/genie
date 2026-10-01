@@ -23,7 +23,9 @@
 //   Asked alone cannot carry the count. Pass that round to every later command.
 // - An answer settles only its own id. A Settled id changes only through an
 //   asked question whose `reopens` names it and whose text quotes the old answer
-//   then `→` and the new one; the old entry stays and records `reopenedBy`.
+//   in quotation marks ("…" or “…”), then `→` and the new one; the old entry
+//   stays and records `reopenedBy`, and a Source citing it no longer resolves.
+//   One open question at a time may reopen a given id.
 // - A pick stores the option's `value`; a multi-select stores an array; free
 //   text stores `value: null` and the verbatim quote. An empty answer is a skip:
 //   the question stays Asked and is shown again.
@@ -36,8 +38,18 @@
 //   no approval question is asked at 3.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const KINDS = new Set(['decision', 'council-approval', 'review-findings', 'end-without-design']);
@@ -237,12 +249,26 @@ function loadDraft(path, { bootstrap = false } = {}) {
   return { path, text, ledger: parseLedger(text.slice(open.end, close.start)), dirty: false };
 }
 
+/** Write through a temp file in the same directory and rename it over the DRAFT, keeping its mode. */
+function writeDraft(path, text) {
+  const target = existsSync(path) ? realpathSync(path) : resolve(path);
+  mkdirSync(dirname(target), { recursive: true });
+  const temp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(temp, text);
+    if (existsSync(target)) chmodSync(temp, statSync(target).mode & 0o7777);
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
+}
+
 function saveDraft(draft) {
   const blocks = ledgerBlocks(scanLines(draft.text));
   const { open, close } = blocks[0];
   const text = draft.text.slice(0, open.start) + ledgerFence(draft.ledger) + draft.text.slice(close.end);
-  mkdirSync(dirname(resolve(draft.path)), { recursive: true });
-  writeFileSync(draft.path, text);
+  writeDraft(draft.path, text);
   draft.text = text;
 }
 
@@ -261,13 +287,27 @@ function asList(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-/** True when `text` quotes every part of `oldAnswer`, then an arrow, then something new. */
+const QUOTE_MARKS = [
+  ['"', '"'],
+  ['“', '”'],
+];
+
+/** End of the first `part` inside quotation marks in `text`, or -1. */
+function quotedEnd(text, part) {
+  const ends = QUOTE_MARKS.map(([open, close]) => {
+    const at = text.indexOf(`${open}${part}${close}`);
+    return at < 0 ? -1 : at + open.length + part.length + close.length;
+  }).filter((end) => end >= 0);
+  return ends.length > 0 ? Math.min(...ends) : -1;
+}
+
+/** True when `text` quotes every part of `oldAnswer` in quotation marks, then an arrow, then something new. */
 function quotesOldToNew(text, oldAnswer) {
   let cursor = 0;
   for (const part of asList(oldAnswer).map(String)) {
-    const at = text.indexOf(part);
-    if (part === '' || at < 0) return false;
-    cursor = Math.max(cursor, at + part.length);
+    const end = part === '' ? -1 : quotedEnd(text, part);
+    if (end < 0) return false;
+    cursor = Math.max(cursor, end);
   }
   const arrows = ['→', '->'].map((arrow) => [text.indexOf(arrow, cursor), arrow.length]).filter(([at]) => at >= 0);
   if (arrows.length === 0) return false;
@@ -280,7 +320,7 @@ function reopenProblem(ledger, targetId, questionText) {
   if (!target) return `reopens ${targetId}, which is not a Settled id`;
   if (target.reopenedBy) return `${targetId} was already reopened by ${target.reopenedBy}; reopen that one instead`;
   if (!quotesOldToNew(questionText, target.answer)) {
-    return `a reopen question must quote ${targetId}'s answer verbatim, then → and the new text`;
+    return `a reopen question must quote ${targetId}'s answer verbatim in quotation marks, then → and the new text`;
   }
   return null;
 }
@@ -456,6 +496,8 @@ function questionProblem(question, ledger) {
   if (options) return options;
   if (question.reopens === undefined) return councilApprovalQuestionProblem(question, ledger);
   if (typeof question.reopens !== 'string') return 'reopens must name one Settled id';
+  const pending = ledger.asked.find((entry) => entry.reopens === question.reopens);
+  if (pending) return `${question.reopens} is already being reopened by open question ${pending.id}`;
   return reopenProblem(ledger, question.reopens, question.question) ?? councilApprovalQuestionProblem(question, ledger);
 }
 
@@ -756,7 +798,7 @@ function renderSections(text, ledger) {
 function commandRender(flags) {
   const draft = loadDraft(flags.draft);
   const { text, rewritten, appended } = renderSections(draft.text, draft.ledger);
-  if (text !== draft.text) writeFileSync(draft.path, text);
+  if (text !== draft.text) writeDraft(draft.path, text);
   return { exitCode: 0, output: { rewritten, appended, changed: text !== draft.text } };
 }
 
@@ -792,6 +834,14 @@ function pathProblem(token, root) {
   return existsSync(target) ? null : `${token.text} does not exist under ${root}`;
 }
 
+/** A Source cites the current answer: an id another question reopened is superseded. */
+function settledSourceProblem(ledger, id) {
+  const entry = findSettled(ledger, id);
+  if (!entry) return `${id} is not a Settled id`;
+  if (entry.reopenedBy) return `${id} was reopened by ${entry.reopenedBy}; cite the current answer instead`;
+  return null;
+}
+
 function tokenProblem(token, ledger, root) {
   const reviews = ledger.reviews;
   switch (token.type) {
@@ -809,7 +859,7 @@ function tokenProblem(token, ledger, root) {
         ? null
         : `${token.text}: no recorded review lists ${token.first}`;
     case 'settled':
-      return findSettled(ledger, token.text) ? null : `${token.text} is not a Settled id`;
+      return settledSourceProblem(ledger, token.text);
     default:
       return ledger.councils.some((council) => (council.decided ?? []).includes(token.text))
         ? null

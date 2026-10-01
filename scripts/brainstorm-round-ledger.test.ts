@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { designReviewDigest, designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
@@ -136,6 +147,17 @@ describe('round trip: apply → ask → apply → render', () => {
 });
 
 describe('apply', () => {
+  test('writes go through a temp file renamed over the DRAFT, keeping its mode and leaving nothing behind', () => {
+    const draft = newDraft();
+    apply(draft);
+    chmodSync(draft, 0o600);
+    expect(ask(draft, 1, [question()]).code).toBe(0);
+    expect(ledger('render', '--draft', draft).out.changed).toBe(true);
+    expect(statSync(draft).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dirname(draft))).toEqual(['DRAFT.md']);
+    expect(blockOf(draft).asked).toHaveLength(1);
+  });
+
   test('a DRAFT without a block keeps its bytes and gains one', () => {
     const draft = newDraft();
     mkdirSync(dirname(draft), { recursive: true });
@@ -263,6 +285,41 @@ describe('reopen: a Settled id changes only through a question that quotes old �
     expect(settled['R2-1']).toMatchObject({ value: 'G', reopens: 'R1-1' });
     const twice = ask(draft, 3, [reopen(text)]);
     expect(twice.out.refused[0].reason).toBe('R1-1 was already reopened by R2-1; reopen that one instead');
+  });
+
+  test('the old answer must sit inside quotation marks; a bare substring is not a quote', () => {
+    const draft = settledDraft([question()], [answer('R1-1', 'G')]);
+    const substring = ask(draft, 2, [reopen('Go smaller -> keep it lean?')]);
+    expect(substring.code).toBe(1);
+    expect(substring.out.refused[0].reason).toBe(
+      "a reopen question must quote R1-1's answer verbatim in quotation marks, then → and the new text",
+    );
+    expect(ask(draft, 2, [reopen('R1-1 was “G” → shrink to M?')]).code).toBe(0);
+  });
+
+  test('apply refuses an Asked reopen whose text does not quote the old answer', () => {
+    const draft = settledDraft([question()], [answer('R1-1', 'G')]);
+    const text = 'Go smaller -> keep it lean?';
+    // Only a hand-edited block can hold this question: ask refuses it.
+    const block = blockOf(draft);
+    block.asked.push({ id: 'R2-1', ...question({ question: text, reopens: 'R1-1' }), round: 2 });
+    const edited = readFileSync(draft, 'utf8').replace(
+      /```ledger\n[\s\S]*?\n```/,
+      () => `\`\`\`ledger\n${JSON.stringify(block, null, 2)}\n\`\`\``,
+    );
+    writeFileSync(draft, edited);
+    const run = apply(draft, [answer('R2-1', 'M (Recommended)', text)]);
+    expect(run.code).toBe(1);
+    expect(run.out.refused[0].reason).toContain('in quotation marks');
+    expect(blockOf(draft).settled.find((entry: Out) => entry.id === 'R1-1').reopenedBy).toBeUndefined();
+  });
+
+  test('a second reopen of an id that an open question already reopens is refused at ask', () => {
+    const draft = settledDraft([question()], [answer('R1-1', 'M (Recommended)')]);
+    expect(ask(draft, 2, [reopen('R1-1 said "M (Recommended)" → grow to G?')]).code).toBe(0);
+    const again = ask(draft, 2, [reopen('R1-1 said "M (Recommended)" → shrink to P?')]);
+    expect(again.code).toBe(1);
+    expect(again.out.refused[0].reason).toBe('R1-1 is already being reopened by open question R2-1');
   });
 });
 
@@ -424,6 +481,20 @@ describe('council: the ceiling, the owner approval and the cap of 3', () => {
     const reuse = council(draft, 3, 'wf_c', 1, '--approved', 'R2-1');
     expect(reuse.code).toBe(1);
     expect(reuse.out.refused[0].reason).toBe('--approved R2-1 was already used by council run wf_b');
+  });
+
+  test('a reopened approval cannot approve', () => {
+    const draft = newDraft();
+    apply(draft);
+    council(draft, 1, 'wf_a', 1);
+    ask(draft, 1, [approval]);
+    approve(draft, 'R1-1', 'Convene anyway');
+    const text = 'You said "Convene anyway" → hold the council after all?';
+    expect(ask(draft, 2, [question({ question: text, header: 'Reopen', reopens: 'R1-1' })]).code).toBe(0);
+    expect(apply(draft, [answer('R2-1', 'G', text)]).code).toBe(0);
+    const run = council(draft, 3, 'wf_b', 1, '--approved', 'R1-1');
+    expect(run.code).toBe(1);
+    expect(run.out.refused[0].reason).toBe('--approved R1-1 was reopened by R2-1');
   });
 
   test('a decision answer valued "convene" is not a council approval', () => {
@@ -674,6 +745,25 @@ describe('check-design', () => {
       expect(run.out.findings[0].kind).toBe('unresolved-source');
       expect(run.out.findings[0].detail).toContain(detail);
     }
+  });
+
+  test('a Source citing a reopened, superseded Settled id does not resolve', () => {
+    const run = check(swap('| Never force spawns | R3-council |', '| Never force spawns | R1-3 |'));
+    expect(run.code).toBe(1);
+    expect(run.out.findings).toEqual([
+      expect.objectContaining({
+        kind: 'unresolved-source',
+        detail: 'R1-3 was reopened by R3-council; cite the current answer instead',
+      }),
+    ]);
+  });
+
+  test('flags an IN row with no Source token at all', () => {
+    const run = check(swap('| `.claude/workflows/README.md` |\n', '| |\n'));
+    expect(run.code).toBe(1);
+    expect(run.out.findings).toEqual([
+      expect.objectContaining({ kind: 'missing-source', location: 'Scope IN #7 (line 25)', blocking: true }),
+    ]);
   });
 
   test('Decision 5: reviewer round-<n> <id> resolves against the n-th review, criterion ids included', () => {
