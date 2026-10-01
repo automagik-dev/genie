@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `brainstorm-workflow` |
 | **Date** | 2026-10-01 |
 | **Author** | Felipe Rosa |
@@ -307,6 +307,12 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Non-blocking: MEDIUM-1 four front-door clauses unpinned (mutants M4, M8, M9, M11 survived); MEDIUM-2 budgets described as text (a string "0" would become 1); LOW-1..LOW-6; one security LOW (payload files location).
 - One quality loop at `135d16429`: seven new anchors (all four mutants now fail), budgets passed as integers, relay list names descriptions and multiSelect, by-hand path fixed (ratchet `--approved`, crystallize wording, payloads under `mktemp -d`), INDEX lane for answered/blocked/failed, `wish report` fallback, config template key, CLAUDE.md ceiling list. `bun run check` 2975 pass, 0 fail. Merged `--no-ff` into `wish/brainstorm-workflow`.
 
+
+### QA on dev release v6.261001.2 — 2026-10-01 — PASS
+- Merged as #3086 (2026-10-01T22:09Z); dev release `v6.261001.2` published 23:34Z (the `v6.261001.1` build failed after its tag on a transient cosign download and could not be re-run; #3087 republished).
+- QA 1: `genie update --dev` → `Genie v6.261001.2 verified`; `workflows: 12 workflow(s) … (2 written)`; `genie doctor` → `workflows: catalog — 12/12 @ v6.261001.2`, `skills: claude — 18/18`; installed `brainstorm.js`, `wish.js`, `council.js`, `test-simplify.js` and `skills/brainstorm/SKILL.md` are byte-identical to the tag; `genie config get budgets.maxCouncilsPerBrainstorm` → 1.
+- QA 2: the installed `/brainstorm` ran round 2 of the live `skill-cards` brainstorm (run `wf_4e277cd3-53b`, outside genie): the owner's three answers landed in Settled (R1-2, R1-3, R1-4, each with provenance), the unanswered R1-1 stayed Asked and was shown again, WRS 37 → 55, 3 agents, 212,852 tokens, 3.3 min.
+- QA 3: `council.js`, `wish.js` and `workfly.js` installed unchanged against the tag; the routing contract tests pass on dev.
 ---
 
 ## Files to Create/Modify
