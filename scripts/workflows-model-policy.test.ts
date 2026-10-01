@@ -29,9 +29,14 @@ const read = (name: string): string => readFileSync(join(CATALOG, name), 'utf8')
 // (sonnet-opus-worker-routing, design D1); scripts/workflow-routing.test.ts owns that per-call
 // contract. The one-line TIERS table is the only place such a script may spell a model literal, and
 // the caller's `model` still wins over it, so it is stripped before the literal checks below.
+// brainstorm.js alone declares the three-key table with a `judge` tier (brainstorm-workflow DESIGN,
+// routing contract), so only its three-key table is stripped; anywhere else that table stays and fails.
 const routed = (code: string): boolean => /^const TIERS = /m.test(code);
-const TIERS_TABLE = /\{ worker: \{ model: '[^']+' \}, reasoner: \{ model: '[^']+' \} \}/g;
-const withoutTiers = (code: string): string => code.replace(TIERS_TABLE, '');
+const TIERS_TABLE = /\{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \} \}/g;
+const JUDGE_TIERS_TABLE =
+  /\{ worker: \{ model: 'sonnet' \}, reasoner: \{ model: 'opus' \}, judge: \{ model: 'fable' \} \}/g;
+const withoutTiers = (name: string, code: string): string =>
+  code.replace(name === 'brainstorm.js' ? JUDGE_TIERS_TABLE : TIERS_TABLE, '');
 
 describe('no catalog script pins a default model', () => {
   test('the catalog is non-empty and holds every caller-pinned script', () => {
@@ -41,9 +46,19 @@ describe('no catalog script pins a default model', () => {
 
   for (const name of SCRIPTS) {
     test(`${name} carries neither DEFAULT_MODEL nor a literal opus model outside its TIERS table`, () => {
-      expect(withoutTiers(read(name))).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
+      expect(withoutTiers(name, read(name))).not.toMatch(/DEFAULT_MODEL|model: 'opus'/);
     });
   }
+
+  test('the three-key TIERS table is stripped for brainstorm.js only, and only with the pinned models', () => {
+    const line =
+      "const TIERS = { worker: { model: 'sonnet' }, reasoner: { model: 'opus' }, judge: { model: 'fable' } }";
+    expect(withoutTiers('brainstorm.js', line)).toBe('const TIERS = ');
+    for (const name of ['council.js', 'wish.js']) expect(withoutTiers(name, line)).toMatch(/model: 'opus'/);
+    expect(withoutTiers('brainstorm.js', line.replace("'fable'", "'opus'"))).toMatch(/model: 'opus'/);
+    const twoKey = "const TIERS = { worker: { model: 'haiku' }, reasoner: { model: 'opus' } }";
+    expect(withoutTiers('council.js', twoKey)).toMatch(/model: 'opus'/);
+  });
 });
 
 describe('the caller-pinned scripts spread the model only when one was pinned', () => {
@@ -60,7 +75,7 @@ describe('the caller-pinned scripts spread the model only when one was pinned', 
         // Routed: the caller model reaches agent() only through modelFor, never as a spread or a bare key.
         expect(code).not.toContain(SPREAD);
         expect(code).not.toMatch(/\bmodel: MODEL\b/);
-        expect(withoutTiers(code)).not.toMatch(/\bmodel: '[^']+'/);
+        expect(withoutTiers(name, code)).not.toMatch(/\bmodel: '[^']+'/);
         return;
       }
       expect(code).toContain(SPREAD);
@@ -84,7 +99,7 @@ describe('the stage-pinned scripts keep one caller key per stage group', () => {
           expect(code).not.toContain(`...(${variable} ? { model: ${variable} } : {})`);
         }
         expect(code).not.toContain(SPREAD);
-        expect(withoutTiers(code)).not.toMatch(/\bmodel: '[^']+'/);
+        expect(withoutTiers(name, code)).not.toMatch(/\bmodel: '[^']+'/);
         return;
       }
       for (const variable of variables) {

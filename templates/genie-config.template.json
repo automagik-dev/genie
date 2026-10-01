@@ -23,7 +23,8 @@
   },
   "budgets": {
     "maxFableCallsPerWish": 3,
-    "maxEscalationsPerGroup": 2
+    "maxEscalationsPerGroup": 2,
+    "maxCouncilsPerBrainstorm": 1
   },
   "routing": {
     "maxAutoEffort": "xhigh",

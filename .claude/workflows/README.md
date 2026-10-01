@@ -38,7 +38,7 @@ explicit script path — a run by explicit path from a directory outside the pro
 is verified (zero-agent probe `wf_f01915ef-42a`, 2026-09-18). Which scope wins for a
 bare name is still undocumented, and a 2026-09-15 probe here resolved the bare name
 `council` to a stale user copy, so nothing relies on shadowing order any more. The
-six front-door skills state exactly that rule and seven parity tests pin it through
+seven front-door skills state exactly that rule and eight parity tests pin it through
 one shared assertion (`scripts/workflow-front-door-parity.ts`).
 
 Drift between the two scopes is observed rather than guessed. `genie doctor` reads
@@ -74,10 +74,26 @@ the whole workflow on one model. `effort` stays set per stage; routing changes t
 only. `scripts/workflow-routing.test.ts` fails any `agent()` call without a tier-derived
 model.
 
+`brainstorm.js` alone adds two tiers. Its TIERS table carries a third key,
+`judge: { model: 'fable' }` (Fable 5.1), and only its `socrates:*` stages spell
+`modelFor('judge')`; the judge stages of other scripts, such as `wish.js`'s `admit:judge`, stay
+on `reasoner`. Its `scout:*` stages run on the `lead-chosen` tier: the lead's plan names
+`worker` or `reasoner` per scout, and the call spells `modelFor(scoutTier(…))`, where
+`const scoutTier = (t) => (t === 'reasoner' ? 'reasoner' : 'worker')` clamps anything else to
+`worker`, so a scout never runs on the judge tier. `args.model` still pins both. The scanner
+rejects the three-key table, `modelFor('judge')` and `modelFor(scoutTier(…))` in every other
+script, `judge` on a label that is not `socrates:*`, `scoutTier` on a label that is not
+`scout:*`, a scout call whose clamp line is missing or altered (common shadowing forms are
+rejected too), `scoutTier` used as a value instead of called, and any other variable tier
+such as `modelFor(s.tier)`. The Workflow runtime accepted `'fable'` in
+`wf_24aa02c5-abd`. Whether the DSH executor (`dsh-workflow-fork`) accepts it is unverified
+until a zero-agent probe runs there.
+
 ## Entries
 
 | Workflow | Purpose |
 |----------|---------|
+| `brainstorm` | Runs ONE round of a brainstorm whose state lives in `.genie/brainstorms/<slug>/DRAFT.md`, so the owner answers between runs. `ledger:apply` settles the answers of the last round by question id through `round-ledger.mjs`, the only writer of Settled (an answer settles only its own id, a Settled id changes only through a reopen question that quotes old → new, a skipped question is shown again). A lead re-scores the Wish Readiness Score and plans the round: 0 to 11 read-only scouts on the tier and effort it chooses, clamped to worker or reasoner, or the Socratic council of the owner (3 to 5 lens briefs written per decision, dissent always among them, Socrates on the `judge` tier) only when the owner asked or one decision is contested and hard to reverse, within `councilCeiling` (past it only with a Settled answer valued `convene`, never past 3). At most four harness-ready questions come back with ids, the recommended option first. At WRS 100 with nothing open the lead writes `DESIGN.md`, `check-design` runs the template and traceability checks (blocking findings become one owner question instead of a review), an independent reviewer scores it against `review/SKILL.md`, and every verdict is stamped as returned through `design-review-evidence.mjs` and recorded with its finding ids; a FIX-FIRST gets one repair per run inside `repairBudget`. At most 15 agents a round, 11 in a crystallize run. `args`: `{slug, request?, answers?, repo, tools: {ledger, evidence, reviewContract}, councilCeiling, repairBudget, model?, timestamp}`, every path absolute; states `round \| done \| answered \| blocked \| failed`, and only `done`, a verified SHIP stamp, routes to `wish`. |
 | `council` | Five independent lenses (architecture, delivery, product, security, dissent) plus a synthesis; assess-only. `args`: a decision string or `{decision, constraints?, evidence?, unknowns?, model?}`. |
 | `docs-audit` | Audits every documentation surface against the live product — one docs-home reader, four read-only surface auditors, one cross-surface consolidator, and a ranked drift table; assess-only. `args`: `{focus?, surfaces?, quorum?, model?, timestamp?}`. |
 | `observability-review` | Weekly Claude Code observability review over the cc-* Phoenix projects `scripts/observability/backfill.ts` writes — one reader measures the eight `code-annotator/v1` session annotations, one diagnostician names findings with session/trace/span evidence ids, one proposer drafts rule changes against the rules file, and the script drops any proposal citing an id no finding cited; proposal-only, never edits a file or writes to Phoenix. `args`: `{phoenix, rulesPath, projectPrefix?, since?, model?, timestamp?}` (endpoint, rules path and cc-* prefix always arrive through args). |
