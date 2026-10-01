@@ -93,6 +93,12 @@ describe('brainstorm.js carries the spine the design fixes', () => {
     expect(carried).toBe(rule);
   });
 
+  test('the result names the agents that returned nothing `silent`, and the header says so', () => {
+    expect(script).toContain('    silent: silent.slice(),');
+    expect(script).toContain('`silent` lists the');
+    expect(script).not.toContain('notConvened');
+  });
+
   test('every phase the script enters is a meta phase, and every meta phase is entered', () => {
     const entered = [...new Set([...script.matchAll(/\bphase\('([A-Za-z-]+)'\)/g)].map((m) => m[1]))].sort();
     const declared = [...script.matchAll(/\{ title: '([A-Za-z-]+)'/g)].map((m) => m[1]).sort();
