@@ -74,6 +74,20 @@ the whole workflow on one model. `effort` stays set per stage; routing changes t
 only. `scripts/workflow-routing.test.ts` fails any `agent()` call without a tier-derived
 model.
 
+`brainstorm.js` alone adds two tiers. Its TIERS table carries a third key,
+`judge: { model: 'fable' }` (Fable 5.1), and only its `socrates:*` stages spell
+`modelFor('judge')`; the judge stages of other scripts, such as `wish.js`'s `admit:judge`, stay
+on `reasoner`. Its `scout:*` stages run on the `lead-chosen` tier: the lead's plan names
+`worker` or `reasoner` per scout, and the call spells `modelFor(scoutTier(…))`, where
+`const scoutTier = (t) => (t === 'reasoner' ? 'reasoner' : 'worker')` clamps anything else to
+`worker`, so a scout never runs on the judge tier. `args.model` still pins both. The scanner
+rejects the three-key table, `modelFor('judge')` and `modelFor(scoutTier(…))` in every other
+script, `judge` on a label that is not `socrates:*`, `scoutTier` on a label that is not
+`scout:*`, a scout call whose clamp line is missing, altered or shadowed, and any other
+variable tier such as `modelFor(s.tier)`. The Workflow runtime accepted `'fable'` in
+`wf_24aa02c5-abd`. Whether the DSH executor (`dsh-workflow-fork`) accepts it is unverified
+until a zero-agent probe runs there.
+
 ## Entries
 
 | Workflow | Purpose |
