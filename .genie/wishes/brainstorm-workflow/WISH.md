@@ -275,6 +275,11 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - L-b (G1): `asked[]` stores `reopens`; `ask` refuses a `reopens` naming an unknown Settled id; a reopened Settled entry records `reopenedBy`.
 - Open: DSH acceptance of `'fable'` stays unverified (Risk 1).
 
+### Group 2 review — 2026-10-01T18:09:47Z — SHIP
+- Reviewer `review-g2-opus-5.5` on `014f38844` (blind criteria C1-C12 frozen at 18:03:31Z); validation 55 pass, 0 fail; workflows-meta 17 pass; 12 of 14 scanner mutations caught.
+- Non-blocking: M1 model names only shape-checked; M2 (pre-existing) label/model read from raw call text, follow-up outside this wish; L1 two rulings without self-tests; L2 README wording. Quality pass: three maintainability LOWs.
+- One quality loop at `973756f8a`: model names pinned (`sonnet`/`opus`, `judge: 'fable'` in brainstorm.js only), the two self-tests added, clamp occurrence and value-use message fixed, README wording. Coordinator re-ran validation: 75 pass, 0 fail. Merged `--no-ff` into `wish/brainstorm-workflow`.
+
 ---
 
 ## Files to Create/Modify
