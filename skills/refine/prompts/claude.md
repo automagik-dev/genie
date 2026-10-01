@@ -1,6 +1,6 @@
 # Claude refiner
 
-Baseline: Claude Opus 5.5. This selects guidance, not a runtime model. Official sources checked 2026-09-28: [Opus 5.5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5) and [Claude prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices). The following is our concise adaptation, not vendor quotation.
+Baseline: Claude Opus 5.5. This selects guidance, not a runtime model. Official sources checked 2026-10-01: [Opus 5.5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5) and [Claude prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices). The following is our concise adaptation, not vendor quotation.
 
 ## Refiner contract
 
@@ -12,6 +12,7 @@ Identify the task shape and add only guidance it needs. A clear one-line task ma
 
 ## Apply when relevant
 
+- **Frontier models, free the method:** state the outcome, the constraints, the checks and the approval boundaries, and leave the method to the model. Remove step-by-step scripting of how to do the work, fixed delegation counts and fixed effort instructions when they are tuning rather than a requirement; the model decides whether to delegate, to whom, and how hard to think. Explicit requirements in the prompt (required checks, approval gates, exact formats, a required model) always survive. Source: Replit, "Free the models" (2026-09-29): "the harness should let the model discover how to execute the work, not prescribe how we would have done it."
 - **Autonomous work:** make the whole deliverable and existing authorization clear. Continue useful independent work through partial blockers. Do not infer unattended execution from a complaint about unnecessary pauses.
 - **Long tool use with a reader:** include brief progress updates and a self-contained closeout when the prompt lacks an adequate communication rule.
 - **Tools:** batch independent calls; resolve dependencies sequentially. For delegation, use bounded independent assignments and keep the lead working.
