@@ -1147,6 +1147,13 @@ describe('Group E release and documentation contracts', () => {
     expect(brainstorm).toContain('Map the answers back to ids by question order');
     expect(brainstorm).toContain('Simmering while rounds run, Ready at `done`');
     expect(brainstorm).toContain('Stop is permanent for the slug');
+    expect(brainstorm).toContain('the question text as the harness returned it');
+    expect(brainstorm).toContain('`ledger` is `references/round-ledger.mjs`');
+    expect(brainstorm).toContain('`evidence` is `references/design-review-evidence.mjs`');
+    expect(brainstorm).toContain('`reviewContract` is `review/SKILL.md` in the skills directory that holds this one');
+    expect(brainstorm).toContain('a single-skill install has none, and the run ends `failed` naming the path');
+    expect(brainstorm).toContain('An empty `round`, with no question to relay, is a valid result: invoke again.');
+    expect(brainstorm).toContain('each passed as an integer, never as the printed string');
     // Every brainstorm keeps the DRAFT, the WRS and the stamp: the spike/bounded/architectural paths are gone.
     expect(brainstorm).not.toMatch(/\b(?:Spike|Bounded|Architectural)\b/);
     for (const shape of [

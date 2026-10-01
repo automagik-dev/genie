@@ -17,12 +17,12 @@ Pass `{slug, request?, answers?, repo, tools: {ledger, evidence, reviewContract}
 
 - `slug` is lowercase letters, digits and dashes; `request` is the idea in the owner's words; `repo` is the repository root; `timestamp` is the caller's clock, since the workflow has none; `model` pins every stage.
 - `tools` resolve from this skill's own directory, never from the checkout, so a round runs from any repository: `ledger` is `references/round-ledger.mjs`, `evidence` is `references/design-review-evidence.mjs`, and `reviewContract` is `review/SKILL.md` in the skills directory that holds this one, the `review` skill installed beside it; a single-skill install has none, and the run ends `failed` naming the path. The design template stays at `references/design-template.md` beside the ledger, where the workflow finds it.
-- `councilCeiling` is the output of `genie config get budgets.maxCouncilsPerBrainstorm` and `repairBudget` the output of `genie config get budgets.maxEscalationsPerGroup`. When `genie` is absent or a read exits non-zero — an installed release older than the council key exits 1 on it — pass that value's schema default (ceiling 1, repair budget 2) and say so when you relay the result.
+- `councilCeiling` is the value `genie config get budgets.maxCouncilsPerBrainstorm` prints and `repairBudget` the value `genie config get budgets.maxEscalationsPerGroup` prints, each passed as an integer, never as the printed string: the workflow treats anything that is not an integer as unset, so the string "0" would quietly raise an owner's ceiling of 0 to the default 1. When `genie` is absent or a read exits non-zero — an installed release older than the council key exits 1 on it — pass that value's schema default (ceiling 1, repair budget 2) and say so when you relay the result.
 
 ## Each round
 
-1. Run the script, then relay the WRS bar (`wrs.bar`), the plan as run and the `notes`. Whatever the state, run `genie wish report <runId> --append` with the run id the runtime reported, and relay its output: the run's tokens and time per stage, and one row in the machine-local ledger.
-2. Relay `questions` through the runtime's question harness, at most four per batch: each question's text, header and option labels exactly as returned, in the order returned, with no rephrasing and no translation. Ids and kinds stay outside the harness payload.
+1. Run the script, then relay the WRS bar (`wrs.bar`), the plan as run and the `notes`. Whatever the state, run `genie wish report <runId> --append` with the run id the runtime reported, and relay its output: the run's tokens and time per stage, and one row in the machine-local ledger. Without `genie`, relay the run id and say the run's cost was not recorded.
+2. Relay `questions` through the runtime's question harness, at most four per batch: each question's text, header, `multiSelect` flag, option descriptions and option labels exactly as returned, in the order returned, with no rephrasing and no translation. Ids and kinds stay outside the harness payload.
 3. Map the answers back to ids by question order and invoke again with `answers: [{id, question, answer}]`: the id, the question text as the harness returned it, and the picked label (an array of labels for a multi-select) or the owner's own words verbatim. Leave out a question nobody answered; it stays Asked and comes back next round.
 4. An empty `round`, with no question to relay, is a valid result: invoke again.
 
@@ -42,7 +42,7 @@ Choose the simplest complete design satisfying current user stories. Justify add
 
 ## Planning index
 
-`.genie/INDEX.md` is the single intake index. Reconcile a legacy `.genie/brainstorm.md` idempotently into it when encountered; do not maintain two indexes or duplicate entries. After each run, write this slug's entry with a link to `brainstorms/<slug>/`: Simmering while rounds run, Ready at `done`.
+`.genie/INDEX.md` is the single intake index. Reconcile a legacy `.genie/brainstorm.md` idempotently into it when encountered; do not maintain two indexes or duplicate entries. After each run, write this slug's entry with a link to `brainstorms/<slug>/`: Simmering while rounds run, Ready at `done`. An `answered`, `blocked` or `failed` run leaves the entry in Simmering with the state and its one-line reason beside it, since no reviewed design exists to make it Ready.
 
 - Raw: captured idea.
 - Simmering: draft with unresolved decisions.
