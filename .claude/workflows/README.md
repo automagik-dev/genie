@@ -38,7 +38,7 @@ explicit script path — a run by explicit path from a directory outside the pro
 is verified (zero-agent probe `wf_f01915ef-42a`, 2026-09-18). Which scope wins for a
 bare name is still undocumented, and a 2026-09-15 probe here resolved the bare name
 `council` to a stale user copy, so nothing relies on shadowing order any more. The
-six front-door skills state exactly that rule and seven parity tests pin it through
+seven front-door skills state exactly that rule and eight parity tests pin it through
 one shared assertion (`scripts/workflow-front-door-parity.ts`).
 
 Drift between the two scopes is observed rather than guessed. `genie doctor` reads

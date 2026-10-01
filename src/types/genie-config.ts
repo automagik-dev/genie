@@ -39,6 +39,8 @@ const BudgetsConfigSchema = z.object({
   maxFableCallsPerWish: z.number().int().nonnegative().max(10).default(3),
   /** Bounded repair rounds a single execution group may spend. Ceiling 5: the repair loop is not a substitute for review. */
   maxEscalationsPerGroup: z.number().int().nonnegative().max(5).default(2),
+  /** Socratic councils one brainstorm may convene without the owner's answer. Ceiling 3: the workflow never convenes a fourth. */
+  maxCouncilsPerBrainstorm: z.number().int().nonnegative().max(3).default(1),
 });
 
 // Routing-matrix effort configuration

@@ -1130,6 +1130,38 @@ describe('Group E release and documentation contracts', () => {
     expect(lint).toContain('designReviewViolations');
   });
 
+  test('brainstorm fronts its saved workflow one round per run, with no path classifier', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const template = read('skills/brainstorm/references/design-template.md');
+    // The per-question rule, verbatim from the reviewed brainstorm-workflow design.
+    expect(brainstorm).toContain(
+      'An answer settles only the question it answers. Nothing rides along: a change the owner was not asked about, including any edit to something they already approved, goes in its own question. An approved decision is reopened only by a question that quotes it and shows old → new. Moves that add scrutiny may be taken and announced; moves that reduce what the owner sees, or change what they approved, wait for their answer.',
+    );
+    expect(brainstorm).toContain('## Without a workflow surface');
+    expect(brainstorm).toContain('references/without-a-workflow.md');
+    expect(brainstorm).toContain('genie config get budgets.maxCouncilsPerBrainstorm');
+    expect(brainstorm).toContain('genie config get budgets.maxEscalationsPerGroup');
+    expect(brainstorm).toContain('(ceiling 1, repair budget 2)');
+    expect(brainstorm).toContain('genie wish report <runId>');
+    expect(brainstorm).toContain('option labels exactly as returned');
+    expect(brainstorm).toContain('Map the answers back to ids by question order');
+    expect(brainstorm).toContain('Simmering while rounds run, Ready at `done`');
+    expect(brainstorm).toContain('Stop is permanent for the slug');
+    // Every brainstorm keeps the DRAFT, the WRS and the stamp: the spike/bounded/architectural paths are gone.
+    expect(brainstorm).not.toMatch(/\b(?:Spike|Bounded|Architectural)\b/);
+    for (const shape of [
+      '## Problem',
+      '| **WRS** |',
+      '| **Size** |',
+      '| # | Deliverable | Files changed | Source |',
+      '| # | Decision | Rationale | Source |',
+      '(Source: ',
+      '**Proof:**',
+    ])
+      expect(template).toContain(shape);
+    expect(read('skills/brainstorm/references/without-a-workflow.md')).toContain('round-ledger.mjs');
+  });
+
   test('the retired homolog channel never reappears in any workflow', () => {
     for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
       expect(read(`.github/workflows/${name}`), name).not.toContain('homolog');
