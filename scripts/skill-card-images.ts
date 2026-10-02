@@ -16,8 +16,17 @@
  * commands stay `<text>` nodes, never outlines, and every YAML value is XML-escaped before it enters
  * the SVG. The script measures no glyphs, so it counts characters and refuses what may not fit.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 export const CORE_SKILLS = ['brainstorm', 'wish', 'work', 'review', 'council', 'fix'] as const;
 
@@ -119,15 +128,40 @@ export function wrapLine(text: string): string[] {
   return best;
 }
 
+/**
+ * The first UTF-16 unit a card refuses: a C0 control (tab and newline included, since a card value is one
+ * line), DEL and the C1 controls, a bidi embedding, override or isolate (U+202A-202E, U+2066-2069), the
+ * non-characters U+FFFE and U+FFFF, or a lone surrogate. The rest of XML 1.0's Char production passes.
+ */
+function refusedCodeUnit(value: string): number | undefined {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        index++;
+        continue;
+      }
+      return code;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) return code;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return code;
+    if ((code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)) return code;
+    if (code === 0xfffe || code === 0xffff) return code;
+  }
+  return undefined;
+}
+
 function cardValue(source: string, field: string, value: unknown): string {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new SkillCardError(`${source}: interface.${field} is missing or empty`);
   }
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    if (code < 0x20 || code === 0x7f) {
-      throw new SkillCardError(`${source}: interface.${field} holds a control character; a card value is one line`);
-    }
+  const refused = refusedCodeUnit(value);
+  if (refused !== undefined) {
+    const unit = `U+${refused.toString(16).toUpperCase().padStart(4, '0')}`;
+    throw new SkillCardError(
+      `${source}: interface.${field} holds ${unit}; a card value is one line of XML text with no control, bidi override or non-character`,
+    );
   }
   return value;
 }
@@ -170,7 +204,7 @@ function assetDataUri(root: string, file: string, mime: string): string {
   try {
     return `data:${mime};base64,${readFileSync(join(root, path)).toString('base64')}`;
   } catch {
-    throw new SkillCardError(`cannot read ${path}`);
+    throw new SkillCardError(`cannot read ${path}; restore it with git checkout -- scripts/skill-card-images`);
   }
 }
 
@@ -233,6 +267,12 @@ export function docsSkillNames(root: string): string[] {
     .sort();
 }
 
+function isInside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+/** `docs` must resolve to a directory inside `.docs-vendor/`, the docs submodule, or docs mode refuses. */
 function requireDocsDir(root: string): void {
   let isDirectory = false;
   try {
@@ -246,6 +286,42 @@ function requireDocsDir(root: string): void {
         'git submodule update --init .docs-vendor); nothing was written',
     );
   }
+  let inside = false;
+  try {
+    inside = isInside(realpathSync(join(root, '.docs-vendor')), realpathSync(join(root, 'docs')));
+  } catch {
+    inside = false;
+  }
+  if (!inside) {
+    throw new SkillCardError('docs/ resolves outside .docs-vendor/, the docs submodule; nothing was written');
+  }
+}
+
+/**
+ * Refuses a card path that would write through a symlink or onto a non-file, before anything is written.
+ * Every existing component below `base` is checked with lstat: the root for the README cards, the `docs`
+ * link for the docs cards (the link itself is checked by requireDocsDir).
+ */
+function guardWriteTarget(root: string, base: string, path: string): void {
+  const parts = relative(base, path).split(sep);
+  let current = base;
+  for (const [index, part] of parts.entries()) {
+    current = join(current, part);
+    const shown = relative(root, current);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') return;
+      throw new SkillCardError(`cannot inspect ${shown}: ${(error as Error).message}; nothing was written`);
+    }
+    if (stat.isSymbolicLink()) {
+      throw new SkillCardError(`${shown} is a symlink; a card is never written through one, so nothing was written`);
+    }
+    const last = index === parts.length - 1;
+    if (!last && !stat.isDirectory()) throw new SkillCardError(`${shown} is not a directory; nothing was written`);
+    if (last && !stat.isFile()) throw new SkillCardError(`${shown} is not a regular file; nothing was written`);
+  }
 }
 
 function renderCards(root: string, docs: boolean): { path: string; svg: string }[] {
@@ -255,12 +331,22 @@ function renderCards(root: string, docs: boolean): { path: string; svg: string }
   return names.map((name) => ({ path: cardPath(root, name), svg: renderSkillCard(root, name) }));
 }
 
-/** Renders every card first and writes only when all rendered. Returns the written paths. */
+/**
+ * Renders every card and checks every target first, and writes only when all pass: a refusal writes
+ * nothing. Returns the written paths.
+ */
 export function writeSkillCards(root: string, opts: { docs?: boolean } = {}): string[] {
-  const cards = renderCards(root, opts.docs === true);
+  const docs = opts.docs === true;
+  const cards = renderCards(root, docs);
+  const base = docs ? join(root, 'docs') : root;
+  for (const card of cards) guardWriteTarget(root, base, card.path);
   for (const card of cards) {
-    mkdirSync(dirname(card.path), { recursive: true });
-    writeFileSync(card.path, card.svg);
+    try {
+      mkdirSync(dirname(card.path), { recursive: true });
+      writeFileSync(card.path, card.svg);
+    } catch (error) {
+      throw new SkillCardError(`cannot write ${relative(root, card.path)}: ${(error as Error).message}`);
+    }
   }
   return cards.map((card) => card.path);
 }

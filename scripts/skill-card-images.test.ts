@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -115,6 +116,19 @@ function textNodes(svg: string): { attrs: Record<string, string>; text: string }
 
 function danglingDocs(root: string): void {
   symlinkSync(join(root, '.docs-vendor', 'genie'), join(root, 'docs'));
+}
+
+/** The real tree's layout: `docs` is a relative link to `.docs-vendor/genie`, the docs submodule. */
+function docsInVendor(root: string): void {
+  mkdirSync(join(root, '.docs-vendor', 'genie'), { recursive: true });
+  symlinkSync(join('.docs-vendor', 'genie'), join(root, 'docs'));
+}
+
+/** A directory outside the root, standing for anything a symlink could point a write at. */
+function outsideDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'skill-card-images-outside-'));
+  roots.push(dir);
+  return dir;
 }
 
 describe('wrapLine', () => {
@@ -260,15 +274,35 @@ describe('renderSkillCard', () => {
     );
   });
 
-  test('refuses a missing file, an empty or multi-line value, and a name the command row cannot hold', () => {
+  test('refuses a missing file or asset, an empty or multi-line value, and a name the command row cannot hold', () => {
     const root = tempRoot();
     expect(() => readSkillCardText(root, 'missing')).toThrow('cannot read skills/missing/agents/openai.yaml');
+    rmSync(join(root, 'scripts', 'skill-card-images', 'genie-logo.png'));
+    expect(() => renderSkillCard(root, 'fix')).toThrow(
+      'cannot read scripts/skill-card-images/genie-logo.png; restore it with git checkout -- scripts/skill-card-images',
+    );
     expect(() => readSkillCardText(root, '../fix')).toThrow('is not a skill name');
     expect(() => readSkillCardText(root, 'abcdefghijklm')).toThrow('is 13 characters');
     setInterface(root, 'fix', { short_description: '  ' });
     expect(() => readSkillCardText(root, 'fix')).toThrow('interface.short_description is missing or empty');
     setInterface(root, 'work', { display_name: 'Work\nNow' });
-    expect(() => readSkillCardText(root, 'work')).toThrow('interface.display_name holds a control character');
+    expect(() => readSkillCardText(root, 'work')).toThrow('interface.display_name holds U+000A');
+  });
+
+  test('refuses U+FFFE, a non-character outside the XML 1.0 Char production', () => {
+    const root = tempRoot();
+    setInterface(root, 'fix', { display_name: 'Fix\uFFFE' });
+    expect(readInterface(root, 'fix').display_name).toBe('Fix\uFFFE');
+    expect(() => renderSkillCard(root, 'fix')).toThrow(SkillCardError);
+    expect(() => renderSkillCard(root, 'fix')).toThrow('interface.display_name holds U+FFFE');
+  });
+
+  test('refuses U+202E, a bidi override that would reorder the line', () => {
+    const root = tempRoot();
+    setInterface(root, 'fix', { short_description: 'Repair review gaps \u202Ewith bounded retries' });
+    expect(readInterface(root, 'fix').short_description).toContain('\u202E');
+    expect(() => renderSkillCard(root, 'fix')).toThrow(SkillCardError);
+    expect(() => renderSkillCard(root, 'fix')).toThrow('interface.short_description holds U+202E');
   });
 });
 
@@ -335,15 +369,14 @@ describe('writeSkillCards and checkSkillCards', () => {
     }
   });
 
-  test('docs mode writes one card per skill holding a SKILL.md, through the docs link', () => {
+  test('every shipped skill fits a card (name ≤ 12, title ≤ 24, line splits into two of 34), and docs mode writes them all through the docs link', () => {
     const root = tempRoot();
     mkdirSync(join(root, 'skills', 'draft', 'agents'), { recursive: true });
     cpSync(
       join(root, 'skills', 'wish', 'agents', 'openai.yaml'),
       join(root, 'skills', 'draft', 'agents', 'openai.yaml'),
     );
-    mkdirSync(join(root, 'docs-checkout'));
-    symlinkSync('docs-checkout', join(root, 'docs'));
+    docsInVendor(root);
     const shipped = readdirSync(join(REPO, 'skills'))
       .filter((name) => existsSync(join(REPO, 'skills', name, 'SKILL.md')))
       .sort();
@@ -354,7 +387,7 @@ describe('writeSkillCards and checkSkillCards', () => {
     expect(docsCardPath(root, 'wish')).toBe(join(root, 'docs', 'images', 'skills', 'wish.svg'));
     expect(writeSkillCards(root, { docs: true })).toEqual(names.map((name) => docsCardPath(root, name)));
     const files = names.map((name) => `${name}.svg`).sort();
-    expect(readdirSync(join(root, 'docs-checkout', 'images', 'skills')).sort()).toEqual(files);
+    expect(readdirSync(join(root, '.docs-vendor', 'genie', 'images', 'skills')).sort()).toEqual(files);
     expect(existsSync(join(root, '.github'))).toBe(false);
     expect(checkSkillCards(root, { docs: true })).toEqual({ ok: true, differing: [] });
   });
@@ -370,6 +403,81 @@ describe('writeSkillCards and checkSkillCards', () => {
     expect(lstatSync(join(root, 'docs')).isSymbolicLink()).toBe(true);
     expect(existsSync(join(root, '.docs-vendor'))).toBe(false);
   });
+});
+
+describe('write safety', () => {
+  test('a symlinked card file exits 1, leaves its target untouched and writes no card', async () => {
+    const root = tempRoot();
+    const target = join(outsideDir(), 'victim.txt');
+    writeFileSync(target, 'keep\n');
+    mkdirSync(join(root, '.github', 'assets'), { recursive: true });
+    symlinkSync(target, join(root, '.github', 'assets', 'skill-fix.svg'));
+    const before = snapshot(root);
+    expect(await main([], root)).toBe(1);
+    expect(stderr).toEqual([
+      `skill-card-images: ${join('.github', 'assets', 'skill-fix.svg')} is a symlink; a card is never written through one, so nothing was written`,
+    ]);
+    expect(readFileSync(target, 'utf8')).toBe('keep\n');
+    expect(readdirSync(join(root, '.github', 'assets'))).toEqual(['skill-fix.svg']);
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  test('a symlinked .github/assets exits 1 and puts nothing in the directory it points at', async () => {
+    const root = tempRoot();
+    const outside = outsideDir();
+    mkdirSync(join(root, '.github'));
+    symlinkSync(outside, join(root, '.github', 'assets'));
+    expect(await main([], root)).toBe(1);
+    expect(stderr).toEqual([
+      `skill-card-images: ${join('.github', 'assets')} is a symlink; a card is never written through one, so nothing was written`,
+    ]);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  test('docs mode exits 1 and creates nothing when docs resolves outside .docs-vendor or a link sits below it', async () => {
+    const root = tempRoot();
+    const outside = outsideDir();
+    mkdirSync(join(root, '.docs-vendor'));
+    symlinkSync(outside, join(root, 'docs'));
+    const before = snapshot(root);
+    expect(await main(['--docs'], root)).toBe(1);
+    expect(stderr).toEqual([
+      'skill-card-images: docs/ resolves outside .docs-vendor/, the docs submodule; nothing was written',
+    ]);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(snapshot(root)).toEqual(before);
+
+    const nested = tempRoot();
+    const elsewhere = outsideDir();
+    docsInVendor(nested);
+    symlinkSync(elsewhere, join(nested, '.docs-vendor', 'genie', 'images'));
+    expect(await main(['--docs'], nested)).toBe(1);
+    expect(stderr[1]).toBe(
+      `skill-card-images: ${join('docs', 'images')} is a symlink; a card is never written through one, so nothing was written`,
+    );
+    expect(readdirSync(elsewhere)).toEqual([]);
+  });
+
+  // Root ignores directory permissions, so this case cannot fail a write there.
+  test.skipIf(process.getuid?.() === 0)(
+    'a filesystem error while writing becomes a refusal naming the path',
+    async () => {
+      const root = tempRoot();
+      const assets = join(root, '.github', 'assets');
+      mkdirSync(assets, { recursive: true });
+      chmodSync(assets, 0o555);
+      try {
+        expect(await main([], root)).toBe(1);
+        expect(stderr).toHaveLength(1);
+        expect(stderr[0]).toStartWith(
+          `skill-card-images: cannot write ${join('.github', 'assets', 'skill-brainstorm.svg')}: `,
+        );
+        expect(readdirSync(assets)).toEqual([]);
+      } finally {
+        chmodSync(assets, 0o755);
+      }
+    },
+  );
 });
 
 describe('main', () => {
