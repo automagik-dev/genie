@@ -21,20 +21,22 @@ Launch traffic lands on a README that spends most of its first screen on retirem
   - "When not to use it / what it costs", using only figures from the Allowed numbers list below.
   - A short comparison with Superpowers, spec-kit and GSD.
   - Links to docs and the org.
+  - The link in `package.json`'s description moves from `automagik.dev/genie/release-process` (404 today) to `https://docs.automagik.dev/genie/security`.
   - The retirement, rollback, restore, MCP and Orca text moves verbatim to a new `UPGRADING.md`, keeping its headings, including `#### Restoring from a retirement backup`.
-- **B. v6 docs refactor** (automagik-dev/docs, `genie/` section, PR to its `main`; the `.docs-vendor` pointer is bumped in a separate genie PR only after that docs PR merges). At most 15 public pages:
+- **B. v6 docs refactor** (automagik-dev/docs, `genie/` section, PR to its `main`; the `.docs-vendor` pointer is bumped in a separate genie PR only after that docs PR merges). At most 15 nav pages:
   1. Introduction
   2. Install (stays at `genie/installation.mdx`)
   3. Quickstart (first wish)
   4. Skills catalog, with one skill card image per shipped skill, all 18, which group B embeds from `genie/images/skills/<name>.svg` (skill-cards R2-3)
   5–10. One page each for brainstorm, wish, work, review, council, fix
   11. Workflows
-  12. CLI reference (pasted from `genie --help` of release tag v6.260929.2, or the newest stable tag at execution time, named on the page). The paste is verbatim: while the retired `orca` stub and the `mcp` wording still ship, a note on the page names them as retired stubs (owner decision 2026-10-02)
+  12. CLI reference (pasted from `genie --help` of release tag v6.260929.2, or the newest stable tag at execution time, named on the page). The paste is verbatim: while the retired `orca` stub and the `mcp` wording in `init` still ship, a note on the page names `orca` as a retired stub and `mcp` as a removed verb (owner decision 2026-10-02)
   13. Upgrading and retired (stays at `genie/release-notes.mdx`)
   14. Security and releases, with one factual line on leaving npm for signed releases
   15. The incident write-up (stays public at `genie/incident-response/canisterworm.mdx` as the Security page's link target)
-  - Everything else moves to `genie/_internal/` or is deleted.
-  - Orphan pages are unpublished, except the pages shipped code or pinned docs link to (`genie/hacks` from the shipped `genie-hacks` skill, `genie/release-process` from `package.json`, `concepts/byoa` from Install, `security/key-rotation` from the incident page). They stay reachable at their paths, outside the nav, so no shipped link breaks.
+  - Everything else, except the reachable pages below, moves to `genie/_internal/` or is deleted.
+  - Orphan pages are unpublished, except the two pages shipped code or a pinned page links to: `genie/hacks` (from the shipped `genie-hacks` skill) and `genie/security/key-rotation` (from the incident page). They stay reachable at their paths, outside the nav, so no shipped link breaks. They count as public pages for the grep criterion, and B brings each up to v6 where it presents v4 as current. `concepts/byoa` moves to `_internal/` and B's Install drops its link; `release-process` moves to `_internal/` and A retargets the link in `package.json`'s description to the Security and releases page (`https://docs.automagik.dev/genie/security`).
+  - Links inside docs pages stay root-relative (`/genie/...`); the `docs.automagik.dev` domain applies to links from the README, skills, `package.json` and the org and profile pages.
   - Open docs PR automagik-dev/docs#84 (`feat/genie-v6`) is superseded: B is written fresh on docs `main`, and #84 is closed with a pointer to B's PR (owner decision 2026-10-02).
   - The docs host: the Mintlify deployment has not tracked docs `main` since before 2026-09-01, and Felipe will migrate off Mintlify soon (2026-10-02). B delivers the content in automagik-dev/docs; putting it live belongs to that migration, not to this wish. Links keep `docs.automagik.dev`, accepting 404s on new pages until the migration (owner decision 2026-10-02).
   - The docs.json nav label "RLMX" becomes "mikro". This is a label-only change to the shared nav and needs Felipe's approval in the docs PR.
@@ -46,7 +48,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
     - the skill card images in design B, one per core skill for the README and all 18 for the docs, from the tracked generator `scripts/skill-card-images.ts` (skill-cards R1-4, R2-3);
     - one SOP video per core skill, 30 to 60 seconds, with a simulated terminal labelled "simulated" on screen;
     - the real `/wish` capture (V2) embedded in Quickstart.
-  - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source. The `/wish` (V2) and `/brainstorm` captures exist; work, review, council and fix get real runs recorded in a throwaway repository (owner decision 2026-10-02). Before any render, captures are redacted: host paths become `~/`, and the line that launches the agent with `--dangerously-skip-permissions` is cut; the video says it is edited at those two points (owner decision 2026-10-02).
+  - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source; the shipped capture file is the redacted copy. The `/wish` (V2) and `/brainstorm` captures exist; work, review, council and fix get real runs recorded in a throwaway repository (owner decision 2026-10-02). Before any render, captures are redacted: host paths become `~/`, and the line that launches the agent with `--dangerously-skip-permissions` is cut; the video says it is edited at those two points (owner decision 2026-10-02).
 - **D. Org and profile pages.** These are outward-facing GitHub writes, each done only with Felipe present and approving it.
   - **automagik-dev:** org description, 4 pins (genie, workit, autopg, mikro), a new profile README, per-repo descriptions and topics, and the Forge archive after closing its open issues with a pointer to genie. Filming the archive belongs to the launch video work, not to this wish.
   - **namastex888:** bio, 6 pins, a new profile README, and archiving empty originals.
@@ -80,7 +82,7 @@ Copy follows Felipe's voice rules and gets a deslop pass: no hashtags, no dash p
 
 Alternatives considered:
 - A new marketing site: rejected, a second surface to keep true.
-- Recording real terminals for every SOP: rejected for speed. Only the /wish run is real footage. The SOPs are labelled simulations replaying saved real captures.
+- Showing real footage in every SOP: rejected for speed. Each SOP replays a recorded real run in a terminal labelled simulated; only the V2 `/wish` run is shown as real footage.
 - A site-wide neon docs theme: out, because it restyles the other products sharing docs.json.
 
 ## Simplicity Case
@@ -102,7 +104,7 @@ Alternatives considered:
 | 6 | README tests are retargeted, not narrowed | `release-docs.test.ts` pins real README contracts (release channel authority, review names, MCP ownership, command table, `/wish` invocation forms). `skills-retirement-restore.test.ts` executes the restore block. Assertions follow the moved text into `UPGRADING.md`. |
 | 7 | Keep `installation.mdx`, `release-notes.mdx` and `incident-response/canisterworm.mdx` at their paths | genie's `lint:docs-links`, `lint:docs-markdown` and `.github/workflows/docs-lint.yml` pin them; moving them fails the pointer bump. |
 | 8 | Outward GitHub writes (D) only with Felipe approving each | Hard to reverse and public. |
-| 9 | Counts come from the repo at the release tag used at execution, and the CLI page pastes `--help` verbatim with a retired-stubs note | Owner decision 2026-10-02: the catalog grew to 12 workflows after the design, and the `orca` and `mcp` stubs ship until a later release. |
+| 9 | Counts come from the repo at the release tag used at execution, and the CLI page pastes `--help` verbatim with a retired-stubs note | Owner decision 2026-10-02: the catalog grew to 12 workflows after the design, and the `orca` stub and the `mcp` wording in `init` ship until a later release. |
 | 10 | B is content in the docs repo; the site going live waits for the Mintlify migration, D does not | Owner decision 2026-10-02. |
 
 ## Risks & Assumptions
@@ -130,6 +132,7 @@ Alternatives considered:
 - [ ] The CLI reference page names the release tag its `--help` output came from.
 - [ ] The six core skills each have a card image and an SOP video labelled "simulated", each with its saved capture file; GIF ≤ 3 MB, each MP4 ≤ 8 MB.
 - [ ] Every figure in A–D is on the Allowed numbers list.
+- [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|scratchpad|/home/genie|khal|ghp_|sk-|Bearer|bypass permissions|dangerously-skip-permissions`, and each video shows its two-edit note.
 - [ ] Newly written copy (excluding verbatim `UPGRADING.md` blocks, fenced code and pasted CLI output) passes a grep for `—`, `–`, spaced hyphens used as punctuation, hashtags and "não é/não era" rebuttals.
 - [ ] The org shows a description and 4 pins; forge is archived with its issues closed; the namastex888 profile shows the new bio, pins and README; each write was approved by Felipe.
 
