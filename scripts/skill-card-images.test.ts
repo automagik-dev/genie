@@ -458,6 +458,32 @@ describe('write safety', () => {
     expect(readdirSync(elsewhere)).toEqual([]);
   });
 
+  test('docs mode exits 1 when .docs-vendor is a link, while the real layout writes every shipped card', async () => {
+    const root = tempRoot();
+    const outside = outsideDir();
+    mkdirSync(join(outside, 'genie'));
+    symlinkSync(outside, join(root, '.docs-vendor'));
+    symlinkSync(join('.docs-vendor', 'genie'), join(root, 'docs'));
+    const before = snapshot(outside);
+    const refusal =
+      'skill-card-images: .docs-vendor must be the checked-out docs submodule, a directory and not a link ' +
+      '(git submodule update --init .docs-vendor); nothing was written';
+    expect(await main(['--docs'], root)).toBe(1);
+    expect(await main(['--docs', '--check'], root)).toBe(1);
+    expect(stderr).toEqual([refusal, refusal]);
+    expect(snapshot(outside)).toEqual(before);
+    expect(readdirSync(join(outside, 'genie'))).toEqual([]);
+
+    const real = tempRoot();
+    docsInVendor(real);
+    const shipped = docsSkillNames(real);
+    stdout = [];
+    expect(await main(['--docs'], real)).toBe(0);
+    expect(stdout).toEqual(shipped.map((name) => `wrote ${join('docs', 'images', 'skills', `${name}.svg`)}`));
+    expect(readdirSync(join(real, '.docs-vendor', 'genie', 'images', 'skills'))).toHaveLength(shipped.length);
+    expect(await main(['--docs', '--check'], real)).toBe(0);
+  });
+
   // Root ignores directory permissions, so this case cannot fail a write there.
   test.skipIf(process.getuid?.() === 0)(
     'a filesystem error while writing becomes a refusal naming the path',

@@ -272,7 +272,11 @@ function isInside(parent: string, child: string): boolean {
   return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
-/** `docs` must resolve to a directory inside `.docs-vendor/`, the docs submodule, or docs mode refuses. */
+/**
+ * `docs` must resolve to a directory inside `.docs-vendor/`, and `.docs-vendor` must be the checked-out
+ * submodule itself, a directory and never a link (a linked one would carry both paths outside the tree),
+ * or docs mode refuses.
+ */
 function requireDocsDir(root: string): void {
   let isDirectory = false;
   try {
@@ -284,6 +288,19 @@ function requireDocsDir(root: string): void {
     throw new SkillCardError(
       'docs/ does not resolve to a directory (is the .docs-vendor submodule initialized? ' +
         'git submodule update --init .docs-vendor); nothing was written',
+    );
+  }
+  let vendorIsDirectory = false;
+  try {
+    const vendor = lstatSync(join(root, '.docs-vendor'));
+    vendorIsDirectory = vendor.isDirectory() && !vendor.isSymbolicLink();
+  } catch {
+    vendorIsDirectory = false;
+  }
+  if (!vendorIsDirectory) {
+    throw new SkillCardError(
+      '.docs-vendor must be the checked-out docs submodule, a directory and not a link ' +
+        '(git submodule update --init .docs-vendor); nothing was written',
     );
   }
   let inside = false;
