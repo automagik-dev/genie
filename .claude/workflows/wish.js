@@ -8,7 +8,7 @@ export const meta = {
     {
       title: 'Admit',
       detail:
-        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any repository command quoted with no evidence and any command whose text or quoted body spells an obvious push or publish verb (a git push, a gh verb that changes the remote, a package publish or an image push); that is a tripwire over the text, not a boundary, so the gate read-only brief and the publisher allowlist still stand behind it. Anything but proceed returns refused with nothing created',
+        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any repository command that is not exactly one of the forms the discovery rules produce or is quoted with no evidence, and any command whose text or quoted body spells an obvious push or publish verb (a git push, a gh verb that changes the remote, a package publish or an image push); that is a tripwire over the text, not a boundary, so the gate read-only brief and the publisher allowlist still stand behind it. Anything but proceed returns refused with nothing created',
     },
     {
       title: 'Work',
@@ -169,6 +169,7 @@ const COMMAND_DISCOVERY = [
   "installCommand is that manager's frozen install: bun install --frozen-lockfile; pnpm install --frozen-lockfile; yarn install --immutable when .yarnrc.yml exists and yarn install --frozen-lockfile when it does not; npm ci. With no root lockfile there is no install command: answer installCommand '' even when package.json declares dependencies.",
   'checkCommand is the FIRST match in this order: (1) a package.json check script is <manager> run check, with npm when there is no lockfile; (2) a Makefile check target is make check; (3) a justfile check recipe is just check; (4) a Taskfile check task is task check; (5) a package.json test script is <manager> run test, unless its body is npm\'s placeholder echo "Error: no test specified" && exit 1, which fails by design; (6) a Makefile test target is make test.',
   "With no match, answer checkCommand '': the gate then runs the validation command in its place and CI is the authority. A hook manager's configuration (husky, lefthook, pre-commit, simple-git-hooks) is never the check, and no runner is guessed from file extensions: pytest, cargo test, go test, tox or nox count only through a tracked root target above.",
+  'Answer each command in exactly one of the forms above, character for character — no flag, argument, prefix or second command: the script freezes only those exact forms from the repository, and freezes anything else empty.',
   'Quote in commandEvidence what each command you propose RUNS, verbatim from the file named in path, one entry per quote, with command check or install: for a package.json check, the script body plus its pre<name> and post<name> bodies when defined; for a Makefile, justfile or Taskfile check, the target\'s own recipe lines plus those of the prerequisite targets it names in the same file; for an install, the lockfile path, plus the root preinstall, install, postinstall and prepare script bodies. The script freezes a command you quote nothing for as empty, so quote it or answer it as \'\'.',
 ]
 // The mikro offload: a DeepSeek-flash microagent (the repository's own
@@ -555,8 +556,8 @@ function baseRefusal(base) {
 // publish verb is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and
 // no gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
 // This is a tripwire over the command text, not a boundary: a variable, an encoded string or a script
-// that pushes for it all pass. What stands behind it is the gate's read-only brief and the
-// publisher's allowlist.
+// that pushes for it all pass. What stands behind it is the gate's read-only brief, the publisher's
+// allowlist and, for a repository-sourced command, the closed set of forms the discovery rules produce.
 const UNSAFE_VALIDATION = [
   // A verb ends at whitespace, a shell separator, a closing paren or a quote, so `git push;`,
   // `$(git push)` and `bash -c 'git push'` are caught as surely as `git push origin`.
@@ -606,6 +607,40 @@ function freezeCommand(proposed, evidence, fromRepository) {
   if (ran) return { command: '', refused: `${proposed} — ${ran} in what it runs` }
   if (fromRepository && !evidence.length) return { command: '', refused: `${proposed} — no command evidence was quoted` }
   return { command: proposed, refused: '' }
+}
+
+// The discovery rules (COMMAND_DISCOVERY) are a CLOSED set: these are the only commands they can
+// produce. A repository-sourced command is free text from an agent that read untrusted input, and the
+// tripwire above reads only verbs — so it must also equal one of these forms exactly, or it is frozen
+// empty and the run takes the fallback path. No flag, no argument, no second command. A caller-set
+// command is exempt: the caller chose it (Decision 7), and freezeCommand still checks it as written.
+const DISCOVERABLE_COMMANDS = {
+  check: [
+    'bun run check',
+    'pnpm run check',
+    'yarn run check',
+    'npm run check',
+    'make check',
+    'just check',
+    'task check',
+    'bun run test',
+    'pnpm run test',
+    'yarn run test',
+    'npm run test',
+    'make test',
+  ],
+  install: [
+    'bun install --frozen-lockfile',
+    'pnpm install --frozen-lockfile',
+    'yarn install --immutable',
+    'yarn install --frozen-lockfile',
+    'npm ci',
+  ],
+}
+function freezeDiscoveredCommand(kind, proposed, evidence) {
+  const frozen = freezeCommand(proposed, evidence, true)
+  if (!frozen.command || DISCOVERABLE_COMMANDS[kind].includes(frozen.command)) return frozen
+  return { command: '', refused: `${proposed} — not one of the ${kind} commands the discovery rules produce` }
 }
 
 // The script, never the gate, picks the command the gate runs: the frozen check over a hook system,
@@ -1348,7 +1383,10 @@ const freezeRepositoryCommand = (name, callerValue) => {
     log(`The judge's contract carried ${name}Command ${echoed}, not the scout's ${scouted || '(none)'}: ignored — the blind judge authors no command.`)
   if (callerValue) return { ...freezeCommand(callerValue, [], false), source: 'caller' }
   if (!scouted) return { command: '', refused: '', source: 'none' }
-  return { ...freezeCommand(scouted, evidenceOf(name).map((entry) => text(entry.quote)), true), source: 'repository' }
+  return {
+    ...freezeDiscoveredCommand(name, scouted, evidenceOf(name).map((entry) => text(entry.quote))),
+    source: 'repository',
+  }
 }
 const frozenCheck = freezeRepositoryCommand('check', job.check)
 const frozenInstall = freezeRepositoryCommand('install', job.install)
