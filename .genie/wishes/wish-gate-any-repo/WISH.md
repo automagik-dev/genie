@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | IN_PROGRESS |
 | **Slug** | `wish-gate-any-repo` |
 | **Date** | 2026-10-02 |
 | **Author** | Felipe Rosa |
@@ -609,6 +609,46 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### Plan review 1 — 2026-10-02 — FIX-FIRST
+
+- **Reviewer:** an independent read-only agent (Opus 5.5) that did not write the plan. Lint exits 0. Every Bun and husky site in `wish.js` is covered: 149-150, 212, 220, 294, 298, 699, 725, 750-759, 831, 883-884, 1511 and `meta.phases`. File ownership is disjoint, and the size is in band.
+- **Major findings:**
+  - the refusal saw only the command string, not the script body;
+  - the blind judge could author a command;
+  - the Group 3 evidence was a model's retelling of the result;
+  - husky 6 to 8 repositories would end `blocked`.
+- **Minor findings:**
+  - discovery edge cases: npm's placeholder `test`, the repository root only, `just` and `task`, the order;
+  - "genie-only" wording for the darwin tolerance.
+- **Answers to the open questions:**
+  - (a) Accepting the repository's git directory is sound, proved by a probe.
+  - (b) `blocks: none` with the edge in prose is sound.
+  - (c) The nested sessions need `git-safety.sh` through `--settings` and an assert that `GH_REPO` and `GH_HOST` are empty.
+- **Owner answers (Felipe, 2026-10-02):**
+  - husky 6 to 8 is covered;
+  - Decision 5 is ratified as "the worktree or the repository's git directory";
+  - the end-to-end runs are approved with both safeguards and kept out of the run ledger.
+
+### Plan review 2 — 2026-10-02 — SHIP
+
+- **Repair commit:** `aa662d84a` (WISH.md only, +221/-120). It closes all six findings and builds in the three owner answers.
+- **Probes:**
+  - `wish.js`'s own refusal patterns pass genie's real `check` and `prepare` bodies, and refuse `node --test && git push origin HEAD`;
+  - the repaired `HOOKS_LIVE_COMMAND` reports a live common-dir `pre-commit` as live, and only `.sample` hooks or a 644 `pre-push` as dead;
+  - `git-safety.sh` allows the command;
+  - all four shell blocks parse with `sh -n`.
+- **Compatibility:** `gateCommand` breaks no pin. Behavior case (19) is the only test that changes, and the plan says so.
+- **Size:** about 675 code and test insertions across 9 files.
+- **Lint:** exits 0.
+- **Nits for the executor (rulings, not blockers):**
+  - `verify.sh` checks URL rewrites at every git config scope; use `--local`, or state that the global check is deliberate;
+  - keep the script-level choice in a variable named apart from the `gateCommand` function (e.g. `gateChoice`).
+
+
+### Owner approval — 2026-10-02
+
+- Felipe approved execution through the question harness ("Aprovado, executa"). Status is APPROVED, then IN_PROGRESS when work starts.
 
 ---
 
