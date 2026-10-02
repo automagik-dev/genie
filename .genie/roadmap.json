@@ -2806,6 +2806,114 @@
       "kind": "release",
       "note": "completed",
       "task_id": "t_muqbpjjyd2d43855"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790910933786,
+      "id": 390,
+      "kind": "comment",
+      "note": "dispatch: orchestrator (coordinator) — wave5/group-6; scope: full gate on the final head, push wish/skill-cards, PR to dev, read-back, independent PR review",
+      "task_id": "t_muqbpjwz1bb41bbe"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790910934017,
+      "id": 391,
+      "kind": "claim",
+      "note": "claimed by orchestrator",
+      "task_id": "t_muqbpjwz1bb41bbe"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790912578231,
+      "id": 392,
+      "kind": "comment",
+      "note": "review: SHIP — PR #3092 review 2 on head 9a4c80e (review 1 FIX-FIRST: stale genie-launch INDEX entry, repaired); every CI check green incl. both Unit legs; validation: G6 block → exit 0 (bun run check on 2803f43, check:fast on 9a4c80e); merge stays with the operator",
+      "task_id": "t_muqbpjwz1bb41bbe"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790912578462,
+      "id": 393,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_muqbpjwz1bb41bbe"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790912593335,
+      "id": 394,
+      "kind": "comment",
+      "note": "dispatch: orchestrator (coordinator) — wave5/group-7; scope: 18 SVGs under genie/images/skills/ in automagik-dev/docs via .docs-vendor, generated at the reviewed head 9a4c80e",
+      "task_id": "t_muqbpk3q52e17e4c"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790912593577,
+      "id": 395,
+      "kind": "claim",
+      "note": "claimed by orchestrator",
+      "task_id": "t_muqbpk3q52e17e4c"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790912630325,
+      "id": 396,
+      "kind": "comment",
+      "note": "review: SHIP — docs PR automagik-dev/docs#88: exactly 18 genie/images/skills/*.svg from the reviewed generator at 9a4c80e; validation: G7 block → exit 0; merge (docs main) stays with Felipe",
+      "task_id": "t_muqbpk3q52e17e4c"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790912630576,
+      "id": 397,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_muqbpk3q52e17e4c"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790915328460,
+      "id": 398,
+      "kind": "comment",
+      "note": "dispatch: orchestrator (coordinator) — wave5/group-8; scope: .docs-vendor bump PR from origin/dev after docs#88 merged, throwaway branch cleanup, wish evidence",
+      "task_id": "t_muqbpkabc2dc503d"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790915328717,
+      "id": 399,
+      "kind": "claim",
+      "note": "claimed by orchestrator",
+      "task_id": "t_muqbpkabc2dc503d"
+    },
+    {
+      "author": "orchestrator",
+      "author_kind": "claude-code",
+      "created_at": 1790941946355,
+      "id": 400,
+      "kind": "comment",
+      "note": "review: SHIP — bump PR #3093 merged into dev (9097ccf) by Felipe; every check green incl. Docs Lint; throwaway branches deleted, docs#87 closed unmerged; validation: G8 block → exit 0",
+      "task_id": "t_muqbpkabc2dc503d"
+    },
+    {
+      "author": "cli",
+      "author_kind": "claude-code",
+      "created_at": 1790941946649,
+      "id": 401,
+      "kind": "release",
+      "note": "completed",
+      "task_id": "t_muqbpkabc2dc503d"
     }
   ],
   "tasks": [
@@ -4477,16 +4585,16 @@
       "blocked_by": null,
       "blocked_reason": null,
       "board_id": null,
-      "claimed_at": null,
-      "claimed_by": null,
+      "claimed_at": 1790910934016,
+      "claimed_by": "orchestrator",
       "created_at": 1790906868755,
       "group_name": "group-6",
-      "heartbeat_at": null,
+      "heartbeat_at": 1790910934016,
       "id": "t_muqbpjwz1bb41bbe",
       "lane": null,
-      "status": "ready",
+      "status": "done",
       "title": "skill-cards G6: publish the genie PR",
-      "updated_at": 1790906868755,
+      "updated_at": 1790912578461,
       "wish": "skill-cards"
     },
     {
@@ -4497,16 +4605,16 @@
       "blocked_by": null,
       "blocked_reason": null,
       "board_id": null,
-      "claimed_at": null,
-      "claimed_by": null,
+      "claimed_at": 1790912593576,
+      "claimed_by": "orchestrator",
       "created_at": 1790906868998,
       "group_name": "group-7",
-      "heartbeat_at": null,
+      "heartbeat_at": 1790912593576,
       "id": "t_muqbpk3q52e17e4c",
       "lane": null,
-      "status": "ready",
+      "status": "done",
       "title": "skill-cards G7: the docs PR",
-      "updated_at": 1790906868998,
+      "updated_at": 1790912630575,
       "wish": "skill-cards"
     },
     {
@@ -4517,16 +4625,16 @@
       "blocked_by": null,
       "blocked_reason": null,
       "board_id": null,
-      "claimed_at": null,
-      "claimed_by": null,
+      "claimed_at": 1790915328715,
+      "claimed_by": "orchestrator",
       "created_at": 1790906869235,
       "group_name": "group-8",
-      "heartbeat_at": null,
+      "heartbeat_at": 1790915328715,
       "id": "t_muqbpkabc2dc503d",
       "lane": null,
-      "status": "ready",
+      "status": "done",
       "title": "skill-cards G8: pointer bump and cleanup",
-      "updated_at": 1790906869235,
+      "updated_at": 1790941946647,
       "wish": "skill-cards"
     }
   ],

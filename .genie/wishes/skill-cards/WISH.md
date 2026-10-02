@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `skill-cards` |
 | **Date** | 2026-10-02 |
 | **Author** | Felipe Rosa |
@@ -486,7 +486,15 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 - Branch `chore/bump-docs-skill-cards` from `origin/dev` (`2dfaf3492`); `git submodule update --remote .docs-vendor` moves the pointer from `d87ae8404` to `bc0b43ba7`, the docs#88 merge on docs `main` (ancestor check passes); `.docs-vendor/genie/images/skills/` holds 18 SVGs, and `bun scripts/skill-card-images.ts --docs --check` exits 0 against them.
 - Both `render-check/skill-cards` branches deleted (genie and docs); docs#87 closed unmerged.
-- Status stays IN_PROGRESS until this bump merges and the QA criteria run on `dev`.
+- [#3093](https://github.com/automagik-dev/genie/pull/3093) merged into `dev` by Felipe at 2026-10-02T11:45:11Z (`9097ccf82`); every check green, the three `Docs Lint` jobs included. The G8 validation block exits 0.
+
+### QA on `dev` — 2026-10-02 — PASS → SHIPPED
+
+- QA 1: on `dev` (`2dfaf3492`, #3092 merged) `bun scripts/skill-card-images.ts --check` exits 0, and the six cards load from `raw.githubusercontent.com/.../dev/.github/assets/` through `<img>` in Chromium, two per row, with title, line, `/name` and `$name` readable.
+- QA 2: in a scratch tree of `dev`, changing brainstorm's `short_description` fails `skill-brainstorm.svg`'s test and `checkSkillCards`, naming that card; rerunning the generator makes all 39 pass.
+- QA 3: a fresh `--depth 1` clone of `dev` (`9097ccf82`) with `git submodule update --init .docs-vendor` checks out `bc0b43ba7` and holds 18 SVGs in `docs/images/skills/`; `--docs --check` and `--check` both exit 0.
+- QA 4: CI on `dev` is green on `2afb03fb8` (#3092 merge) and `9097ccf82` (#3093 merge), both `Unit (…)` legs included; no existing test changed (the only test file touched is the new `scripts/skill-card-images.test.ts`).
+- Delivered: genie #3092 and #3093 into `dev`, automagik-dev/docs#88 into docs `main`. All eight group cards are done.
 
 ---
 
