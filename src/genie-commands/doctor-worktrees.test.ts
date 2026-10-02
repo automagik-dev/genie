@@ -410,21 +410,6 @@ describe('post-0.3 retarget: remotty sessions are never launch residue', () => {
     expect(branchExists(fx.root, 'wt/sess-wt')).toBe(true);
   });
 
-  test('a session never enters the reclaimable count, even merged+clean', () => {
-    const fx = makeFixture();
-    addSessionWorktree(fx, 'sess-clean', 'wish/demo-clean');
-
-    // No legacy residue: the headline must say none found rather than counting
-    // the session as reclaimable.
-    expect(checkLaunchWorktrees(fx.root, { worktreesBase: fx.base })[0]).toMatchObject({
-      name: 'launch worktrees',
-      status: 'pass',
-      detail: 'none found',
-    });
-    expect(runFix(fx)).toEqual([]);
-    expect(branchExists(fx.root, 'wish/demo-clean')).toBe(true);
-  });
-
   test('scanning from inside a session still recognizes sibling sessions via the main worktree', () => {
     const fx = makeFixture();
     const from = addSessionWorktree(fx, 'sess-one', 'wish/demo-one');

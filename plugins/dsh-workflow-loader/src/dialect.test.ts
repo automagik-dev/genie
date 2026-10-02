@@ -13,7 +13,12 @@
  * the tenth file and added 3 more, taking the catalog total to 38; its count was
  * read from this transform's own report rather than from the AST cross-check, which
  * predates that file. Its `verify:files` batch verifier (wish `evidence-gate-cwd-batch`,
- * 2026-09-28) adds a fourth, taking the catalog total to 39.
+ * 2026-09-28) adds a fourth, taking the catalog total to 39. `test-simplify` (2026-09-29)
+ * adds 5 (inventory, lanes, refuters, planner, tree guard), read from this transform's
+ * own report, taking the catalog total to 44. `brainstorm` (2026-10-01) adds 14, one per
+ * stage call site (four ledger agents, plan, compose, design, repair, scouts, lenses,
+ * elenchus, answers, proposal, review), read from this transform's own report, taking the
+ * catalog total to 58.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -24,6 +29,7 @@ const CATALOG = join(import.meta.dir, '..', '..', '..', '.claude', 'workflows');
 
 /** `effort` options removed per catalog file, from the AST cross-check. */
 const EXPECTED_REMOVALS: Record<string, number> = {
+  brainstorm: 14,
   council: 0,
   'observability-review': 0,
   'pm-ledger-verify': 1,
@@ -34,6 +40,7 @@ const EXPECTED_REMOVALS: Record<string, number> = {
   'evidence-gate': 4,
   wish: 9,
   workfly: 9,
+  'test-simplify': 5,
 };
 
 const catalogFiles = readdirSync(CATALOG)

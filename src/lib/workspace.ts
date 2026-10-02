@@ -8,10 +8,18 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
-import { z } from 'zod';
-import type { AgentDefaults } from './defaults.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/** Agent configuration defaults. Runtime values can be any string. */
+export interface AgentDefaults {
+  model: string;
+  promptMode: string;
+  color: string;
+  effort: string;
+  thinking: string;
+  permissionMode: string;
+}
 
 /** Tmux transport configuration. */
 export interface TmuxConfig {
@@ -235,36 +243,6 @@ export function getWorkspaceConfig(root: string): WorkspaceConfig {
   const raw = readFileSync(configPath, 'utf-8');
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   return migrateWorkspaceConfig(parsed);
-}
-
-// ─── Zod Validation ──────────────────────────────────────────────────────────
-
-/** Zod schema for agents.defaults — validates against the same constraints as agent frontmatter. */
-export const AgentDefaultsSchema = z
-  .object({
-    model: z.string().optional(),
-    promptMode: z.enum(['system', 'append']).optional(),
-    color: z.string().optional(),
-    effort: z.string().optional(),
-    thinking: z.string().optional(),
-    permissionMode: z.string().optional(),
-  })
-  .strict();
-
-// TmuxConfigSchema and SdkConfigSchema removed — were defined but unused.
-// Re-add from git history if validation of these sections is needed.
-
-/**
- * Validate the agents.defaults section on load.
- * Throws with a descriptive error on invalid values.
- */
-export function validateWorkspaceDefaults(config: WorkspaceConfig): void {
-  if (!config.agents?.defaults) return;
-  const result = AgentDefaultsSchema.safeParse(config.agents.defaults);
-  if (!result.success) {
-    const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n');
-    throw new Error(`Invalid agents.defaults in workspace.json:\n${issues}`);
-  }
 }
 
 // ─── Migration ───────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
-// The seven front-door parity tests all delegate to one assertion, so that
+// The eight front-door parity tests all delegate to one assertion, so that
 // assertion is now the single thing standing between a front door and a bare
 // saved name. A guard nothing guards is a guard nobody can trust: these tests
 // prove it REJECTS each way the rule can be broken, one way at a time.

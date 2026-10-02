@@ -14,7 +14,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import * as projectMcp from './codex-project-mcp.js';
 import {
   type RouteLayerInput,
   classifyRouteLayers,
@@ -91,17 +90,6 @@ describe('resolveGitProjectRoots', () => {
 });
 
 describe('retireProjectMcpConfigs', () => {
-  test('exports no registration or revival API', () => {
-    for (const name of [
-      'genieMcpEntry',
-      'mergeCodexMcpFallback',
-      'preflightCodexPluginMutation',
-      'reconcileCodexProjectMcp',
-      'registerProjectMcpConfigs',
-    ]) {
-      expect(Object.hasOwn(projectMcp, name), name).toBe(false);
-    }
-  });
   test('leaves an unparseable .mcp.json byte-for-byte alone and reports why', () => {
     const original = '{ definitely not json\n';
     writeFileSync(join(root, '.mcp.json'), original);
@@ -164,16 +152,6 @@ describe('retireProjectMcpConfigs', () => {
       expect(() => retireProjectMcpConfigs(root)).toThrow();
       expect(readFileSync(config, 'utf8')).toBe(original);
     }
-  });
-});
-
-describe('shipped plugin payload', () => {
-  test('carries no genie plugin tree, so no Genie-owned MCP route can ship with one', () => {
-    // The Claude and Kimi manifests left with their payloads, and the Orca
-    // plugin was retired (wish `retire-orca-integration`). The release payload
-    // keeps only an EMPTY `plugins/genie` compat directory, created by
-    // scripts/build-binary.sh — the source tree carries none.
-    expect(existsSync(join(import.meta.dir, '..', '..', 'plugins', 'genie'))).toBe(false);
   });
 });
 

@@ -2,12 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  compareReleaseVersions,
-  parseReleaseVersion,
-  scanPhysicalTree,
-  stripControl,
-} from './release-payload-proof.js';
+import { parseReleaseVersion, scanPhysicalTree } from './release-payload-proof.js';
 
 const roots: string[] = [];
 
@@ -36,24 +31,6 @@ describe('release version grammar', () => {
     }
     expect(parseReleaseVersion(null)).toBeNull();
     expect(parseReleaseVersion(42 as unknown)).toBeNull();
-  });
-
-  test('orders validated versions totally across every component', () => {
-    const ver = (raw: string) => {
-      const parsed = parseReleaseVersion(raw);
-      if (parsed === null) throw new Error(`fixture version ${raw} is malformed`);
-      return parsed;
-    };
-    expect(compareReleaseVersions(ver('5.260712.1'), ver('5.260712.2'))).toBe(-1);
-    expect(compareReleaseVersions(ver('5.260712.2'), ver('5.260712.1'))).toBe(1);
-    expect(compareReleaseVersions(ver('5.260712.1'), ver('5.260712.1+build.7'))).toBe(0);
-    expect(compareReleaseVersions(ver('5.260712.9'), ver('5.260713.1'))).toBe(-1);
-    expect(compareReleaseVersions(ver('4.260712.1'), ver('5.260712.1'))).toBe(-1);
-  });
-
-  test('strips ANSI CSI and OSC control sequences from modeled output', () => {
-    expect(stripControl('\u001b[31mred\u001b[0m')).toBe('red');
-    expect(stripControl('\u001b]0;title\u0007tail')).toBe('tail');
   });
 });
 

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { findWorkspace, genieHome, getWorkspaceConfig, scanAgents } from './workspace.js';
+import { findWorkspace, getWorkspaceConfig, scanAgents } from './workspace.js';
 
 let testDir: string;
 let fakeGenieHome: string;
@@ -210,12 +210,6 @@ describe('workspaceRoot persistence', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.workspaceRoot).toBeUndefined();
     }
-  });
-
-  test('genieHome() reflects GENIE_HOME env override', () => {
-    // Sanity check: the exported helper resolves dynamically so callers in other
-    // modules (e.g. serve.ts warning messages) see the same value as workspace.ts.
-    expect(genieHome()).toBe(fakeGenieHome);
   });
 
   test('clears stale workspaceRoot from config when the saved path is gone', () => {

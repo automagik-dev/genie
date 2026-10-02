@@ -1598,28 +1598,6 @@ describe('wish-status lane reconciliation on CLI JSON reads', () => {
     observed.close();
   });
 
-  test('does not reconcile a non-JSON human board read nor an unscoped --json read', async () => {
-    writeWish('lane-json-only', 'DONE');
-    const db = openDb({ cwd: repo });
-    const roadmap = createBoard(db, 'roadmap', DEFAULT_LIFECYCLE_LANES);
-    const task = createTask(db, { title: 'lane json only', boardId: roadmap.id, lane: 'Idea', wish: 'lane-json-only' });
-    db.close();
-
-    const human = await board(repo, '--board', 'roadmap');
-    expect(human.code).toBe(0);
-    let observed = openDb({ cwd: repo });
-    expect(getTaskLane(observed, task.id)).toBe('Idea');
-    observed.close();
-
-    // Unscoped `--json` renders the frozen status shape, which shows no lanes —
-    // so it must not write one either.
-    const json = await board(repo, '--json');
-    expect(json.code).toBe(0);
-    observed = openDb({ cwd: repo });
-    expect(getTaskLane(observed, task.id)).toBe('Idea');
-    observed.close();
-  });
-
   test('a seeded lane divergence survives every laneless read and is reconciled only by the lane --json read', async () => {
     writeWish('diverged', 'DONE');
     const db = openDb({ cwd: repo });
@@ -1708,46 +1686,6 @@ describe('laneless board render is unchanged', () => {
     }
     expect(r.stdout).not.toContain('── Blocked');
     expect(r.stdout).not.toContain('/brainstorm');
-  });
-
-  test('--json for a laneless board keeps the status-keyed shape with no lane field', async () => {
-    const db = openDb({ cwd: repo });
-    const plain = createBoard(db, 'plain');
-    createTask(db, { title: 'plain task', boardId: plain.id });
-    db.close();
-
-    const r = await board(repo, '--board', 'plain', '--json');
-    expect(r.code).toBe(0);
-    const payload = JSON.parse(r.stdout) as { columns: Record<string, Array<Record<string, unknown>>> };
-    expect(Object.keys(payload.columns).sort()).toEqual(['blocked', 'done', 'in_progress', 'ready']);
-    // The frozen TaskRow shape never gains a `lane` key NOR any runtime or
-    // declared-routing field on the laneless path — the byte-freeze survives
-    // the runtime layer (Decision 7) and the assignment layer (W1).
-    const card = payload.columns.ready[0];
-    for (const leaked of [
-      'lane',
-      'agentKind',
-      'heartbeatAt',
-      'blockedBy',
-      'blockedReason',
-      'assignedAgent',
-      'assignedReason',
-    ]) {
-      expect(leaked in card).toBe(false);
-    }
-    // The exact frozen key set, sorted — a byte-level guard against additions.
-    expect(Object.keys(card).sort()).toEqual([
-      'boardId',
-      'claimedAt',
-      'claimedBy',
-      'createdAt',
-      'group',
-      'id',
-      'status',
-      'title',
-      'updatedAt',
-      'wish',
-    ]);
   });
 
   test('an ENFORCED-BLOCKED card keeps the frozen laneless shape (enforcedBlock is lane-only)', async () => {

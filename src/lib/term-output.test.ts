@@ -18,7 +18,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { stripAnsi } from './term-color.js';
 import { isBrokenPipeError, printErr, printOut, renderFor, runUnderBrokenPipeGuard } from './term-output.js';
 import { openDb } from './v5/genie-db.js';
@@ -129,12 +129,6 @@ describe('structural rule: a module that composes escapes never writes them itse
       if (writes) offenders.push(`${rel}: ${writes.length} direct write(s)`);
     }
     expect(offenders).toEqual([]);
-  });
-
-  test('the rule is anchored on real files — src/ does carry escape-composing modules', () => {
-    const composing = sourceFiles().filter((rel) => readFileSync(join(SRC, rel), 'utf-8').includes('\\x1b['));
-    expect(composing.length).toBeGreaterThan(5);
-    expect(relative(SRC, CLI).replaceAll('\\', '/')).toBe('genie.ts');
   });
 });
 

@@ -1102,6 +1102,27 @@ describe('Group E release and documentation contracts', () => {
     expect(metadata).toContain('Security-sensitive work does not bypass by default.');
   });
 
+  test('refine accepts sonnet, opus and fable after --for claude, each loading its own overlay', () => {
+    const refine = read('skills/refine/SKILL.md');
+    const overlays = { sonnet: 'claude-sonnet-5-5.md', opus: 'claude-opus-5-5.md', fable: 'claude-fable-5-1.md' };
+    for (const [target, file] of Object.entries(overlays)) {
+      expect(refine).toContain(`| \`--for claude --target ${target}\` | \`prompts/claude.md\` + \`prompts/${file}\` |`);
+      expect(read(`skills/refine/prompts/${file}`)).toContain(`(\`--target ${target}\`)`);
+    }
+    for (const mode of ['@path/to/file.md', '<text>'])
+      expect(refine).toContain(`refine [--for openai|claude [--target sonnet|opus|fable]] ${mode}`);
+    expect(refine).toContain(
+      'Accept one `--target sonnet`, `--target opus` or `--target fable`, only after `--for claude`.',
+    );
+    expect(refine).toContain('list `sonnet`, `opus` and `fable`');
+    expect(refine).toMatch(/^Checked: \d{4}-\d{2}-\d{2}$/m);
+    const claude = read('skills/refine/prompts/claude.md');
+    expect(claude).toContain('leave the method to the model');
+    expect(claude).toContain(
+      'Explicit requirements in the prompt (required checks, approval gates, exact formats, a required model) always survive.',
+    );
+  });
+
   test('design completion requires independent review before wish planning', () => {
     const brainstorm = read('skills/brainstorm/SKILL.md');
     expect(brainstorm).toContain('do not implement');
@@ -1130,10 +1151,43 @@ describe('Group E release and documentation contracts', () => {
     expect(lint).toContain('designReviewViolations');
   });
 
-  test('MCP operator instructions expose project-route ownership policy', () => {
-    const readme = read('README.md');
-    expect(readme).toContain('registrations proven to be Genie-owned');
-    expect(readme).toContain('unowned same-name routes');
+  test('brainstorm fronts its saved workflow one round per run, with no path classifier', () => {
+    const brainstorm = read('skills/brainstorm/SKILL.md');
+    const template = read('skills/brainstorm/references/design-template.md');
+    // The per-question rule, verbatim from the reviewed brainstorm-workflow design.
+    expect(brainstorm).toContain(
+      'An answer settles only the question it answers. Nothing rides along: a change the owner was not asked about, including any edit to something they already approved, goes in its own question. An approved decision is reopened only by a question that quotes it and shows old → new. Moves that add scrutiny may be taken and announced; moves that reduce what the owner sees, or change what they approved, wait for their answer.',
+    );
+    expect(brainstorm).toContain('## Without a workflow surface');
+    expect(brainstorm).toContain('references/without-a-workflow.md');
+    expect(brainstorm).toContain('genie config get budgets.maxCouncilsPerBrainstorm');
+    expect(brainstorm).toContain('genie config get budgets.maxEscalationsPerGroup');
+    expect(brainstorm).toContain('(ceiling 1, repair budget 2)');
+    expect(brainstorm).toContain('genie wish report <runId>');
+    expect(brainstorm).toContain('option labels exactly as returned');
+    expect(brainstorm).toContain('Map the answers back to ids by question order');
+    expect(brainstorm).toContain('Simmering while rounds run, Ready at `done`');
+    expect(brainstorm).toContain('Stop is permanent for the slug');
+    expect(brainstorm).toContain('the question text as the harness returned it');
+    expect(brainstorm).toContain('`ledger` is `references/round-ledger.mjs`');
+    expect(brainstorm).toContain('`evidence` is `references/design-review-evidence.mjs`');
+    expect(brainstorm).toContain('`reviewContract` is `review/SKILL.md` in the skills directory that holds this one');
+    expect(brainstorm).toContain('a single-skill install has none, and the run ends `failed` naming the path');
+    expect(brainstorm).toContain('An empty `round`, with no question to relay, is a valid result: invoke again.');
+    expect(brainstorm).toContain('each passed as an integer, never as the printed string');
+    // Every brainstorm keeps the DRAFT, the WRS and the stamp: the spike/bounded/architectural paths are gone.
+    expect(brainstorm).not.toMatch(/\b(?:Spike|Bounded|Architectural)\b/);
+    for (const shape of [
+      '## Problem',
+      '| **WRS** |',
+      '| **Size** |',
+      '| # | Deliverable | Files changed | Source |',
+      '| # | Decision | Rationale | Source |',
+      '(Source: ',
+      '**Proof:**',
+    ])
+      expect(template).toContain(shape);
+    expect(read('skills/brainstorm/references/without-a-workflow.md')).toContain('round-ledger.mjs');
   });
 
   test('the retired homolog channel never reappears in any workflow', () => {

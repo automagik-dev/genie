@@ -41,16 +41,13 @@ describe('genie config get', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test('prints the schema default for a budget key on a fresh home', async () => {
+  test('prints the schema default for a budget key on a fresh home, and --json reports key, value, and a default source', async () => {
     const result = await runCli(home, ['config', 'get', 'budgets.maxEscalationsPerGroup']);
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe('2');
-  });
-
-  test('--json reports key, value, and a default source', async () => {
-    const result = await runCli(home, ['config', 'get', 'budgets.maxEscalationsPerGroup', '--json']);
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    const json = await runCli(home, ['config', 'get', 'budgets.maxEscalationsPerGroup', '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.stdout)).toEqual({
       key: 'budgets.maxEscalationsPerGroup',
       value: 2,
       source: 'default',
@@ -92,22 +89,42 @@ describe('genie config get', () => {
     });
   });
 
-  test('an unknown key exits 1 with a stable stderr diagnostic and no stdout', async () => {
-    const result = await runCli(home, ['config', 'get', 'budgets.nope']);
-    expect(result.code).toBe(1);
-    expect(result.stdout).toBe('');
-    expect(result.stderr.trim()).toBe('Error (genie config get): unknown config key: budgets.nope');
+  // The /brainstorm front door reads this key once per run and passes it as the
+  // workflow's councilCeiling: default 1, ceiling 3, so a config can only tighten it.
+  test('the brainstorm council ceiling defaults to 1 and a value past 3 falls back to it', async () => {
+    const fresh = await runCli(home, ['config', 'get', 'budgets.maxCouncilsPerBrainstorm']);
+    expect(fresh.code).toBe(0);
+    expect(fresh.stdout.trim()).toBe('1');
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ budgets: { maxCouncilsPerBrainstorm: 0 } }), 'utf-8');
+    const tightened = await runCli(home, ['config', 'get', 'budgets.maxCouncilsPerBrainstorm', '--json']);
+    expect(JSON.parse(tightened.stdout)).toEqual({ key: 'budgets.maxCouncilsPerBrainstorm', value: 0, source: 'file' });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ budgets: { maxCouncilsPerBrainstorm: 4 } }), 'utf-8');
+    const relaxed = await runCli(home, ['config', 'get', 'budgets.maxCouncilsPerBrainstorm', '--json']);
+    expect(relaxed.code).toBe(0);
+    expect(JSON.parse(relaxed.stdout)).toEqual({
+      key: 'budgets.maxCouncilsPerBrainstorm',
+      value: 1,
+      source: 'default',
+    });
   });
 
-  test('a key under an open-ended container is not addressable', async () => {
-    const result = await runCli(home, ['config', 'get', 'workerProfiles.anything']);
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain('unknown config key: workerProfiles.anything');
-  });
+  test.each(['budgets.nope', 'workerProfiles.anything'])(
+    'an unknown key (%s, including one under an open-ended container) exits 1 with a stable stderr diagnostic and no stdout',
+    async (key) => {
+      const result = await runCli(home, ['config', 'get', key]);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr.trim()).toBe(`Error (genie config get): unknown config key: ${key}`);
+    },
+  );
 
   test('a branch key prints its whole object', async () => {
     const result = await runCli(home, ['config', 'get', 'budgets']);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ maxFableCallsPerWish: 3, maxEscalationsPerGroup: 2 });
+    expect(JSON.parse(result.stdout)).toEqual({
+      maxFableCallsPerWish: 3,
+      maxEscalationsPerGroup: 2,
+      maxCouncilsPerBrainstorm: 1,
+    });
   });
 });

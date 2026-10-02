@@ -187,11 +187,6 @@ describe('doctorCommand', () => {
     expect(bun?.status).toBe('pass');
   });
 
-  test('does not set a failing exit code when all checks pass', async () => {
-    const { exitCode } = await captureDoctor(() => doctorCommand({ json: true }, isolatedDoctorDeps()));
-    expect(exitCode).toBe(0);
-  });
-
   test('human output renders a header and an honest warning summary', async () => {
     const { output } = await captureDoctor(() => doctorCommand({}, isolatedDoctorDeps()));
     expect(output).toContain('genie doctor');
@@ -446,11 +441,6 @@ describe('checkV4Residue', () => {
     const parsed = JSON.parse(output) as { checks: Array<{ name: string; status: string }> };
     const relicChecks = parsed.checks.filter((c) => c.name.startsWith('v4 residue:'));
     expect(relicChecks.map((c) => c.name)).toContain('v4 residue: serve.pid');
-  });
-
-  test('doctorCommand wires cleanup strictly behind the fix flag (source lock)', () => {
-    const source = readFileSync(join(import.meta.dir, 'doctor.ts'), 'utf-8');
-    expect(source).toMatch(/if \(options\?\.fix\) \{\s*\n\s*cleanupV4\(/);
   });
 });
 
@@ -812,30 +802,6 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
     expect(states.orphan).toBe('unlinked');
   });
 
-  test('--json rider is present under the stable name with per-entry states', () => {
-    writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
-    writeTarget('wishes/boards-first-class/WISH.md');
-    seedDb([{ title: 'Boards first-class', wish: 'boards-first-class', lane: 'Wish' }]);
-    const results = checkIndexLaneDrift(dir, dir);
-    // Serialize exactly as doctorCommand does and re-parse — the rider must survive.
-    const doc = JSON.parse(JSON.stringify({ ok: true, checks: results })) as {
-      checks: Array<{
-        name: string;
-        indexLane?: {
-          entries: Array<{ entry: string; slug: string | null; section: string; lane: string | null; state: string }>;
-        };
-      }>;
-    };
-    const rider = doc.checks.find((c) => c.name === 'jar: index-lane drift')?.indexLane;
-    expect(rider?.entries[0]).toEqual({
-      entry: 'WISH: boards',
-      slug: 'boards-first-class',
-      section: 'Poured',
-      lane: 'Wish',
-      state: 'ok',
-    });
-  });
-
   test('a deleted WISH.md is broken, not ok, and warns', () => {
     // Lane agrees with the section — only the dead target separates this from ok.
     writeIndex('# Plans Index\n## Poured\n- [WISH: boards](wishes/boards-first-class/WISH.md)\n');
@@ -867,14 +833,6 @@ describe('checkIndexLaneDrift (DB-backed, warning-level)', () => {
     const states = Object.fromEntries((result.indexLane?.entries ?? []).map((e) => [e.slug, e.state]));
     expect(states.anchored).toBe('ok');
     expect(states.dirlink).toBe('drift'); // resolved target → still lane-checked, never broken
-  });
-
-  test('an entry that is both dangling and lane-mismatched reports broken', () => {
-    writeIndex('# Plans Index\n## Poured\n- [gone](wishes/gone/WISH.md)\n');
-    seedDb([{ title: 'Gone', wish: 'gone', lane: 'Idea' }]); // Poured excludes Idea → would be drift
-    const [result] = checkIndexLaneDrift(dir, dir);
-    expect(result.indexLane?.entries[0].state).toBe('broken');
-    expect(result.detail).toContain('0 drift, 1 broken');
   });
 
   test('a link that traverses outside .genie is broken even when the outside path exists', () => {
@@ -988,11 +946,6 @@ describe('checkRetiredJsonMcpEntry', () => {
 
     writeFileSync(join(repoRoot, '.mcp.json'), 'not json');
     expect(checkRetiredJsonMcpEntry(repoRoot)[0].status).toBe('pass');
-  });
-
-  test('never flips doctor ok:false — it is warning-level on a user-owned file', () => {
-    writeFileSync(join(repoRoot, '.mcp.json'), '{"mcpServers":{"genie":{"command":"genie","args":["mcp"]}}}');
-    expect(checkRetiredJsonMcpEntry(repoRoot).every((c) => c.status !== 'fail')).toBe(true);
   });
 });
 

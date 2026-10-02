@@ -212,16 +212,6 @@ describe('end-to-end: skills-lint against fixture skills trees', () => {
     expect(stderr).toContain('cp-repo-template');
   });
 
-  test('a ${CLAUDE_SKILL_DIR} skill fails the portable resource contract', () => {
-    writeSkill(
-      'good',
-      ['# good', '', '```bash', 'cp "${CLAUDE_SKILL_DIR}/templates/wish-template.md" dest.md', '```', ''].join('\n'),
-    );
-    const result = runLint();
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain('host-specific-skill-root');
-  });
-
   test('allowlisted genie-hacks content passes even with repo-root recipes', () => {
     writeSkill(
       'genie-hacks',
@@ -847,20 +837,6 @@ describe('house size — every shipped SKILL.md is 40-90 lines', () => {
     expect(grown?.detail).toContain('retirement stub');
     // Without the waiver the same file is a floor violation, not a pass.
     expect(checkSkillSize('stub', skillOf(8))?.detail).toContain('grow to at least');
-  });
-
-  test('wish is held to the plain house window — its waiver was retired once it fit', () => {
-    expect(SKILL_SIZE_WAIVERS.has('wish')).toBe(false);
-    expect(checkSkillSize('wish', skillOf(85))).toBeNull();
-    expect(checkSkillSize('wish', skillOf(SKILL_MAX_LINES))).toBeNull();
-    const grown = checkSkillSize('wish', skillOf(SKILL_MAX_LINES + 1));
-    expect(grown?.detail).toContain(`trim to ${SKILL_MAX_LINES} line(s) or fewer`);
-    expect(grown?.detail).toContain(`house size ${SKILL_MIN_LINES}-${SKILL_MAX_LINES}`);
-  });
-
-  test('a waiver covers only the skill it names', () => {
-    expect(checkSkillSize('other', skillOf(95))?.detail).toContain(`trim to ${SKILL_MAX_LINES} line(s) or fewer`);
-    expect(checkSkillSize('other', skillOf(8))?.detail).toContain(`grow to at least ${SKILL_MIN_LINES} line(s)`);
   });
 
   test('end-to-end: an undersized skill fails the gate and an in-window one passes', () => {

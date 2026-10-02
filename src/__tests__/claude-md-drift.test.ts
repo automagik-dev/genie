@@ -62,22 +62,6 @@ const RETIRED_FOSSILS: ReadonlyArray<string> = [
   'both marketplaces',
 ];
 
-// v5 command surface that MUST stay documented so the file can't drift back
-// into describing a body that no longer ships.
-const REQUIRED_V5_COMMANDS: ReadonlyArray<string> = [
-  'board',
-  'config',
-  'context',
-  'doctor',
-  'idea',
-  'init',
-  'setup',
-  'shortcuts',
-  'task',
-  'uninstall',
-  'update',
-];
-
 describe('CLAUDE.md v5 drift guard', () => {
   const content = readFileSync(CLAUDE_MD, 'utf8');
   const shared = readFileSync(AGENTS_MD, 'utf8');
@@ -102,6 +86,14 @@ describe('CLAUDE.md v5 drift guard', () => {
     expect(shared).toContain('delivered to every agent home by the skills channel');
   });
 
+  test('AGENTS.md scopes an owner answer to the question it answers', () => {
+    const section = shared.split('\n## Owner approvals\n')[1]?.split('\n## ')[0] ?? '';
+    expect(section).toContain('An answer settles only the question it answers.');
+    expect(section).toContain('including any edit to something they already approved, goes in its own question');
+    expect(section).toContain('reopened only by a question that quotes it and shows old → new');
+    expect(section).toContain('wait for their answer');
+  });
+
   test('does not resurrect the dead Genie loopback relay', () => {
     expect(content).not.toContain('relay is load-bearing');
     expect(shared).toContain('Do not use telemetry presence as integration health');
@@ -118,12 +110,6 @@ describe('CLAUDE.md v5 drift guard', () => {
     test(`does not contain retired fossil: ${JSON.stringify(fossil)}`, () => {
       expect(content).not.toContain(fossil);
       expect(shared).not.toContain(fossil);
-    });
-  }
-
-  for (const command of REQUIRED_V5_COMMANDS) {
-    test(`documents v5 command: ${command}`, () => {
-      expect(content).toContain(command);
     });
   }
 

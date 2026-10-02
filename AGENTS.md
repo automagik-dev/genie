@@ -48,6 +48,10 @@ The two-mode contract plus git-state freeze is the current answer, not a permane
 
 Open investigations feeding these conditions: [#2706](https://github.com/automagik-dev/genie/issues/2706) pilots native `isolation: "worktree"` on one real `/work` group and closes (i)'s remaining gap; [#2705](https://github.com/automagik-dev/genie/issues/2705) asks whether the freeze can be enforced mechanically at dispatch — a recorded infeasibility there is itself evidence toward (i).
 
+## Owner approvals
+
+An answer settles only the question it answers. Nothing rides along: a change the owner was not asked about, including any edit to something they already approved, goes in its own question. An approved decision is reopened only by a question that quotes it and shows old → new. Moves that add scrutiny may be taken and announced; moves that reduce what the owner sees, or change what they approved, wait for their answer.
+
 ## Code style
 
 Biome enforces single quotes, two-space indentation, 120-column lines, and trailing commas. Use conventional commits. A cognitive-complexity score above 25 requires architectural review; do not extract meaningless helpers only to game the score.

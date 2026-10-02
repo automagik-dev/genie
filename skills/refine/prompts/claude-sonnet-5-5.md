@@ -1,6 +1,6 @@
 # Claude Sonnet 5.5 overlay
 
-Loaded after `claude.md` when the destination is a worker prompt for Claude Sonnet 5.5 (`--target sonnet`). It selects guidance, not a runtime model. Official source checked 2026-09-28: [Sonnet 5.5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5). The following is our concise adaptation, not vendor quotation. The target is a worker inside a saved workflow whose agent returns a JSON schema; apply each clause only where the stage shape fits.
+Loaded after `claude.md` when the destination is a worker prompt for Claude Sonnet 5.5 (`--target sonnet`). It selects guidance, not a runtime model. Official source checked 2026-10-01: [Sonnet 5.5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5). The following is our concise adaptation, not vendor quotation. The target is a worker inside a saved workflow whose agent returns a JSON schema; apply each clause only where the stage shape fits.
 
 ## Add when the stage fits
 

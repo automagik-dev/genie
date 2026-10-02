@@ -3,13 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ACTIVATION_FAILURES,
   ENGINE_OFF_PATCH,
   NO_MODEL_MARKER,
-  PACKAGE_NAME,
   PLUGIN_BUNDLES,
   PROFILE,
-  ROW_ID,
   TOOL_NAME,
   activationFailure,
   buildLoaderDist,
@@ -99,12 +96,6 @@ describe('the loader smoke', () => {
     });
     expect(built).toEqual([join(root, 'plugins/dsh-workflow-loader/dist/index.js')]);
     expect(PLUGIN_BUNDLES).toEqual(['index.js']);
-  });
-
-  test('names the boot-audit failures it fails on', () => {
-    expect(ACTIVATION_FAILURES).toEqual(['did not activate', 'waiting for service']);
-    expect(ROW_ID).toBe('genie-dsh-workflow-loader');
-    expect(PACKAGE_NAME).toBe('@automagik/genie-dsh-workflow-loader');
   });
 
   test('finds an activation failure in a Host transcript', () => {

@@ -511,26 +511,6 @@ describe('installCommand', () => {
     expect(normalizeCalls).toBe(1);
   });
 
-  test('--skip-integrations maps to none', async () => {
-    const seen: string[] = [];
-    const runFor = (options: InstallOptions) =>
-      installCommand(
-        options,
-        makeCleanupSpy().runner,
-        () => undefined,
-        noopLease,
-        noopConsent,
-        () => null,
-        (selection) => {
-          seen.push(selection);
-          return { status: 'skipped', reason: 'test fixture' };
-        },
-      );
-    await runFor({});
-    await runFor({ skipIntegrations: true });
-    expect(seen).toEqual(['auto', 'none']);
-  });
-
   test('the workflows channel runs after the skills channel, under the same consent', async () => {
     const order: string[] = [];
     await installCommand(
@@ -584,11 +564,13 @@ describe('installCommand', () => {
    * integrations are retired; an explicit selection now reports the retirement
    * and cannot fail.
    */
-  test('an explicit runtime selection reports the retirement and never fails the install', async () => {
+  test('a runtime selection reports the retirement for explicit clients only and never fails the install', async () => {
     for (const [integrations, expected] of [
       ['claude', ['claude: client plugin integration is retired']],
       ['codex', ['codex: client plugin integration is retired']],
       ['all', ['codex: client plugin integration is retired', 'claude: client plugin integration is retired']],
+      ['auto', []],
+      ['none', []],
     ] as const) {
       const lines: string[] = [];
       const originalWrite = process.stdout.write;
@@ -616,30 +598,6 @@ describe('installCommand', () => {
       // No client CLI is ever consulted, so no failure line and no stack trace.
       expect(lines.join('\n')).not.toContain('marketplace');
       expect(lines.join('\n')).not.toContain('Requested integration failed');
-    }
-  });
-
-  test('auto and none report no runtime at all', async () => {
-    for (const integrations of ['auto', 'none'] as const) {
-      const lines: string[] = [];
-      const originalWrite = process.stdout.write;
-      process.stdout.write = ((chunk: unknown) => {
-        lines.push(String(chunk).replace(/\n$/, ''));
-        return true;
-      }) as typeof process.stdout.write;
-      try {
-        await installCommand(
-          { integrations },
-          makeCleanupSpy().runner,
-          () => undefined,
-          noopLease,
-          noopConsent,
-          () => null,
-        );
-      } finally {
-        process.stdout.write = originalWrite;
-      }
-      expect(lines.join('\n')).not.toContain('client plugin integration is retired');
       expect(lines.join('\n')).not.toContain('Review Genie hooks with /hooks');
     }
   });
@@ -1243,11 +1201,11 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
     expect(calls).toEqual(['retirement-notice', 'skills:claude']);
   });
 
-  test('every non-none selection reaches the channel unnarrowed (decision 3)', async () => {
+  test('every selection reaches the channel unnarrowed, and --skip-integrations maps to none (decision 3)', async () => {
     const seen: string[] = [];
-    const runFor = (integrations: 'auto' | 'all' | 'claude' | 'codex' | 'none') =>
+    const runFor = (options: InstallOptions) =>
       installCommand(
-        { integrations },
+        options,
         makeCleanupSpy().runner,
         () => undefined,
         noopLease,
@@ -1258,36 +1216,12 @@ describe('installCommand — skills.sh channel seam (wish skills-everywhere, gro
           return { status: 'skipped', reason: 'test fixture' };
         },
       );
-    await runFor('auto');
-    await runFor('all');
-    await runFor('claude');
-    await runFor('codex');
     // `none` still reaches the channel, which reports `skipped (consent: none)`
     // itself.
-    await runFor('none');
-    expect(seen).toEqual(['auto', 'all', 'claude', 'codex', 'none']);
-  });
-
-  test('an explicit selection no longer has a failure arm that can skip the channel (H1)', async () => {
-    let skills = 0;
-    await expect(
-      installCommand(
-        { integrations: 'claude' },
-        makeCleanupSpy().runner,
-        () => undefined,
-        noopLease,
-        noopConsent,
-        () => undefined,
-        () => {
-          skills += 1;
-          return { status: 'skipped', reason: 'test fixture' };
-        },
-      ),
-    ).resolves.toBeUndefined();
-    expect(skills).toBe(1);
-    const source = readFileSync(join(import.meta.dir, 'install.ts'), 'utf8');
-    expect(source).not.toContain('Requested integration failed');
-    expect(source).not.toContain('installRuntimeIntegrations');
+    for (const integrations of ['auto', 'all', 'claude', 'codex', 'none'] as const) await runFor({ integrations });
+    await runFor({});
+    await runFor({ skipIntegrations: true });
+    expect(seen).toEqual(['auto', 'all', 'claude', 'codex', 'none', 'auto', 'none']);
   });
 });
 
@@ -1361,7 +1295,7 @@ describe('--integrations validation (m7)', () => {
     for (const dir of badValueRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  function runInstall(args: string[]): { code: number | null; stdout: string; stderr: string } {
+  function runInstall(args: string[]): { code: number | null; stdout: string; stderr: string; homeCreated: boolean } {
     const dir = mkdtempSync(join(tmpdir(), 'genie-install-integrations-'));
     badValueRoots.push(dir);
     const res = Bun.spawnSync([process.execPath, CLI_PATH, 'install', ...args], {
@@ -1372,46 +1306,29 @@ describe('--integrations validation (m7)', () => {
       timeout: 20_000,
       env: { ...process.env, HOME: dir, GENIE_HOME: join(dir, '.genie') },
     });
-    return { code: res.exitCode, stdout: res.stdout.toString(), stderr: res.stderr.toString() };
+    return {
+      code: res.exitCode,
+      stdout: res.stdout.toString(),
+      stderr: res.stderr.toString(),
+      homeCreated: existsSync(join(dir, '.genie')),
+    };
   }
 
-  test('an unknown mode is one stderr line naming every allowed value, exit 1, no stack', () => {
-    const res = runInstall(['--integrations', 'bogus']);
-
-    expect(res.code).toBe(1);
-    const lines = res.stderr.split('\n').filter((line) => line.trim().length > 0);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("'bogus'");
-    for (const allowed of INTEGRATION_SELECTIONS) expect(lines[0]).toContain(allowed);
-    // No stack trace, and nothing from the minified bundle.
-    expect(res.stderr).not.toContain('    at ');
-    expect(res.stderr).not.toContain('$bunfs');
-    expect(res.stderr).not.toContain('Bun v');
-  });
-
-  test('the refusal happens at parse time — no install side effect runs', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'genie-install-integrations-noop-'));
-    badValueRoots.push(dir);
-    const genieHome = join(dir, '.genie');
-    const res = Bun.spawnSync([process.execPath, CLI_PATH, 'install', '--integrations', 'CLAUDE'], {
-      cwd: dir,
-      stdin: 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
-      timeout: 20_000,
-      env: { ...process.env, HOME: dir, GENIE_HOME: genieHome },
-    });
-
+  test('an unknown or wrong-case mode is refused at parse time: one stderr line, exit 1, no stack, no side effect', () => {
     // Case matters: the allow-list is exact, not case-insensitive.
-    expect(res.exitCode).toBe(1);
-    expect(res.stderr.toString()).not.toContain('$bunfs');
-    expect(res.stderr.toString()).not.toContain('    at ');
-    expect(existsSync(genieHome)).toBe(false);
-  });
+    for (const value of ['bogus', 'CLAUDE']) {
+      const res = runInstall(['--integrations', value]);
 
-  test('every allowed value is accepted by the parser', () => {
-    for (const allowed of INTEGRATION_SELECTIONS) {
-      expect(resolveIntegrationSelection({ integrations: allowed })).toBe(allowed);
+      expect(res.code).toBe(1);
+      const lines = res.stderr.split('\n').filter((line) => line.trim().length > 0);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`'${value}'`);
+      for (const allowed of INTEGRATION_SELECTIONS) expect(lines[0]).toContain(allowed);
+      // No stack trace, and nothing from the minified bundle.
+      expect(res.stderr).not.toContain('    at ');
+      expect(res.stderr).not.toContain('$bunfs');
+      expect(res.stderr).not.toContain('Bun v');
+      expect(res.homeCreated).toBe(false);
     }
   });
 

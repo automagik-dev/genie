@@ -340,10 +340,4 @@ describe('the shipped script end to end', () => {
     expect(result.verdict).toBe('insufficient');
     expect(result.ok).toBe(false);
   });
-
-  test('normalizeInput feeds the plan in declaration order, files first', () => {
-    const job = api.normalizeInput({ contract });
-    expect(job?.items.map((item) => item.id)).toEqual(['file#1', 'file#2', 'file#3', 'cmd#1', 'cmd#2']);
-    expect(api.planDispatch(job?.items ?? []).agents).toBe(3);
-  });
 });

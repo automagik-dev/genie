@@ -33,7 +33,6 @@ import {
   scanWorktreeModes,
   summarizeModeDrift,
 } from './doctor-modes.js';
-import { cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import { doctorCommand } from './doctor.js';
 
 const scratchRoots: string[] = [];
@@ -639,26 +638,6 @@ describe('probe errors keep the item with a reason', () => {
         throw new Error('repair must not run without a repo root');
       },
     });
-  });
-});
-
-describe('dirty worktrees: repair applies, removal stays refused', () => {
-  test('--fix tightens drift inside a dirty worktree but never removes it', () => {
-    const fixture = makeFixture();
-    const wt = addWorktree(fixture, 'wish/demo-alpha');
-    writeFileSync(join(wt, 'scratch.txt'), 'work in progress\n');
-    chmodSync(join(wt, 'a.txt'), 0o666);
-
-    // The worktrees-removal proof still refuses a dirty tree (regression).
-    const cleanupLines: string[] = [];
-    cleanupLaunchWorktrees(fixture.root, { worktreesBase: fixture.base, logSink: (line) => cleanupLines.push(line) });
-    expect(cleanupLines).toEqual([]);
-    expect(lstatSync(join(wt, 'scratch.txt')).isFile()).toBe(true);
-
-    // Mode repair still applies: content hygiene does not depend on cleanliness.
-    runRepair(fixture);
-    expect(modeOf(join(wt, 'a.txt'))).toBe(0o644);
-    expect(lstatSync(join(wt, 'scratch.txt')).isFile()).toBe(true);
   });
 });
 

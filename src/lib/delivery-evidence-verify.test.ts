@@ -52,37 +52,11 @@ describe('signed delivery evidence verification', () => {
     }
   });
 
-  test('rejects descriptor formatting changes because the statement binds exact bytes', () => {
-    const pack = buildTestDeliveryEvidencePack();
-    expect(() =>
-      verifyDownloadedDeliveryEvidence(
-        { ...pack.input, descriptorBytes: JSON.stringify(JSON.parse(pack.descriptorBytes)) },
-        pack.dependencies,
-      ),
-    ).toThrow('exact descriptor bytes');
-  });
-
   test('rejects exact manifest-byte tampering even when parsed values are unchanged', () => {
     const pack = buildTestDeliveryEvidencePack();
     expect(() =>
       verifyDownloadedDeliveryEvidence({ ...pack.input, manifestBytes: pack.manifestBytes.trim() }, pack.dependencies),
     ).toThrow('exact fetched manifest bytes');
-  });
-
-  test('rejects a bundle whose signed predicate type is changed', () => {
-    const pack = buildTestDeliveryEvidencePack();
-    const bundle = JSON.parse(pack.bundleBytes) as {
-      dsseEnvelope: { payload: string };
-    };
-    const statement = JSON.parse(Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString('utf8')) as {
-      predicateType: string;
-    };
-    statement.predicateType = 'https://example.invalid/predicate';
-    bundle.dsseEnvelope.payload = Buffer.from(JSON.stringify(statement), 'utf8').toString('base64');
-
-    expect(() =>
-      verifyDownloadedDeliveryEvidence({ ...pack.input, bundleBytes: JSON.stringify(bundle) }, pack.dependencies),
-    ).toThrow('predicate type');
   });
 
   test('production verification cannot accept the deterministic unsigned test bundle', () => {

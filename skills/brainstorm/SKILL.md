@@ -7,53 +7,57 @@ mutates: documents
 
 # Brainstorm
 
-Use when the problem, approach, or boundaries need decisions. Explore with the user; do not implement. Resume a related draft rather than starting another.
+Use when the problem, approach, or boundaries need decisions. Explore with the user; do not implement. Resume a related draft rather than starting another: the slug names `.genie/brainstorms/<slug>/`, whose `DRAFT.md` carries the state of every round.
 
-## Classify, then explore
+The brainstorm is a saved workflow that runs one round per invocation, because a workflow cannot wait for a person: the owner answers between runs. The single source of truth is `.claude/workflows/brainstorm.js` in the genie repository's workflow catalog (see `.claude/workflows/README.md` there); this skill is its front door and carries no stage roster of its own. On a runtime that runs saved workflows, run the script at `<repository root>/.claude/workflows/brainstorm.js` when that file exists, otherwise `~/.claude/workflows/brainstorm.js` (delivered by `genie install` / `genie update`); give the runtime that explicit script path, never a bare name — both scopes carry these names and the order a name resolves in is undocumented. On a runtime that does not, or where neither file exists, follow "Without a workflow surface" below.
 
-Before the first question, say the classification out loud so the user can override it:
+## Invoke
 
-- **Spike** — a feasibility question whose output is an answer, not code anyone keeps. State the question and the probe in two or three sentences, get a nod, find out as cheaply as correctness allows, and label anything built as throwaway. No design document.
-  - Order several probes by risk: the one most likely to kill the idea runs first, because proving the easy parts of an idea whose hard part fails buys nothing.
-  - Close each probe with one of three verdicts — validated, invalidated, or validated under named constraints. Name the constraints, since they are what a later wish has to plan around, and report an invalidated probe as a finished probe rather than a failure to soften.
-  - When two approaches answer the same question, probe both and close with one head-to-head comparison and a recommendation, not two separate verdicts.
-  - When the undecided thing is a screen, probe it with two or three throwaway variants that differ along one named stance axis — density, emphasis, aesthetic, layout, or grounding — so the user can say which they prefer and why. Variants that differ only in an accent colour compare nothing.
-- **Bounded** — a well-scoped change to a flow that already exists in this repository and can be read today. Ask only the questions that change the outcome, present a short design in the conversation, and stop there until the user accepts it.
-- **Architectural** — a new subsystem, a restructuring of how components fit, or a change to interfaces others depend on. Run the full path below through to a reviewed `DESIGN.md`.
+Pass `{slug, request?, answers?, repo, tools: {ledger, evidence, reviewContract}, councilCeiling, repairBudget, model?, timestamp}` through args, every path absolute:
 
-Bounded measures the repository, not your familiarity: with no existing flow to change, the request is architectural. When torn between two paths take the heavier one. The ratchet is one-way — complexity discovered mid-task upgrades the path, and nothing downgrades. The artifact scales with simplicity; the user's approval never does.
+- `slug` is lowercase letters, digits and dashes; `request` is the idea in the owner's words; `repo` is the repository root; `timestamp` is the caller's clock, since the workflow has none; `model` pins every stage.
+- `tools` resolve from this skill's own directory, never from the checkout, so a round runs from any repository: `ledger` is `references/round-ledger.mjs`, `evidence` is `references/design-review-evidence.mjs`, and `reviewContract` is `review/SKILL.md` in the skills directory that holds this one, the `review` skill installed beside it; a single-skill install has none, and the run ends `failed` naming the path. The design template stays at `references/design-template.md` beside the ledger, where the workflow finds it.
+- `councilCeiling` is the value `genie config get budgets.maxCouncilsPerBrainstorm` prints and `repairBudget` the value `genie config get budgets.maxEscalationsPerGroup` prints, each passed as an integer, never as the printed string: the workflow treats anything that is not an integer as unset, so the string "0" would quietly raise an owner's ceiling of 0 to the default 1. When `genie` is absent or a read exits non-zero — an installed release older than the council key exits 1 on it — pass that value's schema default (ceiling 1, repair budget 2) and say so when you relay the result.
 
-Work the design as a tree of decisions, in rounds. The frontier is every decision whose prerequisites are already settled. Each round, put the whole frontier to the user at once, numbered, each with your recommended answer, then wait; a question whose answer depends on another still open belongs to a later round. Answers reshape the tree and push the frontier outward.
+## Each round
 
-Establish the problem and who it affects, scope and exclusions, constraints, risks, and observable success. Inspect relevant project evidence before presenting options and make routine assumptions explicit. Finding facts is this skill's job, never the user's: delegate a read-only `scout` through the runtime's native delegation surface for anything the environment can answer, and let only the questions downstream of it wait. Decisions are the user's: put each one to them. Use a council when a consequential disagreement needs independent perspectives.
+1. Run the script, then relay the WRS bar (`wrs.bar`), the plan as run and the `notes`. Whatever the state, run `genie wish report <runId> --append` with the run id the runtime reported, and relay its output: the run's tokens and time per stage, and one row in the machine-local ledger. Without `genie`, relay the run id and say the run's cost was not recorded.
+2. Relay `questions` through the runtime's question harness, at most four per batch: each question's text, header, `multiSelect` flag, option descriptions and option labels exactly as returned, in the order returned, with no rephrasing and no translation. Ids and kinds stay outside the harness payload.
+3. Map the answers back to ids by question order and invoke again with `answers: [{id, question, answer}]`: the id, the question text as the harness returned it, and the picked label (an array of labels for a multi-select) or the owner's own words verbatim. Leave out a question nobody answered; it stays Asked and comes back next round.
+4. An empty `round`, with no question to relay, is a valid result: invoke again.
 
-Exploration stops when the frontier is empty — every branch visited, nothing silently assumed — and the settled answers are enough to write a testable plan. Record unresolved decisions in `.genie/brainstorms/<slug>/DRAFT.md` so the next session can continue.
+The per-question rule, verbatim: "An answer settles only the question it answers. Nothing rides along: a change the owner was not asked about, including any edit to something they already approved, goes in its own question. An approved decision is reopened only by a question that quotes it and shows old → new. Moves that add scrutiny may be taken and announced; moves that reduce what the owner sees, or change what they approved, wait for their answer."
+
+`state` is one of:
+
+- `round` — questions to relay, including a `council-approval` question (convene past the ceiling or not) or a `review-findings` question (repair again, I settle them, stop).
+- `done` — DESIGN.md carries a verified SHIP stamp; the only next route is `wish`.
+- `answered` — the owner ended with a recorded verdict and no design.
+- `blocked` — a ledger refusal the owner must resolve, a BLOCKED review, the repair budget spent, or the owner's stop. Stop is permanent for the slug: resuming needs a new slug or a deliberate reopen.
+- `failed` — a spine agent returned nothing, the ledger could not start, or the review contract is missing; `notConvened` names the agents.
 
 ## Simplicity Gate
 
 Choose the simplest complete design satisfying current user stories. Justify added state, caches, synchronization, configuration, or background work with a present requirement or measurement. Bound current data and separate history before introducing distribution machinery. Name concrete triggers for deferred complexity.
 
-## Design and independent review
-
-1. Resolve this skill’s directory and copy `references/design-template.md` to `.genie/brainstorms/<slug>/DESIGN.md` when creating a design. Preserve existing work on resume.
-2. Fill the problem, scope, approach, decisions, Simplicity Case, risks, and testable criteria. Remove placeholders.
-3. Send the exact design to an independent `review` agent. The reviewer returns verdict, identity, UTC time, findings, and `reviewed-sha256` for the content it actually reviewed. This skill bundles `references/design-review-evidence.mjs` for digesting and stamping.
-4. The caller passes the reviewer’s digest unchanged to the stamp command:
-
-```bash
-node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" stamp ".genie/brainstorms/<slug>/DESIGN.md" --verdict SHIP --reviewed-sha256 "<reviewer-returned-sha256>" --reviewer "<reviewer-id>" --reviewed-at "<UTC-time>"
-node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
-```
-
-Stamp the actual verdict, including FIX-FIRST or BLOCKED; the example shows SHIP. Stamping rejects an edit made after review; changing any reviewed design content invalidates the evidence. Never substitute a locally recomputed digest for the reviewer’s value. Correct blocking findings and obtain fresh review before `wish` consumes the design.
-
 ## Planning index
 
-`.genie/INDEX.md` is the single intake index. Reconcile a legacy `.genie/brainstorm.md` idempotently into it when encountered; do not maintain two indexes or duplicate entries.
+`.genie/INDEX.md` is the single intake index. Reconcile a legacy `.genie/brainstorm.md` idempotently into it when encountered; do not maintain two indexes or duplicate entries. After each run, write this slug's entry with a link to `brainstorms/<slug>/`: Simmering while rounds run, Ready at `done`. An `answered`, `blocked` or `failed` run leaves the entry in Simmering with the state and its one-line reason beside it, since no reviewed design exists to make it Ready.
 
 - Raw: captured idea.
 - Simmering: draft with unresolved decisions.
 - Ready: reviewed design awaiting a wish.
 - Poured: an existing WISH.md has persisted APPROVED status.
 
-A design or a score alone never makes an entry Poured. Update only the related entry and preserve unrelated material. Ensure the design, draft, and index accompany the wish in version control; in a shared workspace the coordinator stages them. Return artifact paths, settled decisions, unresolved questions, and next route. Task-board pointers are optional; unavailable tracking does not block the design.
+A design or a score alone never makes an entry Poured. Update only the related entry and preserve unrelated material. Ensure the design and the index accompany the wish in version control; in a shared workspace the coordinator stages them. Report the DRAFT and DESIGN paths, the state and the next route. Task-board pointers are optional; unavailable tracking does not block the design.
+
+## Without a workflow surface
+
+Run the same spine inline, one round per turn, as `references/without-a-workflow.md` lays out: the ledger commands through the shell, the lead's work in this session, scouts and the review through the runtime's native delegation surface, and each question as numbered options with its id, recommended first, answered in the same `{id, question, answer}` shape. At WRS 100 with nothing open, write `.genie/brainstorms/<slug>/DESIGN.md` from `references/design-template.md` and run the ledger's `check-design`. Send the exact design to an independent `review` agent with `review/SKILL.md`'s contract, the DRAFT, and the files the design changes as required reading. The reviewer returns verdict, identity, UTC time, findings, and `reviewed-sha256` for the content it actually reviewed; this skill bundles `references/design-review-evidence.mjs`, and the caller passes the reviewer's digest unchanged to the stamp command:
+
+```bash
+node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" stamp ".genie/brainstorms/<slug>/DESIGN.md" --verdict SHIP --reviewed-sha256 "<reviewer-returned-sha256>" --reviewer "<reviewer-id>" --reviewed-at "<UTC-time>"
+node "<brainstorm-skill-dir>/references/design-review-evidence.mjs" verify ".genie/brainstorms/<slug>/DESIGN.md"
+```
+
+Stamp the actual verdict, including FIX-FIRST or BLOCKED; the example shows SHIP. Stamping rejects an edit made after review; changing any reviewed design content invalidates the evidence. Never substitute a locally recomputed digest for the reviewer’s value. Record every verdict with the ledger's `review` command, repair a FIX-FIRST within the repair budget, and obtain fresh review before `wish` consumes the design.

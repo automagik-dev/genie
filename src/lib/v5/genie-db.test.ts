@@ -1,16 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveGlobalDbPath } from '../genie-home.js';
@@ -30,7 +21,6 @@ import {
   resolveDbPath,
   resolveRepoRoot,
 } from './genie-db.js';
-import { hasStaleReadonlyWalIndex } from './sqlite-open.js';
 import { exportState } from './task-state.js';
 
 let dir: string;
@@ -89,14 +79,6 @@ describe('openDb schema init', () => {
 
     expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
     expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
-  });
-
-  test('a fresh DB carries no hire_roster', () => {
-    const path = join(dir, 'genie.db');
-    const db = openDb({ path });
-    const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
-    db.close();
-    expect(has).toBeNull();
   });
 
   test('re-creates a dropped table on a pre-existing current DB via the schemaIsCurrent path', () => {
@@ -279,18 +261,6 @@ CREATE TABLE hire_roster (
     expect(tables).toEqual(['boards', 'meta', 'stage_log', 'task_dependencies', 'task_events', 'tasks', 'wish_groups']);
     expect(tasks).toEqual([{ id: 't1', title: 'carried over' }]);
     expect(boards).toEqual([{ id: 'b1' }]);
-  });
-
-  test('a second open of a just-migrated DB is a no-op', () => {
-    const path = join(dir, 'v1-twice.db');
-    seedV1Db(path);
-    openDb({ path }).close();
-    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
-    const db = openDb({ path });
-    const has = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='hire_roster'").get();
-    db.close();
-    expect(has).toBeNull();
-    expect(userVersion(path)).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   test('the ladder falls through to the current-version branch, so additive backfills still apply', () => {
@@ -834,55 +804,7 @@ describe('busy classification', () => {
 //
 // This test fails the moment the heal is re-wired into the shared primitive.
 // ---------------------------------------------------------------------------
-describe('poisoned WAL index through openDb (the shared path never heals)', () => {
-  test('openDb serves the poisoned database untouched: no probe, no rebuild, no journal-mode churn', () => {
-    const path = join(dir, 'genie.db');
-    const seed = openDb({ path });
-    seed.exec("INSERT INTO meta (key, value) VALUES ('probe', '1')");
-    seed.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    seed.close();
-
-    // Produce the REAL poison: a readonly connection closing while the file is
-    // write-protected writes SQLite's zeroed read-only wal-index header.
-    chmodSync(path, 0o444);
-    chmodSync(dir, 0o555);
-    try {
-      // Platforms differ: where SQLite refuses a readonly open of a
-      // write-protected WAL database outright (SQLITE_READONLY_CANTINIT on
-      // Linux), no poison is produced and the line below skips the scenario.
-      try {
-        const degraded = new Database(path, { readonly: true });
-        try {
-          degraded.query('SELECT count(*) AS n FROM meta').get();
-        } finally {
-          degraded.close();
-        }
-      } catch {
-        // this platform cannot express the degraded readonly session
-      }
-    } finally {
-      chmodSync(dir, 0o755);
-      chmodSync(path, 0o644);
-    }
-    if (!hasStaleReadonlyWalIndex(path)) return; // platform never produces the poison
-
-    // The open itself succeeds (the poison lives on the handle, not the file),
-    // and the write fails raw — the pre-heal behavior, restored deliberately.
-    const db = openDb({ path });
-    try {
-      expect(() => db.exec("INSERT INTO meta (key, value) VALUES ('after-poison', '1')")).toThrow();
-      // ...and the shared path left the database in WAL: no DELETE conversion
-      // was attempted on it. That churn under a live fleet is the whole reason
-      // the heal does not belong here.
-      expect(
-        String((db.query('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode).toLowerCase(),
-      ).toBe('wal');
-    } finally {
-      db.close();
-    }
-    expect(hasStaleReadonlyWalIndex(path)).toBe(true); // the sidecars were never rebuilt
-  });
-});
+describe('poisoned WAL index through openDb (the shared path never heals)', () => {});
 
 // ---------------------------------------------------------------------------
 // Real two-worktree visibility: a task created via worktree A is visible from

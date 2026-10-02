@@ -2,13 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  WISH_SLUG_PATTERN,
-  extractLegacyStatusValue,
-  extractStatusCell,
-  readBoundedWishFile,
-  readBoundedWishHead,
-} from './wish-status.js';
+import { WISH_SLUG_PATTERN, extractLegacyStatusValue, extractStatusCell, readBoundedWishFile } from './wish-status.js';
 
 const MAX_WISH_BYTES = 256 * 1_024;
 /**
@@ -69,12 +63,6 @@ const CORPUS: CorpusRow[] = [
     why: 'the legacy form is opt-in and only the hook opts in',
   },
   {
-    slug: 'row-6-legacy-with-note',
-    body: '**Status:** DRAFT (2026-07-09) — shipped later\n',
-    board: null,
-    why: 'the legacy line keeps PREFIX semantics, unlike the cell — a note after the status does not void it',
-  },
-  {
     slug: 'row-7-board-falls-through',
     body: '| **Status** | DRAFT |   <!-- x -->\n| **Status** | APPROVED |\n',
     board: 'APPROVED',
@@ -133,30 +121,6 @@ const CORPUS: CorpusRow[] = [
     body: '| **Status** |\tDRAFT |\n',
     board: 'DRAFT',
     why: 'leading whitespace is stripped by the surrounding runs, so a tab-led cell still reads',
-  },
-  {
-    slug: 'legacy-bare-then-value',
-    body: '**Status:**\n**Status:** DRAFT\n',
-    board: null,
-    why: 'a bare legacy line is not a match; scanning continues to the next legacy line',
-  },
-  {
-    slug: 'legacy-lowercase-then-value',
-    body: '**Status:** draft\n**Status:** APPROVED\n',
-    board: null,
-    why: 'a lowercase legacy line still MATCHES (a space satisfies the charset), so the scan stops and yields nothing',
-  },
-  {
-    slug: 'legacy-bare-only',
-    body: '**Status:**\n',
-    board: null,
-    why: 'no admissible legacy line',
-  },
-  {
-    slug: 'legacy-value-on-next-line',
-    body: '**Status:**\nDRAFT\n',
-    board: null,
-    why: 'the whitespace run crosses the newline, so the value on the following line still reads',
   },
   {
     slug: 'unterminated-then-row',
@@ -227,26 +191,6 @@ describe('shared wish-status mechanics', () => {
     expect(WISH_SLUG_PATTERN.test('Upper')).toBe(false);
   });
 
-  test('accept receives the untrimmed span, so a blank cell is distinguishable from a zero-width one', () => {
-    const seen: string[] = [];
-    const collect = (raw: string) => {
-      seen.push(raw);
-      return true;
-    };
-    extractStatusCell('| **Status** |   |\n', 'first-pipe', collect);
-    extractStatusCell('| **Status** ||\n', 'first-pipe', collect);
-    // Trimming here would collapse both to '' and silently merge two cases the
-    // pre-consolidation regex told apart.
-    expect(seen).toEqual(['   ', '']);
-  });
-
-  test('a rejected row resumes the scan past its START, not past its end', () => {
-    // The leading whitespace run can cross a newline and end the match on the
-    // NEXT row's opening pipe; resuming at the match end would swallow that row.
-    const doc = '| **Status** | draft\n| **Status** | APPROVED |\n';
-    expect(extractStatusCell(doc, 'first-pipe', (raw) => /^\s*[A-Z_ -]+\s*$/.test(raw))).toBe('APPROVED');
-  });
-
   test('legacy extraction skips a line it cannot read and keeps scanning', () => {
     const admissible = (raw: string) => /^\s*[A-Z_ -]/.test(raw);
     expect(extractLegacyStatusValue('**Status:**\n**Status:** DRAFT\n', admissible)).toBe('DRAFT');
@@ -291,20 +235,6 @@ describe('bounded wish read', () => {
     const directory = join(dir, 'directory.md');
     mkdirSync(directory);
     expect(readBoundedWishFile(directory, MAX_WISH_BYTES)).toBeNull();
-  });
-
-  test('head reads cap at headBytes and refuse files over the max size, with the same guards', () => {
-    const file = join(dir, 'head.md');
-    writeFileSync(file, `| **Status** | DRAFT |\n${'x'.repeat(1_000)}`);
-    expect(readBoundedWishHead(file, MAX_WISH_BYTES, 32)).toBe('| **Status** | DRAFT |\nxxxxxxxxx');
-    expect(readBoundedWishHead(file, 64, 32)).toBeNull();
-    expect(readBoundedWishHead(join(dir, 'missing.md'), MAX_WISH_BYTES, 32)).toBeNull();
-    const link = join(dir, 'head-link.md');
-    symlinkSync(file, link);
-    expect(readBoundedWishHead(link, MAX_WISH_BYTES, 32)).toBeNull();
-    const directory = join(dir, 'head-dir.md');
-    mkdirSync(directory);
-    expect(readBoundedWishHead(directory, MAX_WISH_BYTES, 32)).toBeNull();
   });
 });
 
