@@ -392,6 +392,20 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 ---
 
+## Render check
+
+G3, 2026-10-02. The `brainstorm` card, rendered with `renderSkillCard(root, 'brainstorm')` at `f5247ca5e` (127,284 bytes), was viewed through `<img>` in each placement context. Outcome: **continue**. Fonts, logo and glow render on both platforms, so no R5-1 fallback applies.
+
+| Platform | Context | Fonts | Logo | Glow | Evidence |
+|---|---|---|---|---|---|
+| GitHub | `render-check.md` on throwaway branch `render-check/skill-cards` (`9a21a6ae0`), `<img src=".github/assets/skill-brainstorm.svg" width="400">`, served from `github.com/.../raw/...` | rendered (Geist, JetBrains Mono) | rendered | rendered | [render-github.png](evidence/render-github.png); https://github.com/automagik-dev/genie/blob/render-check/skill-cards/render-check.md |
+| Mintlify | `genie/render-check.mdx` on throwaway docs branch `render-check/skill-cards`, `<img src="/genie/images/skills/brainstorm.svg" />`, rendered by `mint dev` 4.2.970 | rendered (Geist, JetBrains Mono) | rendered | rendered | [render-mintlify.png](evidence/render-mintlify.png) |
+
+- Font proof: each platform's `<img>` capture was compared with two local Chromium renders of the same card, one as shipped and one with its `@font-face` block removed (which falls back to DejaVu). GitHub differs 1.98% from the as-shipped render and 4.56% from the fallback; Mintlify 1.82% and 4.29%. The glyph shapes match Geist and JetBrains Mono.
+- Mintlify substitute, approved by the owner: the draft docs PR [automagik-dev/docs#87](https://github.com/automagik-dev/docs/pull/87) got no preview ("Mintlify Deployment: Skipping deployment — No eligible deployments found for changes"). Per this plan's risk row the check stopped and asked; Felipe chose "Render local com mint dev". The local renderer draws the same `<img>` in the same browser engine; what it does not exercise is the hosted CDN's response headers. #87 is closed unmerged.
+- Owner checkpoint: Felipe approved the card visually ("Aprovado") and the Mintlify substitute on 2026-10-02.
+- Neither `render-check.md` nor `render-check.mdx` exists on `wish/skill-cards` or on any PR head; both throwaway branches are deleted in G8.
+
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
