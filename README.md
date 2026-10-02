@@ -4,7 +4,7 @@
 
 <p align="center"><strong>Code is a commodity. Harnesses get replaced. Context stays.</strong></p>
 
-Genie is a set of skills for coding agents, plus a small CLI. It takes an idea through a reviewed design, a plan, the code and an independent review to a pull request. Every design, plan and verdict stays in your repository as markdown, so the next agent you use reads the same context.
+Genie is a set of skills for coding agents, plus a small CLI. It takes an idea through a reviewed design, a plan, the code and an independent review to a pull request. Designs and plans stay in your repository as markdown, with the reviews that approved them, so the next agent you use reads the same context.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
@@ -13,14 +13,16 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 One `/wish` from a real run, shortened:
 
 ```text
-You:    /wish Delete dead code: src/lib/defaults.ts has no production callers and
-        src/__tests__/dir-ls.test.ts asserts on its own copy of a removed handler.
-        Move the AgentDefaults type into workspace.ts, delete defaults.ts,
-        defaults.test.ts and dir-ls.test.ts.
+You:    /wish Delete dead code: src/lib/defaults.ts has no production callers
+        (only a type import of AgentDefaults in src/lib/workspace.ts) and
+        src/__tests__/dir-ls.test.ts reimplements a removed handler and asserts
+        on its own copy. Move the AgentDefaults type into workspace.ts, delete
+        defaults.ts, defaults.test.ts and dir-ls.test.ts.
 
-Genie:  I started the wish workflow on branch wish/delete-dead-defaults. It checks
-        that the task fits a single wish, makes the change in its own worktree,
-        runs the full check, gets an independent review and opens a PR against dev.
+Genie:  I started the wish workflow in the background on branch
+        wish/delete-dead-defaults. It checks that the task fits a single wish,
+        makes the change in its own worktree, runs the full check, gets an
+        independent review and opens a PR against dev.
 
 Genie:  Review: SHIP. Checks: pass. The PR is open and its remote head matches the
         local one. This run merged nothing. Merging is yours.
@@ -34,8 +36,8 @@ One decided task goes straight to **wish**. Anything bigger takes the whole loop
 
 - **brainstorm** settles an idea into a `DESIGN.md`. A design review approves it before any plan is written.
 - **wish** delivers one task end to end and returns a pull request ready for you to merge. Work bigger than one task becomes a `WISH.md` with execution groups, and a plan review approves it before anything is built.
-- **work** runs the approved groups in dependency order, each with its own scoped worker.
-- **review** is the implementation review. It checks the result against the plan's criteria and returns SHIP, FIX-FIRST or BLOCKED. **fix** repairs the blocking gaps with bounded retries and a fresh reviewer.
+- **work** runs the approved groups in dependency order, each with its own scoped worker, and ends at an implementation review.
+- **review** runs those reviews. After **work**, it checks the result against the plan's criteria and returns SHIP, FIX-FIRST or BLOCKED. **fix** repairs the blocking gaps with bounded retries and a fresh reviewer.
 - **council** sits beside the loop. It pressure-tests a decision through independent lenses and changes nothing.
 
 Designs, plans and verdicts land in git under `.genie/brainstorms/<slug>/` and `.genie/wishes/<slug>/`. Task state lives in one SQLite file per repository, `.genie/genie.db`, and `genie board` shows it as a kanban.
@@ -95,7 +97,7 @@ A saved workflow is a Claude Code script for a procedure worth running the same 
 - `wish`: the engine behind the `wish` skill: admission, one executor in a worktree, a gate, an independent review, bounded repair and a PR; merging stays with you
 - `workfly`: discovers a procedure and builds its saved workflow, checked by a static test and refuters
 
-The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills in front of them (`wish`, `brainstorm`, `council` and the rest) dispatch the same stages by hand.
+The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills that start them (`wish`, `brainstorm`, `council`, `docs`, `research`, `skill-audit`, `workfly`) run the same stages by hand.
 
 ## When not to use it, and what it costs
 
@@ -112,27 +114,27 @@ Superpowers, Spec Kit and GSD work the same ground. Each of their rows comes fro
 
 | | What it says it is | Its loop | How it installs |
 |---|---|---|---|
-| [Superpowers](https://github.com/obra/superpowers) | "a complete software development methodology for your coding agents, built on top of a set of composable skills" | brainstorming, writing plans, then executing them with subagents or inline, with code review and test-driven development | a plugin per harness, installed "separately for each one" |
+| [Superpowers](https://github.com/obra/superpowers) | "a complete software development methodology for your coding agents, built on top of a set of composable skills" | brainstorming, writing plans, then executing them with subagents or inline, with code review and test-driven development | installed per harness, "separately for each one" |
 | [Spec Kit](https://github.com/github/spec-kit) | "an open source toolkit that gives AI coding agents structured processes, reusable templates, and documented outcomes" | a constitution once per project, then specify, plan, tasks, implement and converge for each feature | `uv tool install specify-cli` |
 | [GSD](https://github.com/open-gsd/gsd-core) | "a context-engineering and spec-driven development framework" that runs heavy work "in fresh-context subagents" | discuss, plan, execute, verify and ship, one phase at a time | `npx @opengsd/gsd-core@latest` |
-| Genie | skills and saved workflows, plus a CLI that keeps plans in git and task state in one SQLite file | brainstorm, wish, work and review, with council beside it and a separate reviewer at each gate | one signed binary that installs the skills into every agent it detects |
+| Genie | skills and saved workflows that keep plans in git, plus a CLI that keeps task state in one SQLite file | brainstorm, wish, work and review, with council beside it and a separate reviewer at each gate | one signed binary that installs the skills into every agent it detects |
 
 ## Install
 
-The one-paste install at the top fetches the signed binary for Linux or macOS and finishes with `genie install`. Stable is declared for Linux and macOS: both run in the release gate, so a change that breaks either one does not ship. Windows is not supported; WSL2 works but is not on the tested matrix.
+The one-paste install at the top fetches the signed binary for Linux or Apple Silicon macOS and finishes with `genie install`. Stable is declared for Linux and macOS: both run in the release gate, so a change that breaks either one does not ship. Windows is not supported; WSL2 works but is not on the tested matrix.
 
 Genie ships exactly two surfaces:
 
 - **The signed binary**, installed and updated by `install.sh` and `genie update`.
 - **The skills and the saved workflows**, delivered through the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, copy the workflows into `~/.claude/workflows`, and record what landed in `~/.genie/skills-install.json`.
 
-The installer hands its arguments to `genie install`. `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel: any value other than `none` installs to every detected agent skill home, and `none` skips the channel, writes no record, and reports `skills: skipped (consent: none)`. To install the binary and skip the skills channel:
+The installer hands its arguments to `genie install`. `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel: any value other than `none` installs to every detected agent skill home, because the skills CLI already installs per agent; `none` skips the channel, writes no record, and reports `skills: skipped (consent: none)`. To install the binary and skip the skills channel:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- --integrations none
 ```
 
-Each detected agent gets its own copy: Claude Code in `~/.claude/skills`, and Codex with every other agent that reads the shared home in `~/.agents/skills`.
+Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it.
 
 `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
 
@@ -159,7 +161,7 @@ Genie v6.261002.2 has 16 CLI commands. Nothing runs in the background: every com
 | `genie setup` | Configure Genie |
 | `genie shortcuts` | Manage tmux keyboard shortcuts |
 | `genie task` | Inspect and drive task state |
-| `genie uninstall` | Remove the Genie CLI and the skills install it recorded |
+| `genie uninstall` | Remove the Genie CLI, its `~/.genie` home (backups kept), its client plugin registrations and the skills and workflows it recorded |
 | `genie update` | Update to the latest signed release, verified offline |
 | `genie wish` | `wish lint` checks any repository's wishes for structure; `wish report <runId>` prints a run's tokens and time per stage |
 
