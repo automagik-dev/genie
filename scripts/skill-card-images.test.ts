@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import {
   CORE_SKILLS,
   SkillCardError,
@@ -592,18 +592,17 @@ describe('tracked inputs', () => {
 // since it never calls `main` or `writeSkillCards`. The expected text comes from the YAML itself, never
 // from the generator, so a card left stale after a skill's text changes fails here and is named.
 describe('the committed README cards', () => {
-  const realRoot = resolve(import.meta.dir, '..');
   const SVG_NAMESPACE = ' xmlns="http://www.w3.org/2000/svg"';
 
   for (const name of CORE_SKILLS) {
     test(`skill-${name}.svg: an 800x400 canvas, its YAML text, the font stacks, data: URIs only`, () => {
-      const path = readmeCardPath(realRoot, name);
+      const path = readmeCardPath(REPO, name);
       expect(existsSync(path)).toBe(true);
       const svg = readFileSync(path, 'utf8');
       expect(svg).toStartWith(`<svg${SVG_NAMESPACE} `);
       expect(svg).toContain('viewBox="0 0 800 400"');
 
-      const fields = readInterface(realRoot, name);
+      const fields = readInterface(REPO, name);
       const nodes = textNodes(svg);
       expect(nodes).toHaveLength(svg.match(/<text\b/g)?.length ?? 0);
       const texts = nodes.map((node) => node.text);
@@ -625,11 +624,12 @@ describe('the committed README cards', () => {
       expect(hrefs.length).toBeGreaterThan(0);
       for (const href of hrefs) expect(href).toStartWith('data:');
       expect(svg).not.toContain('@import');
-      expect(svg.replace(SVG_NAMESPACE, '')).not.toContain('http');
+      // A URL scheme, never the bare word: base64 holds no ':', so font or logo bytes cannot trip it.
+      expect(svg.replace(SVG_NAMESPACE, '').match(/https?:\/\//g)).toBeNull();
     });
   }
 
   test('checkSkillCards finds the six committed cards current with their skills', () => {
-    expect(checkSkillCards(realRoot)).toEqual({ ok: true, differing: [] });
+    expect(checkSkillCards(REPO)).toEqual({ ok: true, differing: [] });
   });
 });
