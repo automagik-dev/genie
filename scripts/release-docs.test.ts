@@ -949,6 +949,18 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(docs).toContain(statement);
     }
+    // Wish `genie-launch` Decision 4: the install-surface strings stay in the
+    // README itself, not only in the moved text.
+    const readme = read('README.md');
+    for (const statement of [
+      'Genie ships exactly two surfaces',
+      'npx skills add automagik-dev/genie',
+      'skills-install.json',
+      '~/.agents/skills',
+      'skills: skipped (consent: none)',
+    ]) {
+      expect(readme).toContain(statement);
+    }
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
