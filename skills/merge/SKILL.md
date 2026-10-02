@@ -44,7 +44,7 @@ Read the commit messages, and where a commit points at a pull request or an issu
 
 ## Re-run the gate
 
-The merged tree is code neither side ever compiled. Run the repository's own full gate on it: the aggregate check its hooks and CI run, such as `bun run check` in genie, or `npm run check` or `make check` elsewhere. Find it in the repository's CI workflow, hook configuration or root scripts rather than assuming one.
+The merged tree is code neither side ever compiled. Run the repository's own full gate on it: the full aggregate check the repository defines, the one its CI enforces, not a hook's faster subset. That is `bun run check` in genie, and often `npm run check` or `make check` elsewhere. Find it in the repository's root scripts or task file and confirm it against what CI runs, rather than assuming one or taking a hook's command.
 
 That gate is the only proof the merge is sound. A green gate on either parent proves nothing about the merge. Fix what the merge broke, and re-run until it exits zero; a partial re-run proves only the part you re-ran.
 
