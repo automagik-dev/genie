@@ -461,9 +461,9 @@ Run the workflow against each fixture, one at a time. `WT` is the worktree holdi
 umask 022
 : "${S:?export S as the scratch directory}" "${WT:?export WT as the worktree holding wish/wish-gate-any-repo}"
 F=$S/gate-fixtures
-test -z "$(git config --global --get core.hooksPath)"   # a global hooks path resolves outside every fixture, by design
-test -z "$GH_REPO$GH_HOST"                              # gh must have no repository to fall back on
-command -v jq >/dev/null                                # verify.sh reads the run records with jq
+test -z "$(git config --global --get core.hooksPath)" || exit 1   # a global hooks path resolves outside every fixture, by design
+test -z "$GH_REPO$GH_HOST" || exit 1                              # gh must have no repository to fall back on
+command -v jq >/dev/null || exit 1                                # verify.sh reads the run records with jq
 sh "$F/build-fixtures.sh" "$F"
 mkdir -p "$F/sessions" "$F/logs"
 cat > "$F/claude-settings.json" <<EOF
@@ -472,9 +472,10 @@ EOF
 run() {
   sid=$(python3 -c 'import uuid; print(uuid.uuid4())')
   printf '%s\n' "$sid" > "$F/sessions/$1"
-  ( cd "$F/$1" && claude -p --session-id "$sid" --settings "$F/claude-settings.json" \
-      --permission-mode bypassPermissions --add-dir "$WT/.claude/workflows" \
+  ( cd "$F/$1" && claude -p --model claude-opus-5-5 --session-id "$sid" --settings "$F/claude-settings.json" \
+      --permission-mode bypassPermissions --add-dir "$WT/.claude/workflows" -- \
       "Run the saved workflow at the explicit script path $WT/.claude/workflows/wish.js with args {\"objective\": \"$2\", \"slug\": \"farewell\", \"base\": \"dev\", \"repairBudget\": 1, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}. Wait until it returns, then reply with its run id and state only." \
+      < /dev/null \
   ) > "$F/logs/$1.txt" 2>&1
 }
 run npm-husky "Add a farewell(name) function to greet.js that returns 'Goodbye, <name>', exported beside greet, with a test in test/greet.test.js."
@@ -483,7 +484,7 @@ run lefthook-nocheck "Add a farewell function to greet.sh that prints 'Goodbye, 
 sh "$F/verify.sh"
 ```
 
-If print mode exits before a fixture's run record appears, rerun that fixture interactively. Use `claude --session-id <new uuid> --settings "$F/claude-settings.json"` in the fixture with the same prompt, and write the new id to `sessions/<fixture>`. Each run is expected to end `blocked` at Read-back, because a fixture has no forge and no pull request can open there. That is not a failure of this wish. A run that ends `refused`, or `missed` before its first gate answered, is a failure, and the run is repeated.
+If print mode exits before a fixture's run record appears, rerun that fixture interactively. Use `claude --model claude-opus-5-5 --session-id <new uuid> --settings "$F/claude-settings.json"` in the fixture with the same prompt, and write the new id to `sessions/<fixture>`. Each run is expected to end `blocked` at Read-back, because a fixture has no forge and no pull request can open there. That is not a failure of this wish. A run that ends `refused`, or `missed` before its first gate answered, is a failure, and the run is repeated.
 
 `S/gate-fixtures/verify.sh`:
 
@@ -649,6 +650,87 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 ### Owner approval — 2026-10-02
 
 - Felipe approved execution through the question harness ("Aprovado, executa"). Status is APPROVED, then IN_PROGRESS when work starts.
+
+### Group 1 criteria review — 2026-10-02 — SHIP
+
+- Commit `5f63ea9`, PR #3097.
+- The Group 1 validation exits 0: 221 focused tests pass, and `bun run check` gives 3053 pass, 2 skip, 0 fail. The focused tests and biome were re-run on a clean `git archive` export. CI Unit passes on linux and darwin, and the 11 hooks cases ran on darwin.
+- Mutation testing: 25 single changes were applied to a copy of `wish.js`. Every one turns at least one named test red.
+- Decisions 3, 6, 7, 8, 9, 11, 12 and 15 hold. `HOOKS_LIVE_COMMAND` is byte-identical to the plan (738 bytes).
+- Genie is unchanged:
+  - `canned()` still resolves to `bun run check` and `bun install --frozen-lockfile`;
+  - cases (9) and (10) are untouched;
+  - the only assertion removed is (19)'s husky check, which the plan names.
+- The author's three plan deviations are confirmed sound.
+- Nit for later: for a check refused at admission, the `Ran:` line (`wish.js:1026`) and the PR prefix (`:955`) say "no check command was discovered". The contract line says the command was refused.
+
+### Group 1 quality pass — 2026-10-02 — FIX-FIRST (quality loop 1 of 1)
+
+- F1, MEDIUM: the check and install commands the scout proposes are free text, guarded only by regexes. In the harness, an issue body could freeze `npm ci && curl … | sh` and the run still ended `merge-ready`. Fix: enforce Decision 6's closed set in the script for commands that come from the repository; the caller's own values stay exempt.
+- F2, LOW-MEDIUM: these pass the refusal:
+  - npm abbreviations (`npm pub`, `npm publ`);
+  - `cargo publish`, `poetry publish`, `uv publish`, `twine upload`, `gem push`;
+  - `docker push`, `podman push`, `mvn deploy`, `gradle publish`, `lerna publish`, `changeset publish`;
+  - `git -c 'x.y=;' push`.
+
+  Fix: add these verbs, and reword the refusal as a tripwire rather than a boundary.
+- F3, LOW: the body check is advisory. The front doors should say that `/wish` runs the repository's install lifecycle and its check, so it is for trusted repositories only. Routed to G2. Decision 8's claim that "hooks already run it" is inaccurate.
+- F4, LOW: in no-check mode the validation command now runs in repositories that have hooks. Noted only.
+- F5, LOW:
+  - the husky 9 `pre-push` is tested with `-f` instead of `-x`;
+  - empty `git rev-parse` output is unguarded, which gives a false `live` under dash or bash when git fails.
+
+  Fix both, and update the WISH.md block to match.
+- F6, LOW: `DENYLIST` does not cover Makefile, justfile, Taskfile, `.githooks/`, `lefthook.yml` or `.pre-commit-config.yaml`. This is out of scope and goes to a follow-up.
+- Performance: the prompts grow by about 4.6k characters per run. There are no new agent calls.
+
+### Group 1 quality re-review — 2026-10-02 — SHIP (quality loop 1/1 used)
+
+- Repair commits: `31d2443d7` (F5), `fbd908f7c` (F2) and `39a54a50c` (F1).
+- The injected check and install commands are frozen empty, and they never reach an executor, gate, review, repair or publish prompt.
+- `DISCOVERABLE_COMMANDS` equals Decision 6 exactly: 12 check commands and 5 install commands. Genie's own commands are unchanged, and values set by the caller stay exempt.
+- The new tripwire verbs are refused. 41 of 46 ordinary commands pass. Low note: false refusals such as `poetry run pytest -k publish` fail closed.
+- The liveness fixes are probed: under dash and bash, both the husky 9 hook at mode 644 and a silently failing git answer dead. `git-safety.sh` still allows the command, and the plan's copy is byte-equal to the code.
+- Group 1 validation on a clean worktree: 234 pass, `bun run check` exits 0 (3066 pass).
+- F3 landed in G2. F4 (the validation command is free text) and F6 (the denylist does not yet cover the Makefile, justfile, Taskfile, .githooks, lefthook or pre-commit config) are accepted as follow-ups, to be recorded as issues.
+
+### Group 2 review — 2026-10-02 — SHIP (2 LOW and 1 nit, applied after the verdict)
+
+- Commit `c81152a5d`. The four focused files give 176 pass. CI on PR #3097 at that head is green on all 19 checks, including Unit on linux and darwin and the Quality Gate. `skills:lint` reports 0 house-size violations.
+- The Invoke key list equals `INTAKE_ERROR` in order, checked by script. The by-hand section keeps parity. SKILL.md is 85 lines. In the README only the wish row changed. The merge skill keeps the only-proof rule.
+- Everything described matches `wish.js` at HEAD, and nothing claims the refusal is a security boundary. F3 is covered.
+- LOW, applied in a follow-up commit:
+  - SKILL.md:16 undersells what passes the tripwire;
+  - merge SKILL.md:47 implies genie's hooks run the full check (pre-push runs `check:fast`);
+  - nit: the README row's "it" is ambiguous.
+- One review covered both lenses: criteria, plus quality (accuracy, security honesty).
+
+### Group 3 end-to-end proof — 2026-10-02 — SHIP
+
+Three real runs of `wish.js` (blob `a4412cfc7`, unchanged since `39a54a50c`) against throwaway fixtures. Each one reached the gate and passed it over live hooks:
+
+| Fixture | Run | Check and install frozen | Hooks | Gate ran | Time, tokens |
+|---|---|---|---|---|---|
+| npm-husky | `wf_175c135a-254` | `npm run check` / `npm ci` | husky, `.husky/_/pre-push` | `npm run check` | 3.3 min, 189,414 |
+| precommit-make | `wf_8c1cba0f-c2a` | `make check` / none | other, shared `.git/hooks/pre-commit` from a linked worktree | `make check` | 3.8 min, 188,241 |
+| lefthook-nocheck | `wf_52816ef8-106` | none / none | other, shared `.git/hooks/pre-commit` | the frozen validation command, mode `no-check-command`, with the line "no check command was discovered in this repository" | 3.2 min, 184,503 |
+
+- **Final state:** each run ended `blocked` at read-back. That is expected, because a fixture has no forge.
+- **Proof from the records:** `verify.sh` reads the run records with `jq` and exits 0. The reviewer reproduced that result. The reviewer also ran 11 negative controls of their own, and each fails as it should. The three records match the originals under `~/.claude/projects` by sha256.
+- **Safety:**
+  - every assertion passed before each run;
+  - `--settings` wires `git-safety.sh` by absolute path;
+  - each fixture's only remote is its local bare origin, with no pushurl or rewrite at any scope;
+  - `main` and `dev` did not move;
+  - the run ledger was untouched.
+- **Models:** the stages resolved to `claude-sonnet-5-5` and `claude-opus-5-5`.
+- **Plan fixes:**
+  - the run block's `--add-dir` is variadic, so the prompt needs `--` in front of it and stdin from `/dev/null` (G3-3);
+  - the run block pins `--model claude-opus-5-5`;
+  - each assertion now ends with `|| exit 1`.
+- **Follow-ups, not in this wish:**
+  - the log prints `Publish: opened PR (no url)` when no PR was created (`wish.js:1807`, already on dev);
+  - `wish.js:1416` prints `check (none) (none)`.
 
 ---
 
