@@ -33,7 +33,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
   12. CLI reference (pasted from `genie --help` of release tag v6.260929.2, or the newest stable tag at execution time, named on the page). The paste is verbatim: while the retired `orca` stub and the `mcp` wording in `init` still ship, a note on the page names `orca` as a retired stub and `mcp` as a removed verb (owner decision 2026-10-02)
   13. Upgrading and retired (stays at `genie/release-notes.mdx`)
   14. Security and releases, with one factual line on leaving npm for signed releases
-  15. The incident write-up (stays public at `genie/incident-response/canisterworm.mdx` as the Security page's link target)
+  15. The incident write-up (stays public at `genie/incident-response/canisterworm.mdx` as the Security page's link target). B adds v6 guidance where it recommends the removed `genie sec`; the incident record is otherwise unchanged
   - Everything else, except the reachable pages below, moves to `genie/_internal/` or is deleted.
   - Orphan pages are unpublished, except the two pages shipped code or a pinned page links to: `genie/hacks` (from the shipped `genie-hacks` skill) and `genie/security/key-rotation` (from the incident page). They stay reachable at their paths, outside the nav, so no shipped link breaks. They count as public pages for the grep criterion, and B brings each up to v6 where it presents v4 as current. `concepts/byoa` moves to `_internal/` and B's Install drops its link; `release-process` moves to `_internal/` and A retargets the link in `package.json`'s description to the Security and releases page (`https://docs.automagik.dev/genie/security`).
   - Links inside docs pages stay root-relative (`/genie/...`); the `docs.automagik.dev` domain applies to links from the README, skills, `package.json` and the org and profile pages.
@@ -132,7 +132,7 @@ Alternatives considered:
 - [ ] The CLI reference page names the release tag its `--help` output came from.
 - [ ] The six core skills each have a card image and an SOP video labelled "simulated", each with its saved capture file; GIF ≤ 3 MB, each MP4 ≤ 8 MB.
 - [ ] Every figure in A–D is on the Allowed numbers list.
-- [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|scratchpad|/home/genie|khal|ghp_|sk-|Bearer|dangerously-skip-permissions`, and each video rendered from a capture shows its two-edit note.
+- [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|/scratchpad|-scratchpad-|/home/genie|khal|ghp_|sk-|Bearer|dangerously-skip-permissions`, and each video rendered from a capture shows its two-edit note.
 - [ ] Newly written copy (excluding verbatim `UPGRADING.md` blocks, fenced code and pasted CLI output) passes a grep for `—`, `–`, spaced hyphens used as punctuation, hashtags and "não é/não era" rebuttals.
 - [ ] The org shows a description and 4 pins; forge is archived with its issues closed; the namastex888 profile shows the new bio, pins and README; each write was approved by Felipe.
 
