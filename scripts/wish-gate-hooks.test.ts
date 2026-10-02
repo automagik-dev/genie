@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -64,10 +73,26 @@ function hooksPath(dir: string, value: string): void {
   git(dir, 'config', 'core.hooksPath', value);
 }
 
-function liveness(cwd: string): { status: number | null; stdout: string } {
-  const result = spawnSync('sh', ['-c', HOOKS_LIVE_COMMAND], { cwd, env, encoding: 'utf8' });
+/** Runs the lifted command from `cwd`; `path` replaces PATH for the probes that change which git answers. */
+function liveness(cwd: string, path = env.PATH): { status: number | null; stdout: string } {
+  const result = spawnSync('/bin/sh', ['-c', HOOKS_LIVE_COMMAND], {
+    cwd,
+    env: { ...env, PATH: path },
+    encoding: 'utf8',
+  });
   return { status: result.status, stdout: result.stdout };
 }
+
+/** A PATH whose first `git` runs `body`: the host git failing, or answering with nothing at all. */
+function fakeGitPath(body: string): string {
+  const bin = join(scratch, 'fake-bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\n${body}\n`);
+  chmodSync(join(bin, 'git'), EXECUTABLE);
+  return `${bin}:${env.PATH ?? ''}`;
+}
+
+const GIT_UNRESOLVED = 'dead: git did not resolve the hooks directory, the worktree and the repository git directory\n';
 
 describe('the gate liveness command answers live, exit 0, for every hook system that would fire', () => {
   test('husky 9: core.hooksPath .husky/_ holding pre-push and pre-commit', () => {
@@ -130,8 +155,47 @@ describe('the gate liveness command answers dead, exit 1, for every hook system 
     hooksPath(dir, '.husky/_');
     expect(liveness(dir)).toEqual({
       status: 1,
-      stdout: `dead: the husky 9 hooks directory ${dir}/.husky/_ has no pre-push\n`,
+      stdout: `dead: the husky 9 hooks directory ${dir}/.husky/_ has no executable pre-push\n`,
     });
+  });
+
+  test('husky 9 with a non-executable pre-push, though its pre-commit is executable', () => {
+    const dir = repository();
+    hook(join(dir, '.husky', '_', 'pre-push'), NOT_EXECUTABLE);
+    hook(join(dir, '.husky', '_', 'pre-commit'), EXECUTABLE);
+    hooksPath(dir, '.husky/_');
+    expect(liveness(dir)).toEqual({
+      status: 1,
+      stdout: `dead: the husky 9 hooks directory ${dir}/.husky/_ has no executable pre-push\n`,
+    });
+  });
+
+  /**
+   * An empty answer from git used to reach `cd ""`, which dash takes as the current directory: run from
+   * a directory holding an executable file named pre-commit, every check then passed against that
+   * directory and the answer was live. Each probe keeps that trap in place.
+   */
+  test('a git that fails, even from a directory holding an executable pre-commit', () => {
+    const dir = repository();
+    hook(join(dir, 'pre-commit'), EXECUTABLE);
+    expect(liveness(dir, fakeGitPath('exit 128'))).toEqual({ status: 1, stdout: GIT_UNRESOLVED });
+  });
+
+  test('a git that succeeds and prints nothing', () => {
+    const dir = repository();
+    hook(join(dir, 'pre-commit'), EXECUTABLE);
+    expect(liveness(dir, fakeGitPath('exit 0'))).toEqual({ status: 1, stdout: GIT_UNRESOLVED });
+  });
+
+  test('no git on PATH at all', () => {
+    const dir = repository();
+    hook(join(dir, 'pre-commit'), EXECUTABLE);
+    // The command starts `sh -c`, so the PATH keeps a sh and nothing else: the shell's builtins are all
+    // the command needs besides git.
+    const shOnly = join(scratch, 'sh-only-bin');
+    mkdirSync(shOnly);
+    symlinkSync('/bin/sh', join(shOnly, 'sh'));
+    expect(liveness(dir, shOnly)).toEqual({ status: 1, stdout: GIT_UNRESOLVED });
   });
 
   test('husky 6 to 8 with a non-executable .husky/pre-commit', () => {
