@@ -72,7 +72,7 @@ The source files are gitignored brainstorm notes. This list is the tracked autho
 - The reviewer is also fallible: #3045 passed a wrong gate command; #2935 met 68 of 86 blind criteria with 3 HIGH gaps.
 - The filmed V2 run's own figures (wall-clock time, tokens, questions asked), as printed by `genie wish report <runId>` for that run, labelled as one sample.
 - The counts of shipped skills, saved workflows and top-level commands, read from the repo at the release tag used at execution (at v6.261002.2: 18, 12 and 16).
-- Not allowed anywhere in A–D: commit or PR totals, 14/58 or any merge-ready rate, the 511k-token or 22-minute averages, SHIP rates, human/agent splits, lines of code of PRs, cost multiples.
+- Not allowed anywhere in A–D, exempt output and moved text included: commit or PR totals, 14/58 or any merge-ready rate, the 511k-token or 22-minute averages, SHIP rates, human/agent splits, lines of code of PRs, cost multiples.
 
 ## Approach
 
@@ -116,7 +116,7 @@ Alternatives considered:
 | 3 | A simulated terminal is read as fake | Medium | On-screen "simulated" label; each SOP replays a saved real capture; the real V2 run is shown in Quickstart. |
 | 4 | Media bloats the repos | Medium | GIF ≤ 3 MB, each MP4 ≤ 8 MB. |
 | 5 | Docs pointer bumped before the docs PR merges | High | Follow the CLAUDE.md docs rule: bump only after merge, in its own PR. |
-| 6 | A figure outside the Allowed numbers list ships | Medium | The reviewer checks every figure in A–D against the list. |
+| 6 | A figure outside the Allowed numbers list ships | Medium | The reviewer checks every figure in newly written copy in A–D against the list, and checks that no figure on the not-allowed list appears anywhere in A–D, exempt output and moved text included. |
 | 7 | D is done before visitors can see A | Medium | D starts only after the dev to main promotion Felipe merges and after B's docs PR merges. |
 | 8 | New docs pages 404 on `docs.automagik.dev` until the Mintlify migration | Medium | Accepted by the owner (2026-10-02); links keep the domain, and the content is ready in the docs repo for the new host. |
 | 9 | A capture shows host paths or the permission-skip flag | Medium | Redact host paths to `~/` and cut the agent launch line before any render; the video states the two edits. |
@@ -131,10 +131,10 @@ Alternatives considered:
 - [ ] A grep over public genie pages finds no Postgres, pgserve, daemon, Orca, npm, `genie spawn`, `genie team` or `genie sec` presented as current, and no `council.js`; the pasted CLI output under its retired-stubs note is excepted.
 - [ ] The CLI reference page names the release tag its `--help` output came from.
 - [ ] The six core skills each have a card image and an SOP video labelled "simulated", each with its saved capture file; GIF ≤ 3 MB, each MP4 ≤ 8 MB.
-- [ ] Every figure in A–D is on the Allowed numbers list.
+- [ ] Every figure in newly written copy in A–D is on the Allowed numbers list, and no figure on the not-allowed list appears anywhere in A–D, exempt output and moved text included.
 - [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|/scratchpad|-scratchpad-|/home/genie|khal|ghp_|sk-|Bearer|dangerously-skip-permissions`, and each video rendered from a capture shows its two-edit note.
 - [ ] Newly written copy (excluding verbatim `UPGRADING.md` blocks, fenced code and pasted CLI output) passes a grep for `—`, `–`, spaced hyphens used as punctuation, hashtags and "não é/não era" rebuttals.
-- [ ] The org shows a description and 4 pins; forge is archived with its issues closed; the namastex888 profile shows the new bio, pins and README; each write was approved by Felipe.
+- [ ] The org shows a description and 4 pins; forge is archived with its open issues and pull requests closed, each with a pointer to genie; the namastex888 profile shows the new bio, pins and README; each write was approved by Felipe.
 
 ## Next Step
 
