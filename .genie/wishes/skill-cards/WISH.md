@@ -462,6 +462,14 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Quality pass (claude-opus-5-5, read-only): SHIP; cards parse as strict XML with no script, handlers or external refs.
 - Both reviews raised the same LOW: the literal `not.toContain('http')` also scanned the base64 assets (the logo already holds `HttP`). The orchestrator applied it in `93d3767ec` (match `https?://` instead, reuse `REPO`), test-only; a planted `https://` URL still fails the wish card's test and `checkSkillCards`. The G6 PR review scores the final head.
 
+### PR review 1 (#3092) — 2026-10-02T03:34:19Z — FIX-FIRST → repaired
+
+- Reviewer: claude-opus-5-5, independent read-only PR reviewer, on head `2803f432f`. SC1-SC15, the Global constraints, Group 6, file scope and the board snapshot all pass; CI on that head: every check green, both `Unit (…)` legs included.
+- MEDIUM-1, repaired: the `genie-launch` INDEX entry still named the old digest and an open gate this PR closes; it now names the re-stamp (`d7aa88ec…`) and that group C has no card task.
+- LOW-1, repaired: the PR body's design and wish links were relative; they are now blob URLs pinned to the head.
+- LOW-2, accepted: the logo PNG carries Adobe XMP metadata (Canva ids, author name, an ad-attribution id); the identical blob is already public in this repository's history (`.github/assets/genie-logo.png`), and stripping it would break the byte-for-byte pin of design IN #3 and SC10. Changing it is an owner decision through the design.
+- LOW-3, accepted: the design and the wish name absolute host paths as the provenance of the pinned binaries; that is reviewed design content, and tracked `.genie` files on `dev` already do the same.
+
 ---
 
 ## Files to Create/Modify
