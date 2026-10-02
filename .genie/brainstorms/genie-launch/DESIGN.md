@@ -16,7 +16,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
   - Hero: the animated mascot loop (face as mascot + GENIE wordmark), the thesis line, a one-paste install.
   - A short You:/Genie: transcript of one `/wish`.
   - The loop: brainstorm, wish, work, review, plus council.
-  - A skills catalog: every shipped skill (the 18 directories with a `SKILL.md`, the set `SHIPPED_SKILLS` in `scripts/release-docs.test.ts` pins), one plain line each; the six core skills get a card image.
+  - A skills catalog: every shipped skill (the 18 directories with a `SKILL.md`, the set `SHIPPED_SKILLS` in `scripts/release-docs.test.ts` pins), one plain line each; the six core skills get a card image, which group A embeds from `.github/assets/skill-<name>.svg`.
   - All 10 saved workflows, one line each, including `evidence-gate`, named without the `.js` suffix.
   - "When not to use it / what it costs", using only figures from the Allowed numbers list below.
   - A short comparison with Superpowers, spec-kit and GSD.
@@ -26,7 +26,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
   1. Introduction
   2. Install (stays at `genie/installation.mdx`)
   3. Quickstart (first wish)
-  4. Skills catalog
+  4. Skills catalog, with one skill card image per shipped skill, all 18, which group B embeds from `genie/images/skills/<name>.svg` (skill-cards R2-3)
   5–10. One page each for brainstorm, wish, work, review, council, fix
   11. Workflows
   12. CLI reference (pasted from `genie --help` of release tag v6.260929.2, or the newest stable tag at execution time, named on the page)
@@ -36,12 +36,12 @@ Launch traffic lands on a README that spends most of its first screen on retirem
   - Everything else moves to `genie/_internal/` or is deleted.
   - Orphan pages are unpublished.
   - The docs.json nav label "RLMX" becomes "mikro". This is a label-only change to the shared nav and needs Felipe's approval in the docs PR.
-- **C. Media**, produced in the scratchpad and committed as static assets.
+- **C. Media**, committed as static assets. The skill card images come from a tracked generator; everything else is produced in the scratchpad.
   - README assets live in the genie repo under `.github/assets/`: the mascot loop GIF and the six core skill cards.
-  - Docs assets live in the docs repo under `genie/images/` and `genie/videos/`: cards and SOP videos.
+  - Docs assets live in the docs repo under `genie/images/` and `genie/videos/`: the 18 skill card images, one per shipped skill at `genie/images/skills/<name>.svg`, and the SOP videos (skill-cards R2-3).
   - Assets:
     - the animated mascot (loop MP4 and GIF, from the code rig);
-    - one card image per core skill in design B;
+    - the skill card images in design B, one per core skill for the README and all 18 for the docs, from the tracked generator `scripts/skill-card-images.ts` (skill-cards R1-4, R2-3);
     - one SOP video per core skill, 30 to 60 seconds, with a simulated terminal labelled "simulated" on screen;
     - the real `/wish` capture (V2) embedded in Quickstart.
   - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source.
@@ -53,7 +53,8 @@ Launch traffic lands on a README that spends most of its first screen on retirem
 - The launch posts and the hero videos V1/V2/V3 and the bar-chart race (produced separately; not repo work).
 - Reddit, HN, the long essay, beta outreach.
 - The Socratic council type (NMSTX-766) and the test cleanups (NMSTX-767/768): separate wishes.
-- Changing the docs framework, adding a website, adding CI for media, or a site-wide docs theme change.
+- Changing the docs framework, adding a website, or a site-wide docs theme change.
+- Media in CI: a bun test checks the six README cards; CI renders nothing (skill-cards R2-2).
 - Omni in the genie README and in `genie/` docs pages. The Omni product docs elsewhere on the site are untouched.
 
 ## Allowed numbers (the permission list; sources are citations only)
@@ -71,7 +72,7 @@ The source files are gitignored brainstorm notes. This list is the tracked autho
 
 ## Approach
 
-One wish with four groups. A and B are independent. C supplies assets to A and B, and each asset lands in the same PR as the page that uses it. D runs after A is visible on the default branch. That requires the dev to main promotion, which only Felipe merges. It also requires B to be live on the docs site.
+One wish with four groups. A and B are independent. C supplies assets to A and B. Each asset lands in the same PR as the page that uses it, but the skill card images land ahead of their pages: group A embeds the six from `.github/assets/` in the README skills catalog, and group B embeds the 18 from `genie/images/skills/` in the "4. Skills catalog" page (skill-cards R3-4, R4-2). D runs after A is visible on the default branch. That requires the dev to main promotion, which only Felipe merges. It also requires B to be live on the docs site.
 
 Copy follows Felipe's voice rules and gets a deslop pass: no hashtags, no dash punctuation, no "não é X, é Y" rebuttals. "Wishes in, PRs out" and "context framework" are not used as headlines.
 
@@ -82,8 +83,8 @@ Alternatives considered:
 
 ## Simplicity Case
 
-- **Simplest complete design:** static markdown/MDX pages plus static images and video files, committed in the PR of the page that uses them.
-- **Added machinery:** one throwaway local render pipeline (HTML frames, Chromium, ffmpeg) for cards and SOPs, kept in the scratchpad. Nothing new ships in genie's runtime or CI.
+- **Simplest complete design:** static markdown/MDX pages plus static images and video files, committed in the PR of the page that uses them; the skill card images land ahead of their pages (skill-cards R3-4, R4-2).
+- **Added machinery:** the card pipeline is the tracked `scripts/skill-card-images.ts` plus one bun test (skill-cards R1-4, R2-2). The SOP videos stay on one throwaway local render pipeline (HTML frames, Chromium, ffmpeg), kept in the scratchpad. Nothing new ships in genie's runtime, and CI renders nothing.
 - **Deferred until measured:** a CLI-reference generator in CI, when the reference drifts twice. A genie-only docs theme, when Mintlify supports per-product theming or Felipe approves a site-wide change. PT docs, when PT traffic shows up.
 - **Complexity removed:** the genie public nav drops from 68 pages to 15 or fewer, and the retirement prose leaves the README's first screen. No test is dropped: README assertions about text that moves are retargeted to `UPGRADING.md`.
 
@@ -134,7 +135,7 @@ After an independent design review returns SHIP, persist the evidence below and 
 ## Design Review Evidence
 
 - **Verdict:** SHIP
-- **Reviewed content SHA-256:** `fbcc99318690e12b9f38dc1abca2f792f07ca366ce952092634726c026dd6273`
-- **Reviewer:** claude-opus-5.5-design-reviewer
-- **Reviewed at:** 2026-09-29T15:21:58.000Z
+- **Reviewed content SHA-256:** `d7aa88ec09652a459815e9c63b5ca664d99a780354c37279d836d1b70c1f1a87`
+- **Reviewer:** claude-opus-5-5, independent read-only design reviewer
+- **Reviewed at:** 2026-10-02T02:16:09.000Z
 <!-- genie-design-review:end -->
