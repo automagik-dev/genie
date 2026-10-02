@@ -5,7 +5,8 @@
  * backup's own directory metadata onto the agent homes that already exist — a
  * `drwxr-xr-x ~/.claude` silently became `drwx------`, because the backup root
  * is created 0700 and the mirrored parents inherit it. These tests extract the
- * commands straight out of README.md and prove they restore the removed tree
+ * commands straight out of UPGRADING.md, where wish `genie-launch` moved the
+ * README's restore section verbatim, and prove they restore the removed tree
  * WITHOUT touching the modes of directories that are still there.
  */
 
@@ -14,14 +15,14 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const README = readFileSync(join(import.meta.dir, '..', 'README.md'), 'utf8');
+const UPGRADING = readFileSync(join(import.meta.dir, '..', 'UPGRADING.md'), 'utf8');
 
-/** The two restore commands the README prescribes, as literal shell lines. */
+/** The two restore commands UPGRADING.md prescribes, as literal shell lines. */
 function documentedRestoreCommands(): string[] {
-  const section = README.split('#### Restoring from a retirement backup')[1];
-  if (section === undefined) throw new Error('README lost its retirement-restore section');
+  const section = UPGRADING.split('#### Restoring from a retirement backup')[1];
+  if (section === undefined) throw new Error('UPGRADING.md lost its retirement-restore section');
   const block = section.split('```bash')[1]?.split('```')[0];
-  if (block === undefined) throw new Error('README lost the retirement-restore command block');
+  if (block === undefined) throw new Error('UPGRADING.md lost the retirement-restore command block');
   return block
     .split('\n')
     .map((line) => line.trim())
@@ -56,7 +57,7 @@ function run(command: string, env: Record<string, string>): void {
 }
 
 describe('documented retirement-backup restore', () => {
-  test('README prescribes a mode-preserving restore, never a bare `cp -a`', () => {
+  test('UPGRADING.md prescribes a mode-preserving restore, never a bare `cp -a`', () => {
     const commands = documentedRestoreCommands();
     expect(commands.filter((command) => command.startsWith('cp '))).toHaveLength(1);
     expect(commands.filter((command) => command.startsWith('rsync '))).toHaveLength(1);
@@ -75,7 +76,7 @@ describe('documented retirement-backup restore', () => {
   test.each([0, 1])('documented command %i restores the tree and leaves existing modes alone', (index) => {
     const commands = documentedRestoreCommands();
     const command = commands[index];
-    if (command === undefined) throw new Error(`README documents fewer than ${index + 1} restore commands`);
+    if (command === undefined) throw new Error(`UPGRADING.md documents fewer than ${index + 1} restore commands`);
     const { root, home, backup, live } = fixture();
     try {
       if (!Bun.which('rsync') && command.startsWith('rsync')) return;
