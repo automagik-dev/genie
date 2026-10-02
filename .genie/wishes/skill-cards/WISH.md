@@ -451,6 +451,17 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Process note: in a worktree without `node_modules`, `bunx biome` resolves to an unrelated npm package named `biome` (0.3.3) that checks nothing and exits 0. Every validation in this wish runs `./node_modules/.bin/biome` after `bun install --frozen-lockfile`.
 - The worker rendered all 18 cards into a scratchpad directory to eyeball layout in local Chromium; nothing was committed, and the criteria review judged it breaks no criterion. It is not SC8 evidence; G3 is.
 
+### Group 3 — 2026-10-02T02:56Z — owner checkpoint passed
+
+- See `## Render check`: fonts, logo and glow render through `<img>` on GitHub and in Mintlify (local `mint dev`, owner-approved substitute after the preview was skipped); Felipe approved the card. Evidence commit `d0b5cb1cd`; docs#87 closed unmerged. The G3 validation block exits 0.
+
+### Group 4 review — 2026-10-02T03:14:00Z — SHIP
+
+- g4-engineer commit `ac65f81ce`: the six cards (brainstorm byte-identical to the render-checked card, sha256 `1c57c44c…`) and a read-only real-tree block of 7 tests; the Group 4 validation block, `bun run check` included, exits 0 (3016 pass, 2 skip, 0 fail).
+- Criteria review (claude-opus-5-5, read-only): SHIP, D1-D17 pass; the cards' adding commit is a child of the evidence commit (SC8 ordering); mutation matrix in a temp clone fails the right tests.
+- Quality pass (claude-opus-5-5, read-only): SHIP; cards parse as strict XML with no script, handlers or external refs.
+- Both reviews raised the same LOW: the literal `not.toContain('http')` also scanned the base64 assets (the logo already holds `HttP`). The orchestrator applied it in `93d3767ec` (match `https?://` instead, reuse `REPO`), test-only; a planted `https://` URL still fails the wish card's test and `checkSkillCards`. The G6 PR review scores the final head.
+
 ---
 
 ## Files to Create/Modify
