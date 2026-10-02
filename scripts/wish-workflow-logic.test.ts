@@ -31,6 +31,7 @@ const DECLARATIONS = [
   lift(/^function baseRefusal\(base\) \{[\s\S]*?^\}$/m),
   // The Admit-side refusal of a validation command that would reach the remote or publish.
   lift(/^const UNSAFE_VALIDATION = \[[\s\S]*?^\]$/m),
+  lift(/^const blankQuotedSeparators = [\s\S]*?\)\)$/m),
   lift(/^function validationRefusal\(command\) \{[\s\S]*?^\}$/m),
   // `normalizeGate` is the decision itself: it is what turns a gate's answer into `pass`.
   lift(/^const list = .*$/m),
@@ -341,9 +342,67 @@ describe('a validation command that would reach the remote is refused at admissi
       'pytest tests/test_publish.py',
       'cargo test --package gh-push',
       '',
+      // The ecosystems the tripwire now names, running everything BUT a publish.
+      'cargo test --workspace',
+      'uv run pytest tests/test_publish.py',
+      'poetry run pytest',
+      'twine check dist/*',
+      'gem build greet.gemspec',
+      'mvn verify',
+      './gradlew test',
+      'gradle build',
+      'docker compose config',
+      'podman build .',
+      'lerna run test',
+      'npm test -- pu.spec.js',
+      'npm run pub:check',
+      // genie's own validation and gate commands, and quoted text that merely mentions a separator.
+      'bun run check',
+      'bun test scripts/wish-workflow-behavior.test.ts scripts/release-docs.test.ts',
+      "git log --format='%h;%s' -1",
     ]) {
       expect([command, api.validationRefusal(command)]).toEqual([command, '']);
     }
+  });
+
+  /**
+   * The tripwire's vocabulary beyond git, gh and the JavaScript managers. It reads the command text, so
+   * an indirect spelling still passes it: the gate's read-only brief and the publisher allowlist stand
+   * behind it, and the meta text says tripwire, not boundary.
+   */
+  test("the other ecosystems' publish verbs, npm's abbreviations and an image push are refused too", () => {
+    const refused: Array<[string, string]> = [
+      ['npm pu', 'a package publish'],
+      ['npm pub --access public', 'a package publish'],
+      ['npm publ', 'a package publish'],
+      ['npm publi', 'a package publish'],
+      ['npm publis;', 'a package publish'],
+      ['cargo publish --dry-run', 'a package publish'],
+      ['poetry publish --build', 'a package publish'],
+      ['uv publish', 'a package publish'],
+      ['twine upload dist/*', 'a package publish'],
+      ['python -m twine upload dist/*', 'a package publish'],
+      ['gem push greet-1.0.0.gem', 'a package publish'],
+      ['mvn -B deploy', 'a package publish'],
+      ['./mvnw deploy', 'a package publish'],
+      ['gradle publish', 'a package publish'],
+      ['./gradlew publish', 'a package publish'],
+      ['./gradlew publishToMavenCentral', 'a package publish'],
+      ['lerna publish from-package', 'a package publish'],
+      ['npx changeset publish', 'a package publish'],
+      ['docker push ghcr.io/o/img:1', 'an image push'],
+      ['docker image push img', 'an image push'],
+      ['podman push img', 'an image push'],
+    ];
+    for (const [command, rule] of refused) expect([command, api.validationRefusal(command)]).toEqual([command, rule]);
+  });
+
+  test('a separator inside quotes no longer hides the verb that follows it', () => {
+    for (const command of ["git -c 'x.y=;' push", 'git -c "a.b=c|d" push origin HEAD', "npm --tag 'a;b' publish"]) {
+      expect([command, api.validationRefusal(command)]).not.toEqual([command, '']);
+    }
+    // The command as written is still read too, so a verb INSIDE quotes stays refused.
+    expect(api.validationRefusal("bash -c 'git push'")).toBe('a git push');
   });
 });
 

@@ -8,7 +8,7 @@ export const meta = {
     {
       title: 'Admit',
       detail:
-        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any of them whose text or quoted body would push, change the remote or publish, and any repository command quoted with no evidence. Anything but proceed returns refused with nothing created',
+        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any repository command quoted with no evidence and any command whose text or quoted body spells an obvious push or publish verb (a git push, a gh verb that changes the remote, a package publish or an image push); that is a tripwire over the text, not a boundary, so the gate read-only brief and the publisher allowlist still stand behind it. Anything but proceed returns refused with nothing created',
     },
     {
       title: 'Work',
@@ -551,9 +551,12 @@ function baseRefusal(base) {
 }
 
 // The frozen validation command is agent-authored text from stages that read untrusted input, and in
-// a repository with no hook system the gate runs it verbatim. A command that reaches the remote or
-// publishes is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and no
-// gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
+// a repository with no hook system the gate runs it verbatim. A command that SPELLS an obvious push or
+// publish verb is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and
+// no gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
+// This is a tripwire over the command text, not a boundary: a variable, an encoded string or a script
+// that pushes for it all pass. What stands behind it is the gate's read-only brief and the
+// publisher's allowlist.
 const UNSAFE_VALIDATION = [
   // A verb ends at whitespace, a shell separator, a closing paren or a quote, so `git push;`,
   // `$(git push)` and `bash -c 'git push'` are caught as surely as `git push origin`.
@@ -563,9 +566,27 @@ const UNSAFE_VALIDATION = [
     pattern: /\bgh\b[^;&|\n]*\s["']?(pr\s+(merge|create|close|edit|comment|review|ready|reopen)|release|repo|api|workflow|issue|secret|variable)(?=[\s;&|)'"`]|$)/,
   },
   { rule: 'a package publish', pattern: /\b(npm|pnpm|yarn|bun)\b[^;&|\n]*\s["']?publish(?=[\s;&|)'"`]|$)/ },
+  // npm runs any unambiguous prefix of a command, and `pu` through `publis` all resolve to publish.
+  { rule: 'a package publish', pattern: /\bnpm\b[^;&|\n]*\s["']?pu(b(l(i(s)?)?)?)?(?=[\s;&|)'"`]|$)/ },
+  {
+    rule: 'a package publish',
+    pattern: /\b(cargo|poetry|uv|lerna|changesets?)\b[^;&|\n]*\s["']?publish(?=[\s;&|)'"`]|$)/,
+  },
+  { rule: 'a package publish', pattern: /\btwine\b[^;&|\n]*\s["']?upload(?=[\s;&|)'"`]|$)/ },
+  { rule: 'a package publish', pattern: /\bgem\b[^;&|\n]*\s["']?push(?=[\s;&|)'"`]|$)/ },
+  { rule: 'a package publish', pattern: /\b(mvn|mvnw)\b[^;&|\n]*\s["']?deploy(?=[\s;&|)'"`]|$)/ },
+  // `publish`, and every `publish<Something>` task gradle generates (publishToMavenCentral, …).
+  { rule: 'a package publish', pattern: /\b(gradle|gradlew)\b[^;&|\n]*\s["']?publish\w*(?=[\s;&|)'"`]|$)/ },
+  { rule: 'an image push', pattern: /\b(docker|podman)\b[^;&|\n]*\s["']?push(?=[\s;&|)'"`]|$)/ },
 ]
+// A separator inside quotes separates nothing — `git -c 'x.y=;' push` is ONE git command — so every
+// rule also runs over the command with its quoted separators blanked. The command as written is still
+// matched too, so `bash -c 'git push'` stays refused.
+const blankQuotedSeparators = (command) =>
+  command.replace(/'[^']*'|"[^"]*"/g, (quoted) => quoted.replace(/[;&|\n]/g, ' '))
 function validationRefusal(command) {
-  const hit = UNSAFE_VALIDATION.find(({ pattern }) => pattern.test(command))
+  const spellings = [command, blankQuotedSeparators(command)]
+  const hit = UNSAFE_VALIDATION.find(({ pattern }) => spellings.some((spelled) => pattern.test(spelled)))
   return hit ? hit.rule : ''
 }
 const refusalNote = (refused) => (refused ? `: the proposed one was refused at admission (${refused})` : '')
@@ -1310,7 +1331,7 @@ collectInjections(judged.injectionAttempts)
 const judgedContract = objectOf(judged.contract)
 const declaredFiles = texts(judgedContract.files).map(repoRelative).filter(Boolean)
 // Frozen here, before any code exists, so the gate can never choose its own command — and refused
-// here when it would reach the remote, so the gate never sees it.
+// here when its text trips the push and publish tripwire, so the gate never sees it.
 const proposedValidation = text(judgedContract.validationCommand) || text(scoutPlan.validationCommand)
 const frozenValidation = freezeCommand(proposedValidation, [], false)
 // The check and install commands come from the caller, else from the repository through the scout
