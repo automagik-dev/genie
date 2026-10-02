@@ -50,7 +50,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
     - the real `/wish` capture (V2) embedded in Quickstart.
   - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source; the shipped capture file is the redacted copy. The `/wish` (V2) and `/brainstorm` captures exist; work, review, council and fix get real runs recorded in a throwaway repository (owner decision 2026-10-02). Before any render, captures are redacted: host paths become `~/`, and the line that launches the agent with `--dangerously-skip-permissions` is cut; the video says it is edited at those two points (owner decision 2026-10-02). Claude Code's permission-mode status line ("bypass permissions on") stays visible, because it shows how the run really ran (owner decision 2026-10-02).
 - **D. Org and profile pages.** These are outward-facing GitHub writes, each done only with Felipe present and approving it.
-  - **automagik-dev:** org description, 4 pins (genie, workit, autopg, mikro), a new profile README, per-repo descriptions and topics, and the Forge archive after closing its open issues with a pointer to genie. Filming the archive belongs to the launch video work, not to this wish.
+  - **automagik-dev:** org description, 4 pins (genie, workit, autopg, mikro), a new profile README, per-repo descriptions and topics, and the Forge archive after closing its open issues and pull requests with a pointer to genie (pull requests included by owner decision 2026-10-02). Filming the archive belongs to the launch video work, not to this wish.
   - **namastex888:** bio, 6 pins, a new profile README, and archiving empty originals.
 
 ### OUT
@@ -63,7 +63,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
 
 ## Allowed numbers (the permission list; sources are citations only)
 
-The source files are gitignored brainstorm notes. This list is the tracked authority. Any figure not on it does not ship.
+The source files are gitignored brainstorm notes. This list is the tracked authority. Any figure not on it does not ship in newly written copy. Exempt (owner decision 2026-10-02): verbatim program output shown in a capture, a video or pasted CLI output, and text moved verbatim into `UPGRADING.md`.
 - 182,960 lines deleted across 739 files in one commit (3d5d16596, 2026-07-02); its tests passed (430/430); bundle 5.8 MB to 0.9 MB.
 - Source files 943 to 209 at that commit, while the 201 context docs under `.genie` stayed at 201.
 - Subsystem lifetimes: pgserve 104 days, Tauri desktop app 95 days, TUI 96 days, Orca plugin 35 days.
