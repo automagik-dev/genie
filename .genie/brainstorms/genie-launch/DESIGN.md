@@ -48,7 +48,7 @@ Launch traffic lands on a README that spends most of its first screen on retirem
     - the skill card images in design B, one per core skill for the README and all 18 for the docs, from the tracked generator `scripts/skill-card-images.ts` (skill-cards R1-4, R2-3);
     - one SOP video per core skill, 30 to 60 seconds, with a simulated terminal labelled "simulated" on screen;
     - the real `/wish` capture (V2) embedded in Quickstart.
-  - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source; the shipped capture file is the redacted copy. The `/wish` (V2) and `/brainstorm` captures exist; work, review, council and fix get real runs recorded in a throwaway repository (owner decision 2026-10-02). Before any render, captures are redacted: host paths become `~/`, and the line that launches the agent with `--dangerously-skip-permissions` is cut; the video says it is edited at those two points (owner decision 2026-10-02).
+  - Each SOP video ships with a saved capture file (the real command and output it replays) next to its source; the shipped capture file is the redacted copy. The `/wish` (V2) and `/brainstorm` captures exist; work, review, council and fix get real runs recorded in a throwaway repository (owner decision 2026-10-02). Before any render, captures are redacted: host paths become `~/`, and the line that launches the agent with `--dangerously-skip-permissions` is cut; the video says it is edited at those two points (owner decision 2026-10-02). Claude Code's permission-mode status line ("bypass permissions on") stays visible, because it shows how the run really ran (owner decision 2026-10-02).
 - **D. Org and profile pages.** These are outward-facing GitHub writes, each done only with Felipe present and approving it.
   - **automagik-dev:** org description, 4 pins (genie, workit, autopg, mikro), a new profile README, per-repo descriptions and topics, and the Forge archive after closing its open issues with a pointer to genie. Filming the archive belongs to the launch video work, not to this wish.
   - **namastex888:** bio, 6 pins, a new profile README, and archiving empty originals.
@@ -128,11 +128,11 @@ Alternatives considered:
 - [ ] Every skill in `SHIPPED_SKILLS` (directories with a `SKILL.md`) appears in the README catalog and the docs Skills page, and every `.claude/workflows/*.js` name appears on both, including `evidence-gate`. A comparison script exits 0.
 - [ ] `bun run check` exits 0 on the genie PR, and the PR body lists any removed README assertion with a reason.
 - [ ] The docs `genie/` public nav has ≤ 15 pages; `.github/workflows/docs-lint.yml` and `bun run lint:docs-links` pass on the pointer-bump PR.
-- [ ] A grep over public genie pages finds no Postgres, pgserve, daemon, Orca or npm presented as current, and no `council.js`; the pasted CLI output under its retired-stubs note is excepted.
+- [ ] A grep over public genie pages finds no Postgres, pgserve, daemon, Orca, npm, `genie spawn`, `genie team` or `genie sec` presented as current, and no `council.js`; the pasted CLI output under its retired-stubs note is excepted.
 - [ ] The CLI reference page names the release tag its `--help` output came from.
 - [ ] The six core skills each have a card image and an SOP video labelled "simulated", each with its saved capture file; GIF ≤ 3 MB, each MP4 ≤ 8 MB.
 - [ ] Every figure in A–D is on the Allowed numbers list.
-- [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|scratchpad|/home/genie|khal|ghp_|sk-|Bearer|bypass permissions|dangerously-skip-permissions`, and each video shows its two-edit note.
+- [ ] Every shipped capture file, and the frame data each video renders from, matches none of `sofia-agents|scratchpad|/home/genie|khal|ghp_|sk-|Bearer|dangerously-skip-permissions`, and each video rendered from a capture shows its two-edit note.
 - [ ] Newly written copy (excluding verbatim `UPGRADING.md` blocks, fenced code and pasted CLI output) passes a grep for `—`, `–`, spaced hyphens used as punctuation, hashtags and "não é/não era" rebuttals.
 - [ ] The org shows a description and 4 pins; forge is archived with its issues closed; the namastex888 profile shows the new bio, pins and README; each write was approved by Felipe.
 
