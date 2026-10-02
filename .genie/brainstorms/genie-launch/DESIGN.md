@@ -144,7 +144,7 @@ After an independent design review returns SHIP, persist the evidence below and 
 ## Design Review Evidence
 
 - **Verdict:** SHIP
-- **Reviewed content SHA-256:** `3d2ed3afcabb4fbe60aaffbf6c11e0a9a582cc2ffc5210749f27a63a99ef7a85`
+- **Reviewed content SHA-256:** `1ea68505fea1620afe6ad29545e194e9bad1d3d3e98ad77aa995d15ffec5787c`
 - **Reviewer:** claude-opus-5-5, independent read-only design reviewer
-- **Reviewed at:** 2026-10-02T13:39:22.000Z
+- **Reviewed at:** 2026-10-02T14:05:00.000Z
 <!-- genie-design-review:end -->
