@@ -425,6 +425,18 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - Criteria: IN #7 edits all made and nothing extra; every hunk inside the SC13 regions with the evidence block untouched; internally consistent (six README cards, 18 docs cards, CI wording, placement owners); consistent with R1-4, R2-2, R2-3, R3-4, R4-2; untouched content still holds. All four worker rulings accepted.
 - Carried to the future `genie-launch` wish, non-blocking: LOW-1, group C still lists the card images as its assets, so its plan must not schedule a card task (the skill-cards wish delivers them); LOW-2, no `genie-launch` success criterion checks that groups A and B place the cards, so that plan adds one placement check per group.
 
+### Group 2 review — 2026-10-02T02:44:28Z — FIX-FIRST → repair 1 → repair 2 → SHIP
+
+- g2-engineer commits `ed469f4c9` (generator, fonts, OFL, logo, 25 temp-root tests), `371f03c9b` (repair 1), `4a0d821c5` (repair 2); merged `--no-ff` into `wish/skill-cards`. 32 tests in about 0.6 s; the Group 2 validation block and `bun run check:fast` exit 0; exports unchanged across both repairs; no `.svg` tracked.
+- Criteria review (claude-opus-5-5, read-only): SHIP on `ed469f4` (C1-C18 pass) and SHIP again on `371f03c`.
+- Quality pass (claude-opus-5-5, read-only, separate): FIX-FIRST on `ed469f4`, MEDIUM-1 writes followed symlinks (a committed symlinked card file, `.github/assets`, `docs` or `docs/images` pointing outside got overwritten, exit 0). Repair 1 guards every existing path component with `lstat` before the first write and requires `realpath(docs)` inside `.docs-vendor`; it also refuses non-XML, C1 and bidi code points, wraps write errors, and names the asset remedy. The re-review found one residual path, a symlinked `.docs-vendor` itself, closed by repair 2 (budget 2 of 2). Final verify SHIP on `4a0d821`.
+- Rulings recorded for the owner:
+  - The criteria reviewer accepted a symlinked `.docs-vendor` as a legitimate developer setup; the orchestrator ruled to refuse it, matching the repo's pattern for symlinked config roots (`mikro init`, `genie init`). Cost if wrong: a developer with a separate docs clone gets a clear refusal and uses the submodule.
+  - The worker's ten rulings were accepted by the criteria review, notably: a skill name at most 12 characters matching `^[a-z0-9][a-z0-9-]*$` (one-row command layout; longest today 11), `--docs --check` compares exactly the 18 it writes, `--help` exits 0.
+- Deferred, non-blocking: orphan detection in `--docs --check`; per-run caching of the asset data URIs; symlink-following on the read side; no `O_NOFOLLOW` on the final write (a race needs a concurrent writer in the checkout).
+- Process note: in a worktree without `node_modules`, `bunx biome` resolves to an unrelated npm package named `biome` (0.3.3) that checks nothing and exits 0. Every validation in this wish runs `./node_modules/.bin/biome` after `bun install --frozen-lockfile`.
+- The worker rendered all 18 cards into a scratchpad directory to eyeball layout in local Chromium; nothing was committed, and the criteria review judged it breaks no criterion. It is not SC8 evidence; G3 is.
+
 ---
 
 ## Files to Create/Modify
