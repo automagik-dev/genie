@@ -45,6 +45,16 @@ function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
 
+/**
+ * The operator docs as one text: README.md, then UPGRADING.md, which holds the
+ * retirement, rollback, restore, MCP and Orca prose moved verbatim out of the
+ * README (wish `genie-launch`). Concatenated, a negative check still covers
+ * both files.
+ */
+function operatorDocs(): string {
+  return `${read('README.md')}\n${read('UPGRADING.md')}`;
+}
+
 function buildHelperInputs(): string[] {
   const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.[jt]s)/g)].map(
     (match) => `scripts/${match[1]}`,
@@ -848,7 +858,7 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('operator docs keep one lifecycle authority, rollback, uninstall and MCP retirement', () => {
-    const operator = read('README.md');
+    const operator = operatorDocs();
     for (const topic of [
       '## Lifecycle authority',
       'Orca mode is retired',
@@ -873,7 +883,7 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['plugins/genie', 'orca-marketplace.json', '.github/workflows/orca-plugin-ref.yml']) {
       expect(existsSync(join(ROOT, path))).toBe(false);
     }
-    const operator = read('README.md');
+    const operator = operatorDocs();
     expect(operator).toContain('### Orca integration retired');
     expect(operator).toContain('empty `plugins/genie/` directory');
     for (const retired of [
@@ -925,7 +935,7 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('operator docs name the two delivery surfaces and keep the plugin era retired', () => {
-    const docs = read('README.md');
+    const docs = operatorDocs();
     // Wish `skills-everywhere-c` named three surfaces; the Orca plugin was
     // retired (`retire-orca-integration`), leaving the signed binary and the
     // skills.sh channel.
