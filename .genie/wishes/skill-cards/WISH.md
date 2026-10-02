@@ -414,6 +414,17 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 
 ---
 
+### Group 1 — 2026-10-02T02:09Z — orchestrator, validated
+
+- Commits `9ff079539` (the stamped `genie-launch` DESIGN.md alone, digest `fbcc9931…`) and `2b36ebd7a` (this design, this wish, INDEX entries, the eight group cards in `roadmap.json`), both from the linked worktree. The G1 validation block exits 0.
+- Ruling: no separate reviewer for G1, since it changes no code and its criteria are mechanical; the G6 PR review re-scores SC12.
+
+### Group 5 review — 2026-10-02T02:16:09Z — SHIP
+
+- Amendment `836356766` by g5-engineer; independent design review by claude-opus-5-5 (read-only), reviewed digest `d7aa88ec09652a459815e9c63b5ca664d99a780354c37279d836d1b70c1f1a87`, stamped as returned in `55651b5b5`; merged `--no-ff` as `a66b6d081`. The G5 validation block exits 0.
+- Criteria: IN #7 edits all made and nothing extra; every hunk inside the SC13 regions with the evidence block untouched; internally consistent (six README cards, 18 docs cards, CI wording, placement owners); consistent with R1-4, R2-2, R2-3, R3-4, R4-2; untouched content still holds. All four worker rulings accepted.
+- Carried to the future `genie-launch` wish, non-blocking: LOW-1, group C still lists the card images as its assets, so its plan must not schedule a card task (the skill-cards wish delivers them); LOW-2, no `genie-launch` success criterion checks that groups A and B place the cards, so that plan adds one placement check per group.
+
 ---
 
 ## Files to Create/Modify
