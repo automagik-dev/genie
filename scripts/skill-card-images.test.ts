@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   CORE_SKILLS,
   SkillCardError,
@@ -584,5 +584,52 @@ describe('tracked inputs', () => {
     expect(license).toMatch(/^Copyright.*(Geist|Vercel)/m);
     expect(license).toMatch(/^Copyright.*JetBrains/m);
     expect(license).toContain('SIL OPEN FONT LICENSE Version 1.1');
+  });
+});
+
+// The committed README cards. This block is the one exception to the note at the top of the file: it reads
+// the real repository root, the cards in .github/assets against each skill's YAML. It still writes nothing,
+// since it never calls `main` or `writeSkillCards`. The expected text comes from the YAML itself, never
+// from the generator, so a card left stale after a skill's text changes fails here and is named.
+describe('the committed README cards', () => {
+  const realRoot = resolve(import.meta.dir, '..');
+  const SVG_NAMESPACE = ' xmlns="http://www.w3.org/2000/svg"';
+
+  for (const name of CORE_SKILLS) {
+    test(`skill-${name}.svg: an 800x400 canvas, its YAML text, the font stacks, data: URIs only`, () => {
+      const path = readmeCardPath(realRoot, name);
+      expect(existsSync(path)).toBe(true);
+      const svg = readFileSync(path, 'utf8');
+      expect(svg).toStartWith(`<svg${SVG_NAMESPACE} `);
+      expect(svg).toContain('viewBox="0 0 800 400"');
+
+      const fields = readInterface(realRoot, name);
+      const nodes = textNodes(svg);
+      expect(nodes).toHaveLength(svg.match(/<text\b/g)?.length ?? 0);
+      const texts = nodes.map((node) => node.text);
+      const lines = texts.slice(1, -2);
+      expect(texts[0]).toBe(fields.display_name);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      expect(lines.length).toBeLessThanOrEqual(2);
+      expect(lines.join(' ')).toBe(fields.short_description);
+      expect(texts.slice(-2)).toEqual([`/${name}`, `$${name}`]);
+
+      nodes.forEach((node, index) => {
+        const command = index >= nodes.length - 2;
+        const family = node.attrs['font-family'];
+        expect(family).toStartWith(command ? "'JetBrains Mono'" : 'Geist');
+        expect(family).toEndWith(command ? 'monospace' : 'sans-serif');
+      });
+
+      const hrefs = [...svg.matchAll(/\bhref="([^"]*)"/g)].map((match) => match[1]);
+      expect(hrefs.length).toBeGreaterThan(0);
+      for (const href of hrefs) expect(href).toStartWith('data:');
+      expect(svg).not.toContain('@import');
+      expect(svg.replace(SVG_NAMESPACE, '')).not.toContain('http');
+    });
+  }
+
+  test('checkSkillCards finds the six committed cards current with their skills', () => {
+    expect(checkSkillCards(realRoot)).toEqual({ ok: true, differing: [] });
   });
 });
