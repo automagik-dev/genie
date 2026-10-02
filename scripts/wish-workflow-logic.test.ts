@@ -38,7 +38,13 @@ const DECLARATIONS = [
   lift(/^const intOf = .*$/m),
   lift(/^const texts = .*$/m),
   lift(/^const measuredCount = .*$/m),
-  lift(/^function normalizeGate\(raw\) \{[\s\S]*?^\}$/m),
+  lift(/^function normalizeGate\(raw, darwinInScope\) \{[\s\S]*?^\}$/m),
+  // The one refusal over the three frozen commands, the script's choice of the gate's command, and
+  // the stop an empty choice ends in — at the first gate and at every repair-round gate.
+  lift(/^function freezeCommand\(proposed, evidence, fromRepository\) \{[\s\S]*?^\}$/m),
+  lift(/^function gateCommand\(contract, noHookSystem\) \{[\s\S]*?^\}$/m),
+  lift(/^const refusalNote = .*$/m),
+  lift(/^function noCommandReason\(contract, noHookSystem, when\) \{[\s\S]*?^\}$/m),
 ].join('\n');
 
 interface KnownFailure {
@@ -46,21 +52,37 @@ interface KnownFailure {
   test: string;
 }
 
+interface Frozen {
+  command: string;
+  refused: string;
+}
+
+interface GateChoice {
+  command: string;
+  mode: string;
+}
+
 const api = new Function(
-  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal, validationRefusal, normalizeGate }`,
+  `${DECLARATIONS}\nreturn { DARWIN_TOLERATED, toleratedIndex, darwinTolerable, baseRefusal, validationRefusal, normalizeGate, freezeCommand, gateCommand, noCommandReason }`,
 )() as {
   DARWIN_TOLERATED: KnownFailure[];
   toleratedIndex: (entry: string) => number;
   darwinTolerable: (failing: string[], reconfirmed: string[], failCount: number) => boolean;
   baseRefusal: (base: string) => string;
   validationRefusal: (command: string) => string;
-  normalizeGate: (raw: unknown) => {
+  normalizeGate: (
+    raw: unknown,
+    darwinInScope: boolean,
+  ) => {
     pass: boolean;
     darwinTolerated: boolean;
     failCount: number;
     noHookSystem: boolean;
     hookEvidence: string[];
   };
+  freezeCommand: (proposed: string, evidence: string[], fromRepository: boolean) => Frozen;
+  gateCommand: (contract: Record<string, string>, noHookSystem: boolean) => GateChoice;
+  noCommandReason: (contract: Record<string, string>, noHookSystem: boolean, when: string) => string;
 };
 
 /** The gate reports as many failures as it names unless a test says otherwise. */
@@ -193,27 +215,42 @@ describe('the gate answer becomes a pass only where the script allows it', () =>
   });
 
   test('the five known failures pass only while the gate itself claims the tolerance', () => {
-    expect(api.normalizeGate(answer()).pass).toBe(true);
+    expect(api.normalizeGate(answer(), true).pass).toBe(true);
     // The gate did not claim it: the script never tolerates on its own initiative.
-    expect(api.normalizeGate(answer({ darwinTolerated: false })).pass).toBe(false);
-    expect(api.normalizeGate(answer({ darwinTolerated: undefined })).pass).toBe(false);
-    expect(api.normalizeGate(answer({ darwinTolerated: false })).darwinTolerated).toBe(false);
+    expect(api.normalizeGate(answer({ darwinTolerated: false }), true).pass).toBe(false);
+    expect(api.normalizeGate(answer({ darwinTolerated: undefined }), true).pass).toBe(false);
+    expect(api.normalizeGate(answer({ darwinTolerated: false }), true).darwinTolerated).toBe(false);
   });
 
   test('a sixth failure, or one never re-confirmed at the base, is red', () => {
     const sixth = [...ALL_NAMES, 'some other suite > a new failure'];
-    expect(api.normalizeGate(answer({ failingTests: sixth, failCount: sixth.length })).pass).toBe(false);
-    expect(api.normalizeGate(answer({ baseReconfirmed: [] })).pass).toBe(false);
+    expect(api.normalizeGate(answer({ failingTests: sixth, failCount: sixth.length }), true).pass).toBe(false);
+    expect(api.normalizeGate(answer({ baseReconfirmed: [] }), true).pass).toBe(false);
   });
 
   test('a clean run passes on its own, and the gate can still call it red', () => {
     expect(
-      api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false })).pass,
+      api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false }), true).pass,
     ).toBe(true);
     expect(
-      api.normalizeGate(answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false, pass: false }))
-        .pass,
+      api.normalizeGate(
+        answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false, pass: false }),
+        true,
+      ).pass,
     ).toBe(false);
+  });
+
+  /**
+   * The roster names genie's own tests. Another repository's check — even one also spelled with bun —
+   * can fail five tests with those exact names only by coincidence, and its base re-confirm assumes
+   * genie's node_modules: outside genie's check the tolerance is never granted, whatever the gate claims.
+   */
+  test("outside genie's check the five known failures are never tolerated", () => {
+    expect(api.normalizeGate(answer(), false)).toMatchObject({ pass: false, darwinTolerated: false });
+    expect(api.normalizeGate(answer(), true)).toMatchObject({ pass: true, darwinTolerated: true });
+    // A clean run needs no tolerance, so it passes either way.
+    const clean = answer({ exitCode: 0, failCount: 0, failingTests: [], darwinTolerated: false });
+    expect(api.normalizeGate(clean, false).pass).toBe(true);
   });
 });
 
@@ -231,33 +268,39 @@ describe('a gate in a repository with no hook system', () => {
   };
 
   test('never tolerates the five darwin names: they are genie tests, meaningless elsewhere', () => {
-    const gate = api.normalizeGate({
-      ...noHooks,
-      exitCode: 1,
-      failCount: ALL_NAMES.length,
-      failingTests: ALL_NAMES,
-      baseReconfirmed: ALL_NAMES,
-      darwinTolerated: true,
-    });
+    const gate = api.normalizeGate(
+      {
+        ...noHooks,
+        exitCode: 1,
+        failCount: ALL_NAMES.length,
+        failingTests: ALL_NAMES,
+        baseReconfirmed: ALL_NAMES,
+        darwinTolerated: true,
+      },
+      true,
+    );
     expect({ pass: gate.pass, darwinTolerated: gate.darwinTolerated }).toEqual({ pass: false, darwinTolerated: false });
   });
 
   test('passes on exit 0 of the validation command and is red on a non-zero exit', () => {
-    const green = api.normalizeGate(noHooks);
+    const green = api.normalizeGate(noHooks, true);
     expect({ pass: green.pass, noHookSystem: green.noHookSystem }).toEqual({ pass: true, noHookSystem: true });
     expect(green.hookEvidence).toEqual(['git ls-files: nothing tracked']);
-    expect(api.normalizeGate({ ...noHooks, exitCode: 2, failCount: 1 }).pass).toBe(false);
+    expect(api.normalizeGate({ ...noHooks, exitCode: 2, failCount: 1 }, true).pass).toBe(false);
   });
 
   test('only the exact value none opens the no-hook path: absent, husky, other or unknown do not', () => {
     for (const hookSystem of [undefined, 'husky', 'other', 'None', 'no']) {
-      expect([hookSystem, api.normalizeGate({ ...noHooks, hookSystem }).noHookSystem]).toEqual([hookSystem, false]);
+      expect([hookSystem, api.normalizeGate({ ...noHooks, hookSystem }, true).noHookSystem]).toEqual([
+        hookSystem,
+        false,
+      ]);
     }
   });
 
   test('a bare none with no hook evidence is a hook system, never the no-hook path', () => {
     for (const hookEvidence of [[], undefined, ['', '  ']]) {
-      const gate = api.normalizeGate({ ...noHooks, hookEvidence });
+      const gate = api.normalizeGate({ ...noHooks, hookEvidence }, true);
       expect([hookEvidence, gate.noHookSystem]).toEqual([hookEvidence, false]);
     }
   });
@@ -301,6 +344,116 @@ describe('a validation command that would reach the remote is refused at admissi
     ]) {
       expect([command, api.validationRefusal(command)]).toEqual([command, '']);
     }
+  });
+});
+
+// Genie's own check and prepare bodies, read from the real package.json: the evidence the scout quotes
+// in genie, so a body that ever learned to push or publish would fail this file before any run.
+const PACKAGE_SCRIPTS = (
+  JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }
+).scripts;
+
+describe('one refusal freezes every command the gate or the executor would run', () => {
+  const RULES: Array<[string, string]> = [
+    ['git push origin HEAD', 'a git push'],
+    ['gh pr merge 1 --merge', 'a gh verb that changes the remote'],
+    ['npm publish', 'a package publish'],
+  ];
+
+  test('each rule is refused in the command itself, naming the rule', () => {
+    for (const [unsafe, rule] of RULES) {
+      const proposed = `npm run check && ${unsafe}`;
+      for (const fromRepository of [true, false]) {
+        expect(api.freezeCommand(proposed, ['node --test'], fromRepository)).toEqual({
+          command: '',
+          refused: `${proposed} — ${rule}`,
+        });
+      }
+    }
+  });
+
+  test('each rule is refused in the quoted evidence of what the command runs', () => {
+    for (const [unsafe, rule] of RULES) {
+      expect(api.freezeCommand('npm run check', ['node --test', `node --test && ${unsafe}`], true)).toEqual({
+        command: '',
+        refused: `npm run check — ${rule} in what it runs`,
+      });
+    }
+  });
+
+  test('a repository command with no quoted evidence is frozen empty; a caller or validation command is not', () => {
+    expect(api.freezeCommand('npm run check', [], true)).toEqual({
+      command: '',
+      refused: 'npm run check — no command evidence was quoted',
+    });
+    expect(api.freezeCommand('npm run check', [], false)).toEqual({ command: 'npm run check', refused: '' });
+    expect(api.freezeCommand('', [], true)).toEqual({ command: '', refused: '' });
+  });
+
+  test("genie's own check and install pass with the evidence genie's scout would quote", () => {
+    const check = PACKAGE_SCRIPTS.check as string;
+    const prepare = PACKAGE_SCRIPTS.prepare as string;
+    expect(check.length).toBeGreaterThan(0);
+    expect(api.freezeCommand('bun run check', [check], true)).toEqual({ command: 'bun run check', refused: '' });
+    expect(api.freezeCommand('bun install --frozen-lockfile', ['bun.lock', prepare], true)).toEqual({
+      command: 'bun install --frozen-lockfile',
+      refused: '',
+    });
+  });
+
+  test('the validation command keeps its literal check: refused as written, never for missing evidence', () => {
+    expect(api.freezeCommand('bun test src/a.test.ts', [], false)).toEqual({
+      command: 'bun test src/a.test.ts',
+      refused: '',
+    });
+    expect(api.freezeCommand('bun test && git push', [], false)).toEqual({
+      command: '',
+      refused: 'bun test && git push — a git push',
+    });
+  });
+});
+
+describe('the script picks the command the gate runs', () => {
+  const contract = (checkCommand: string, validationCommand: string) => ({ checkCommand, validationCommand });
+
+  test('the check over a hook system, the validation command with no hook system or no check command', () => {
+    expect(api.gateCommand(contract('npm run check', 'node --test x'), false)).toEqual({
+      command: 'npm run check',
+      mode: 'check',
+    });
+    expect(api.gateCommand(contract('npm run check', 'node --test x'), true)).toEqual({
+      command: 'node --test x',
+      mode: 'no-hook-system',
+    });
+    expect(api.gateCommand(contract('', 'node --test x'), false)).toEqual({
+      command: 'node --test x',
+      mode: 'no-check-command',
+    });
+    // Nothing to run in either mode is an empty choice the script stops on.
+    expect(api.gateCommand(contract('', ''), false)).toEqual({ command: '', mode: 'no-check-command' });
+    expect(api.gateCommand(contract('npm run check', ''), true)).toEqual({ command: '', mode: 'no-hook-system' });
+  });
+
+  /**
+   * A frozen contract with neither command stops at the FIRST gate in every mode, so a canned run can
+   * never reach the repair-round gate with one. The round's stop goes through this same function, so
+   * its wording is proven here, and its call site below.
+   */
+  test('an empty choice names what is missing, at the first gate and at a repair-round gate', () => {
+    const empty = { checkCommand: '', checkRefused: '', validationCommand: '', validationRefused: '' };
+    const hooked = api.noCommandReason(empty, false, 'repair round 1');
+    expect(hooked).toContain('no check command');
+    expect(hooked).toContain('no validation command');
+    expect(hooked).toContain('nothing proved repair round 1 before a push. Nothing was pushed.');
+    expect(api.noCommandReason(empty, true, 'the change')).toBe(
+      'The repository has no hook system and the contract froze no validation command, so nothing proved the change before a push. Nothing was pushed.',
+    );
+    const refused = { ...empty, checkRefused: 'npm run check — no command evidence was quoted' };
+    expect(api.noCommandReason(refused, false, 'the change')).toContain(
+      'no check command: the proposed one was refused at admission (npm run check — no command evidence was quoted)',
+    );
+    expect(SCRIPT).toContain("noCommandReason(contract, gate.noHookSystem, 'the change')");
+    expect(SCRIPT).toContain('noCommandReason(contract, gate.noHookSystem, `repair round ${round}`)');
   });
 });
 
@@ -398,6 +551,8 @@ interface Job {
   model: string;
   gateModel: string;
   publishModel: string;
+  check: string;
+  install: string;
   repairBudget: number;
 }
 
@@ -463,6 +618,17 @@ describe('per-stage models resolve from the caller args, and an unset key falls 
     expect(job.gateModel).toBe('');
     expect(job.publishModel).toBe('');
     expect(stageModels(job)).toEqual({ worker: 'opus', reasoner: 'opus', gate: 'opus', publish: 'opus' });
+  });
+
+  test('check and install arrive trimmed, and empty when absent or not a string', () => {
+    const set = normalizeInput({ objective: 'do one thing', check: '  make ci ', install: '\tmake deps\n' });
+    if (!set) throw new Error('normalizeInput refused a valid objective');
+    expect({ check: set.check, install: set.install }).toEqual({ check: 'make ci', install: 'make deps' });
+    for (const raw of [{}, { check: '   ', install: '' }, { check: 7, install: ['npm ci'] }]) {
+      const job = normalizeInput({ objective: 'do one thing', ...raw });
+      if (!job) throw new Error('normalizeInput refused a valid objective');
+      expect([raw, job.check, job.install]).toEqual([raw, '', '']);
+    }
   });
 
   test('the stage keys change nothing else about intake', () => {
