@@ -1085,6 +1085,69 @@ Run samples (from captures/NOTES.md, one sample each):
 - The validation exits 0, `mint broken-links` finds 0 in `genie/`, and the dash scan is clean.
 - One review covered both lenses: criteria, plus quality (accuracy, voice, leaks, media integrity). Repair counter: 1 of 2.
 
+### Owner decisions: the viral README (2026-10-02, late)
+
+- Felipe asked for a README model that is concise, dynamic and built to spread. It comes from analyzing the README form of recently viral repos (superpowers and others), and it extends the earlier distribution research.
+- Wait for the viral README: nothing goes to dev until it is approved. The current G6 README, `UPGRADING.md` and the test retargets go out together with it in one PR.
+- Format: an analysis plus three rendered first-screen variants, each taking a different stance, with a skeleton of the rest of the page. Felipe picks one, and then the full README is written.
+- Running alongside: the gate fix is merged to dev (#3097, `53f2186`), and dev release v6.261002.6 is published with 20 assets. Promotion PR #3094 (dev→main) is waiting for Felipe.
+
+### Owner decisions: README model A (2026-10-03)
+
+- Analysis: 16 READMEs pinned and measured (`scratchpad/readme-viral/ANALYSIS.md`). Three first-screen variants were rendered: A demo-first, B thesis plus loop, C problem-first.
+- Felipe picked **A, demo first** over the recommended C. The first screen he approved from the preview:
+  - a small mascot;
+  - the thesis, verbatim;
+  - the `/wish` run as the hero, labelled as one sample;
+  - a new sentence on what `/wish` does;
+  - the install.
+- Hero form: **a short looping GIF** (about 15 to 20 s, at most 5 MB, autoplaying on GitHub, no manual step). Clicking it opens the full video on the docs Quickstart page.
+- The rewrite replaces the G6 README on `wish/genie-launch` and goes to dev in one PR with `UPGRADING.md` and the test retargets.
+
+### G6b review — 2026-10-03 — SHIP
+
+- Commit `1f5fc9ecb` (README 174 lines plus `.github/assets/wish-run.gif`, 1.85 MB, 19.75 s).
+- Checks:
+  - `readme-checks.sh` reports 61 PASS. The checker edit only changes the owner-approved mascot width and adds two GIF checks; nothing was weakened.
+  - `release-docs` passes 45 tests. The card and skills tests pass 132.
+  - `bun run check` exits 0, with 3016 tests passing.
+- The first screen matches the approved model A apart from the caption (rewritten to carry the two-edit disclosure and the video link) and the switch from poster to GIF. No unlisted change touches approved copy.
+- Every claim is accurate against origin/dev and v6.261003.1. Voice and numbers are clean.
+- The GIF's badge is pixel-identical on all 237 frames, and no frame leaks. Links return 200, except Workflows and CLI reference, which arrive with G15.
+- Rendered length is 4281 px, down from 6394 (−33%). About 101 lines show with the `<details>` blocks folded.
+- LOW notes:
+  - the Quickstart video and the Workflows and CLI pages arrive with G15; say so in the PR body;
+  - the tag-bound lines are true at v6.261003.1, and G18 retags;
+  - four new `<summary>` labels;
+  - program-output figures inside the GIF come from the owner-approved video.
+
+### G6b owner approval — 2026-10-03
+
+- Felipe approved README model A ("Aprovado") with these changes to approved copy, each listed for him first:
+  - the caption was rewritten;
+  - the loop line and the dogfood sentence were added;
+  - a new "untrusted repositories / no integration branch" bullet;
+  - the plain-language examples were removed;
+  - four new `<details>` labels.
+- Stable v6.261003.1 is published (it carries #3097), with notes applied. The host is updated and verified: the installed `wish.js` equals the tag, and doctor reports workflows 12/12 and skills 18/18 at v6.261003.1.
+
+### Group 18 review — 2026-10-03 — SHIP
+
+- Docs commit `6f8ac57`, README commit `8c48f91`, and the orchestrator's low fixes in docs `f74218a`.
+- Every check holds at v6.261003.1:
+  - every tag swap is in place, and the counts are 18, 12 and 16;
+  - the CLI paste is byte-identical to the tag and to the host binary;
+  - the doctor excerpt matches the host;
+  - every claim in the gate copy is verified against `wish.js` at the tag;
+  - the `release-notes:58` wording is accurate;
+  - the README diff touches only the tag strings.
+- The validation exits 0 when run from wt-gl. LOW-4 fixed this in the plan with a `cd`.
+- LOW fixes applied:
+  - the override sentence now says "the workflow's `check` and `install` args replace them";
+  - "that" now reads "the gate".
+- LOW-2 was noted and left as is: README:10 "runs your repository's own check" is a simplification of approved copy, true whenever the repository has hooks and a discoverable check.
+- One review covered both lenses.
+
 ---
 
 ## Files to Create/Modify
