@@ -53,7 +53,7 @@ Designs, plans and verdicts land in git under `.genie/brainstorms/<slug>/` and `
 <p align="center"><img src=".github/assets/skill-work.svg" width="400" alt="work"> <img src=".github/assets/skill-review.svg" width="400" alt="review"></p>
 <p align="center"><img src=".github/assets/skill-council.svg" width="400" alt="council"> <img src=".github/assets/skill-fix.svg" width="400" alt="fix"></p>
 
-Genie v6.261002.2 ships 18 skills. The [skill catalog](skills/README.md) groups them by category, and the [Skills docs](https://docs.automagik.dev/genie/skills) show a card for each one.
+Genie v6.261003.1 ships 18 skills. The [skill catalog](skills/README.md) groups them by category, and the [Skills docs](https://docs.automagik.dev/genie/skills) show a card for each one.
 
 <details>
 <summary>All 18 skills</summary>
@@ -80,7 +80,7 @@ Genie v6.261002.2 ships 18 skills. The [skill catalog](skills/README.md) groups 
 
 ## Workflows
 
-A saved workflow is a Claude Code script for a procedure worth running the same way twice. `genie install` and `genie update` deliver the catalog to `~/.claude/workflows`. Genie v6.261002.2 ships 12. The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills that start them (`wish`, `brainstorm`, `council`, `docs`, `research`, `skill-audit`, `workfly`) run the same stages by hand.
+A saved workflow is a Claude Code script for a procedure worth running the same way twice. `genie install` and `genie update` deliver the catalog to `~/.claude/workflows`. Genie v6.261003.1 ships 12. The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills that start them (`wish`, `brainstorm`, `council`, `docs`, `research`, `skill-audit`, `workfly`) run the same stages by hand.
 
 <details>
 <summary>All 12 saved workflows</summary>
@@ -144,7 +144,7 @@ Every release is cosign-signed with SLSA provenance, and `genie update` verifies
 
 ## Commands
 
-Genie v6.261002.2 has 16 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
+Genie v6.261003.1 has 16 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
 
 <details>
 <summary>All 16 commands</summary>
