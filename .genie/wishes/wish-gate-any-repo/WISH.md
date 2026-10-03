@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | IN_PROGRESS |
+| **Status** | SHIPPED |
 | **Slug** | `wish-gate-any-repo` |
 | **Date** | 2026-10-02 |
 | **Author** | Felipe Rosa |
@@ -731,6 +731,14 @@ Three real runs of `wish.js` (blob `a4412cfc7`, unchanged since `39a54a50c`) aga
 - **Follow-ups, not in this wish:**
   - the log prints `Publish: opened PR (no url)` when no PR was created (`wish.js:1807`, already on dev);
   - `wish.js:1416` prints `check (none) (none)`.
+
+### Delivery — 2026-10-03 — SHIPPED
+
+- PR #3097 merged into dev as `53f218610`. CI passed 19/19 at head `0fc2a6ad4`, including Unit on linux and darwin.
+- Promoted by #3094 (merged by Felipe) as `338f4b03f`. The Version run tagged **v6.261003.1**.
+- The stable release ran as workflow run 37086848423. A maintainer other than the dispatcher approved it, and it completed with 28 assets. Release notes were applied and read back.
+- The host was updated to 6.261003.1. The installed `~/.claude/workflows/wish.js` equals the tag's file (sha256 prefix `db40d01c100cfecc`). `genie doctor` reports workflows 12/12 and skills 18/18 at v6.261003.1.
+- Follow-up issues: #3098 (the denylist does not yet cover the new gate definitions), #3099 (the validation command is still free text in no-check mode), #3100 (two log lines misstate what a run did).
 
 ---
 
