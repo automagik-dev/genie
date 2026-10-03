@@ -71,6 +71,7 @@ The design is reviewed SHIP and was amended on 2026-10-02 for the owner's decisi
 | 11 | All docs work happens in one dedicated worktree, `scratchpad/wishrun/wt-docs`: a genie worktree detached at `origin/dev` whose `.docs-vendor` checks out `feat/genie-v6-launch`. Nothing is ever committed in that worktree's superproject. The docs groups run in sequence on that one branch | One docs branch, no `.docs-vendor` gitlink near the genie PR, and genie's docs lints run against the branch |
 | 12 | Numbers. Verbatim program output (captures, videos, the pasted CLI) and text moved verbatim into `UPGRADING.md` are exempt from the Allowed numbers list. All new copy follows the list. No figure on the not-allowed list appears anywhere, exempt output included, so no capture or paste of `genie wish report --summary` ships | Owner decision on 2026-10-02, recorded in the design |
 | 13 | The launch waits for the `/wish` gate to work in any repository, which the sibling wish `wish-gate-any-repo` delivers. Its stable becomes the launch tag. G12 and G13 continue against v6.261002.2. G18 then moves every tag-bound line (Decision 2) to the new tag, and rewrites the Quickstart gate prerequisite and the README "Weak checks" line to match the shipped gate. G14 and G15 wait for G18 | Owner decision on 2026-10-02 (fix before the launch; docs continue), after the G11 review found the gate hardcodes `bun run check` and the husky pre-push hook |
+| 14 | The README follows model A, demo first (G6b): a small mascot, the thesis verbatim, a looping GIF of the real `/wish` run (`.github/assets/wish-run.gif`, 1.85 MB, labelled as one sample, linking to the Quickstart video), the `/wish` sentence and the install. Reference blocks fold into `<details>`. G14's file set gains `.github/assets/wish-run.gif` | Owner decisions on 2026-10-02 and 2026-10-03: an analysis of 16 viral READMEs (`scratchpad/readme-viral/ANALYSIS.md`), then model A picked over the recommended C, the GIF hero chosen, and the final render approved |
 
 ## Simplicity Case
 
@@ -611,7 +612,7 @@ bash /var/tmp/sofia-agents/claude-1001/-home-genie-workspace-repos-genie/065fdff
 **Goal:** a merge-ready genie PR to `dev` carrying G1, G5 and G6.
 
 **Deliverables:**
-1. Run `bun run check` on the final head. Push, open the PR, and read back head, base and file set. The file set may contain only README, UPGRADING, the two test files, `CLAUDE.md`, `package.json`, `.github/assets/genie-loop.gif` and `.genie/`.
+1. Run `bun run check` on the final head. Push, open the PR, and read back head, base and file set. The file set may contain only README, UPGRADING, the two test files, `CLAUDE.md`, `package.json`, `.github/assets/genie-loop.gif`, `.github/assets/wish-run.gif` and `.genie/`.
 2. A PR body with:
    - SC2's output, bound to the G5 commit;
    - the comparison citations;
@@ -630,7 +631,7 @@ bash /var/tmp/sofia-agents/claude-1001/-home-genie-workspace-repos-genie/065fdff
 **Validation:**
 ```bash
 # PR is the genie PR number
-set -o pipefail; bun run check && test "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" && ! gh pr view "$PR" --json files --jq '.files[].path' | grep -vE '^(README\.md|UPGRADING\.md|CLAUDE\.md|package\.json|scripts/release-docs\.test\.ts|scripts/skills-retirement-restore\.test\.ts|\.github/assets/genie-loop\.gif|\.genie/.*)$' | grep -q . && gh pr checks "$PR" --json name,bucket --jq '[.[]|select(.name|startswith("Unit ("))|.bucket]|(length==2 and all(.=="pass"))' | grep -qx true
+set -o pipefail; bun run check && test "$(git rev-parse HEAD)" = "$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" && ! gh pr view "$PR" --json files --jq '.files[].path' | grep -vE '^(README\.md|UPGRADING\.md|CLAUDE\.md|package\.json|scripts/release-docs\.test\.ts|scripts/skills-retirement-restore\.test\.ts|\.github/assets/genie-loop\.gif|\.github/assets/wish-run\.gif|\.genie/.*)$' | grep -q . && gh pr checks "$PR" --json name,bucket --jq '[.[]|select(.name|startswith("Unit ("))|.bucket]|(length==2 and all(.=="pass"))' | grep -qx true
 ```
 
 **depends-on:** 1, 5, 6, 18
@@ -752,7 +753,7 @@ O=/var/tmp/sofia-agents/claude-1001/-home-genie-workspace-repos-genie/065fdfff-9
 
 **Validation:**
 ```bash
-S=/var/tmp/sofia-agents/claude-1001/-home-genie-workspace-repos-genie/065fdfff-9583-40b0-98b4-321e16c72e82/scratchpad; T=$(cat $S/docs-tag.txt); test "$T" != v6.261002.2 && gh release view "$T" -R automagik-dev/genie >/dev/null && bash $S/docs-checks.sh all && bash $S/readme-checks.sh && ! grep -rn 'v6\.261002\.2' $S/wishrun/wt-docs/.docs-vendor/genie --include=*.mdx | grep -v release-notes.mdx
+S=/var/tmp/sofia-agents/claude-1001/-home-genie-workspace-repos-genie/065fdfff-9583-40b0-98b4-321e16c72e82/scratchpad; cd $S/wishrun/wt-gl && T=$(cat $S/docs-tag.txt); test "$T" != v6.261002.2 && gh release view "$T" -R automagik-dev/genie >/dev/null && bash $S/docs-checks.sh all && bash $S/readme-checks.sh && ! grep -rn 'v6\.261002\.2' $S/wishrun/wt-docs/.docs-vendor/genie --include=*.mdx | grep -v release-notes.mdx
 ```
 
 **depends-on:** 13, wish-gate-any-repo (stable published)
