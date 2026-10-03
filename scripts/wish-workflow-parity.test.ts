@@ -160,7 +160,10 @@ describe('wish.js guards that must not drift', () => {
   };
 
   test('the gate command and the failing-checks read-back mismatch stay pinned', () => {
-    expect(script).toContain("const CHECK_COMMAND = 'bun run check'\n");
+    // The check and install commands are contract data now: genie's literal survives only to scope
+    // the darwin tolerance, and no constant poses as a default command for every repository.
+    expect(script).toContain("const GENIE_CHECK_COMMAND = 'bun run check'\n");
+    expect(script).not.toMatch(/^const (CHECK|INSTALL)_COMMAND\b/m);
     expect(script).toContain(
       "if (checks === 'fail') mismatches.push(`the remote checks failed: ${pr.failingChecks.join(', ') || 'no check name was returned'}`)",
     );
@@ -589,6 +592,21 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
       'git push origin feature/main-menu',
     ]) {
       expect([command, probe(command)]).toEqual([command, 0]);
+    }
+  });
+
+  /**
+   * The gate runs this one command, verbatim, in every repository with a hook system. A guard that
+   * refused it would end every such run blocked over hooks that are live, so the lifted text is
+   * probed as written and in the `cd <worktree> &&` form an agent reaches for.
+   */
+  test('allows the hook liveness command the gate runs, lifted from wish.js', () => {
+    const line = /^const HOOKS_LIVE_COMMAND = .*$/m.exec(script)?.[0];
+    if (!line) throw new Error('wish.js: no one-line HOOKS_LIVE_COMMAND');
+    const command = new Function(`${line}\nreturn HOOKS_LIVE_COMMAND`)() as string;
+    expect(command.startsWith("sh -c '")).toBe(true);
+    for (const spelled of [command, `cd /tmp/wt && ${command}`]) {
+      expect([spelled, probe(spelled)]).toEqual([spelled, 0]);
     }
   });
 
