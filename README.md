@@ -1,14 +1,19 @@
-<p align="center">
-  <img src=".github/assets/genie-loop.gif" width="360" alt="Genie">
-</p>
+<p align="center"><img src=".github/assets/genie-loop.gif" width="140" alt="Genie"></p>
 
 <p align="center"><strong>Code is a commodity. Harnesses get replaced. Context stays.</strong></p>
 
-Genie is a set of skills for coding agents, plus a small CLI. It takes an idea through a reviewed design, a plan, the code and an independent review to a pull request. Designs and plans stay in your repository as markdown, with the reviews that approved them, so the next agent you use reads the same context.
+<p align="center">
+  <a href="https://docs.automagik.dev/genie/quickstart"><img src=".github/assets/wish-run.gif" width="640" alt="Time-lapse of a real /wish run in Claude Code, from the task to an open pull request"></a><br>
+  <sub>A time-lapsed replay of a real <code>/wish</code> run, host details hidden and agent launch line removed. Its figures are one labelled sample, from its own <code>genie wish report</code>. <a href="https://docs.automagik.dev/genie/quickstart">Full video</a></sub>
+</p>
+
+Give `/wish` one decided task. It checks that the task fits, builds it in its own worktree, runs your repository's own check, has an agent that did not write the code review the exact commit, and opens a pull request. Merging stays with you.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
+
+Claude Code runs it as `/wish`, Codex as `$wish`, and other agents by name. [Docs](https://docs.automagik.dev/genie) · [Skills](https://docs.automagik.dev/genie/skills) · [Discord](https://discord.gg/xcW8c7fF3R)
 
 One `/wish` from a real run, shortened:
 
@@ -28,11 +33,11 @@ Genie:  Review: SHIP. Checks: pass. The PR is open and its remote head matches t
         local one. This run merged nothing. Merging is yours.
 ```
 
-## The loop
+## How it works
 
-Each step is a skill. Claude Code runs it as `/wish`, Codex as `$wish`, and any other agent by name or in plain language ("deliver this", "brainstorm this").
+Designs and plans stay in your repository as markdown, with the reviews that approved them, so the next agent you use reads the same context. Each step is a skill. One decided task goes straight to **wish**. Anything bigger takes the whole loop, where every gate is run by an agent that did not do the work:
 
-One decided task goes straight to **wish**. Anything bigger takes the whole loop, where every gate is run by an agent that did not do the work:
+**brainstorm** → design review → **wish** → plan review → **work** → implementation review → PR
 
 - **brainstorm** settles an idea into a `DESIGN.md`. A design review approves it before any plan is written.
 - **wish** delivers one task end to end and returns a pull request ready for you to merge. Work bigger than one task becomes a `WISH.md` with execution groups, and a plan review approves it before anything is built.
@@ -40,24 +45,18 @@ One decided task goes straight to **wish**. Anything bigger takes the whole loop
 - **review** runs those reviews. After **work**, it checks the result against the plan's criteria and returns SHIP, FIX-FIRST or BLOCKED. **fix** repairs the blocking gaps with bounded retries and a fresh reviewer.
 - **council** sits beside the loop. It pressure-tests a decision through independent lenses and changes nothing.
 
-Designs, plans and verdicts land in git under `.genie/brainstorms/<slug>/` and `.genie/wishes/<slug>/`. Task state lives in one SQLite file per repository, `.genie/genie.db`, and `genie board` shows it as a kanban.
+Designs, plans and verdicts land in git under `.genie/brainstorms/<slug>/` and `.genie/wishes/<slug>/`. Task state lives in one SQLite file per repository, `.genie/genie.db`, and `genie board` shows it as a kanban. Genie is built with Genie: this repository's own designs and plans are in [`.genie/brainstorms`](.genie/brainstorms) and [`.genie/wishes`](.genie/wishes).
 
 ## Skills
 
-<p align="center">
-  <img src=".github/assets/skill-brainstorm.svg" width="400" alt="brainstorm">
-  <img src=".github/assets/skill-wish.svg" width="400" alt="wish">
-</p>
-<p align="center">
-  <img src=".github/assets/skill-work.svg" width="400" alt="work">
-  <img src=".github/assets/skill-review.svg" width="400" alt="review">
-</p>
-<p align="center">
-  <img src=".github/assets/skill-council.svg" width="400" alt="council">
-  <img src=".github/assets/skill-fix.svg" width="400" alt="fix">
-</p>
+<p align="center"><img src=".github/assets/skill-brainstorm.svg" width="400" alt="brainstorm"> <img src=".github/assets/skill-wish.svg" width="400" alt="wish"></p>
+<p align="center"><img src=".github/assets/skill-work.svg" width="400" alt="work"> <img src=".github/assets/skill-review.svg" width="400" alt="review"></p>
+<p align="center"><img src=".github/assets/skill-council.svg" width="400" alt="council"> <img src=".github/assets/skill-fix.svg" width="400" alt="fix"></p>
 
-Genie v6.261002.2 ships 18 skills:
+Genie v6.261002.2 ships 18 skills. The [skill catalog](skills/README.md) groups them by category, and the [Skills docs](https://docs.automagik.dev/genie/skills) show a card for each one.
+
+<details>
+<summary>All 18 skills</summary>
 
 - `authoring`: Write a Genie skill that passes the shipped contract
 - `brainstorm`: Settle an idea into a reviewed design
@@ -77,12 +76,14 @@ Genie v6.261002.2 ships 18 skills:
 - `wish`: Deliver one task end to end, or plan a multi-group wish
 - `work`: Execute approved wishes with evidence
 - `workfly`: Build a saved workflow from a procedure
-
-The [skill catalog](skills/README.md) groups them by category, and the [Skills docs](https://docs.automagik.dev/genie/skills) show a card for each one.
+</details>
 
 ## Workflows
 
-A saved workflow is a Claude Code script for a procedure worth running the same way twice. `genie install` and `genie update` deliver the catalog to `~/.claude/workflows`. Genie v6.261002.2 ships 12:
+A saved workflow is a Claude Code script for a procedure worth running the same way twice. `genie install` and `genie update` deliver the catalog to `~/.claude/workflows`. Genie v6.261002.2 ships 12. The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills that start them (`wish`, `brainstorm`, `council`, `docs`, `research`, `skill-audit`, `workfly`) run the same stages by hand.
+
+<details>
+<summary>All 12 saved workflows</summary>
 
 - `brainstorm`: runs one round of a brainstorm whose state lives in `DRAFT.md`, so you answer between rounds, and ends in a reviewed `DESIGN.md`
 - `council`: architecture, delivery, product, security and dissent lenses, then a synthesis; assess only
@@ -96,8 +97,7 @@ A saved workflow is a Claude Code script for a procedure worth running the same 
 - `test-simplify`: audits every test file in scope and proposes batches of tests to delete or consolidate; deletes nothing
 - `wish`: the engine behind the `wish` skill: admission, one executor in a worktree, a gate, an independent review, bounded repair and a PR; merging stays with you
 - `workfly`: discovers a procedure and builds its saved workflow, checked by a static test and refuters
-
-The [Workflows docs](https://docs.automagik.dev/genie/workflows) describe each one. In Codex and other agents without saved workflows, the skills that start them (`wish`, `brainstorm`, `council`, `docs`, `research`, `skill-audit`, `workfly`) run the same stages by hand.
+</details>
 
 ## When not to use it, and what it costs
 
@@ -107,6 +107,7 @@ Genie adds steps around the code. They pay off when a change deserves review, an
 - **Big plans.** Plan size predicts delivery. In an observational sample of 50 wishes, the share merged within 8h fell from 100% (n=9) for the smallest plans to 95% (n=19), 67% (n=12) and 30% (n=10) for the largest. Split big work before it starts.
 - **Diffs you will not read.** Agents miss things, reviewers included. The reviewer passed a wrong gate command in [#3045](https://github.com/automagik-dev/genie/pull/3045), and [#2935](https://github.com/automagik-dev/genie/pull/2935) met 68 of 86 blind criteria with 3 HIGH gaps. Read the diff and the verdict before you merge.
 - **Weak checks.** The gate runs your repository's checks, so a wish proves only what those checks prove.
+- **Untrusted repositories, or no integration branch.** `/wish` runs the repository's own install and check commands, so point it only at repositories you trust. It opens its pull request against `dev` by default and refuses `main` or `master` as the base.
 
 ## How it compares
 
@@ -121,10 +122,12 @@ Superpowers, Spec Kit and GSD work the same ground. Each of their rows comes fro
 
 ## Install
 
-The one-paste install at the top fetches the signed binary for Linux or Apple Silicon macOS and finishes with `genie install`. Stable is declared for Linux and macOS: both run in the release gate, so a change that breaks either one does not ship. Windows is not supported; WSL2 works but is not on the tested matrix.
+The one-paste install at the top fetches the signed binary for Linux or Apple Silicon macOS and finishes with `genie install`. Stable is declared for Linux and macOS: both run in the release gate, so a change that breaks either one does not ship. Windows is not supported; WSL2 works but is not on the tested matrix. Coming from an earlier version? [UPGRADING.md](UPGRADING.md) covers what changed, what left, and how to clean up.
+
+<details>
+<summary>What the install delivers, consent scopes and release verification</summary>
 
 Genie ships exactly two surfaces:
-
 - **The signed binary**, installed and updated by `install.sh` and `genie update`.
 - **The skills and the saved workflows**, delivered through the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, copy the workflows into `~/.claude/workflows`, and record what landed in `~/.genie/skills-install.json`.
 
@@ -134,17 +137,17 @@ The installer hands its arguments to `genie install`. `--integrations auto|codex
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- --integrations none
 ```
 
-Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it.
-
-`genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
+Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it. `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
 
 Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
-
-Coming from an earlier version? [UPGRADING.md](UPGRADING.md) covers what changed, what left, and how to clean up.
+</details>
 
 ## Commands
 
-Genie v6.261002.2 has 16 CLI commands. Nothing runs in the background: every command does its work and exits.
+Genie v6.261002.2 has 16 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
+
+<details>
+<summary>All 16 commands</summary>
 
 | Command | What it does |
 |---------|-------------|
@@ -164,14 +167,8 @@ Genie v6.261002.2 has 16 CLI commands. Nothing runs in the background: every com
 | `genie uninstall` | Remove the Genie CLI, its `~/.genie` home (backups kept), its client plugin registrations and the skills and workflows it recorded |
 | `genie update` | Update to the latest signed release, verified offline |
 | `genie wish` | `wish lint` checks any repository's wishes for structure; `wish report <runId>` prints a run's tokens and time per stage |
-
-The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
+</details>
 
 ## Links
 
-- [Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security)
-- [UPGRADING.md](UPGRADING.md)
-- [Releases](https://github.com/automagik-dev/genie/releases)
-- [automagik-dev](https://github.com/automagik-dev), the org behind Genie
-- [Discord](https://discord.gg/xcW8c7fF3R)
-- [MIT License](LICENSE)
+[Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-dev/genie/releases) · [automagik-dev](https://github.com/automagik-dev), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [MIT License](LICENSE)
