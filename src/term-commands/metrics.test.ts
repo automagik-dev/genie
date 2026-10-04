@@ -91,6 +91,22 @@ describe('genie metrics', () => {
     expect(readFileSync(ledger, 'utf8')).toBe(before);
   }, 60_000);
 
+  test('export: no target configured → --phoenix exits 2 and sends nothing; a half target is refused', () => {
+    expect(run(['metrics', 'enable']).code).toBe(0);
+    const bare = run(['metrics', 'export']);
+    expect(bare.code).toBe(0);
+    expect(bare.stdout).toContain('no intervals yet');
+    const phoenix = run(['metrics', 'export', '--phoenix']);
+    expect(phoenix.code).toBe(2);
+    expect(phoenix.stderr).toContain('no Phoenix target configured');
+    expect(phoenix.stderr).toContain('Nothing was sent.');
+    const half = run(['metrics', 'export', '--phoenix', '--project', 'mine']);
+    expect(half.code).toBe(2);
+    expect(half.stderr).toContain('needs an http(s) endpoint');
+    expect(run(['metrics', 'export', '--since', 'yesterday-ish']).code).toBe(2);
+    expect(listTree(home)).toEqual(['metrics', join('metrics', 'capture.on')]);
+  }, 60_000);
+
   test('status --json names the switch, the ledger and this shell’s session', () => {
     const status = run(['metrics', 'status', '--json'], { PI_SESSION_ID: 'pi-1', PI_SESSION_FILE: '/s/pi-1.jsonl' });
     expect(status.code).toBe(0);

@@ -159,7 +159,7 @@ Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every com
 | `genie idea` | Capture an idea into the roadmap board's Idea lane |
 | `genie init` | Set up per-repository state and remove Genie's own historical MCP entries, backup first |
 | `genie install` | Finish a verified install and deliver the skills under the consent scope you chose |
-| `genie metrics` | Opt-in lifecycle capture, off until `metrics enable`: a machine-local metadata ledger of card events with the runtime session they ran in; sends nothing anywhere |
+| `genie metrics` | Opt-in lifecycle capture, off until `metrics enable`: a machine-local ledger of card events with the runtime session they ran in; `metrics export` reports time and tokens per lifecycle transition and, with `--phoenix`, sends them to a Phoenix you name |
 | `genie mikro` | Run and grow mikro microagents in any repository; `mikro call <agent>` returns validated JSON with every citation checked |
 | `genie orca` | Retired: a stub for one more release that prints a notice and writes nothing |
 | `genie setup` | Configure Genie |
