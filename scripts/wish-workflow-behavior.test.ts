@@ -243,6 +243,15 @@ describe('wish.js read-back states', () => {
       expect(result.blockedReason).toContain(`does not carry ${FILES[1]}`);
     });
   }
+
+  test('(49) a publisher that reported no pull request logs no PR reported, never opened', async () => {
+    const noPr = { ...publishResult('pending'), prUrl: '', prNumber: 0, prBase: '', prHead: '', prHeadOid: '' };
+    const { logs } = await clean(canned('pass', { 'publish:pr': noPr }));
+    expect(logs).toContain('Publish: no PR reported (pushed); checks pending.');
+    expect(logs.some((line) => line.includes('Publish: opened'))).toBe(false);
+    const unpushed = await clean(canned('pass', { 'publish:pr': { ...noPr, pushed: false } }));
+    expect(unpushed.logs).toContain('Publish: no PR reported (not pushed); checks pending.');
+  });
 });
 
 describe('wish.js reports the gate-measured size', () => {
@@ -815,6 +824,21 @@ describe('wish.js runs the repository own check and install commands', () => {
         label,
         false,
       ]);
+  });
+
+  test('(50) a run with no discovered check logs one none phrase per frozen command, never (none) (none)', async () => {
+    const { logs } = await clean(canned('pass', noCheck(VALIDATION)));
+    expect(logs).toContain('Check command: (none discovered — the gate runs the validation command in its place)');
+    expect(logs).toContain('Install command: (none discovered — the executor installs nothing)');
+    expect(logs.some((line) => line.includes('(none) (none)'))).toBe(false);
+  });
+
+  test('(51) a refused check logs refused at admission, never as not discovered', async () => {
+    const { logs } = await clean(canned('pass', npmShaped({ check: 'npm run check && git push origin HEAD' })));
+    expect(logs).toContain(
+      'Check command: (none frozen — refused at admission: npm run check && git push origin HEAD — a git push)',
+    );
+    expect(logs.some((line) => line.includes('Check command: (none discovered'))).toBe(false);
   });
 });
 

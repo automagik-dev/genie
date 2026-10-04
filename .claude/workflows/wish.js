@@ -1413,7 +1413,27 @@ contract = {
 if (frozenValidation.refused) log(`The proposed validation command was refused at admission (${frozenValidation.refused}) and frozen empty: a repository with no hook system, or with no check command, will stop at the gate.`)
 if (frozenCheck.refused) log(`The proposed check command was refused at admission (${frozenCheck.refused}) and frozen empty: the gate runs the frozen validation command in its place.`)
 if (frozenInstall.refused) log(`The proposed install command was refused at admission (${frozenInstall.refused}) and frozen empty: the executor installs nothing.`)
-log(`Frozen commands: check ${contract.checkCommand || '(none)'} (${frozenCheck.source}), install ${contract.installCommand || '(none)'} (${frozenInstall.source}).`)
+// The report's own three-way renderer, not a second paraphrase of it: value and source are never printed
+// independently, so an absence is named once — as refused or as not discovered — and no source token is
+// rendered as the provenance of a command that does not exist.
+log(
+  commandLine(
+    'Check command',
+    frozenCheck.command,
+    frozenCheck.refused,
+    frozenCheck.source,
+    'the gate runs the validation command in its place',
+  ),
+)
+log(
+  commandLine(
+    'Install command',
+    frozenInstall.command,
+    frozenInstall.refused,
+    frozenInstall.source,
+    'the executor installs nothing',
+  ),
+)
 // The darwin roster names genie's own tests, so tolerating it means anything only under genie's check.
 const darwinInScope = contract.checkCommand === GENIE_CHECK_COMMAND
 route = ROUTES.includes(text(judged.route)) ? text(judged.route) : 'report'
@@ -1804,7 +1824,14 @@ pr = {
   notes: texts(published.notes),
 }
 checks = ['pass', 'fail', 'pending'].includes(text(published.checks)) ? text(published.checks) : 'pending'
-log(`Publish: ${pr.reused ? 'reused' : 'opened'} PR ${pr.url || '(no url)'}; checks ${checks}.`)
+// The verb is the read-back guard's own predicate — `!pr.url && !pr.number`, the mismatch pushed just
+// below — so this line can never claim a PR that read-back is about to report as never reported. A PR
+// reported by number alone keeps '(no url)', which is true there.
+log(
+  pr.url || pr.number
+    ? `Publish: ${pr.reused ? 'reused' : 'opened'} PR ${pr.url || '(no url)'}; checks ${checks}.`
+    : `Publish: no PR reported (${pr.pushed ? 'pushed' : 'not pushed'}); checks ${checks}.`,
+)
 
 phase('Read-back')
 stageReached = 'Read-back'
