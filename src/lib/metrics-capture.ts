@@ -65,22 +65,38 @@ export interface RuntimeSession {
   /** The runtime's own session id, as its session log names it; null when no runtime marker is present. */
   id: string | null;
   source: SessionSource | null;
-  /** The session log path when the runtime exports it (pi/OMP `PI_SESSION_FILE`). */
+  /** The session log path when the runtime exports it (pi `PI_SESSION_FILE`). */
   file: string | null;
+  /** Session markers of two runtimes were present (a nested shell): which is inner is unknowable, so no id is kept. */
+  ambiguous?: boolean;
 }
 
 /**
  * Read the runtime session id the runtime itself exports to its tool shells.
- * Verified 2026-10-04: Claude Code `CLAUDE_CODE_SESSION_ID`; Codex
- * `CODEX_THREAD_ID` (equal to the rollout's `session_meta.session_id`); pi/OMP
- * `PI_SESSION_ID` plus `PI_SESSION_FILE`. No marker → all null, never a guess.
+ * Verified live 2026-10-04: Claude Code `CLAUDE_CODE_SESSION_ID`; Codex
+ * `CODEX_THREAD_ID` (equal to the rollout's `session_meta.session_id`); pi
+ * `PI_SESSION_ID` plus `PI_SESSION_FILE`. OMP 18.6.1 exports `OMPCODE=1` and NO
+ * session id to its tool shells, so an OMP line carries `{source: 'pi', id: null}`
+ * plus the capture `cwd`, and the export matches OMP's own session file by that
+ * cwd and the interval's time window (labelled, never exact). No marker → all
+ * null, never a guess.
  */
 export function resolveRuntimeSession(env: NodeJS.ProcessEnv = process.env): RuntimeSession {
-  if (env.CLAUDE_CODE_SESSION_ID) return { id: env.CLAUDE_CODE_SESSION_ID, source: 'claude-code', file: null };
-  if (env.CODEX_THREAD_ID) return { id: env.CODEX_THREAD_ID, source: 'codex', file: null };
-  if (env.PI_SESSION_ID || env.PI_SESSION_FILE) {
-    return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
-  }
+  // Presence cannot tell which of two nested runtimes is the inner one, so when the session markers of
+  // two runtimes coexist no id is kept (ambiguous) rather than guessing a possibly-outer one. OMP's own
+  // CLAUDECODE=1 is not a session marker, so a plain OMP shell is unambiguous; but OMP exports no
+  // PI_SESSION_*, so PI_SESSION_* inside an OMP shell came from an outer pi and makes it ambiguous too.
+  const omp = Boolean(env.OMPCODE);
+  const pi = Boolean(env.PI_SESSION_ID || env.PI_SESSION_FILE);
+  const codex = Boolean(env.CODEX_THREAD_ID);
+  const claude = Boolean(env.CLAUDE_CODE_SESSION_ID);
+  // The same order as resolveAuthorKind, so the event's author and its session never disagree.
+  const source: SessionSource | null = omp ? 'pi' : codex ? 'codex' : pi ? 'pi' : claude ? 'claude-code' : null;
+  if ([omp, pi, codex, claude].filter(Boolean).length > 1) return { id: null, source, file: null, ambiguous: true };
+  if (omp) return { id: null, source: 'pi', file: null };
+  if (codex) return { id: env.CODEX_THREAD_ID as string, source: 'codex', file: null };
+  if (pi) return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
+  if (claude) return { id: env.CLAUDE_CODE_SESSION_ID as string, source: 'claude-code', file: null };
   return { id: null, source: null, file: null };
 }
 
@@ -105,11 +121,15 @@ export interface CaptureLine {
   authorKind: string | null;
   at: number;
   session: RuntimeSession;
+  /** Only for a pi/OMP shell that exported no session id: the export's window join needs it. */
+  cwd?: string;
   genie: string;
   pid: number;
 }
 
 export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.ProcessEnv = process.env): CaptureLine {
+  const session = resolveRuntimeSession(env);
+  const anonymousPi = session.source === 'pi' && session.id === null && session.file === null && !session.ambiguous;
   return {
     v: CAPTURE_SCHEMA_VERSION,
     source: 'task_event',
@@ -119,7 +139,8 @@ export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.Process
     kind: input.kind,
     authorKind: input.authorKind,
     at: input.createdAt,
-    session: resolveRuntimeSession(env),
+    session,
+    ...(anonymousPi ? { cwd: process.cwd() } : {}),
     genie: VERSION,
     pid: process.pid,
   };

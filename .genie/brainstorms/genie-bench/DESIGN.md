@@ -76,13 +76,17 @@ This does not change the separately required public allowlist or authorize expos
 
 Each adapter reports the observed executable/build, launch/UI mechanism, discovery/isolation roots, configuration and model/effort resolution, source-native artifact transport, settled/stop signal, registered lead/worker/auxiliary actors, exposed dispatch/retry/usage/input/approval fields, and safe bounded capture/export capabilities. Test these in the actual client; declarations, catalog entries and SDK callbacks are not proof of TUI subscription behavior. No fabricated APIs, no silently permissive adapter fallback. A missing native capability is a named upstream/dependency requirement before the affected gate can pass.
 
-Use the already exposed session linkage reported by the capture agent: Claude Code
-`CLAUDE_CODE_SESSION_ID`; Codex `CODEX_THREAD_ID`, observed equal to rollout
-`session_meta.session_id` in 3/3 checked sessions; OMP/pi `PI_SESSION_ID` and `PI_SESSION_FILE`.
-The latter identifies the exact native log path; child logs have their own native file identities.
-Cross-trace session linkage needs no new adapter API. These are the owner's reported findings,
-not fresh probes by this author; the capture note distinguishes older pi observations from live
-OMP conformance still to exercise. Runtime/session association does not itself prove input authorship.
+Use exposed session linkage where the native client actually supplies it: Claude Code
+`CLAUDE_CODE_SESSION_ID`; Codex `CODEX_THREAD_ID`, reported equal to rollout
+`session_meta.session_id` in 3/3 checked sessions; older Pi `PI_SESSION_ID` and
+`PI_SESSION_FILE`, with exact native log paths and separate child file identities.
+The capture agent's live OMP 18.6.1 finding supersedes the Pi-era assumption: tool shells
+set both `OMPCODE=1` and `CLAUDECODE=1` but expose neither Pi session identifier.
+Give `OMPCODE` precedence; do not inherit an outer Claude session ID. OMP transcript linkage
+uses the native session's own `cwd` plus a covering time window, labeled `match=window`,
+never exact; missing or ambiguous candidates remain null/unknown. These are reported findings,
+not fresh probes by this author. Linkage does not prove input authorship, complete call capture
+or billing coverage; native conformance remains an implementation gate.
 
 Consume the exact reviewed OMP adaptation contract and its pinned resource hashes. Its native blind-admission and reader-only reviewer requirements remain mandatory where wish/review paths are used. The user reported OMP updated; this is not a claim those behavioral requirements passed, and the old inspected version is not asserted to describe the new build. Run the specified native policy and real-client probes during authorized implementation, not a redundant version check to challenge the update.
 
@@ -269,7 +273,7 @@ Obtain independent design review of this exact artifact, stamp its returned cont
 ## Design Review Evidence
 
 - **Verdict:** SHIP
-- **Reviewed content SHA-256:** `1c4ad6a923f0c65cc94b926701f650625d74bbf26f4ab6ce1a03e46014da4d9e`
-- **Reviewer:** BenchDesignReviewer
-- **Reviewed at:** 2026-10-04T19:16:52.000Z
+- **Reviewed content SHA-256:** `6acd07d9a8f855ce8e8923e6d805c40044f058fb5c3c8bea4a118c1e0f64e92b`
+- **Reviewer:** DesignAlignmentReviewer
+- **Reviewed at:** 2026-10-04T21:45:41.000Z
 <!-- genie-design-review:end -->

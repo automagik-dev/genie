@@ -19,7 +19,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
-import { type UsageSample, readUsageSamples } from './metrics-usage.js';
+import { type UsageSample, matchOmpSessionByCwd, readUsageSamples } from './metrics-usage.js';
 
 export interface UsageTotals {
   calls: number;
@@ -46,6 +46,12 @@ export interface Interval {
   sharedSession: boolean;
   /** mikro runs this repository logged inside the window (another provider, priced by mikro); null when no ledger. */
   offload: OffloadUsage | null;
+  /**
+   * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
+   * OMP shell exported none and exactly one OMP session in the same cwd overlapped the interval;
+   * 'ambiguous' — several did, so no usage is attributed; null — no runtime session at all.
+   */
+  sessionMatch: 'exact' | 'window' | 'ambiguous' | null;
 }
 
 export interface LedgerRead {
@@ -124,6 +130,38 @@ function sumUsage(samples: UsageSample[], startAt: number, endAt: number): Usage
 
 const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id ?? session.file ?? ''}`;
 
+/** The opening event's session, or — for an OMP shell that exported no id — the one OMP session that matches by cwd and window. */
+function resolveIntervalSession(
+  from: CaptureLine,
+  env: NodeJS.ProcessEnv,
+): { session: RuntimeSession; match: Interval['sessionMatch'] } {
+  const session = from.session;
+  if (session.source === null) return { session, match: null };
+  if (session.ambiguous) return { session, match: 'ambiguous' };
+  if (session.source !== 'pi' || session.id !== null || session.file !== null) return { session, match: 'exact' };
+  if (!from.cwd) return { session, match: null };
+  const found = matchOmpSessionByCwd(from.cwd, from.at, env);
+  if (found === 'ambiguous') return { session, match: 'ambiguous' };
+  if (found === null) return { session, match: null };
+  return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };
+}
+
+/**
+ * Usage inside the window, or null when unknown. A 'window' match that holds NO call inside the
+ * interval is null too: the matched OMP session may have been idle while another runtime did the
+ * work, so its 0 would be a guess dressed as a measurement.
+ */
+function usageFor(
+  samples: UsageSample[] | null,
+  startAt: number,
+  endAt: number,
+  match: Interval['sessionMatch'],
+): UsageTotals | null {
+  if (!samples) return null;
+  const usage = sumUsage(samples, startAt, endAt);
+  return match === 'window' && usage.calls === 0 ? null : usage;
+}
+
 /** Consecutive matched events of one card → intervals, with the opening session's usage inside each. */
 export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = process.env): Interval[] {
   const byCard = new Map<string, CaptureLine[]>();
@@ -152,7 +190,8 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
     for (let i = 0; i + 1 < events.length; i++) {
       const from = events[i] as CaptureLine;
       const to = events[i + 1] as CaptureLine;
-      const samples = samplesFor(from.session);
+      const { session, match } = resolveIntervalSession(from, env);
+      const samples = match === 'ambiguous' ? null : samplesFor(session);
       intervals.push({
         db: from.db,
         task: from.task,
@@ -162,9 +201,10 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
         startAt: from.at,
         endAt: to.at,
         durationMs: to.at - from.at,
-        session: from.session,
-        usage: samples ? sumUsage(samples, from.at, to.at) : null,
+        session,
+        usage: usageFor(samples, from.at, to.at, match),
         sharedSession: false,
+        sessionMatch: match,
         offload: null,
       });
     }
