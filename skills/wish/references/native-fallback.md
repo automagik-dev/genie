@@ -98,8 +98,10 @@ Apply to proposed paths, actual commits, reviewer path lists and remote PR files
 | `scripts/release-*` | Matching release paths; a colocated `*.test.ts` alone is not the release script. |
 | `release-guard.sh`, `version.yml`, `delivery-evidence-verify.ts` | Exact filenames at root or under another directory. |
 | `auth, secret and permission surfaces` | Semantic boundary, not a filename-only test: authentication, secrets, permissions and execution-authority surfaces, including workflow changes, route `plan`. |
-| `Makefile`, `justfile`, `Taskfile.yml` | The root build files the check discovery reads; editing one changes the command the gate runs. |
-| `.githooks/`, `lefthook.yml`, `.pre-commit-config.yaml` | The hook definitions the gate only asserts live; editing one changes what fires at push. |
+| `GNUmakefile`, `Makefile`, `justfile`, `.justfile`, `Taskfile.yml`, `Taskfile.yaml`, `Taskfile.dist.yml`, `Taskfile.dist.yaml` | The build files the check discovery reads, under every spelling the tool itself accepts; editing one changes the command the gate runs. |
+| `.githooks/`, `.lefthook/`, `.lefthook-local/`, `lefthook*`, `.lefthook*`, `.config/lefthook*`, `simple-git-hooks*`, `.simple-git-hooks*`, `.pre-commit-config.yaml`, `.pre-commit-config.yml` | The hook definitions the gate only asserts live, under every spelling the tool itself accepts (any extension for the lefthook and simple-git-hooks shapes); editing one changes what fires at push. |
+
+Filename rules match case-insensitively, so `makefile`, `MAKEFILE`, `Justfile` and `taskfile.yml` hit the `Makefile`, `justfile` and `Taskfile.yml` entries: GNU make reads `makefile` beside `Makefile`, just reads `justfile` in any case, and a case-insensitive filesystem resolves every spelling to the file the tool reads. A `*` rule with no directory part (`lefthook*`) matches only at the repository root, where that tool reads its configuration.
 
 An actual denylist hit or write outside the frozen set is `blocked`, not repairable by declaring the path after the fact. Reviewers judge semantic entries as well as filename shapes.
 

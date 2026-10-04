@@ -148,6 +148,73 @@ const intentRun = (context: RunResult, options: Record<string, unknown> = {}) =>
     fakeRunner({ 'wish-context': context }),
   );
 
+// ─── The gate definitions, spelled every way the tools read them ──
+// GNU make reads GNUmakefile, then makefile, then Makefile; just matches justfile case-insensitively
+// (and `.justfile`); task reads Taskfile and taskfile with .yml/.yaml and the .dist forms; lefthook reads
+// `[.]lefthook[-local].<yml|yaml|toml|json|jsonc>` at the root and under `.config/`, plus its script
+// directories; simple-git-hooks reads `[.]simple-git-hooks.<js|cjs|mjs|json>`; pre-commit reads
+// `.pre-commit-config.yaml` (and the `.yml` spelling is as dangerous to leave open). path -> the
+// DENYLIST entry the hit is reported under. Matching is case-insensitive, so a case-insensitive
+// filesystem resolves the same file the tool reads.
+const GATE_DEFINITION_HITS: Record<string, string> = {
+  Makefile: 'Makefile',
+  'docs/Makefile': 'Makefile',
+  GNUmakefile: 'GNUmakefile',
+  makefile: 'Makefile',
+  MAKEFILE: 'Makefile',
+  'docs/GNUmakefile': 'GNUmakefile',
+  justfile: 'justfile',
+  Justfile: 'justfile',
+  JUSTFILE: 'justfile',
+  '.justfile': '.justfile',
+  '.Justfile': '.justfile',
+  'Taskfile.yml': 'Taskfile.yml',
+  'Taskfile.yaml': 'Taskfile.yaml',
+  'taskfile.yml': 'Taskfile.yml',
+  'taskfile.yaml': 'Taskfile.yaml',
+  'Taskfile.dist.yml': 'Taskfile.dist.yml',
+  'Taskfile.dist.yaml': 'Taskfile.dist.yaml',
+  'taskfile.dist.yml': 'Taskfile.dist.yml',
+  'taskfile.dist.yaml': 'Taskfile.dist.yaml',
+  'docs/Taskfile.yml': 'Taskfile.yml',
+  '.githooks/pre-push': '.githooks/',
+  '.githooks': '.githooks/',
+  '.Husky/pre-push': '.husky/',
+  '.lefthook/pre-push/lint.sh': '.lefthook/',
+  '.lefthook-local/pre-push/lint.sh': '.lefthook-local/',
+  'lefthook.yml': 'lefthook*',
+  'lefthook.yaml': 'lefthook*',
+  'lefthook.toml': 'lefthook*',
+  'lefthook.json': 'lefthook*',
+  'lefthook.jsonc': 'lefthook*',
+  'lefthook-local.yml': 'lefthook*',
+  'lefthook-local.yaml': 'lefthook*',
+  'Lefthook.YML': 'lefthook*',
+  '.lefthook.yml': '.lefthook*',
+  '.lefthook.yaml': '.lefthook*',
+  '.lefthook-local.yml': '.lefthook*',
+  '.lefthook-local.yaml': '.lefthook*',
+  '.config/lefthook.yml': '.config/lefthook*',
+  '.config/lefthook-local.yaml': '.config/lefthook*',
+  'simple-git-hooks.js': 'simple-git-hooks*',
+  '.simple-git-hooks.cjs': '.simple-git-hooks*',
+  '.simple-git-hooks.json': '.simple-git-hooks*',
+  '.pre-commit-config.yaml': '.pre-commit-config.yaml',
+  '.pre-commit-config.yml': '.pre-commit-config.yml',
+  '.Pre-Commit-Config.YAML': '.pre-commit-config.yaml',
+};
+
+// Names no tool reads as a gate definition: a build-adjacent file, a colocated lefthook test, and a
+// source file whose basename merely starts with `lefthook` (a `*` shape with no directory is root-only,
+// the one place lefthook reads its configuration). Each must stay clean in BOTH matchers.
+const GATE_DEFINITION_CLEAN = [
+  'Makefile.am',
+  'Taskfile.md',
+  'justfile.md',
+  'lefthook.test.ts',
+  'src/lib/lefthook-installer.ts',
+];
+
 // ─── The denylist is read from wish.js, or it is unknown ──
 
 describe('boundary hits come from wish.js and fail closed', () => {
@@ -175,21 +242,11 @@ describe('boundary hits come from wish.js and fail closed', () => {
       'version.yml',
       '.github/workflows/version.yml',
       'src/lib/delivery-evidence-verify.ts',
-      // The gate definitions #3098 added: the root build files the check discovery reads and the
-      // hook files the gate only asserts live. `.githooks` alone hits the trailing-slash rule; the
-      // three alias spellings stay clean, so the mirror is proven on the new shapes AND on the gap
-      // the fix deliberately leaves open (no alias entry is silently widened).
-      'Makefile',
-      'docs/Makefile',
-      'justfile',
-      'Taskfile.yml',
-      '.githooks/pre-push',
-      '.githooks',
-      'lefthook.yml',
-      '.pre-commit-config.yaml',
-      'Makefile.am',
-      'Taskfile.yaml',
-      '.lefthook.yml',
+      // The gate definitions #3098 added: the build files the check discovery reads and the hook files
+      // the gate only asserts live, under EVERY spelling the tool itself reads. `.githooks` alone hits
+      // the trailing-slash rule; the controls stay clean so neither matcher is silently widened.
+      ...Object.keys(GATE_DEFINITION_HITS),
+      ...GATE_DEFINITION_CLEAN,
       'package.json',
       'plugins/dsh-genie-board/package.json',
       'src/genie.ts',
@@ -204,22 +261,19 @@ describe('boundary hits come from wish.js and fail closed', () => {
     const theirs = api.denylistHits(paths).map((h) => `${h.path}→${h.rule}`);
     expect(mine).toEqual(theirs);
     expect(mine.length).toBeGreaterThan(5);
-    // Agreement alone would hold over a table where both matchers stayed clean. Name the shapes the
-    // six additions must hit — including the trailing-slash rule on a bare `.githooks` — and the
-    // alias spellings they must NOT cover, so the extension proves the mirror on the new shapes.
-    const mustHit = [
-      'Makefile→Makefile',
-      'docs/Makefile→Makefile',
-      'justfile→justfile',
-      'Taskfile.yml→Taskfile.yml',
-      '.githooks/pre-push→.githooks/',
-      '.githooks→.githooks/',
-      'lefthook.yml→lefthook.yml',
-      '.pre-commit-config.yaml→.pre-commit-config.yaml',
-    ];
-    for (const hit of mustHit) expect(mine).toContain(hit);
-    for (const alias of ['Makefile.am', 'Taskfile.yaml', '.lefthook.yml']) {
-      expect(mine.some((entry) => entry.startsWith(`${alias}→`))).toBe(false);
+  });
+
+  test('every spelling a gate tool reads is a hit and every control stays clean, in both matchers', () => {
+    // Agreement alone would hold over a table where both matchers stayed clean, so name every
+    // spelling that must hit (under the entry it is reported as) and every control that must not.
+    const denylist = extractDenylist(SCRIPT);
+    for (const [path, rule] of Object.entries(GATE_DEFINITION_HITS)) {
+      expect(denylistHits([path], denylist)).toEqual([{ path, entry: rule }]);
+      expect(api.denylistHits([path])).toEqual([{ path, rule }]);
+    }
+    for (const path of GATE_DEFINITION_CLEAN) {
+      expect(denylistHits([path], denylist)).toEqual([]);
+      expect(api.denylistHits([path])).toEqual([]);
     }
   });
 

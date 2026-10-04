@@ -390,7 +390,7 @@ describe('wish.js admission narrowing', () => {
     ['justfile', 'justfile'],
     ['Taskfile.yml', 'Taskfile.yml'],
     ['.githooks/pre-push', '.githooks/'],
-    ['lefthook.yml', 'lefthook.yml'],
+    ['lefthook.yml', 'lefthook*'],
     ['.pre-commit-config.yaml', '.pre-commit-config.yaml'],
   ];
 
@@ -405,6 +405,47 @@ describe('wish.js admission narrowing', () => {
       }
     });
   }
+
+  // The aliases each tool reads are the same file: GNU make runs GNUmakefile before makefile before
+  // Makefile, just matches its file name case-insensitively, task reads Taskfile.yaml / .dist forms, and
+  // lefthook / pre-commit / simple-git-hooks each read more than the one spelling the first six name. A
+  // run that declared one of them was admitted and the frozen `make check` then executed it.
+  const GATE_ALIAS_PATHS: Array<[string, string]> = [
+    ['GNUmakefile', 'GNUmakefile'],
+    ['makefile', 'Makefile'],
+    ['Justfile', 'justfile'],
+    ['.justfile', '.justfile'],
+    ['Taskfile.yaml', 'Taskfile.yaml'],
+    ['taskfile.yml', 'Taskfile.yml'],
+    ['Taskfile.dist.yml', 'Taskfile.dist.yml'],
+    ['lefthook.yaml', 'lefthook*'],
+    ['.lefthook.yml', '.lefthook*'],
+    ['lefthook-local.yml', 'lefthook*'],
+    ['.config/lefthook.yml', '.config/lefthook*'],
+    ['.lefthook/pre-push/lint.sh', '.lefthook/'],
+    ['.pre-commit-config.yml', '.pre-commit-config.yml'],
+    ['.simple-git-hooks.json', '.simple-git-hooks*'],
+  ];
+
+  for (const [path, rule] of GATE_ALIAS_PATHS) {
+    test(`(42a) a declared ${path} (an alias the tool reads) routes plan -> refused`, async () => {
+      const { result, logs, prompts } = await clean(canned('pass', declaring([FILES[0], path])));
+      expect({ state: result.state, route: result.route }).toEqual({ state: 'refused', route: 'plan' });
+      const hit = logs.find((line) => line.includes('Route overridden to plan') && line.includes(path)) ?? '';
+      expect(hit).toContain(`(${path} → ${rule})`);
+      for (const label of ['work:executor', 'gate:check', 'review:diff', 'publish:pr']) {
+        expect(prompts[label]).toBeUndefined();
+      }
+    });
+  }
+
+  test('(42b) a reviewer-reported GNUmakefile the executor omitted forces BLOCKED, publish never runs', async () => {
+    const data = canned('pass', { 'review:diff': { ...reviewResult(), diffFiles: [...FILES, 'GNUmakefile'] } });
+    const { result, prompts } = await clean(data);
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('GNUmakefile → GNUmakefile');
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
 
   test('(48) a reviewer-reported Makefile forces BLOCKED on the denylist, publish never runs', async () => {
     const data = canned('pass', { 'review:diff': { ...reviewResult(), diffFiles: [...FILES, 'Makefile'] } });
