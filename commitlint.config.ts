@@ -106,5 +106,15 @@ export default {
     // an uppercase label — write "r2 task-lane pair" or lead with a verb.
     (message: string) =>
       message.split('\n')[0] === 'docs(workflows): R2 Task-lane pair on #2919 — offload arm 8.32 vs control 9.77',
+    // Historical exception: one docs(genie-launch) commit (4e9b40bb1) landed on
+    // dev via #3101 with a 108-character header, over header-max-length. It was
+    // merged while the non-required Commit Messages check was red, and the
+    // rolling dev→main promotion (#3113) replays every dev commit, so it fails
+    // there. Rewriting dev is off the table. Matching is pinned to the exact
+    // full subject. Do NOT reuse this subject and do not broaden this to a
+    // pattern — keep new headers ≤100.
+    (message: string) =>
+      message.split('\n')[0] ===
+      'docs(genie-launch): exempt verbatim program output and moved text from the numbers list; close forge PRs too',
   ],
 };
