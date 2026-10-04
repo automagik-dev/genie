@@ -191,7 +191,7 @@ const COMMAND_DISCOVERY = [
   "With no match, answer checkCommand '': the gate then runs the validation command in its place and CI is the authority. A hook manager's configuration (husky, lefthook, pre-commit, simple-git-hooks) is never the check, and no runner is guessed from file extensions: pytest, cargo test, go test, tox or nox count only through a tracked root target above.",
   'Answer each command in exactly one of the forms above, character for character — no flag, argument, prefix or second command: the script freezes only those exact forms from the repository, and freezes anything else empty.',
   'Quote in commandEvidence what each command you propose RUNS, verbatim from the file named in path, one entry per quote, with command check or install: for a package.json check, the script body plus its pre<name> and post<name> bodies when defined; for a Makefile, justfile or Taskfile check, the target\'s own recipe lines plus those of the prerequisite targets it names in the same file; for an install, the lockfile path, plus the root preinstall, install, postinstall and prepare script bodies. The script freezes a command you quote nothing for as empty, so quote it or answer it as \'\'.',
-  "validationCommand is not discovered from a root file: answer ONE focused test invocation, in the form <runner> <path ...>, where runner is exactly one of: bun test, bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test, npm run test, npx jest, npx vitest, pytest, python -m pytest, tox, nox, go test, cargo test, dotnet test, mvn test, mvnw test, gradle test, gradlew test, rspec, rake test, php artisan test, make test, just test, task test — matched as the whole command or as that text followed by a space. NO separator (; & | a backtick, a redirect < or >, a newline, $() ) and no second command. Every space-separated token after the runner must be one of the files your plan declares (a leading ./ is fine, and a bare name with no / is held to the same set) or one of the few tokens listed for that runner: --bail for bun test, -- for bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test and npm run test, and run for npx vitest. Every other flag is refused, because a flag can load, configure or run code (--preload, --config, -exec, -p, --script-shell), and so is any VAR=value, any .. segment, any absolute path, ~ or @file, and any quote, $, backslash, bracket, brace, glob character or =. tox, nox, mvn test, mvnw test, gradle test, gradlew test, rake test, make test, just test and task test take NO argument at all, because their tokens are targets, goals and sessions: answer exactly the runner. A leading ./ is spelled only on mvnw and gradlew. The script anchors the command to your declared set and freezes empty anything wider. A bare runner with no path is accepted on purpose when the repository has no root target to narrow to, and a command outside this shape stops the gate: it is frozen empty, so answer this form or answer ''.",
+  "validationCommand is not discovered from a root file: answer ONE focused test invocation, in the form <runner> <path ...>, where runner is exactly one of: bun test, bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test, npm run test, npx jest, npx vitest, pytest, python -m pytest, tox, nox, go test, cargo test, dotnet test, mvn test, mvnw test, gradle test, gradlew test, rspec, rake test, php artisan test, make test, just test, task test — matched as the whole command or as that text followed by a space. NO separator (; & | a backtick, a redirect < or >, a newline, $() ) and no second command. Every space-separated token after the runner must be one of the files your plan declares (a leading ./ is fine, and a bare name with no / is held to the same set) or one of the few tokens listed for that runner: --bail for bun test, -- for bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test and npm run test, and run for npx vitest. Every other flag is refused, because a flag can load, configure or run code (--preload, --config, -exec, -p, --script-shell), and so is any VAR=value, any .. segment, any absolute path, ~ or @file, and any quote, $, backslash, bracket, brace, glob character or =. tox, nox, mvn test, mvnw test, gradle test, gradlew test, rake test, make test, just test and task test take NO argument at all, because their tokens are targets, goals and sessions: answer exactly the runner. A leading ./ is spelled only on mvnw and gradlew. The script anchors the command to your declared set and freezes empty anything wider. A bare runner with no path is accepted on purpose when the repository has no root target to narrow to, and a command outside this shape stops the run: it is frozen empty, so answer this form or answer ''.",
 ]
 // The mikro offload: a DeepSeek-flash microagent (the repository's own
 // .mikro/agents/<name> AS IT EXISTS AT origin/<base> when it has one, else the
@@ -362,7 +362,7 @@ const JUDGE_SCHEMA = obj(['route', 'reason', 'contract'], {
     ),
     files: notes('the declared file set, repository-relative; the executor may touch nothing else'),
     validationCommand: note(
-      "the one command that proves the change in this repository — the scout plan's validation command or a narrower one IN THE SAME SHAPE, never the repository check; the gate runs it in place of the check when the repository has no hook system or no check command, and the script freezes it now. The shape is ONE focused test invocation over the declared files — a runner from the closed list the scout's brief names, no second command, and every token after the runner a declared file or one of the few flags the brief allows for that runner (a task runner such as make test takes no argument) — and anything else is frozen empty, so a command you author outside that shape stops the gate instead of running",
+      "the one command that proves the change in this repository — the scout plan's validation command or a narrower one IN THE SAME SHAPE, never the repository check; the gate runs it in place of the check when the repository has no hook system or no check command, and the script freezes it now. The shape is ONE focused test invocation over the declared files — a runner from the closed list the scout's brief names, no second command, and every token after the runner a declared file or one of the few flags the brief allows for that runner (a task runner such as make test takes no argument) — and anything else is frozen empty, so a command you author outside that shape stops the run instead of running",
     ),
     // Echo-only: the judge has seen no repository, so a command it wrote would be invented. The
     // script keeps a judged value only when it equals the scout's, and logs any other.
@@ -583,8 +583,9 @@ function baseRefusal(base) {
 
 // The frozen validation command is agent-authored text from stages that read untrusted input, and in
 // a repository with no hook system the gate runs it verbatim. A command that SPELLS an obvious push or
-// publish verb is refused here, at Admit: it is frozen empty, so the no-hook stop blocks the run and
-// no gate prompt ever carries the refused text. Each rule is named so the report can say which one hit.
+// publish verb is refused here, at Admit: it is frozen empty, so the run is blocked (at admission when no
+// check command froze, else by the no-hook stop at the gate) and no gate prompt ever carries the refused
+// text. Each rule is named so the report can say which one hit.
 // This is a tripwire over the command text, not a boundary: a variable, an encoded string or a script
 // that pushes for it all pass. What stands behind it is the gate's read-only brief, the publisher's
 // allowlist and, for a repository-sourced command, the closed set of forms the discovery rules produce.
@@ -768,8 +769,8 @@ const RUNNER_TOKENS = {
 // file's own content, which is the change under test and is checked by the diff gates, nor the runner's
 // own configuration files already in the repository, which are the repository's code, trusted the way
 // its hooks are. A caller-passed `validation` is the escape for a command outside this shape.
-// A refusal becomes `<proposed> — <reason>`, which noCommandReason already carries into blockedReason
-// and the report.
+// A refusal becomes `<proposed> — <reason>`, which noCommandReason and admissionStopReason carry into
+// blockedReason and the report; with no check command the run ends at admission, else at the gate.
 function validationShapeRefusal(command, files) {
   if (/[;&|`<>\n]/.test(command) || command.includes('$(')) return 'more than one command'
   if (/[^\x20-\x7e]/.test(command)) return 'a control or non-ASCII character'
@@ -822,6 +823,22 @@ function noCommandReason(contract, noHookSystem, when) {
     ? `no hook system and the contract froze no validation command${refusalNote(contract.validationRefused)}`
     : `a hook system but no check command${refusalNote(contract.checkRefused)}, and the contract froze no validation command${refusalNote(contract.validationRefused)}`
   return `The repository has ${missing}, so nothing proved ${when} before a push. Nothing was pushed.`
+}
+
+// The admission twin of noCommandReason, for the one stop the script can prove before any code exists: a
+// refused validation command with NO check command frozen. In that contract every hook mode ends at the
+// same empty command — no hook system and no check command both select the validation command — so the
+// hook classification the gate makes later cannot change the answer, and the run ends here rather than
+// after an executor. A frozen check command keeps the stop at the gate, because whether a hook system
+// makes the check the gate's command is a fact only the gate reads. The refusal text is the gate's, byte
+// for byte; the escape is named only when the refused value was the scout's, since a caller value that
+// the tripwire refused is already the escape being refused.
+function admissionStopReason(contract) {
+  const escape =
+    objectOf(contract.commandSource).validation === 'caller'
+      ? 'Pass a different `validation` command and run again.'
+      : 'Pass `validation` — a caller command outside the focused shape is the escape — and run again.'
+  return `The repository has no check command${refusalNote(contract.checkRefused)} and the contract froze no validation command${refusalNote(contract.validationRefused)}, so the gate would have nothing to run in any hook mode and nothing could prove the change before a push. Stopped at admission: no worktree, no branch, no executor was started. ${escape}`
 }
 
 // Accept an object or a JSON-encoded string (some invocation paths stringify args); a bare
@@ -1594,7 +1611,8 @@ contract = {
   files: declaredFiles,
   acceptanceCriteria: texts(judgedContract.acceptanceCriteria),
 }
-if (frozenValidation.refused) log(`The proposed validation command was refused at admission (${frozenValidation.refused}) and frozen empty: a repository with no hook system, or with no check command, will stop at the gate.`)
+if (frozenValidation.refused)
+  log(`The proposed validation command was refused at admission (${frozenValidation.refused}) and frozen empty: ${contract.checkCommand ? 'a repository with no hook system will stop at the gate' : 'with no check command either, the run stops at admission'}.`)
 if (frozenCheck.refused) log(`The proposed check command was refused at admission (${frozenCheck.refused}) and frozen empty: the gate runs the frozen validation command in its place.`)
 if (frozenInstall.refused) log(`The proposed install command was refused at admission (${frozenInstall.refused}) and frozen empty: the executor installs nothing.`)
 // The report's own three-way renderer, not a second paraphrase of it: value and source are never printed
@@ -1647,6 +1665,16 @@ if (route !== 'proceed') {
 }
 if (!contract.files.length) return finish('refused', false, { route: 'plan', blockedReason: 'The judge routed proceed but declared no file set, so there is nothing an executor could be held to. Nothing was created.' })
 if (!contract.acceptanceCriteria.length) return finish('refused', false, { route: 'brainstorm', blockedReason: 'The judge routed proceed but wrote no acceptance criteria, so no later agent could score a real diff blind. Nothing was created.' })
+
+// A refused validation command with no check command (#3111): the gate would have nothing to run in any hook
+// mode, so the run ends blocked here, before a worktree, a branch or an executor exists. After the route
+// checks above on purpose: a route refusal, a size or denylist override and an empty file set or criteria
+// list are the admission answers that outrank it, and only a run that would otherwise start work stops here.
+if (contract.validationRefused && !contract.checkCommand) {
+  const reason = admissionStopReason(contract)
+  log(`Blocked at admission: ${reason}`)
+  return finish('blocked', false, { blockedReason: reason })
+}
 
 phase('Work')
 stageReached = 'Work'
