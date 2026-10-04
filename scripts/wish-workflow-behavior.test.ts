@@ -959,6 +959,98 @@ describe('wish.js freezes the validation command as one focused test invocation'
   });
 });
 
+// #3111: with no check command the gate's only possible command is the validation command, in every hook
+// mode, so a refused proposal is knowable before any code exists. The run ends blocked at ADMISSION: no
+// executor, no worktree, no gate, with the same named refusal and the documented escape.
+describe('wish.js stops a refused validation command at admission, before any executor runs', () => {
+  const NO_RUNTIME_STAGE = ['work:executor', 'gate:check', 'review:diff', 'repair:fix-1', 'publish:pr'];
+  const expectStoppedAtAdmission = (
+    record: Awaited<ReturnType<typeof clean>>,
+    refusal: string,
+    proposed: string,
+    shapeEscape = true,
+  ) => {
+    const { result, prompts, logs } = record;
+    expect(NO_RUNTIME_STAGE.filter((label) => label in prompts)).toEqual([]);
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('no validation command');
+    expect(result.blockedReason).toContain(`refused at admission (${proposed} \u2014 ${refusal})`);
+    expect(result.blockedReason).toContain('Stopped at admission: no worktree, no branch, no executor');
+    if (shapeEscape) expect(result.blockedReason).toContain('Pass `validation`');
+    expect(result.report).toContain(refusal);
+    expect(result.contract?.validationCommand).toBe('');
+    expect(result.gateCommand).toBeNull();
+    expect(result.branch).toBe('');
+    expect(result.worktree).toBe('');
+    expect(logs.some((line) => line.startsWith('Blocked at admission:'))).toBe(true);
+  };
+
+  for (const [command, refusal] of [
+    ['go test ./...', './... is not a declared file'],
+    ['pytest tests/', 'tests/ is not a declared file'],
+    ['gradle test --tests Foo', '--tests is not an allowed argument to gradle test'],
+    ['mvn test -Dtest=Foo', '-Dtest=Foo is not an allowed argument to mvn test'],
+  ] as const) {
+    test(`(57) ${command} with no check command ends blocked at admission, zero executor calls, the named refusal and the escape`, async () => {
+      // The gate's answer is irrelevant and deliberately a hook-system one: no check command makes the
+      // validation command the only thing any gate could run, so the hook classification cannot rescue it.
+      const record = await clean(canned('pass', { ...noCheck(command), 'gate:check': deadHooks('husky') }));
+      expectStoppedAtAdmission(record, refusal, command);
+      expect(record.result.stageReached).toBe('');
+    });
+  }
+
+  test('(58) a refused check command is no check command: the same admission stop', async () => {
+    const data = canned(
+      'pass',
+      npmShaped({ check: 'npm run check && git push origin HEAD', validation: 'go test ./...' }),
+    );
+    expectStoppedAtAdmission(await clean(data), './... is not a declared file', 'go test ./...');
+  });
+
+  test('(59) a caller validation that the tripwire refuses stops at admission, without the shape escape', async () => {
+    const record = await clean(canned('pass', noCheck('bun test')), { validation: 'bun test && git push' });
+    expectStoppedAtAdmission(record, 'a git push', 'bun test && git push', false);
+    expect(record.result.blockedReason).not.toContain('Pass `validation`');
+  });
+
+  test('(60) the caller validation is the documented escape: the same proposal runs to merge-ready', async () => {
+    const record = await clean(canned('pass', noCheck('go test ./...')), { validation: 'go test ./...' });
+    expect({ ok: record.result.ok, state: record.result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    expect(record.result.gateCommand).toEqual({ command: 'go test ./...', mode: 'no-check-command' });
+    expect(record.prompts['work:executor']).toHaveLength(1);
+  });
+
+  test('(61) a frozen check command keeps the stop at the gate: a hook system never needed the validation command', async () => {
+    // Genie-shaped, refused validation: the check freezes, so with hooks the gate runs it and the run
+    // delivers (54); with no hook system only the gate can know, and it still stops after the executor.
+    const refused = validating('go test ./...');
+    const delivered = await clean(canned('pass', refused));
+    expect({ ok: delivered.result.ok, state: delivered.result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    const blocked = await clean(canned('pass', { ...refused, 'gate:check': noHooks }));
+    expect({ ok: blocked.result.ok, state: blocked.result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(blocked.result.blockedReason).toContain('no hook system and the contract froze no validation command');
+    expect(blocked.prompts['work:executor']).toHaveLength(1);
+    expect(blocked.logs.some((line) => line.startsWith('Blocked at admission:'))).toBe(false);
+  });
+
+  test('(62) no check and no validation proposed at all is not a refusal: it still ends at the gate', async () => {
+    const { result, prompts } = await clean(canned('pass', noCheck('')));
+    expect(result.blockedReason).toContain('no validation command');
+    expect(result.blockedReason).not.toContain('Stopped at admission');
+    expect(prompts['work:executor']).toHaveLength(1);
+  });
+
+  test('(63) a route refusal outranks the admission stop: a denylist hit is refused, not blocked', async () => {
+    const data = canned('pass', noCheck('go test ./...'));
+    (data['admit:judge'] as { contract: { files: string[] } }).contract.files = ['scripts/release-guard.sh'];
+    (data['admit:scout'] as { plan: { files: string[] } }).plan.files = ['scripts/release-guard.sh'];
+    const { result, prompts } = await clean(data);
+    expect({ state: result.state, route: result.route }).toEqual({ state: 'refused', route: 'plan' });
+    expect(prompts['work:executor']).toBeUndefined();
+  });
+});
+
 // Admission failure paths: every early return before a stage's binding exists must still render.
 describe('wish.js admission failures report instead of crashing', () => {
   const failing = (label: 'admit:scout' | 'admit:judge', answer: null | Error) => {
