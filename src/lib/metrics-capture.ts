@@ -84,15 +84,18 @@ export interface RuntimeSession {
 export function resolveRuntimeSession(env: NodeJS.ProcessEnv = process.env): RuntimeSession {
   // Presence cannot tell which of two nested runtimes is the inner one, so when the session markers of
   // two runtimes coexist no id is kept (ambiguous) rather than guessing a possibly-outer one. OMP's own
-  // CLAUDECODE=1 is NOT a session marker, so a plain OMP shell is unambiguous.
-  const pi = Boolean(env.OMPCODE || env.PI_SESSION_ID || env.PI_SESSION_FILE);
+  // CLAUDECODE=1 is not a session marker, so a plain OMP shell is unambiguous; but OMP exports no
+  // PI_SESSION_*, so PI_SESSION_* inside an OMP shell came from an outer pi and makes it ambiguous too.
+  const omp = Boolean(env.OMPCODE);
+  const pi = Boolean(env.PI_SESSION_ID || env.PI_SESSION_FILE);
   const codex = Boolean(env.CODEX_THREAD_ID);
   const claude = Boolean(env.CLAUDE_CODE_SESSION_ID);
-  const present = [pi, codex, claude].filter(Boolean).length;
-  const source: SessionSource | null = pi ? 'pi' : codex ? 'codex' : claude ? 'claude-code' : null;
-  if (present > 1) return { id: null, source, file: null, ambiguous: true };
-  if (pi) return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
+  // The same order as resolveAuthorKind, so the event's author and its session never disagree.
+  const source: SessionSource | null = omp ? 'pi' : codex ? 'codex' : pi ? 'pi' : claude ? 'claude-code' : null;
+  if ([omp, pi, codex, claude].filter(Boolean).length > 1) return { id: null, source, file: null, ambiguous: true };
+  if (omp) return { id: null, source: 'pi', file: null };
   if (codex) return { id: env.CODEX_THREAD_ID as string, source: 'codex', file: null };
+  if (pi) return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
   if (claude) return { id: env.CLAUDE_CODE_SESSION_ID as string, source: 'claude-code', file: null };
   return { id: null, source: null, file: null };
 }

@@ -273,32 +273,30 @@ function readPiSessionHeader(file: string): { id: string | null; cwd: string; st
 export type PiSessionMatch = { id: string | null; file: string } | 'ambiguous' | null;
 
 /**
- * The single pi/OMP session that ran in `cwd` while `[startAt, endAt)` elapsed: its header's cwd is
- * equal and its life (header timestamp → last write) overlaps the window. Two candidates are
+ * The single OMP session that wrote the opening event: its header's cwd is equal, it had started by
+ * `openedAt` and it was still written at or after it. Only `~/.omp` is scanned — only OMP shells
+ * produce id-less lines, so a pi log there would be someone else's usage. Two candidates are
  * 'ambiguous' — never a guess; none is null. Top-level session logs only: an OMP subagent's log lives
  * in its parent's folder, so a `genie` call from a subagent shell is matched to the parent session.
  */
-export function matchPiSessionByCwd(
+export function matchOmpSessionByCwd(
   cwd: string,
-  startAt: number,
-  endAt: number,
+  openedAt: number,
   env: NodeJS.ProcessEnv = process.env,
 ): PiSessionMatch {
-  const home = env.HOME || homedir();
+  const root = join(env.HOME || homedir(), '.omp', 'agent', 'sessions');
   const hits: Array<{ id: string | null; file: string }> = [];
-  for (const root of [join(home, '.omp', 'agent', 'sessions'), join(home, '.pi', 'agent', 'sessions')]) {
-    for (const slug of safeReaddir(root)) {
-      for (const file of listJsonl(join(root, slug))) {
-        const header = piSessionHeader(file);
-        if (!header || header.cwd !== cwd || !(header.startedAt <= endAt)) continue;
-        let lastWrite = 0;
-        try {
-          lastWrite = statSync(file).mtimeMs;
-        } catch {
-          continue;
-        }
-        if (lastWrite >= startAt) hits.push({ id: header.id, file });
+  for (const slug of safeReaddir(root)) {
+    for (const file of listJsonl(join(root, slug))) {
+      const header = piSessionHeader(file);
+      if (!header || header.cwd !== cwd || !(header.startedAt <= openedAt)) continue;
+      let lastWrite = 0;
+      try {
+        lastWrite = statSync(file).mtimeMs;
+      } catch {
+        continue;
       }
+      if (lastWrite >= openedAt) hits.push({ id: header.id, file });
     }
   }
   if (hits.length > 1) return 'ambiguous';

@@ -279,6 +279,38 @@ describe('ledger → verified intervals', () => {
     expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
   });
 
+  test('the OMP window join needs a session alive at the opening event, and never reads pi logs', () => {
+    const at1 = t('2026-10-04T12:00:00Z');
+    const at2 = t('2026-10-04T12:10:00Z');
+    const usage = { input: 9, output: 1, cacheRead: 0, cacheWrite: 0 };
+    // Started AFTER the opening event: it cannot have written it.
+    write(
+      join(root, '.omp', 'agent', 'sessions', '-late', '2026-10-04T12-05-00Z_late.jsonl'),
+      jsonl([
+        { type: 'session', id: 'late', timestamp: '2026-10-04T12:05:00Z', cwd: '/work/late' },
+        { type: 'message', timestamp: '2026-10-04T12:06:00Z', message: { role: 'assistant', usage } },
+      ]),
+    );
+    // A pi (not OMP) log in the same cwd: never matched for an id-less OMP line.
+    write(
+      join(root, '.pi', 'agent', 'sessions', '-late', '2026-10-04T11-00-00Z_pi.jsonl'),
+      jsonl([
+        { type: 'session', id: 'pi', timestamp: '2026-10-04T11:00:00Z', cwd: '/work/late' },
+        { type: 'message', timestamp: '2026-10-04T12:06:00Z', message: { role: 'assistant', usage } },
+      ]),
+    );
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
+    const [interval] = buildIntervals(
+      [{ ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/late' }, line(db, 2, 'report', at2, anonymous)],
+      env,
+    );
+    expect(interval).toMatchObject({ sessionMatch: null, usage: null });
+  });
+
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');
     write(

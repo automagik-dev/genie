@@ -18,7 +18,7 @@
 import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
-import { type UsageSample, matchPiSessionByCwd, readUsageSamples } from './metrics-usage.js';
+import { type UsageSample, matchOmpSessionByCwd, readUsageSamples } from './metrics-usage.js';
 
 export interface UsageTotals {
   calls: number;
@@ -138,7 +138,7 @@ function resolveIntervalSession(
   if (session.ambiguous) return { session, match: 'ambiguous' };
   if (session.source !== 'pi' || session.id !== null || session.file !== null) return { session, match: 'exact' };
   if (!from.cwd) return { session, match: null };
-  const found = matchPiSessionByCwd(from.cwd, from.at, to.at, env);
+  const found = matchOmpSessionByCwd(from.cwd, from.at, env);
   if (found === 'ambiguous') return { session, match: 'ambiguous' };
   if (found === null) return { session, match: null };
   return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };

@@ -162,5 +162,15 @@ describe('resolveRuntimeSession', () => {
       id: null,
       ambiguous: true,
     });
+    // OMP exports no PI_SESSION_*: inherited outer pi ids in an OMP shell are never taken for it.
+    expect(
+      resolveRuntimeSession({ OMPCODE: '1', PI_SESSION_ID: 'outer-pi', PI_SESSION_FILE: '/s/outer.jsonl' }),
+    ).toEqual({ id: null, source: 'pi', file: null, ambiguous: true });
+    // Codex with inherited pi ids: source follows the author order (codex), and no id is kept.
+    expect(resolveRuntimeSession({ CODEX_THREAD_ID: 'thr', PI_SESSION_ID: 'p' })).toMatchObject({
+      source: 'codex',
+      id: null,
+      ambiguous: true,
+    });
   });
 });
