@@ -34,6 +34,7 @@ import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
+import { registerMetricsCommand } from './term-commands/metrics.js';
 import { registerMikroCommands } from './term-commands/mikro.js';
 import { registerOrcaCommands } from './term-commands/orca.js';
 import { registerV5BoardCommands } from './term-commands/v5-board.js';
@@ -263,6 +264,7 @@ registerContextCommand(program);
 registerConfigCommand(program);
 registerIdeaCommand(program);
 registerMikroCommands(program);
+registerMetricsCommand(program);
 registerOrcaCommands(program);
 registerWishCommands(program);
 

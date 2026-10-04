@@ -144,10 +144,10 @@ Every release is cosign-signed with SLSA provenance, and `genie update` verifies
 
 ## Commands
 
-Genie v6.261003.1 has 16 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
+Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
 
 <details>
-<summary>All 16 commands</summary>
+<summary>All 17 commands</summary>
 
 | Command | What it does |
 |---------|-------------|
@@ -159,6 +159,7 @@ Genie v6.261003.1 has 16 CLI commands. Nothing runs in the background: every com
 | `genie idea` | Capture an idea into the roadmap board's Idea lane |
 | `genie init` | Set up per-repository state and remove Genie's own historical MCP entries, backup first |
 | `genie install` | Finish a verified install and deliver the skills under the consent scope you chose |
+| `genie metrics` | Opt-in lifecycle capture, off until `metrics enable`: a machine-local metadata ledger of card events with the runtime session they ran in; sends nothing anywhere |
 | `genie mikro` | Run and grow mikro microagents in any repository; `mikro call <agent>` returns validated JSON with every citation checked |
 | `genie orca` | Retired: a stub for one more release that prints a notice and writes nothing |
 | `genie setup` | Configure Genie |
