@@ -446,9 +446,10 @@ describe('genie wish report', () => {
         review: { verdict: 'SHIP', findings: [] },
         repairs: 1,
         rounds: [
-          { round: 1, status: 'fixed', verdict: 'SHIP' },
-          { round: 0, status: 'no response', verdict: '' },
+          { round: 1, status: 'no response', verdict: 'FIX-FIRST' },
+          { round: 2, status: 'fixed', verdict: 'SHIP' },
         ],
+        pr: { number: 7 },
         gate: { exitCode: 0 },
         checks: 'pass',
         stageReached: 'readback',
@@ -464,6 +465,8 @@ describe('genie wish report', () => {
         repairs: 3,
         rounds: [],
         gate: { exitCode: 1 },
+        checks: 'pending',
+        pr: null,
       },
     };
     const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
@@ -483,6 +486,8 @@ describe('genie wish report', () => {
       'outcome: verdict SHIP, round verdicts SHIP, repairs 1, gate exit 0, checks pass, stage reached readback\n',
     );
     expect(run(['wf_brain']).stdout).toContain('outcome: round 6, WRS 88\n');
+    // Never published: the 'pending' wish.js initialised is not an observation.
+    expect(run(['wf_fix']).stdout).toContain('outcome: verdict FIX-FIRST, repairs 3, gate exit 1\n');
     expect(run(['wf_replayed']).stdout).toContain('partial: a stage carries no tokens or duration');
     // A version-1 row, written before the outcome fields existed.
     const ledger = join(root, 'genie', 'metrics', 'wish-runs.jsonl');

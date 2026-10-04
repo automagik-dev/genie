@@ -74,13 +74,13 @@ parser's own error and exits 1.`;
 interface RunOutcome {
   /** wish: the final review verdict (SHIP / FIX-FIRST / BLOCKED). */
   verdict: string | null;
-  /** wish: the verdict of each repair round, in order (rounds that reached no review are skipped). */
+  /** wish: the verdict of each repair round that ran a review ('fixed'), in order; carried-forward verdicts are skipped. */
   roundVerdicts: string[];
   /** wish: repair rounds spent. */
   repairs: number | null;
   /** wish: the gate's exit code. */
   gateExitCode: number | null;
-  /** wish: the remote checks state the read-back saw ('pass', 'pending', …). */
+  /** wish: the remote checks state the read-back saw ('pass', 'pending', …); null when no PR was read back. */
   checks: string | null;
   /** wish: the furthest stage reached. */
   stageReached: string | null;
@@ -190,12 +190,17 @@ function toOutcome(result: Record<string, unknown> | null): RunOutcome | null {
   const rounds = Array.isArray(result.rounds) ? result.rounds : [];
   return {
     verdict: stringOrNull(objectOrNull(result.review)?.verdict),
+    // Only a 'fixed' round ran a review; 'no response' / 'unable' / 'no new commit' rounds carry the
+    // PREVIOUS verdict forward, which no review issued.
     roundVerdicts: rounds
-      .map((round) => stringOrNull(objectOrNull(round)?.verdict))
+      .map(objectOrNull)
+      .filter((round) => round?.status === 'fixed')
+      .map((round) => stringOrNull(round?.verdict))
       .filter((v): v is string => v !== null),
     repairs: numberOrNull(result.repairs),
     gateExitCode: numberOrNull(objectOrNull(result.gate)?.exitCode),
-    checks: stringOrNull(result.checks),
+    // wish.js initialises checks to 'pending' before publish: it is an observation only once a PR was read back.
+    checks: result.pr !== null && result.pr !== undefined ? stringOrNull(result.checks) : null,
     stageReached: stringOrNull(result.stageReached),
     round: numberOrNull(result.round),
     wrs: numberOrNull(objectOrNull(result.wrs)?.score),
