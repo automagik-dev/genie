@@ -12,7 +12,7 @@
  * the ledger is machine-local metadata (`src/lib/metrics-capture.ts`).
  */
 
-import { chmodSync, writeFileSync } from 'node:fs';
+import { chmodSync, statSync, writeFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import {
   type CaptureStatus,
@@ -96,7 +96,12 @@ async function runExport(options: ExportOptions): Promise<number> {
   const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt };
   if (options.out) {
     writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
-    chmodSync(options.out, 0o600);
+    // Tighten a pre-existing regular file only: never a tty or pipe (`--out /dev/stdout`), never fatal.
+    try {
+      if (statSync(options.out).isFile()) chmodSync(options.out, 0o600);
+    } catch {
+      // a file the operator can write but does not own keeps its mode
+    }
   }
   printOut(
     options.json
