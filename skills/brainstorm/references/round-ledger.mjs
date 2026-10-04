@@ -14,8 +14,13 @@
 //   render       --draft P                            rewrite the five ledger-owned sections
 //   check-design --design P --draft P [--root P]      template and Source checks
 //
-// Any JSON flag may be given as `@<file>` to read the JSON from that file, so a
-// question text never has to survive shell quoting.
+// Any JSON flag is given as `packed:<percent-encoded JSON>` — the form the
+// workflow's steps write, which crosses a model channel byte for byte — or as
+// `@<file>` to read the JSON from that file, so a question text never has to
+// survive shell quoting or a model re-serialising JSON. Inline JSON is refused:
+// it is exactly the form a model re-serialises, and an over-escaped quote in an
+// owner's answer then fails the reopen check forever. A human on the by-hand
+// path writes the payload to a file and passes `@<file>`.
 //
 // Rules a caller codes against:
 // - `apply` returns the round this run works on: 1 + the highest round recorded
@@ -70,6 +75,7 @@ const EVIDENCE_END = '<!-- genie-design-review:end -->';
 
 const USAGE = [
   'usage: round-ledger.mjs <command> [flags]',
+  '  every JSON flag takes packed:<percent-encoded JSON> or @<file>, never inline JSON',
   '  apply        --draft <DRAFT.md> [--answers <json>]',
   '  ask          --draft <DRAFT.md> --round <n> --questions <json>',
   '  ratchet      --draft <DRAFT.md> --round <n> --by <who> [--size <P|M|G>] [--scope <json>] [--approved <id>]...',
@@ -139,12 +145,20 @@ function jsonFlag(flags, name, fallback) {
   const raw = flags[name];
   if (raw === undefined) return fallback;
   let text = raw;
-  if (raw.startsWith('@')) {
+  if (raw.startsWith('packed:')) {
+    try {
+      text = decodeURIComponent(raw.slice('packed:'.length));
+    } catch (error) {
+      throw new UsageError(`--${name} is not a valid packed payload: ${error.message}`);
+    }
+  } else if (raw.startsWith('@')) {
     try {
       text = readFileSync(raw.slice(1), 'utf8');
     } catch (error) {
       throw new UsageError(`--${name} names a file that cannot be read: ${raw.slice(1)} (${error.code ?? error})`);
     }
+  } else {
+    throw new UsageError(`--${name} must be packed:<percent-encoded JSON> or @<file>, not inline JSON`);
   }
   try {
     return JSON.parse(text);
@@ -417,8 +431,7 @@ function settlementFor(asked, answer, round) {
 function answerAgain(settled, answer, result) {
   const same = asList(settled.answer).join(', ') === asList(answer.answer).join(', ');
   if (isSkip(answer.answer) || (same && answer.question === settled.question)) {
-    if (!isSkip(answer.answer))
-      result.applied.push({ id: settled.id, provenance: settled.provenance, unchanged: true });
+    if (!isSkip(answer.answer)) result.applied.push({ id: settled.id, unchanged: true });
     return null;
   }
   return `${settled.id} is Settled; it changes only through a question whose reopens names it and quotes old → new`;
@@ -440,7 +453,8 @@ function applyOne(ledger, answer, round, result) {
   ledger.asked.splice(index, 1);
   ledger.settled.push(entry);
   if (asked.reopens) findSettled(ledger, asked.reopens).reopenedBy = id;
-  result.applied.push({ id, provenance: entry.provenance, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
+  // The echo names what was applied and nothing the owner wrote: the DRAFT is the record of that.
+  result.applied.push({ id, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
   return null;
 }
 
@@ -450,6 +464,58 @@ function answerRefusal(ledger, answer, round, result, seen) {
   if (seen.has(answer.id)) return `${answer.id} is answered twice in one batch`;
   seen.add(answer.id);
   return applyOne(ledger, answer, round, result);
+}
+
+// The read model apply returns: `state`, a `packed:`-prefixed percent-encoded JSON payload, so the
+// transport identifies itself and a state a model decoded and re-formatted is refused. A Settled entry
+// keeps its id, kind, value, round and reopen links: the owner's words (answer, provenance) and the
+// question text stay in the DRAFT's ledger block and its rendered `## Settled` section, so the state grows
+// with the number of entries and never with what anyone wrote. The one exception is the question of the
+// review-findings choice still waiting to be acted on, which the workflow lists back to the lead and the
+// repairer. That is the latest review-findings entry that no reopen replaced and that was settled after the
+// last recorded review (the workflow's `pendingReviewChoice`, minus its settle-choice refinement): a choice
+// a later review has spent is history. The workflow builds that question from the reviewer's finding ids and
+// it quotes no owner answer; a reopen question quotes one verbatim, so a reopen entry never carries its
+// question. A question still OPEN rides `asked` (one batch at most) because the workflow relays it.
+const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
+
+function pendingFindingsChoice(ledger) {
+  const lastReview = Math.max(0, ...ledger.reviews.map((entry) => Number(entry.round) || 0));
+  const waiting = ledger.settled.filter(
+    (entry) =>
+      entry.kind === 'review-findings' &&
+      !entry.reopens &&
+      !entry.reopenedBy &&
+      (Number(entry.round) || 0) > lastReview,
+  );
+  return waiting.length > 0 ? waiting[waiting.length - 1] : null;
+}
+
+function settledView(entry, pending) {
+  const keepsQuestion = entry === pending;
+  return Object.fromEntries(
+    STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined && (key !== 'question' || keepsQuestion)).map((key) => [
+      key,
+      entry[key],
+    ]),
+  );
+}
+
+function stateOf(ledger) {
+  const pending = pendingFindingsChoice(ledger);
+  return {
+    settled: ledger.settled.map((entry) => settledView(entry, pending)),
+    asked: ledger.asked,
+    size: ledger.size,
+    scopeIn: ledger.scopeIn,
+    councils: ledger.councils,
+    reviews: ledger.reviews,
+  };
+}
+
+/** The one transport: payload bytes cross a model channel percent-packed, never as JSON a model re-serialises. */
+function pack(value) {
+  return encodeURIComponent(value).replace(/[!'()*~]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function commandApply(flags) {
@@ -465,7 +531,8 @@ function commandApply(flags) {
   }
   result.skipped = draft.ledger.asked.map((entry) => entry.id);
   if (draft.dirty || result.applied.some((entry) => !entry.unchanged)) saveDraft(draft);
-  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, ledger: draft.ledger } };
+  const state = `packed:${pack(JSON.stringify(stateOf(draft.ledger)))}`;
+  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, state } };
 }
 
 // ---------------------------------------------------------------- ask

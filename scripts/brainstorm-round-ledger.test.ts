@@ -26,17 +26,30 @@ const FIXTURE_DRAFT = join(FIXTURE, 'DRAFT.md');
 const DIGEST = 'a'.repeat(64);
 
 type Out = Record<string, any>;
-type Run = { code: number; out: Out };
+type Run = { code: number; out: Out; stdout: string };
 
 function ledger(...args: string[]): Run {
   const result = Bun.spawnSync(['node', LEDGER, ...args], { stdout: 'pipe', stderr: 'pipe' });
   const stdout = result.stdout.toString();
   try {
-    return { code: result.exitCode ?? -1, out: JSON.parse(stdout) };
+    return { code: result.exitCode ?? -1, out: JSON.parse(stdout), stdout };
   } catch {
     throw new Error(`round-ledger printed no JSON (exit ${result.exitCode}): ${stdout}${result.stderr.toString()}`);
   }
 }
+
+// The one transport the workflow's steps use: percent-packed JSON. The alphabet is [A-Za-z0-9%._-]
+// alone, so a payload is byte-identical after JSON.stringify and safe as one quoted shell argument.
+const pack = (value: unknown): string =>
+  `packed:${encodeURIComponent(JSON.stringify(value)).replace(
+    /[!'()*~]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  )}`;
+// apply's `state` rides the same self-identifying transport: the `packed:` prefix is part of the payload.
+const unpack = (state: string): Out => {
+  expect(state.startsWith('packed:')).toBe(true);
+  return JSON.parse(decodeURIComponent(state.slice('packed:'.length)));
+};
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -77,9 +90,11 @@ function question(overrides: Out = {}): Out {
 const apply = (draft: string, answers?: Out[]) =>
   answers === undefined
     ? ledger('apply', '--draft', draft)
-    : ledger('apply', '--draft', draft, '--answers', JSON.stringify(answers));
+    : ledger('apply', '--draft', draft, '--answers', pack(answers));
 const ask = (draft: string, round: number, questions: Out[]) =>
-  ledger('ask', '--draft', draft, '--round', String(round), '--questions', JSON.stringify(questions));
+  ledger('ask', '--draft', draft, '--round', String(round), '--questions', pack(questions));
+const review = (draft: string, round: number, verdict: string, ...flags: string[]) =>
+  ledger('review', '--draft', draft, '--round', String(round), '--verdict', verdict, '--digest', DIGEST, ...flags);
 const answer = (id: string, text: string | string[], asked = 'Which size fits this idea?') => ({
   id,
   question: asked,
@@ -112,8 +127,9 @@ describe('round trip: apply → ask → apply → render', () => {
     const second = apply(draft, [answer('R1-1', 'M (Recommended)')]);
     expect(second.code).toBe(0);
     expect(second.out.round).toBe(2);
-    expect(second.out.applied).toEqual([{ id: 'R1-1', provenance: 'owner picked "M (Recommended)"' }]);
-    expect(second.out.ledger.settled).toEqual([
+    // The echo names what was applied; the DRAFT is the record of what it means.
+    expect(second.out.applied).toEqual([{ id: 'R1-1' }]);
+    expect(blockOf(draft).settled).toEqual([
       {
         id: 'R1-1',
         kind: 'decision',
@@ -195,7 +211,7 @@ describe('apply', () => {
     expect(edit.out.refused[0].reason).toContain('R1-1 is Settled; it changes only through a question whose reopens');
     const again = apply(draft, [answer('R1-1', 'M (Recommended)')]);
     expect(again.code).toBe(0);
-    expect(again.out.applied).toEqual([{ id: 'R1-1', provenance: 'owner picked "M (Recommended)"', unchanged: true }]);
+    expect(again.out.applied).toEqual([{ id: 'R1-1', unchanged: true }]);
     expect(readFileSync(draft, 'utf8')).toBe(before);
   });
 
@@ -205,7 +221,7 @@ describe('apply', () => {
     ask(draft, 1, [question(), question({ question: 'Who owns it?', header: 'Owner' })]);
     const run = apply(draft, [answer('R1-1', 'Neither: split it in two'), answer('R1-2', '  ', 'Who owns it?')]);
     expect(run.code).toBe(0);
-    const [settled] = run.out.ledger.settled;
+    const [settled] = blockOf(draft).settled;
     expect(settled.value).toBeNull();
     expect(settled.answer).toBe('Neither: split it in two');
     expect(settled.provenance).toBe('owner said: "Neither: split it in two"');
@@ -228,7 +244,7 @@ describe('apply', () => {
       answer('R1-3', ['Ledger', 'none of these'], 'Which groups never?'),
     ]);
     expect(run.code).toBe(0);
-    const byId = Object.fromEntries(run.out.ledger.settled.map((entry: Out) => [entry.id, entry]));
+    const byId = Object.fromEntries(blockOf(draft).settled.map((entry: Out) => [entry.id, entry]));
     expect(byId['R1-1'].value).toEqual(['g1', 'g2']);
     expect(byId['R1-1'].answer).toEqual(['Ledger', 'Routing']);
     expect(byId['R1-2'].value).toEqual(['g2', 'g3']);
@@ -252,9 +268,159 @@ describe('apply', () => {
     expect(apply(draft).code).toBe(1);
     writeFileSync(draft, '# DRAFT\n\n```ledger\n{}\n```\n\n```ledger\n{}\n```\n');
     expect(apply(draft).out.refused[0].reason).toContain('holds 2 ledger blocks');
-    const bad = ledger('apply', '--draft', newDraft(), '--answers', '{not json');
+    const bad = ledger('apply', '--draft', newDraft(), '--answers', 'packed:%7Bnot%20json');
     expect(bad.code).toBe(2);
     expect(bad.out.error).toContain('--answers is not valid JSON');
+  });
+});
+
+describe('the packed transport: payload bytes never meet a model that re-serialises them', () => {
+  test('a packed payload survives quotes, backslashes, an arrow and an emoji byte for byte', () => {
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    const text = 'Keep the "helper" as-is? It\'s C:\\tmp\\x (yes!) *really*~ → “small” 🧞';
+    const questions = pack([question({ question: text })]);
+    expect(questions).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
+    const asked = ledger('ask', '--draft', draft, '--round', '1', '--questions', questions);
+    expect(asked.code).toBe(0);
+    expect(asked.out.asked[0].question).toBe(text);
+    expect(blockOf(draft).asked[0].question).toBe(text);
+
+    const settled = ledger('apply', '--draft', draft, '--answers', pack([answer('R1-1', 'G', text)]));
+    expect(settled.code).toBe(0);
+    expect(blockOf(draft).settled[0]).toMatchObject({ id: 'R1-1', answer: 'G', value: 'G' });
+  });
+
+  test('apply echoes a bounded packed state, not the ledger, and its size ignores owner prose', () => {
+    const settleFreeText = (text: string) => {
+      const draft = newDraft();
+      expect(apply(draft).code).toBe(0);
+      expect(ask(draft, 1, [question()]).code).toBe(0);
+      const run = apply(draft, [answer('R1-1', text)]);
+      expect(run.code).toBe(0);
+      return { run, draft };
+    };
+    const short = settleFreeText('keep it');
+    const padded = settleFreeText(`keep it${'a'.repeat(2048)}`);
+
+    expect(short.run.out.ledger).toBeUndefined();
+    expect(short.run.out.state).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
+    const state = unpack(short.run.out.state);
+    expect(Object.keys(state)).toEqual(['settled', 'asked', 'size', 'scopeIn', 'councils', 'reviews']);
+    expect(state).toEqual({
+      settled: [{ id: 'R1-1', kind: 'decision', value: null, round: 2 }],
+      asked: [],
+      size: [],
+      scopeIn: [],
+      councils: [],
+      reviews: [],
+    });
+    // The owner's words stay in the DRAFT and its rendered sections; apply's stdout is the same size.
+    expect(blockOf(padded.draft).settled[0].answer).toBe(`keep it${'a'.repeat(2048)}`);
+    expect(short.run.stdout).not.toContain('keep it');
+    expect(Math.abs(short.run.stdout.length - padded.run.stdout.length)).toBeLessThanOrEqual(64);
+  });
+
+  // The measured failure: 9 rounds of 4 questions grew apply's state from 1.9 KB to 14.3 KB, because every
+  // Settled entry kept its question. Nothing the owner or the lead wrote may set the state's size once
+  // answered; only the number of entries does.
+  test('apply state after nine rounds does not grow with question or answer length', () => {
+    const stateAfterNineRounds = (pad: number) => {
+      const draft = newDraft();
+      expect(apply(draft).code).toBe(0);
+      const third = { label: 'P', description: 'a single pass', value: 'P' };
+      let last = apply(draft);
+      for (let round = 1; round <= 9; round += 1) {
+        const questions = [1, 2, 3, 4].map((n) =>
+          question({
+            question: `Q${round}.${n} ${'q'.repeat(pad)}`,
+            header: `H${n}`,
+            options: [PICK_M, PICK_G, third],
+          }),
+        );
+        expect(ask(draft, round, questions).code).toBe(0);
+        // Questions 1 and 3 are answered in the owner's own words, 2 and 4 by picking an option.
+        const answers = questions.map((q, i) =>
+          answer(`R${round}-${i + 1}`, i % 2 === 0 ? `a${'a'.repeat(pad)}` : 'G', q.question),
+        );
+        last = apply(draft, answers);
+        expect(last.out.refused).toEqual([]);
+      }
+      return { last, draft };
+    };
+    const short = stateAfterNineRounds(10);
+    const long = stateAfterNineRounds(2000);
+    expect(unpack(short.last.out.state).settled).toHaveLength(36);
+    expect(unpack(long.last.out.state).settled).toHaveLength(36);
+    // The same state, byte for byte in size, whatever the question and answer lengths.
+    expect(long.last.out.state.length).toBe(short.last.out.state.length);
+    expect(long.last.stdout.length).toBe(short.last.stdout.length);
+    // The prose is in the DRAFT, which is where it belongs.
+    expect(blockOf(long.draft).settled[0].question.length).toBeGreaterThan(2000);
+    expect(blockOf(long.draft).settled[0].answer.length).toBeGreaterThan(2000);
+  });
+
+  test('the state keeps a settled review-findings question, which the workflow lists back to the lead', () => {
+    const findings = 'The design review returned FIX-FIRST. Open findings: HIGH-1 (HIGH) a claim. How should it go on?';
+    const options = [
+      { label: 'Repair again (Recommended)', description: 'repair', value: 'repair' },
+      { label: 'Stop', description: 'stop', value: 'stop' },
+    ];
+    const draft = settledDraft(
+      [question({ kind: 'review-findings', question: findings, header: 'Review', options })],
+      [answer('R1-1', 'Repair again (Recommended)', findings)],
+    );
+    const again = apply(draft);
+    expect(unpack(again.out.state).settled).toEqual([
+      { id: 'R1-1', kind: 'review-findings', question: findings, value: 'repair', round: 2 },
+    ]);
+  });
+
+  // The workflow lists the findings back from the one choice still waiting to be acted on
+  // (pendingReviewChoice: unreopened, settled after the last recorded review, the latest of those). A choice
+  // a recorded review has spent is history, and history lives in the DRAFT: three repairs of 2000-character
+  // claims once put 62 KB of it back into every apply.
+  test('apply state keeps the question of the one unspent review-findings choice, however many repairs are spent', () => {
+    const options = [
+      { label: 'Repair again (Recommended)', description: 'repair', value: 'repair' },
+      { label: 'Stop', description: 'stop', value: 'stop' },
+    ];
+    const findings = (tag: string, pad: number) =>
+      `The design review returned FIX-FIRST. Open findings: ${tag} (HIGH) ${'c'.repeat(pad)}. How should it go on?`;
+    const afterRepairs = (spent: number, pad: number) => {
+      const draft = newDraft();
+      expect(apply(draft).code).toBe(0);
+      let round = 1;
+      for (let index = 1; index <= spent; index += 1) {
+        const text = findings(`HIGH-${index}`, pad);
+        expect(
+          ask(draft, round, [question({ kind: 'review-findings', question: text, header: 'Review', options })]).code,
+        ).toBe(0);
+        const settled = apply(draft, [answer(`R${round}-1`, 'Repair again (Recommended)', text)]);
+        expect(settled.out.refused).toEqual([]);
+        round = settled.out.round;
+        expect(review(draft, round, 'FIX-FIRST', '--repaired', '--findings', pack([`HIGH-${index}`])).code).toBe(0);
+      }
+      const text = findings('HIGH-last', 20);
+      expect(
+        ask(draft, round, [question({ kind: 'review-findings', question: text, header: 'Review', options })]).code,
+      ).toBe(0);
+      const run = apply(draft, [answer(`R${round}-1`, 'Repair again (Recommended)', text)]);
+      return { run, text, draft };
+    };
+    const short = afterRepairs(3, 10);
+    const long = afterRepairs(3, 2000);
+    const state = unpack(long.run.out.state);
+    expect(state.settled).toHaveLength(4);
+    // Only the latest choice, which no recorded review has spent, carries its question.
+    expect(state.settled.filter((entry: Out) => entry.question !== undefined).map((entry: Out) => entry.id)).toEqual([
+      state.settled[3].id,
+    ]);
+    expect(state.settled[3].question).toBe(long.text);
+    // So the state is the same size whatever the spent findings said.
+    expect(long.run.out.state.length).toBe(short.run.out.state.length);
+    // The spent questions are still in the DRAFT.
+    expect(blockOf(long.draft).settled[0].question.length).toBeGreaterThan(2000);
   });
 });
 
@@ -279,12 +445,63 @@ describe('reopen: a Settled id changes only through a question that quotes old �
     expect(asked.out.asked[0]).toMatchObject({ id: 'R2-1', reopens: 'R1-1' });
     const run = apply(draft, [answer('R2-1', 'G', text)]);
     expect(run.code).toBe(0);
-    expect(run.out.applied).toEqual([{ id: 'R2-1', provenance: 'owner picked "G"', reopens: 'R1-1' }]);
-    const settled = Object.fromEntries(run.out.ledger.settled.map((entry: Out) => [entry.id, entry]));
+    expect(run.out.applied).toEqual([{ id: 'R2-1', reopens: 'R1-1' }]);
+    const settled = Object.fromEntries(blockOf(draft).settled.map((entry: Out) => [entry.id, entry]));
     expect(settled['R1-1']).toMatchObject({ answer: 'M (Recommended)', reopenedBy: 'R2-1' });
     expect(settled['R2-1']).toMatchObject({ value: 'G', reopens: 'R1-1' });
     const twice = ask(draft, 3, [reopen(text)]);
     expect(twice.out.refused[0].reason).toBe('R1-1 was already reopened by R2-1; reopen that one instead');
+  });
+
+  test('a reopen whose quoted answer holds inner quotes is accepted through the packed transport', () => {
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    const oldAnswer = 'the "reflection" daily, in the owner\'s words';
+    expect(ledger('ask', '--draft', draft, '--round', '1', '--questions', pack([question()])).code).toBe(0);
+    expect(ledger('apply', '--draft', draft, '--answers', pack([answer('R1-1', oldAnswer)])).code).toBe(0);
+    const text = `You answered: "${oldAnswer}" → keep it weekly instead?`;
+    const asked = ledger(
+      'ask',
+      '--draft',
+      draft,
+      '--round',
+      '2',
+      '--questions',
+      pack([question({ question: text, header: 'Reopen', reopens: 'R1-1' })]),
+    );
+    expect(asked.code).toBe(0);
+    expect(asked.out.asked[0]).toMatchObject({ id: 'R2-1', reopens: 'R1-1' });
+    const run = ledger('apply', '--draft', draft, '--answers', pack([answer('R2-1', 'G', text)]));
+    expect(run.code).toBe(0);
+    expect(run.out.applied).toEqual([{ id: 'R2-1', reopens: 'R1-1' }]);
+    expect(unpack(run.out.state).settled).toEqual([
+      expect.objectContaining({ id: 'R1-1', value: null, reopenedBy: 'R2-1' }),
+      expect.objectContaining({ id: 'R2-1', kind: 'decision', value: 'G', reopens: 'R1-1' }),
+    ]);
+  });
+
+  test('a reopen never puts the old owner answer back into the packed state', () => {
+    const stateAfterReopen = (oldAnswer: string) => {
+      const draft = settledDraft([question()], [answer('R1-1', oldAnswer)]);
+      const text = `R1-1 said "${oldAnswer}" → grow to G?`;
+      expect(ask(draft, 2, [reopen(text)]).code).toBe(0);
+      const run = apply(draft, [answer('R2-1', 'G', text)]);
+      expect(run.code).toBe(0);
+      expect(run.out.applied).toEqual([{ id: 'R2-1', reopens: 'R1-1' }]);
+      return { run, draft, text };
+    };
+    const short = stateAfterReopen('keep it');
+    const long = stateAfterReopen(`keep it${'z'.repeat(2000)}`);
+    const state = unpack(long.run.out.state);
+    expect(state.settled).toEqual([
+      { id: 'R1-1', kind: 'decision', value: null, round: 2, reopenedBy: 'R2-1' },
+      { id: 'R2-1', kind: 'decision', value: 'G', round: 3, reopens: 'R1-1' },
+    ]);
+    expect(long.run.stdout).not.toContain('zzzz');
+    expect(long.run.out.state.length).toBe(short.run.out.state.length);
+    // The DRAFT still holds the owner's words and the reopen question that quotes them.
+    expect(blockOf(long.draft).settled[1].question).toBe(long.text);
+    expect(blockOf(long.draft).settled[0].answer).toBe(`keep it${'z'.repeat(2000)}`);
   });
 
   test('the old answer must sit inside quotation marks; a bare substring is not a quote', () => {
@@ -374,7 +591,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
   test('raises are recorded with who and which round', () => {
     const draft = newDraft();
     apply(draft);
-    const run = ratchet(draft, 1, '--size', 'M', '--scope', JSON.stringify(['ledger', 'workflow']));
+    const run = ratchet(draft, 1, '--size', 'M', '--scope', pack(['ledger', 'workflow']));
     expect(run.code).toBe(0);
     expect(run.out.changes).toEqual([
       { change: 'size-raised', value: 'M' },
@@ -388,12 +605,12 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
   test('a size or scope downgrade without an answer is refused and writes nothing', () => {
     const draft = newDraft();
     apply(draft);
-    ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow']));
+    ratchet(draft, 1, '--size', 'G', '--scope', pack(['ledger', 'workflow']));
     const before = readFileSync(draft, 'utf8');
     const smaller = ratchet(draft, 2, '--size', 'M');
     expect(smaller.code).toBe(1);
     expect(smaller.out.refused[0].reason).toContain('size:M lowers what the owner approved');
-    const narrower = ratchet(draft, 2, '--scope', JSON.stringify(['ledger']));
+    const narrower = ratchet(draft, 2, '--scope', pack(['ledger']));
     expect(narrower.code).toBe(1);
     expect(narrower.out.refused[0].reason).toContain('scope-drop:workflow lowers what the owner approved');
     expect(readFileSync(draft, 'utf8')).toBe(before);
@@ -412,7 +629,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     });
     const draft = newDraft();
     apply(draft);
-    ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow']));
+    ratchet(draft, 1, '--size', 'G', '--scope', pack(['ledger', 'workflow']));
     ask(draft, 1, [shrink]);
     apply(draft, [{ id: 'R1-1', question: shrink.question, answer: ['Shrink to P', 'Drop workflow'] }]);
 
@@ -420,7 +637,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     expect(wrong.code).toBe(1);
     expect(wrong.out.refused[0].reason).toBe('--approved R1-1 did not agree to size:M');
 
-    const run = ratchet(draft, 2, '--size', 'P', '--scope', JSON.stringify(['ledger']), '--approved', 'R1-1');
+    const run = ratchet(draft, 2, '--size', 'P', '--scope', pack(['ledger']), '--approved', 'R1-1');
     expect(run.code).toBe(0);
     expect(run.out).toMatchObject({ size: 'P', scope: ['ledger'] });
     const block = blockOf(draft);
@@ -455,7 +672,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     ];
     const draft = newDraft();
     expect(apply(draft).code).toBe(0);
-    expect(ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow'])).code).toBe(0);
+    expect(ratchet(draft, 1, '--size', 'G', '--scope', pack(['ledger', 'workflow'])).code).toBe(0);
     expect(ask(draft, 1, drops).code).toBe(0);
     const settled = apply(draft, [
       answer('R1-1', 'Drop it', drops[0].question),
@@ -467,7 +684,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
 
   test('P3: two drops approved by two answers record each with its own approvedBy, once', () => {
     const draft = twoDropDraft();
-    const run = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-2');
+    const run = ratchet(draft, 2, '--scope', pack([]), '--approved', 'R1-1', '--approved', 'R1-2');
     expect(run.code).toBe(0);
     expect(run.out.scope).toEqual([]);
     expect(run.out.changes).toEqual([
@@ -479,7 +696,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     expect(block.scopeIn[1].dropped).toEqual({ by: 'lead', round: 2, approvedBy: 'R1-2' });
 
     const before = readFileSync(draft, 'utf8');
-    const again = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-2');
+    const again = ratchet(draft, 2, '--scope', pack([]), '--approved', 'R1-1', '--approved', 'R1-2');
     expect(again.code).toBe(0);
     expect(again.out.changes).toEqual([]);
     expect(readFileSync(draft, 'utf8')).toBe(before);
@@ -503,7 +720,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     );
     const draft = newDraft();
     expect(apply(draft).code).toBe(0);
-    expect(ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow'])).code).toBe(0);
+    expect(ratchet(draft, 1, '--size', 'G', '--scope', pack(['ledger', 'workflow'])).code).toBe(0);
     expect(ask(draft, 1, asked).code).toBe(0);
     const settled = apply(
       draft,
@@ -520,7 +737,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
   }
 
   const dropAll = (draft: string, ...approved: string[]) =>
-    ratchet(draft, 2, '--scope', JSON.stringify([]), ...approved.flatMap((id) => ['--approved', id]));
+    ratchet(draft, 2, '--scope', pack([]), ...approved.flatMap((id) => ['--approved', id]));
   const droppedBy = (draft: string) => blockOf(draft).scopeIn.map((entry: Out) => entry.dropped?.approvedBy);
 
   test('H1: overlapping answers are accepted in either --approved order, and each drop takes the newest that names it', () => {
@@ -569,7 +786,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     const draft = twoDropDraft();
     const before = readFileSync(draft, 'utf8');
 
-    const partial = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1');
+    const partial = ratchet(draft, 2, '--scope', pack([]), '--approved', 'R1-1');
     expect(partial.code).toBe(1);
     expect(partial.out.refused[0].reason).toBe('--approved R1-1 did not agree to scope-drop:workflow');
     expect(readFileSync(draft, 'utf8')).toBe(before);
@@ -579,7 +796,7 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     expect(idle.out.refused[0].reason).toBe('--approved R1-1 did not agree to size:M');
     expect(readFileSync(draft, 'utf8')).toBe(before);
 
-    const twice = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-1');
+    const twice = ratchet(draft, 2, '--scope', pack([]), '--approved', 'R1-1', '--approved', 'R1-1');
     expect(twice.code).toBe(2);
     expect(twice.out.error).toBe('--approved R1-1 is given twice');
     expect(readFileSync(draft, 'utf8')).toBe(before);
@@ -605,7 +822,7 @@ describe('council: the ceiling, the owner approval and the cap of 3', () => {
   test('within the ceiling a convening is recorded with the decisions it named', () => {
     const draft = newDraft();
     apply(draft);
-    const run = council(draft, 1, 'wf_a', 1, '--decided', JSON.stringify(['P1', 'P2']));
+    const run = council(draft, 1, 'wf_a', 1, '--decided', pack(['P1', 'P2']));
     expect(run.code).toBe(0);
     expect(run.out).toEqual({ council: { run: 'wf_a', round: 1, decided: ['P1', 'P2'] }, count: 1, ceiling: 1 });
   });
@@ -666,8 +883,8 @@ describe('council: the ceiling, the owner approval and the cap of 3', () => {
   test('never past 3, and no approval question is asked at the cap', () => {
     const draft = newDraft();
     apply(draft);
-    council(draft, 1, 'wf_1', 3, '--decided', JSON.stringify(['P1']));
-    council(draft, 1, 'wf_2', 3, '--decided', JSON.stringify(['P2']));
+    council(draft, 1, 'wf_1', 3, '--decided', pack(['P1']));
+    council(draft, 1, 'wf_2', 3, '--decided', pack(['P2']));
     ask(draft, 1, [approval]);
     approve(draft, 'R1-1', 'Convene anyway');
     expect(council(draft, 2, 'wf_3', 3).code).toBe(0);
@@ -684,23 +901,20 @@ describe('council: the ceiling, the owner approval and the cap of 3', () => {
   test('a repeated run id or decision id is refused; a ceiling past 3 is usage', () => {
     const draft = newDraft();
     apply(draft);
-    council(draft, 1, 'wf_a', 3, '--decided', JSON.stringify(['P1']));
+    council(draft, 1, 'wf_a', 3, '--decided', pack(['P1']));
     expect(council(draft, 2, 'wf_a', 3).out.refused[0].reason).toBe('council run wf_a is already recorded');
-    const reused = council(draft, 2, 'wf_b', 3, '--decided', JSON.stringify(['P1']));
+    const reused = council(draft, 2, 'wf_b', 3, '--decided', pack(['P1']));
     expect(reused.out.refused[0].reason).toBe("P1 already name an earlier council's decisions");
     expect(council(draft, 2, 'wf_b', 4).code).toBe(2);
-    expect(council(draft, 2, 'wf_b', 3, '--decided', JSON.stringify(['D1'])).code).toBe(2);
+    expect(council(draft, 2, 'wf_b', 3, '--decided', pack(['D1'])).code).toBe(2);
   });
 });
 
 describe('review', () => {
-  const review = (draft: string, round: number, verdict: string, ...flags: string[]) =>
-    ledger('review', '--draft', draft, '--round', String(round), '--verdict', verdict, '--digest', DIGEST, ...flags);
-
   test('appends each verdict with its findings; nothing is recorded after a SHIP', () => {
     const draft = newDraft();
     apply(draft);
-    const first = review(draft, 1, 'FIX-FIRST', '--findings', JSON.stringify(['HIGH-1', 'C11']));
+    const first = review(draft, 1, 'FIX-FIRST', '--findings', pack(['HIGH-1', 'C11']));
     expect(first.out).toEqual({
       review: { verdict: 'FIX-FIRST', digest: DIGEST, round: 1, repaired: false, findings: ['HIGH-1', 'C11'] },
       ordinal: 1,
@@ -989,6 +1203,26 @@ describe('usage', () => {
     const run = ledger('ask', '--draft', draft, '--round', '1', '--questions', `@${file}`);
     expect(run.code).toBe(0);
     expect(run.out.asked[0].question).toBe('It\'s the owner\'s call: "M" or `G`?');
+  });
+
+  test('a raw inline JSON flag is usage that writes nothing: only packed: or @<file> carry a payload', () => {
+    const draft = newDraft();
+    apply(draft);
+    const raw = ledger('ask', '--draft', draft, '--round', '1', '--questions', JSON.stringify([question()]));
+    expect(raw.code).toBe(2);
+    expect(raw.out.error).toBe('--questions must be packed:<percent-encoded JSON> or @<file>, not inline JSON');
+    expect(blockOf(draft).asked).toEqual([]);
+    expect(ledger('apply', '--draft', draft, '--answers', '[]').code).toBe(2);
+  });
+
+  test('a packed flag decodes, and a mangled one is usage that writes nothing', () => {
+    const draft = newDraft();
+    apply(draft);
+    expect(ledger('ask', '--draft', draft, '--round', '1', '--questions', pack([question()])).code).toBe(0);
+    const bad = ledger('ask', '--draft', draft, '--round', '2', '--questions', 'packed:%ZZ');
+    expect(bad.code).toBe(2);
+    expect(bad.out.error).toContain('--questions is not a valid packed payload');
+    expect(blockOf(draft).asked).toHaveLength(1);
   });
 
   test('commands other than apply refuse a DRAFT that does not exist', () => {

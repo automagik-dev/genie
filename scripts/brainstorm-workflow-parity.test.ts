@@ -95,6 +95,22 @@ describe('brainstorm.js carries the spine the design fixes', () => {
     expect(carried).toBe(rule);
   });
 
+  test('every JSON payload crosses to the ledger packed, never as a file the agent re-types', () => {
+    expect(script).toContain('const payload = (value) => `packed:${pack(JSON.stringify(value))}`');
+    for (const flag of ['--answers', '--questions', '--scope', '--decided', '--findings']) {
+      expect(script).toContain(`'${flag}', payload(`);
+    }
+    expect(script).not.toContain('files: {');
+    expect(script).not.toContain('@{');
+  });
+
+  test('the argument cap stays under the 128 KiB one Linux argv element can hold', () => {
+    const cap = Number(/const ARG_CAP = (\d+)/.exec(script)?.[1]);
+    expect(cap).toBeGreaterThan(0);
+    expect(cap).toBeLessThan(131_072);
+    expect(script).toContain('const oversized = oversizedArg(spec.steps)');
+  });
+
   test('the result names the agents that returned null `notConvened`, as every catalog workflow does', () => {
     expect(script).toContain('    notConvened: notConvened.slice(),');
     expect(script).toContain('`notConvened`\n// lists the label of every agent that returned null or threw');
