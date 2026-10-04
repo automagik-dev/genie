@@ -443,15 +443,17 @@ function unusedConvene() {
 }
 
 // Each downgrade token (`size:<S>`, `scope-drop:<item>`) needs an unused, unreopened Settled decision
-// whose value names it; one answer may pay for several tokens, and a token no answer names stays out.
+// whose value names it: the NEWEST such answer, as when one answer had to name every token. One answer may
+// pay for several tokens, and a token no answer names stays out. The ledger makes the same choice over the
+// ids it is passed (the newest by Settled position), so the two cannot disagree.
 function downgradeApprovals(tokens) {
   const used = usedApprovals()
-  const approvals = ledger.settled.filter(
-    (entry) => entry.kind === 'decision' && !entry.reopenedBy && !used.has(entry.id),
-  )
+  const newestFirst = ledger.settled
+    .filter((entry) => entry.kind === 'decision' && !entry.reopenedBy && !used.has(entry.id))
+    .reverse()
   const byToken = new Map()
   for (const token of tokens) {
-    const found = approvals.find((entry) => asList(entry.value).includes(token))
+    const found = newestFirst.find((entry) => asList(entry.value).includes(token))
     if (found) byToken.set(token, found)
   }
   return byToken
@@ -490,8 +492,13 @@ function ratchetPlan(plan) {
   const scopeChanges = diff.added.length > 0 || kept.length < diff.dropped.length
   const scope = scopeChanges ? [...diff.wantedScope, ...kept] : null
   if (!size && !scope) return null
-  const approvedBy = unique([...approvals.values()].map((entry) => text(entry.id)))
-  return { size, scope, approvedBy, by: approvedBy.length ? 'owner' : 'lead' }
+  // The ids go out in Settled order, which is the order the ledger resolves them in, never in drop order.
+  const paying = new Set(approvals.values())
+  const approvedBy = ledger.settled.filter((entry) => paying.has(entry)).map((entry) => text(entry.id))
+  // One call has one `by`: the owner's only when every change in it is a downgrade an answer approved. A raise or
+  // an addition is the lead's own, and rides with `lead` even beside an approved drop (the drop keeps its approvedBy).
+  const leadAuthored = Boolean(size && !diff.lowered) || diff.added.length > 0
+  return { size, scope, approvedBy, by: approvedBy.length && !leadAuthored ? 'owner' : 'lead' }
 }
 
 // ---------------------------------------------------------------- questions

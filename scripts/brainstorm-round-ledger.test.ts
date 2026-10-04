@@ -485,6 +485,86 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     expect(readFileSync(draft, 'utf8')).toBe(before);
   });
 
+  /**
+   * Raised to G with `ledger` and `workflow` IN, then one Settled answer per entry of `drops`: R1-<n> is a
+   * multi-select naming `scope-drop:<item>` for each item its entry lists, so answers can overlap.
+   */
+  function overlapDraft(...drops: string[][]): string {
+    const asked = drops.map((items, index) =>
+      question({
+        question: `Which items go (answer ${index + 1})?`,
+        header: `Drop ${index + 1}`,
+        multiSelect: true,
+        options: [
+          ...items.map((item) => ({ label: `Drop ${item}`, description: 'narrower', value: `scope-drop:${item}` })),
+          { label: 'Keep all', description: 'wider', value: 'keep' },
+        ],
+      }),
+    );
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    expect(ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow'])).code).toBe(0);
+    expect(ask(draft, 1, asked).code).toBe(0);
+    const settled = apply(
+      draft,
+      drops.map((items, index) =>
+        answer(
+          `R1-${index + 1}`,
+          items.map((item) => `Drop ${item}`),
+          asked[index].question,
+        ),
+      ),
+    );
+    expect(settled.out.refused).toEqual([]);
+    return draft;
+  }
+
+  const dropAll = (draft: string, ...approved: string[]) =>
+    ratchet(draft, 2, '--scope', JSON.stringify([]), ...approved.flatMap((id) => ['--approved', id]));
+  const droppedBy = (draft: string) => blockOf(draft).scopeIn.map((entry: Out) => entry.dropped?.approvedBy);
+
+  test('H1: overlapping answers are accepted in either --approved order, and each drop takes the newest that names it', () => {
+    // R1-1 names only `workflow`; R1-2 names both. The newest answer naming a drop pays for it, so R1-2 pays
+    // for both and R1-1 stays unused: the call neither depends on the flag order nor refuses a covering set.
+    for (const order of [
+      ['R1-1', 'R1-2'],
+      ['R1-2', 'R1-1'],
+    ]) {
+      const draft = overlapDraft(['workflow'], ['ledger', 'workflow']);
+      const run = dropAll(draft, ...order);
+      expect(run.code).toBe(0);
+      expect(run.out.changes).toEqual([
+        { change: 'scope-dropped', item: 'ledger' },
+        { change: 'scope-dropped', item: 'workflow' },
+      ]);
+      expect(droppedBy(draft)).toEqual(['R1-2', 'R1-2']);
+    }
+
+    // R1-1 names both; the newer R1-2 names only `workflow`: each drop still takes the newest naming it.
+    for (const order of [
+      ['R1-1', 'R1-2'],
+      ['R1-2', 'R1-1'],
+    ]) {
+      const draft = overlapDraft(['ledger', 'workflow'], ['workflow']);
+      expect(dropAll(draft, ...order).code).toBe(0);
+      expect(droppedBy(draft)).toEqual(['R1-1', 'R1-2']);
+    }
+  });
+
+  test('an answer that names none of the downgrades is refused by name, whatever the order, and nothing is written', () => {
+    for (const order of [
+      ['R1-1', 'R1-2', 'R1-3'],
+      ['R1-3', 'R1-2', 'R1-1'],
+    ]) {
+      const draft = overlapDraft(['ledger'], ['workflow'], ['elsewhere']);
+      const before = readFileSync(draft, 'utf8');
+      const run = dropAll(draft, ...order);
+      expect(run.code).toBe(1);
+      expect(run.out.refused[0].reason).toBe('--approved R1-3 did not agree to scope-drop:ledger, scope-drop:workflow');
+      expect(readFileSync(draft, 'utf8')).toBe(before);
+    }
+  });
+
   test('a downgrade no named id covers, or an id that pays for none, is refused and writes nothing', () => {
     const draft = twoDropDraft();
     const before = readFileSync(draft, 'utf8');

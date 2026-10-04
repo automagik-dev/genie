@@ -34,8 +34,10 @@
 //   item is a downgrade, taken only with `--approved` naming an unused Settled
 //   decision whose value names it exactly: `size:<P|M|G>`, `scope-drop:<item>`.
 //   Repeat `--approved` once per answer that agreed: one answer may pay for
-//   several tokens, and every token must be named by one of them or the whole
-//   call is refused and nothing is written.
+//   several tokens. Each token is recorded with the newest of the passed answers
+//   (by Settled position, never by flag order) whose value names it; every token
+//   must be named by one of them and every passed answer must name at least one,
+//   or the whole call is refused and nothing is written.
 // - A council past the ceiling needs `--approved` naming an unused Settled
 //   `council-approval` answer whose value is `convene`; none past 3, ever, and
 //   no approval question is asked at 3.
@@ -573,11 +575,21 @@ function currentScope(ledger) {
   return ledger.scopeIn.filter((entry) => !entry.dropped).map((entry) => entry.item);
 }
 
-/** The first id in flag order whose Settled value names each downgrade token, in token order. */
+/** Where an answer sits in Settled: a later position is a newer answer. */
+function settledPosition(ledger, id) {
+  return ledger.settled.findIndex((entry) => entry.id === id);
+}
+
+/**
+ * The answer that pays for each downgrade token: the newest of the passed ids, by Settled position, whose value
+ * names it. Settled order, never the order of the flags, so one call has one outcome however it is spelled; the
+ * workflow makes the same choice over the same answers.
+ */
 function approvalByToken(ledger, approved, downgrades) {
+  const newestFirst = [...approved].sort((a, b) => settledPosition(ledger, b) - settledPosition(ledger, a));
   const byToken = new Map();
   for (const token of downgrades) {
-    const id = approved.find((candidate) => asList(findSettled(ledger, candidate)?.value).includes(token));
+    const id = newestFirst.find((candidate) => asList(findSettled(ledger, candidate)?.value).includes(token));
     if (id !== undefined) byToken.set(token, id);
   }
   return byToken;
@@ -592,10 +604,10 @@ function downgradeProblem(ledger, approved, downgrades) {
     const problem = settledApprovalProblem(ledger, id, 'decision');
     if (problem) return problem;
   }
+  const agrees = (id) => downgrades.some((token) => asList(findSettled(ledger, id).value).includes(token));
+  const stray = approved.find((id) => !agrees(id));
+  if (stray !== undefined) return `--approved ${stray} did not agree to ${wanted}`;
   const byToken = approvalByToken(ledger, approved, downgrades);
-  const paying = new Set(byToken.values());
-  const idle = approved.find((id) => !paying.has(id));
-  if (idle !== undefined) return `--approved ${idle} did not agree to ${wanted}`;
   const missing = downgrades.filter((token) => !byToken.has(token));
   if (missing.length > 0) return `--approved ${approved.join(', ')} did not agree to ${missing.join(', ')}`;
   return null;
