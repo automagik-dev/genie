@@ -124,6 +124,12 @@ export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
     attributes['genie.model_calls'] = usage.calls;
     if (usage.costUsd !== null) attributes['llm.cost.total'] = usage.costUsd;
   }
+  if (interval.offload) {
+    attributes['genie.offload.calls'] = interval.offload.calls;
+    attributes['genie.offload.failed'] = interval.offload.failed;
+    attributes['genie.offload.tokens'] = interval.offload.tokens;
+    if (interval.offload.costUsd !== null) attributes['genie.offload.cost_usd'] = interval.offload.costUsd;
+  }
   return {
     name: `genie:${interval.transition}`,
     context: {

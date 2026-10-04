@@ -88,10 +88,27 @@ interface RunOutcome {
   round: number | null;
   /** brainstorm: the Wish Readiness Score after this run. */
   wrs: number | null;
+  /** wish: each mikro offload a stage reported (scout, review), as the workflow returned it. Absent → []. */
+  offloads: Offload[];
+  /** Sum of the offloads mikro priced; null when none was priced (unknown, never 0). */
+  offloadUsd: number | null;
 }
 
-/** Bumped when a row gains a field; a row without `v` is version 1 (no outcome, no partial). */
-const ROW_VERSION = 2;
+/** One mikro microagent offload — a cheap model doing work the stage's own model would otherwise do. */
+interface Offload {
+  stage: 'scout' | 'review';
+  agent: string;
+  ok: boolean;
+  /** The stage did not report its offload: a fact the ledger keeps, never a silent zero. */
+  notReported: boolean;
+  costUsd: number | null;
+  seconds: number | null;
+  usedFacts: number | null;
+  usedFiles: number | null;
+}
+
+/** Bumped when a row gains a field; a row without `v` is version 1 (no outcome, no partial); v2 has no offloads. */
+const ROW_VERSION = 3;
 
 /** One ledger row — design D9. `state` and `totalToolCalls` are nullable; the rest of the totals are required. */
 interface WishRunRow {
@@ -204,7 +221,34 @@ function toOutcome(result: Record<string, unknown> | null): RunOutcome | null {
     stageReached: stringOrNull(result.stageReached),
     round: numberOrNull(result.round),
     wrs: numberOrNull(objectOrNull(result.wrs)?.score),
+    ...offloadsOf(result),
   };
+}
+
+function toOffload(stage: Offload['stage'], value: unknown): Offload | null {
+  const m = objectOrNull(value);
+  const agent = stringOrNull(m?.agent);
+  if (!m || agent === null) return null;
+  return {
+    stage,
+    agent,
+    ok: m.ok === true,
+    notReported: m.notReported === true,
+    costUsd: numberOrNull(m.costUsd),
+    seconds: numberOrNull(m.seconds),
+    usedFacts: numberOrNull(m.usedFacts),
+    usedFiles: numberOrNull(m.usedFiles),
+  };
+}
+
+/** wish.js returns the scout offload on `scoutMikro` and the review's on `review.mikro`. */
+function offloadsOf(result: Record<string, unknown>): Pick<RunOutcome, 'offloads' | 'offloadUsd'> {
+  const offloads = [
+    toOffload('scout', result.scoutMikro),
+    toOffload('review', objectOrNull(result.review)?.mikro),
+  ].filter((o): o is Offload => o !== null);
+  const priced = offloads.map((o) => o.costUsd).filter((c): c is number => c !== null);
+  return { offloads, offloadUsd: priced.length > 0 ? priced.reduce((sum, c) => sum + c, 0) : null };
 }
 
 /** The D9 row of one record, or the reason it is refused. */
@@ -264,6 +308,12 @@ function describeOutcome(row: WishRunRow): string | null {
   if (outcome.stageReached !== null) parts.push(`stage reached ${outcome.stageReached}`);
   if (outcome.round !== null) parts.push(`round ${outcome.round}`);
   if (outcome.wrs !== null) parts.push(`WRS ${outcome.wrs}`);
+  for (const o of outcome.offloads ?? []) {
+    const state = o.notReported ? 'not reported' : o.ok ? 'ok' : 'failed';
+    const cost = o.costUsd === null ? '' : ` $${o.costUsd.toFixed(4)}`;
+    const facts = o.usedFacts === null ? '' : `, ${o.usedFacts} fact(s) used`;
+    parts.push(`${o.stage} offload ${o.agent} ${state}${cost}${facts}`);
+  }
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
@@ -292,7 +342,9 @@ function formatSummary(rows: WishRunRow[]): string {
     const key = `${row.workflowName}\t${row.variant}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
-  const lines = ['workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial'];
+  const lines = [
+    'workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial\tmeanOffloadUsd',
+  ];
   for (const [key, group] of groups) {
     const n = group.length;
     const meanTokens = Math.round(group.reduce((sum, row) => sum + row.totalTokens, 0) / n);
@@ -305,7 +357,13 @@ function formatSummary(rows: WishRunRow[]): string {
     const repairs = group.map((row) => row.outcome?.repairs ?? null).filter((v): v is number => v !== null);
     const meanRepairs = repairs.length > 0 ? (repairs.reduce((sum, v) => sum + v, 0) / repairs.length).toFixed(1) : '-';
     const partial = group.filter((row) => row.partial === true).length;
-    lines.push(`${key}\t${n}\t${meanTokens}\t${meanMinutes}\t${rate}\t${ship}\t${meanRepairs}\t${partial}`);
+    // Mean over rows whose offloads mikro priced; rows from before v3 (or with nothing priced) never count as $0.
+    const offloadUsd = group.map((row) => row.outcome?.offloadUsd ?? null).filter((v): v is number => v !== null);
+    const meanOffload =
+      offloadUsd.length > 0 ? (offloadUsd.reduce((sum, v) => sum + v, 0) / offloadUsd.length).toFixed(4) : '-';
+    lines.push(
+      `${key}\t${n}\t${meanTokens}\t${meanMinutes}\t${rate}\t${ship}\t${meanRepairs}\t${partial}\t${meanOffload}`,
+    );
   }
   return `${lines.join('\n')}\n`;
 }

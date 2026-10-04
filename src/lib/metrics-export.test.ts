@@ -4,7 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
-import { buildIntervals, readCaptureLedger, summarize, verifyAgainstTaskEvents } from './metrics-export.js';
+import {
+  type Interval,
+  buildIntervals,
+  readCaptureLedger,
+  summarize,
+  verifyAgainstTaskEvents,
+} from './metrics-export.js';
 import { installSalt, intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
 import { readUsageSamples } from './metrics-usage.js';
 
@@ -206,6 +212,39 @@ describe('ledger → verified intervals', () => {
     expect(summary.find((s) => s.transition === 'report→move')).toMatchObject({ n: 1, withUsage: 0, meanTokens: null });
   });
 
+  test('mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown', () => {
+    const at1 = t('2026-10-04T13:00:00Z');
+    const at2 = t('2026-10-04T13:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const repoRoot = join(root, 'repo');
+    const run = (ts: string, ok: boolean, cost: number, dir = repoRoot) => ({
+      runId: ts,
+      ts,
+      agent: 'wish-context',
+      dir,
+      ok,
+      footer: { tokensIn: 100, tokensOut: 20, cost },
+    });
+    const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
+    const [unknown] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(unknown?.offload).toBeNull();
+    write(
+      join(repoRoot, '.mikro', 'runs', 'wish-context.jsonl'),
+      jsonl([
+        run('2026-10-04T13:02:00Z', false, 0.03),
+        run('2026-10-04T13:03:00Z', true, 0.02, join(repoRoot, '.claude', 'worktrees', 'wish-x')),
+        run('2026-10-04T13:20:00Z', true, 0.5), // after the window
+        run('2026-10-04T13:04:00Z', true, 0.9, '/elsewhere/repo'), // another repository
+      ]),
+    );
+    const [priced] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(priced?.offload).toEqual({ calls: 2, failed: 1, tokens: 240, costUsd: 0.05 });
+    expect(summarize([priced as Interval])[0]?.offloadUsd).toBeCloseTo(0.05, 6);
+  });
+
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');
     write(
@@ -230,6 +269,7 @@ describe('Phoenix projection', () => {
     session: { id: 's', source: 'claude-code' as const, file: null },
     usage: { calls: 1, input: 1, cacheRead: 2, cacheWrite: 3, output: 4, costUsd: null },
     sharedSession: false,
+    offload: { calls: 2, failed: 1, tokens: 900, costUsd: 0.04 },
   };
 
   test('a target needs an http(s) endpoint, a project and at most an env var NAME for the key', () => {
@@ -260,6 +300,11 @@ describe('Phoenix projection', () => {
       'genie.transition': 'claim→report',
     });
     expect(a.attributes['llm.cost.total']).toBeUndefined();
+    expect(a.attributes).toMatchObject({
+      'genie.offload.calls': 2,
+      'genie.offload.failed': 1,
+      'genie.offload.cost_usd': 0.04,
+    });
   });
 
   test('posts only ids Phoenix does not hold and reports what never read back', async () => {

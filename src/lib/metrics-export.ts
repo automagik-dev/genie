@@ -18,6 +18,7 @@
 import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
+import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
 import { type UsageSample, readUsageSamples } from './metrics-usage.js';
 
 export interface UsageTotals {
@@ -43,6 +44,8 @@ export interface Interval {
   usage: UsageTotals | null;
   /** Another interval of the same session overlaps this one, so its usage is shared, not exclusive. */
   sharedSession: boolean;
+  /** mikro runs this repository logged inside the window (another provider, priced by mikro); null when no ledger. */
+  offload: OffloadUsage | null;
 }
 
 export interface LedgerRead {
@@ -138,6 +141,12 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
     }
     return samplesBySession.get(key) ?? null;
   };
+  const offloadRows = new Map<string, ReturnType<typeof readOffloadRows>>();
+  const offloadFor = (db: string, startAt: number, endAt: number): OffloadUsage | null => {
+    const root = repoRootOfDb(db);
+    if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
+    return offloadInWindow(offloadRows.get(root) ?? null, startAt, endAt);
+  };
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
     events.sort((a, b) => a.at - b.at || a.event - b.event);
@@ -157,6 +166,7 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
         session: from.session,
         usage: samples ? sumUsage(samples, from.at, to.at) : null,
         sharedSession: false,
+        offload: offloadFor(from.db, from.at, to.at),
       });
     }
   }
@@ -187,10 +197,16 @@ export interface TransitionSummary {
   withUsage: number;
   meanTokens: number | null;
   costUsd: number | null;
+  /** mikro offload cost summed over the transition's intervals; null when none was priced. */
+  offloadUsd: number | null;
 }
 
 const quantile = (sorted: number[], q: number) =>
   sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+const sumOrNull = (values: Array<number | null>): number | null => {
+  const known = values.filter((v): v is number => v !== null);
+  return known.length > 0 ? known.reduce((sum, v) => sum + v, 0) : null;
+};
 const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
 export function summarize(intervals: Interval[]): TransitionSummary[] {
@@ -210,6 +226,7 @@ export function summarize(intervals: Interval[]): TransitionSummary[] {
         withUsage: known.length,
         meanTokens: known.length > 0 ? Math.round(known.reduce((s, u) => s + totalTokens(u), 0) / known.length) : null,
         costUsd: priced.length > 0 ? priced.reduce((s, c) => s + c, 0) : null,
+        offloadUsd: sumOrNull(group.map((i) => i.offload?.costUsd ?? null)),
       };
     })
     .sort((a, b) => b.n - a.n || a.transition.localeCompare(b.transition));
@@ -221,10 +238,10 @@ export function formatSummary(
 ): string {
   const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}`;
   if (rows.length === 0) return `${head}\nno intervals yet: a card needs two captured events\n`;
-  const out = [head, 'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd'];
+  const out = [head, 'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd'];
   for (const r of rows) {
     out.push(
-      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}`,
+      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}`,
     );
   }
   return `${out.join('\n')}\n`;

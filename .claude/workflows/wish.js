@@ -70,7 +70,7 @@ export const meta = {
 // `gate:round-<n>`, `review:round-<n>`, `publish:pr` — and ONLY for an agent that returned
 // null. Success is {ok: true, state: 'merge-ready', route, contract, estimate, sizeVerdict,
 // diff, head, branch, worktree, pr, checks, review, gate, gateCommand, repairs, injectionAttempts,
-// notConvened, report}; `ok` is true for that state alone. A non-success carries the same
+// notConvened, scoutMikro, report}; `ok` is true for that state alone. A non-success carries the same
 // trace with ok:false and state 'refused' (judged route, an over-maximum or unreported estimate,
 // or a null Admit agent — the objective was never admitted and nothing was created), 'blocked'
 // (adoption test, dead hooks in a repository that has a hook system, no validation command in
@@ -2153,6 +2153,9 @@ function finish(state, ok, extra) {
     notConvened,
     stageReached: view.stageReached,
     blockedReason,
+    // The scout's mikro offload, as reported or recorded absent — returned so a run ledger can price the
+    // microagent beside the stages it was meant to shrink (the review's rides on review.mikro).
+    scoutMikro: view.scoutMikro,
     report,
   }
 }
