@@ -77,13 +77,14 @@ function listDir(dir: string, seen?: ReadState): string[] {
   }
 }
 
-function readRows(file: string, seen: ReadState): OffloadRow[] {
+/** The rows of one ledger file, or null when it was not READ (absent, a directory, or a failed read). */
+function readRows(file: string, seen: ReadState): OffloadRow[] | null {
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
   } catch (error) {
     if (!isAbsent(error)) seen.unreadable = true;
-    return [];
+    return null;
   }
   const rows: OffloadRow[] = [];
   for (const line of text.split('\n')) {
@@ -152,12 +153,19 @@ export function readOffloadRows(repoRoot: string): OffloadRow[] | null {
   // any unreadable one may hold this repository's rows.
   for (const name of listDir(machineRuns, seen)) files.push(...ledgerFiles(join(machineRuns, name), seen));
   const inside = (dir: string) => checkouts.some((c) => dir === c || dir.startsWith(`${c}${sep}`));
-  const rows = files
-    .flatMap((file) => readRows(file, seen))
-    .filter((row) => Number.isFinite(row.at) && inside(row.dir));
+  // Only a ledger file actually READ is evidence: a candidate that vanished or is a directory named
+  // like a ledger (EISDIR) is no ledger, so it can never turn "nothing here" into a measured 0.
+  const own = new Set(ownFiles);
+  let ownRead = 0;
+  const rows: OffloadRow[] = [];
+  for (const file of files) {
+    const read = readRows(file, seen);
+    if (read === null) continue;
+    if (own.has(file)) ownRead++;
+    rows.push(...read.filter((row) => Number.isFinite(row.at) && inside(row.dir)));
+  }
   if (seen.unreadable) return null;
-  if (files.length === 0) return null;
-  return rows.length > 0 || ownFiles.length > 0 ? rows : null;
+  return rows.length > 0 || ownRead > 0 ? rows : null;
 }
 
 const inWindow = (row: OffloadRow, startAt: number, endAt: number) => row.at >= startAt && row.at < endAt;

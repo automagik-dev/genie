@@ -465,6 +465,24 @@ describe('ledger → verified intervals', () => {
     },
   );
 
+  test('offload: only a ledger actually READ is evidence — a directory named like one alone is no ledger; an empty readable file is a measured 0', () => {
+    const at1 = t('2026-10-04T16:00:00Z');
+    const at2 = t('2026-10-04T16:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const runs = join(root, 'repo', '.mikro', 'runs');
+    const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
+    const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0]?.offload;
+    // ONLY a directory named wish-context.jsonl: no ledger at all → unknown, not 0 attempts / $0.
+    mkdirSync(join(runs, 'wish-context.jsonl'), { recursive: true });
+    expect(offload()).toBeNull();
+    // A real, readable, empty ledger beside it: a measured 0.
+    writeFileSync(join(runs, 'review-prep.jsonl'), '');
+    expect(offload()).toEqual({ attempts: 0, failed: 0, ambiguous: 0, tokens: 0, costUsd: 0 });
+  });
+
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');
     write(
