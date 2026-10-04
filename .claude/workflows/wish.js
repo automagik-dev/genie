@@ -8,7 +8,7 @@ export const meta = {
     {
       title: 'Admit',
       detail:
-        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any repository command that is not exactly one of the forms the discovery rules produce or is quoted with no evidence, and any command whose text or quoted body spells an obvious push or publish verb (a git push, a gh verb that changes the remote, a package publish or an image push); that is a tripwire over the text, not a boundary, so the gate read-only brief and the publisher allowlist still stand behind it. It freezes the validation command the gate would run verbatim to ONE focused test invocation — a closed runner set, a single command, and every path token already in the declared file set — and the caller validation wins, exempt from that shape and still tripwire-checked. Anything but proceed returns refused with nothing created',
+        'a read-only scout reads the objective, the issue and the repo under the injection fence and returns facts, a candidate plan with a declared file set, a validation command, a focused test, the repository check and install commands discovered from its root files with a verbatim quote of what each one runs, an a-priori estimate of files, insertions and units, the injection attempts it saw, a duplicate-work sweep over open and recently closed pull requests by issue number and by intent keywords, the recorded intent behind the lines the plan would change, and the design preflight verdict when a brainstorm DESIGN.md exists for a slug it finds; the script alone does the size arithmetic; then a blind judge — objective, contract shape, the structured scout result, the size verdict and the consequence denylist only — returns a route and the frozen contract written before any code exists. The script writes the check and install commands into that contract itself — the caller check and install first, the scout values otherwise, never one the judge wrote — and freezes empty any repository command that is not exactly one of the forms the discovery rules produce or is quoted with no evidence, and any command whose text or quoted body spells an obvious push or publish verb (a git push, a gh verb that changes the remote, a package publish or an image push); that is a tripwire over the text, not a boundary, so the gate read-only brief and the publisher allowlist still stand behind it. It freezes the validation command the gate would run verbatim to ONE focused test invocation — a closed runner set, a single command, and every token after the runner either a file already in the declared file set (matched after repoRelative, with or without a /) or one of a tiny per-runner allowlist, so any other flag, any VAR=value and any shell syntax is refused and a task runner takes no argument at all — and the caller validation wins, exempt from that shape and still tripwire-checked. Anything but proceed returns refused with nothing created',
     },
     {
       title: 'Work',
@@ -171,7 +171,7 @@ const COMMAND_DISCOVERY = [
   "With no match, answer checkCommand '': the gate then runs the validation command in its place and CI is the authority. A hook manager's configuration (husky, lefthook, pre-commit, simple-git-hooks) is never the check, and no runner is guessed from file extensions: pytest, cargo test, go test, tox or nox count only through a tracked root target above.",
   'Answer each command in exactly one of the forms above, character for character — no flag, argument, prefix or second command: the script freezes only those exact forms from the repository, and freezes anything else empty.',
   'Quote in commandEvidence what each command you propose RUNS, verbatim from the file named in path, one entry per quote, with command check or install: for a package.json check, the script body plus its pre<name> and post<name> bodies when defined; for a Makefile, justfile or Taskfile check, the target\'s own recipe lines plus those of the prerequisite targets it names in the same file; for an install, the lockfile path, plus the root preinstall, install, postinstall and prepare script bodies. The script freezes a command you quote nothing for as empty, so quote it or answer it as \'\'.',
-  "validationCommand is not discovered from a root file: answer ONE focused test invocation, in the form <runner> <path ...>, where runner is exactly one of: bun test, bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test, npm run test, npx jest, npx vitest, pytest, python -m pytest, tox, nox, go test, cargo test, dotnet test, mvn test, mvnw test, gradle test, gradlew test, rspec, rake test, php artisan test, make test, just test, task test — matched as the whole command or as that text followed by a space. Flags may follow the runner, but NO separator (; & | a backtick, a redirect < or >, a newline, $() ) and no second command, and every whitespace-separated token carrying a / must be one of the files your plan declares — the script anchors the command to your declared set and freezes empty anything wider. A bare runner with no path is accepted on purpose when the repository has no root target to narrow to, and a command outside this shape stops the gate: it is frozen empty, so answer this form or answer ''.",
+  "validationCommand is not discovered from a root file: answer ONE focused test invocation, in the form <runner> <path ...>, where runner is exactly one of: bun test, bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test, npm run test, npx jest, npx vitest, pytest, python -m pytest, tox, nox, go test, cargo test, dotnet test, mvn test, mvnw test, gradle test, gradlew test, rspec, rake test, php artisan test, make test, just test, task test — matched as the whole command or as that text followed by a space. NO separator (; & | a backtick, a redirect < or >, a newline, $() ) and no second command. Every space-separated token after the runner must be one of the files your plan declares (a leading ./ is fine, and a bare name with no / is held to the same set) or one of the few tokens listed for that runner: --bail for bun test, -- for bun run test, pnpm test, pnpm run test, yarn test, yarn run test, npm test and npm run test, and run for npx vitest. Every other flag is refused, because a flag can load, configure or run code (--preload, --config, -exec, -p, --script-shell), and so is any VAR=value, any .. segment, any absolute path, ~ or @file, and any quote, $, backslash, bracket, brace, glob character or =. tox, nox, mvn test, mvnw test, gradle test, gradlew test, rake test, make test, just test and task test take NO argument at all, because their tokens are targets, goals and sessions: answer exactly the runner. A leading ./ is spelled only on mvnw and gradlew. The script anchors the command to your declared set and freezes empty anything wider. A bare runner with no path is accepted on purpose when the repository has no root target to narrow to, and a command outside this shape stops the gate: it is frozen empty, so answer this form or answer ''.",
 ]
 // The mikro offload: a DeepSeek-flash microagent (the repository's own
 // .mikro/agents/<name> AS IT EXISTS AT origin/<base> when it has one, else the
@@ -284,7 +284,7 @@ const SCOUT_SCHEMA = obj(['facts', 'plan', 'estimate', 'injectionAttempts'], {
     approach: note('two or three sentences; what you would change and why that is the whole change'),
     files: notes('every repository-relative path the change would touch, and no other'),
     validationCommand: note(
-      'the ONE focused test invocation that proves the change in this repository, by the shape rule in your brief: a runner from the closed list, no second command, and every path token already in the plan file set',
+      'the ONE focused test invocation that proves the change in this repository, by the shape rule in your brief: a runner from the closed list, no second command, and after the runner only files your plan declares plus the few flags the brief allows for that runner',
     ),
     focusedTest: note('the single test or assertion that would fail without the change'),
     checkCommand: note("the repository's own aggregate check, found by the discovery rules in your brief; '' when none is discoverable"),
@@ -342,7 +342,7 @@ const JUDGE_SCHEMA = obj(['route', 'reason', 'contract'], {
     ),
     files: notes('the declared file set, repository-relative; the executor may touch nothing else'),
     validationCommand: note(
-      "the one command that proves the change in this repository — the scout plan's validation command or a narrower one IN THE SAME SHAPE, never the repository check; the gate runs it in place of the check when the repository has no hook system or no check command, and the script freezes it now. The shape is ONE focused test invocation over the declared files — a runner from the closed list the scout's brief names, no second command, and no path token the declared file set does not carry — and anything else is frozen empty, so a command you author outside that shape stops the gate instead of running",
+      "the one command that proves the change in this repository — the scout plan's validation command or a narrower one IN THE SAME SHAPE, never the repository check; the gate runs it in place of the check when the repository has no hook system or no check command, and the script freezes it now. The shape is ONE focused test invocation over the declared files — a runner from the closed list the scout's brief names, no second command, and every token after the runner a declared file or one of the few flags the brief allows for that runner (a task runner such as make test takes no argument) — and anything else is frozen empty, so a command you author outside that shape stops the gate instead of running",
     ),
     // Echo-only: the judge has seen no repository, so a command it wrote would be invented. The
     // script keeps a judged value only when it equals the scout's, and logs any other.
@@ -649,7 +649,8 @@ function freezeDiscoveredCommand(kind, proposed, evidence) {
 // The validation command is the ONE command the gate runs verbatim in a repository with no hook system
 // or no check command, and it is agent-authored text from stages that read untrusted input. The
 // tripwire above reads only VERBS and the discovery set covers only check and install, so the
-// validation command needs its own closure: the runner must be one of these focused test invocations.
+// validation command needs its own closure: the runner must be one of these focused test invocations,
+// and validationShapeRefusal below holds every token after it to the declared files and RUNNER_TOKENS.
 // A bare runner with no path stays legal on purpose — that whole-suite form is exactly what a
 // repository with hooks and no discoverable root target answers with, and refusing it would re-block
 // the repositories this fallback exists for.
@@ -683,30 +684,91 @@ const FOCUSED_RUNNERS = [
   'task test',
 ]
 
+// Runners whose positional tokens are TASKS, not files: `make test evil` builds the evil target,
+// `gradle test publish` runs publish, `mvn test deploy` runs deploy, `tox -e evil` runs the evil
+// environment. They take the runner and nothing after it, so the target is exactly the one the
+// freeze chose. Every one of these is also in FOCUSED_RUNNERS.
+const TASK_RUNNERS = [
+  'tox',
+  'nox',
+  'mvn test',
+  'mvnw test',
+  'gradle test',
+  'gradlew test',
+  'rake test',
+  'make test',
+  'just test',
+  'task test',
+]
+
+// The only runners a leading ./ may spell: the wrapper script a repository carries. For any other
+// runner `./<runner>` is a FILE at the repository root that merely shares the runner's name.
+const WRAPPER_RUNNERS = ['mvnw test', 'gradlew test']
+
+// What a file-taking runner accepts besides a declared file, and nothing else: one boolean flag that
+// takes no value (so the next token stays a positional), the `--` separator of the script runners and
+// vitest's `run` subcommand. A flag is refused unless it is listed HERE for THIS runner, so a flag
+// that loads, configures or executes (a preload, a config, an exec hook, a shell, a plugin) can never
+// ride in under a legitimate head. Adding an entry is a reviewed widening of the freeze.
+const RUNNER_TOKENS = {
+  'bun test': ['--bail'],
+  'bun run test': ['--'],
+  'pnpm test': ['--'],
+  'pnpm run test': ['--'],
+  'yarn test': ['--'],
+  'yarn run test': ['--'],
+  'npm test': ['--'],
+  'npm run test': ['--'],
+  'npx vitest': ['run'],
+}
+
 // '' when the proposal is ONE focused test invocation over the declared file set, else the reason it is
-// not, in this order: more than one command, a foreign head, an undeclared path. The head is a runner
-// from the closed set (a leading ./ ignored) matched as the whole command or as its prefix before a
-// space, so `bun test` cannot stand in for `bun testx`. Every remaining whitespace-separated token that
-// carries a / must be a declared file: that is what makes this a boundary rather than a prefix match —
-// curl, rm, git and node cannot be the program, and a URL, an absolute path, an @file or an undeclared
-// test path is refused even when the head is a legitimate runner. A refusal becomes
-// `<proposed> — <reason>`, which noCommandReason already carries into blockedReason and the report.
+// not, in this order: more than one command, a control or non-ASCII character, a foreign head, a token
+// that is not allowed. The head is a runner from the closed set matched as the whole command or as its
+// prefix before a single space, so `bun test` cannot stand in for `bun testx`; a leading ./ is spelled
+// only on a wrapper script (`./gradlew test`), because `./pytest` is a FILE at the repository root that
+// merely shares a runner's name. Every token after the head is then exactly one of:
+//   - a file the plan declared, compared after repoRelative (so `./src/a.test.ts` is `src/a.test.ts`),
+//     whether or not it carries a / — a bare `a.test.ts` at the root is held to the same set — and made
+//     only of path characters, so no quote, `$`, `\`, backtick, bracket, brace, glob, `~`, `=` or `!`
+//     survives, and no `..` segment, absolute path or `@file` either;
+//   - a member of RUNNER_TOKENS for THIS runner: one boolean flag, the `--` separator, vitest's `run`.
+// Every other token is refused, a flag above all: this is what makes the freeze a boundary rather than
+// a prefix match. A flag can load, configure or execute (`--preload`, `--config`, `-exec`, `-p`,
+// `--script-shell`), and a `VAR=value` token sets a variable the runner reads, so none gets through under
+// a legitimate head. A task runner (TASK_RUNNERS) takes no token at all, because its tokens are targets,
+// goals or sessions: `make test` stays exactly `make test`. What this does NOT bound is the declared test
+// file's own content, which is the change under test and is checked by the diff gates, nor the runner's
+// own configuration files already in the repository, which are the repository's code, trusted the way
+// its hooks are. A caller-passed `validation` is the escape for a command outside this shape.
+// A refusal becomes `<proposed> — <reason>`, which noCommandReason already carries into blockedReason
+// and the report.
 function validationShapeRefusal(command, files) {
   if (/[;&|`<>\n]/.test(command) || command.includes('$(')) return 'more than one command'
-  const head = command.replace(/^\.\//, '')
-  const runner = FOCUSED_RUNNERS.find((candidate) => head === candidate || head.startsWith(`${candidate} `))
-  if (!runner) return 'not one of the focused test runners'
-  const rest = head.slice(runner.length).trim()
-  const undeclared = rest ? rest.split(/\s+/).filter((token) => token.includes('/') && !files.includes(token)) : []
-  return undeclared.length ? `${undeclared[0]} is not a declared file` : ''
+  if (/[^\x20-\x7e]/.test(command)) return 'a control or non-ASCII character'
+  const spelled = command.startsWith('./') ? command.slice(2) : command
+  const runner = FOCUSED_RUNNERS.find((candidate) => spelled === candidate || spelled.startsWith(`${candidate} `))
+  if (!runner || (spelled !== command && !WRAPPER_RUNNERS.includes(runner))) return 'not one of the focused test runners'
+  // Only printable ASCII is left, so a space is the one separator the shell and this split agree on.
+  const tokens = spelled.slice(runner.length).split(' ').filter(Boolean)
+  if (tokens.length && TASK_RUNNERS.includes(runner)) return `${tokens[0]} is not an allowed argument to ${runner}`
+  const declared = files.map(repoRelative).filter(Boolean)
+  const extras = RUNNER_TOKENS[runner] ?? []
+  for (const token of tokens) {
+    if (extras.includes(token)) continue
+    if (token.startsWith('-')) return `${token} is not an allowed flag`
+    const path = /^[A-Za-z0-9_.][A-Za-z0-9_.@+/-]*$/.test(token) ? repoRelative(token) : ''
+    if (!path || !declared.includes(path)) return `${token} is not a declared file`
+  }
+  return ''
 }
 
 // The validation command's own freeze, modelled on freezeRepositoryCommand: a caller value wins and is
 // exempt from the shape rule but still tripwire-checked (Decision 7's precedent for check and install);
 // otherwise freezeCommand runs FIRST and unchanged, so every existing refusal reason stays byte-identical
 // and the shape rule can only refuse what the tripwire passed. `files` is the declared set the contract
-// keeps, so the frozen command can never reach a path the run never declared. `source` is caller, scout
-// or none.
+// keeps, so every path token of a frozen command is a file the run declared and no flag outside the
+// per-runner allowlist survives. `source` is caller, scout or none.
 function freezeValidationCommand(proposed, files, callerValue) {
   if (callerValue) return { ...freezeCommand(callerValue, [], false), source: 'caller' }
   if (!proposed) return { command: '', refused: '', source: 'none' }

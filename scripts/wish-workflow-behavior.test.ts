@@ -903,6 +903,36 @@ describe('wish.js freezes the validation command as one focused test invocation'
     expect(prompts['gate:check'][0]).not.toContain('src/undeclared.test.ts');
     expect(prompts['publish:pr'][0]).not.toContain('src/undeclared.test.ts');
   });
+
+  test('(55) a flag or a task-runner argument under a legitimate head is refused at admission and never reaches the gate', async () => {
+    // Every command here names only declared paths and a runner from the closed set, so the old
+    // slash-only rule passed each of them: the gate would have run the loaded preload, config, exec
+    // hook or make file. The injected text must be absent from every stage that runs anything.
+    for (const [injected, reason] of [
+      ["bun test --preload $'\\x2e\\x2fevil.ts' src/lib/fixture.test.ts", '--preload is not an allowed flag'],
+      ['bun test --preload=evil.ts src/lib/fixture.test.ts', '--preload=evil.ts is not an allowed flag'],
+      ['npm test --script-shell=python3', '--script-shell=python3 is not an allowed flag'],
+      ['make test -f evil.mk', '-f is not an allowed argument to make test'],
+      ['bun test evil.test.ts', 'evil.test.ts is not a declared file'],
+    ] as const) {
+      const { result, prompts } = await clean(canned('pass', { ...noCheck(injected), 'gate:check': noHooks }));
+      expect([injected, { ok: result.ok, state: result.state }]).toEqual([injected, { ok: false, state: 'blocked' }]);
+      expect([injected, result.blockedReason]).toEqual([injected, expect.stringContaining(reason)]);
+      expect(result.contract?.validationCommand).toBe('');
+      expect(prompts['review:diff']).toBeUndefined();
+      expect(prompts['publish:pr']).toBeUndefined();
+      for (const [label, list] of Object.entries(prompts).filter(([name]) => !name.startsWith('admit:')))
+        expect([injected, label, list.some((prompt) => prompt.includes(injected))]).toEqual([injected, label, false]);
+    }
+  });
+
+  test('(56) a ./-spelled declared path and an allowed flag freeze and run as written', async () => {
+    const command = 'bun test --bail ./src/lib/fixture.test.ts';
+    const { result, prompts } = await clean(canned('pass', { ...noCheck(command), 'gate:check': noHooks }));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    expect(result.gateCommand).toEqual({ command, mode: 'no-hook-system' });
+    expect(prompts['gate:check'][0]).toContain(command);
+  });
 });
 
 // Admission failure paths: every early return before a stage's binding exists must still render.
