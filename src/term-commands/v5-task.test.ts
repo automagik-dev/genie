@@ -1644,7 +1644,7 @@ describe('timeline verbs', () => {
 
   test('a pi/OMP shell is attributed to pi, not to the human fallback', async () => {
     const id = await seed('pi-runtime');
-    // pi and OMP export PI_SESSION_ID / PI_SESSION_FILE to their tool shells.
+    // pi exports PI_SESSION_ID / PI_SESSION_FILE to its tool shells (OMP 18.6.1 exports OMPCODE instead).
     // Clear the inherited Claude Code and Codex markers so the pi signal is what resolves.
     await cliEnv(
       repo,

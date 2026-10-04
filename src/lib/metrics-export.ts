@@ -135,12 +135,29 @@ function resolveIntervalSession(
 ): { session: RuntimeSession; match: Interval['sessionMatch'] } {
   const session = from.session;
   if (session.source === null) return { session, match: null };
+  if (session.ambiguous) return { session, match: 'ambiguous' };
   if (session.source !== 'pi' || session.id !== null || session.file !== null) return { session, match: 'exact' };
   if (!from.cwd) return { session, match: null };
   const found = matchPiSessionByCwd(from.cwd, from.at, to.at, env);
   if (found === 'ambiguous') return { session, match: 'ambiguous' };
   if (found === null) return { session, match: null };
   return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };
+}
+
+/**
+ * Usage inside the window, or null when unknown. A 'window' match that holds NO call inside the
+ * interval is null too: the matched OMP session may have been idle while another runtime did the
+ * work, so its 0 would be a guess dressed as a measurement.
+ */
+function usageFor(
+  samples: UsageSample[] | null,
+  startAt: number,
+  endAt: number,
+  match: Interval['sessionMatch'],
+): UsageTotals | null {
+  if (!samples) return null;
+  const usage = sumUsage(samples, startAt, endAt);
+  return match === 'window' && usage.calls === 0 ? null : usage;
 }
 
 /** Consecutive matched events of one card → intervals, with the opening session's usage inside each. */
@@ -178,7 +195,7 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
         endAt: to.at,
         durationMs: to.at - from.at,
         session,
-        usage: samples ? sumUsage(samples, from.at, to.at) : null,
+        usage: usageFor(samples, from.at, to.at, match),
         sharedSession: false,
         sessionMatch: match,
       });

@@ -234,8 +234,15 @@ export function readUsageSamples(session: RuntimeSession, env: NodeJS.ProcessEnv
   return samples.filter((sample) => Number.isFinite(sample.at)).sort((a, b) => a.at - b.at);
 }
 
-/** The `session` header record of a pi/OMP log (its first lines), without reading the whole file. */
+const headerCache = new Map<string, { id: string | null; cwd: string; startedAt: number } | null>();
+
+/** The `session` header record of a pi/OMP log (its first lines), read once per file per process. */
 function piSessionHeader(file: string): { id: string | null; cwd: string; startedAt: number } | null {
+  if (!headerCache.has(file)) headerCache.set(file, readPiSessionHeader(file));
+  return headerCache.get(file) ?? null;
+}
+
+function readPiSessionHeader(file: string): { id: string | null; cwd: string; startedAt: number } | null {
   let fd: number | null = null;
   try {
     fd = openSync(file, 'r');
@@ -268,7 +275,8 @@ export type PiSessionMatch = { id: string | null; file: string } | 'ambiguous' |
 /**
  * The single pi/OMP session that ran in `cwd` while `[startAt, endAt)` elapsed: its header's cwd is
  * equal and its life (header timestamp → last write) overlaps the window. Two candidates are
- * 'ambiguous' — never a guess; none is null.
+ * 'ambiguous' — never a guess; none is null. Top-level session logs only: an OMP subagent's log lives
+ * in its parent's folder, so a `genie` call from a subagent shell is matched to the parent session.
  */
 export function matchPiSessionByCwd(
   cwd: string,

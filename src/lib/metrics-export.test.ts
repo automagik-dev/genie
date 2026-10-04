@@ -245,9 +245,37 @@ describe('ledger → verified intervals', () => {
       session: { source: 'pi', id: 'omp-1', file: ompFile },
       usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
     });
+    // The same unique match over a window in which that session made no call: unknown, not 0.
+    const quiet = [
+      { ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/repo', at: at1 },
+      { ...line(db, 2, 'report', at2, anonymous), cwd: '/work/repo', at: at2 },
+    ];
+    expect(buildIntervals(quiet, env).length).toBe(1);
     // A second OMP session in the same cwd over the same window: ambiguous, so no usage is attributed.
     omp('omp-2', '/work/repo');
     const [ambiguous] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+  });
+
+  test('a window match with no call inside the interval is unknown, never 0; a nested-shell line is ambiguous', () => {
+    const at1 = t('2026-10-04T11:00:00Z');
+    const at2 = t('2026-10-04T11:10:00Z');
+    write(
+      join(root, '.omp', 'agent', 'sessions', '-q', '2026-10-04T09-00-00Z_idle.jsonl'),
+      jsonl([{ type: 'session', id: 'idle', timestamp: '2026-10-04T09:00:00Z', cwd: '/work/quiet' }]),
+    );
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
+    const [idle] = buildIntervals(
+      [{ ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/quiet' }, line(db, 2, 'report', at2, anonymous)],
+      env,
+    );
+    expect(idle).toMatchObject({ sessionMatch: 'window', usage: null });
+    const nested: RuntimeSession = { id: null, source: 'codex', file: null, ambiguous: true };
+    const [ambiguous] = buildIntervals([line(db, 1, 'claim', at1, nested), line(db, 2, 'report', at2)], env);
     expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
   });
 

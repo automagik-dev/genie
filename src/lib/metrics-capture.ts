@@ -65,8 +65,10 @@ export interface RuntimeSession {
   /** The runtime's own session id, as its session log names it; null when no runtime marker is present. */
   id: string | null;
   source: SessionSource | null;
-  /** The session log path when the runtime exports it (pi/OMP `PI_SESSION_FILE`). */
+  /** The session log path when the runtime exports it (pi `PI_SESSION_FILE`). */
   file: string | null;
+  /** Session markers of two runtimes were present (a nested shell): which is inner is unknowable, so no id is kept. */
+  ambiguous?: boolean;
 }
 
 /**
@@ -80,13 +82,18 @@ export interface RuntimeSession {
  * null, never a guess.
  */
 export function resolveRuntimeSession(env: NodeJS.ProcessEnv = process.env): RuntimeSession {
-  // Same most-specific-first order as resolveAuthorKind: an OMP shell also carries CLAUDECODE, and a
-  // nested shell can carry an OUTER runtime's session id, so the innermost runtime's marker wins.
-  if (env.OMPCODE || env.PI_SESSION_ID || env.PI_SESSION_FILE) {
-    return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
-  }
-  if (env.CODEX_THREAD_ID) return { id: env.CODEX_THREAD_ID, source: 'codex', file: null };
-  if (env.CLAUDE_CODE_SESSION_ID) return { id: env.CLAUDE_CODE_SESSION_ID, source: 'claude-code', file: null };
+  // Presence cannot tell which of two nested runtimes is the inner one, so when the session markers of
+  // two runtimes coexist no id is kept (ambiguous) rather than guessing a possibly-outer one. OMP's own
+  // CLAUDECODE=1 is NOT a session marker, so a plain OMP shell is unambiguous.
+  const pi = Boolean(env.OMPCODE || env.PI_SESSION_ID || env.PI_SESSION_FILE);
+  const codex = Boolean(env.CODEX_THREAD_ID);
+  const claude = Boolean(env.CLAUDE_CODE_SESSION_ID);
+  const present = [pi, codex, claude].filter(Boolean).length;
+  const source: SessionSource | null = pi ? 'pi' : codex ? 'codex' : claude ? 'claude-code' : null;
+  if (present > 1) return { id: null, source, file: null, ambiguous: true };
+  if (pi) return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
+  if (codex) return { id: env.CODEX_THREAD_ID as string, source: 'codex', file: null };
+  if (claude) return { id: env.CLAUDE_CODE_SESSION_ID as string, source: 'claude-code', file: null };
   return { id: null, source: null, file: null };
 }
 
@@ -119,7 +126,7 @@ export interface CaptureLine {
 
 export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.ProcessEnv = process.env): CaptureLine {
   const session = resolveRuntimeSession(env);
-  const anonymousPi = session.source === 'pi' && session.id === null && session.file === null;
+  const anonymousPi = session.source === 'pi' && session.id === null && session.file === null && !session.ambiguous;
   return {
     v: CAPTURE_SCHEMA_VERSION,
     source: 'task_event',

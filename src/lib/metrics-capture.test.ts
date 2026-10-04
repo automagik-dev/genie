@@ -144,15 +144,23 @@ describe('resolveRuntimeSession', () => {
     expect(resolveRuntimeSession(NO_RUNTIME)).toEqual({ id: null, source: null, file: null });
     // OMP 18.6.1 sets OMPCODE=1 AND CLAUDECODE=1 and exports no session id; a leaked outer Claude
     // session id must not be taken for it.
+    expect(resolveRuntimeSession({ OMPCODE: '1', CLAUDECODE: '1' })).toEqual({ id: null, source: 'pi', file: null });
     expect(resolveRuntimeSession({ OMPCODE: '1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'outer-claude' })).toEqual({
       id: null,
       source: 'pi',
       file: null,
+      ambiguous: true,
     });
-    // Codex nested under Claude: the innermost runtime's own id wins.
-    expect(resolveRuntimeSession({ CLAUDE_CODE_SESSION_ID: 'outer', CODEX_THREAD_ID: 'thr' })).toMatchObject({
-      id: 'thr',
+    // Two runtimes' session markers (a nested shell): which is inner is unknowable, so no id is kept.
+    expect(resolveRuntimeSession({ CLAUDE_CODE_SESSION_ID: 'outer', CODEX_THREAD_ID: 'thr' })).toEqual({
+      id: null,
       source: 'codex',
+      file: null,
+      ambiguous: true,
+    });
+    expect(resolveRuntimeSession({ OMPCODE: '1', CODEX_THREAD_ID: 'thr' })).toMatchObject({
+      id: null,
+      ambiguous: true,
     });
   });
 });
