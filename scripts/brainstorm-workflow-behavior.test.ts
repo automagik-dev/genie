@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { designReviewDigest, designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 // Behavior guard: executes the body of .claude/workflows/brainstorm.js across runs under fake agents
@@ -130,7 +131,6 @@ function executeLedger(prompt: string): Out {
     out.precondition = { path: spec.precondition, exists };
     if (!exists) return out;
   }
-  const payloads = tempDir('genie-bs-payload-');
   const exits: Record<string, number> = {};
   for (const step of spec.steps) {
     const blocked = (step.onlyAfter ?? []).some((name: string) => exits[name] !== 0);
@@ -146,13 +146,8 @@ function executeLedger(prompt: string): Out {
       out.runs.push({ step: step.step, exitCode: 0, stdout: '', stderr: '' });
       continue;
     }
-    const argv = (step.argv as string[]).map((arg) =>
-      arg.replace(/^@\{(\w+)\}$/, (_whole, name: string) => {
-        const file = join(payloads, `${step.step}-${name}.json`);
-        writeFileSync(file, JSON.stringify(step.files[name]));
-        return `@${file}`;
-      }),
-    );
+    // Every payload arrives already packed in argv: the agent passes the arguments through and writes nothing.
+    const argv = step.argv as string[];
     const result = Bun.spawnSync(argv, { stdout: 'pipe', stderr: 'pipe' });
     exits[step.step] = result.exitCode ?? -1;
     out.runs.push({
@@ -542,6 +537,71 @@ describe('rounds across runs', () => {
     expect(again.result.state).toBe('round');
     expect(again.result.notes.join('\n')).toContain('Not recorded: size:M lowers what the owner approved');
     expect(blockOf(env.draft).size.map((s: Out) => s.value)).toEqual(['G', 'M', 'G']);
+  });
+});
+
+// ---------------------------------------------------------------- the payload transport
+
+describe('the ledger payload transport', () => {
+  const JSON_FLAGS = ['--answers', '--questions', '--scope', '--decided', '--findings'];
+  const stepsOf = (calls: Call[]): Out[] =>
+    calls
+      .filter((call) => call.label.startsWith('ledger:'))
+      .flatMap(
+        (call) =>
+          (JSON.parse((/```json\n([\s\S]*?)\n```/.exec(call.prompt) as RegExpExecArray)[1]) as { steps: Out[] }).steps,
+      );
+
+  test('no step hands the agent JSON to re-type: every payload is packed into argv, no file is named', async () => {
+    const env = newEnv();
+    const { calls } = await clean(env, { 'lead:plan': plan({ questions: [question(1)] }) });
+    const steps = stepsOf(calls);
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step.files).toBeUndefined();
+      const argv = step.argv as string[];
+      expect(argv.join(' ')).not.toContain('@{');
+      for (const [index, arg] of argv.entries()) {
+        if (JSON_FLAGS.includes(argv[index - 1] as string)) expect(arg).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
+      }
+    }
+    const flags = steps.flatMap((step) => step.argv as string[]).filter((arg) => JSON_FLAGS.includes(arg));
+    expect(flags).toContain('--answers');
+    expect(flags).toContain('--questions');
+  });
+
+  test('a question with quotes, a backslash, an arrow and an emoji reaches the DRAFT byte for byte', async () => {
+    const text = 'Keep the "helper" as-is? It\'s C:\\tmp\\x (yes!) *really*~ → “small” 🧞';
+    const env = newEnv();
+    const { result } = await clean(env, { 'lead:plan': plan({ questions: [question(1, { question: text })] }) });
+    expect(result.state).toBe('round');
+    expect(blockOf(env.draft).asked[0].question).toBe(text);
+  });
+
+  test('a state that does not survive the transport names itself, never the generic start failure', async () => {
+    const env = newEnv();
+    const wrapper = join(tempDir('genie-bs-wrapper-'), 'mangled-state.mjs');
+    writeFileSync(
+      wrapper,
+      [
+        `import { runRoundLedger } from ${JSON.stringify(pathToFileURL(LEDGER).href)};`,
+        'const argv = process.argv.slice(2);',
+        'const { exitCode, output } = runRoundLedger(argv);',
+        "if (argv[0] === 'apply') output.state = '[NOT VERBATIM: the state was withheld]';",
+        'process.stdout.write(`${JSON.stringify(output, null, 2)}\\n`);',
+        'process.exitCode = exitCode;',
+        '',
+      ].join('\n'),
+    );
+    const { result, labels } = await clean(
+      env,
+      {},
+      { tools: { ledger: wrapper, evidence: EVIDENCE, reviewContract: REVIEW_CONTRACT } },
+    );
+    expect(labels).toEqual(['ledger:apply']);
+    expect(result.state).toBe('failed');
+    expect(result.notes.join('\n')).toContain('transport');
+    expect(result.notes.join('\n')).not.toContain('The round ledger failed to start');
   });
 });
 

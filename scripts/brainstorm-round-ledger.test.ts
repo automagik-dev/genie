@@ -26,17 +26,26 @@ const FIXTURE_DRAFT = join(FIXTURE, 'DRAFT.md');
 const DIGEST = 'a'.repeat(64);
 
 type Out = Record<string, any>;
-type Run = { code: number; out: Out };
+type Run = { code: number; out: Out; stdout: string };
 
 function ledger(...args: string[]): Run {
   const result = Bun.spawnSync(['node', LEDGER, ...args], { stdout: 'pipe', stderr: 'pipe' });
   const stdout = result.stdout.toString();
   try {
-    return { code: result.exitCode ?? -1, out: JSON.parse(stdout) };
+    return { code: result.exitCode ?? -1, out: JSON.parse(stdout), stdout };
   } catch {
     throw new Error(`round-ledger printed no JSON (exit ${result.exitCode}): ${stdout}${result.stderr.toString()}`);
   }
 }
+
+// The one transport the workflow's steps use: percent-packed JSON. The alphabet is [A-Za-z0-9%._-]
+// alone, so a payload is byte-identical after JSON.stringify and safe as one quoted shell argument.
+const pack = (value: unknown): string =>
+  `packed:${encodeURIComponent(JSON.stringify(value)).replace(
+    /[!'()*~]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  )}`;
+const unpack = (state: string): Out => JSON.parse(decodeURIComponent(state));
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -112,8 +121,9 @@ describe('round trip: apply → ask → apply → render', () => {
     const second = apply(draft, [answer('R1-1', 'M (Recommended)')]);
     expect(second.code).toBe(0);
     expect(second.out.round).toBe(2);
-    expect(second.out.applied).toEqual([{ id: 'R1-1', provenance: 'owner picked "M (Recommended)"' }]);
-    expect(second.out.ledger.settled).toEqual([
+    // The echo names what was applied; the DRAFT is the record of what it means.
+    expect(second.out.applied).toEqual([{ id: 'R1-1' }]);
+    expect(blockOf(draft).settled).toEqual([
       {
         id: 'R1-1',
         kind: 'decision',
@@ -195,7 +205,7 @@ describe('apply', () => {
     expect(edit.out.refused[0].reason).toContain('R1-1 is Settled; it changes only through a question whose reopens');
     const again = apply(draft, [answer('R1-1', 'M (Recommended)')]);
     expect(again.code).toBe(0);
-    expect(again.out.applied).toEqual([{ id: 'R1-1', provenance: 'owner picked "M (Recommended)"', unchanged: true }]);
+    expect(again.out.applied).toEqual([{ id: 'R1-1', unchanged: true }]);
     expect(readFileSync(draft, 'utf8')).toBe(before);
   });
 
@@ -205,7 +215,7 @@ describe('apply', () => {
     ask(draft, 1, [question(), question({ question: 'Who owns it?', header: 'Owner' })]);
     const run = apply(draft, [answer('R1-1', 'Neither: split it in two'), answer('R1-2', '  ', 'Who owns it?')]);
     expect(run.code).toBe(0);
-    const [settled] = run.out.ledger.settled;
+    const [settled] = blockOf(draft).settled;
     expect(settled.value).toBeNull();
     expect(settled.answer).toBe('Neither: split it in two');
     expect(settled.provenance).toBe('owner said: "Neither: split it in two"');
@@ -228,7 +238,7 @@ describe('apply', () => {
       answer('R1-3', ['Ledger', 'none of these'], 'Which groups never?'),
     ]);
     expect(run.code).toBe(0);
-    const byId = Object.fromEntries(run.out.ledger.settled.map((entry: Out) => [entry.id, entry]));
+    const byId = Object.fromEntries(blockOf(draft).settled.map((entry: Out) => [entry.id, entry]));
     expect(byId['R1-1'].value).toEqual(['g1', 'g2']);
     expect(byId['R1-1'].answer).toEqual(['Ledger', 'Routing']);
     expect(byId['R1-2'].value).toEqual(['g2', 'g3']);
@@ -258,6 +268,54 @@ describe('apply', () => {
   });
 });
 
+describe('the packed transport: payload bytes never meet a model that re-serialises them', () => {
+  test('a packed payload survives quotes, backslashes, an arrow and an emoji byte for byte', () => {
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    const text = 'Keep the "helper" as-is? It\'s C:\\tmp\\x (yes!) *really*~ → “small” 🧞';
+    const questions = pack([question({ question: text })]);
+    expect(questions).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
+    const asked = ledger('ask', '--draft', draft, '--round', '1', '--questions', questions);
+    expect(asked.code).toBe(0);
+    expect(asked.out.asked[0].question).toBe(text);
+    expect(blockOf(draft).asked[0].question).toBe(text);
+
+    const settled = ledger('apply', '--draft', draft, '--answers', pack([answer('R1-1', 'G', text)]));
+    expect(settled.code).toBe(0);
+    expect(blockOf(draft).settled[0]).toMatchObject({ id: 'R1-1', answer: 'G', value: 'G' });
+  });
+
+  test('apply echoes a bounded packed state, not the ledger, and its size ignores owner prose', () => {
+    const settleFreeText = (text: string) => {
+      const draft = newDraft();
+      expect(apply(draft).code).toBe(0);
+      expect(ask(draft, 1, [question()]).code).toBe(0);
+      const run = apply(draft, [answer('R1-1', text)]);
+      expect(run.code).toBe(0);
+      return { run, draft };
+    };
+    const short = settleFreeText('keep it');
+    const padded = settleFreeText(`keep it${'a'.repeat(2048)}`);
+
+    expect(short.run.out.ledger).toBeUndefined();
+    expect(short.run.out.state).toMatch(/^[A-Za-z0-9%._-]*$/);
+    const state = unpack(short.run.out.state);
+    expect(Object.keys(state)).toEqual(['settled', 'asked', 'size', 'scopeIn', 'councils', 'reviews']);
+    expect(state).toEqual({
+      settled: [{ id: 'R1-1', kind: 'decision', question: 'Which size fits this idea?', value: null, round: 2 }],
+      asked: [],
+      size: [],
+      scopeIn: [],
+      councils: [],
+      reviews: [],
+    });
+    // The owner's words stay in the DRAFT and its rendered sections; apply's stdout is the same size.
+    expect(blockOf(padded.draft).settled[0].answer).toBe(`keep it${'a'.repeat(2048)}`);
+    expect(short.run.stdout).not.toContain('keep it');
+    expect(Math.abs(short.run.stdout.length - padded.run.stdout.length)).toBeLessThanOrEqual(64);
+  });
+});
+
 describe('reopen: a Settled id changes only through a question that quotes old → new', () => {
   const reopen = (text: string) => question({ question: text, header: 'Reopen', reopens: 'R1-1' });
 
@@ -279,12 +337,39 @@ describe('reopen: a Settled id changes only through a question that quotes old �
     expect(asked.out.asked[0]).toMatchObject({ id: 'R2-1', reopens: 'R1-1' });
     const run = apply(draft, [answer('R2-1', 'G', text)]);
     expect(run.code).toBe(0);
-    expect(run.out.applied).toEqual([{ id: 'R2-1', provenance: 'owner picked "G"', reopens: 'R1-1' }]);
-    const settled = Object.fromEntries(run.out.ledger.settled.map((entry: Out) => [entry.id, entry]));
+    expect(run.out.applied).toEqual([{ id: 'R2-1', reopens: 'R1-1' }]);
+    const settled = Object.fromEntries(blockOf(draft).settled.map((entry: Out) => [entry.id, entry]));
     expect(settled['R1-1']).toMatchObject({ answer: 'M (Recommended)', reopenedBy: 'R2-1' });
     expect(settled['R2-1']).toMatchObject({ value: 'G', reopens: 'R1-1' });
     const twice = ask(draft, 3, [reopen(text)]);
     expect(twice.out.refused[0].reason).toBe('R1-1 was already reopened by R2-1; reopen that one instead');
+  });
+
+  test('a reopen whose quoted answer holds inner quotes is accepted through the packed transport', () => {
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    const oldAnswer = 'the "reflection" daily, in the owner\'s words';
+    expect(ledger('ask', '--draft', draft, '--round', '1', '--questions', pack([question()])).code).toBe(0);
+    expect(ledger('apply', '--draft', draft, '--answers', pack([answer('R1-1', oldAnswer)])).code).toBe(0);
+    const text = `You answered: "${oldAnswer}" → keep it weekly instead?`;
+    const asked = ledger(
+      'ask',
+      '--draft',
+      draft,
+      '--round',
+      '2',
+      '--questions',
+      pack([question({ question: text, header: 'Reopen', reopens: 'R1-1' })]),
+    );
+    expect(asked.code).toBe(0);
+    expect(asked.out.asked[0]).toMatchObject({ id: 'R2-1', reopens: 'R1-1' });
+    const run = ledger('apply', '--draft', draft, '--answers', pack([answer('R2-1', 'G', text)]));
+    expect(run.code).toBe(0);
+    expect(run.out.applied).toEqual([{ id: 'R2-1', reopens: 'R1-1' }]);
+    expect(unpack(run.out.state).settled).toEqual([
+      expect.objectContaining({ id: 'R1-1', value: null, reopenedBy: 'R2-1' }),
+      expect.objectContaining({ id: 'R2-1', kind: 'decision', value: 'G', reopens: 'R1-1' }),
+    ]);
   });
 
   test('the old answer must sit inside quotation marks; a bare substring is not a quote', () => {
@@ -837,6 +922,16 @@ describe('usage', () => {
     const run = ledger('ask', '--draft', draft, '--round', '1', '--questions', `@${file}`);
     expect(run.code).toBe(0);
     expect(run.out.asked[0].question).toBe('It\'s the owner\'s call: "M" or `G`?');
+  });
+
+  test('a packed flag decodes, and a mangled one is usage that writes nothing', () => {
+    const draft = newDraft();
+    apply(draft);
+    expect(ledger('ask', '--draft', draft, '--round', '1', '--questions', pack([question()])).code).toBe(0);
+    const bad = ledger('ask', '--draft', draft, '--round', '2', '--questions', 'packed:%ZZ');
+    expect(bad.code).toBe(2);
+    expect(bad.out.error).toContain('--questions is not a valid packed payload');
+    expect(blockOf(draft).asked).toHaveLength(1);
   });
 
   test('commands other than apply refuse a DRAFT that does not exist', () => {

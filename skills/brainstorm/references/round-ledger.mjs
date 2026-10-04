@@ -14,8 +14,10 @@
 //   render       --draft P                            rewrite the five ledger-owned sections
 //   check-design --design P --draft P [--root P]      template and Source checks
 //
-// Any JSON flag may be given as `@<file>` to read the JSON from that file, so a
-// question text never has to survive shell quoting.
+// Any JSON flag may be given as `packed:<percent-encoded JSON>` — the form the
+// workflow's steps write, which crosses a model channel byte for byte — or as
+// `@<file>` to read the JSON from that file, so a question text never has to
+// survive shell quoting or a model re-serialising JSON.
 //
 // Rules a caller codes against:
 // - `apply` returns the round this run works on: 1 + the highest round recorded
@@ -65,6 +67,7 @@ const EVIDENCE_END = '<!-- genie-design-review:end -->';
 
 const USAGE = [
   'usage: round-ledger.mjs <command> [flags]',
+  '  every JSON flag takes inline JSON, @<file>, or packed:<percent-encoded JSON>',
   '  apply        --draft <DRAFT.md> [--answers <json>]',
   '  ask          --draft <DRAFT.md> --round <n> --questions <json>',
   '  ratchet      --draft <DRAFT.md> --round <n> --by <who> [--size <P|M|G>] [--scope <json>] [--approved <id>]',
@@ -124,7 +127,13 @@ function jsonFlag(flags, name, fallback) {
   const raw = flags[name];
   if (raw === undefined) return fallback;
   let text = raw;
-  if (raw.startsWith('@')) {
+  if (raw.startsWith('packed:')) {
+    try {
+      text = decodeURIComponent(raw.slice('packed:'.length));
+    } catch (error) {
+      throw new UsageError(`--${name} is not a valid packed payload: ${error.message}`);
+    }
+  } else if (raw.startsWith('@')) {
     try {
       text = readFileSync(raw.slice(1), 'utf8');
     } catch (error) {
@@ -402,8 +411,7 @@ function settlementFor(asked, answer, round) {
 function answerAgain(settled, answer, result) {
   const same = asList(settled.answer).join(', ') === asList(answer.answer).join(', ');
   if (isSkip(answer.answer) || (same && answer.question === settled.question)) {
-    if (!isSkip(answer.answer))
-      result.applied.push({ id: settled.id, provenance: settled.provenance, unchanged: true });
+    if (!isSkip(answer.answer)) result.applied.push({ id: settled.id, unchanged: true });
     return null;
   }
   return `${settled.id} is Settled; it changes only through a question whose reopens names it and quotes old → new`;
@@ -425,7 +433,8 @@ function applyOne(ledger, answer, round, result) {
   ledger.asked.splice(index, 1);
   ledger.settled.push(entry);
   if (asked.reopens) findSettled(ledger, asked.reopens).reopenedBy = id;
-  result.applied.push({ id, provenance: entry.provenance, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
+  // The echo names what was applied and nothing the owner wrote: the DRAFT is the record of that.
+  result.applied.push({ id, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
   return null;
 }
 
@@ -435,6 +444,29 @@ function answerRefusal(ledger, answer, round, result, seen) {
   if (seen.has(answer.id)) return `${answer.id} is answered twice in one batch`;
   seen.add(answer.id);
   return applyOne(ledger, answer, round, result);
+}
+
+// The read model apply returns: `state`, packed. Settled keeps the id, the kind, the question text the
+// workflow echoes back into a later prompt, the value, the round and the reopen links. The owner's own
+// words — answer and provenance — stay in the DRAFT and its rendered `## Settled` section, never here.
+const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
+
+function stateOf(ledger) {
+  return {
+    settled: ledger.settled.map((entry) =>
+      Object.fromEntries(STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined).map((key) => [key, entry[key]])),
+    ),
+    asked: ledger.asked,
+    size: ledger.size,
+    scopeIn: ledger.scopeIn,
+    councils: ledger.councils,
+    reviews: ledger.reviews,
+  };
+}
+
+/** The one transport: payload bytes cross a model channel percent-packed, never as JSON a model re-serialises. */
+function pack(value) {
+  return encodeURIComponent(value).replace(/[!'()*~]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function commandApply(flags) {
@@ -450,7 +482,8 @@ function commandApply(flags) {
   }
   result.skipped = draft.ledger.asked.map((entry) => entry.id);
   if (draft.dirty || result.applied.some((entry) => !entry.unchanged)) saveDraft(draft);
-  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, ledger: draft.ledger } };
+  const state = pack(JSON.stringify(stateOf(draft.ledger)));
+  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, state } };
 }
 
 // ---------------------------------------------------------------- ask
