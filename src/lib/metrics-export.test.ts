@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
@@ -399,6 +399,71 @@ describe('ledger → verified intervals', () => {
     const again = buildIntervals(verifyAgainstTaskEvents(lines).matched, env).find((i) => i.task === 't1');
     expect(again?.offload).toMatchObject({ attempts: 3, tokens: null, costUsd: null });
   });
+
+  // Root ignores mode bits, so the permission cases only prove anything as an ordinary user.
+  const asRoot = process.getuid?.() === 0;
+
+  test.skipIf(asRoot)(
+    'offload: an unreadable ledger, alone or beside readable ones, is unknown — never a measured 0',
+    () => {
+      const at1 = t('2026-10-04T15:00:00Z');
+      const at2 = t('2026-10-04T15:10:00Z');
+      const db = seedDb([
+        { id: 1, task: 't1', kind: 'claim', at: at1 },
+        { id: 2, task: 't1', kind: 'report', at: at2 },
+      ]);
+      const repoRoot = join(root, 'repo');
+      const runs = join(repoRoot, '.mikro', 'runs');
+      const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
+      const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0]?.offload;
+      const readable = jsonl([
+        { ts: '2026-10-04T15:02:00Z', dir: repoRoot, ok: true, footer: { tokensIn: 1, tokensOut: 1, cost: 0.01 } },
+      ]);
+      // 1. The only ledger exists but cannot be read (mode 000): unknown, not 0 attempts / $0.
+      write(join(runs, 'wish-context.jsonl'), readable);
+      chmodSync(join(runs, 'wish-context.jsonl'), 0o000);
+      try {
+        expect(offload()).toBeNull();
+        // 2. A readable ledger beside it: still unknown, never the readable part alone.
+        write(join(runs, 'review-prep.jsonl'), readable);
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(join(runs, 'wish-context.jsonl'), 0o600);
+      }
+      expect(offload()).toMatchObject({ attempts: 2, costUsd: 0.02 });
+      // 3. An unreadable machine-ledger directory may hold this repository's rows: unknown.
+      const machine = join(root, 'genie', 'mikro', 'runs', 'other-12345678');
+      write(join(machine, 'wish-context.jsonl'), readable);
+      chmodSync(machine, 0o000);
+      try {
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(machine, 0o700);
+      }
+      // 4. An unreadable worktree registration may hide a worktree (and its ledger): unknown.
+      const registration = join(repoRoot, '.git', 'worktrees', 'wt');
+      write(join(registration, 'gitdir'), `${join(root, 'wt-elsewhere', '.git')}\n`);
+      chmodSync(join(registration, 'gitdir'), 0o000);
+      try {
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(join(registration, 'gitdir'), 0o600);
+      }
+      chmodSync(registration, 0o000);
+      try {
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(registration, 0o700);
+      }
+      // A directory named like a ledger is not a ledger, not a read failure.
+      mkdirSync(join(runs, 'not-a-ledger.jsonl'));
+      // (the readable machine ledger restored above still contributes its attempt)
+      expect(offload()).toMatchObject({ attempts: 3, tokens: 6 });
+      // An ABSENT ledger dir is simply no ledger, not a read failure.
+      rmSync(join(root, 'genie', 'mikro'), { recursive: true, force: true });
+      expect(offload()).toMatchObject({ attempts: 2 });
+    },
+  );
 
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');

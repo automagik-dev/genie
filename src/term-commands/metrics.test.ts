@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -129,6 +129,34 @@ describe('genie metrics', () => {
     });
     expect(statSync(path).mode & 0o777).toBe(0o600);
   }, 60_000);
+
+  test.skipIf(process.getuid?.() === 0)(
+    'export: an unreadable mikro ledger reports the offload unknown, never 0 (installed .15 regression)',
+    () => {
+      expect(run(['metrics', 'enable']).code).toBe(0);
+      const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
+      expect(run(['task', 'comment', id, 'one'], { CLAUDE_CODE_SESSION_ID: 's' }).code).toBe(0);
+      expect(run(['task', 'comment', id, 'two'], { CLAUDE_CODE_SESSION_ID: 's' }).code).toBe(0);
+      const ledger = join(repo, '.mikro', 'runs', 'wish-context.jsonl');
+      execFileSync('mkdir', ['-p', join(repo, '.mikro', 'runs')]);
+      writeFileSync(ledger, '');
+      chmodSync(ledger, 0o000);
+      const out = join(root, 'intervals.jsonl');
+      try {
+        const exported = run(['metrics', 'export', '--out', out]);
+        expect(exported.code).toBe(0);
+        const [interval] = readFileSync(out, 'utf8')
+          .trim()
+          .split('\n')
+          .map((l) => JSON.parse(l));
+        expect(interval.offload).toBeNull();
+        expect(exported.stdout).toMatch(/comment→comment\t1\t.*\t-$/m);
+      } finally {
+        chmodSync(ledger, 0o600);
+      }
+    },
+    60_000,
+  );
 
   test('status --json names the switch, the ledger and this shell’s session', () => {
     const status = run(['metrics', 'status', '--json'], { PI_SESSION_ID: 'pi-1', PI_SESSION_FILE: '/s/pi-1.jsonl' });

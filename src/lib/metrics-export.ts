@@ -242,7 +242,7 @@ export interface TransitionSummary {
   withUsage: number;
   meanTokens: number | null;
   costUsd: number | null;
-  /** mikro offload cost summed over the transition's intervals; null when none was priced. */
+  /** mikro offload cost summed over the transition's intervals; null when any interval's offload is unknown (a partial sum is not a total). */
   offloadUsd: number | null;
 }
 
