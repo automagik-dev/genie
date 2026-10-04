@@ -543,6 +543,215 @@ describe('rounds across runs', () => {
     expect(again.result.notes.join('\n')).toContain('Not recorded: size:M lowers what the owner approved');
     expect(blockOf(env.draft).size.map((s: Out) => s.value)).toEqual(['G', 'M', 'G']);
   });
+
+  test('two scope drops approved by two answers in one round are both recorded with their own approvedBy', async () => {
+    const drops = [
+      question(1, {
+        question: 'Drop the first helper?',
+        header: 'Drop1',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+      question(2, {
+        question: 'Drop the second helper?',
+        header: 'Drop2',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the second helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    ];
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: drops }),
+    });
+    expect(raised.result.state).toBe('round');
+    expect(raised.result.questions.map((q: Out) => q.id)).toEqual(['R1-1', 'R1-2']);
+
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          answerTo(raised.result.questions[0], 'Drop it (Recommended)'),
+          answerTo(raised.result.questions[1], 'Drop it (Recommended)'),
+        ],
+      },
+    );
+    expect(second.result.state).toBe('round');
+    expect(second.result.notes.join('\n')).not.toContain('Not recorded:');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.item)).toEqual(['the helper', 'the second helper']);
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([
+      { by: 'owner', round: 2, approvedBy: 'R1-1' },
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+    ]);
+  });
+
+  test('a drop no answer covers still waits while the approved drop in the same plan is recorded', async () => {
+    const drop = question(1, {
+      question: 'Drop the first helper?',
+      header: 'Drop1',
+      options: [
+        { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+        { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+      ],
+    });
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: [drop] }),
+    });
+    const approvedBy = raised.result.questions[0].id;
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      { answers: [answerTo(raised.result.questions[0], 'Drop it (Recommended)')] },
+    );
+    expect(second.result.state).toBe('round');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([{ by: 'owner', round: 2, approvedBy }, undefined]);
+    expect(scopeIn[1].item).toBe('the second helper');
+    const note = second.result.notes.find((line: string) => line.startsWith('Not recorded:'));
+    expect(note).toBe(
+      "Not recorded: scope-drop:the second helper lowers what the owner approved, and no unused Settled answer agrees to it; it waits for the owner's answer.",
+    );
+    expect(note).not.toContain('scope-drop:the helper');
+  });
+
+  /** Round 1 asks one multi-select-or-single drop question per entry of `drops`; each names `scope-drop:<item>` for its items. */
+  function dropQuestions(...drops: string[][]): Out[] {
+    return drops.map((items, index) =>
+      question(index + 1, {
+        question: `Which helpers go (answer ${index + 1})?`,
+        header: `Drop${index + 1}`,
+        multiSelect: true,
+        options: [
+          ...items.map((item) => ({
+            label: `Drop ${item}`,
+            description: 'a narrower wish',
+            value: `scope-drop:${item}`,
+          })),
+          { label: 'Keep them', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    );
+  }
+
+  /** The `--approved` ids the ratchet step of the round's ledger:commit call carries, in argv order. */
+  function approvedArgv(record: { calls: Call[] }): string[] {
+    const commit = record.calls.find((call) => call.label === 'ledger:commit');
+    const spec = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(commit?.prompt ?? '')?.[1] ?? '{}') as { steps: Out[] };
+    const argv: string[] = spec.steps.find((step) => step.step === 'ratchet')?.argv ?? [];
+    return argv.flatMap((arg, index) => (arg === '--approved' ? [argv[index + 1] as string] : []));
+  }
+
+  test('H1: overlapping answers still record every drop; the argv names the answers in Settled order and the ledger accepts it', async () => {
+    // Drops `the helper`, `the second helper` (Scope IN order). R1-1 names only the second; the newer R1-2 names both.
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper', 'the second helper'],
+        questions: dropQuestions(['the second helper'], ['the helper', 'the second helper']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop the second helper'] },
+          { id: second.id, question: second.question, answer: ['Drop the helper', 'Drop the second helper'] },
+        ],
+      },
+    );
+    expect(answered.result.state).toBe('round');
+    expect(answered.result.notes.join('\n')).not.toContain('Not recorded:');
+    expect(approvedArgv(answered)).toEqual(['R1-2']);
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+    ]);
+  });
+
+  test('H1: two answers that each pay for a drop are emitted in Settled order, not in drop order', async () => {
+    // Scope IN order is beta, alpha. R1-1 names both; the newer R1-2 names beta, so beta <- R1-2 and alpha <- R1-1.
+    // Taken in drop order the ids would read R1-2, R1-1; the ledger and the script agree on Settled order.
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['beta', 'alpha'],
+        questions: dropQuestions(['alpha', 'beta'], ['beta']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop alpha', 'Drop beta'] },
+          { id: second.id, question: second.question, answer: ['Drop beta'] },
+        ],
+      },
+    );
+    expect(answered.result.state).toBe('round');
+    expect(answered.result.notes.join('\n')).not.toContain('Not recorded:');
+    expect(approvedArgv(answered)).toEqual(['R1-1', 'R1-2']);
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => [entry.item, entry.dropped.approvedBy])).toEqual([
+      ['beta', 'R1-2'],
+      ['alpha', 'R1-1'],
+    ]);
+  });
+
+  test('the answer recorded for a drop is the newest that names it, as before one answer paid for several', async () => {
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper'],
+        questions: dropQuestions(['the helper'], ['the helper']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop the helper'] },
+          { id: second.id, question: second.question, answer: ['Drop the helper'] },
+        ],
+      },
+    );
+    expect(approvedArgv(answered)).toEqual(['R1-2']);
+    expect(blockOf(env.draft).scopeIn[0].dropped).toEqual({ by: 'owner', round: 2, approvedBy: 'R1-2' });
+  });
+
+  test('P2: a lead-authored addition in the same plan as an approved drop is not attributed to the owner', async () => {
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper', 'the second helper'],
+        questions: dropQuestions(['the helper']),
+      }),
+    });
+    const [asked] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: ['the second helper', 'a third helper'], questions: [] }) },
+      { answers: [{ id: asked.id, question: asked.question, answer: ['Drop the helper'] }] },
+    );
+    expect(answered.result.state).toBe('round');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.item)).toEqual(['the helper', 'the second helper', 'a third helper']);
+    // The addition is the lead's; the drop keeps the owner's answer as its approval.
+    expect(scopeIn[2]).toEqual({ item: 'a third helper', by: 'lead', round: 2 });
+    expect(scopeIn[0].dropped).toEqual({ by: 'lead', round: 2, approvedBy: asked.id });
+  });
 });
 
 // ---------------------------------------------------------------- scouts

@@ -442,16 +442,21 @@ function unusedConvene() {
   return approvals.length ? approvals[approvals.length - 1] : null
 }
 
-function downgradeApproval(tokens) {
+// Each downgrade token (`size:<S>`, `scope-drop:<item>`) needs an unused, unreopened Settled decision
+// whose value names it: the NEWEST such answer, as when one answer had to name every token. One answer may
+// pay for several tokens, and a token no answer names stays out. The ledger makes the same choice over the
+// ids it is passed (the newest by Settled position), so the two cannot disagree.
+function downgradeApprovals(tokens) {
   const used = usedApprovals()
-  const approvals = ledger.settled.filter(
-    (entry) =>
-      entry.kind === 'decision' &&
-      !entry.reopenedBy &&
-      !used.has(entry.id) &&
-      tokens.every((token) => asList(entry.value).includes(token)),
-  )
-  return approvals.length ? approvals[approvals.length - 1] : null
+  const newestFirst = ledger.settled
+    .filter((entry) => entry.kind === 'decision' && !entry.reopenedBy && !used.has(entry.id))
+    .reverse()
+  const byToken = new Map()
+  for (const token of tokens) {
+    const found = newestFirst.find((entry) => asList(entry.value).includes(token))
+    if (found) byToken.set(token, found)
+  }
+  return byToken
 }
 
 const currentSize = () => (ledger.size.length ? text(ledger.size[ledger.size.length - 1].value) : '')
@@ -473,18 +478,27 @@ function ratchetDiff(plan) {
 }
 
 // Size and Scope IN only ratchet up; a downgrade is recorded only with the Settled answer that agreed
-// to exactly it (`size:<S>`, `scope-drop:<item>`), otherwise it waits for the owner and is said so.
+// to exactly that token (`size:<S>`, `scope-drop:<item>`). One answer may pay for several tokens; a
+// token no answer names is left IN and named alone in the note, so it waits for the owner.
 function ratchetPlan(plan) {
   const diff = ratchetDiff(plan)
-  const approval = diff.downgrades.length ? downgradeApproval(diff.downgrades) : null
-  if (diff.downgrades.length && !approval) {
-    addNote(`Not recorded: ${diff.downgrades.join(', ')} lowers what the owner approved, and no unused Settled answer agrees to it; it waits for the owner's answer.`)
+  const approvals = diff.downgrades.length ? downgradeApprovals(diff.downgrades) : new Map()
+  const waiting = diff.downgrades.filter((token) => !approvals.has(token))
+  if (waiting.length) {
+    addNote(`Not recorded: ${waiting.join(', ')} lowers what the owner approved, and no unused Settled answer agrees to it; it waits for the owner's answer.`)
   }
-  const size = (diff.lowered && !approval) || diff.wantedSize === diff.current ? '' : diff.wantedSize
-  const scopeChanges = diff.added.length > 0 || (approval !== null && diff.dropped.length > 0)
-  const scope = scopeChanges ? (approval ? diff.wantedScope : [...diff.inScope, ...diff.added]) : null
+  const size = (diff.lowered && !approvals.has(`size:${diff.wantedSize}`)) || diff.wantedSize === diff.current ? '' : diff.wantedSize
+  const kept = diff.dropped.filter((item) => !approvals.has(`scope-drop:${item}`))
+  const scopeChanges = diff.added.length > 0 || kept.length < diff.dropped.length
+  const scope = scopeChanges ? [...diff.wantedScope, ...kept] : null
   if (!size && !scope) return null
-  return { size, scope, approvedBy: approval ? approval.id : '', by: approval ? 'owner' : 'lead' }
+  // The ids go out in Settled order, which is the order the ledger resolves them in, never in drop order.
+  const paying = new Set(approvals.values())
+  const approvedBy = ledger.settled.filter((entry) => paying.has(entry)).map((entry) => text(entry.id))
+  // One call has one `by`: the owner's only when every change in it is a downgrade an answer approved. A raise or
+  // an addition is the lead's own, and rides with `lead` even beside an approved drop (the drop keeps its approvedBy).
+  const leadAuthored = Boolean(size && !diff.lowered) || diff.added.length > 0
+  return { size, scope, approvedBy, by: approvedBy.length && !leadAuthored ? 'owner' : 'lead' }
 }
 
 // ---------------------------------------------------------------- questions
@@ -763,7 +777,8 @@ function commitSteps(spec) {
   }
   if (spec.ratchet) {
     const { size, scope, approvedBy, by } = spec.ratchet
-    const argv = ledgerArgv('ratchet', '--round', r, '--by', by, ...(size ? ['--size', size] : []), ...(scope ? ['--scope', '@{scope}'] : []), ...(approvedBy ? ['--approved', approvedBy] : []))
+    const approved = approvedBy.flatMap((id) => ['--approved', id])
+    const argv = ledgerArgv('ratchet', '--round', r, '--by', by, ...(size ? ['--size', size] : []), ...(scope ? ['--scope', '@{scope}'] : []), ...approved)
     steps.push({ step: 'ratchet', argv, ...(scope ? { files: { scope } } : {}) })
   }
   if (steps.length) steps.push({ step: 'render', argv: ledgerArgv('render') })
