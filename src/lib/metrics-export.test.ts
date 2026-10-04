@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import {
   type Interval,
@@ -257,7 +257,9 @@ describe('ledger → verified intervals', () => {
     const repoRoot = join(root, 'repo');
     // A worktree of this repo living OUTSIDE its root, registered with git.
     const outside = join(root, 'elsewhere', 'wish-x');
-    write(join(repoRoot, '.git', 'worktrees', 'wish-x', 'gitdir'), `${join(outside, '.git')}\n`);
+    // Registered RELATIVE to its registration dir, as git ≥2.48 `worktree add --relative-paths` writes it.
+    const registration = join(repoRoot, '.git', 'worktrees', 'wish-x');
+    write(join(registration, 'gitdir'), `${relative(registration, join(outside, '.git'))}\n`);
     const attempt = (ts: string, dir: string, footer: Record<string, number> | null) => ({ ts, dir, ok: true, footer });
     write(
       join(outside, '.mikro', 'runs', 'review-prep.jsonl'),
@@ -280,7 +282,10 @@ describe('ledger → verified intervals', () => {
     ];
     const intervals = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
     const first = intervals.find((i) => i.task === 't1');
-    expect(first?.offload).toEqual({ attempts: 2, failed: 0, ambiguous: 1, tokens: 40, costUsd: 0.03 });
+    // One attempt also sits inside t2's window: it may be t1's, so t1's bill is unknown, never a lower total.
+    expect(first?.offload).toEqual({ attempts: 2, failed: 0, ambiguous: 1, tokens: null, costUsd: null });
+    // ...and a transition with one unknown interval has an unknown total.
+    expect(summarize(intervals).find((r) => r.transition === 'claim→report')?.offloadUsd).toBeNull();
     // One more attempt with no footer (a timeout): tokens and cost become unknown, never a lower total.
     write(
       join(repoRoot, '.mikro', 'runs', 'issue-triage.jsonl'),

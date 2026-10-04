@@ -17,20 +17,20 @@
  * Unknown is never 0: a repository with no ledger on this host is null; tokens
  * or cost are null as soon as one attempt in the window carried no footer or
  * no price (a window with no attempt in an existing ledger is a measured 0); an attempt that also falls inside another card's interval of the
- * same repository cannot be told apart, so it is counted `ambiguous` and left
- * out of tokens and cost. Calls made with `--no-ledger` or through `mikro mcp`
+ * same repository cannot be told apart, so it is counted `ambiguous` and the
+ * interval's tokens and cost become null (the bill may be this card's). Calls made with `--no-ledger` or through `mikro mcp`
  * write no row and are not seen.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { resolveGenieHome } from './genie-home.js';
 
 export interface OffloadUsage {
   /** mikro attempts started inside the window and owned by this card alone (a retry is a second attempt). */
   attempts: number;
   failed: number;
-  /** Attempts that also fall inside another card's interval of the same repository: excluded below. */
+  /** Attempts that also fall inside another card's interval of the same repository: tokens and cost become null. */
   ambiguous: number;
   /** null when any counted attempt had no footer. */
   tokens: number | null;
@@ -107,7 +107,8 @@ export function repoCheckouts(repoRoot: string): string[] {
   for (const name of safeReaddir(registry)) {
     try {
       const gitdir = readFileSync(join(registry, name, 'gitdir'), 'utf8').trim();
-      if (gitdir) checkouts.push(dirname(gitdir));
+      // git ≥2.48 `worktree add --relative-paths` writes it relative to this registration directory.
+      if (gitdir) checkouts.push(dirname(isAbsolute(gitdir) ? gitdir : resolve(join(registry, name), gitdir)));
     } catch {
       // a pruned or half-written registration
     }
@@ -124,7 +125,7 @@ export function readOffloadRows(repoRoot: string): OffloadRow[] | null {
   if (files.length === 0) return null;
   const inside = (dir: string) => checkouts.some((c) => dir === c || dir.startsWith(`${c}${sep}`));
   const rows = files.flatMap(readRows).filter((row) => Number.isFinite(row.at) && inside(row.dir));
-  const ownLedger = checkouts.some((c) => safeReaddir(join(c, '.mikro', 'runs')).length > 0);
+  const ownLedger = checkouts.some((c) => ledgerFiles(join(c, '.mikro', 'runs')).length > 0);
   return rows.length > 0 || ownLedger ? rows : null;
 }
 
@@ -150,7 +151,8 @@ export function offloadInWindow(
     attempts: own.length,
     failed: own.filter((row) => !row.ok).length,
     ambiguous: shared.length,
-    tokens: tokens.includes(null) ? null : (tokens as number[]).reduce((sum, t) => sum + t, 0),
-    costUsd: costs.includes(null) ? null : (costs as number[]).reduce((sum, c) => sum + c, 0),
+    // An ambiguous attempt may be this card's: leaving it out would understate the bill, so the bill is unknown.
+    tokens: shared.length > 0 || tokens.includes(null) ? null : (tokens as number[]).reduce((sum, t) => sum + t, 0),
+    costUsd: shared.length > 0 || costs.includes(null) ? null : (costs as number[]).reduce((sum, c) => sum + c, 0),
   };
 }

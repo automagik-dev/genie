@@ -208,10 +208,8 @@ export interface TransitionSummary {
 
 const quantile = (sorted: number[], q: number) =>
   sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
-const sumOrNull = (values: Array<number | null>): number | null => {
-  const known = values.filter((v): v is number => v !== null);
-  return known.length > 0 ? known.reduce((sum, v) => sum + v, 0) : null;
-};
+const allOrNull = (values: Array<number | null>): number | null =>
+  values.length > 0 && !values.includes(null) ? (values as number[]).reduce((sum, v) => sum + v, 0) : null;
 const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
 export function summarize(intervals: Interval[]): TransitionSummary[] {
@@ -231,7 +229,8 @@ export function summarize(intervals: Interval[]): TransitionSummary[] {
         withUsage: known.length,
         meanTokens: known.length > 0 ? Math.round(known.reduce((s, u) => s + totalTokens(u), 0) / known.length) : null,
         costUsd: priced.length > 0 ? priced.reduce((s, c) => s + c, 0) : null,
-        offloadUsd: sumOrNull(group.map((i) => i.offload?.costUsd ?? null)),
+        // A partial sum is not a total: one interval whose offload bill is unknown makes the transition's unknown.
+        offloadUsd: allOrNull(group.map((i) => i.offload?.costUsd ?? null)),
       };
     })
     .sort((a, b) => b.n - a.n || a.transition.localeCompare(b.transition));
