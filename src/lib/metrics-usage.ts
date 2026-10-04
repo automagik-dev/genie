@@ -13,9 +13,13 @@
  *
  * A log that is absent or unreadable yields no samples — the caller reports the
  * interval as having no usage, never as zero.
+ *
+ * OMP 18.6.1 exports no session id to its tool shells, so an OMP capture line
+ * carries only its cwd; {@link matchPiSessionByCwd} finds the session whose own
+ * `session.cwd` record equals it and whose life overlaps the interval.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir } from './genie-home.js';
@@ -228,4 +232,67 @@ export function readUsageSamples(session: RuntimeSession, env: NodeJS.ProcessEnv
       ? parse(files.flatMap(readRecords))
       : files.flatMap((file) => parse(readRecords(file)));
   return samples.filter((sample) => Number.isFinite(sample.at)).sort((a, b) => a.at - b.at);
+}
+
+/** The `session` header record of a pi/OMP log (its first lines), without reading the whole file. */
+function piSessionHeader(file: string): { id: string | null; cwd: string; startedAt: number } | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, 'r');
+    const buffer = Buffer.alloc(16_384);
+    const read = readSync(fd, buffer, 0, buffer.length, 0);
+    for (const line of buffer.subarray(0, read).toString('utf8').split('\n').slice(0, 8)) {
+      try {
+        const record = obj(JSON.parse(line));
+        if (record?.type === 'session' && typeof record.cwd === 'string') {
+          return {
+            id: typeof record.id === 'string' ? record.id : null,
+            cwd: record.cwd,
+            startedAt: Date.parse(String(record.timestamp)),
+          };
+        }
+      } catch {
+        // a torn header line
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+  return null;
+}
+
+export type PiSessionMatch = { id: string | null; file: string } | 'ambiguous' | null;
+
+/**
+ * The single pi/OMP session that ran in `cwd` while `[startAt, endAt)` elapsed: its header's cwd is
+ * equal and its life (header timestamp → last write) overlaps the window. Two candidates are
+ * 'ambiguous' — never a guess; none is null.
+ */
+export function matchPiSessionByCwd(
+  cwd: string,
+  startAt: number,
+  endAt: number,
+  env: NodeJS.ProcessEnv = process.env,
+): PiSessionMatch {
+  const home = env.HOME || homedir();
+  const hits: Array<{ id: string | null; file: string }> = [];
+  for (const root of [join(home, '.omp', 'agent', 'sessions'), join(home, '.pi', 'agent', 'sessions')]) {
+    for (const slug of safeReaddir(root)) {
+      for (const file of listJsonl(join(root, slug))) {
+        const header = piSessionHeader(file);
+        if (!header || header.cwd !== cwd || !(header.startedAt <= endAt)) continue;
+        let lastWrite = 0;
+        try {
+          lastWrite = statSync(file).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (lastWrite >= startAt) hits.push({ id: header.id, file });
+      }
+    }
+  }
+  if (hits.length > 1) return 'ambiguous';
+  return hits[0] ?? null;
 }

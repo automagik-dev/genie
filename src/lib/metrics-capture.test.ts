@@ -83,6 +83,19 @@ describe('enabled', () => {
     expect(statSync(captureLedgerPath()).mode & 0o777).toBe(0o600);
   });
 
+  test('only an OMP line with no session id carries its cwd (the export’s window join key)', () => {
+    enableCapture();
+    recordLifecycleEvent(EVENT, { OMPCODE: '1', CLAUDECODE: '1' });
+    recordLifecycleEvent({ ...EVENT, eventId: 8 }, { CLAUDE_CODE_SESSION_ID: 'c' });
+    const [omp, claude] = readFileSync(captureLedgerPath(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(omp.cwd).toBe(process.cwd());
+    expect(omp.session).toEqual({ id: null, source: 'pi', file: null });
+    expect(claude.cwd).toBeUndefined();
+  });
+
   test('a failing ledger never throws into the command', () => {
     enableCapture();
     mkdirSync(captureLedgerPath()); // a directory where the ledger file should be
@@ -129,5 +142,17 @@ describe('resolveRuntimeSession', () => {
       file: '/s/d.jsonl',
     });
     expect(resolveRuntimeSession(NO_RUNTIME)).toEqual({ id: null, source: null, file: null });
+    // OMP 18.6.1 sets OMPCODE=1 AND CLAUDECODE=1 and exports no session id; a leaked outer Claude
+    // session id must not be taken for it.
+    expect(resolveRuntimeSession({ OMPCODE: '1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'outer-claude' })).toEqual({
+      id: null,
+      source: 'pi',
+      file: null,
+    });
+    // Codex nested under Claude: the innermost runtime's own id wins.
+    expect(resolveRuntimeSession({ CLAUDE_CODE_SESSION_ID: 'outer', CODEX_THREAD_ID: 'thr' })).toMatchObject({
+      id: 'thr',
+      source: 'codex',
+    });
   });
 });

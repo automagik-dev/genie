@@ -71,16 +71,22 @@ export interface RuntimeSession {
 
 /**
  * Read the runtime session id the runtime itself exports to its tool shells.
- * Verified 2026-10-04: Claude Code `CLAUDE_CODE_SESSION_ID`; Codex
- * `CODEX_THREAD_ID` (equal to the rollout's `session_meta.session_id`); pi/OMP
- * `PI_SESSION_ID` plus `PI_SESSION_FILE`. No marker → all null, never a guess.
+ * Verified live 2026-10-04: Claude Code `CLAUDE_CODE_SESSION_ID`; Codex
+ * `CODEX_THREAD_ID` (equal to the rollout's `session_meta.session_id`); pi
+ * `PI_SESSION_ID` plus `PI_SESSION_FILE`. OMP 18.6.1 exports `OMPCODE=1` and NO
+ * session id to its tool shells, so an OMP line carries `{source: 'pi', id: null}`
+ * plus the capture `cwd`, and the export matches OMP's own session file by that
+ * cwd and the interval's time window (labelled, never exact). No marker → all
+ * null, never a guess.
  */
 export function resolveRuntimeSession(env: NodeJS.ProcessEnv = process.env): RuntimeSession {
-  if (env.CLAUDE_CODE_SESSION_ID) return { id: env.CLAUDE_CODE_SESSION_ID, source: 'claude-code', file: null };
-  if (env.CODEX_THREAD_ID) return { id: env.CODEX_THREAD_ID, source: 'codex', file: null };
-  if (env.PI_SESSION_ID || env.PI_SESSION_FILE) {
+  // Same most-specific-first order as resolveAuthorKind: an OMP shell also carries CLAUDECODE, and a
+  // nested shell can carry an OUTER runtime's session id, so the innermost runtime's marker wins.
+  if (env.OMPCODE || env.PI_SESSION_ID || env.PI_SESSION_FILE) {
     return { id: env.PI_SESSION_ID || null, source: 'pi', file: env.PI_SESSION_FILE || null };
   }
+  if (env.CODEX_THREAD_ID) return { id: env.CODEX_THREAD_ID, source: 'codex', file: null };
+  if (env.CLAUDE_CODE_SESSION_ID) return { id: env.CLAUDE_CODE_SESSION_ID, source: 'claude-code', file: null };
   return { id: null, source: null, file: null };
 }
 
@@ -105,11 +111,15 @@ export interface CaptureLine {
   authorKind: string | null;
   at: number;
   session: RuntimeSession;
+  /** Only for a pi/OMP shell that exported no session id: the export's window join needs it. */
+  cwd?: string;
   genie: string;
   pid: number;
 }
 
 export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.ProcessEnv = process.env): CaptureLine {
+  const session = resolveRuntimeSession(env);
+  const anonymousPi = session.source === 'pi' && session.id === null && session.file === null;
   return {
     v: CAPTURE_SCHEMA_VERSION,
     source: 'task_event',
@@ -119,7 +129,8 @@ export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.Process
     kind: input.kind,
     authorKind: input.authorKind,
     at: input.createdAt,
-    session: resolveRuntimeSession(env),
+    session,
+    ...(anonymousPi ? { cwd: process.cwd() } : {}),
     genie: VERSION,
     pid: process.pid,
   };

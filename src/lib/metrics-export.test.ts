@@ -206,6 +206,51 @@ describe('ledger → verified intervals', () => {
     expect(summary.find((s) => s.transition === 'report→move')).toMatchObject({ n: 1, withUsage: 0, meanTokens: null });
   });
 
+  test('an OMP shell exported no session id: its usage joins by the one OMP session in that cwd, else stays null', () => {
+    const at1 = t('2026-10-04T10:00:00Z');
+    const at2 = t('2026-10-04T10:10:00Z');
+    const omp = (name: string, cwd: string) => {
+      const file = join(root, '.omp', 'agent', 'sessions', '-repo', `2026-10-04T09-00-00Z_${name}.jsonl`);
+      write(
+        file,
+        jsonl([
+          { type: 'title', v: 1, title: name },
+          { type: 'session', id: name, timestamp: '2026-10-04T09:00:00Z', cwd },
+          {
+            type: 'message',
+            timestamp: '2026-10-04T10:05:00Z',
+            message: {
+              role: 'assistant',
+              usage: { input: 50, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+            },
+          },
+        ]),
+      );
+      return file;
+    };
+    const ompFile = omp('omp-1', '/work/repo');
+    omp('omp-other-cwd', '/work/elsewhere');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
+    const lines = [
+      { ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/repo' },
+      { ...line(db, 2, 'report', at2, anonymous), cwd: '/work/repo' },
+    ];
+    const [windowed] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(windowed).toMatchObject({
+      sessionMatch: 'window',
+      session: { source: 'pi', id: 'omp-1', file: ompFile },
+      usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
+    });
+    // A second OMP session in the same cwd over the same window: ambiguous, so no usage is attributed.
+    omp('omp-2', '/work/repo');
+    const [ambiguous] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+  });
+
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');
     write(
@@ -230,6 +275,7 @@ describe('Phoenix projection', () => {
     session: { id: 's', source: 'claude-code' as const, file: null },
     usage: { calls: 1, input: 1, cacheRead: 2, cacheWrite: 3, output: 4, costUsd: null },
     sharedSession: false,
+    sessionMatch: 'exact' as const,
   };
 
   test('a target needs an http(s) endpoint, a project and at most an env var NAME for the key', () => {
