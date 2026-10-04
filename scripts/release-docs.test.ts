@@ -45,6 +45,41 @@ function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
 
+const RAW_MAIN = 'https://raw.githubusercontent.com/automagik-dev/genie/main';
+
+/** The operator one-liner in SECURITY.md that compares the two published pin copies. */
+function pinCrossCheckScript(): string {
+  const blocks = [...read('SECURITY.md').matchAll(/```bash\n([\s\S]*?)```/g)].map((match) => match[1]);
+  const matching = blocks.filter((block) => block.includes('curl') && block.includes('SIGNING_IDENTITY_PIN'));
+  expect(matching).toHaveLength(1);
+  expect(matching[0]).toContain(RAW_MAIN);
+  return matching[0];
+}
+
+/** Runs that one-liner for real against a loopback server standing in for raw.githubusercontent.com. */
+async function runPinCrossCheck(routes: Record<string, { status: number; body: string }>) {
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(request) {
+      const hit = routes[new URL(request.url).pathname];
+      return hit ? new Response(hit.body, { status: hit.status }) : new Response('not found', { status: 404 });
+    },
+  });
+  try {
+    const script = pinCrossCheckScript().replaceAll(RAW_MAIN, `http://127.0.0.1:${server.port}`);
+    const proc = Bun.spawn(['bash', '-c', script], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      env: { ...process.env, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
+    });
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return { stdout, exitCode };
+  } finally {
+    server.stop(true);
+  }
+}
+
 /**
  * The operator docs as one text: README.md, then UPGRADING.md, which holds the
  * retirement, rollback, restore, MCP and Orca prose moved verbatim out of the
@@ -796,6 +831,43 @@ describe('Group E release and documentation contracts', () => {
       expect(source).toContain('certificate-oidc-issuer:     https://token.actions.githubusercontent.com');
       expect(source).toContain('provenance source-uri:       github.com/automagik-dev/genie');
     }
+  });
+
+  test('the pin cross-check one-liner fails closed unless both published copies are fetched and agree', async () => {
+    const security = read('SECURITY.md');
+    const mirror = read('.well-known/security.txt');
+    const ok = (body: string) => ({ status: 200, body });
+    const down = { status: 403, body: 'rate limited' };
+
+    // Real files from this tree: both fetched, same three values.
+    const agree = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': ok(mirror) });
+    expect(agree.exitCode).toBe(0);
+    expect(agree.stdout).toContain('agree');
+
+    // Both fetches fail (rate limit, outage): two empty streams must not read as a match.
+    const bothDown = await runPinCrossCheck({ '/SECURITY.md': down, '/.well-known/security.txt': down });
+    expect(bothDown.exitCode).not.toBe(0);
+    expect(bothDown.stdout).not.toContain('agree');
+
+    // Both fetches succeed but neither carries a pin block.
+    const noPin = await runPinCrossCheck({
+      '/SECURITY.md': ok('<html>maintenance</html>'),
+      '/.well-known/security.txt': ok('<html>maintenance</html>'),
+    });
+    expect(noPin.exitCode).not.toBe(0);
+    expect(noPin.stdout).not.toContain('agree');
+
+    // One side fails.
+    const oneDown = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': down });
+    expect(oneDown.exitCode).not.toBe(0);
+
+    // One side tampered: a changed issuer is a real mismatch.
+    const tampered = mirror.replace('token.actions.githubusercontent.com', 'token.actions.example.invalid');
+    expect(tampered).not.toBe(mirror);
+    const drift = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': ok(tampered) });
+    expect(drift.exitCode).not.toBe(0);
+    expect(drift.stdout).not.toContain('agree');
+    expect(drift.stdout).toContain('example.invalid');
   });
 
   test('release packaging validates the extracted archive payload', () => {

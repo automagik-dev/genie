@@ -118,7 +118,7 @@ provenance source-uri:       github.com/automagik-dev/genie
 
 <!-- END SIGNING_IDENTITY_PIN -->
 
-**These three values agree across every channel that publishes them.** If any channel drifts, treat all three as compromised and escalate per the runbook.
+**These three values agree across every channel that publishes them.** If any channel drifts, treat the three values as compromised and escalate per the runbook.
 
 | Channel | Path / URL | Purpose |
 |---------|------------|---------|
@@ -179,17 +179,22 @@ scripts/check-fingerprint-pinning.sh
 
 The script greps each of the six required in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`, `scripts/verify-release.sh`, and `install.sh`) for the three canonical lines above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
 
-One-liner for operators without the repo cloned (checks the two published copies, both from `main`):
+One-liner for operators without the repo cloned (checks the two published copies, both from `main`). It fails closed: a fetch that fails, a copy with no pin block, or copies that differ all end in a non-zero exit, and only a fetched, non-empty, identical pin prints the `agree` line.
 
 ```bash
-diff <(curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/SECURITY.md \
-        | awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
-        | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri') \
-     <(curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt \
-        | awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
-        | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri' \
-        | sed 's/^# //')
-# Empty output = the two published copies agree. Any output = escalate.
+(
+  set -o pipefail
+  u=https://raw.githubusercontent.com/automagik-dev/genie/main
+  pin() { awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
+            | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri'; }
+  a=$(curl -fsSL "$u/SECURITY.md" | pin) && [ -n "$a" ] &&
+  b=$(curl -fsSL "$u/.well-known/security.txt" | pin | sed 's/^# //') && [ -n "$b" ] &&
+  diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") && echo "OK: the two published copies agree"
+)
+# Exit 0 with the OK line = the two published copies agree.
+# Any other outcome (diff output, no output, a non-zero exit) = the check did not
+# confirm the pin. A failed fetch is not a match: retry from a trusted network,
+# and escalate if the two copies show differing lines.
 ```
 
 ### If the pin has drifted
