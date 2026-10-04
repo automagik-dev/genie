@@ -35,9 +35,9 @@
  * at all (the sandbox holds no credential — `basis.gh: skipped-boundary` says
  * so in the artifact and in the ledger row).
  *
- * Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and
- * posted to Phoenix (project cc-mikro) so the bill is visible where the Opus
- * turns it replaces are. Exit 0 with the result JSON on stdout when the final
+ * Each attempt is appended to `<repo>/.mikro/runs/<agent>.jsonl` and, when
+ * the operator configured a Phoenix target (`phoenix.ts`), posted there so the
+ * bill is visible where the Opus turns it replaces are. Exit 0 with the result JSON on stdout when the final
  * attempt is ok; exit 1 otherwise (the result JSON still names every error).
  */
 import { createHash, randomUUID } from 'node:crypto';

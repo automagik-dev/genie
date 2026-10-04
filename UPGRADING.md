@@ -45,6 +45,15 @@ stub: any `genie orca …` call, `genie orca mirror` included, prints a retireme
 Release tarballs keep an empty `plugins/genie/` directory only so earlier binaries can still update; nothing reads
 it. An Orca install of the plugin keeps running the commit Orca pinned, so uninstall it from Orca yourself.
 
+### mikro Phoenix spans are off until you configure them
+
+`genie mikro call` used to post every attempt to `http://127.0.0.1:6006`, project `cc-mikro`, whether or not a
+Phoenix was there. It now posts only when you name both the project and the endpoint:
+`MIKRO_PHOENIX_PROJECT=<your project> PHOENIX_ENDPOINT=<your Phoenix>`. Any Phoenix works, including the self-hosted
+single-command install. A `PHOENIX_*` variable set for another tool no longer turns posting on, and an unconfigured
+host makes no network call. To keep the old behavior, export `MIKRO_PHOENIX_PROJECT=cc-mikro` and
+`PHOENIX_ENDPOINT=http://127.0.0.1:6006`.
+
 ## Skills
 
 ### Where the skills land

@@ -163,8 +163,10 @@ earn trust — the cost
 footer must parse, the JSON must validate against `schemas.ts`, every `path:line` must exist at that
 line (an unambiguous bare file name is resolved to its tracked path and rewritten; an ambiguous one
 gets a did-you-mean hint), and a failure is retried once with the errors appended. Every attempt is
-appended to `.mikro/runs/<agent>.jsonl` (gitignored) and posted as an AGENT span to Phoenix project
-`cc-mikro`, beside the Opus turns it replaces. Exit 0 = the JSON on stdout is trustworthy.
+appended to `.mikro/runs/<agent>.jsonl` (gitignored) and, only when you configured a Phoenix, posted as
+an AGENT span beside the Opus turns it replaces: set BOTH `MIKRO_PHOENIX_PROJECT` (the project name you
+choose) and `PHOENIX_ENDPOINT` (any Phoenix — the self-hosted single-command install works). There is no
+default endpoint or project; unconfigured, a run makes no network call. `PHOENIX_DISABLED=1` skips it. Exit 0 = the JSON on stdout is trustworthy.
 
 A FAILED attempt also keeps the raw MCP text beside its row, as `.mikro/runs/raw-<runId>-<attempt>.txt`
 — always, no flag. `--raw` prints to stdout, and inside a `wish.js` workflow that stdout is gone, so a
