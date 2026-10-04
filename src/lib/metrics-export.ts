@@ -18,6 +18,7 @@
 import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
+import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
 import { type UsageSample, matchOmpSessionByCwd, readUsageSamples } from './metrics-usage.js';
 
 export interface UsageTotals {
@@ -43,6 +44,8 @@ export interface Interval {
   usage: UsageTotals | null;
   /** Another interval of the same session overlaps this one, so its usage is shared, not exclusive. */
   sharedSession: boolean;
+  /** mikro runs this repository logged inside the window (another provider, priced by mikro); null when no ledger. */
+  offload: OffloadUsage | null;
   /**
    * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
    * OMP shell exported none and exactly one OMP session in the same cwd overlapped the interval;
@@ -176,6 +179,11 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
     }
     return samplesBySession.get(key) ?? null;
   };
+  const offloadRows = new Map<string, ReturnType<typeof readOffloadRows>>();
+  const rowsFor = (root: string) => {
+    if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
+    return offloadRows.get(root) ?? null;
+  };
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
     events.sort((a, b) => a.at - b.at || a.event - b.event);
@@ -197,10 +205,17 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
         usage: usageFor(samples, from.at, to.at, match),
         sharedSession: false,
         sessionMatch: match,
+        offload: null,
       });
     }
   }
   markSharedSessions(intervals);
+  // mikro rows carry a repository, not a session: an attempt inside two cards' windows of one repo is ambiguous.
+  for (const interval of intervals) {
+    const root = repoRootOfDb(interval.db);
+    const others = intervals.filter((o) => o.task !== interval.task && repoRootOfDb(o.db) === root);
+    interval.offload = offloadInWindow(rowsFor(root), interval.startAt, interval.endAt, others);
+  }
   return intervals;
 }
 
@@ -227,10 +242,14 @@ export interface TransitionSummary {
   withUsage: number;
   meanTokens: number | null;
   costUsd: number | null;
+  /** mikro offload cost summed over the transition's intervals; null when none was priced. */
+  offloadUsd: number | null;
 }
 
 const quantile = (sorted: number[], q: number) =>
   sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+const allOrNull = (values: Array<number | null>): number | null =>
+  values.length > 0 && !values.includes(null) ? (values as number[]).reduce((sum, v) => sum + v, 0) : null;
 const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
 export function summarize(intervals: Interval[]): TransitionSummary[] {
@@ -250,6 +269,8 @@ export function summarize(intervals: Interval[]): TransitionSummary[] {
         withUsage: known.length,
         meanTokens: known.length > 0 ? Math.round(known.reduce((s, u) => s + totalTokens(u), 0) / known.length) : null,
         costUsd: priced.length > 0 ? priced.reduce((s, c) => s + c, 0) : null,
+        // A partial sum is not a total: one interval whose offload bill is unknown makes the transition's unknown.
+        offloadUsd: allOrNull(group.map((i) => i.offload?.costUsd ?? null)),
       };
     })
     .sort((a, b) => b.n - a.n || a.transition.localeCompare(b.transition));
@@ -261,10 +282,10 @@ export function formatSummary(
 ): string {
   const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}`;
   if (rows.length === 0) return `${head}\nno intervals yet: a card needs two captured events\n`;
-  const out = [head, 'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd'];
+  const out = [head, 'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd'];
   for (const r of rows) {
     out.push(
-      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}`,
+      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}`,
     );
   }
   return `${out.join('\n')}\n`;

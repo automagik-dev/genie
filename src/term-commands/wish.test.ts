@@ -352,7 +352,7 @@ describe('genie wish report', () => {
     const summary = run(['--summary']);
     expect(summary.code).toBe(0);
     expect(summary.stderr).toBe(`wish report: skipped corrupt line 2 of ${ledger}\n`);
-    expect(summary.stdout).toContain('wish\tunlabeled\t2\t200\t2.0\t2/2\t-\t-\t0\n');
+    expect(summary.stdout).toContain('wish\tunlabeled\t2\t200\t2.0\t2/2\t-\t-\t0\t-\n');
   });
 
   test('--append writes one D9 row, and a second --append of the same runId is refused', () => {
@@ -381,7 +381,7 @@ describe('genie wish report', () => {
       'stages',
     ]);
     expect(ledger[0]).toMatchObject({
-      v: 2,
+      v: 3,
       partial: false,
       outcome: { verdict: null, roundVerdicts: [], repairs: null, gateExitCode: null, checks: null },
       runId: FIXTURE.runId,
@@ -430,10 +430,12 @@ describe('genie wish report', () => {
     }
     const { code, stdout } = run(['--summary']);
     expect(code).toBe(0);
-    expect(stdout).toContain('workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial\n');
-    expect(stdout).toContain('wish\trouted\t2\t200\t2.0\t1/2\t-\t-\t0\n');
-    expect(stdout).toContain('wish\tall-opus\t1\t50\t0.5\t1/1\t-\t-\t0\n');
-    expect(stdout).toContain('research-sweep\trouted\t1\t10\t0.1\t-\t-\t-\t0\n');
+    expect(stdout).toContain(
+      'workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial\tmeanOffloadUsd\n',
+    );
+    expect(stdout).toContain('wish\trouted\t2\t200\t2.0\t1/2\t-\t-\t0\t-\n');
+    expect(stdout).toContain('wish\tall-opus\t1\t50\t0.5\t1/1\t-\t-\t0\t-\n');
+    expect(stdout).toContain('research-sweep\trouted\t1\t10\t0.1\t-\t-\t-\t0\t-\n');
   });
 
   test('the outcome the workflow returned rides the row and the summary; a pre-outcome row counts in n only', () => {
@@ -502,7 +504,60 @@ describe('genie wish report', () => {
     }
     const summary = run(['--summary']);
     expect(summary.code).toBe(0);
-    expect(summary.stdout).toMatch(/^wish\tv\t4\t\d+\t[\d.]+\t3\/4\t1\/2\t2\.0\t1$/m);
+    expect(summary.stdout).toMatch(/^wish\tv\t4\t\d+\t[\d.]+\t3\/4\t1\/2\t2\.0\t1\t-$/m);
+  });
+
+  test('mikro offloads ride the row priced, an unreported one is kept, and the summary averages only priced runs', () => {
+    const offloaded = {
+      ...FIXTURE,
+      runId: 'wf_offload',
+      result: {
+        ok: true,
+        state: 'merge-ready',
+        scoutMikro: { agent: 'wish-context', ok: true, costUsd: 0.021, seconds: 64, usedFacts: 4, usedFiles: 3 },
+        review: {
+          verdict: 'SHIP',
+          mikro: { agent: 'review-prep', ok: true, costUsd: 0.0069, seconds: 21.8, usedFacts: 5, usedFiles: 2 },
+        },
+      },
+    };
+    const unreported = {
+      ...FIXTURE,
+      runId: 'wf_unreported',
+      result: { ok: true, state: 'merge-ready', scoutMikro: { agent: 'wish-context', ok: false, notReported: true } },
+    };
+    const { run, rows } = host([offloaded, unreported]);
+    const report = run(['wf_offload', '--append', '--variant', 'mikro-on']);
+    expect(report.code).toBe(0);
+    expect(report.stdout).toContain(
+      'scout offload wish-context ok $0.0210, 4 fact(s) used, review offload review-prep ok $0.0069, 5 fact(s) used',
+    );
+    expect(run(['wf_unreported', '--append', '--variant', 'mikro-on']).stdout).toContain(
+      'scout offload wish-context not reported',
+    );
+    const [priced, missing] = rows();
+    expect(priced.outcome.offloadUsd).toBeCloseTo(0.0279, 6);
+    expect(priced.outcome.offloads.map((o: { stage: string }) => o.stage)).toEqual(['scout', 'review']);
+    expect(missing.outcome).toMatchObject({
+      offloadUsd: null,
+      offloads: [{ stage: 'scout', notReported: true, costUsd: null }],
+    });
+    // A priced scout beside an unreported review is a partial bill: unknown, never the scout alone.
+    const half = {
+      ...FIXTURE,
+      runId: 'wf_half',
+      result: {
+        ok: true,
+        state: 'merge-ready',
+        scoutMikro: { agent: 'wish-context', ok: true, costUsd: 0.021 },
+        review: { verdict: 'SHIP', mikro: { agent: 'review-prep', ok: false, notReported: true } },
+      },
+    };
+    const second = host([half]);
+    expect(second.run(['wf_half', '--append']).code).toBe(0);
+    expect(second.rows()[0].outcome.offloadUsd).toBeNull();
+    // Mean over the ONE priced run, never diluted by the unpriced one as $0.
+    expect(run(['--summary']).stdout).toMatch(/^wish\tmikro-on\t2\t.*\t0\.0279$/m);
   });
 
   test('--summary over an empty ledger says so and exits 0; no runId and no --summary exits 2', () => {

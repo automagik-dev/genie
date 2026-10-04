@@ -49,6 +49,7 @@ type WishResult = {
   diff: { files: number; insertions: number; measured: boolean; band: string } | null;
   contract: Record<string, unknown> | null;
   gateCommand: { command: string; mode: string } | null;
+  scoutMikro: { agent: string; ok: boolean; notReported?: boolean };
 };
 type WishBody = (...params: unknown[]) => Promise<WishResult>;
 
@@ -222,6 +223,8 @@ describe('wish.js read-back states', () => {
   test('(1) checks pass and every comparison equal -> merge-ready, ok true', async () => {
     const { result } = await clean(canned('pass'));
     expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
+    // The scout offload rides on the result so a run ledger can price it; absence is recorded, never dropped.
+    expect(result.scoutMikro.agent).toBe('wish-context');
   });
 
   test('(2) checks pending -> pr-open', async () => {

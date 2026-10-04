@@ -2,9 +2,15 @@ import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
-import { buildIntervals, readCaptureLedger, summarize, verifyAgainstTaskEvents } from './metrics-export.js';
+import {
+  type Interval,
+  buildIntervals,
+  readCaptureLedger,
+  summarize,
+  verifyAgainstTaskEvents,
+} from './metrics-export.js';
 import { installSalt, intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
 import { readUsageSamples } from './metrics-usage.js';
 
@@ -311,6 +317,89 @@ describe('ledger → verified intervals', () => {
     expect(interval).toMatchObject({ sessionMatch: null, usage: null });
   });
 
+  test('mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown', () => {
+    const at1 = t('2026-10-04T13:00:00Z');
+    const at2 = t('2026-10-04T13:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const repoRoot = join(root, 'repo');
+    const run = (ts: string, ok: boolean, cost: number, dir = repoRoot) => ({
+      runId: ts,
+      ts,
+      agent: 'wish-context',
+      dir,
+      ok,
+      footer: { tokensIn: 100, tokensOut: 20, cost },
+    });
+    const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
+    const [unknown] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(unknown?.offload).toBeNull();
+    write(
+      join(repoRoot, '.mikro', 'runs', 'wish-context.jsonl'),
+      jsonl([
+        run('2026-10-04T13:02:00Z', false, 0.03),
+        run('2026-10-04T13:03:00Z', true, 0.02, join(repoRoot, '.claude', 'worktrees', 'wish-x')),
+        run('2026-10-04T13:20:00Z', true, 0.5), // after the window
+        run('2026-10-04T13:04:00Z', true, 0.9, '/elsewhere/repo'), // another repository
+      ]),
+    );
+    const [priced] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(priced?.offload).toEqual({ attempts: 2, failed: 1, ambiguous: 0, tokens: 240, costUsd: 0.05 });
+    expect(summarize([priced as Interval])[0]?.offloadUsd).toBeCloseTo(0.05, 6);
+  });
+
+  test('offload: an unpriced attempt makes the bill unknown; another card in the same window makes runs ambiguous; registered worktrees and GENIE_HOME ledgers count', () => {
+    const at1 = t('2026-10-04T14:00:00Z');
+    const at2 = t('2026-10-04T14:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+      { id: 3, task: 't2', kind: 'claim', at: t('2026-10-04T14:04:00Z') },
+      { id: 4, task: 't2', kind: 'report', at: t('2026-10-04T14:06:00Z') },
+    ]);
+    const repoRoot = join(root, 'repo');
+    // A worktree of this repo living OUTSIDE its root, registered with git.
+    const outside = join(root, 'elsewhere', 'wish-x');
+    // Registered RELATIVE to its registration dir, as git ≥2.48 `worktree add --relative-paths` writes it.
+    const registration = join(repoRoot, '.git', 'worktrees', 'wish-x');
+    write(join(registration, 'gitdir'), `${relative(registration, join(outside, '.git'))}\n`);
+    const attempt = (ts: string, dir: string, footer: Record<string, number> | null) => ({ ts, dir, ok: true, footer });
+    write(
+      join(outside, '.mikro', 'runs', 'review-prep.jsonl'),
+      jsonl([attempt('2026-10-04T14:01:00Z', outside, { tokensIn: 10, tokensOut: 5, cost: 0.01 })]),
+    );
+    write(
+      join(root, 'genie', 'mikro', 'runs', 'repo-abcd1234', 'wish-context.jsonl'),
+      jsonl([
+        attempt('2026-10-04T14:02:00Z', repoRoot, { tokensIn: 20, tokensOut: 5, cost: 0.02 }),
+        // inside t2's window too: ambiguous, excluded from t1's bill
+        attempt('2026-10-04T14:05:00Z', repoRoot, { tokensIn: 99, tokensOut: 1, cost: 0.5 }),
+      ]),
+    );
+    const t1 = (task: string, id: number, kind: string, at: number) => ({ ...line(db, id, kind, at), task });
+    const lines = [
+      t1('t1', 1, 'claim', at1),
+      t1('t1', 2, 'report', at2),
+      t1('t2', 3, 'claim', t('2026-10-04T14:04:00Z')),
+      t1('t2', 4, 'report', t('2026-10-04T14:06:00Z')),
+    ];
+    const intervals = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    const first = intervals.find((i) => i.task === 't1');
+    // One attempt also sits inside t2's window: it may be t1's, so t1's bill is unknown, never a lower total.
+    expect(first?.offload).toEqual({ attempts: 2, failed: 0, ambiguous: 1, tokens: null, costUsd: null });
+    // ...and a transition with one unknown interval has an unknown total.
+    expect(summarize(intervals).find((r) => r.transition === 'claim→report')?.offloadUsd).toBeNull();
+    // One more attempt with no footer (a timeout): tokens and cost become unknown, never a lower total.
+    write(
+      join(repoRoot, '.mikro', 'runs', 'issue-triage.jsonl'),
+      jsonl([attempt('2026-10-04T14:03:00Z', repoRoot, null)]),
+    );
+    const again = buildIntervals(verifyAgainstTaskEvents(lines).matched, env).find((i) => i.task === 't1');
+    expect(again?.offload).toMatchObject({ attempts: 3, tokens: null, costUsd: null });
+  });
+
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
     const path = join(root, 'events.jsonl');
     write(
@@ -336,6 +425,7 @@ describe('Phoenix projection', () => {
     usage: { calls: 1, input: 1, cacheRead: 2, cacheWrite: 3, output: 4, costUsd: null },
     sharedSession: false,
     sessionMatch: 'exact' as const,
+    offload: { attempts: 2, failed: 1, ambiguous: 0, tokens: 900, costUsd: 0.04 },
   };
 
   test('a target needs an http(s) endpoint, a project and at most an env var NAME for the key', () => {
@@ -366,6 +456,11 @@ describe('Phoenix projection', () => {
       'genie.transition': 'claim→report',
     });
     expect(a.attributes['llm.cost.total']).toBeUndefined();
+    expect(a.attributes).toMatchObject({
+      'genie.offload.attempts': 2,
+      'genie.offload.failed': 1,
+      'genie.offload.cost_usd': 0.04,
+    });
   });
 
   test('posts only ids Phoenix does not hold and reports what never read back', async () => {
