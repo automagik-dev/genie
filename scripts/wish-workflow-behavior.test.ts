@@ -423,12 +423,14 @@ describe('wish.js admission narrowing', () => {
     ['lefthook-local.yml', 'lefthook*'],
     ['.config/lefthook.yml', '.config/lefthook*'],
     ['.lefthook/pre-push/lint.sh', '.lefthook/'],
+    ['.config/lefthook/pre-push/lint.sh', '.config/lefthook/'],
+    ['.config/lefthook-local/pre-push/lint.sh', '.config/lefthook-local/'],
     ['.pre-commit-config.yml', '.pre-commit-config.yml'],
     ['.simple-git-hooks.json', '.simple-git-hooks*'],
   ];
 
-  for (const [path, rule] of GATE_ALIAS_PATHS) {
-    test(`(42a) a declared ${path} (an alias the tool reads) routes plan -> refused`, async () => {
+  for (const [index, [path, rule]] of GATE_ALIAS_PATHS.entries()) {
+    test(`(42.${index + 1}) a declared ${path} (an alias the tool reads) routes plan -> refused`, async () => {
       const { result, logs, prompts } = await clean(canned('pass', declaring([FILES[0], path])));
       expect({ state: result.state, route: result.route }).toEqual({ state: 'refused', route: 'plan' });
       const hit = logs.find((line) => line.includes('Route overridden to plan') && line.includes(path)) ?? '';

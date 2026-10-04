@@ -94,6 +94,8 @@ const DENYLIST = [
   '.githooks/',
   '.lefthook/',
   '.lefthook-local/',
+  '.config/lefthook/',
+  '.config/lefthook-local/',
   'lefthook*',
   '.lefthook*',
   '.config/lefthook*',

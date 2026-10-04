@@ -152,7 +152,7 @@ const intentRun = (context: RunResult, options: Record<string, unknown> = {}) =>
 // GNU make reads GNUmakefile, then makefile, then Makefile; just matches justfile case-insensitively
 // (and `.justfile`); task reads Taskfile and taskfile with .yml/.yaml and the .dist forms; lefthook reads
 // `[.]lefthook[-local].<yml|yaml|toml|json|jsonc>` at the root and under `.config/`, plus its script
-// directories; simple-git-hooks reads `[.]simple-git-hooks.<js|cjs|mjs|json>`; pre-commit reads
+// directories (`.lefthook/`, `.lefthook-local/` and the same two under `.config/`); simple-git-hooks reads `[.]simple-git-hooks.<js|cjs|mjs|json>`; pre-commit reads
 // `.pre-commit-config.yaml` (and the `.yml` spelling is as dangerous to leave open). path -> the
 // DENYLIST entry the hit is reported under. Matching is case-insensitive, so a case-insensitive
 // filesystem resolves the same file the tool reads.
@@ -182,6 +182,9 @@ const GATE_DEFINITION_HITS: Record<string, string> = {
   '.Husky/pre-push': '.husky/',
   '.lefthook/pre-push/lint.sh': '.lefthook/',
   '.lefthook-local/pre-push/lint.sh': '.lefthook-local/',
+  '.config/lefthook/pre-push/lint.sh': '.config/lefthook/',
+  '.config/lefthook-local/pre-push/lint.sh': '.config/lefthook-local/',
+  '.config/lefthook': '.config/lefthook/',
   'lefthook.yml': 'lefthook*',
   'lefthook.yaml': 'lefthook*',
   'lefthook.toml': 'lefthook*',
