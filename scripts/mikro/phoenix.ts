@@ -1,17 +1,36 @@
 /**
  * Phoenix span emitter for mikro microagent runs — one AGENT span per attempt,
- * posted to project `cc-mikro` with the same OpenInference shape
- * `scripts/observability/backfill.ts` uses for Claude Code sessions, so a run's
- * USD, tokens and latency sit beside the Opus turns it is meant to replace.
+ * in the same OpenInference shape `scripts/observability/backfill.ts` uses for
+ * Claude Code sessions, so a run's USD, tokens and latency sit beside the Opus
+ * turns it is meant to replace.
  *
- * Best-effort by design: a Phoenix that is down or refusing never fails a run;
- * the caller gets 'failed' and a stderr line. `PHOENIX_DISABLED=1` skips it.
- * Env: PHOENIX_ENDPOINT (or PHOENIX_COLLECTOR_ENDPOINT; default the local
- * loopback the README documents), PHOENIX_API_KEY (optional), MIKRO_PHOENIX_PROJECT.
+ * OFF until configured. genie and Phoenix are both open source and genie
+ * presumes no one's setup: nothing is posted unless the operator names BOTH
+ * the project (`MIKRO_PHOENIX_PROJECT`, genie-specific, so a `PHOENIX_*` set
+ * for another tool never turns this on) and the endpoint (`PHOENIX_ENDPOINT`
+ * or `PHOENIX_COLLECTOR_ENDPOINT`). There is no default endpoint and no
+ * default project; unconfigured, a run makes no network call and prints
+ * nothing. `PHOENIX_DISABLED=1` still skips a configured target.
+ *
+ * Best-effort when configured: a Phoenix that is down or refusing never fails
+ * a run; the caller gets 'failed' and a stderr line. `PHOENIX_API_KEY` is sent
+ * as a bearer token when set.
  */
 import { createHash } from 'node:crypto';
 
-export const MIKRO_PHOENIX_PROJECT = process.env.MIKRO_PHOENIX_PROJECT ?? 'cc-mikro';
+export interface PhoenixTarget {
+  endpoint: string;
+  project: string;
+}
+
+/** The configured target, or null when posting is off (unconfigured, half-configured or disabled). */
+export function resolvePhoenixTarget(env: NodeJS.ProcessEnv = process.env): PhoenixTarget | null {
+  if (env.PHOENIX_DISABLED === '1') return null;
+  const project = env.MIKRO_PHOENIX_PROJECT?.trim();
+  const endpoint = (env.PHOENIX_ENDPOINT || env.PHOENIX_COLLECTOR_ENDPOINT)?.trim();
+  if (!project || !endpoint) return null;
+  return { endpoint: endpoint.replace(/\/+$/, ''), project };
+}
 
 export interface RunSpanInput {
   agent: string;
@@ -70,19 +89,16 @@ export function buildRunSpan(input: RunSpanInput) {
   };
 }
 
-function endpoint(): string {
-  return (process.env.PHOENIX_ENDPOINT ?? process.env.PHOENIX_COLLECTOR_ENDPOINT ?? 'http://127.0.0.1:6006').replace(
-    /\/+$/,
-    '',
-  );
-}
-
-export async function postRunSpan(input: RunSpanInput): Promise<'posted' | 'skipped' | 'failed'> {
-  if (process.env.PHOENIX_DISABLED === '1') return 'skipped';
+export async function postRunSpan(
+  input: RunSpanInput,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<'posted' | 'skipped' | 'failed'> {
+  const target = resolvePhoenixTarget(env);
+  if (!target) return 'skipped';
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (process.env.PHOENIX_API_KEY) headers.authorization = `Bearer ${process.env.PHOENIX_API_KEY}`;
+  if (env.PHOENIX_API_KEY) headers.authorization = `Bearer ${env.PHOENIX_API_KEY}`;
   try {
-    const res = await fetch(`${endpoint()}/v1/projects/${encodeURIComponent(MIKRO_PHOENIX_PROJECT)}/spans`, {
+    const res = await fetch(`${target.endpoint}/v1/projects/${encodeURIComponent(target.project)}/spans`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ data: [buildRunSpan(input)] }),
