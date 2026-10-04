@@ -102,7 +102,7 @@ The current Genie CLI does not ship a `genie sec` command. Do not treat older ro
 
 ## Release Signing — Pinned Identity (cosign keyless)
 
-`@automagik/genie` releases are signed with **cosign keyless** via GitHub Actions OIDC. There is no long-lived public key to pin — no private key in repo secrets, no hardware-backed offline key, no two-officer key-custody ceremony. What operators pin instead is the **certificate identity + OIDC issuer + provenance source-uri** tuple that `cosign verify-blob` and `slsa-verifier` must accept. If all three values match across all three pinning channels, the release was signed by the repo's own Actions workflow and by nothing else.
+`@automagik/genie` releases are signed with **cosign keyless** via GitHub Actions OIDC. There is no long-lived public key to pin — no private key in repo secrets, no hardware-backed offline key, no two-officer key-custody ceremony. What operators pin instead is the **certificate identity + OIDC issuer + provenance source-uri** tuple that `cosign verify-blob` and `slsa-verifier` must accept. If all three values match across every channel that publishes them, the release was signed by the repo's own Actions workflow and by nothing else.
 
 Release-channel authority comes from the repository-hosted `.well-known/latest.json` and `dev.json` manifests. Every dev or stable promotion creates a fresh monotonic version and immutable tag from its CI-approved channel source. The exact release becomes public and immutable before the eligible manifest advances; published release bytes and state are never edited. GitHub's release metadata remains a non-authoritative convenience: stable releases are non-prerelease and marked Latest, while dev releases are prereleases and never Latest. A fixed migration caveat may be appended to human-authored release notes.
 
@@ -118,13 +118,12 @@ provenance source-uri:       github.com/automagik-dev/genie
 
 <!-- END SIGNING_IDENTITY_PIN -->
 
-**These three lines are byte-identical across three independent channels.** If any channel drifts, treat all three as compromised and escalate per the runbook.
+**These three values agree across every channel that publishes them.** If any channel drifts, treat the three values as compromised and escalate per the runbook.
 
 | Channel | Path / URL | Purpose |
 |---------|------------|---------|
 | In-repo canonical | [`SECURITY.md`](./SECURITY.md) (this file) | Ships with every release tarball; read-only after tag |
-| Project site | [`/.well-known/security.txt`](./.well-known/security.txt) | RFC 9116 discovery path served at the project site |
-| Out-of-band | [Pinned issue: `SIGNING_CERT_IDENTITY_*`](https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity) | Independent mirror for cross-checking identity changes |
+| In-repo mirror, readable without a clone | [`.well-known/security.txt`](./.well-known/security.txt) — `https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt` | RFC 9116 discovery document carried by this repository |
 
 A fourth in-repo witness — [`.github/cosign.pub`](./.github/cosign.pub) — carries the same values inside a NO-PINNED-KEY sentinel so tooling that naively reads a PEM file fails closed rather than trusting a fabricated key. The shipped verifier and installer are the fifth and sixth required in-repo witnesses. The CI gate (`scripts/check-fingerprint-pinning.sh`) asserts all six required in-repo witnesses agree on every PR that touches any of them.
 
@@ -169,7 +168,7 @@ Exit codes:
 - `64` — invalid arguments
 - `127` — a required verifier is unavailable
 
-### Cross-check the three channels match
+### Cross-check the channels match
 
 Before trusting a release during incident response, confirm the pin has not drifted:
 
@@ -180,22 +179,28 @@ scripts/check-fingerprint-pinning.sh
 
 The script greps each of the six required in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`, `scripts/verify-release.sh`, and `install.sh`) for the three canonical lines above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
 
-One-liner for operators without the repo cloned (checks the in-repo canonical + the project-site copy):
+One-liner for operators without the repo cloned (checks the two published copies, both from `main`). It fails closed: a fetch that fails, a copy with no pin block, or copies that differ all end in a non-zero exit, and only a fetched, non-empty, identical pin prints the `agree` line.
 
 ```bash
-diff <(curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/SECURITY.md \
-        | awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
-        | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri') \
-     <(curl -fsSL https://automagik.dev/.well-known/security.txt \
-        | awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
-        | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri')
-# Empty output = channels agree. Any output = escalate.
+(
+  set -o pipefail
+  u=https://raw.githubusercontent.com/automagik-dev/genie/main
+  pin() { awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
+            | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri'; }
+  a=$(curl -fsSL "$u/SECURITY.md" | pin) && [ -n "$a" ] &&
+  b=$(curl -fsSL "$u/.well-known/security.txt" | pin | sed 's/^# //') && [ -n "$b" ] &&
+  diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") && echo "OK: the two published copies agree"
+)
+# Exit 0 with the OK line = the two published copies agree.
+# Any other outcome (diff output, no output, a non-zero exit) = the check did not
+# confirm the pin. A failed fetch is not a match: retry from a trusted network,
+# and escalate if the two copies show differing lines.
 ```
 
 ### If the pin has drifted
 
-1. **Do not install or execute the suspect release** — you cannot distinguish a legitimate rotation from a compromise until the out-of-band channel is reconciled.
-2. Check the pinned `SIGNING_CERT_IDENTITY_<YYYYMMDD>` GitHub issue for an independently published replacement identity.
+1. **Do not install or execute the suspect release** — you cannot distinguish a legitimate rotation from a compromise until the drift is reconciled against the remaining witnesses.
+2. Re-derive the expected identity on a second trusted host — a fresh clone, `scripts/check-fingerprint-pinning.sh` — never from the channel that drifted.
 3. Email `privacidade@namastex.ai` with the diverging channel, the observed value, and the expected value. Response SLA is two business hours (see [Reporting a Vulnerability](#reporting-a-vulnerability)).
 4. Preserve the suspect artifacts and affected-host evidence while triage is in flight. There is no supported verification bypass.
 

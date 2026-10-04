@@ -1,27 +1,26 @@
 # @automagik/genie security.txt (RFC 9116)
 #
-# This file is one of three independent channels that pin the cosign keyless
-# release-signing identity for `@automagik/genie`. The values between the
-# BEGIN / END SIGNING_IDENTITY_PIN markers below are byte-identical to
-# SECURITY.md at the repo root and to the pinned GitHub tracking issue
-# (SIGNING_CERT_IDENTITY_<YYYYMMDD>). If any channel diverges, treat ALL
-# three as compromised. See SECURITY.md for the full verification contract.
+# This file publishes the cosign keyless release-signing identity for
+# `@automagik/genie`, and carries the same values as SECURITY.md at the repo
+# root. The lines between the BEGIN / END SIGNING_IDENTITY_PIN markers below
+# are byte-identical to SECURITY.md, and scripts/check-fingerprint-pinning.sh
+# is the gate that asserts every in-repo witness agrees. If any channel
+# diverges, treat ALL of them as compromised. See SECURITY.md for the full
+# verification contract.
 
 Contact: mailto:privacidade@namastex.ai
 Contact: mailto:dpo@namastex.ai
 Contact: https://github.com/automagik-dev/genie/security/advisories/new
 Expires: 2027-04-23T00:00:00.000Z
 Preferred-Languages: en, pt-BR
-Canonical: https://automagik.dev/.well-known/security.txt
 Canonical: https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt
 Policy: https://github.com/automagik-dev/genie/blob/main/SECURITY.md
 Acknowledgments: https://github.com/automagik-dev/genie/blob/main/SECURITY.md#acknowledgments
 
 # Release signing is cosign KEYLESS ONLY. There is no public-key fingerprint
 # to pin — operators cross-check the three lines below against SECURITY.md and
-# the pinned GitHub issue. See:
+# run the pin gate. See:
 #   - https://github.com/automagik-dev/genie/blob/main/SECURITY.md#release-signing--pinned-identity-cosign-keyless
-#   - https://github.com/automagik-dev/genie/issues?q=is%3Aissue+label%3Apinned+label%3Asigning-identity
 
 # BEGIN SIGNING_IDENTITY_PIN
 # certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
