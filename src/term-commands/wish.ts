@@ -90,7 +90,7 @@ interface RunOutcome {
   wrs: number | null;
   /** wish: each mikro offload a stage reported (scout, review), as the workflow returned it. Absent → []. */
   offloads: Offload[];
-  /** Sum of the offloads mikro priced; null when none was priced (unknown, never 0). */
+  /** Sum of the offloads' costs; null unless EVERY reported offload was priced (a partial bill is unknown, never a lower total). */
   offloadUsd: number | null;
 }
 
@@ -248,7 +248,9 @@ function offloadsOf(result: Record<string, unknown>): Pick<RunOutcome, 'offloads
     toOffload('review', objectOrNull(result.review)?.mikro),
   ].filter((o): o is Offload => o !== null);
   const priced = offloads.map((o) => o.costUsd).filter((c): c is number => c !== null);
-  return { offloads, offloadUsd: priced.length > 0 ? priced.reduce((sum, c) => sum + c, 0) : null };
+  // A partial bill is not a bill: one unreported or unpriced offload makes the run's total unknown.
+  const complete = offloads.length > 0 && priced.length === offloads.length;
+  return { offloads, offloadUsd: complete ? priced.reduce((sum, c) => sum + c, 0) : null };
 }
 
 /** The D9 row of one record, or the reason it is refused. */

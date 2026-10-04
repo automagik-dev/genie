@@ -241,8 +241,53 @@ describe('ledger → verified intervals', () => {
       ]),
     );
     const [priced] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
-    expect(priced?.offload).toEqual({ calls: 2, failed: 1, tokens: 240, costUsd: 0.05 });
+    expect(priced?.offload).toEqual({ attempts: 2, failed: 1, ambiguous: 0, tokens: 240, costUsd: 0.05 });
     expect(summarize([priced as Interval])[0]?.offloadUsd).toBeCloseTo(0.05, 6);
+  });
+
+  test('offload: an unpriced attempt makes the bill unknown; another card in the same window makes runs ambiguous; registered worktrees and GENIE_HOME ledgers count', () => {
+    const at1 = t('2026-10-04T14:00:00Z');
+    const at2 = t('2026-10-04T14:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+      { id: 3, task: 't2', kind: 'claim', at: t('2026-10-04T14:04:00Z') },
+      { id: 4, task: 't2', kind: 'report', at: t('2026-10-04T14:06:00Z') },
+    ]);
+    const repoRoot = join(root, 'repo');
+    // A worktree of this repo living OUTSIDE its root, registered with git.
+    const outside = join(root, 'elsewhere', 'wish-x');
+    write(join(repoRoot, '.git', 'worktrees', 'wish-x', 'gitdir'), `${join(outside, '.git')}\n`);
+    const attempt = (ts: string, dir: string, footer: Record<string, number> | null) => ({ ts, dir, ok: true, footer });
+    write(
+      join(outside, '.mikro', 'runs', 'review-prep.jsonl'),
+      jsonl([attempt('2026-10-04T14:01:00Z', outside, { tokensIn: 10, tokensOut: 5, cost: 0.01 })]),
+    );
+    write(
+      join(root, 'genie', 'mikro', 'runs', 'repo-abcd1234', 'wish-context.jsonl'),
+      jsonl([
+        attempt('2026-10-04T14:02:00Z', repoRoot, { tokensIn: 20, tokensOut: 5, cost: 0.02 }),
+        // inside t2's window too: ambiguous, excluded from t1's bill
+        attempt('2026-10-04T14:05:00Z', repoRoot, { tokensIn: 99, tokensOut: 1, cost: 0.5 }),
+      ]),
+    );
+    const t1 = (task: string, id: number, kind: string, at: number) => ({ ...line(db, id, kind, at), task });
+    const lines = [
+      t1('t1', 1, 'claim', at1),
+      t1('t1', 2, 'report', at2),
+      t1('t2', 3, 'claim', t('2026-10-04T14:04:00Z')),
+      t1('t2', 4, 'report', t('2026-10-04T14:06:00Z')),
+    ];
+    const intervals = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    const first = intervals.find((i) => i.task === 't1');
+    expect(first?.offload).toEqual({ attempts: 2, failed: 0, ambiguous: 1, tokens: 40, costUsd: 0.03 });
+    // One more attempt with no footer (a timeout): tokens and cost become unknown, never a lower total.
+    write(
+      join(repoRoot, '.mikro', 'runs', 'issue-triage.jsonl'),
+      jsonl([attempt('2026-10-04T14:03:00Z', repoRoot, null)]),
+    );
+    const again = buildIntervals(verifyAgainstTaskEvents(lines).matched, env).find((i) => i.task === 't1');
+    expect(again?.offload).toMatchObject({ attempts: 3, tokens: null, costUsd: null });
   });
 
   test('a corrupt ledger line is counted, and --since drops older lines', () => {
@@ -269,7 +314,7 @@ describe('Phoenix projection', () => {
     session: { id: 's', source: 'claude-code' as const, file: null },
     usage: { calls: 1, input: 1, cacheRead: 2, cacheWrite: 3, output: 4, costUsd: null },
     sharedSession: false,
-    offload: { calls: 2, failed: 1, tokens: 900, costUsd: 0.04 },
+    offload: { attempts: 2, failed: 1, ambiguous: 0, tokens: 900, costUsd: 0.04 },
   };
 
   test('a target needs an http(s) endpoint, a project and at most an env var NAME for the key', () => {
@@ -301,7 +346,7 @@ describe('Phoenix projection', () => {
     });
     expect(a.attributes['llm.cost.total']).toBeUndefined();
     expect(a.attributes).toMatchObject({
-      'genie.offload.calls': 2,
+      'genie.offload.attempts': 2,
       'genie.offload.failed': 1,
       'genie.offload.cost_usd': 0.04,
     });

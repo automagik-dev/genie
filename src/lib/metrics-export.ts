@@ -142,10 +142,9 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
     return samplesBySession.get(key) ?? null;
   };
   const offloadRows = new Map<string, ReturnType<typeof readOffloadRows>>();
-  const offloadFor = (db: string, startAt: number, endAt: number): OffloadUsage | null => {
-    const root = repoRootOfDb(db);
+  const rowsFor = (root: string) => {
     if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
-    return offloadInWindow(offloadRows.get(root) ?? null, startAt, endAt);
+    return offloadRows.get(root) ?? null;
   };
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
@@ -166,11 +165,17 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
         session: from.session,
         usage: samples ? sumUsage(samples, from.at, to.at) : null,
         sharedSession: false,
-        offload: offloadFor(from.db, from.at, to.at),
+        offload: null,
       });
     }
   }
   markSharedSessions(intervals);
+  // mikro rows carry a repository, not a session: an attempt inside two cards' windows of one repo is ambiguous.
+  for (const interval of intervals) {
+    const root = repoRootOfDb(interval.db);
+    const others = intervals.filter((o) => o.task !== interval.task && repoRootOfDb(o.db) === root);
+    interval.offload = offloadInWindow(rowsFor(root), interval.startAt, interval.endAt, others);
+  }
   return intervals;
 }
 

@@ -542,6 +542,20 @@ describe('genie wish report', () => {
       offloadUsd: null,
       offloads: [{ stage: 'scout', notReported: true, costUsd: null }],
     });
+    // A priced scout beside an unreported review is a partial bill: unknown, never the scout alone.
+    const half = {
+      ...FIXTURE,
+      runId: 'wf_half',
+      result: {
+        ok: true,
+        state: 'merge-ready',
+        scoutMikro: { agent: 'wish-context', ok: true, costUsd: 0.021 },
+        review: { verdict: 'SHIP', mikro: { agent: 'review-prep', ok: false, notReported: true } },
+      },
+    };
+    const second = host([half]);
+    expect(second.run(['wf_half', '--append']).code).toBe(0);
+    expect(second.rows()[0].outcome.offloadUsd).toBeNull();
     // Mean over the ONE priced run, never diluted by the unpriced one as $0.
     expect(run(['--summary']).stdout).toMatch(/^wish\tmikro-on\t2\t.*\t0\.0279$/m);
   });
