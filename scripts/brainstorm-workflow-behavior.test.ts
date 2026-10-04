@@ -543,6 +543,82 @@ describe('rounds across runs', () => {
     expect(again.result.notes.join('\n')).toContain('Not recorded: size:M lowers what the owner approved');
     expect(blockOf(env.draft).size.map((s: Out) => s.value)).toEqual(['G', 'M', 'G']);
   });
+
+  test('two scope drops approved by two answers in one round are both recorded with their own approvedBy', async () => {
+    const drops = [
+      question(1, {
+        question: 'Drop the first helper?',
+        header: 'Drop1',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+      question(2, {
+        question: 'Drop the second helper?',
+        header: 'Drop2',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the second helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    ];
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: drops }),
+    });
+    expect(raised.result.state).toBe('round');
+    expect(raised.result.questions.map((q: Out) => q.id)).toEqual(['R1-1', 'R1-2']);
+
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          answerTo(raised.result.questions[0], 'Drop it (Recommended)'),
+          answerTo(raised.result.questions[1], 'Drop it (Recommended)'),
+        ],
+      },
+    );
+    expect(second.result.state).toBe('round');
+    expect(second.result.notes.join('\n')).not.toContain('Not recorded:');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.item)).toEqual(['the helper', 'the second helper']);
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([
+      { by: 'owner', round: 2, approvedBy: 'R1-1' },
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+    ]);
+  });
+
+  test('a drop no answer covers still waits while the approved drop in the same plan is recorded', async () => {
+    const drop = question(1, {
+      question: 'Drop the first helper?',
+      header: 'Drop1',
+      options: [
+        { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+        { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+      ],
+    });
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: [drop] }),
+    });
+    const approvedBy = raised.result.questions[0].id;
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      { answers: [answerTo(raised.result.questions[0], 'Drop it (Recommended)')] },
+    );
+    expect(second.result.state).toBe('round');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([{ by: 'owner', round: 2, approvedBy }, undefined]);
+    expect(scopeIn[1].item).toBe('the second helper');
+    const note = second.result.notes.find((line: string) => line.startsWith('Not recorded:'));
+    expect(note).toBe(
+      "Not recorded: scope-drop:the second helper lowers what the owner approved, and no unused Settled answer agrees to it; it waits for the owner's answer.",
+    );
+    expect(note).not.toContain('scope-drop:the helper');
+  });
 });
 
 // ---------------------------------------------------------------- scouts

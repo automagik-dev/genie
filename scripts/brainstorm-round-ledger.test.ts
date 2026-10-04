@@ -432,6 +432,78 @@ describe('ratchet: size and Scope IN only go up without an owner answer', () => 
     expect(reuse.code).toBe(1);
     expect(reuse.out.refused[0].reason).toBe('--approved R1-1 was already used by the size change to P in round 2');
   });
+
+  /** Raised to G with both items IN, then two Settled answers: R1-1 pays for `ledger`, R1-2 for `workflow`. */
+  function twoDropDraft(): string {
+    const drops = [
+      question({
+        question: 'Drop the ledger item?',
+        header: 'Drop A',
+        options: [
+          { label: 'Drop it', description: 'a narrower wish', value: 'scope-drop:ledger' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+      question({
+        question: 'Drop the workflow item?',
+        header: 'Drop B',
+        options: [
+          { label: 'Drop it', description: 'a narrower wish', value: 'scope-drop:workflow' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    ];
+    const draft = newDraft();
+    expect(apply(draft).code).toBe(0);
+    expect(ratchet(draft, 1, '--size', 'G', '--scope', JSON.stringify(['ledger', 'workflow'])).code).toBe(0);
+    expect(ask(draft, 1, drops).code).toBe(0);
+    const settled = apply(draft, [
+      answer('R1-1', 'Drop it', drops[0].question),
+      answer('R1-2', 'Drop it', drops[1].question),
+    ]);
+    expect(settled.out.refused).toEqual([]);
+    return draft;
+  }
+
+  test('P3: two drops approved by two answers record each with its own approvedBy, once', () => {
+    const draft = twoDropDraft();
+    const run = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-2');
+    expect(run.code).toBe(0);
+    expect(run.out.scope).toEqual([]);
+    expect(run.out.changes).toEqual([
+      { change: 'scope-dropped', item: 'ledger' },
+      { change: 'scope-dropped', item: 'workflow' },
+    ]);
+    const block = blockOf(draft);
+    expect(block.scopeIn[0].dropped).toEqual({ by: 'lead', round: 2, approvedBy: 'R1-1' });
+    expect(block.scopeIn[1].dropped).toEqual({ by: 'lead', round: 2, approvedBy: 'R1-2' });
+
+    const before = readFileSync(draft, 'utf8');
+    const again = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-2');
+    expect(again.code).toBe(0);
+    expect(again.out.changes).toEqual([]);
+    expect(readFileSync(draft, 'utf8')).toBe(before);
+  });
+
+  test('a downgrade no named id covers, or an id that pays for none, is refused and writes nothing', () => {
+    const draft = twoDropDraft();
+    const before = readFileSync(draft, 'utf8');
+
+    const partial = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1');
+    expect(partial.code).toBe(1);
+    expect(partial.out.refused[0].reason).toBe('--approved R1-1 did not agree to scope-drop:workflow');
+    expect(readFileSync(draft, 'utf8')).toBe(before);
+
+    const idle = ratchet(draft, 2, '--size', 'M', '--approved', 'R1-1');
+    expect(idle.code).toBe(1);
+    expect(idle.out.refused[0].reason).toBe('--approved R1-1 did not agree to size:M');
+    expect(readFileSync(draft, 'utf8')).toBe(before);
+
+    const twice = ratchet(draft, 2, '--scope', JSON.stringify([]), '--approved', 'R1-1', '--approved', 'R1-1');
+    expect(twice.code).toBe(2);
+    expect(twice.out.error).toBe('--approved R1-1 is given twice');
+    expect(readFileSync(draft, 'utf8')).toBe(before);
+  });
 });
 
 describe('council: the ceiling, the owner approval and the cap of 3', () => {
