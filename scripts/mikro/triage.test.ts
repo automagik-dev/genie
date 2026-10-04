@@ -175,6 +175,21 @@ describe('boundary hits come from wish.js and fail closed', () => {
       'version.yml',
       '.github/workflows/version.yml',
       'src/lib/delivery-evidence-verify.ts',
+      // The gate definitions #3098 added: the root build files the check discovery reads and the
+      // hook files the gate only asserts live. `.githooks` alone hits the trailing-slash rule; the
+      // three alias spellings stay clean, so the mirror is proven on the new shapes AND on the gap
+      // the fix deliberately leaves open (no alias entry is silently widened).
+      'Makefile',
+      'docs/Makefile',
+      'justfile',
+      'Taskfile.yml',
+      '.githooks/pre-push',
+      '.githooks',
+      'lefthook.yml',
+      '.pre-commit-config.yaml',
+      'Makefile.am',
+      'Taskfile.yaml',
+      '.lefthook.yml',
       'package.json',
       'plugins/dsh-genie-board/package.json',
       'src/genie.ts',
@@ -189,6 +204,23 @@ describe('boundary hits come from wish.js and fail closed', () => {
     const theirs = api.denylistHits(paths).map((h) => `${h.path}→${h.rule}`);
     expect(mine).toEqual(theirs);
     expect(mine.length).toBeGreaterThan(5);
+    // Agreement alone would hold over a table where both matchers stayed clean. Name the shapes the
+    // six additions must hit — including the trailing-slash rule on a bare `.githooks` — and the
+    // alias spellings they must NOT cover, so the extension proves the mirror on the new shapes.
+    const mustHit = [
+      'Makefile→Makefile',
+      'docs/Makefile→Makefile',
+      'justfile→justfile',
+      'Taskfile.yml→Taskfile.yml',
+      '.githooks/pre-push→.githooks/',
+      '.githooks→.githooks/',
+      'lefthook.yml→lefthook.yml',
+      '.pre-commit-config.yaml→.pre-commit-config.yaml',
+    ];
+    for (const hit of mustHit) expect(mine).toContain(hit);
+    for (const alias of ['Makefile.am', 'Taskfile.yaml', '.lefthook.yml']) {
+      expect(mine.some((entry) => entry.startsWith(`${alias}→`))).toBe(false);
+    }
   });
 
   test('prose entries are reported as unmatchable, never silently skipped', async () => {

@@ -381,6 +381,40 @@ describe('wish.js admission narrowing', () => {
     expect(hit).toContain('Route overridden to plan');
   });
 
+  // #3098: the files that DEFINE what the gate runs and what fires at push are the same trust boundary
+  // as `.husky/`. The check discovery reads a root Makefile/justfile/Taskfile and the gate only ASSERTS
+  // the hooks are live, so an admitted edit to either changes the body the gate executes. All three
+  // enforcement points read the one DENYLIST, and admission is the first of them.
+  const GATE_DEFINITION_PATHS: Array<[string, string]> = [
+    ['Makefile', 'Makefile'],
+    ['justfile', 'justfile'],
+    ['Taskfile.yml', 'Taskfile.yml'],
+    ['.githooks/pre-push', '.githooks/'],
+    ['lefthook.yml', 'lefthook.yml'],
+    ['.pre-commit-config.yaml', '.pre-commit-config.yaml'],
+  ];
+
+  for (const [index, [path, rule]] of GATE_DEFINITION_PATHS.entries()) {
+    test(`(${42 + index}) a declared ${path} routes plan -> refused`, async () => {
+      const { result, logs, prompts } = await clean(canned('pass', declaring([FILES[0], path])));
+      expect({ state: result.state, route: result.route }).toEqual({ state: 'refused', route: 'plan' });
+      const hit = logs.find((line) => line.includes('Route overridden to plan') && line.includes(path)) ?? '';
+      expect(hit).toContain(`(${path} → ${rule})`);
+      for (const label of ['work:executor', 'gate:check', 'review:diff', 'publish:pr']) {
+        expect(prompts[label]).toBeUndefined();
+      }
+    });
+  }
+
+  test('(48) a reviewer-reported Makefile forces BLOCKED on the denylist, publish never runs', async () => {
+    const data = canned('pass', { 'review:diff': { ...reviewResult(), diffFiles: [...FILES, 'Makefile'] } });
+    const { result, prompts } = await clean(data);
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('touches a denylisted path');
+    expect(result.blockedReason).toContain('Makefile → Makefile');
+    expect(prompts['publish:pr']).toBeUndefined();
+  });
+
   test('(14) units over the maximum is advice, never a refusal -> merge-ready with the advice logged', async () => {
     const scout = { ...(canned()['admit:scout'] as object), estimate: { files: 2, insertions: 40, units: 9 } };
     const { result, logs } = await clean(canned('pass', { 'admit:scout': scout }));

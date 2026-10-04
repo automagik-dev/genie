@@ -98,6 +98,8 @@ Apply to proposed paths, actual commits, reviewer path lists and remote PR files
 | `scripts/release-*` | Matching release paths; a colocated `*.test.ts` alone is not the release script. |
 | `release-guard.sh`, `version.yml`, `delivery-evidence-verify.ts` | Exact filenames at root or under another directory. |
 | `auth, secret and permission surfaces` | Semantic boundary, not a filename-only test: authentication, secrets, permissions and execution-authority surfaces, including workflow changes, route `plan`. |
+| `Makefile`, `justfile`, `Taskfile.yml` | The root build files the check discovery reads; editing one changes the command the gate runs. |
+| `.githooks/`, `lefthook.yml`, `.pre-commit-config.yaml` | The hook definitions the gate only asserts live; editing one changes what fires at push. |
 
 An actual denylist hit or write outside the frozen set is `blocked`, not repairable by declaring the path after the fact. Reviewers judge semantic entries as well as filename shapes.
 
