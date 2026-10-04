@@ -130,7 +130,6 @@ const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id 
 /** The opening event's session, or — for an OMP shell that exported no id — the one OMP session that matches by cwd and window. */
 function resolveIntervalSession(
   from: CaptureLine,
-  to: CaptureLine,
   env: NodeJS.ProcessEnv,
 ): { session: RuntimeSession; match: Interval['sessionMatch'] } {
   const session = from.session;
@@ -183,7 +182,7 @@ export function buildIntervals(matched: CaptureLine[], env: NodeJS.ProcessEnv = 
     for (let i = 0; i + 1 < events.length; i++) {
       const from = events[i] as CaptureLine;
       const to = events[i + 1] as CaptureLine;
-      const { session, match } = resolveIntervalSession(from, to, env);
+      const { session, match } = resolveIntervalSession(from, env);
       const samples = match === 'ambiguous' ? null : samplesFor(session);
       intervals.push({
         db: from.db,
