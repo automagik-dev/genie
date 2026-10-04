@@ -14,10 +14,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveGenieHome } from './genie-home.js';
 import { metricsDir } from './metrics-capture.js';
 import type { Interval } from './metrics-export.js';
 
@@ -57,13 +56,33 @@ export function loadSavedTarget(): PhoenixExportTarget | null {
   }
 }
 
-export function saveTarget(target: PhoenixExportTarget): void {
-  writeFileSync(exportTargetPath(), `${JSON.stringify(target, null, 2)}\n`, { mode: 0o600 });
+/** Write a private file under <GENIE_HOME>/metrics, creating the dir, and tighten a file that already existed wider. */
+export function writePrivate(path: string, body: string): void {
+  mkdirSync(metricsDir(), { recursive: true, mode: 0o700 });
+  writeFileSync(path, body, { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
-/** Per-install salt: span ids stay stable across re-exports on one host and never collide across hosts. */
+export function saveTarget(target: PhoenixExportTarget): void {
+  writePrivate(exportTargetPath(), `${JSON.stringify(target, null, 2)}\n`);
+}
+
+/**
+ * Per-install salt, random and persisted on first use: span ids stay stable across re-exports on one
+ * host (a hostname can change with the network on macOS, which would re-post every span as new) and
+ * never collide across hosts. It also keys the repo hash, so a common path is not guessable from it.
+ */
 export function installSalt(): string {
-  return createHash('sha256').update(`${hostname()}\u0000${resolveGenieHome()}`).digest('hex').slice(0, 12);
+  const path = join(metricsDir(), 'export-salt');
+  try {
+    const existing = readFileSync(path, 'utf8').trim();
+    if (/^[0-9a-f]{12,}$/.test(existing)) return existing;
+  } catch {
+    // first export on this install
+  }
+  const salt = randomBytes(8).toString('hex');
+  writePrivate(path, `${salt}\n`);
+  return salt;
 }
 
 const hex = (seed: string, chars: number) => createHash('sha256').update(seed).digest('hex').slice(0, chars);
@@ -86,7 +105,7 @@ export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
     'openinference.span.kind': 'CHAIN',
     'genie.export_id': salt,
     'genie.task': interval.task,
-    'genie.repo': hex(interval.db, 12),
+    'genie.repo': hex(`${salt}:${interval.db}`, 12),
     'genie.transition': interval.transition,
     'genie.from_event': interval.fromEvent,
     'genie.to_event': interval.toEvent,

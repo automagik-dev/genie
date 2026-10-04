@@ -12,7 +12,7 @@
  * the ledger is machine-local metadata (`src/lib/metrics-capture.ts`).
  */
 
-import { writeFileSync } from 'node:fs';
+import { chmodSync, writeFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import {
   type CaptureStatus,
@@ -94,7 +94,10 @@ async function runExport(options: ExportOptions): Promise<number> {
   const intervals = buildIntervals(matched);
   const summary = summarize(intervals);
   const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt };
-  if (options.out) writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
+  if (options.out) {
+    writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
+    chmodSync(options.out, 0o600);
+  }
   printOut(
     options.json
       ? JSON.stringify({ ...stats, intervals: intervals.length, summary })

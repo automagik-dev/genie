@@ -1,22 +1,28 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import { buildIntervals, readCaptureLedger, summarize, verifyAgainstTaskEvents } from './metrics-export.js';
-import { intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
+import { installSalt, intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
 import { readUsageSamples } from './metrics-usage.js';
 
 let root: string;
 let env: NodeJS.ProcessEnv;
+let savedHome: string | undefined;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));
   env = { HOME: root, CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') };
+  // installSalt() persists under <GENIE_HOME>/metrics: never the operator's real home.
+  savedHome = process.env.GENIE_HOME;
+  process.env.GENIE_HOME = join(root, 'genie');
 });
 
 afterEach(() => {
+  if (savedHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = savedHome;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -47,31 +53,44 @@ describe('runtime session logs → usage samples', () => {
     );
     write(
       join(base, 'sess-c', 'subagents', 'agent-a.jsonl'),
-      jsonl([{ type: 'assistant', timestamp: '2026-10-04T10:00:04Z', message: { id: 'm2', usage: usage(7) } }]),
+      jsonl([
+        // A fork subagent transcript repeats its parent's message: counted once across files.
+        { type: 'assistant', timestamp: '2026-10-04T10:00:02Z', message: { id: 'm1', usage: usage(3) } },
+        { type: 'assistant', timestamp: '2026-10-04T10:00:04Z', message: { id: 'm2', usage: usage(7) } },
+      ]),
     );
     const samples = readUsageSamples({ id: 'sess-c', source: 'claude-code', file: null }, env);
     expect(samples.map((s) => s.input)).toEqual([3, 7]);
     expect(samples[0]).toMatchObject({ cacheRead: 10, cacheWrite: 5, output: 2, costUsd: null });
   });
 
-  test('codex: last_token_usage per token_count event, cached input split out', () => {
+  test('codex: one sample per moved cumulative total (re-emitted token_count skipped), cached input split out', () => {
+    const event = (ts: string, total: number, input: number) => ({
+      timestamp: ts,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { total_tokens: total },
+          last_token_usage: { input_tokens: input, cached_input_tokens: 60, output_tokens: 4 },
+        },
+      },
+    });
     write(
       join(root, 'codex', 'sessions', '2026', '10', '04', 'rollout-2026-10-04T10-00-00-thr-9.jsonl'),
       jsonl([
-        {
-          timestamp: '2026-10-04T10:00:05Z',
-          type: 'event_msg',
-          payload: {
-            type: 'token_count',
-            info: { last_token_usage: { input_tokens: 100, cached_input_tokens: 60, output_tokens: 4 } },
-          },
-        },
-        { timestamp: '2026-10-04T10:00:06Z', type: 'response_item', payload: { type: 'message' } },
+        event('2026-10-04T10:00:05Z', 104, 100),
+        event('2026-10-04T10:00:06Z', 104, 100), // the same turn re-emitted
+        { timestamp: '2026-10-04T10:00:07Z', type: 'response_item', payload: { type: 'message' } },
+        event('2026-10-04T10:00:08Z', 268, 160),
       ]),
     );
-    expect(readUsageSamples({ id: 'thr-9', source: 'codex', file: null }, env)).toEqual([
-      { at: t('2026-10-04T10:00:05Z'), input: 40, cacheRead: 60, cacheWrite: 0, output: 4, costUsd: null },
+    const samples = readUsageSamples({ id: 'thr-9', source: 'codex', file: null }, env);
+    expect(samples.map((s) => [s.input, s.cacheRead, s.output])).toEqual([
+      [40, 60, 4],
+      [100, 60, 4],
     ]);
+    expect(samples[0]?.costUsd).toBeNull();
   });
 
   test('pi/OMP: assistant message usage with the runtime’s own cost, sibling subagent logs included', () => {
@@ -221,6 +240,13 @@ describe('Phoenix projection', () => {
     expect(validateTarget({ project: 'mine' })).toBe('an http(s) endpoint');
     expect(validateTarget({ endpoint: 'https://px' })).toBe('a project name');
     expect(validateTarget({ endpoint: 'https://px', project: 'p', apiKeyEnv: 'sk-live-123' })).toContain('NAME');
+  });
+
+  test('the install salt is random, persisted 0600 and stable across calls', () => {
+    const salt = installSalt();
+    expect(salt).toMatch(/^[0-9a-f]{16}$/);
+    expect(installSalt()).toBe(salt);
+    expect(statSync(join(root, 'genie', 'metrics', 'export-salt')).mode & 0o777).toBe(0o600);
   });
 
   test('span ids are deterministic per install and the repo path is hashed, never sent', () => {

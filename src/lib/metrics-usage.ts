@@ -166,10 +166,17 @@ function claudeSamples(records: Rec[]): UsageSample[] {
 
 function codexSamples(records: Rec[]): UsageSample[] {
   const out: UsageSample[] = [];
+  // Codex re-emits the same token_count (identical cumulative total) more than once per turn; only a
+  // total that moved is a new model call. Summing every event overcounted 4–16% on real rollouts.
+  let previousTotal: string | null = null;
   for (const record of records) {
     const payload = obj(record.payload);
-    const last = obj(obj(payload?.info)?.last_token_usage);
+    const info = obj(payload?.info);
+    const last = obj(info?.last_token_usage);
     if (record.type !== 'event_msg' || payload?.type !== 'token_count' || !last) continue;
+    const total = JSON.stringify(info?.total_token_usage ?? null);
+    if (total !== 'null' && total === previousTotal) continue;
+    previousTotal = total;
     const cached = num(last.cached_input_tokens);
     out.push({
       at: Date.parse(String(record.timestamp)),
@@ -213,6 +220,12 @@ export function readUsageSamples(session: RuntimeSession, env: NodeJS.ProcessEnv
           ? piSamples
           : null;
   if (!parse) return [];
-  const samples = sessionLogFiles(session, env).flatMap((file) => parse(readRecords(file)));
+  const files = sessionLogFiles(session, env);
+  // Claude dedupes by message id ACROSS the session's files: a fork subagent transcript repeats its
+  // parent's messages. Codex's cumulative totals are per rollout file, so it parses file by file.
+  const samples =
+    session.source === 'claude-code'
+      ? parse(files.flatMap(readRecords))
+      : files.flatMap((file) => parse(readRecords(file)));
   return samples.filter((sample) => Number.isFinite(sample.at)).sort((a, b) => a.at - b.at);
 }

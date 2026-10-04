@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -105,6 +105,29 @@ describe('genie metrics', () => {
     expect(half.stderr).toContain('needs an http(s) endpoint');
     expect(run(['metrics', 'export', '--since', 'yesterday-ish']).code).toBe(2);
     expect(listTree(home)).toEqual(['metrics', join('metrics', 'capture.on')]);
+  }, 60_000);
+
+  test('export --save works on a host that never enabled capture and stores the target 0600, key by name only', () => {
+    const save = run([
+      'metrics',
+      'export',
+      '--endpoint',
+      'http://px.example:6006/',
+      '--project',
+      'mine',
+      '--api-key-env',
+      'PX_KEY',
+      '--save',
+    ]);
+    expect(save.code).toBe(0);
+    expect(save.stderr).toBe('');
+    const path = join(home, 'metrics', 'export.json');
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      endpoint: 'http://px.example:6006',
+      project: 'mine',
+      apiKeyEnv: 'PX_KEY',
+    });
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   }, 60_000);
 
   test('status --json names the switch, the ledger and this shell’s session', () => {
