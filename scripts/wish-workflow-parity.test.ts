@@ -71,6 +71,29 @@ describe('wish skill fronts the wish workflow', () => {
     );
   });
 
+  test("the denylist the script declares is the set the skill's native fallback describes", () => {
+    // The script's DENYLIST is the single source and the front door names every entry, so the two
+    // sides are pinned as SETS, not as a sample: a new entry the table omits and a table rule the
+    // script dropped are both red. The entries are lifted with the regex `scripts/mikro/triage.ts`
+    // already uses, so the run-time mirror and this pin cannot read the const differently.
+    const block = /^const DENYLIST = \[([\s\S]*?)^\]$/m.exec(script);
+    if (!block) throw new Error('wish.js: DENYLIST not found');
+    const declared = [...block[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1] as string);
+    expect(declared.length).toBeGreaterThan(0);
+    const fallback = read('skills/wish/references/native-fallback.md');
+    const start = fallback.indexOf('### Full consequence denylist');
+    if (start === -1) throw new Error('native-fallback.md: no Full consequence denylist section');
+    const next = fallback.indexOf('\n### ', start + 1);
+    const described = fallback
+      .slice(start, next === -1 ? undefined : next)
+      .split('\n')
+      .filter((line) => line.startsWith('|'))
+      .map((line) => (line.split('|')[1] ?? '').trim())
+      .filter((cell) => cell && cell !== 'Rule' && !/^-+$/.test(cell))
+      .flatMap((cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1] as string));
+    expect([...described].sort()).toEqual([...declared].sort());
+  });
+
   test('the three inherited clauses are verbatim in the source skill, the front door and the script', () => {
     const pins: Array<[string, string, RegExp]> = [
       [

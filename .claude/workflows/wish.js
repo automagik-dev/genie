@@ -91,9 +91,29 @@ const STATES = ['merge-ready', 'pr-open', 'refused', 'blocked', 'missed']
 const DENYLIST = [
   '.github/',
   '.husky/',
+  '.githooks/',
+  '.lefthook/',
+  '.lefthook-local/',
+  '.config/lefthook/',
+  '.config/lefthook-local/',
+  'lefthook*',
+  '.lefthook*',
+  '.config/lefthook*',
+  'simple-git-hooks*',
+  '.simple-git-hooks*',
+  '.pre-commit-config.yaml',
+  '.pre-commit-config.yml',
   '.claude/hooks/',
   '.claude/settings*.json',
   'package.json scripts',
+  'GNUmakefile',
+  'Makefile',
+  'justfile',
+  '.justfile',
+  'Taskfile.yml',
+  'Taskfile.yaml',
+  'Taskfile.dist.yml',
+  'Taskfile.dist.yaml',
   'biome.json',
   'commitlint.config.ts',
   'scripts/release-*',
@@ -514,28 +534,35 @@ function slugify(value) {
 const escapeRule = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // A prose entry ('package.json scripts', the auth surfaces) is a judgement the judge and the
-// reviewer make; the script matches only the entries that name a path shape.
+// reviewer make; the script matches only the entries that name a path shape. Matching is
+// case-insensitive: just reads `justfile` in any case, GNU make reads `makefile` beside `Makefile`,
+// and a case-insensitive filesystem (macOS) resolves every spelling to the file the tool reads, so
+// the entry `Makefile` also covers `makefile` and `MAKEFILE`.
 function denylistRule(candidate) {
   const value = repoRelative(candidate)
   if (!value) return ''
+  const folded = value.toLowerCase()
   for (const rule of DENYLIST) {
+    const name = rule.toLowerCase()
     if (rule.endsWith('/')) {
-      if (value === rule.slice(0, -1) || value.startsWith(rule)) return rule
+      if (folded === name.slice(0, -1) || folded.startsWith(name)) return rule
       continue
     }
     if (rule.includes(' ')) continue
     if (rule.includes('*')) {
       // A `*` rule names a path shape, and a colocated `*.test.ts` beside it is the test of a
       // release script, never the release script: scripts/release-docs.test.ts falls through
-      // while scripts/release-guard.sh and every other scripts/release-* path still hits.
-      if (value.endsWith('.test.ts')) continue
-      const parts = rule.split('*').map(escapeRule).join('[^/]*')
-      if (new RegExp(`^${parts}$`).test(value)) return rule
+      // while scripts/release-guard.sh and every other scripts/release-* path still hits. A `*`
+      // rule matches the whole path, so one with no directory part (lefthook*) is a root-file
+      // shape: the one place that tool reads its configuration.
+      if (folded.endsWith('.test.ts')) continue
+      const parts = name.split('*').map(escapeRule).join('[^/]*')
+      if (new RegExp(`^${parts}$`).test(folded)) return rule
       continue
     }
-    if (value === rule || value.endsWith(`/${rule}`)) return rule
+    if (folded === name || folded.endsWith(`/${name}`)) return rule
   }
-  return value === 'package.json' ? 'package.json scripts' : ''
+  return folded === 'package.json' ? 'package.json scripts' : ''
 }
 
 const denylistHits = (paths) =>
