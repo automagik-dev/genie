@@ -383,9 +383,9 @@ const payload = (value) => `packed:${pack(JSON.stringify(value))}`;
 /** The ledger's packed state back as an object, or null when it did not survive the transport. */
 function unpack(value) {
   const raw = text(value);
-  if (!raw) return null;
+  if (!raw.startsWith('packed:')) return null;
   try {
-    const parsed = JSON.parse(decodeURIComponent(raw));
+    const parsed = JSON.parse(decodeURIComponent(raw.slice('packed:'.length)));
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;

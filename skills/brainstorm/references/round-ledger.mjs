@@ -446,9 +446,11 @@ function answerRefusal(ledger, answer, round, result, seen) {
   return applyOne(ledger, answer, round, result);
 }
 
-// The read model apply returns: `state`, packed. Settled keeps the id, the kind, the question text the
-// workflow echoes back into a later prompt, the value, the round and the reopen links. The owner's own
-// words — answer and provenance — stay in the DRAFT and its rendered `## Settled` section, never here.
+// The read model apply returns: `state`, a `packed:`-prefixed percent-encoded JSON payload, so the
+// transport identifies itself and a state a model decoded and re-formatted is refused. Settled keeps the
+// id, the kind, the question text the workflow echoes back into a later prompt, the value, the round and
+// the reopen links. The owner's own words — answer and provenance — stay in the DRAFT and its rendered
+// `## Settled` section, never here.
 const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
 
 function stateOf(ledger) {
@@ -482,7 +484,7 @@ function commandApply(flags) {
   }
   result.skipped = draft.ledger.asked.map((entry) => entry.id);
   if (draft.dirty || result.applied.some((entry) => !entry.unchanged)) saveDraft(draft);
-  const state = pack(JSON.stringify(stateOf(draft.ledger)));
+  const state = `packed:${pack(JSON.stringify(stateOf(draft.ledger)))}`;
   return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, state } };
 }
 

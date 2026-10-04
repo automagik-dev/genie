@@ -45,7 +45,11 @@ const pack = (value: unknown): string =>
     /[!'()*~]/g,
     (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
   )}`;
-const unpack = (state: string): Out => JSON.parse(decodeURIComponent(state));
+// apply's `state` rides the same self-identifying transport: the `packed:` prefix is part of the payload.
+const unpack = (state: string): Out => {
+  expect(state.startsWith('packed:')).toBe(true);
+  return JSON.parse(decodeURIComponent(state.slice('packed:'.length)));
+};
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -298,7 +302,7 @@ describe('the packed transport: payload bytes never meet a model that re-seriali
     const padded = settleFreeText(`keep it${'a'.repeat(2048)}`);
 
     expect(short.run.out.ledger).toBeUndefined();
-    expect(short.run.out.state).toMatch(/^[A-Za-z0-9%._-]*$/);
+    expect(short.run.out.state).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
     const state = unpack(short.run.out.state);
     expect(Object.keys(state)).toEqual(['settled', 'asked', 'size', 'scopeIn', 'councils', 'reviews']);
     expect(state).toEqual({

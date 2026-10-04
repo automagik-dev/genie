@@ -587,7 +587,7 @@ describe('the ledger payload transport', () => {
         `import { runRoundLedger } from ${JSON.stringify(pathToFileURL(LEDGER).href)};`,
         'const argv = process.argv.slice(2);',
         'const { exitCode, output } = runRoundLedger(argv);',
-        "if (argv[0] === 'apply') output.state = '[NOT VERBATIM: the state was withheld]';",
+        "if (argv[0] === 'apply') output.state = '{\"round\":1}';",
         'process.stdout.write(`${JSON.stringify(output, null, 2)}\\n`);',
         'process.exitCode = exitCode;',
         '',
