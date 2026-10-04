@@ -1,0 +1,129 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  CAPTURE_SCHEMA_VERSION,
+  captureLedgerPath,
+  captureSignalPath,
+  captureStatus,
+  disableCapture,
+  enableCapture,
+  isCaptureEnabled,
+  metricsDir,
+  recordLifecycleEvent,
+  resolveRuntimeSession,
+} from './metrics-capture.js';
+
+const EVENT = { db: '/repo/.genie/genie.db', taskId: 't-1', eventId: 7, kind: 'move', authorKind: 'pi', createdAt: 1 };
+const NO_RUNTIME: NodeJS.ProcessEnv = {};
+
+let home: string;
+let savedHome: string | undefined;
+
+beforeEach(() => {
+  savedHome = process.env.GENIE_HOME;
+  home = mkdtempSync(join(tmpdir(), 'genie-metrics-'));
+  process.env.GENIE_HOME = home;
+});
+
+afterEach(() => {
+  if (savedHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = savedHome;
+  rmSync(home, { recursive: true, force: true });
+});
+
+describe('off by default', () => {
+  test('a fresh GENIE_HOME records nothing and creates nothing', () => {
+    expect(isCaptureEnabled(NO_RUNTIME)).toBe(false);
+    recordLifecycleEvent(EVENT, NO_RUNTIME);
+    expect(existsSync(metricsDir())).toBe(false);
+  });
+
+  test('GENIE_METRICS=off disables an enabled host; the env can never enable', () => {
+    enableCapture();
+    expect(isCaptureEnabled({ GENIE_METRICS: 'off' })).toBe(false);
+    recordLifecycleEvent(EVENT, { GENIE_METRICS: 'off' });
+    expect(existsSync(captureLedgerPath())).toBe(false);
+    disableCapture();
+    expect(isCaptureEnabled({ GENIE_METRICS: 'on' })).toBe(false);
+  });
+
+  test('a directory where the switch should be is not a switch', () => {
+    mkdirSync(captureSignalPath(), { recursive: true });
+    expect(isCaptureEnabled(NO_RUNTIME)).toBe(false);
+  });
+});
+
+describe('enabled', () => {
+  test('appends one schema-versioned line with the runtime session, dir 0700 and file 0600', () => {
+    enableCapture();
+    recordLifecycleEvent(EVENT, { CLAUDE_CODE_SESSION_ID: 'sess-1' });
+    recordLifecycleEvent({ ...EVENT, eventId: 8 }, { CLAUDE_CODE_SESSION_ID: 'sess-1' });
+    const lines = readFileSync(captureLedgerPath(), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+    const row = JSON.parse(lines[0] as string);
+    expect(row).toMatchObject({
+      v: CAPTURE_SCHEMA_VERSION,
+      source: 'task_event',
+      db: EVENT.db,
+      task: 't-1',
+      event: 7,
+      kind: 'move',
+      authorKind: 'pi',
+      at: 1,
+      session: { id: 'sess-1', source: 'claude-code', file: null },
+    });
+    expect(typeof row.genie).toBe('string');
+    expect(statSync(metricsDir()).mode & 0o777).toBe(0o700);
+    expect(statSync(captureLedgerPath()).mode & 0o777).toBe(0o600);
+  });
+
+  test('a failing ledger never throws into the command', () => {
+    enableCapture();
+    mkdirSync(captureLedgerPath()); // a directory where the ledger file should be
+    expect(() => recordLifecycleEvent(EVENT, NO_RUNTIME)).not.toThrow();
+  });
+
+  test('disable removes only the switch and keeps the ledger', () => {
+    enableCapture();
+    recordLifecycleEvent(EVENT, NO_RUNTIME);
+    expect(disableCapture()).toBe(true);
+    expect(disableCapture()).toBe(false);
+    expect(existsSync(captureLedgerPath())).toBe(true);
+    expect(isCaptureEnabled(NO_RUNTIME)).toBe(false);
+  });
+
+  test('status reports the switch, ledger size and session', () => {
+    expect(captureStatus(NO_RUNTIME)).toMatchObject({ enabled: false, ledgerBytes: null });
+    enableCapture();
+    writeFileSync(captureLedgerPath(), 'x\n');
+    expect(captureStatus({ CODEX_THREAD_ID: 'thr' })).toMatchObject({
+      enabled: true,
+      ledgerBytes: 2,
+      session: { id: 'thr', source: 'codex' },
+    });
+  });
+});
+
+describe('resolveRuntimeSession', () => {
+  test('reads each runtime marker and never guesses', () => {
+    expect(resolveRuntimeSession({ CLAUDE_CODE_SESSION_ID: 'a' })).toEqual({
+      id: 'a',
+      source: 'claude-code',
+      file: null,
+    });
+    expect(resolveRuntimeSession({ CODEX_THREAD_ID: 'b' })).toEqual({ id: 'b', source: 'codex', file: null });
+    expect(resolveRuntimeSession({ PI_SESSION_ID: 'c', PI_SESSION_FILE: '/s/c.jsonl' })).toEqual({
+      id: 'c',
+      source: 'pi',
+      file: '/s/c.jsonl',
+    });
+    expect(resolveRuntimeSession({ PI_SESSION_FILE: '/s/d.jsonl' })).toEqual({
+      id: null,
+      source: 'pi',
+      file: '/s/d.jsonl',
+    });
+    expect(resolveRuntimeSession(NO_RUNTIME)).toEqual({ id: null, source: null, file: null });
+  });
+});

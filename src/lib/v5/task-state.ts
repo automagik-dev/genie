@@ -13,6 +13,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { randomBytes } from 'node:crypto';
+import { recordLifecycleEvent } from '../metrics-capture.js';
 import { STAGE_LOG_BACKFILL_KEY, backfillStageLog } from './genie-db.js';
 
 // ============================================================================
@@ -1520,8 +1521,18 @@ function appendTaskEventInTx(db: Database, taskId: string, event: AppendEventInp
   const res = db
     .query('INSERT INTO task_events (task_id, kind, note, author_kind, author, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(taskId, event.kind, event.note ?? null, event.authorKind ?? null, event.author ?? null, createdAt);
+  const id = Number(res.lastInsertRowid);
+  // Opt-in, machine-local, never published: a no-op stat unless `genie metrics enable` ran.
+  recordLifecycleEvent({
+    db: db.filename,
+    taskId,
+    eventId: id,
+    kind: event.kind,
+    authorKind: event.authorKind ?? null,
+    createdAt,
+  });
   return {
-    id: Number(res.lastInsertRowid),
+    id,
     taskId,
     kind: event.kind,
     note: event.note ?? null,

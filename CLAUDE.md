@@ -72,7 +72,7 @@ skills/                         Skill prompt files (brainstorm, wish, work, revi
 
 ## CLI Commands
 
-Sixteen top-level commands (run `genie <command> --help` for detail):
+Seventeen top-level commands (run `genie <command> --help` for detail):
 
 | Command | Purpose |
 |---------|---------|
@@ -83,6 +83,7 @@ Sixteen top-level commands (run `genie <command> --help` for detail):
 | `install` | Post-install finisher — authenticated delivery, v4 cleanup (`--skip-v4-cleanup`), and non-Codex convergence |
 | `config` | Read the resolved global config: `config get <dotted.key>` prints one schema key's value (`budgets.maxEscalationsPerGroup` is the per-group repair budget the shipped `fix` skill reads); `--json` adds `{key, value, source}` |
 | `context` | Resolve spawn context: wish/group branch + base SHA, or the integration branch (versioned JSON); `--plan` previews |
+| `metrics` | Opt-in lifecycle capture, OFF until `metrics enable` writes `<GENIE_HOME>/metrics/capture.on`: each card event then also appends one machine-local metadata line (runtime session id, genie version, event identity) to `<GENIE_HOME>/metrics/events.jsonl`; `metrics disable` removes the switch and keeps the ledger; `metrics status [--json]`. Sends nothing anywhere, and `GENIE_METRICS=off` disables it per process (the env can never enable) |
 | `mikro` | The mikro microagent runtime, on PATH — `mikro call <agent>` hands its tail to `scripts/mikro/call.ts` as typed (genie's global options excepted); `init`, `fixtures --from-commits`, `bench` and `coach` are the per-repository growth loop |
 | `setup` | Configure Genie. `--orchestration-mode` is a hidden one-release retirement stub: `standalone` exits 0 and `orca` exits 2, each with a notice that Orca mode is retired and a stale `orchestration.mode` key in `config.json` is harmless |
 | `orca` | Retired with the Orca integration: a visible one-release stub that accepts any arguments (`genie orca mirror …` included), prints a retirement notice on stderr, writes nothing and exits 2. Removed in the next release |
@@ -171,6 +172,7 @@ Worktrees share the main repo's `.genie/genie.db` via `git rev-parse --git-commo
 | `GENIE_HOME` | Relocates ALL global state from `~/.genie` (`config.json`, `skills-install.json`, `state-backups/`, `templates/`, `worktrees/`) |
 | `GENIE_AGENT_NAME` | Worker identity for task claims and stage-log entries (`resolveWorkerIdentity`; the default for `task checkout --worker`) |
 | `GENIE_AGENT_ID` | Fallback worker identity when `GENIE_AGENT_NAME` is unset; both floor at `cli` |
+| `GENIE_METRICS` | `off` disables opt-in lifecycle capture for one process; it can never enable it (only `genie metrics enable` does) |
 | `GENIE_WORKTREES_DIR` | Override the worktrees base the doctor launch-residue check and review snapshots use (default `<GENIE_HOME>/worktrees`) |
 
 ## Build
