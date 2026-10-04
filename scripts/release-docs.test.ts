@@ -757,6 +757,47 @@ describe('Group E release and documentation contracts', () => {
     expect(read('scripts/check-fingerprint-pinning.sh')).not.toContain('all four witnesses');
   });
 
+  test('signing-identity documentation names only the channels that exist', () => {
+    // A documented pin channel must be a document this repository serves at a
+    // URL that answers 200 today. Only two qualify: SECURITY.md and the RFC
+    // 9116 document at raw `main`. The project-site copy answers 404 and the
+    // pinned issue never existed, so neither may be named as a channel.
+    const security = read('SECURITY.md');
+    const mirror = read('.well-known/security.txt');
+    const template = read('.github/ISSUE_TEMPLATE/signing-key-fingerprint.md');
+    for (const source of [security, mirror, template]) {
+      expect(source).not.toContain('automagik.dev/.well-known/security.txt');
+    }
+    for (const gone of [
+      'label%3Apinned',
+      'SIGNING_CERT_IDENTITY_<YYYYMMDD>',
+      'three independent channels',
+      'all three pinning channels',
+      'Cross-check the three channels',
+      'out-of-band channel',
+    ]) {
+      expect(security).not.toContain(gone);
+    }
+    expect(security).toContain('https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt');
+    for (const gone of ['automagik.dev/.well-known/security.txt', 'label%3Apinned', 'SIGNING_CERT_IDENTITY']) {
+      expect(mirror).not.toContain(gone);
+    }
+    for (const gone of ['project site', 'This pinned issue', 'Three-Channel Cross-Check']) {
+      expect(template).not.toContain(gone);
+    }
+    // The pin itself is not weakened: both published copies keep the marker
+    // block and every canonical value.
+    for (const source of [security, mirror]) {
+      expect(source).toContain('BEGIN SIGNING_IDENTITY_PIN');
+      expect(source).toContain('END SIGNING_IDENTITY_PIN');
+      expect(source).toContain(
+        'certificate-identity-regexp: ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+      );
+      expect(source).toContain('certificate-oidc-issuer:     https://token.actions.githubusercontent.com');
+      expect(source).toContain('provenance source-uri:       github.com/automagik-dev/genie');
+    }
+  });
+
   test('release packaging validates the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
     // The Orca bundle and its parity check left with the plugin.
