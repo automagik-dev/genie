@@ -1642,6 +1642,30 @@ describe('timeline verbs', () => {
     expect(ev.authorKind).toBe('codex');
   });
 
+  test('a pi/OMP shell is attributed to pi, not to the human fallback', async () => {
+    const id = await seed('pi-runtime');
+    // pi and OMP export PI_SESSION_ID / PI_SESSION_FILE to their tool shells.
+    // Clear the inherited Claude Code and Codex markers so the pi signal is what resolves.
+    await cliEnv(
+      repo,
+      {
+        GENIE_AGENT_NAME: 'omp-worker',
+        PI_SESSION_ID: '01a10740-9581-7000',
+        CLAUDECODE: '',
+        CLAUDE_CODE: '',
+        CODEX_THREAD_ID: '',
+      },
+      'comment',
+      id,
+      'from omp',
+    );
+    const db = openDb({ cwd: repo });
+    const ev = getTaskEvents(db, id)[0];
+    db.close();
+    expect(ev.author).toBe('omp-worker');
+    expect(ev.authorKind).toBe('pi');
+  });
+
   test('GENIE_AGENT_KIND overrides inferred runtime', async () => {
     const id = await seed('override');
     await cliEnv(repo, { GENIE_AGENT_NAME: 'x', CLAUDECODE: '1', GENIE_AGENT_KIND: 'hermes' }, 'comment', id, 'hi');
