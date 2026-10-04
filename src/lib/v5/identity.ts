@@ -34,13 +34,20 @@ export function resolveWorkerIdentity(): string {
 /**
  * Infer the acting runtime kind from the environment. An explicit
  * `GENIE_AGENT_KIND` always wins; otherwise the coding-agent markers are probed
- * in order (Claude Code, Codex, Hermes), falling back to 'human'.
+ * in order (Claude Code, Codex, pi/OMP, Hermes), falling back to 'human'.
+ *
+ * 'human' is a fallback, not evidence: any runtime without a marker here (a
+ * script, a cron job, an unrecognised agent) resolves to it. pi and OMP export
+ * `PI_SESSION_ID` and `PI_SESSION_FILE` to the shells their tools run; before
+ * they were probed, every card event an OMP agent wrote was attributed to a
+ * human.
  */
 export function resolveAuthorKind(): string {
   const env = process.env;
   if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
   if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
   if (env.CODEX_THREAD_ID) return 'codex';
+  if (env.PI_SESSION_ID || env.PI_SESSION_FILE) return 'pi';
   if (env.HERMES || env.HERMES_HOME) return 'hermes';
   return 'human';
 }
