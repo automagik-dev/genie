@@ -64,7 +64,8 @@ interface ReadState {
 
 const isAbsent = (error: unknown): boolean => {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  // EISDIR: a directory that happens to be named *.jsonl can never be a ledger.
+  return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR';
 };
 
 function listDir(dir: string, seen?: ReadState): string[] {
@@ -126,8 +127,10 @@ export function repoCheckouts(repoRoot: string, seen?: ReadState): string[] {
       const gitdir = readFileSync(join(registry, name, 'gitdir'), 'utf8').trim();
       // git ≥2.48 `worktree add --relative-paths` writes it relative to this registration directory.
       if (gitdir) checkouts.push(dirname(isAbsolute(gitdir) ? gitdir : resolve(join(registry, name), gitdir)));
-    } catch {
-      // a pruned or half-written registration
+    } catch (error) {
+      // A pruned or half-written registration is no worktree; an UNREADABLE one may hide a worktree whose
+      // ledger holds this repository's attempts, so the repository's offload becomes unknown.
+      if (!isAbsent(error) && seen) seen.unreadable = true;
     }
   }
   return checkouts;

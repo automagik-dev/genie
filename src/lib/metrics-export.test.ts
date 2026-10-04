@@ -440,6 +440,25 @@ describe('ledger → verified intervals', () => {
       } finally {
         chmodSync(machine, 0o700);
       }
+      // 4. An unreadable worktree registration may hide a worktree (and its ledger): unknown.
+      const registration = join(repoRoot, '.git', 'worktrees', 'wt');
+      write(join(registration, 'gitdir'), `${join(root, 'wt-elsewhere', '.git')}\n`);
+      chmodSync(join(registration, 'gitdir'), 0o000);
+      try {
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(join(registration, 'gitdir'), 0o600);
+      }
+      chmodSync(registration, 0o000);
+      try {
+        expect(offload()).toBeNull();
+      } finally {
+        chmodSync(registration, 0o700);
+      }
+      // A directory named like a ledger is not a ledger, not a read failure.
+      mkdirSync(join(runs, 'not-a-ledger.jsonl'));
+      // (the readable machine ledger restored above still contributes its attempt)
+      expect(offload()).toMatchObject({ attempts: 3, tokens: 6 });
       // An ABSENT ledger dir is simply no ledger, not a read failure.
       rmSync(join(root, 'genie', 'mikro'), { recursive: true, force: true });
       expect(offload()).toMatchObject({ attempts: 2 });
