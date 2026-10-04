@@ -45,13 +45,17 @@ describe('off by default', () => {
     expect(isCaptureEnabled({ GENIE_METRICS: 'off' })).toBe(false);
     recordLifecycleEvent(EVENT, { GENIE_METRICS: 'off' });
     expect(existsSync(captureLedgerPath())).toBe(false);
+    for (const value of ['OFF', '0', 'false', ' No ']) expect(isCaptureEnabled({ GENIE_METRICS: value })).toBe(false);
+    expect(isCaptureEnabled({ GENIE_METRICS: 'on' })).toBe(true);
     disableCapture();
     expect(isCaptureEnabled({ GENIE_METRICS: 'on' })).toBe(false);
   });
 
-  test('a directory where the switch should be is not a switch', () => {
+  test('a directory where the switch should be is not a switch, and disable removes it', () => {
     mkdirSync(captureSignalPath(), { recursive: true });
     expect(isCaptureEnabled(NO_RUNTIME)).toBe(false);
+    expect(disableCapture()).toBe(true);
+    expect(existsSync(captureSignalPath())).toBe(false);
   });
 });
 

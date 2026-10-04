@@ -147,7 +147,7 @@ Every release is cosign-signed with SLSA provenance, and `genie update` verifies
 Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
 
 <details>
-<summary>All 16 commands</summary>
+<summary>All 17 commands</summary>
 
 | Command | What it does |
 |---------|-------------|

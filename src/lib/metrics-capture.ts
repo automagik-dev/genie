@@ -28,8 +28,14 @@ import { VERSION } from './version.js';
 /** Bumped on any change to the shape of an `events.jsonl` line. */
 export const CAPTURE_SCHEMA_VERSION = 1;
 
-/** `GENIE_METRICS=off` disables capture for one process even when enabled. Env may only disable. */
+/** `GENIE_METRICS=off` (or 0/false/no, any case) disables capture for one process even when enabled. Env may only disable. */
 const DISABLE_ENV = 'GENIE_METRICS';
+const DISABLE_VALUES = new Set(['off', '0', 'false', 'no']);
+
+function disabledByEnv(env: NodeJS.ProcessEnv): boolean {
+  const value = env[DISABLE_ENV];
+  return value !== undefined && DISABLE_VALUES.has(value.trim().toLowerCase());
+}
 
 export function metricsDir(): string {
   return join(resolveGenieHome(), 'metrics');
@@ -45,7 +51,7 @@ export function captureLedgerPath(): string {
 }
 
 export function isCaptureEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env[DISABLE_ENV] === 'off') return false;
+  if (disabledByEnv(env)) return false;
   try {
     return statSync(captureSignalPath()).isFile();
   } catch {
@@ -122,9 +128,14 @@ export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.Process
 /**
  * Append one line for a just-written card event, when capture is enabled.
  * One O_APPEND write of one line: concurrent writers from many worktrees never
- * tear it (measured: 16 × 5,000 appends, 0 torn, at ~200 B and ~3.8 KB). A line
- * whose transaction later rolls back has no `task_events` row to join and is
- * reported unmatched by the export, never invented.
+ * tear it (measured: 16 × 5,000 appends, 0 torn, at ~200 B and ~3.8 KB).
+ *
+ * The line is written inside the caller's transaction, before commit. If that
+ * transaction rolls back, SQLite also rolls back the AUTOINCREMENT counter and
+ * the next insert REUSES the event id — so `(db, event)` alone is not a join
+ * key. A consumer joins on `(db, task, event, kind, at)`: the stray line's
+ * `at` (the rolled-back row's `created_at`) matches no stored row, and the line
+ * is reported unmatched, never attributed.
  */
 export function recordLifecycleEvent(input: LifecycleEventInput, env: NodeJS.ProcessEnv = process.env): void {
   if (!isCaptureEnabled(env)) return;
@@ -159,7 +170,7 @@ export function captureStatus(env: NodeJS.ProcessEnv = process.env): CaptureStat
   }
   return {
     enabled: isCaptureEnabled(env),
-    disabledByEnv: env[DISABLE_ENV] === 'off',
+    disabledByEnv: disabledByEnv(env),
     signal: captureSignalPath(),
     ledger: captureLedgerPath(),
     ledgerBytes,
@@ -181,6 +192,7 @@ export function disableCapture(): boolean {
   } catch {
     return false;
   }
-  rmSync(captureSignalPath(), { force: true });
+  // recursive: a directory planted where the switch belongs is removed too, never an EISDIR crash.
+  rmSync(captureSignalPath(), { force: true, recursive: true });
   return true;
 }
