@@ -352,7 +352,7 @@ describe('genie wish report', () => {
     const summary = run(['--summary']);
     expect(summary.code).toBe(0);
     expect(summary.stderr).toBe(`wish report: skipped corrupt line 2 of ${ledger}\n`);
-    expect(summary.stdout).toContain('wish\tunlabeled\t2\t200\t2.0\t2/2\n');
+    expect(summary.stdout).toContain('wish\tunlabeled\t2\t200\t2.0\t2/2\t-\t-\t0\n');
   });
 
   test('--append writes one D9 row, and a second --append of the same runId is refused', () => {
@@ -364,6 +364,7 @@ describe('genie wish report', () => {
     const ledger = rows();
     expect(ledger).toHaveLength(1);
     expect(Object.keys(ledger[0])).toEqual([
+      'v',
       'runId',
       'sessionId',
       'repo',
@@ -375,9 +376,14 @@ describe('genie wish report', () => {
       'totalTokens',
       'totalToolCalls',
       'agentCount',
+      'outcome',
+      'partial',
       'stages',
     ]);
     expect(ledger[0]).toMatchObject({
+      v: 2,
+      partial: false,
+      outcome: { verdict: null, roundVerdicts: [], repairs: null, gateExitCode: null, checks: null },
       runId: FIXTURE.runId,
       sessionId: SESSION,
       workflowName: 'wish',
@@ -424,10 +430,74 @@ describe('genie wish report', () => {
     }
     const { code, stdout } = run(['--summary']);
     expect(code).toBe(0);
-    expect(stdout).toContain('workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\n');
-    expect(stdout).toContain('wish\trouted\t2\t200\t2.0\t1/2\n');
-    expect(stdout).toContain('wish\tall-opus\t1\t50\t0.5\t1/1\n');
-    expect(stdout).toContain('research-sweep\trouted\t1\t10\t0.1\t-\n');
+    expect(stdout).toContain('workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial\n');
+    expect(stdout).toContain('wish\trouted\t2\t200\t2.0\t1/2\t-\t-\t0\n');
+    expect(stdout).toContain('wish\tall-opus\t1\t50\t0.5\t1/1\t-\t-\t0\n');
+    expect(stdout).toContain('research-sweep\trouted\t1\t10\t0.1\t-\t-\t-\t0\n');
+  });
+
+  test('the outcome the workflow returned rides the row and the summary; a pre-outcome row counts in n only', () => {
+    const shipped = {
+      ...FIXTURE,
+      runId: 'wf_ship',
+      result: {
+        ok: true,
+        state: 'merge-ready',
+        review: { verdict: 'SHIP', findings: [] },
+        repairs: 1,
+        rounds: [
+          { round: 1, status: 'fixed', verdict: 'SHIP' },
+          { round: 0, status: 'no response', verdict: '' },
+        ],
+        gate: { exitCode: 0 },
+        checks: 'pass',
+        stageReached: 'readback',
+      },
+    };
+    const fixFirst = {
+      ...FIXTURE,
+      runId: 'wf_fix',
+      result: {
+        ok: false,
+        state: 'missed',
+        review: { verdict: 'FIX-FIRST' },
+        repairs: 3,
+        rounds: [],
+        gate: { exitCode: 1 },
+      },
+    };
+    const progress = FIXTURE.workflowProgress.map((entry: Record<string, unknown>) => ({ ...entry }));
+    const firstStage = progress.find((entry: { type: string }) => entry.type === 'workflow_agent');
+    firstStage.tokens = undefined;
+    const replayed = { ...FIXTURE, runId: 'wf_replayed', workflowProgress: progress };
+    const brainstorm = {
+      ...FIXTURE,
+      runId: 'wf_brain',
+      workflowName: 'brainstorm',
+      result: { state: 'round', round: 6, wrs: { score: 88, bar: '88/100' } },
+    };
+    const { run, root } = host([shipped, fixFirst, replayed, brainstorm]);
+    const report = run(['wf_ship']);
+    expect(report.code).toBe(0);
+    expect(report.stdout).toContain(
+      'outcome: verdict SHIP, round verdicts SHIP, repairs 1, gate exit 0, checks pass, stage reached readback\n',
+    );
+    expect(run(['wf_brain']).stdout).toContain('outcome: round 6, WRS 88\n');
+    expect(run(['wf_replayed']).stdout).toContain('partial: a stage carries no tokens or duration');
+    // A version-1 row, written before the outcome fields existed.
+    const ledger = join(root, 'genie', 'metrics', 'wish-runs.jsonl');
+    mkdirSync(join(root, 'genie', 'metrics'), { recursive: true });
+    const legacy = { ...FIXTURE, runId: 'wf_legacy', workflowProgress: undefined, result: undefined };
+    writeFileSync(
+      ledger,
+      `${JSON.stringify({ runId: legacy.runId, sessionId: SESSION, repo: null, workflowName: 'wish', variant: 'v', state: 'merge-ready', timestamp: null, durationMs: 60000, totalTokens: 100, totalToolCalls: null, agentCount: 1, stages: [] })}\n`,
+    );
+    for (const runId of ['wf_ship', 'wf_fix', 'wf_replayed']) {
+      expect(run([runId, '--append', '--variant', 'v']).code).toBe(0);
+    }
+    const summary = run(['--summary']);
+    expect(summary.code).toBe(0);
+    expect(summary.stdout).toMatch(/^wish\tv\t4\t\d+\t[\d.]+\t3\/4\t1\/2\t2\.0\t1$/m);
   });
 
   test('--summary over an empty ledger says so and exits 0; no runId and no --summary exits 2', () => {
