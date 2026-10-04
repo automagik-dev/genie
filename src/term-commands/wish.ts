@@ -25,7 +25,9 @@
  * `wish report` reads one saved-workflow run record
  * (`<CLAUDE_CONFIG_DIR>/projects/<project>/<session>/workflows/<runId>.json`) and
  * prints its totals and one row per agent stage — tokens and time only, never
- * money. `--append` adds one row to the machine-local ledger
+ * money — plus the outcome the workflow already returned in `result` (the review
+ * verdict, repair rounds, gate exit code, checks; a brainstorm's round and WRS),
+ * so a cheaper run can always be read beside whether it shipped. `--append` adds one row to the machine-local ledger
  * `<GENIE_HOME>/metrics/wish-runs.jsonl`; `--summary` averages that ledger per
  * workflow and variant. Exit 2: an unknown runId, a record missing a required
  * field, or a runId already in the ledger.
@@ -64,8 +66,36 @@ that does not follow that contract should treat them there, not here.
 Exit codes: 0 clean, 1 findings, 2 the root was refused. An unknown flag is the
 parser's own error and exits 1.`;
 
+/**
+ * The outcome a workflow already returned in its `result` — read, never re-derived, and null
+ * wherever the workflow did not return it. Efficiency is only comparable at equal outcome, so
+ * every row carries this beside its tokens and time.
+ */
+interface RunOutcome {
+  /** wish: the final review verdict (SHIP / FIX-FIRST / BLOCKED). */
+  verdict: string | null;
+  /** wish: the verdict of each repair round that ran a review ('fixed'), in order; carried-forward verdicts are skipped. */
+  roundVerdicts: string[];
+  /** wish: repair rounds spent. */
+  repairs: number | null;
+  /** wish: the gate's exit code. */
+  gateExitCode: number | null;
+  /** wish: the remote checks state the read-back saw ('pass', 'pending', …); null when no PR was read back. */
+  checks: string | null;
+  /** wish: the furthest stage reached. */
+  stageReached: string | null;
+  /** brainstorm: the round this run was. */
+  round: number | null;
+  /** brainstorm: the Wish Readiness Score after this run. */
+  wrs: number | null;
+}
+
+/** Bumped when a row gains a field; a row without `v` is version 1 (no outcome, no partial). */
+const ROW_VERSION = 2;
+
 /** One ledger row — design D9. `state` and `totalToolCalls` are nullable; the rest of the totals are required. */
 interface WishRunRow {
+  v?: number;
   runId: string;
   sessionId: string;
   repo: string | null;
@@ -77,6 +107,10 @@ interface WishRunRow {
   totalTokens: number;
   totalToolCalls: number | null;
   agentCount: number;
+  /** null when the run returned no result (crashed, interrupted). */
+  outcome?: RunOutcome | null;
+  /** true when any stage carries no tokens or duration (a replayed or interrupted stage): its totals undercount. */
+  partial?: boolean;
   stages: Array<{
     label: string;
     model: string | null;
@@ -145,6 +179,34 @@ function gitRepoName(): string | null {
   }
 }
 
+const numberOrNull = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+const stringOrNull = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
+const objectOrNull = (value: unknown): Record<string, unknown> | null =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+function toOutcome(result: Record<string, unknown> | null): RunOutcome | null {
+  if (result === null) return null;
+  const rounds = Array.isArray(result.rounds) ? result.rounds : [];
+  return {
+    verdict: stringOrNull(objectOrNull(result.review)?.verdict),
+    // Only a 'fixed' round ran a review; 'no response' / 'unable' / 'no new commit' rounds carry the
+    // PREVIOUS verdict forward, which no review issued.
+    roundVerdicts: rounds
+      .map(objectOrNull)
+      .filter((round) => round?.status === 'fixed')
+      .map((round) => stringOrNull(round?.verdict))
+      .filter((v): v is string => v !== null),
+    repairs: numberOrNull(result.repairs),
+    gateExitCode: numberOrNull(objectOrNull(result.gate)?.exitCode),
+    // wish.js initialises checks to 'pending' before publish: it is an observation only once a PR was read back.
+    checks: result.pr !== null && result.pr !== undefined ? stringOrNull(result.checks) : null,
+    stageReached: stringOrNull(result.stageReached),
+    round: numberOrNull(result.round),
+    wrs: numberOrNull(objectOrNull(result.wrs)?.score),
+  };
+}
+
 /** The D9 row of one record, or the reason it is refused. */
 function toRow(record: Record<string, unknown>, path: string, variant: string): WishRunRow | string {
   for (const field of REQUIRED) if (record[field] === undefined || record[field] === null) return `has no ${field}`;
@@ -163,7 +225,15 @@ function toRow(record: Record<string, unknown>, path: string, variant: string): 
       }
     }
   }
+  const stages = agents.map((entry) => ({
+    label: entry.label as string,
+    model: (entry.model as string | undefined) ?? null,
+    tokens: (entry.tokens as number | undefined) ?? null,
+    toolCalls: (entry.toolCalls as number | undefined) ?? null,
+    durationMs: (entry.durationMs as number | undefined) ?? null,
+  }));
   return {
+    v: ROW_VERSION,
     runId: record.runId as string,
     sessionId: basename(dirname(dirname(path))),
     repo: gitRepoName(),
@@ -175,14 +245,26 @@ function toRow(record: Record<string, unknown>, path: string, variant: string): 
     totalTokens: record.totalTokens as number,
     totalToolCalls: (record.totalToolCalls as number | undefined) ?? null,
     agentCount: record.agentCount as number,
-    stages: agents.map((entry) => ({
-      label: entry.label as string,
-      model: (entry.model as string | undefined) ?? null,
-      tokens: (entry.tokens as number | undefined) ?? null,
-      toolCalls: (entry.toolCalls as number | undefined) ?? null,
-      durationMs: (entry.durationMs as number | undefined) ?? null,
-    })),
+    outcome: toOutcome(objectOrNull(record.result)),
+    partial: stages.some((stage) => stage.tokens === null || stage.durationMs === null),
+    stages,
   };
+}
+
+/** One human line for whatever outcome fields the workflow returned, or null when it returned none. */
+function describeOutcome(row: WishRunRow): string | null {
+  const outcome = row.outcome;
+  if (!outcome) return null;
+  const parts: string[] = [];
+  if (outcome.verdict !== null) parts.push(`verdict ${outcome.verdict}`);
+  if (outcome.roundVerdicts.length > 0) parts.push(`round verdicts ${outcome.roundVerdicts.join(' → ')}`);
+  if (outcome.repairs !== null) parts.push(`repairs ${outcome.repairs}`);
+  if (outcome.gateExitCode !== null) parts.push(`gate exit ${outcome.gateExitCode}`);
+  if (outcome.checks !== null) parts.push(`checks ${outcome.checks}`);
+  if (outcome.stageReached !== null) parts.push(`stage reached ${outcome.stageReached}`);
+  if (outcome.round !== null) parts.push(`round ${outcome.round}`);
+  if (outcome.wrs !== null) parts.push(`WRS ${outcome.wrs}`);
+  return parts.length > 0 ? parts.join(', ') : null;
 }
 
 function formatRow(row: WishRunRow): string {
@@ -190,8 +272,11 @@ function formatRow(row: WishRunRow): string {
   const lines = [
     `${row.workflowName} ${row.runId} (session ${row.sessionId}, variant ${row.variant})`,
     `total: ${minutes} min, ${row.totalTokens} tokens, ${row.totalToolCalls ?? '-'} tool calls, ${row.agentCount} agents, state ${row.state ?? 'null'}`,
-    'stage\tmodel\ttokens\ttoolCalls\tseconds',
   ];
+  const outcome = describeOutcome(row);
+  if (outcome !== null) lines.push(`outcome: ${outcome}`);
+  if (row.partial) lines.push('partial: a stage carries no tokens or duration, so the totals undercount');
+  lines.push('stage\tmodel\ttokens\ttoolCalls\tseconds');
   for (const stage of row.stages) {
     const seconds = stage.durationMs === null ? '-' : Math.round(stage.durationMs / 1000);
     lines.push(`${stage.label}\t${stage.model ?? '-'}\t${stage.tokens ?? '-'}\t${stage.toolCalls ?? '-'}\t${seconds}`);
@@ -207,14 +292,20 @@ function formatSummary(rows: WishRunRow[]): string {
     const key = `${row.workflowName}\t${row.variant}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
-  const lines = ['workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady'];
+  const lines = ['workflow\tvariant\tn\tmeanTokens\tmeanMinutes\tmergeReady\tship\tmeanRepairs\tpartial'];
   for (const [key, group] of groups) {
     const n = group.length;
     const meanTokens = Math.round(group.reduce((sum, row) => sum + row.totalTokens, 0) / n);
     const meanMinutes = (group.reduce((sum, row) => sum + row.durationMs, 0) / n / 60000).toFixed(1);
     const ready = group.filter((row) => row.state === 'merge-ready').length;
     const rate = group[0]?.workflowName === 'wish' ? `${ready}/${n}` : '-';
-    lines.push(`${key}\t${n}\t${meanTokens}\t${meanMinutes}\t${rate}`);
+    // Rows written before the outcome fields existed carry none: they count in n, never as a SHIP or a repair.
+    const verdicts = group.map((row) => row.outcome?.verdict ?? null).filter((v): v is string => v !== null);
+    const ship = verdicts.length > 0 ? `${verdicts.filter((v) => v === 'SHIP').length}/${verdicts.length}` : '-';
+    const repairs = group.map((row) => row.outcome?.repairs ?? null).filter((v): v is number => v !== null);
+    const meanRepairs = repairs.length > 0 ? (repairs.reduce((sum, v) => sum + v, 0) / repairs.length).toFixed(1) : '-';
+    const partial = group.filter((row) => row.partial === true).length;
+    lines.push(`${key}\t${n}\t${meanTokens}\t${meanMinutes}\t${rate}\t${ship}\t${meanRepairs}\t${partial}`);
   }
   return `${lines.join('\n')}\n`;
 }
