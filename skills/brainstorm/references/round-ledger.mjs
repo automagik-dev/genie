@@ -14,10 +14,13 @@
 //   render       --draft P                            rewrite the five ledger-owned sections
 //   check-design --design P --draft P [--root P]      template and Source checks
 //
-// Any JSON flag may be given as `packed:<percent-encoded JSON>` — the form the
+// Any JSON flag is given as `packed:<percent-encoded JSON>` — the form the
 // workflow's steps write, which crosses a model channel byte for byte — or as
 // `@<file>` to read the JSON from that file, so a question text never has to
-// survive shell quoting or a model re-serialising JSON.
+// survive shell quoting or a model re-serialising JSON. Inline JSON is refused:
+// it is exactly the form a model re-serialises, and an over-escaped quote in an
+// owner's answer then fails the reopen check forever. A human on the by-hand
+// path writes the payload to a file and passes `@<file>`.
 //
 // Rules a caller codes against:
 // - `apply` returns the round this run works on: 1 + the highest round recorded
@@ -67,7 +70,7 @@ const EVIDENCE_END = '<!-- genie-design-review:end -->';
 
 const USAGE = [
   'usage: round-ledger.mjs <command> [flags]',
-  '  every JSON flag takes inline JSON, @<file>, or packed:<percent-encoded JSON>',
+  '  every JSON flag takes packed:<percent-encoded JSON> or @<file>, never inline JSON',
   '  apply        --draft <DRAFT.md> [--answers <json>]',
   '  ask          --draft <DRAFT.md> --round <n> --questions <json>',
   '  ratchet      --draft <DRAFT.md> --round <n> --by <who> [--size <P|M|G>] [--scope <json>] [--approved <id>]',
@@ -139,6 +142,8 @@ function jsonFlag(flags, name, fallback) {
     } catch (error) {
       throw new UsageError(`--${name} names a file that cannot be read: ${raw.slice(1)} (${error.code ?? error})`);
     }
+  } else {
+    throw new UsageError(`--${name} must be packed:<percent-encoded JSON> or @<file>, not inline JSON`);
   }
   try {
     return JSON.parse(text);
@@ -447,17 +452,29 @@ function answerRefusal(ledger, answer, round, result, seen) {
 }
 
 // The read model apply returns: `state`, a `packed:`-prefixed percent-encoded JSON payload, so the
-// transport identifies itself and a state a model decoded and re-formatted is refused. Settled keeps the
-// id, the kind, the question text the workflow echoes back into a later prompt, the value, the round and
-// the reopen links. The owner's own words — answer and provenance — stay in the DRAFT and its rendered
-// `## Settled` section, never here.
+// transport identifies itself and a state a model decoded and re-formatted is refused. A Settled entry
+// keeps its id, kind, value, round and reopen links: the owner's words (answer, provenance) and the
+// question text stay in the DRAFT and its rendered `## Settled` section, so the state grows with the number
+// of entries and never with what anyone wrote. The one exception is the question of a review-findings
+// choice, which the workflow lists back to the lead and the repairer: the workflow builds it from the
+// reviewer's finding ids, one per repair, and it quotes no owner answer. A reopen question quotes the old
+// answer verbatim, so a reopen entry never carries its question here. A question still OPEN rides `asked`
+// (one batch at most) because the workflow relays it to the owner.
 const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
+
+function settledView(entry) {
+  const keepsQuestion = entry.kind === 'review-findings' && entry.reopens === undefined;
+  return Object.fromEntries(
+    STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined && (key !== 'question' || keepsQuestion)).map((key) => [
+      key,
+      entry[key],
+    ]),
+  );
+}
 
 function stateOf(ledger) {
   return {
-    settled: ledger.settled.map((entry) =>
-      Object.fromEntries(STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined).map((key) => [key, entry[key]])),
-    ),
+    settled: ledger.settled.map(settledView),
     asked: ledger.asked,
     size: ledger.size,
     scopeIn: ledger.scopeIn,

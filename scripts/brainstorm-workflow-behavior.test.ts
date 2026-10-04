@@ -247,6 +247,13 @@ function blockOf(path: string): Out {
   return JSON.parse(match[1] as string);
 }
 
+// The one transport the workflow's steps use: percent-packed JSON, which the ledger CLI requires of every JSON flag.
+const pack = (value: unknown): string =>
+  `packed:${encodeURIComponent(JSON.stringify(value)).replace(
+    /[!'()*~]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  )}`;
+
 function cli(...args: string[]): Out {
   const result = Bun.spawnSync(['node', LEDGER, ...args], { stdout: 'pipe', stderr: 'pipe' });
   return { code: result.exitCode, out: JSON.parse(result.stdout.toString()) };
@@ -464,7 +471,11 @@ describe('rounds across runs', () => {
     ]);
     expect(second.result.questions.map((q) => q.id)).toEqual(['R1-2', 'R2-1']);
     expect(second.result.notes).toContain('R1-2 was not answered; it stays Asked and is shown again.');
-    expect(second.calls.find((c) => c.label === 'lead:plan')?.prompt).toContain('"id": "R1-1"');
+    const leadPrompt = second.calls.find((c) => c.label === 'lead:plan')?.prompt ?? '';
+    expect(leadPrompt).toContain('"id": "R1-1"');
+    // The settled question lives in the DRAFT the lead reads; only the still-open one rides the state.
+    expect(leadPrompt).not.toContain(question(1).question);
+    expect(leadPrompt).toContain(question(2).question);
     expect(readFileSync(env.draft, 'utf8')).toContain('- **R1-1** (round 2, decision)');
   });
 
@@ -568,6 +579,31 @@ describe('the ledger payload transport', () => {
     const flags = steps.flatMap((step) => step.argv as string[]).filter((arg) => JSON_FLAGS.includes(arg));
     expect(flags).toContain('--answers');
     expect(flags).toContain('--questions');
+  });
+
+  // One command-line argument holds 128 KiB on Linux (MAX_ARG_STRLEN), and a packed payload is what an
+  // owner's words become in it: past the script's cap the run refuses by name before any agent is asked to
+  // spawn it, instead of failing as E2BIG halfway through a round.
+  test('an answer too large for one argument is refused by name before any agent runs', async () => {
+    const { env, asked } = await askedOnce();
+    for (const pad of ['a'.repeat(200_000), 'é'.repeat(40_000)]) {
+      const refused = await runBrainstorm(env, {}, { answers: [answerTo(asked[0], pad)] });
+      expect(refused.calls).toEqual([]);
+      expect(refused.result.state).toBe('failed');
+      expect(refused.result.notes.join('\n')).toContain('payload too large: the --answers argument of step apply is');
+      expect(refused.result.notes.join('\n')).toContain('98304');
+    }
+    expect(blockOf(env.draft).settled).toEqual([]);
+  });
+
+  test('an answer just under the cap still settles, and the state apply returns stays small', async () => {
+    const { env, asked } = await askedOnce();
+    const words = 'x'.repeat(90_000);
+    const run = await clean(env, { 'lead:plan': plan({ questions: [] }) }, { answers: [answerTo(asked[0], words)] });
+    expect(run.result.state).toBe('round');
+    expect(blockOf(env.draft).settled[0].answer).toBe(words);
+    const lead = run.calls.find((c) => c.label === 'lead:plan')?.prompt ?? '';
+    expect(lead).not.toContain('xxxxxxxx');
   });
 
   test('a question with quotes, a backslash, an arrow and an emoji reaches the DRAFT byte for byte', async () => {
@@ -728,7 +764,19 @@ describe('the Socratic council', () => {
   test('P1: Socrates numbers decisions after the existing P ids, and commit records them as --decided', async () => {
     const env = newEnv();
     cli('apply', '--draft', env.draft);
-    cli('council', '--draft', env.draft, '--round', '1', '--run', 'seed', '--ceiling', '3', '--decided', '["P1","P2"]');
+    cli(
+      'council',
+      '--draft',
+      env.draft,
+      '--round',
+      '1',
+      '--run',
+      'seed',
+      '--ceiling',
+      '3',
+      '--decided',
+      pack(['P1', 'P2']),
+    );
     const council = { convene: true, decision: 'd', reason: 'r', lenses: ['a', 'b', DISSENT_KEY].map(LENS) };
     const { calls } = await clean(
       env,
@@ -745,7 +793,19 @@ describe('the Socratic council', () => {
 
     const again = newEnv();
     cli('apply', '--draft', again.draft);
-    cli('council', '--draft', again.draft, '--round', '1', '--run', 'seed', '--ceiling', '3', '--decided', '["P1"]');
+    cli(
+      'council',
+      '--draft',
+      again.draft,
+      '--round',
+      '1',
+      '--run',
+      'seed',
+      '--ceiling',
+      '3',
+      '--decided',
+      pack(['P1']),
+    );
     const reused = await clean(
       again,
       { 'lead:plan': plan({ council, questions: [] }), ...councilFakes(['P1', 'P7']) },
@@ -878,7 +938,7 @@ describe('the Socratic council', () => {
     const env = newEnv();
     cli('apply', '--draft', env.draft);
     // A recorded run id that this round's convening would reuse makes the ledger refuse the council step.
-    cli('council', '--draft', env.draft, '--round', '1', '--run', 'round-2', '--ceiling', '3', '--decided', '[]');
+    cli('council', '--draft', env.draft, '--round', '1', '--run', 'round-2', '--ceiling', '3', '--decided', pack([]));
     const { result, labels } = await clean(
       env,
       { 'lead:plan': wantingCouncil(), ...councilFakes(['P1']) },
@@ -907,11 +967,9 @@ describe('the Socratic council', () => {
         { label: 'Convene anyway', description: 'about 1M tokens', value: 'convene' },
       ],
     };
-    expect(
-      cli('ask', '--draft', env.draft, '--round', '1', '--questions', JSON.stringify([approvalQuestion])).code,
-    ).toBe(0);
+    expect(cli('ask', '--draft', env.draft, '--round', '1', '--questions', pack([approvalQuestion])).code).toBe(0);
     const approve = [{ id: 'R1-1', question: approvalQuestion.question, answer: 'Convene anyway' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(approve)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(approve)).code).toBe(0);
     const reopenText = 'R1-1 was "Convene anyway" → hold the council after all?';
     const reopen = {
       kind: 'decision',
@@ -924,9 +982,9 @@ describe('the Socratic council', () => {
         { label: 'Keep it', description: '', value: 'keep' },
       ],
     };
-    expect(cli('ask', '--draft', env.draft, '--round', '2', '--questions', JSON.stringify([reopen])).code).toBe(0);
+    expect(cli('ask', '--draft', env.draft, '--round', '2', '--questions', pack([reopen])).code).toBe(0);
     const hold = [{ id: 'R2-1', question: reopenText, answer: 'Hold it' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(hold)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(hold)).code).toBe(0);
     expect(blockOf(env.draft).settled.find((e: Out) => e.id === 'R1-1').reopenedBy).toBe('R2-1');
 
     const { result, labels } = await clean(env, { 'lead:plan': wantingCouncil() });
@@ -1146,7 +1204,7 @@ describe('crystallize, review and the repair budget', () => {
 
   test('a reopened review-findings answer is not acted on', async () => {
     const { env, choice } = await fixFirstRound();
-    const stop = cli('apply', '--draft', env.draft, '--answers', JSON.stringify([answerTo(choice, 'Stop')]));
+    const stop = cli('apply', '--draft', env.draft, '--answers', pack([answerTo(choice, 'Stop')]));
     expect(stop.code).toBe(0);
     const reopenText = `${choice.id} was "Stop" → go on with the brainstorm?`;
     const reopen = {
@@ -1160,18 +1218,10 @@ describe('crystallize, review and the repair budget', () => {
         { label: 'Stay stopped', description: '', value: 'stay' },
       ],
     };
-    const asked = cli(
-      'ask',
-      '--draft',
-      env.draft,
-      '--round',
-      String(stop.out.round),
-      '--questions',
-      JSON.stringify([reopen]),
-    );
+    const asked = cli('ask', '--draft', env.draft, '--round', String(stop.out.round), '--questions', pack([reopen]));
     expect(asked.code).toBe(0);
     const goOn = [{ id: asked.out.asked[0].id, question: reopenText, answer: 'Go on' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(goOn)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(goOn)).code).toBe(0);
 
     const { result, labels } = await clean(env, { 'lead:plan': plan({ questions: [] }) });
     expect(result.state).toBe('round');

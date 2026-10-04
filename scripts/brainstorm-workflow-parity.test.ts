@@ -104,6 +104,13 @@ describe('brainstorm.js carries the spine the design fixes', () => {
     expect(script).not.toContain('@{');
   });
 
+  test('the argument cap stays under the 128 KiB one Linux argv element can hold', () => {
+    const cap = Number(/const ARG_CAP = (\d+)/.exec(script)?.[1]);
+    expect(cap).toBeGreaterThan(0);
+    expect(cap).toBeLessThan(131_072);
+    expect(script).toContain('const oversized = oversizedArg(spec.steps)');
+  });
+
   test('the result names the agents that returned null `notConvened`, as every catalog workflow does', () => {
     expect(script).toContain('    notConvened: notConvened.slice(),');
     expect(script).toContain('`notConvened`\n// lists the label of every agent that returned null or threw');

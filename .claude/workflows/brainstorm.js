@@ -80,6 +80,9 @@ const LEAD_KINDS = ['decision', 'end-without-design']
 const OWNED_SECTIONS = ['## Settled', '## Asked', '## Size', '## Scope ratchet', '## Councils']
 const SHA256 = /^[a-f0-9]{64}$/
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/
+// One command-line argument holds 128 KiB on Linux (MAX_ARG_STRLEN). A packed payload is JSON percent-encoded,
+// up to three characters a byte, so an owner's answer can outgrow that: the cap sits well under the limit.
+const ARG_CAP = 98304
 const COUNCIL_ID = /^P(\d+)$/
 const FINDING_ID = /^[A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$/
 // A path reaches a shell as one quoted argument; refusing these keeps quoting trivially correct.
@@ -379,6 +382,20 @@ function pack(value) {
 }
 
 const payload = (value) => `packed:${pack(JSON.stringify(value))}`;
+
+// The first step argument past ARG_CAP, named, or null. A payload that cannot be passed as one argument is
+// refused before any agent is asked to run it, never left to fail as E2BIG halfway through a round.
+function oversizedArg(steps) {
+  for (const step of list(steps).map(objectOf)) {
+    const argv = list(step.argv)
+    const index = argv.findIndex((arg) => String(arg).length > ARG_CAP)
+    if (index >= 0) {
+      const flag = String(argv[index - 1] || '').startsWith('--') ? argv[index - 1] : 'argv'
+      return `payload too large: the ${flag} argument of step ${text(step.step)} is ${String(argv[index]).length} bytes packed, over the ${ARG_CAP}-byte cap one command-line argument can carry (E2BIG on Linux). Shorten it or split it across runs; nothing was run.`
+    }
+  }
+  return null
+}
 
 /** The ledger's packed state back as an object, or null when it did not survive the transport. */
 function unpack(value) {
@@ -818,6 +835,8 @@ function stampSteps(review, repaired) {
 // ---------------------------------------------------------------- prompts
 
 function ledgerPrompt(purpose, spec) {
+  const oversized = oversizedArg(spec.steps)
+  if (oversized) throw new Error(oversized)
   return join([
     `You run the round ledger of the brainstorm \`${job.slug}\`. ${purpose} You are mechanical: run exactly the steps below and report each one; judge nothing and edit no file by hand.`,
     spec.precondition
