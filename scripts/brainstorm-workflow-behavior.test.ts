@@ -475,6 +475,7 @@ describe('rounds across runs', () => {
     expect(leadPrompt).toContain('"id": "R1-1"');
     // The settled question lives in the DRAFT the lead reads; only the still-open one rides the state.
     expect(leadPrompt).not.toContain(question(1).question);
+    expect(leadPrompt).toContain('read what the owner said there, never from the state');
     expect(leadPrompt).toContain(question(2).question);
     expect(readFileSync(env.draft, 'utf8')).toContain('- **R1-1** (round 2, decision)');
   });

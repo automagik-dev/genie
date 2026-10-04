@@ -888,7 +888,7 @@ function planPrompt(settle) {
   const capacity = capacityNow()
   return join([
     `You are the lead of one brainstorm round: round ${round} of \`${job.slug}\`, in the repository at ${job.repo}. A workflow cannot wait for a person, so each run is one round. You decide what this round needs; the script runs your plan inside a fixed spine (the round ledger, the owner's questions, the design-review stamp), and the owner answers between runs.`,
-    `The DRAFT at ${job.draft} carries everything earlier rounds settled and learned: read it in full before you plan. The ledger state below is the data the ledger rendered there.`,
+    `The DRAFT at ${job.draft} carries everything earlier rounds settled and learned: read it in full before you plan. Each settled question and the owner's answer to it are in its ## Settled section and its ledger block; the ledger state below is only the compact view of it (ids, kinds, values and rounds of what is settled, the open questions, size, scope, councils, reviews), so read what the owner said there, never from the state.`,
     round === 1 || job.request
       ? `The request of the owner${round === 1 ? '' : ' this run'}, in their words:\n${job.request || '(none given: work from the slug and ask the owner what the idea is)'}`
       : '',

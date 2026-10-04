@@ -469,16 +469,30 @@ function answerRefusal(ledger, answer, round, result, seen) {
 // The read model apply returns: `state`, a `packed:`-prefixed percent-encoded JSON payload, so the
 // transport identifies itself and a state a model decoded and re-formatted is refused. A Settled entry
 // keeps its id, kind, value, round and reopen links: the owner's words (answer, provenance) and the
-// question text stay in the DRAFT and its rendered `## Settled` section, so the state grows with the number
-// of entries and never with what anyone wrote. The one exception is the question of a review-findings
-// choice, which the workflow lists back to the lead and the repairer: the workflow builds it from the
-// reviewer's finding ids, one per repair, and it quotes no owner answer. A reopen question quotes the old
-// answer verbatim, so a reopen entry never carries its question here. A question still OPEN rides `asked`
-// (one batch at most) because the workflow relays it to the owner.
+// question text stay in the DRAFT's ledger block and its rendered `## Settled` section, so the state grows
+// with the number of entries and never with what anyone wrote. The one exception is the question of the
+// review-findings choice still waiting to be acted on, which the workflow lists back to the lead and the
+// repairer. That is the latest review-findings entry that no reopen replaced and that was settled after the
+// last recorded review (the workflow's `pendingReviewChoice`, minus its settle-choice refinement): a choice
+// a later review has spent is history. The workflow builds that question from the reviewer's finding ids and
+// it quotes no owner answer; a reopen question quotes one verbatim, so a reopen entry never carries its
+// question. A question still OPEN rides `asked` (one batch at most) because the workflow relays it.
 const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
 
-function settledView(entry) {
-  const keepsQuestion = entry.kind === 'review-findings' && entry.reopens === undefined;
+function pendingFindingsChoice(ledger) {
+  const lastReview = Math.max(0, ...ledger.reviews.map((entry) => Number(entry.round) || 0));
+  const waiting = ledger.settled.filter(
+    (entry) =>
+      entry.kind === 'review-findings' &&
+      !entry.reopens &&
+      !entry.reopenedBy &&
+      (Number(entry.round) || 0) > lastReview,
+  );
+  return waiting.length > 0 ? waiting[waiting.length - 1] : null;
+}
+
+function settledView(entry, pending) {
+  const keepsQuestion = entry === pending;
   return Object.fromEntries(
     STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined && (key !== 'question' || keepsQuestion)).map((key) => [
       key,
@@ -488,8 +502,9 @@ function settledView(entry) {
 }
 
 function stateOf(ledger) {
+  const pending = pendingFindingsChoice(ledger);
   return {
-    settled: ledger.settled.map(settledView),
+    settled: ledger.settled.map((entry) => settledView(entry, pending)),
     asked: ledger.asked,
     size: ledger.size,
     scopeIn: ledger.scopeIn,

@@ -93,6 +93,8 @@ const apply = (draft: string, answers?: Out[]) =>
     : ledger('apply', '--draft', draft, '--answers', pack(answers));
 const ask = (draft: string, round: number, questions: Out[]) =>
   ledger('ask', '--draft', draft, '--round', String(round), '--questions', pack(questions));
+const review = (draft: string, round: number, verdict: string, ...flags: string[]) =>
+  ledger('review', '--draft', draft, '--round', String(round), '--verdict', verdict, '--digest', DIGEST, ...flags);
 const answer = (id: string, text: string | string[], asked = 'Which size fits this idea?') => ({
   id,
   question: asked,
@@ -372,6 +374,53 @@ describe('the packed transport: payload bytes never meet a model that re-seriali
     expect(unpack(again.out.state).settled).toEqual([
       { id: 'R1-1', kind: 'review-findings', question: findings, value: 'repair', round: 2 },
     ]);
+  });
+
+  // The workflow lists the findings back from the one choice still waiting to be acted on
+  // (pendingReviewChoice: unreopened, settled after the last recorded review, the latest of those). A choice
+  // a recorded review has spent is history, and history lives in the DRAFT: three repairs of 2000-character
+  // claims once put 62 KB of it back into every apply.
+  test('apply state keeps the question of the one unspent review-findings choice, however many repairs are spent', () => {
+    const options = [
+      { label: 'Repair again (Recommended)', description: 'repair', value: 'repair' },
+      { label: 'Stop', description: 'stop', value: 'stop' },
+    ];
+    const findings = (tag: string, pad: number) =>
+      `The design review returned FIX-FIRST. Open findings: ${tag} (HIGH) ${'c'.repeat(pad)}. How should it go on?`;
+    const afterRepairs = (spent: number, pad: number) => {
+      const draft = newDraft();
+      expect(apply(draft).code).toBe(0);
+      let round = 1;
+      for (let index = 1; index <= spent; index += 1) {
+        const text = findings(`HIGH-${index}`, pad);
+        expect(
+          ask(draft, round, [question({ kind: 'review-findings', question: text, header: 'Review', options })]).code,
+        ).toBe(0);
+        const settled = apply(draft, [answer(`R${round}-1`, 'Repair again (Recommended)', text)]);
+        expect(settled.out.refused).toEqual([]);
+        round = settled.out.round;
+        expect(review(draft, round, 'FIX-FIRST', '--repaired', '--findings', pack([`HIGH-${index}`])).code).toBe(0);
+      }
+      const text = findings('HIGH-last', 20);
+      expect(
+        ask(draft, round, [question({ kind: 'review-findings', question: text, header: 'Review', options })]).code,
+      ).toBe(0);
+      const run = apply(draft, [answer(`R${round}-1`, 'Repair again (Recommended)', text)]);
+      return { run, text, draft };
+    };
+    const short = afterRepairs(3, 10);
+    const long = afterRepairs(3, 2000);
+    const state = unpack(long.run.out.state);
+    expect(state.settled).toHaveLength(4);
+    // Only the latest choice, which no recorded review has spent, carries its question.
+    expect(state.settled.filter((entry: Out) => entry.question !== undefined).map((entry: Out) => entry.id)).toEqual([
+      state.settled[3].id,
+    ]);
+    expect(state.settled[3].question).toBe(long.text);
+    // So the state is the same size whatever the spent findings said.
+    expect(long.run.out.state.length).toBe(short.run.out.state.length);
+    // The spent questions are still in the DRAFT.
+    expect(blockOf(long.draft).settled[0].question.length).toBeGreaterThan(2000);
   });
 });
 
@@ -862,9 +911,6 @@ describe('council: the ceiling, the owner approval and the cap of 3', () => {
 });
 
 describe('review', () => {
-  const review = (draft: string, round: number, verdict: string, ...flags: string[]) =>
-    ledger('review', '--draft', draft, '--round', String(round), '--verdict', verdict, '--digest', DIGEST, ...flags);
-
   test('appends each verdict with its findings; nothing is recorded after a SHIP', () => {
     const draft = newDraft();
     apply(draft);
