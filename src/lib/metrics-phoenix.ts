@@ -111,6 +111,7 @@ export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
     'genie.to_event': interval.toEvent,
     'genie.duration_ms': interval.durationMs,
     'genie.shared_session': interval.sharedSession,
+    'genie.session_match': interval.sessionMatch ?? 'none',
     'genie.usage_known': usage !== null,
   };
   if (interval.session.id) attributes['session.id'] = interval.session.id;

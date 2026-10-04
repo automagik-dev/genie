@@ -12,3 +12,20 @@ Reflect.deleteProperty(process.env, 'FORCE_COLOR');
 // enabled capture the suite would append rows for throwaway tmpdir databases to the operator's
 // real ledger. Off for the whole run; the metrics tests set their own GENIE_HOME and override it.
 process.env.GENIE_METRICS = 'off';
+
+// Runtime markers decide which runtime a card event is attributed to (src/lib/v5/identity.ts). A
+// suite run from inside OMP inherits OMPCODE=1, from Codex CODEX_THREAD_ID, from Claude Code
+// CLAUDECODE — and a test that sets only CLAUDECODE=1 would then resolve to whichever runtime ran
+// the gate. Removed for the whole run; a test that needs one sets it on the child it spawns.
+for (const marker of [
+  'OMPCODE',
+  'CODEX_THREAD_ID',
+  'PI_SESSION_ID',
+  'PI_SESSION_FILE',
+  'CLAUDECODE',
+  'CLAUDE_CODE',
+  'CLAUDE_CODE_SESSION_ID',
+  'GENIE_AGENT_KIND',
+]) {
+  Reflect.deleteProperty(process.env, marker);
+}
