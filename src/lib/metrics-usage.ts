@@ -40,6 +40,8 @@ export interface UsageSample {
    * the log names none. Claude Code's `<synthetic>` placeholder is no model and reads as null.
    */
   model: string | null;
+  /** The part of `cacheWrite` Claude Code logged as 1-hour cache writes; absent when no TTL split was logged. */
+  cacheWrite1h?: number;
 }
 
 type Rec = Record<string, unknown>;
@@ -162,7 +164,9 @@ function claudeSamples(records: Rec[]): UsageSample[] {
     const message = obj(record.message);
     const usage = obj(message?.usage);
     if (record.type !== 'assistant' || !usage || typeof message?.id !== 'string') continue;
+    const ttl = obj(usage.cache_creation);
     byMessage.set(message.id, {
+      ...(ttl ? { cacheWrite1h: num(ttl.ephemeral_1h_input_tokens) } : {}),
       at: Date.parse(String(record.timestamp)),
       input: num(usage.input_tokens),
       cacheRead: num(usage.cache_read_input_tokens),

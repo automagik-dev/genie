@@ -125,6 +125,8 @@ export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
     attributes['genie.model_calls'] = usage.calls;
     if (usage.costUsd !== null) attributes['llm.cost.total'] = usage.costUsd;
     if (usage.costSource) attributes['genie.cost_source'] = usage.costSource;
+    // Coverage of a partial sum, beside `genie.model_calls`; only while a price table is loaded.
+    if (usage.pricedCalls !== undefined) attributes['genie.cost.priced_calls'] = usage.pricedCalls;
   }
   if (interval.offload) {
     attributes['genie.offload.attempts'] = interval.offload.attempts;

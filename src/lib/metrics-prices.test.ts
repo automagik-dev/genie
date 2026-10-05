@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type PriceTable,
+  entryFor,
   loadPriceTable,
   pricesPath,
-  ratesFor,
   tableCost,
   updatePriceTable,
 } from './metrics-prices.js';
@@ -49,13 +49,13 @@ const tokens = (input: number, output: number, cacheRead = 0, cacheWrite = 0) =>
 
 describe('lookup and cost', () => {
   test('exact id first, then the part after the last slash; nothing fuzzier', () => {
-    expect(ratesFor(table, 'openai/gpt-6.1-sol')?.input).toBe(0.000003);
-    expect(ratesFor(table, 'openai-codex/gpt-6.1-sol')?.input).toBe(0.000002);
-    expect(ratesFor(table, 'gpt-6.1')).toBeNull();
-    expect(ratesFor(table, 'claude-opus-5-5-20261001')).toBeNull();
-    expect(ratesFor(table, null)).toBeNull();
+    expect(entryFor(table, 'openai/gpt-6.1-sol')?.input_cost_per_token).toBe(0.000003);
+    expect(entryFor(table, 'openai-codex/gpt-6.1-sol')?.input_cost_per_token).toBe(0.000002);
+    expect(entryFor(table, 'gpt-6.1')).toBeNull();
+    expect(entryFor(table, 'claude-opus-5-5-20261001')).toBeNull();
+    expect(entryFor(table, null)).toBeNull();
     // Inherited object keys are not models.
-    expect(ratesFor(table, 'constructor')).toBeNull();
+    expect(entryFor(table, 'constructor')).toBeNull();
   });
 
   test('cost sums every kind; a kind used without a rate is unknown, never 0', () => {
@@ -67,6 +67,57 @@ describe('lookup and cost', () => {
     expect(tableCost(table, 'unknown-model', tokens(1, 1))).toBeNull();
     // A call that used no tokens costs 0 whatever its model.
     expect(tableCost(table, null, tokens(0, 0))).toBe(0);
+  });
+});
+
+describe('cache TTL and long-context tiers', () => {
+  const tiered: PriceTable = {
+    meta: { source: 't', fetchedAt: 't', sha256: 't', models: 3 },
+    models: {
+      'claude-ttl': {
+        input_cost_per_token: 0.00001,
+        output_cost_per_token: 0.0001,
+        cache_read_input_token_cost: 0.000001,
+        cache_creation_input_token_cost: 0.00002,
+        cache_creation_input_token_cost_above_1hr: 0.00004,
+      },
+      'claude-no-1h': {
+        input_cost_per_token: 0.00001,
+        output_cost_per_token: 0.0001,
+        cache_creation_input_token_cost: 0.00002,
+      },
+      'long-ctx': {
+        input_cost_per_token: 0.000001,
+        output_cost_per_token: 0.00001,
+        cache_read_input_token_cost: 0.0000001,
+        input_cost_per_token_above_200k_tokens: 0.000002,
+        output_cost_per_token_above_200k_tokens: 0.00002,
+        input_cost_per_token_above_1000k_tokens: 0.000004,
+        output_cost_per_token_above_1000k_tokens: 0.00004,
+      },
+    },
+  };
+
+  test('1-hour cache writes are priced at the _above_1hr rate; the rest at the 5-minute rate', () => {
+    const cost = tableCost(tiered, 'claude-ttl', { ...tokens(0, 0, 0, 100), cacheWrite1h: 60 });
+    expect(cost).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+    // No TTL split logged: every write at the flat rate, as before.
+    expect(tableCost(tiered, 'claude-ttl', tokens(0, 0, 0, 100))).toBeCloseTo(100 * 0.00002, 12);
+    // 1h tokens but no 1h rate: unknown, never the 5-minute price.
+    expect(tableCost(tiered, 'claude-no-1h', { ...tokens(0, 0, 0, 100), cacheWrite1h: 1 })).toBeNull();
+    expect(tableCost(tiered, 'claude-no-1h', { ...tokens(0, 0, 0, 100), cacheWrite1h: 0 })).toBeCloseTo(0.002, 12);
+  });
+
+  test('a prompt above an _above_<N>k_tokens threshold is priced at the highest tier it crosses', () => {
+    // 150k prompt: base rates.
+    expect(tableCost(tiered, 'long-ctx', tokens(150_000, 10))).toBeCloseTo(150_000 * 0.000001 + 10 * 0.00001, 12);
+    // Exactly 200k is not above it.
+    expect(tableCost(tiered, 'long-ctx', tokens(200_000, 10))).toBeCloseTo(200_000 * 0.000001 + 10 * 0.00001, 12);
+    // 250k prompt (input + cacheRead + cacheWrite): every kind at its 200k tier.
+    expect(tableCost(tiered, 'long-ctx', tokens(250_000, 10))).toBeCloseTo(250_000 * 0.000002 + 10 * 0.00002, 12);
+    expect(tableCost(tiered, 'long-ctx', tokens(1_200_000, 10))).toBeCloseTo(1_200_000 * 0.000004 + 10 * 0.00004, 12);
+    // The tier lacks a cache-read rate although the base has one: unknown, never the base price.
+    expect(tableCost(tiered, 'long-ctx', tokens(100_000, 10, 150_000))).toBeNull();
   });
 });
 
@@ -118,6 +169,26 @@ describe('prices update', () => {
     expect(await updatePriceTable('ftp://example.invalid/p.json')).toMatchObject({ ok: false, code: 2 });
     expect(readFileSync(pricesPath()).equals(before)).toBe(true);
     expect(readdirSync(join(root, 'genie', 'metrics'))).toEqual(['prices.json']);
+  });
+
+  test('a URL is stored, shown and reported without its userinfo, query or fragment', async () => {
+    // A loopback server: no real network is touched.
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => Response.json(litellm) });
+    try {
+      const base = `http://127.0.0.1:${server.port}/p.json`;
+      const secret = `http://user:hunter2@127.0.0.1:${server.port}/p.json?sig=abc123#frag`;
+      const result = await updatePriceTable(secret);
+      expect(result).toMatchObject({ ok: true, meta: { source: base } });
+      expect(readFileSync(pricesPath(), 'utf8')).not.toMatch(/hunter2|abc123|frag/);
+    } finally {
+      server.stop(true);
+    }
+    const failed = await updatePriceTable('http://user:hunter2@127.0.0.1:9/p.json?sig=abc123#frag', {
+      timeoutMs: 5000,
+    });
+    expect(failed.ok).toBe(false);
+    expect(failed.ok ? '' : failed.message).not.toMatch(/hunter2|abc123|frag/);
+    expect(failed.ok ? '' : failed.message).toContain('http://127.0.0.1:9/p.json');
   });
 
   test('an unreachable URL is a network failure: exit 1, nothing written', async () => {

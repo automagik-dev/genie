@@ -19,6 +19,14 @@
  * tokens of a kind whose rate is absent is unpriced (null). That includes the
  * cache kinds — some providers bill cached tokens as plain input and LiteLLM
  * then omits the cache field, but genie does not guess which; null on doubt.
+ *
+ * Two LiteLLM refinements are honoured, both generically:
+ *   - 1-hour cache writes (Claude Code logs `cache_creation.ephemeral_1h_input_tokens`)
+ *     take `cache_creation_input_token_cost_above_1hr`; the rest of the writes the
+ *     5-minute `cache_creation_input_token_cost`. No split logged → the flat rate.
+ *   - Long-context tiers: when an entry carries any `<rate>_above_<N>k_tokens` and the
+ *     call's prompt (input + cacheRead + cacheWrite) exceeds N·1000, every kind the
+ *     call used is priced at the highest crossed tier's rate — absent there → null.
  */
 
 import { createHash } from 'node:crypto';
@@ -41,19 +49,15 @@ export interface PriceTable {
   models: Record<string, unknown>;
 }
 
-export interface ModelRates {
-  input: number | null;
-  output: number | null;
-  cacheRead: number | null;
-  cacheWrite: number | null;
-}
-
 /** The token counts a price applies to — a `UsageSample` satisfies it. */
 export interface PricedTokens {
   input: number;
   cacheRead: number;
+  /** Every cache write, whatever its TTL. */
   cacheWrite: number;
   output: number;
+  /** The part of `cacheWrite` logged as 1-hour writes; absent when the runtime logs no TTL split. */
+  cacheWrite1h?: number;
 }
 
 type Rec = Record<string, unknown>;
@@ -100,38 +104,45 @@ export function loadPriceTable(path = pricesPath()): PriceTable | null {
 }
 
 /** Exact id first, then the part after the last `/` (`openai-codex/gpt-6.1-sol` → `gpt-6.1-sol`); null otherwise. */
-export function ratesFor(table: PriceTable, model: string | null): ModelRates | null {
+export function entryFor(table: PriceTable, model: string | null): Rec | null {
   if (!model) return null;
-  const slash = model.lastIndexOf('/');
-  const entry =
-    obj(Object.hasOwn(table.models, model) ? table.models[model] : null) ??
-    (slash >= 0 && Object.hasOwn(table.models, model.slice(slash + 1))
-      ? obj(table.models[model.slice(slash + 1)])
-      : null);
-  if (!entry) return null;
-  return {
-    input: rate(entry.input_cost_per_token),
-    output: rate(entry.output_cost_per_token),
-    cacheRead: rate(entry.cache_read_input_token_cost),
-    cacheWrite: rate(entry.cache_creation_input_token_cost),
-  };
+  if (Object.hasOwn(table.models, model)) return obj(table.models[model]);
+  const suffix = model.slice(model.lastIndexOf('/') + 1);
+  return suffix !== model && Object.hasOwn(table.models, suffix) ? obj(table.models[suffix]) : null;
 }
+
+const TIER = /_above_(\d+)k_tokens$/;
+
+/** `_above_<N>k_tokens` for the highest N the prompt exceeds among the entry's priced tiers; '' for the base rates. */
+function tierSuffix(entry: Rec, prompt: number): string {
+  let best = -1;
+  for (const key of Object.keys(entry)) {
+    const n = Number(TIER.exec(key)?.[1] ?? -1);
+    if (n > best && prompt > n * 1000 && rate(entry[key]) !== null) best = n;
+  }
+  return best < 0 ? '' : `_above_${best}k_tokens`;
+}
+
+export const hasTokens = (t: PricedTokens): boolean => t.input + t.cacheRead + t.cacheWrite + t.output > 0;
 
 /** USD for one call, or null when any kind it used has no rate. A call with no tokens at all costs 0. */
 export function tableCost(table: PriceTable, model: string | null, tokens: PricedTokens): number | null {
-  const kinds: Array<[number, keyof ModelRates]> = [
-    [tokens.input, 'input'],
-    [tokens.cacheRead, 'cacheRead'],
-    [tokens.cacheWrite, 'cacheWrite'],
-    [tokens.output, 'output'],
+  if (!hasTokens(tokens)) return 0;
+  const entry = entryFor(table, model);
+  if (!entry) return null;
+  const tier = tierSuffix(entry, tokens.input + tokens.cacheRead + tokens.cacheWrite);
+  const write1h = Math.min(tokens.cacheWrite, tokens.cacheWrite1h ?? 0);
+  const parts: Array<[number, string]> = [
+    [tokens.input, 'input_cost_per_token'],
+    [tokens.cacheRead, 'cache_read_input_token_cost'],
+    [tokens.cacheWrite - write1h, 'cache_creation_input_token_cost'],
+    [write1h, 'cache_creation_input_token_cost_above_1hr'],
+    [tokens.output, 'output_cost_per_token'],
   ];
-  if (kinds.every(([count]) => count === 0)) return 0;
-  const rates = ratesFor(table, model);
-  if (!rates) return null;
   let cost = 0;
-  for (const [count, kind] of kinds) {
+  for (const [count, field] of parts) {
     if (count === 0) continue;
-    const perToken = rates[kind];
+    const perToken = rate(entry[`${field}${tier}`]);
     if (perToken === null) return null;
     cost += count * perToken;
   }
@@ -144,18 +155,39 @@ export type PriceUpdateResult =
 
 const refuse = (code: 1 | 2, message: string): PriceUpdateResult => ({ ok: false, code, message });
 
-async function fetchSource(from: string, timeoutMs: number): Promise<{ bytes: Buffer } | PriceUpdateResult> {
+/** What genie stores, prints and reports for a source: a URL without userinfo, query or fragment. */
+export function displaySource(from: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(from)) return from;
+  try {
+    const url = new URL(from);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return from.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1').replace(/[?#].*$/, '');
+  }
+}
+
+async function fetchSource(
+  from: string,
+  shown: string,
+  timeoutMs: number,
+): Promise<{ bytes: Buffer } | PriceUpdateResult> {
   if (/^https?:\/\//i.test(from)) {
     try {
       const res = await fetch(from, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!res.ok) return refuse(1, `GET ${from} answered ${res.status}`);
+      if (!res.ok) return refuse(1, `GET ${shown} answered ${res.status}`);
       return { bytes: Buffer.from(await res.arrayBuffer()) };
     } catch (error) {
-      return refuse(1, `GET ${from}: ${error instanceof Error ? error.message : String(error)}`);
+      // The runtime's message may quote the URL it was handed: never echo the raw one.
+      const reason = (error instanceof Error ? error.message : String(error)).split(from).join(shown);
+      return refuse(1, `GET ${shown}: ${reason}`);
     }
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(from))
-    return refuse(2, `--from takes an http(s) URL or a local file, not ${from}`);
+    return refuse(2, `--from takes an http(s) URL or a local file, not ${shown}`);
   try {
     return { bytes: readFileSync(from) };
   } catch (error) {
@@ -171,19 +203,20 @@ export async function updatePriceTable(
   from: string = DEFAULT_PRICE_SOURCE,
   options: { timeoutMs?: number; now?: Date } = {},
 ): Promise<PriceUpdateResult> {
-  const fetched = await fetchSource(from, options.timeoutMs ?? 60_000);
+  const shown = displaySource(from);
+  const fetched = await fetchSource(from, shown, options.timeoutMs ?? 60_000);
   if ('ok' in fetched) return fetched;
   let models: Rec | null;
   try {
     models = obj(JSON.parse(fetched.bytes.toString('utf8')));
   } catch {
-    return refuse(2, `${from} is not JSON; the stored table is unchanged`);
+    return refuse(2, `${shown} is not JSON; the stored table is unchanged`);
   }
-  if (!models) return refuse(2, `${from} is not a JSON object of model prices; the stored table is unchanged`);
+  if (!models) return refuse(2, `${shown} is not a JSON object of model prices; the stored table is unchanged`);
   const count = countPricedModels(models);
-  if (count === 0) return refuse(2, `${from} names no model with a per-token rate; the stored table is unchanged`);
+  if (count === 0) return refuse(2, `${shown} names no model with a per-token rate; the stored table is unchanged`);
   const meta: PriceTableMeta = {
-    source: from,
+    source: shown,
     fetchedAt: (options.now ?? new Date()).toISOString(),
     sha256: createHash('sha256').update(fetched.bytes).digest('hex'),
     models: count,

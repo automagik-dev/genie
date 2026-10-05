@@ -182,7 +182,10 @@ describe('genie metrics', () => {
     };
     const bare = exportUsage();
     expect(bare.usage).toEqual({ calls: 1, input: 1000, cacheRead: 0, cacheWrite: 0, output: 100, costUsd: null });
-    expect(bare.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t-\t/m);
+    expect(bare.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t-\t-$/m);
+    expect(bare.stdout).not.toContain('priced');
+    const bareJson = JSON.parse(run(['metrics', 'export', '--json'], env).stdout);
+    expect(Object.keys(bareJson.summary[0])).not.toContain('pricedCalls');
 
     const table = join(root, 'litellm.json');
     writeFileSync(
@@ -197,7 +200,10 @@ describe('genie metrics', () => {
     const priced = exportUsage();
     expect(priced.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
     expect(priced.usage.costUsd).toBeCloseTo(0.02, 12);
-    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t/m);
+    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t-\t1\/1$/m);
+    expect(priced.stdout).toContain('\toffloadUsd\tpriced');
+    const pricedJson = JSON.parse(run(['metrics', 'export', '--json'], env).stdout);
+    expect(pricedJson.summary[0]).toMatchObject({ calls: 1, pricedCalls: 1 });
 
     writeFileSync(table, 'not json');
     const refused = run(['metrics', 'prices', 'update', '--from', table]);

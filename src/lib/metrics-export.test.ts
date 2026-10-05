@@ -7,6 +7,7 @@ import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import {
   type Interval,
   buildIntervals,
+  formatSummary,
   readCaptureLedger,
   summarize,
   verifyAgainstTaskEvents,
@@ -647,6 +648,66 @@ describe('ledger → verified intervals', () => {
       const [runtimeOnly] = buildIntervals(matched, env, prices);
       expect(runtimeOnly?.usage).toMatchObject({ costUsd: 0.5, costSource: 'runtime', pricedCalls: 1 });
     });
+
+    test('a zero-token call is never evidence of a price: alone it leaves the interval unknown', () => {
+      const zero = {
+        type: 'assistant',
+        timestamp: '2026-10-04T10:04:00Z',
+        message: { id: 'z', model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0 } },
+      };
+      const [onlyZero] = claudeIntervals([zero], prices);
+      expect(onlyZero?.usage).toMatchObject({ calls: 1, costUsd: null, costSource: null, pricedCalls: 0 });
+      const [withReal] = claudeIntervals([zero, claudeCall('m1', 'claude-opus-5-5')], prices);
+      expect(withReal?.usage).toMatchObject({ calls: 2, costSource: 'table', pricedCalls: 1 });
+    });
+
+    test('Claude 1-hour cache writes ride the sample and are priced at the 1h rate', () => {
+      const ttl: PriceTable = {
+        ...prices,
+        models: {
+          'claude-opus-5-5': {
+            input_cost_per_token: 0.00001,
+            output_cost_per_token: 0.0001,
+            cache_creation_input_token_cost: 0.00002,
+            cache_creation_input_token_cost_above_1hr: 0.00004,
+          },
+        },
+      };
+      const call = {
+        type: 'assistant',
+        timestamp: '2026-10-04T10:05:00Z',
+        message: {
+          id: 'h',
+          model: 'claude-opus-5-5',
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 100,
+            cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 60 },
+          },
+        },
+      };
+      const [interval] = claudeIntervals([call], ttl);
+      // The token total is unchanged; only the price splits by TTL.
+      expect(interval?.usage).toMatchObject({ cacheWrite: 100, costSource: 'table' });
+      expect(interval?.usage?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+    });
+
+    test('summary coverage: with a table each row carries calls and pricedCalls, and the text grows a column', () => {
+      const intervals = claudeIntervals(
+        [claudeCall('m1', 'claude-opus-5-5'), claudeCall('m2', 'claude-unreleased-9', '2026-10-04T10:06:00Z')],
+        prices,
+      );
+      const [row] = summarize(intervals, true);
+      expect(row).toMatchObject({ calls: 2, pricedCalls: 1 });
+      const text = formatSummary(summarize(intervals, true), { lines: 2, unmatched: 0, corrupt: 0 });
+      expect(text).toContain('\tpriced\n');
+      expect(text).toMatch(/claim→report\t1\t.*\t1\/2\n/);
+
+      const bare = summarize(claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null));
+      expect(Object.keys(bare[0] ?? {})).not.toContain('pricedCalls');
+      expect(formatSummary(bare, { lines: 2, unmatched: 0, corrupt: 0 })).not.toContain('priced');
+    });
   });
 });
 
@@ -700,7 +761,14 @@ describe('Phoenix projection', () => {
       { ...interval, usage: { ...interval.usage, costUsd: 0.01, costSource: 'table' as const, pricedCalls: 1 } },
       'salt',
     );
-    expect(tabled.attributes).toMatchObject({ 'llm.cost.total': 0.01, 'genie.cost_source': 'table' });
+    expect(tabled.attributes).toMatchObject({
+      'llm.cost.total': 0.01,
+      'genie.cost_source': 'table',
+      'genie.cost.priced_calls': 1,
+      'genie.model_calls': 1,
+    });
+    // Without a table the span carries no coverage attribute at all.
+    expect(a.attributes['genie.cost.priced_calls']).toBeUndefined();
     expect(a.attributes).toMatchObject({
       'genie.offload.attempts': 2,
       'genie.offload.failed': 1,

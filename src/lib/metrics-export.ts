@@ -21,7 +21,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
-import { type PriceTable, tableCost } from './metrics-prices.js';
+import { type PriceTable, hasTokens, tableCost } from './metrics-prices.js';
 import { type UsageSample, matchOmpSessionByCwd, readUsageSamples } from './metrics-usage.js';
 
 export interface UsageTotals {
@@ -129,11 +129,12 @@ function storedEventKeys(path: string, group: CaptureLine[]): Set<string> {
 
 function sumUsage(samples: UsageSample[], startAt: number, endAt: number, prices: PriceTable | null): UsageTotals {
   const inside = samples.filter((sample) => sample.at >= startAt && sample.at < endAt);
-  // The runtime's own price always wins; the table only fills calls the runtime left unpriced.
+  // The runtime's own price always wins; the table only fills calls the runtime left unpriced. A call
+  // that used no tokens costs nothing either way, so it is never evidence that the interval was priced.
   const runtime = inside.filter((s) => s.costUsd !== null).map((s) => s.costUsd as number);
   const table = prices
     ? inside
-        .filter((s) => s.costUsd === null)
+        .filter((s) => s.costUsd === null && hasTokens(s))
         .map((s) => tableCost(prices, s.model, s))
         .filter((c): c is number => c !== null)
     : [];
@@ -277,6 +278,10 @@ export interface TransitionSummary {
   costUsd: number | null;
   /** mikro offload cost summed over the transition's intervals; null when any interval's offload is unknown (a partial sum is not a total). */
   offloadUsd: number | null;
+  /** Present only while a price table is loaded: model calls inside intervals with known usage. */
+  calls?: number;
+  /** Present only while a price table is loaded: how many of `calls` `costUsd` covers (a partial sum shows here). */
+  pricedCalls?: number;
 }
 
 const quantile = (sorted: number[], q: number) =>
@@ -285,7 +290,8 @@ const allOrNull = (values: Array<number | null>): number | null =>
   values.length > 0 && !values.includes(null) ? (values as number[]).reduce((sum, v) => sum + v, 0) : null;
 const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
-export function summarize(intervals: Interval[]): TransitionSummary[] {
+/** `coverage` (set while a price table is loaded) adds `calls`/`pricedCalls`; without it every row keeps its shape. */
+export function summarize(intervals: Interval[], coverage = false): TransitionSummary[] {
   const groups = new Map<string, Interval[]>();
   for (const interval of intervals)
     groups.set(interval.transition, [...(groups.get(interval.transition) ?? []), interval]);
@@ -304,6 +310,12 @@ export function summarize(intervals: Interval[]): TransitionSummary[] {
         costUsd: priced.length > 0 ? priced.reduce((s, c) => s + c, 0) : null,
         // A partial sum is not a total: one interval whose offload bill is unknown makes the transition's unknown.
         offloadUsd: allOrNull(group.map((i) => i.offload?.costUsd ?? null)),
+        ...(coverage
+          ? {
+              calls: known.reduce((sum, u) => sum + u.calls, 0),
+              pricedCalls: known.reduce((sum, u) => sum + (u.pricedCalls ?? 0), 0),
+            }
+          : {}),
       };
     })
     .sort((a, b) => b.n - a.n || a.transition.localeCompare(b.transition));
@@ -315,10 +327,14 @@ export function formatSummary(
 ): string {
   const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}`;
   if (rows.length === 0) return `${head}\nno intervals yet: a card needs two captured events\n`;
-  const out = [head, 'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd'];
+  const coverage = rows.some((r) => r.pricedCalls !== undefined);
+  const out = [
+    head,
+    `transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd${coverage ? '\tpriced' : ''}`,
+  ];
   for (const r of rows) {
     out.push(
-      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}`,
+      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}${coverage ? `\t${r.pricedCalls ?? 0}/${r.calls ?? 0}` : ''}`,
     );
   }
   return `${out.join('\n')}\n`;

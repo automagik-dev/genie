@@ -94,8 +94,9 @@ async function runExport(options: ExportOptions): Promise<number> {
 
   const ledger = readCaptureLedger(captureLedgerPath(), since);
   const { matched, unmatched } = verifyAgainstTaskEvents(ledger.lines);
-  const intervals = buildIntervals(matched, process.env, loadPriceTable());
-  const summary = summarize(intervals);
+  const prices = loadPriceTable();
+  const intervals = buildIntervals(matched, process.env, prices);
+  const summary = summarize(intervals, prices !== null);
   const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt };
   if (options.out) {
     writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
