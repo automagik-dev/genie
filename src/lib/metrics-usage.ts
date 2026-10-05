@@ -35,10 +35,18 @@ export interface UsageSample {
   output: number;
   /** Only when the runtime itself priced the call (pi/OMP); null otherwise — never a guess. */
   costUsd: number | null;
+  /**
+   * The model id the runtime logged for the call, as written (pi/OMP may provider-prefix it); null when
+   * the log names none. Claude Code's `<synthetic>` placeholder is no model and reads as null.
+   */
+  model: string | null;
+  /** The part of `cacheWrite` Claude Code logged as 1-hour cache writes; absent when no TTL split was logged. */
+  cacheWrite1h?: number;
 }
 
 type Rec = Record<string, unknown>;
 
+const str = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 const obj = (value: unknown): Rec | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
@@ -156,13 +164,16 @@ function claudeSamples(records: Rec[]): UsageSample[] {
     const message = obj(record.message);
     const usage = obj(message?.usage);
     if (record.type !== 'assistant' || !usage || typeof message?.id !== 'string') continue;
+    const ttl = obj(usage.cache_creation);
     byMessage.set(message.id, {
+      ...(ttl ? { cacheWrite1h: num(ttl.ephemeral_1h_input_tokens) } : {}),
       at: Date.parse(String(record.timestamp)),
       input: num(usage.input_tokens),
       cacheRead: num(usage.cache_read_input_tokens),
       cacheWrite: num(usage.cache_creation_input_tokens),
       output: num(usage.output_tokens),
       costUsd: null,
+      model: message.model === '<synthetic>' ? null : str(message.model),
     });
   }
   return [...byMessage.values()];
@@ -173,8 +184,11 @@ function codexSamples(records: Rec[]): UsageSample[] {
   // Codex re-emits the same token_count (identical cumulative total) more than once per turn; only a
   // total that moved is a new model call. Summing every event overcounted 4–16% on real rollouts.
   let previousTotal: string | null = null;
+  // The model rides each turn's `turn_context`; a token_count belongs to the latest one before it.
+  let model: string | null = null;
   for (const record of records) {
     const payload = obj(record.payload);
+    if (record.type === 'turn_context') model = str(payload?.model);
     const info = obj(payload?.info);
     const last = obj(info?.last_token_usage);
     if (record.type !== 'event_msg' || payload?.type !== 'token_count' || !last) continue;
@@ -189,6 +203,7 @@ function codexSamples(records: Rec[]): UsageSample[] {
       cacheWrite: num(last.cache_write_input_tokens),
       output: num(last.output_tokens),
       costUsd: null,
+      model,
     });
   }
   return out;
@@ -207,7 +222,10 @@ function piSamples(records: Rec[]): UsageSample[] {
       cacheRead: num(usage.cacheRead),
       cacheWrite: num(usage.cacheWrite),
       output: num(usage.output),
-      costUsd: cost && typeof cost.total === 'number' ? cost.total : null,
+      // A negative or non-finite price is no price.
+      costUsd:
+        cost && typeof cost.total === 'number' && Number.isFinite(cost.total) && cost.total >= 0 ? cost.total : null,
+      model: str(message.model),
     });
   }
   return out;

@@ -1,17 +1,19 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import {
   type Interval,
   buildIntervals,
+  formatSummary,
   readCaptureLedger,
   summarize,
   verifyAgainstTaskEvents,
 } from './metrics-export.js';
 import { installSalt, intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
+import type { PriceTable } from './metrics-prices.js';
 import { readUsageSamples } from './metrics-usage.js';
 
 let root: string;
@@ -67,7 +69,7 @@ describe('runtime session logs → usage samples', () => {
     );
     const samples = readUsageSamples({ id: 'sess-c', source: 'claude-code', file: null }, env);
     expect(samples.map((s) => s.input)).toEqual([3, 7]);
-    expect(samples[0]).toMatchObject({ cacheRead: 10, cacheWrite: 5, output: 2, costUsd: null });
+    expect(samples[0]).toMatchObject({ cacheRead: 10, cacheWrite: 5, output: 2, costUsd: null, model: null });
   });
 
   test('codex: one sample per moved cumulative total (re-emitted token_count skipped), cached input split out', () => {
@@ -97,6 +99,66 @@ describe('runtime session logs → usage samples', () => {
       [100, 60, 4],
     ]);
     expect(samples[0]?.costUsd).toBeNull();
+    expect(samples.map((s) => s.model)).toEqual([null, null]);
+  });
+
+  test('model ids: Claude message.model (<synthetic> is none), Codex the latest turn_context, pi/OMP as written', () => {
+    const usage = { input_tokens: 1, output_tokens: 1 };
+    write(
+      join(root, 'claude', 'projects', '-repo', 'sess-m.jsonl'),
+      jsonl([
+        { type: 'assistant', timestamp: '2026-10-04T10:00:01Z', message: { id: 'a', model: 'claude-opus-5-5', usage } },
+        { type: 'assistant', timestamp: '2026-10-04T10:00:02Z', message: { id: 'b', model: '<synthetic>', usage } },
+      ]),
+    );
+    expect(readUsageSamples({ id: 'sess-m', source: 'claude-code', file: null }, env).map((s) => s.model)).toEqual([
+      'claude-opus-5-5',
+      null,
+    ]);
+
+    const tokens = (ts: string, total: number) => ({
+      timestamp: ts,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: { total_token_usage: { total_tokens: total }, last_token_usage: { input_tokens: 5, output_tokens: 1 } },
+      },
+    });
+    const turn = (ts: string, model?: string) => ({ timestamp: ts, type: 'turn_context', payload: { model } });
+    write(
+      join(root, 'codex', 'sessions', '2026', '10', '04', 'rollout-2026-10-04T10-00-00-thr-m.jsonl'),
+      jsonl([
+        tokens('2026-10-04T10:00:00Z', 6),
+        turn('2026-10-04T10:00:01Z', 'gpt-5.6-sol'),
+        tokens('2026-10-04T10:00:02Z', 12),
+        turn('2026-10-04T10:00:03Z', 'gpt-6.1-sol'),
+        tokens('2026-10-04T10:00:04Z', 18),
+        turn('2026-10-04T10:00:05Z'),
+        tokens('2026-10-04T10:00:06Z', 24),
+      ]),
+    );
+    // Before any turn_context, and after one that names no model, the model is unknown — never carried over.
+    expect(readUsageSamples({ id: 'thr-m', source: 'codex', file: null }, env).map((s) => s.model)).toEqual([
+      null,
+      'gpt-5.6-sol',
+      'gpt-6.1-sol',
+      null,
+    ]);
+
+    const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-m.jsonl');
+    write(
+      file,
+      jsonl([
+        {
+          type: 'message',
+          timestamp: '2026-10-04T10:00:07Z',
+          message: { role: 'assistant', model: 'openai-codex/gpt-6.1-sol', usage: { input: 1, output: 1 } },
+        },
+      ]),
+    );
+    expect(readUsageSamples({ id: null, source: 'pi', file }, env).map((s) => s.model)).toEqual([
+      'openai-codex/gpt-6.1-sol',
+    ]);
   });
 
   test('pi/OMP: assistant message usage with the runtime’s own cost, sibling subagent logs included', () => {
@@ -492,6 +554,217 @@ describe('ledger → verified intervals', () => {
     expect(readCaptureLedger(path, 10)).toMatchObject({ corrupt: 1, lines: [{ event: 2 }] });
     expect(readCaptureLedger(join(root, 'absent.jsonl'))).toEqual({ lines: [], corrupt: 0 });
   });
+
+  describe('price table', () => {
+    const at1 = t('2026-10-04T10:00:00Z');
+    const at2 = t('2026-10-04T10:10:00Z');
+    const prices: PriceTable = {
+      meta: { source: 'test', fetchedAt: '2026-10-04T00:00:00Z', sha256: 'x', models: 2 },
+      models: {
+        'claude-opus-5-5': {
+          input_cost_per_token: 0.00001,
+          output_cost_per_token: 0.0001,
+          cache_read_input_token_cost: 0.000001,
+          cache_creation_input_token_cost: 0.00002,
+        },
+        'gpt-6.1-sol': { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
+      },
+    };
+    const claudeCall = (id: string, model: string, ts = '2026-10-04T10:05:00Z') => ({
+      type: 'assistant',
+      timestamp: ts,
+      message: {
+        id,
+        model,
+        usage: {
+          input_tokens: 100,
+          output_tokens: 10,
+          cache_read_input_tokens: 1000,
+          cache_creation_input_tokens: 50,
+        },
+      },
+    });
+    const claudeIntervals = (calls: unknown[], table: PriceTable | null) => {
+      write(join(root, 'claude', 'projects', '-repo', 'sess-c.jsonl'), jsonl(calls));
+      const seeded = join(root, 'repo', '.genie', 'genie.db');
+      const db = existsSync(seeded)
+        ? seeded
+        : seedDb([
+            { id: 1, task: 't1', kind: 'claim', at: at1 },
+            { id: 2, task: 't1', kind: 'report', at: at2 },
+          ]);
+      const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1), line(db, 2, 'report', at2)]);
+      return buildIntervals(matched, env, table);
+    };
+
+    test('no table: the usage carries exactly the fields it always did — no costSource, no pricedCalls', () => {
+      const [interval] = claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null);
+      expect(interval?.usage).toEqual({
+        calls: 1,
+        input: 100,
+        cacheRead: 1000,
+        cacheWrite: 50,
+        output: 10,
+        costUsd: null,
+      });
+    });
+
+    test('a Claude call is priced by the table; an unknown model or <synthetic> stays unknown, never 0', () => {
+      const [priced] = claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], prices);
+      expect(priced?.usage?.costUsd).toBeCloseTo(100 * 0.00001 + 1000 * 0.000001 + 50 * 0.00002 + 10 * 0.0001, 12);
+      expect(priced?.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
+
+      const [unknown] = claudeIntervals([claudeCall('m1', 'claude-unreleased-9')], prices);
+      expect(unknown?.usage).toMatchObject({ calls: 1, costUsd: null, costSource: null, pricedCalls: 0 });
+
+      const [synthetic] = claudeIntervals([claudeCall('m1', '<synthetic>')], prices);
+      expect(synthetic?.usage?.costUsd).toBeNull();
+    });
+
+    test('the runtime’s own price beats the table; runtime + table calls are mixed', () => {
+      const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-1.jsonl');
+      const call = (ts: string, cost: { total: number } | undefined) => ({
+        type: 'message',
+        timestamp: ts,
+        message: {
+          role: 'assistant',
+          model: 'openai-codex/gpt-6.1-sol',
+          usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, ...(cost ? { cost } : {}) },
+        },
+      });
+      write(file, jsonl([call('2026-10-04T10:01:00Z', { total: 0.5 }), call('2026-10-04T10:02:00Z', undefined)]));
+      const pi: RuntimeSession = { id: null, source: 'pi', file };
+      const db = seedDb([
+        { id: 1, task: 't1', kind: 'claim', at: at1 },
+        { id: 2, task: 't1', kind: 'report', at: at2 },
+      ]);
+      const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1, pi), line(db, 2, 'report', at2, pi)]);
+      const [mixed] = buildIntervals(matched, env, prices);
+      // 0.5 from the runtime (never re-priced) + the table's price for the unpriced call, found by suffix.
+      expect(mixed?.usage?.costUsd).toBeCloseTo(0.5 + 1000 * 0.000002 + 100 * 0.00002, 12);
+      expect(mixed?.usage).toMatchObject({ costSource: 'mixed', pricedCalls: 2 });
+
+      write(file, jsonl([call('2026-10-04T10:01:00Z', { total: 0.5 })]));
+      const [runtimeOnly] = buildIntervals(matched, env, prices);
+      expect(runtimeOnly?.usage).toMatchObject({ costUsd: 0.5, costSource: 'runtime', pricedCalls: 1 });
+    });
+
+    test('a zero-token call is never evidence of a price: alone it leaves the interval unknown', () => {
+      const zero = {
+        type: 'assistant',
+        timestamp: '2026-10-04T10:04:00Z',
+        message: { id: 'z', model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0 } },
+      };
+      const [onlyZero] = claudeIntervals([zero], prices);
+      expect(onlyZero?.usage).toMatchObject({ calls: 1, costUsd: null, costSource: null, pricedCalls: 0 });
+      const [withReal] = claudeIntervals([zero, claudeCall('m1', 'claude-opus-5-5')], prices);
+      expect(withReal?.usage).toMatchObject({ calls: 2, costSource: 'table', pricedCalls: 1 });
+    });
+
+    test('Claude 1-hour cache writes ride the sample and are priced at the 1h rate', () => {
+      const ttl: PriceTable = {
+        ...prices,
+        models: {
+          'claude-opus-5-5': {
+            input_cost_per_token: 0.00001,
+            output_cost_per_token: 0.0001,
+            cache_creation_input_token_cost: 0.00002,
+            cache_creation_input_token_cost_above_1hr: 0.00004,
+          },
+        },
+      };
+      const call = {
+        type: 'assistant',
+        timestamp: '2026-10-04T10:05:00Z',
+        message: {
+          id: 'h',
+          model: 'claude-opus-5-5',
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 100,
+            cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 60 },
+          },
+        },
+      };
+      const [interval] = claudeIntervals([call], ttl);
+      // The token total is unchanged; only the price splits by TTL.
+      expect(interval?.usage).toMatchObject({ cacheWrite: 100, costSource: 'table' });
+      expect(interval?.usage?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+    });
+
+    test('summary coverage: with a table each row carries calls and pricedCalls, and the text grows a column', () => {
+      const intervals = claudeIntervals(
+        [claudeCall('m1', 'claude-opus-5-5'), claudeCall('m2', 'claude-unreleased-9', '2026-10-04T10:06:00Z')],
+        prices,
+      );
+      const [row] = summarize(intervals, true);
+      expect(row).toMatchObject({ calls: 2, pricedCalls: 1, costSource: 'table' });
+      const text = formatSummary(summarize(intervals, true), { lines: 2, unmatched: 0, corrupt: 0 });
+      expect(text).toContain('\tpriced\tcostSource\n');
+      expect(text).toMatch(/claim→report\t1\t.*\t1\/2\ttable\n/);
+
+      const bare = summarize(claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null));
+      expect(Object.keys(bare[0] ?? {})).not.toContain('pricedCalls');
+      expect(Object.keys(bare[0] ?? {})).not.toContain('costSource');
+      expect(formatSummary(bare, { lines: 2, unmatched: 0, corrupt: 0 })).not.toContain('priced');
+    });
+
+    test('summary provenance: runtime and table intervals make a mixed row; an unpriced row is null', () => {
+      const usage = (costUsd: number | null, costSource: 'runtime' | 'table' | null) => ({
+        calls: 1,
+        input: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 1,
+        costUsd,
+        costSource,
+        pricedCalls: costUsd === null ? 0 : 1,
+      });
+      const at = (task: string, u: ReturnType<typeof usage>) =>
+        ({
+          db: '/d',
+          task,
+          fromEvent: 1,
+          toEvent: 2,
+          transition: 'claim→report',
+          startAt: 0,
+          endAt: 1,
+          durationMs: 1,
+          session: { id: 's', source: 'claude-code', file: null },
+          usage: u,
+          sharedSession: false,
+          offload: null,
+          sessionMatch: 'exact',
+        }) as Interval;
+      expect(summarize([at('a', usage(1, 'runtime')), at('b', usage(2, 'table'))], true)[0]).toMatchObject({
+        costUsd: 3,
+        costSource: 'mixed',
+      });
+      expect(summarize([at('a', usage(null, null))], true)[0]).toMatchObject({ costUsd: null, costSource: null });
+      // Two finite interval costs whose sum overflows: unknown, never Infinity.
+      expect(summarize([at('a', usage(1e308, 'table')), at('b', usage(1e308, 'table'))], true)[0]?.costUsd).toBeNull();
+    });
+
+    test('an interval sum that overflows is null, never Infinity; a negative runtime price is no price', () => {
+      const huge: PriceTable = { ...prices, models: { 'claude-opus-5-5': { input_cost_per_token: 1e308 } } };
+      const call = (id: string) => ({
+        type: 'assistant',
+        timestamp: '2026-10-04T10:05:00Z',
+        message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 0 } },
+      });
+      const [overflow] = claudeIntervals([call('a'), call('b')], huge);
+      expect(overflow?.usage).toMatchObject({ costUsd: null, costSource: null });
+
+      const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-n.jsonl');
+      const usage = { input: 1, output: 1, cost: { total: -0.5 } };
+      write(
+        file,
+        jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:07Z', message: { role: 'assistant', usage } }]),
+      );
+      expect(readUsageSamples({ id: null, source: 'pi', file }, env)[0]?.costUsd).toBeNull();
+    });
+  });
 });
 
 describe('Phoenix projection', () => {
@@ -539,6 +812,19 @@ describe('Phoenix projection', () => {
       'genie.transition': 'claim→report',
     });
     expect(a.attributes['llm.cost.total']).toBeUndefined();
+    expect(a.attributes['genie.cost_source']).toBeUndefined();
+    const tabled = intervalSpan(
+      { ...interval, usage: { ...interval.usage, costUsd: 0.01, costSource: 'table' as const, pricedCalls: 1 } },
+      'salt',
+    );
+    expect(tabled.attributes).toMatchObject({
+      'llm.cost.total': 0.01,
+      'genie.cost_source': 'table',
+      'genie.cost.priced_calls': 1,
+      'genie.model_calls': 1,
+    });
+    // Without a table the span carries no coverage attribute at all.
+    expect(a.attributes['genie.cost.priced_calls']).toBeUndefined();
     expect(a.attributes).toMatchObject({
       'genie.offload.attempts': 2,
       'genie.offload.failed': 1,

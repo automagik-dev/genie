@@ -6,6 +6,8 @@
  *   metrics status    what is on, where the ledger is, which runtime session this shell is in
  *   metrics export    ledger + task_events + runtime session logs → per-transition time and tokens;
  *                     `--phoenix` projects the intervals to a Phoenix the operator configured
+ *   metrics prices    update|status the optional price table that derives USD where the runtime
+ *                     did not price a call; only `prices update` fetches it (export never does)
  *
  * Capture is OFF until `enable` runs: a host that never runs it sees no new
  * file, directory, latency or network call. Enabling sends nothing anywhere —
@@ -36,6 +38,7 @@ import {
   saveTarget,
   validateTarget,
 } from '../lib/metrics-phoenix.js';
+import { type PriceTable, loadPriceTable, pricesPath, updatePriceTable } from '../lib/metrics-prices.js';
 import { printErr, printOut } from '../lib/term-output.js';
 
 interface ExportOptions {
@@ -91,8 +94,9 @@ async function runExport(options: ExportOptions): Promise<number> {
 
   const ledger = readCaptureLedger(captureLedgerPath(), since);
   const { matched, unmatched } = verifyAgainstTaskEvents(ledger.lines);
-  const intervals = buildIntervals(matched);
-  const summary = summarize(intervals);
+  const prices = loadPriceTable();
+  const intervals = buildIntervals(matched, process.env, prices);
+  const summary = summarize(intervals, prices !== null);
   const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt };
   if (options.out) {
     writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
@@ -140,6 +144,47 @@ function renderStatus(status: CaptureStatus): string {
     `ledger:  ${status.ledger} (${ledger})`,
     `session: ${session}`,
   ].join('\n');
+}
+
+function renderPrices(table: PriceTable | null): string {
+  if (!table) return `prices:  no price table — USD stays runtime-priced only (${pricesPath()})`;
+  const { source, fetchedAt, models, sha256 } = table.meta;
+  return [
+    `prices:  ${pricesPath()}`,
+    `source:  ${source}`,
+    `fetched: ${fetchedAt}`,
+    `models:  ${models}`,
+    `sha256:  ${sha256}`,
+  ].join('\n');
+}
+
+function registerPricesCommand(metrics: Command): void {
+  const prices = metrics
+    .command('prices')
+    .description('The optional price table that derives USD where the runtime did not price a call');
+
+  prices
+    .command('update')
+    .description('Download (or copy) the LiteLLM price table into GENIE_HOME; export never fetches prices itself')
+    .option('--from <url-or-file>', 'Where to read the table from (default: LiteLLM on GitHub)')
+    .action(async (options: { from?: string }) => {
+      const result = await updatePriceTable(options.from);
+      if (!result.ok) {
+        printErr(`Error (genie metrics prices update): ${result.message}`);
+        process.exitCode = result.code;
+        return;
+      }
+      printOut(`prices: ${result.meta.models} models from ${result.meta.source} → ${result.path}`);
+    });
+
+  prices
+    .command('status')
+    .description('Show whether a price table is stored, where it came from and when')
+    .option('--json', 'Emit the status as JSON')
+    .action((options: JsonOption) => {
+      const table = loadPriceTable();
+      printOut(options.json ? JSON.stringify({ path: pricesPath(), table: table?.meta ?? null }) : renderPrices(table));
+    });
 }
 
 export function registerMetricsCommand(program: Command): void {
@@ -193,4 +238,6 @@ export function registerMetricsCommand(program: Command): void {
       const status = captureStatus();
       printOut(options.json ? JSON.stringify(status) : renderStatus(status));
     });
+
+  registerPricesCommand(metrics);
 }
