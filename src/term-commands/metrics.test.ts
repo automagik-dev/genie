@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -261,6 +262,25 @@ describe('genie metrics', () => {
       expect(readFileSync(stored).equals(before)).toBe(true);
     } finally {
       server.stop(true);
+    }
+  }, 60_000);
+
+  test('R3: prices status redacts a source an older genie stored with secrets (item 5)', () => {
+    const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
+    const meta = {
+      source: 'https://user:hunter2@example.invalid/p.json?token=abc123#frag',
+      fetchedAt: '2026-10-05T00:00:00.000Z',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      models: 1,
+    };
+    execFileSync('mkdir', ['-p', join(home, 'metrics')]);
+    writeFileSync(join(home, 'metrics', 'prices.json'), `{"genie":${JSON.stringify(meta)},"models":${body}}\n`);
+    const text = run(['metrics', 'prices', 'status']);
+    const json = run(['metrics', 'prices', 'status', '--json']);
+    expect(text.code).toBe(0);
+    expect(text.stdout).toContain('source:  https://example.invalid/p.json');
+    for (const out of [text.stdout, text.stderr, json.stdout, json.stderr]) {
+      expect(out).not.toMatch(/hunter2|abc123|frag/);
     }
   }, 60_000);
 

@@ -567,7 +567,11 @@ describe('ledger → verified intervals', () => {
           cache_read_input_token_cost: 0.000001,
           cache_creation_input_token_cost: 0.00002,
         },
-        'gpt-6.1-sol': { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
+        'gpt-6.1-sol': {
+          input_cost_per_token: 0.000002,
+          output_cost_per_token: 0.00002,
+          cache_read_input_token_cost: 0.0000002,
+        },
       },
     };
     const claudeCall = (id: string, model: string, ts = '2026-10-04T10:05:00Z') => ({
@@ -763,6 +767,125 @@ describe('ledger → verified intervals', () => {
         jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:07Z', message: { role: 'assistant', usage } }]),
       );
       expect(readUsageSamples({ id: null, source: 'pi', file }, env)[0]?.costUsd).toBeNull();
+    });
+
+    describe('R3: a raw count the log got wrong is never table-priced', () => {
+      // Raw JSONL text, so non-JSON-stringifiable literals (1e400) and strings reach the parser as logged.
+      const priceWindow = (session: RuntimeSession, file: string, text: string) => {
+        write(file, text);
+        const db = seedDb([
+          { id: 1, task: 't1', kind: 'claim', at: at1 },
+          { id: 2, task: 't1', kind: 'report', at: at2 },
+        ]);
+        const { matched } = verifyAgainstTaskEvents([
+          line(db, 1, 'claim', at1, session),
+          line(db, 2, 'report', at2, session),
+        ]);
+        return buildIntervals(matched, env, prices)[0]?.usage;
+      };
+      const claudeFile = () => join(root, 'claude', 'projects', '-repo', 'sess-c.jsonl');
+      const claudeLine = (usage: string) =>
+        `{"type":"assistant","timestamp":"2026-10-04T10:05:00Z","message":{"id":"m1","model":"claude-opus-5-5","usage":${usage}}}\n`;
+      const unpriced = { calls: 1, costUsd: null, costSource: null, pricedCalls: 0 };
+
+      test('Claude: a non-finite or non-number count leaves the call unpriced (item 1)', () => {
+        expect(
+          priceWindow(session, claudeFile(), claudeLine('{"input_tokens":1e400,"output_tokens":5}')),
+        ).toMatchObject(unpriced);
+      });
+
+      test('Claude: a string count leaves the call unpriced (item 1)', () => {
+        expect(
+          priceWindow(session, claudeFile(), claudeLine('{"input_tokens":"100","output_tokens":5}')),
+        ).toMatchObject(unpriced);
+      });
+
+      test('Claude: a well-formed call with absent optional counters is still priced (item 1 control)', () => {
+        expect(priceWindow(session, claudeFile(), claudeLine('{"input_tokens":100,"output_tokens":5}'))).toMatchObject({
+          costSource: 'table',
+          pricedCalls: 1,
+        });
+      });
+
+      const codexFile = () =>
+        join(root, 'codex', 'sessions', '2026', '10', '04', 'rollout-2026-10-04T10-00-00-thr-r3.jsonl');
+      const codex: RuntimeSession = { id: 'thr-r3', source: 'codex', file: null };
+      const turn = '{"timestamp":"2026-10-04T10:01:00Z","type":"turn_context","payload":{"model":"gpt-6.1-sol"}}';
+      const codexLines = (last: string) =>
+        `${turn}\n{"timestamp":"2026-10-04T10:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1},"last_token_usage":${last}}}}\n`;
+
+      test('Codex: a negative input count leaves the call unpriced (item 1)', () => {
+        expect(
+          priceWindow(codex, codexFile(), codexLines('{"input_tokens":-10,"cached_input_tokens":0,"output_tokens":5}')),
+        ).toMatchObject(unpriced);
+      });
+
+      test('Codex: cached above input leaves the call unpriced, never clamped to 0 (item 1)', () => {
+        expect(
+          priceWindow(codex, codexFile(), codexLines('{"input_tokens":40,"cached_input_tokens":60,"output_tokens":5}')),
+        ).toMatchObject(unpriced);
+      });
+
+      test('Codex: a well-formed call is priced (item 1 control)', () => {
+        expect(
+          priceWindow(codex, codexFile(), codexLines('{"input_tokens":100,"cached_input_tokens":0,"output_tokens":5}')),
+        ).toMatchObject({ costSource: 'table', pricedCalls: 1 });
+      });
+
+      test('pi/OMP: a non-finite count with no runtime price leaves the call unpriced (item 1)', () => {
+        const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-r3.jsonl');
+        const text = `{"type":"message","timestamp":"2026-10-04T10:05:00Z","message":{"role":"assistant","model":"openai-codex/gpt-6.1-sol","usage":{"input":1e400,"output":5}}}\n`;
+        expect(priceWindow({ id: null, source: 'pi', file }, file, text)).toMatchObject(unpriced);
+      });
+
+      const ttl = (total: number, split: string) =>
+        claudeLine(
+          `{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":${total},"cache_creation":${split}}`,
+        );
+      const ttlPrices: PriceTable = {
+        ...prices,
+        models: {
+          'claude-opus-5-5': {
+            input_cost_per_token: 0.00001,
+            output_cost_per_token: 0.0001,
+            cache_creation_input_token_cost: 0.00002,
+            cache_creation_input_token_cost_above_1hr: 0.00004,
+          },
+        },
+      };
+      const ttlUsage = (total: number, split: string) => {
+        write(claudeFile(), ttl(total, split));
+        const db = seedDb([
+          { id: 1, task: 't1', kind: 'claim', at: at1 },
+          { id: 2, task: 't1', kind: 'report', at: at2 },
+        ]);
+        const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1), line(db, 2, 'report', at2)]);
+        return buildIntervals(matched, env, ttlPrices)[0]?.usage;
+      };
+
+      test('TTL: a 1h count above the total leaves the call unpriced (item 3)', () => {
+        expect(ttlUsage(100, '{"ephemeral_1h_input_tokens":200,"ephemeral_5m_input_tokens":0}')).toMatchObject(
+          unpriced,
+        );
+      });
+
+      test('TTL: 5m + 1h that do not add up to the total leave the call unpriced (item 3)', () => {
+        expect(ttlUsage(100, '{"ephemeral_1h_input_tokens":60,"ephemeral_5m_input_tokens":10}')).toMatchObject(
+          unpriced,
+        );
+      });
+
+      test('TTL: a negative or non-finite counter leaves the call unpriced (item 3)', () => {
+        expect(ttlUsage(100, '{"ephemeral_1h_input_tokens":100,"ephemeral_5m_input_tokens":-1}')).toMatchObject(
+          unpriced,
+        );
+      });
+
+      test('TTL: a consistent split is still priced (item 3 control)', () => {
+        const usage = ttlUsage(100, '{"ephemeral_1h_input_tokens":60,"ephemeral_5m_input_tokens":40}');
+        expect(usage).toMatchObject({ cacheWrite: 100, costSource: 'table', pricedCalls: 1 });
+        expect(usage?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+      });
     });
   });
 });

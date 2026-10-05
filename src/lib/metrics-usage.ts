@@ -42,11 +42,21 @@ export interface UsageSample {
   model: string | null;
   /** The part of `cacheWrite` Claude Code logged as 1-hour cache writes; absent when no TTL split was logged. */
   cacheWrite1h?: number;
+  /**
+   * The log supplied a count genie cannot price from: negative, non-finite or not a number, Codex cached input
+   * above its input, or a Claude TTL split that contradicts its total. The token fields keep their reported
+   * values; only the price table refuses the call. Absent when every supplied count was sound.
+   */
+  invalid?: true;
 }
 
 type Rec = Record<string, unknown>;
 
 const str = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
+/** A count the log supplied that is not a finite, nonnegative number; an absent counter is not invalid. */
+const badCount = (value: unknown): boolean =>
+  value !== undefined && !(typeof value === 'number' && Number.isFinite(value) && value >= 0);
+const invalidIf = (invalid: boolean): { invalid?: true } => (invalid ? { invalid: true } : {});
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 const obj = (value: unknown): Rec | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
@@ -157,6 +167,15 @@ export function sessionLogFiles(session: RuntimeSession, env: NodeJS.ProcessEnv 
   return [];
 }
 
+/** A logged TTL split genie cannot price: a bad counter, 1h above the total, or 5m + 1h that miss the total. */
+function ttlContradicts(ttl: Rec, total: number): boolean {
+  const hour = ttl.ephemeral_1h_input_tokens;
+  const fiveMinutes = ttl.ephemeral_5m_input_tokens;
+  if (badCount(hour) || badCount(fiveMinutes)) return true;
+  if (hour !== undefined && num(hour) > total) return true;
+  return hour !== undefined && fiveMinutes !== undefined && num(hour) + num(fiveMinutes) !== total;
+}
+
 function claudeSamples(records: Rec[]): UsageSample[] {
   // One API response streams as several records sharing message.id; the last one carries the final usage.
   const byMessage = new Map<string, UsageSample>();
@@ -165,8 +184,17 @@ function claudeSamples(records: Rec[]): UsageSample[] {
     const usage = obj(message?.usage);
     if (record.type !== 'assistant' || !usage || typeof message?.id !== 'string') continue;
     const ttl = obj(usage.cache_creation);
+    const counts = [
+      usage.input_tokens,
+      usage.cache_read_input_tokens,
+      usage.cache_creation_input_tokens,
+      usage.output_tokens,
+    ];
     byMessage.set(message.id, {
       ...(ttl ? { cacheWrite1h: num(ttl.ephemeral_1h_input_tokens) } : {}),
+      ...invalidIf(
+        counts.some(badCount) || (ttl !== null && ttlContradicts(ttl, num(usage.cache_creation_input_tokens))),
+      ),
       at: Date.parse(String(record.timestamp)),
       input: num(usage.input_tokens),
       cacheRead: num(usage.cache_read_input_tokens),
@@ -196,7 +224,9 @@ function codexSamples(records: Rec[]): UsageSample[] {
     if (total !== 'null' && total === previousTotal) continue;
     previousTotal = total;
     const cached = num(last.cached_input_tokens);
+    const counts = [last.input_tokens, last.cached_input_tokens, last.cache_write_input_tokens, last.output_tokens];
     out.push({
+      ...invalidIf(counts.some(badCount) || cached > num(last.input_tokens)),
       at: Date.parse(String(record.timestamp)),
       input: Math.max(0, num(last.input_tokens) - cached),
       cacheRead: cached,
@@ -217,6 +247,7 @@ function piSamples(records: Rec[]): UsageSample[] {
     if (record.type !== 'message' || message?.role !== 'assistant' || !usage) continue;
     const cost = obj(usage.cost);
     out.push({
+      ...invalidIf([usage.input, usage.cacheRead, usage.cacheWrite, usage.output].some(badCount)),
       at: Date.parse(String(record.timestamp)),
       input: num(usage.input),
       cacheRead: num(usage.cacheRead),

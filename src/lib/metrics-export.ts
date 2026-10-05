@@ -134,7 +134,7 @@ function sumUsage(samples: UsageSample[], startAt: number, endAt: number, prices
   const runtime = inside.filter((s) => s.costUsd !== null).map((s) => s.costUsd as number);
   const table = prices
     ? inside
-        .filter((s) => s.costUsd === null && hasTokens(s))
+        .filter((s) => s.costUsd === null && !s.invalid && hasTokens(s))
         .map((s) => tableCost(prices, s.model, s))
         .filter((c): c is number => c !== null)
     : [];

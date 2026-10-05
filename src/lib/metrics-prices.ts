@@ -84,11 +84,24 @@ export function countPricedModels(models: Rec): number {
   return n;
 }
 
-/** The stored table, or null when absent or unreadable — an unreadable table is no table, never a guess. */
+const SHA256 = /^[0-9a-f]{64}$/;
+const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex');
+
+/** The file `prices update` writes: the header, then the fetched body byte for byte, so its hash can be re-checked. */
+const envelopePrefix = (meta: unknown): string => `{"genie":${JSON.stringify(meta)},"models":`;
+
+/**
+ * The stored table, or null when absent, unreadable or untruthful — never a guess, never a crash. The header
+ * must be exactly what `prices update` writes: an ISO `fetchedAt`, a lowercase sha256 equal to the hash of the
+ * stored body, and a model count equal to the priced models in it. The source is redacted on read, so a table
+ * stored by an older genie never shows its credentials.
+ */
 export function loadPriceTable(path = pricesPath()): PriceTable | null {
+  let text: string;
   let parsed: Rec | null;
   try {
-    parsed = obj(JSON.parse(readFileSync(path, 'utf8')));
+    text = readFileSync(path, 'utf8');
+    parsed = obj(JSON.parse(text));
   } catch {
     return null;
   }
@@ -96,10 +109,15 @@ export function loadPriceTable(path = pricesPath()): PriceTable | null {
   const models = obj(parsed?.models);
   if (!header || !models) return null;
   const { source, fetchedAt, sha256, models: count } = header;
-  // A hand-edited header is no table rather than a crash: every field must be the plain value genie wrote.
   if (typeof source !== 'string' || typeof fetchedAt !== 'string' || typeof sha256 !== 'string') return null;
-  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) return null;
-  return { meta: { source, fetchedAt, sha256, models: count }, models };
+  const at = Date.parse(fetchedAt);
+  if (!Number.isFinite(at) || new Date(at).toISOString() !== fetchedAt || !SHA256.test(sha256)) return null;
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || count !== countPricedModels(models))
+    return null;
+  const prefix = envelopePrefix(header);
+  if (!text.startsWith(prefix) || !text.endsWith('}\n')) return null;
+  if (sha256Hex(text.slice(prefix.length, -2)) !== sha256) return null;
+  return { meta: { source: displaySource(source), fetchedAt, sha256, models: count }, models };
 }
 
 /** Exact id first, then the part after the last `/` (`openai-codex/gpt-6.1-sol` → `gpt-6.1-sol`); null otherwise. */
@@ -112,12 +130,16 @@ export function entryFor(table: PriceTable, model: string | null): Rec | null {
 
 const TIER = /_above_(\d+)k_tokens$/;
 
-/** `_above_<N>k_tokens` for the highest N the prompt exceeds among the entry's priced tiers; '' for the base rates. */
+/**
+ * `_above_<N>k_tokens` for the highest N the prompt exceeds among the entry's declared tiers; '' for the base
+ * rates. A tier is declared by its key whatever its value: an invalid rate at the crossed tier makes the call
+ * unknown, never a fallback to the base or a lower tier.
+ */
 function tierSuffix(entry: Rec, prompt: number): string {
   let best = -1;
   for (const key of Object.keys(entry)) {
     const n = Number(TIER.exec(key)?.[1] ?? -1);
-    if (n > best && prompt > n * 1000 && ownRate(entry, key) !== null) best = n;
+    if (n > best && prompt > n * 1000) best = n;
   }
   return best < 0 ? '' : `_above_${best}k_tokens`;
 }
@@ -210,9 +232,10 @@ export async function updatePriceTable(
   const shown = displaySource(from);
   const fetched = await fetchSource(from, shown, options.timeoutMs ?? 60_000);
   if ('ok' in fetched) return fetched;
+  const body = fetched.bytes.toString('utf8');
   let models: Rec | null;
   try {
-    models = obj(JSON.parse(fetched.bytes.toString('utf8')));
+    models = obj(JSON.parse(body));
   } catch {
     return refuse(2, `${shown} is not JSON; the stored table is unchanged`);
   }
@@ -222,14 +245,15 @@ export async function updatePriceTable(
   const meta: PriceTableMeta = {
     source: shown,
     fetchedAt: (options.now ?? new Date()).toISOString(),
-    sha256: createHash('sha256').update(fetched.bytes).digest('hex'),
+    // The hash of the body exactly as stored (the fetched text), so a later read can prove it unedited.
+    sha256: sha256Hex(body),
     models: count,
   };
   const path = pricesPath();
   const tmp = `${path}.tmp-${process.pid}`;
   try {
     mkdirSync(metricsDir(), { recursive: true, mode: 0o700 });
-    writeFileSync(tmp, `${JSON.stringify({ genie: meta, models })}\n`, { mode: 0o600 });
+    writeFileSync(tmp, `${envelopePrefix(meta)}${body}}\n`, { mode: 0o600 });
     renameSync(tmp, path);
   } catch (error) {
     rmSync(tmp, { force: true });

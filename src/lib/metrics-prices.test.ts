@@ -121,6 +121,75 @@ describe('cache TTL and long-context tiers', () => {
   });
 });
 
+// The envelope exactly as `prices update` writes it: header, then the fetched body byte for byte.
+function writeEnvelope(
+  path: string,
+  body: string,
+  header: Partial<{ source: unknown; fetchedAt: unknown; sha256: unknown; models: unknown }> = {},
+): void {
+  const meta = {
+    source: 'https://example.invalid/p.json',
+    fetchedAt: '2026-10-05T00:00:00.000Z',
+    sha256: createHash('sha256').update(body).digest('hex'),
+    models: 1,
+    ...header,
+  };
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, `{"genie":${JSON.stringify(meta)},"models":${body}}\n`);
+}
+
+describe('R3: the stored envelope must be truthful (item 4)', () => {
+  const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
+
+  test('a well-formed envelope loads (control)', () => {
+    writeEnvelope(pricesPath(), body);
+    expect(loadPriceTable()?.meta.models).toBe(1);
+  });
+
+  test('fetchedAt must be the ISO timestamp genie writes', () => {
+    for (const fetchedAt of ['not-a-date', '2026-10-05', 'Mon, 05 Oct 2026 00:00:00 GMT']) {
+      writeEnvelope(pricesPath(), body, { fetchedAt });
+      expect(loadPriceTable()).toBeNull();
+    }
+  });
+
+  test('sha256 must be 64 lowercase hex', () => {
+    const upper = createHash('sha256').update(body).digest('hex').toUpperCase();
+    for (const sha256 of ['x', upper]) {
+      writeEnvelope(pricesPath(), body, { sha256 });
+      expect(loadPriceTable()).toBeNull();
+    }
+  });
+
+  test('sha256 must match the stored body: an edited rate is no table', () => {
+    writeEnvelope(pricesPath(), body);
+    const text = readFileSync(pricesPath(), 'utf8').replace('0.001', '0.002');
+    writeFileSync(pricesPath(), text);
+    expect(loadPriceTable()).toBeNull();
+  });
+
+  test('the model count must equal the priced models in the body', () => {
+    writeEnvelope(pricesPath(), body, { models: 0 });
+    expect(loadPriceTable()).toBeNull();
+    writeEnvelope(pricesPath(), body, { models: 2 });
+    expect(loadPriceTable()).toBeNull();
+  });
+
+  test('a body stored with a different serialization than its hash is no table', () => {
+    const pretty = JSON.stringify({ m: { input_cost_per_token: 0.001 } }, null, 2);
+    writeEnvelope(pricesPath(), body, { sha256: createHash('sha256').update(pretty).digest('hex') });
+    expect(loadPriceTable()).toBeNull();
+  });
+});
+
+describe('R3: an already-stored source is redacted on read (item 5)', () => {
+  test('userinfo, query and fragment never leave loadPriceTable', () => {
+    const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
+    writeEnvelope(pricesPath(), body, { source: 'https://user:hunter2@example.invalid/p.json?token=abc123#frag' });
+    expect(loadPriceTable()?.meta.source).toBe('https://example.invalid/p.json');
+  });
+});
+
 describe('prices update', () => {
   const litellm = {
     sample_spec: { max_tokens: 'set to max tokens' },
@@ -216,6 +285,33 @@ describe('prices update', () => {
       writeFileSync(path, JSON.stringify({ genie, models }));
       expect(loadPriceTable()).toBeNull();
     }
+  });
+});
+
+describe('R3: a crossed tier with an invalid rate is unknown, never the base (item 2)', () => {
+  const tier = (extra: Record<string, unknown>): PriceTable => ({
+    meta: { source: 't', fetchedAt: 't', sha256: 't', models: 1 },
+    models: { m: { input_cost_per_token: 0.000001, output_cost_per_token: 0.00001, ...extra } },
+  });
+
+  test('a negative rate at the only crossed tier', () => {
+    expect(tableCost(tier({ input_cost_per_token_above_200k_tokens: -1 }), 'm', tokens(250_000, 0))).toBeNull();
+  });
+
+  test('a null, string or non-finite-looking rate at the only crossed tier', () => {
+    for (const bad of [null, '0.000002', {}]) {
+      expect(tableCost(tier({ input_cost_per_token_above_200k_tokens: bad }), 'm', tokens(250_000, 0))).toBeNull();
+    }
+  });
+
+  test('an invalid higher crossed tier never falls back to a valid lower one', () => {
+    const table = tier({
+      input_cost_per_token_above_200k_tokens: 0.000002,
+      input_cost_per_token_above_1000k_tokens: -1,
+    });
+    expect(tableCost(table, 'm', tokens(1_200_000, 0))).toBeNull();
+    // Below the invalid tier the valid lower one still prices.
+    expect(tableCost(table, 'm', tokens(250_000, 0))).toBeCloseTo(250_000 * 0.000002, 12);
   });
 });
 
