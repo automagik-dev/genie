@@ -188,6 +188,11 @@ release is the git commit on `main`. See `docs/release-contract.md`.
 
 ### Security
 
+- **Standalone update ownership.** Launcher, direct compiled CLI and direct
+  update-worker entries reject a nested package before locking, journaling or
+  fetch/reset/clean can mutate the enclosing Genie checkout. Independent
+  standalone linked worktrees remain supported.
+
 - Adding `@modelcontextprotocol/sdk` pulled in `@hono/node-server` 1.x, which
   carries a moderate advisory (path traversal in `serve-static` on Windows via
   encoded backslash, GHSA-frvp-7c67-39w9). Pinned to `^2.0.11` via a

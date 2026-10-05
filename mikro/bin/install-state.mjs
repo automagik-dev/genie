@@ -176,9 +176,16 @@ function repair(root, reinstall = false) {
   rmSync(p.pending, { force: true });
 }
 
-function update(root, args) {
-  try { git(root, ["rev-parse", "--is-inside-work-tree"]); }
+function requireStandaloneUpdate(root) {
+  let worktreeRoot;
+  try { worktreeRoot = canonicalRoot(git(root, ["rev-parse", "--show-toplevel"])); }
   catch { throw failure("mikro update requires a git-installed checkout. Reinstall with scripts/install.sh."); }
+  if (worktreeRoot !== root) {
+    throw failure(`Refusing standalone mikro update: package root ${root} is not the Git worktree root ${worktreeRoot}. Update the owning Genie checkout explicitly instead; mikro update only supports standalone Mikro worktrees.`);
+  }
+}
+
+function update(root, args) {
   const force = args.includes("--force") || args.includes("-f");
   const before = git(root, ["rev-parse", "HEAD"]);
   const dirty = git(root, ["status", "--porcelain"]);
@@ -264,6 +271,9 @@ async function main(argv) {
   }
   const [mode, rawRoot, ...args] = argv[0] === "--worker" ? argv.slice(1) : argv;
   const root = canonicalRoot(rawRoot);
+  // Update entry points all converge here; refuse before ownership or recovery
+  // can create state, park dependencies, or mutate an enclosing checkout.
+  if (mode === "update") requireStandaloneUpdate(root);
   if (mode === "finish" || mode === "verify") {
     const owner = json(paths(root).owner);
     if (!owner || owner.token !== process.env.MIKRO_INSTALL_TOKEN || !alive(owner.pid)) throw failure("installer does not own the installation lock");

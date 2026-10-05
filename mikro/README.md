@@ -28,6 +28,11 @@ mikro update            # fetch origin/main, rebuild in place
 mikro update --force    # same, discarding local changes in the checkout
 ```
 
+This command supports standalone Mikro Git worktrees, including linked
+worktrees with a `.git` file. In Genie's nested `mikro/` package it refuses
+before creating update state or fetching/resetting the parent repository,
+even with `--force`. Update the owning Genie source checkout explicitly.
+
 `mikro update` refuses to run over a dirty checkout without `--force`, then
 resets to `origin/main`, reinstalls, rebuilds, and prints the before commit,
 the target commit and the resulting version. Because `mikro` is a symlink into

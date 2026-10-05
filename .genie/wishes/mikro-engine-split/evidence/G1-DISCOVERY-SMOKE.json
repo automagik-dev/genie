@@ -1,0 +1,15 @@
+{
+  "runtime": "1.3.14",
+  "configuration": "actual copied root bunfig.toml and preload",
+  "before": {
+    "exitCode": 1,
+    "stdout": "bun test v1.3.14 (0d9b296a)\n",
+    "stderr": "\nroot.test.ts:\n(pass) root tests and existing preload remain active [0.14ms]\n\nmikro/independent.test.ts:\n\n# Unhandled error between tests\n-------------------------------\n1 | throw new Error('Independent Mikro test must not enter the Genie Bun runner');\n              ^\nerror: Independent Mikro test must not enter the Genie Bun runner\n      at /var/tmp/mikro-g1-pruning-aOhOE7/mikro/independent.test.ts:1:11\n-------------------------------\n\n\n 1 pass\n 1 fail\n 1 error\n 1 expect() calls\nRan 2 tests across 2 files. [29.00ms]\n"
+  },
+  "after": {
+    "exitCode": 0,
+    "stdout": "bun test v1.3.14 (0d9b296a)\n",
+    "stderr": "\nroot.test.ts:\n(pass) root tests and existing preload remain active [0.13ms]\n\n 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [23.00ms]\n"
+  },
+  "supportedPinnedCiVersion": "https://bun.com/blog/bun-v1.3.11"
+}

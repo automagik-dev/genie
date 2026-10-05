@@ -11,6 +11,10 @@
  * third party does not copy genie's description verbatim, and a user's fork of a
  * CURRENT skill keeps a current description, which is deliberately absent here.
  *
+ * Mikro's independently owned subtree is not Genie delivery history: ignore
+ * its prefixed paths and its imported source ancestry. The latter is derived
+ * from validated non-squash subtree metadata, not a pinned source revision.
+ *
  * Run from a FULL clone (`git log --all` needs the whole history; a shallow
  * checkout would silently produce an incomplete catalog, which is why this is
  * not part of `bun run check` — `bun run check` has no say over checkout
@@ -65,22 +69,68 @@ function currentSkillNames(): Set<string> {
   );
 }
 
+/**
+ * Only source-only ancestry is foreign: a source fork may share older Genie
+ * commits, which must remain covered. Collection itself still walks every ref.
+ * Refuse malformed import evidence rather than widening retirement authority.
+ */
+function importedMikroCommits(): Set<string> {
+  const foreign = new Set<string>();
+  const imports = git('log', '--all', '--format=%H', '--grep=^git-subtree-dir:')
+    .split('\n')
+    .filter((line) => /^[0-9a-f]{40}$/.test(line));
+  for (const commit of imports) {
+    const body = git('show', '-s', '--format=%B', commit);
+    const dirs = [...body.matchAll(/^git-subtree-dir:[ \t]*(.*)$/gm)].map((match) => match[1]?.trim());
+    if (!dirs.some((dir) => dir === 'mikro' || dir?.startsWith('mikro/'))) continue;
+    const splits = [...body.matchAll(/^git-subtree-split:[ \t]*(.*)$/gm)].map((match) => match[1]?.trim());
+    const split = splits[0];
+    const parents = git('show', '-s', '--format=%P', commit).trim().split(' ');
+    if (
+      dirs.length !== 1 ||
+      dirs[0] !== 'mikro' ||
+      splits.length !== 1 ||
+      !split ||
+      !/^[0-9a-f]{40}$/.test(split) ||
+      parents.length !== 2 ||
+      parents[1] !== split
+    ) {
+      throw new Error(`legacy-skills-catalog: invalid Mikro subtree import metadata at ${commit}`);
+    }
+    if (git('rev-parse', `${commit}:mikro`).trim() !== git('rev-parse', `${split}^{tree}`).trim()) {
+      throw new Error(`legacy-skills-catalog: Mikro subtree import tree does not match its source at ${commit}`);
+    }
+    for (const ancestor of git('rev-list', split, '--not', parents[0] as string)
+      .trim()
+      .split('\n')) {
+      if (ancestor) foreign.add(ancestor);
+    }
+  }
+  return foreign;
+}
+
 /** `{ name: Set<description> }` for every skill dir on any ref that is no longer shipped. */
 function collectCatalog(): Map<string, Set<string>> {
   const catalog = new Map<string, Set<string>>();
+  const foreign = importedMikroCommits();
   const commits = git('log', '--all', '--pretty=format:%H', '--', 'skills/*/SKILL.md', '*/skills/*/SKILL.md')
     .split('\n')
     .filter((line) => /^[0-9a-f]{40}$/.test(line));
   const seenBlobs = new Set<string>();
   for (const commit of commits) {
+    if (foreign.has(commit)) continue;
     const tree = git('ls-tree', '-r', commit).split('\n');
     for (const row of tree) {
-      // `(?:.*\/)?` — a root-level `skills/<name>/SKILL.md` has no leading
-      // slash; anchoring on one silently skipped every skill genie ever shipped
-      // from the repo root and kept only nested worktree copies.
-      const match = /^\d+ blob ([0-9a-f]{40})\t(?:.*\/)?skills\/([^/]+)\/SKILL\.md$/.exec(row);
+      // Capture the full path before matching skills: integration commits carry
+      // foreign files too, even after their source ancestry has been excluded.
+      const entry = /^\d+ blob ([0-9a-f]{40})\t(.+)$/.exec(row);
+      if (!entry) continue;
+      const [, blob, path] = entry as unknown as [string, string, string];
+      if (path.startsWith('mikro/')) continue;
+      // Root and nested Genie skill directories have both historically shipped.
+      const match = /^(?:.*\/)?skills\/([^/]+)\/SKILL\.md$/.exec(path);
       if (!match) continue;
-      const [, blob, name] = match as unknown as [string, string, string];
+      const name = match[1] as string;
       if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) continue;
       const key = `${blob} ${name}`;
       if (seenBlobs.has(key)) continue;

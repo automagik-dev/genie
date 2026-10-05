@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "timestamp": "2026-10-05T02:41:01.335Z",
+  "base": "7c0eedc01f284bdec1e647f257b83dafa84599db",
+  "budget": {
+    "repair": 1,
+    "max": 2,
+    "qualityLoop": 2,
+    "qualityCap": 2,
+    "qualityCapBeforeOverride": 1,
+    "qualityOverride": {
+      "approver": "owner",
+      "decision": "Sanitize and re-review",
+      "recordedAt": "2026-10-05T03:53:18Z",
+      "scope": "One additional publication-only repair/review; no runtime changes",
+      "privateOriginalHandoffSha256": "8c8ee9e3ae2cd1daa6030afdf35e68400fc5c36a144724442767f5ce8bd7376b"
+    },
+    "effortEscalations": 0
+  },
+  "before": {
+    "updater": {
+      "exit": 1,
+      "baseline": "7c0eedc01f284bdec1e647f257b83dafa84599db",
+      "test": "nested-package update refuses",
+      "condition": "parent index must survive byte-for-byte",
+      "observedFailurePrefix": "✖ nested-package update refuses at every worker entry without mutating its owning Genie checkout (17213.718775ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 18472.742828\n\n✖ failing tests:\n\ntest at dist/tests/install-coordination.test.js:117:1\n✖ nested-package update refuses at every worker entry without mutating its owning Genie checkout (17213.718775ms)\n  AssertionError [ERR_ASSERTION]: parent index must survive byte-for-byte\n  + actual - expected\n  ... Skipped lines\n  \n  + Buffer(21940) [Uint8Array] [\n  - Buffer(45232) [Uint8Array] [\n      68,\n      73,\n      82,\n      67,\n      0,\n  ...\n      0,\n  +   0,\n  +   236,\n  -   1,\n  -   216,\n      106,\n      195,\n      9,\n      189,\n      2,\n  ...\n      189,\n  -   25,\n  -   52,\n  -   79,\n  -   91,\n  -   106,\n  -   195,\n  -   9,\n  -   189,\n  -   25,\n  -   52,\n  -   79,\n  -   91,\n  -   0,\n  -   0,\n  -   253,\n  -   1,\n  -   0,\n  -   234,\n  -   97,\n  -   44,\n  -   0,\n  -   0,\n  -   129,\n  -   164,\n  -   0,\n  -   0,\n  -   3,\n  -   233,\n  -   0,\n  -   0,\n  -   3,\n  -   233,\n  -   0,\n  -   0,\n  -   0",
+      "completeStdoutSha256": "a84de85650ba2f49d4d999a406093da42d3b13f4fb1df13587ea5aee76644116",
+      "stderr": ""
+    },
+    "catalog": {
+      "exit": 1,
+      "stdout": "bun test v1.3.14 (0d9b296a)\n",
+      "stderr": "\nscripts/legacy-skills-catalog.test.ts:\n311 |       // when the same commit changes a Genie skill and is necessarily scanned.\n312 |       skill(repo, 'mikro/skills/foreign-later', 'Mikro skill added after import.');\n313 |       skill(repo, 'skills/demo', 'Demo, revised again.');\n314 |       commit(repo, 'revise both package trees');\n315 |       const catalog = outputCatalog(repo);\n316 |       expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);\n                                  ^\nerror: expect(received).toEqual(expected)\n\n  [\n+   \"foreign-ancestor\",\n+   \"foreign-later\",\n+   \"foreign-nested\",\n    \"genie-branch\",\n    \"genie-nested\",\n    \"genie-retired\",\n    \"recorded-only\",\n  ]\n\n- Expected  - 0\n+ Received  + 3\n\n      at <anonymous> (/var/tmp/genie-catalog-before-MT56TA/scripts/legacy-skills-catalog.test.ts:316:29)\n(fail) catalog CLI over isolated Git histories > foreign ancestry and prefixed integration trees are excluded (shared Genie ancestry: %s) [316.03ms]\n311 |       // when the same commit changes a Genie skill and is necessarily scanned.\n312 |       skill(repo, 'mikro/skills/foreign-later', 'Mikro skill added after import.');\n313 |       skill(repo, 'skills/demo', 'Demo, revised again.');\n314 |       commit(repo, 'revise both package trees');\n315 |       const catalog = outputCatalog(repo);\n316 |       expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);\n                                  ^\nerror: expect(received).toEqual(expected)\n\n  [\n+   \"foreign-ancestor\",\n+   \"foreign-later\",\n+   \"foreign-nested\",\n    \"genie-branch\",\n    \"genie-nested\",\n    \"genie-retired\",\n    \"recorded-only\",\n  ]\n\n- Expected  - 0\n+ Received  + 3\n\n      at <anonymous> (/var/tmp/genie-catalog-before-MT56TA/scripts/legacy-skills-catalog.test.ts:316:29)\n(fail) catalog CLI over isolated Git histories > foreign ancestry and prefixed integration trees are excluded (shared Genie ancestry: %s) [320.43ms]\n\n 0 pass\n 18 filtered out\n 2 fail\n 10 expect() calls\nRan 2 tests across 1 file. [700.00ms]\n",
+      "baseline": "7c0eedc01f284bdec1e647f257b83dafa84599db"
+    }
+  },
+  "after": {
+    "micro": {
+      "command": "env TMPDIR=/var/tmp npm run check && npm test && bash scripts/smoke-install-update.sh",
+      "exit": 0,
+      "tests": 1127,
+      "suites": 201,
+      "pass": 1127,
+      "fail": 0,
+      "skipped": 0,
+      "artifact": "artifact://222",
+      "installUpdateSmoke": "passed in isolated local repositories"
+    },
+    "root": {
+      "command": "env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+      "exit": 0,
+      "tests": 3203,
+      "pass": 3201,
+      "skipped": 2,
+      "fail": 0,
+      "files": 156,
+      "artifact": "artifact://225",
+      "warnings": [
+        "Inherited doctor.ts cognitive complexity 26/max25",
+        "Four non-blocking Knip configuration hints"
+      ]
+    },
+    "catalog": {
+      "command": "bun test scripts/legacy-skills-catalog.test.ts src/lib/legacy-skills.test.ts && bun scripts/legacy-skills-catalog.ts --check",
+      "exit": 0,
+      "tests": 26,
+      "fail": 0,
+      "names": 40,
+      "descriptions": 95
+    },
+    "release": {
+      "command": "env TMPDIR=/var/tmp bash scripts/build-binary.sh --platform linux-x64-glibc",
+      "exit": 0,
+      "version": "6.261005.1",
+      "compressedMegabytes": 35,
+      "payloadContract": "builder staging/extraction/source-version checks passed",
+      "actualCliVersion": "6.261005.1",
+      "actualCli": "genie mikro --help exposes existing caller/bench/fixtures commands"
+    }
+  },
+  "rulings": [
+    "Root CI/development Bun >=1.3.11 supports pathIgnorePatterns; existing CLI runtime floor unchanged",
+    "Shared update guard retains explicit Git environment override semantics; no universal claim for externally redefined repositories/indexes",
+    "Initial claim briefs accidentally concatenated card+t_; native t_ claims succeeded before mutations; corrected notes, no supported alias",
+    "Repair dispatch comments arrived after claims/handoffs; preserved actual timestamps, never backdated or replayed; future wave comments precede dispatch"
+  ],
+  "promotion": "No merge/main promotion/production install; independent SHIP pending",
+  "preservation": {
+    "sourceHead": "62894e49314bad07382492ac074ea96df6776f61",
+    "indexSha256": "aa74f553e19f8107b24220a146412e7fdc4a9f3514b941be258cc184f0e8435c",
+    "trackedUnrelatedWipSha256": {
+      "CHANGELOG.md": "a4ad0fc9ba6a8a3ac79db85a5468b3962e08f102d283d3f8421e4ede42f75ffa",
+      "bin/install-state.mjs": "cc7b8232cac67a688d12789a03b705d26f912837aeda8b6fff9d172d4b590bca",
+      "dist/src/cli.js": "9255ddf790f80ff943a262d231d535863d34441bec3fea113f37ad670ec5601c",
+      "dist/tests/install-coordination.test.js": "79b29a3c6550a0d4de00d94ba18f028d6a76c3bd2216f156b0dcc20849fbddf4",
+      "dist/tests/npm-authority.test.js": "f7657e6a1d0e14a144ebcd2cfbfeffc912659cf70adfbe6532ee9d6fe738b618",
+      "scripts/install.sh": "ad2a999d543ebfae682714098f3c6e30a5203393f2c83d3577bd7bd0d5eb0736",
+      "src/cli.ts": "03af08b963b07d66d7a98de2adf06235a27f265babe016386702facd5427b8d2",
+      "tests/install-coordination.test.ts": "c4e9107debdef921168ddb1706dd57ded88b9b12dc5a0421f6b3aad110821792",
+      "tests/npm-authority.test.ts": "997e66c2f7d59868bd4a89948940b504a48e4829b41404f110e81ce70b678ca8"
+    },
+    "operatorSettingsSha256": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4"
+  }
+}

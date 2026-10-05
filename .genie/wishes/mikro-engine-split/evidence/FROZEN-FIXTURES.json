@@ -1,0 +1,2751 @@
+{
+  "version": 1,
+  "status": "fixture-and-control-arms-frozen-candidates-pending-catalog",
+  "registeredAt": "2026-10-05T00:15:00.846Z",
+  "userModelPolicy": {
+    "control": "DeepSeek Flash",
+    "excluded": [
+      "DeepSeek Pro",
+      "Claude"
+    ],
+    "requestedCandidates": [
+      "GLM 5.3",
+      "GPT-6 Luna fast",
+      "GLM 5.3-flash",
+      "Xiaomi MiMo 2.6"
+    ],
+    "codexAllowed": true
+  },
+  "method": {
+    "agent": "wish-context",
+    "reps": 3,
+    "concurrency": 1,
+    "boundary": "none",
+    "facts": false,
+    "phoenix": false,
+    "outerRetries": 1,
+    "maxIterations": 16,
+    "maxCostUsd": 0.3,
+    "maxDepth": 0,
+    "timeoutMs": 600000,
+    "successRule": "No recommendation below matched verified-success parity in each repository/model cell; retain RLM on ties; no automatic default change"
+  },
+  "controlArms": [
+    "rlm-unpatched",
+    "rlm-patched",
+    "pi"
+  ],
+  "controlLogicalRuns": 36,
+  "fixtures": [
+    {
+      "id": "genie-existing",
+      "repository": "genie",
+      "sourceCommit": "2d16298d0af47113956e025c2c9f8f9f33fcc6bd",
+      "parentCommit": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "evaluationCommit": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "evaluationTree": "61617fb0a737ef9342952c8a3463b1c11d82d573",
+      "sourceTree": "b112180c68342f13a8c78ffec05c1138f385f180",
+      "sourceMessage": "fix(metrics): only a ledger file actually read counts as a mikro ledger\n\nRe-review of #3125: the collector counted ledger CANDIDATES (own\n.mikro/runs/*.jsonl names) as evidence, so a directory named\nwish-context.jsonl alone — which readRows correctly skips as EISDIR —\nstill turned \"no ledger here\" into a measured 0 attempts / $0 (reproduced\nthrough the real CLI on 1e89eab69).\n\nreadRows now returns null for a file it did not read (absent, a directory,\nor a failed read), and the repository counts as measured only when at least\none of its own ledger files was actually read: a readable empty file is a\nmeasured 0; EISDIR or vanished candidates alone are no ledger (null); any\nother read failure stays unknown as #3125 made it.\n\nRegression: a directory-only ledger → null; a readable empty ledger beside\nit → measured 0. Fails on the previous code.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+      "prompt": "Intent: only a ledger file actually read counts as a mikro ledger",
+      "kind": "existing",
+      "truth": [
+        {
+          "path": "src/lib/metrics-export.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "src/lib/metrics-offload.ts",
+          "new": false,
+          "expectedEvidence": true
+        }
+      ]
+    },
+    {
+      "id": "brain-existing",
+      "repository": "brain",
+      "sourceCommit": "2751b850baff3d143dba3f51a04fa23ea8474f9d",
+      "parentCommit": "47e36743d643edc030a2a415155a683cb6692cae",
+      "evaluationCommit": "47e36743d643edc030a2a415155a683cb6692cae",
+      "evaluationTree": "6fdc6c88d5fb0c2c19a92256c43bed695866ed70",
+      "sourceTree": "63e613ed1c4510a374f677e8b2edbc679b120850",
+      "sourceMessage": "fix(self-update): drop macOS platform tokens to match the installer\n\n`scripts/install.sh` stopped mapping Darwin to a darwin-* tarball that\nrelease.yml never publishes, but `src/lib/self-update.ts` still did — so\n`brain update` on macOS would resolve `darwin-arm64`, fetch the manifest,\nfind no sha256 entry and fail on the artifact instead of on the real\ncause. The self-update ⇄ install.sh drift tripwire caught it.\n\nPLATFORM_TOKENS is now linux-x64 + linux-arm64 only, and `resolvePlatform`\nrefuses any `Darwin:*` pair with the shared NO_MACOS_ARTIFACT_MESSAGE at\nEXIT_ENV — raised while planning, before any manifest fetch.\n\nThe tripwire now pins the removal as the contract: the linux tokens must\nmatch on both sides AND neither file may carry a darwin-* token, while\nboth must still name macOS in their refusal.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+      "prompt": "Intent: drop macOS platform tokens to match the installer",
+      "kind": "existing",
+      "truth": [
+        {
+          "path": "src/lib/self-update-drift.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "src/lib/self-update.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "src/lib/self-update.ts",
+          "new": false,
+          "expectedEvidence": true
+        }
+      ]
+    },
+    {
+      "id": "brain-new-directory",
+      "repository": "brain",
+      "sourceCommit": "2396abe42db57f71cc4320966a67a15567295a5e",
+      "parentCommit": "77b67f4375190383d3b2b2d0102ebf717758758b",
+      "evaluationCommit": "77b67f4375190383d3b2b2d0102ebf717758758b",
+      "evaluationTree": "d7c62a2aa467ddc3442b168669f77b1ddfccd003",
+      "sourceTree": "5f7bb684a19f0f830465c370d5545a2ee1811283",
+      "sourceMessage": "feat(skills): add grounded dream workflow",
+      "prompt": "Intent: add grounded dream workflow",
+      "kind": "new-directory",
+      "newDirectory": "src/lib/skills",
+      "truth": [
+        {
+          "path": "README.md",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "scripts/build-compiled-artifact.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "scripts/verify-compiled-artifact.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "scripts/verify-compiled-artifact.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "skills/dream/SKILL.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "src/lib/docs-accuracy.test.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "src/lib/install-skills.test.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "src/lib/install-skills.ts",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": "src/lib/skills/dream-dogfood.integration.test.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "src/lib/skills/dream-skill.test.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "src/lib/skills/fixtures/dream-assumption-only.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "src/lib/skills/fixtures/dream-grounded.md",
+          "new": true,
+          "expectedEvidence": false
+        }
+      ]
+    },
+    {
+      "id": "genie-new-directory",
+      "repository": "genie",
+      "sourceCommit": "5f1970b10b4542cd829620f3feed49e792a52917",
+      "parentCommit": "2f32857edb06e5db23eb51fae668fe4899aeebb9",
+      "evaluationCommit": "2f32857edb06e5db23eb51fae668fe4899aeebb9",
+      "evaluationTree": "b955b8b12d56fb2ac14cd45016412869221f77fa",
+      "sourceTree": "a987fa7f6d5b60ac41486c24fc764915a1582d04",
+      "sourceMessage": "feat(mikro): microagent runner, schemas, bench harness and three agent drafts\n\nscripts/mikro/call.ts speaks MCP stdio to `mikro mcp`, validates the JSON an agent\nreturns against scripts/mikro/schemas.ts, verifies every cited path:line against\nthe tree, retries once with the errors appended, appends a ledger line under\n.mikro/runs/ and posts an AGENT span to Phoenix (cc-mikro). bench.ts runs an\nagent over its fixture set (ground truth from merged PRs) and scores it\nmechanically. .mikro/ becomes a tracked genie asset (config declares the\ncustom-typed DeepSeek 4.1 Flash provider; runs/ stays machine-local) with three\nagents — issue-triage, wish-context, review-prep — on the upstream five-rules\ncontract.",
+      "prompt": "Intent: microagent runner, schemas, bench harness and three agent drafts",
+      "kind": "new-directory",
+      "newDirectory": "scripts/mikro",
+      "truth": [
+        {
+          "path": ".gitignore",
+          "new": false,
+          "expectedEvidence": true
+        },
+        {
+          "path": ".mikro/CRITERIA.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/SYSTEM.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/TOOLS.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/issue-triage/SYSTEM.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/issue-triage/agent.yaml",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/review-prep/SYSTEM.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/review-prep/agent.yaml",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/wish-context/SYSTEM.md",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/agents/wish-context/agent.yaml",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": ".mikro/mikro.yaml",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/bench.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/call.test.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/call.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/fixtures/issue-triage.json",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/fixtures/review-prep.json",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/fixtures/wish-context.json",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/phoenix.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/schemas.ts",
+          "new": true,
+          "expectedEvidence": false
+        },
+        {
+          "path": "scripts/mikro/score.ts",
+          "new": true,
+          "expectedEvidence": false
+        }
+      ]
+    }
+  ],
+  "skips": [
+    {
+      "repo": "genie",
+      "sha": "edf9c7024b1a4417b79b6c13f5e9386c92742bf0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "039df531bebb3390295a0211614cf70eba88138f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "552304fc595f5970ffeac71e466dec3c62b87100",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "ce95dca1ecba8d72dba7b1cf75bc2f56217ad019",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2f6d4c16cc0474b3fc6793f041356ef2129d5c50",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "75baaf1a92865a6090bf432ede7b7798c848ee9e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "718a8ba5b2227e35b36328caba44c8d0c1eeaf6a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1af709cd5402b6fa9761ead4943db4e0c07cc425",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8e3b66b4f2ac9ebe062abc6a299b714e859f0c56",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d542e5fdcd2545eac02fc386e98f75937426beea",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "71ab8015e44631c8976cc11f23dd64393dbef1fc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "ef14b5205a18b0c2493945dc5c47a96970e0f840",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c6f98bb493777dd6e6b757d2648278e9f95e7be8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7b8f92fabd7e1d638474fe9960dcd4ba17a9e4a3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f38734173da0bb433bb268f78784c1bd25120d8a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6354ff1cc672b5ed563ffe64203714f882a81872",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "924eed3e1313c3b4009e5179082e66c26259219b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0c716fbb657a65a5811777c6722e1c80fc6db1ac",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9198bd43802e82288a2d49199798f9599d8edb3e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "67c7e2352be5b7374d408272935db2c180ce78d0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1cbcdce056c9640c53e57a9e8e96ebbb69586005",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "3cd158cbdf591c425d23ff1e61a2c750e88bb8a6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "bccc480ff41adcb50efa2d24be30afcb0b1036e1",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "9b40143ef52aa82dbb01dfb70e5dc18ab15f8f25",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "eddbe76ad020a46a04f52c92212a67e13d53e17a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "46d3010654c36e0db9110a56b6c1a3435c6b646b",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "401d8d9787c4b627dcf7ff7dbccfb8dc8a40925b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7ef7e29080b888f68b8e63d427e50e1e7dfaaaea",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7e44bcfe0c5678cb7f787bd9a9954fd349497b50",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8c48f9179474366bd6f55fd1c6de4f86f3e125bd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1f5fc9ecb9c3e590889c4c23b43a7a601088960b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "13ac342fcf76f106474af4543cb82e5f5799dac8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0fc2a6ad42d8c987f268c75c8e435dfddef4fac3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8034343f9af976a0dfd045952ce6478afa0fb28c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c81152a5decff7e4e4211e4b6b683df7e62cd9d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0b433703e346270ccf92ce05bd041f8f70041a3f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "b69ac96dc2c1568a1bf25838ff82a8edea26be6e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fbe64dcd1edc583ba719803043a15bbb331f2d09",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "aa662d84af54d544970779a37824a638941cc575",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0fa03abd2aa6be79b7c11f00993a4006cbb03518",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a1318bec97d464f274dea378e6be5652becbc9e5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2504cfc4dff5013e8e6e8a02163c3d642fc9003f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7ae9c9d13bc07dd121d9fe6905d82d0f618e79f9",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "9d9a15f8f2527ba1ad04061beaad858c66b0df5c",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "295aebdd33bcc6006be10b33164c934c57aae77f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fc2851177fd38271afd4d92a081f76b9f37beff0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fe97559e2d5d80f6749037f0f25e4d9f9f88bbfd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4e9b40bb16474f0c28a986ba8079911df8200783",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "84fa1a8138d2cc3c96c244bf8cf877aa90fcc0cc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "eec9229fea5e4119c1a211a6c462beda07770c9f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "97aaaa1625d53a671e7d52cee2c2a5276cfb9e74",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6c4e05082778b1d0812b5a153262281f7459ff00",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2f3d1a77258039bac57d6790f434b1c255bc031d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c9773e7abd3802e094737b31cf87d98c644b0560",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "364ef2de74a44baad459d505ad81c7bca007efe3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "cef76a3e63a451c1fb45d3a18f3a7d81d66ee71a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "91b5880d3da24f597208ef9e9b6f5cb5fdd1018f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2dfaf3492c746f9d77179c7a9f89c39fe7f06931",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9a4c80ed8e129c3f0fc6d5587529c3ef4b3db1c4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2803f432f5d4ff6824ad54cbe28dacc1c56f2fe9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a20e2d2357c0ae39f0de152afdd51233644e86bf",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d0b5cb1cd3cb7894d50005591ad81d24966660db",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "706200f43fc542f48fdc87382b1b6a0bd2db2c10",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4a0d821c51f774719832f9c420025ae2f5a724ba",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "3b8e433405c45198e170c65ad2b7e180a6748cd9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "55651b5b5886c0389bb6111ad96b1568723a06c8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "836356766debcf0110fb4f02f5fac95bbd145137",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2b36ebd7a4cf3dc307b37ef7db994b4fba75a4cb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9ff079539bcdbe3a42feef53e4b6eb4c2ba7bbf0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "b7026dce6e9edaf71ecec34bdb5b220bb41a0b4a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "86fcbfa25375b501325a286047a118dfdda0035d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f6c88908b8c7bfae83696fd16d771021f6931ae8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "661d684ba04493bc1c2bb99b82f1bfdfedfc3efe",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e66bf74ad5e1699a1d6793eb01951aa3a75bb399",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "660e35260ec7c15dcc98c4921b16c04eed150fc5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c5e9c42e2c0f623e607b1fa39c60f9b44cba28f3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4154baddd93159c201f303e1f7b241e9a9dc13bb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8ee0cd552cb86950ba74dc30bcdd2339fab36ccf",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "97bb50dd6fd125c65993d9440664306da71ba607",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "778bffd8354620282c31ecd72aafdea469a8190a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d702d6dc112cb8a4f7ea4c77e3ed367d73898a81",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9b5425f404c9fe4e5d45d80c525cdd86ab0f332c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fd1b1a49166bf03a052d1aa4b9a0f8eed7691e43",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9467a13192251d2c2e74410fbcc429531256ed91",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6f6d07580dc5f26ff97d4388fa5b5533a4a94074",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "026d8d5e7a78fb16e2f2da9d3ceaa4bbd589c208",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6a1e7029c2de43c2cbc1ba778a4a2902de38aca4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c16835aa4aeb73ee34483aa35eafbcf93d1b5d38",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5b0a14901f5aa422dd546e8ef9f341ca9f127954",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5ad4df411559ed3f5d4199edae4e5d2784fce2fe",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e3f8c8a101e0af60a6b09b69c65c6d16d10a63ae",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "df5e9d879d4ff70660adcd9985fb4c2894f4350c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "88f40f3f1d74f5a7907c300a17efbcc89f0a2b5f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "953f3199083c24eaaf4bd3221aa6888afd51706b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7778f5130592db5caf1c7db295d266291c798de1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2c9519e096e6b50cd57bb39dc7168d1ed37956d4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "661576d24bab9e9b8034a243c15ec365a09ecf37",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "bc6cb802923df381a6c9593bac196e24f021350f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "04ceb193b83f0067fca04603052435d6d485d7d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9299e90c06a6bcc3caf57ae4ac63aec80445108c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "edcd039ddcf8e30f3456e3db4072d76fa1049109",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "286501267982144578b031b53504a3c1a8f68664",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "83cf99270e2a806d4757edbd1266d41553fa764c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "32e234f276943a8e5fc15d0c51d011ab8ab58c2b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "58bc8a7917c880635229bd1744e260747b252014",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "16aecb9a88b23c3cbe8f7da68ef9bae2c25548ba",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "8d83fd00fe30421879d2344d73674c55e423a2d2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7b73dc2b421733b24b930a0806b902c053ec48a4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "db6500ba0565ad50d22167b2c0774353dd63fbbb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "3ece2902c552374a269355c131eccc58b438b662",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0d22af02962e4d35961a083924199f0d0dc911cb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "94a0d5e994b2673e12c0cb51292d6ba44c4d354e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e2652e2b684906e60cbff678e786fa8a5030b362",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "08679bb6539797608c28e3007eb6d1f6c6569463",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6d8a2e9e689d0eb433dfb62d8ae997a55298e84d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f11d45cc21b14da9a78e81c0439e689df5eefa79",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "76069381480b1727bdc603fc1ad164b5bb093123",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "419d39014617c39ff219feb30d1e4dbe0c748def",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6a8027c0ca169d60d737446eef886b42cc66aac6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c8581bc7fff63853b376e814d723e75f6b9640e4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a6d6879fb3b230b3ba30527e943c8e09921df11b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "ef5c465cb46757556ec23f07e38d06e7f88d5188",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "de5f8727503b17613c4b0576c6a2a66f97570dca",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f32142d872435b648053969ffb4400db00534e11",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f304ccd7d55d94aafd511cb0c70a7b77dc9f1b65",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "78d4ff565e16efa6b72cf8351e803ae75229676c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "82f227da0cdc1e0f7875d3c922c977a904ac7deb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "47fe5592de1440556ec1465cf9b4718c9aee34f2",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "57e783908ce2ddc1dcc7ce8e77e077a7a3353fba",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c6f6845646119a09031478c6fc813b2865287b74",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7c0d89c0530d596773071a7096cf3e5ca368b3d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f0e850acc5c2b57585ac36a532701823a5e24fdd",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "3baf9c9a643a39d5be5d79223efcd7604f1e5ed6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5ba0f772e5c2b4cbb89c8a3c7e914adc7af486d2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "14ba42433bd9ee45e2abb64a743ba7918f82cab6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "3c1fa456933b8d18845cf065b33d1b15ca937215",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c20720a4fd8756d287fc97aa613d9ae12785800a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4c43971d4020e3df88948e15681b0eb9085d652e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e1168a4d260b4396d01dc02d00cff29f69d229d1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a84b8693887296bee6b109a94910da093d69c880",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9807f7873e603c12298b71c6276060d4782b6fc5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2fa1590476d4706baa598f09a77ecdc50ae27648",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "98d71761a579336e42e8b84710a43f6943cba9dc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1e36ffcb76e44840047e8e2d459c00dc41f2ef2e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4ae48aedc348b2e0117355fecd91931a96d5addf",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7a48c282ebae4c86a0123f2fecdbd04fffdfabc7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "30fbc8f453c78afcfa690bf5eef2bcad21b96747",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "da0801ebbed39211b8ec7341366bd753964804d5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0a30099e141cd7cc44ddbd797f5bbdf2799f3007",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "16a0842048409a4fdd4f7d14475bce7891d14970",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "47dc3a2032dba2b630de248617b03adc0e468784",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "38275c529c808106acdc5e57c0f40f3eb40105e5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f622c2e686f5d6689966850a336438230dafa51e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f5a6e166ed6e4dcb408741426e454266bc1ed1a5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "93be61c0e688cadf0920bdc74cea5f2f2d286337",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "caa6516ebbe4eb12baede26da6e0c00f4a4db51d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e814aad8d9675fa7bbd286e520f37dc91d643923",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2fd64226922480d96692c03ec09a8d75873674df",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "b1e63cf03cec17743e7f072b73558ec0cbeecf0a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2729c87d42ad33678ba6925ff176f42041545e80",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "231da23fce044571c8b0a55acd1e62ccfe6bcfbe",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f5723db51ec0e1a343e3d89e10787e779ce50471",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "585676584e9aecf93dd40d2ea5f65bc1c46baa80",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8576b2a3cc6880fb9dd580c21ee50000364f3983",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e6b08d90527c3bd39e1373fb21633f67eaa92b6c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6c7a73cf6ce1d7e40c52f7e529ae2005c2546fab",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2ee00baf1638a7f527693cffa7a3315a75750cbf",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "af2d2408ee1f5e88a7a8d9762da6afed811b776f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "05c000809a7f805e345ad06dec374162fa5ff22d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f3fd7f3aeff3b2a3a895996bb9acf09d5f4b32b2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f2ab16efe2ee78925366aa9840155aedfe4cdc6f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "88a3c3c0937cc0b5daa93befd03bc259a9aabea2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1e00d902d38274a1ee9830954dc9fc632bc81209",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "52e16630a2260194cfc9697f2a0688abeec91539",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d3b709f18fdfb2ffe0174817f03954f54286b869",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "52c8a2ed2026e338d1745c94a43aedbc89a58d8e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0b21fa53369292e2f2ccd27f24055e6572a500b3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4b3cf03ed85a65d4f50157fbbe887984cee4775a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "991235ce1b3a2df2644de9382f6ec4f89dca0859",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2ab9462cb047d1b55bcc15ae14297d2320a56da2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0fa00bd2b485c54d4554bfb345db3759c19c6d4e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d0b08fe7b05ab906323f8c13cd99d82494e1af54",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2743f5a8693b9d98ab08db91175a136b1153c4bb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "7df4e0e149a2d36d62673bda92dd615843d92a91",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "30a52837290b6d240628aa5728a8e0d95cde47fb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a8d8ca02ddde1fa9c2accabac9d9679e78b6c184",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9555cd96b4100fb8566c0f64d355104153cfe798",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "605ae4b546dd9672c8d9b3e2fc6f210afb3b4355",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "48a879979edf97b0eff65c9e4272d2534ac54564",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5543403dc79e4a01b21cda5845824570ee9fc6b9",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "375e377886181ba17ef3d1258c9bdd740d452585",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6d9ffd70a3d41a115485ad1a91b2b5ea8ff57b42",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "20ced172dd58c945e95932c0126fa6683518f10f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8e48413eb771db581f50493b561f8de1305116a3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "bf4a0bde458b5705dfee9df0bc59a019fb3ae0a9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9f55057e323234bf6ab2a1d7ee44cf97608df3f0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "4175a237cee890d685750e56fd845c22566b1691",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "18e35c3a563aedd5aba49f339c1226548c9d95b8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "aeb7ae41a352096ce8b364a67e2d00bc79f7e8f3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2bead1bd660d1d97d58dfc131de474827a9abf70",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "3433722c57b3ad30eb8f8a847efed265e42d5a62",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "874d4f3fce92735d75c4ef778e9c7e73517f6833",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "08ce73e18071c34629cabeeec985b9b2227f1e0e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "98d661bb177025d0eb461d9fb392190ad3b34883",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5c09f9f98c5083dc78d15c6b9a982137e488951e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2add8936e06dda2c770b2b1266ddd939e5a34365",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a4cd1bafdd3c3e42c0c0c8898ed83e125f4a5c35",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1bad8c6e3fc25d59962b765f7e3c497ba66ff703",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "232eff75dfb4b52df6ce2dcfc4439468ff37a106",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2c5e8aec6ba6664ebc1eb3a07b05a7b0635794b0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "60d8e327441405e940e2d27a99287d3d9689d463",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "773d046f4344c79f03912c86dcaef064bf1bd5fd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "83f9bcdd86277f6f43d7c0da444e7831e158e1c2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d1cb34e6a36aae4a8217d68dcfd85df7d870beb6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8cfd00ccbeeef22b6896ec3d8de588518cf1ecfd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c726b018f7822e3273e10102bf447788985defac",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5d45cc9bbd86bd8f8d1f74e52a8176be4b18edbb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "503457e7c9fb4a46d501ef8a4122dfbe9dba27a2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "931af21d334dd6a5457f2def8f78979c72ff9fbc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5351c06b6b68374a626e96a0f443f664b37e9d7a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e90cbdbf6609ff69a1c0d118b271cf8b95053cbb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9dc61e49c4cfb5e973b45b2e8bee95f3bae8980d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "49c5d43583acc1c87c4b11e822bd96b68edbbc1d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e3a17b74b01e70f8b615f92fa77197fac830b1ff",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "48f03ebfa9d83578fae88bce884962b4f08028c4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d1bd411a5ae27ef6820c85e20640825167e0aec3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "70933eba9a2a7fe11a5acd805cf52c8265b63d1c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "25ea82b6b52083bca25e7c65633340e2d8cc7ff2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "de8c097ca9d1e0f627dcd7b5490bd47b953b1522",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c879c4c96c56c39ac53693a974f38e89b6cf8562",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "dd1701ef6a670c1c83e84199721ebdc00698734a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a40e0cab0676a91973977f98a33819a98139358f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "12f4b7eaf11917021f109c3a4502e88347ff9d63",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fe4ec95c8dc4c463be1db11304a3fb2e9c43cf01",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6fc17c2e9de76979fbd0e3e43e4a6be40d30fe3e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "90ecfff4d388bf124cb1f8706c62772c302a3dcc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "150ad5484788791e3f7b4f3599990fb1e10c6578",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c7c8488eea5e1878839eaffe584c2cce355fb3c2",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "5922a762ad6c42e23930ef80a7eae85e838088f0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2583908d75fa4d35b784890cd4649f98783f69ff",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "702b9942ba18f07f42925cf597f986a85fe62e98",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "69317d9be97c093933d26538cf30fd2c469752b4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5f67f8f3b34aea0520be27f77174bbd910c27eee",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "74256164f10487ef1707c804a0bc47bc9613ed50",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5619048fbb154ffc58677ac7acc4180dc305e810",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "2ea6ee91951efa509960feb079a65797a1d49d07",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "46b98f08086270167a16dc02487d15ae7a147923",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "95171ab5975e9e16149d9c98ee0c1add3e2e5ae6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "f82b5c9a119f8cde200b49bc7030ca17702e7316",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1ade7ce0bd7fec2c53d01cd173464abd2872f1d0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e33be9abc311f2b8478cbdab83e6362a6a45e692",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "c50a88a801a1551c6a24ee76070522a3c1149678",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6138148f21e64b5f289c0326266891ec69af1bcb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "742b4302c8e287573ec433ea2672f2ad2dcbdd44",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fc0c1314174082d52322ef96a1ba46b03cb86898",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6fd606d507b1e8d5d703b6e90100421dd5fb6473",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "49e0a02272e3ef1d5a3fcd90e2ac62bcd103afa3",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "05b564fd7fa53cee4c2f6fa35d81f836595c8244",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "genie",
+      "sha": "15b7870f3619d46915040b6659d6d29dc5e240a2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "33bb7f4d541e2d3d0b6bc7955ae8ada6bed9c67e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "fccfabf960615b25dfc647d51004b6a2b4eb2ee1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5ddd2ed36e2d2ae27b26f3cb12847d3b6330473b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1b703b8fa0c8db112257d17fb58a9793326f3b92",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "494b3634b03d965ad11224a1a22cf29d7d80946e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "49e6d64d5302f1d6643281d6ca5efeb9712b1650",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0cc23d15139568b269ea49e317ce2106250fe036",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "faaacb4250995c2b8b0238a38fd5286b5f0cc166",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "032b10c48fa7bd549774903d82f49acaaf99dbc5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "12392c14683fec684fdb093e4f07db7b964ca30b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "69a718870b0661b91de766c7de023661d72f72cd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "b9d592a88e617643fb13b1e3242b78da237531b6",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "1ed6a65df09bb51b9d5a832e66d7acb1e73ea3f0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5670e3c879b306038de987c7a5b36d5fda9b2eac",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "1d9ebb99904cd30cb42fc3db1649238a4edc0d4c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "067e22b6227ff5e37944c8cc9482cd0dded5e353",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "369a03676f078222b8bf6ac8d028e9212fb2c79e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c947ea661ecc2fdf1759706b3d63341ab8cde061",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "67b51070e53124ddc15b137fab4ef3d1a531018f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "acd182aa88428fd0d5d4d35af0d7ad371c837913",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "0745c16bee83212cd6d2cd7db43a79bbb694ffe6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "79b66e4c29b6d401013f6e4626ded07cc88779a8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8b42788e88d5808557066f53bb725fdb7e96532f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "c5c6b9f320b5e23e9885369542eca20e73f4e5ca",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "fab1e78987b10a915454bb99ce58545ce056c411",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1c6ceaf3c06f6f49a103ab9ffbb2da0121ede1c8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "5d3ed800d00366a1ba336cacb37b60ea93645571",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "9cf80be04bc165ca862fc18888c775488778a5d5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "b818d6c7a85e67211402bb9b2664768b17aa1276",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a2f7b7aa58c3a39986c4e3dfcf80c1afc21d284a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "abcdbdf576b14c848501b738bb3f81827bb5fcf7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1631d16acadbd7d0c91ec26dea03b34ba52a69b2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "99c87e94e2b07e1808729a0f99e51885b689e066",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "6aa6788b22962f75fafba9a7a93c4f5b7abc0c63",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "86782f71e0c03631b481905712113c786760a187",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "305ae556b082d97562297619fdac480710d85fe5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "28d424107d7a4ffc3a2623f1b0aa4eb1e6af00fe",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "8f476874a9274288105b3e1aa739112320d31149",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "a8a0e1f991ec70582bd4ad6a7fc6348fb5b926c6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "d96a2666826e59e89715377eb0120238adfb534c",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "b1d6041a96d2fb2c9e3e6ec9a6603a1ddcf83789",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "dd9686b3b9ea34cc295520da7fcb69c7ed1675e3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "32a988a404e6ee1259813396e1d1f406c7b3efd6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "410af28c0710e1fa5c51e6c5dad58d9c08e87b72",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "67c87f54ae72262e585321047b6529f4565fe3a5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "586e5fd0a488a8f9532ccd18b3d510710540d30e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "e252c45a5c8fc183ee55ab5b8a95caf8b9cb6fc1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "db65b190a7b1b54522a4c22287e289144600e7cb",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "genie",
+      "sha": "006d62372d7a4ba5229ceaa9edc2aa90bb960b88",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "cde0ef740238ea5b763e8755edbd928d57676c04",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "genie",
+      "sha": "1430a87c30e620db390a621078d66d2e88a2a600",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d57a9c97742002242e7b8cc0ab63c5413e652779",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "dde29ef10a3491aebe90e478a3a725ea297ef6ad",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "brain",
+      "sha": "4426176613de7f02e47ca33d5203b63a53185996",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "a107a31a4ba25c33acf254c41c898a735bed6ec2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9fc0bd5eb7ac8388af449f59d42c4172c7723564",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e956f7a78433ec79382141de189f01d4b7841700",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "826af4e30b0722fe4e80127b950a64e71c65a47c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b1332e76440f23cf6623a689453851a264057144",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "565f802b903c0bbdf4f73454cd16829703c7f501",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0e28a800e14021925ae550faa87b28d12d284daa",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "13de72a3d984dc4cacb6a113924f1d75c7796ada",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9d2572e2997414304b0b28f4bcc5201293782ff4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "db67ed1efaec9fae660121b14e4522b865609e40",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "29dbe72ffc997aebd96b6162be0d88bde5b7c4af",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "bdb8697a0b85e2abdb6982adfb528e32386b2dd9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "df213141998a9d52079524aed487b63e2e805a8d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8484c960d19d21fe17ff2aa84da5343ca26cb87c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "949123359634c2a360cc78bb3b19cc23e7a17d7c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d1e488d3e917c8193bc762183d4d7eed73c50ffa",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c470e2849d70348800a183ba8d1d42e9e36d90ea",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "7fb50aaff24a8f533059018eab51975aa8d2dd7f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f99fe10b3b13ecc8274d8ec7911e8db6a60f0490",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9cae8466500c3d53247ec000acbd5d83e695bba6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "3aa5da25b34777d1e9dd88ff01683f11bec40a3f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "873388ead2b80556ce6a70d554c4d920b776ea4f",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "3955994fe270a9e5f33c187e9975ce6221c796ef",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "2c0ea6101dc8b92488b218d71770253614b6fd04",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "f50a3dba2b6062c6342c5f255c38bad0c9834682",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8399520ff677732b6e50a447393dd3de84ee80d9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "6dfcea77894089ffa60f1d699e64605f6992b6cc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "78e83840b9283456c4491002c145dd8bdf701c6b",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "brain",
+      "sha": "5bf29ad4cc4a40dc68aa9f8c24d808189275c39d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b0a95dba6450cf616bb36444ec2221af20b9f3f4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "eeb5bb79ac62af7026cf91f4ef4c268bee9340ee",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "5f33c2c3de5c5375cb24edfcd7321669bd683dab",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "5b208cd795c512b9d2af4b0841d7d6165514007d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2cdaf706d9714377e68859a3fa29fa71702104ae",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "ce8e0301792a45fae89e06d773be6859cc3afc0d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b1e4c63e728b09ea488ca46b2c6fa0987cb99e99",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b9faba821895622332f9a8893e74bb1414b70532",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "48c1e625d2e69a4e2006403af9821a02e2cc95dc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9d5aaad4965946c2c54b4de0da772341f42aa039",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d5731f20160161124d232faa37d779a709b40389",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c73dcf40b1b29aab8ae896ad4e2e8559686595c8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "742c2756784667f9765de2ab1807688ca5368f1d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2f24e325e7e6181d6e35ed41a9b735ee9415d8fe",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "7f45265fe320a19684c784650789d97b542b70b7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "09d7fa111c924086747dd738e84ecce1c97404fa",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "7a26ec50398a1af82cc1aa768745b477f993c962",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2967cb8e092acfd6e1001c925c6f999c050bb943",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "792d546e3ffe2645e2dff2863fd3189846ed59ba",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c66fac6ea16726fc1a42c25832b8a8510beb61aa",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "4436cfa75389497775dfed95bf83251a21cb8df8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "044eb7b776ab74dba04063506ec592b89d3408f4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e5fcab0d4395526248930151682729542306eef7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b56d711a51666088d81e9111e80e6ae594cb715b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "5ff1830edd65d578ccd60c8e5ea5c77eed2f2e5a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0c7179849bebd5d9dbbe97882e6764ba8f5a8fb5",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "f722d1f2f7906f2de754115291a939d3d9d93a91",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "ea04f63cb8b195b88a1b67cb462d089ceccc5c55",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9a26e14ea97181ce65e24ebad014a389a90d20ac",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9db34379ddddeb9a56425c695309c9c2435a2baf",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "a68caed79ca7d87cd1e7b2efd8d9fad4d0554ed2",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "c6343080d9e9183ef9b874909ea8fd58b19e27cc",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "dfff181950c46757c972d20c8fc3be05cf7f5f9b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d7b618726e2851644d200bc33d163210d71141b8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9854a968ddedf7221131639d8a72ca5c392d332b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f6086e041eecf78a6eba8705765e6b5732317f89",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f96e068c6184c37ac26a8c35c107f4cc40cac158",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "cc9b6e9a6cc1c5d5fdb3ed5a107d58a4c6be8d0d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "73c0f905bd1b261f0d5a81b20b378ff75b3ba4ed",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "de136629b63541ede28a4443b629c0f65cccd814",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "94dbb44eb53d581f2b9c0b73c0bf0ae2d41c96bb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b6c73552d54c27dd66a33d6dd5ea3936f6abf0f8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d547a163cfeca9b849148d4cd1bd768274e0a699",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "be3af442bbc88ced8a9615436740d7f9c485a95a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9dfef2d692b8f1be627d92e22705ac0937025aa5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "585c9803f1298427485adc2994315b6ccd09c9c9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "70446a213e80b0d2b6ab8a2ad16ad6bed0dc1401",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b0b8f24740743b1c0bbf75735454de2b789a58df",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f1c6c96ba20733e7680888628528251b4b8cf206",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "ab365b7bcabb91625100ad8777cb0d31043570aa",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2e4f0f4d3eb4ebae48198b74853c6565db8d8781",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "01708ef3d35dec2fbfc648c0d4216af5ec7d96b9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "87d9aa9ee0ab61e933fbbe5b2a1c76ba76b1582c",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "13b85e50b1f7a4b9f5277f21a214e9c9ff1410b1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e78100ef3ae60beb8151447c0d39e92fde27fc36",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c7cd5491eb2fcf4532988019ec5e585c88f06bb9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0c96d87ddbdf9278652409ba07f120aedc04dea4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "a3319c801a4aae0486f946336bc4621bedd2351a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "ace59b4306788df34f1c198788b4d25f385a2ee3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "78cb7dab2080dff0b75ff4430d24e84b3a32a58a",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "10fb92c62baff8acfaeca6e842d62086fc8f6d1e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "62077bb9f2637fe6f1f33044aec6d33b906a315e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "fde96b27364064882c28675c03ab7268ce7682d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "108d7b7bdcf50829f0368e7979c3d97490f60ace",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f08bd31a54c4658761b9f40032718c9ab7e7b350",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e49fc20f3a262fc0166a54a995a0156fbfbff9f2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b3b1f3aa48a6b22fb97455857d3eb7b2c4f8aec1",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f5b745c8d3621854c06bbfffd03701b490f69039",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "brain",
+      "sha": "a7c57908897448200762ff87e754b39112a3db8d",
+      "reason": "identity-sensitive or documentation-only objective"
+    },
+    {
+      "repo": "brain",
+      "sha": "3d01d1c01e7a91bf11f37d7ba5eaef83ec55ee77",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "78ccdf42daa87e97453a87f0fe1a44ad7bf3b56a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0b5bea22574f8794656ea9e96b44374ce31a09bc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9bd6ec0f75c049e9c14c673c57b8c01a1a7b8541",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "c9ee81ac39b5b617873bcd2b82261a96ee6e3099",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "3b61c996f95e44d1ff947be4710f8791c0e270ac",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "124b48c40586d9a19c198747397d876646be0a19",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "8cceddf04f4af732cf75f25bbf71d0fa20545281",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2aca41740fb757d0963a11a5054ba6c6eec9df97",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c3b1b5a895e8abffadc1112acd0fdf36825ab1a5",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "3e3f9269d4c01e2f3d7b56ae4ef31792754bbbe3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "af190d7eb0e639f89512805bcd818028c3800623",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "4ffde71a4b837156e560f1a196a5fb9819c7f055",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "25f88dcc796b2eda06545ee9d488c50f766e6b42",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "7f882903e0fcc9ac12cdf4e262ed4fbdf73f6ab9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "92c787213157336bf4dcae21973320bb343d4ed4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e98046861388e5a4d2d9fac361db2eef83265c92",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "dcd338f1a969ad2e40b05b5744ceaa2ffd51bada",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d78b1374f7408557680fa81095cef4442211a80d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "2f092d1b4f6f034f03db9bf040a7a2135e325457",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "22dd7b9880175ef71ae54305227c55962a716421",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "761390e8e04989dd16ce1de794f45900417a4a1d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "5506a1fae407f7a433e091f687a38530e5814026",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "83fa3d2c50138dd1cb617a63d4844d27693555f2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "1a89e99694a482adbe804dd2347ae0bf53b31567",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "230e8cc9db411b5bb732f2e6c618cfa20c20d7a4",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "1677c73f48f22a76c65cc49dd878a4d70d1a33b7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "b0dba4300d3e3903bea228684f3ccec67ad57545",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "59e31a5332b16762d29399232d698ca30af3c0e9",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9a2141cc40d3ca07577283c26faeb9077783dee0",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f0f85c01b50adc2dd33ccf0c02d3e7426d357f12",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "66031410fde27386c6a92a71566c79aa5c12aed6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8ac9f66396388322f6e7017d993d8ea6c58c7912",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "56076c0b10d340c3627124031390d09a207c88e6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "09269c452ddd1dc23d272e31b4f3e4c565d2488e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "22e9108af13951642eeaef32627c47ee22cca912",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "10afd05dbe2ad28ac752f73721c199679aa65984",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e50541e7dace79b28a1a8c48ebd4b03a5d8e3fa6",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "cb864c5b355c343d228a93c0c2412727bd13c53a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "a7b73151d3da182056b78878fd3215cb00a322a8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9d6813760ac82d3c6c1c1f66d77ff66a932d694b",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e82818079f501c4e515929bdaec818a8f94532ba",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d0af251a7686b306cef07a4b5cb14c81d194fe32",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "3db6af63b90758ccf820cc1ba199f92121f62199",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f96a2a7cd9d28d28a3f5777e38cfd7710d179450",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "6d328ac7dec946987712b0020eec7d9cf36ffdec",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8e48ba9506ba63f6e2548453aa0db1970228efd7",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0b76341b8dc1ae5e3b23bdfc1bbab2e14449ed73",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d9139d0cdab73115382f5fc8a01ff28d1a457a0f",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "70a68c047dfccb1e05ebea5c345c77fe9dc7157a",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8acb33cb18b8130a06deae807d6e9736a25a4223",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "c574798e53976ef12a6c81d1ad606fb8e62cb6fd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "4972141204e865aff80b52956e4a580c644ea783",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9c38abebeb7de23c547d37389b3fba169bd349d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "143073c69a1e3dc1cc61011d5f689787164db583",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "966b8cfe4e0d81feb540eb440825afa6ed73b87d",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "1ad4164806bafacba67fcac7b2c9028ece2a13ae",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d9ef3960eec771607a8fbf8e5b366a4f5920e160",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "873c1586474006995bed8b118b08e4c06b187399",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8a9bbdd07b34a43028bfed513ecd325b31785cfc",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8deb43f71358ad6a8ac4f6d9d1946a149089293e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "6cc63eee90100cdac9726cb88f4687da976da52d",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d8e687de035ea4d7430f6ee5b8542a0d6974e2dd",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "34f22886aee8d286e9e348830be370ee39cfc9f4",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "afe10dc2d95bf539dde18eb9bc9f145068ef2313",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "faeaabab121aaf457ebc2de36dd7d2b185958687",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "f9f51ac1c0c4cc9c8753350aa725b329ecc35de2",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "0df01236f079e0028770a3f32f9ad00334d008b8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "8bca725ac1d569686c41f84b8606b0606486f676",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "53a433e189dea0258f98c79384f4188415e2a958",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "bc1a3f5984e1e8ddaefb266013627486df487aca",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "5172a3f5ae64d57707586fa22bd9f142140607fb",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "91b554e757ceac9c8bea6b686b745bc489839840",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "9ac8ebfa96ba2f8b4e6ed8a2cacc0b6625ceb2d8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "aae0c2f60ce9af86d718596d643604d412b64c1e",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e1f733f8fe4a0a1aa36acd0440f3633903c5c8f3",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "e1862dee8e2d43f42baca1b7f954cd6d7c4d4435",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "690405089670c416da0fb274b4502ef457a186f8",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "35855fb8516a75469e14a870a23895179412bc44",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "d895870c74573f15ac682ef5aeb118ff370a311e",
+      "reason": "not bounded single-parent commit"
+    },
+    {
+      "repo": "brain",
+      "sha": "7809c7a24058f12311ab06908c1e2049f518d600",
+      "reason": "no text implementation"
+    },
+    {
+      "repo": "brain",
+      "sha": "71f4f1f1aa5ea1569c15970cc381074945281482",
+      "reason": "no text implementation"
+    }
+  ]
+}

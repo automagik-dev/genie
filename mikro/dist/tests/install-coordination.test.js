@@ -114,6 +114,62 @@ async function fixture(actualCli = false) {
     }
     return { area, remote, checkout, env, processes, launch, complete, advance, events, close };
 }
+it("nested-package update refuses at every worker entry without mutating its owning Genie checkout", { timeout: 30_000 }, async () => {
+    const f = await fixture(true);
+    try {
+        const nested = join(f.checkout, "mikro");
+        await mkdir(nested);
+        for (const name of ["bin", "scripts", "dist", "package.json", "package-lock.json", "fixture-cli.mjs"]) {
+            await cp(join(f.remote, name), join(nested, name), { recursive: true });
+        }
+        const tracked = join(f.checkout, "genie-owned.txt");
+        await writeFile(tracked, "committed parent data\n");
+        command(f.checkout, "git", ["config", "user.name", "Fixture"]);
+        command(f.checkout, "git", ["config", "user.email", "fixture@example.invalid"]);
+        command(f.checkout, "git", ["switch", "-c", "genie-feature"]);
+        command(f.checkout, "git", ["add", "."]);
+        command(f.checkout, "git", ["commit", "-m", "nested package"]);
+        await symlink(join(ROOT, "node_modules"), join(nested, "node_modules"), "dir");
+        await writeFile(tracked, "staged parent data\n");
+        command(f.checkout, "git", ["add", "genie-owned.txt"]);
+        await writeFile(tracked, "unstaged parent data\n");
+        const untracked = join(nested, "local-source-note");
+        await writeFile(untracked, "keep local source\n");
+        const head = command(f.checkout, "git", ["rev-parse", "HEAD"]);
+        const index = await readFile(join(f.checkout, ".git/index"));
+        const protectedFiles = ["bin/install-state.mjs", "package.json", "package-lock.json", "dist/src/cli.js"];
+        const source = await Promise.all(protectedFiles.map(name => readFile(join(nested, name))));
+        assert.equal(existsSync(join(f.checkout, ".git/FETCH_HEAD")), false);
+        // The launcher bypasses CLI import; the real compiled CLI bypasses the
+        // launcher; --worker bypasses both managed front doors.
+        const entries = [
+            [join(nested, "bin/mikro.mjs"), "update", "--force"],
+            [join(nested, "dist/src/cli.js"), "update", "--force"],
+            [join(nested, "bin/install-state.mjs"), "--worker", "update", nested, "--force"],
+        ];
+        for (const args of entries) {
+            const updater = start(f.checkout, process.execPath, args, f.env);
+            f.processes.push(updater);
+            const result = await updater.done;
+            assert.equal(result.code, 1, result.out);
+            assert.deepEqual(await readFile(join(f.checkout, ".git/index")), index, "parent index must survive byte-for-byte");
+            assert.equal(command(f.checkout, "git", ["rev-parse", "HEAD"]), head);
+            assert.match(result.out, /Refusing standalone mikro update/);
+            assert.match(result.out, /Update the owning Genie checkout explicitly/);
+            assert.equal(command(f.checkout, "git", ["symbolic-ref", "--short", "HEAD"]), "genie-feature");
+            assert.equal(await readFile(tracked, "utf8"), "unstaged parent data\n");
+            assert.equal(await readFile(untracked, "utf8"), "keep local source\n");
+            assert.deepEqual(await Promise.all(protectedFiles.map(name => readFile(join(nested, name)))), source);
+            assert.equal(await readlink(join(nested, "node_modules")), join(ROOT, "node_modules"));
+            assert.equal(existsSync(nested + ".mikro-install"), false, "refusal must precede ownership and journaling");
+            assert.equal(existsSync(join(f.checkout, ".git/FETCH_HEAD")), false, "refusal must precede fetch");
+            assert.equal(existsSync(join(f.area, "events")), false, "npm/build must not run");
+        }
+    }
+    finally {
+        await f.close();
+    }
+});
 it("updater and launcher serialize npm/build and recheck completion after waiting", { timeout: 30_000 }, async () => {
     const f = await fixture(true);
     try {
@@ -295,17 +351,25 @@ it("normal launch retains the original PID and terminates on SIGTERM", { timeout
         await f.close();
     }
 });
-it("committed direct CLI update delegates to the same transaction after source compilation", { timeout: 30_000 }, async () => {
+it("compiled CLI updates an independent standalone linked worktree without changing its sibling checkout", { timeout: 30_000 }, async () => {
     const f = await fixture(true);
     try {
-        await symlink(join(ROOT, "node_modules"), join(f.checkout, "node_modules"), "dir");
+        const linked = join(f.area, "linked-checkout");
+        const siblingHead = command(f.checkout, "git", ["rev-parse", "HEAD"]);
+        command(f.checkout, "git", ["worktree", "add", "-b", "linked-install", linked, "HEAD"]);
+        assert.match(await readFile(join(linked, ".git"), "utf8"), /^gitdir: /);
+        await symlink(join(ROOT, "node_modules"), join(linked, "node_modules"), "dir");
         await f.advance();
-        const direct = start(f.checkout, process.execPath, [join(f.checkout, "dist/src/cli.js"), "update"], f.env);
+        const direct = start(linked, process.execPath, [join(linked, "dist/src/cli.js"), "update"], f.env);
         f.processes.push(direct);
         assert.equal((await direct.done).code, 0, direct.output());
+        assert.equal(command(linked, "git", ["rev-parse", "HEAD"]), command(f.remote, "git", ["rev-parse", "HEAD"]));
+        assert.equal(command(f.checkout, "git", ["rev-parse", "HEAD"]), siblingHead);
         assert.deepEqual(await f.events(), ["ci:start", "ci:end", "build:start", "build:end"]);
-        const source = await readFile(join(ROOT, "src/cli.ts"), "utf8");
-        assert.match(source, /await runManaged\(root, "update"/);
+        const version = start(linked, process.execPath, [join(linked, "bin/mikro.mjs"), "--version"], f.env);
+        f.processes.push(version);
+        assert.equal((await version.done).code, 0, version.output());
+        assert.match(version.output(), /CLI_READY/);
     }
     finally {
         await f.close();

@@ -170,6 +170,22 @@ Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every com
 | `genie wish` | `wish lint` checks any repository's wishes for structure; `wish report <runId>` prints a run's tokens and time per stage |
 </details>
 
+## Repository packages
+
+[Mikro](mikro/README.md) lives in `mikro/` with its original Git history, npm lockfile, Node build and independent CI. Its runtime and dependencies are not part of the Genie binary or release payload. Root Bun, Biome and Knip discovery exclude that package; its full npm checks run separately.
+
+Repository checks use Bun 1.3.11 or newer, matching CI: subtree test pruning relies on `test.pathIgnorePatterns`. This development prerequisite does not change Genie's existing CLI runtime floor.
+
+```bash
+bun run check
+npm --prefix mikro run deps:ci
+npm --prefix mikro run build
+npm --prefix mikro run check
+npm --prefix mikro test
+```
+
+`mikro update` is for a standalone Mikro Git worktree, including linked worktrees. It refuses the nested package before acquiring update ownership or changing Git state. Update the owning Genie source checkout explicitly instead; `genie update` remains the signed installed-release update path.
+
 ## Links
 
 [Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-dev/genie/releases) · [automagik-dev](https://github.com/automagik-dev), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [MIT License](LICENSE)
