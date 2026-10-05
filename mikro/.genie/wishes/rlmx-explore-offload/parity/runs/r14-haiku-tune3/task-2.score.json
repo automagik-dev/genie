@@ -1,0 +1,241 @@
+{
+  "arm": "rlmx",
+  "task": 2,
+  "model": "khal/claude-haiku",
+  "round": "r14-haiku-tune3",
+  "footer": "rlmx · agent=explore · khal/claude-haiku · 5 iterations · 172,287 in / 26,561 out · $0.31 · 186.0s · session sess_eff0c432a86ccc07",
+  "wallSeconds": 186.4,
+  "requestChars": 1818,
+  "resultChars": 4364,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 9,
+  "factTotal": 10,
+  "answerChars": 4229,
+  "citations": [
+    {
+      "path": "src/lib/trusted-executable.ts",
+      "line": 147,
+      "key": "src/lib/trusted-executable.ts:147",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/trusted-executable.ts",
+      "lines": 167,
+      "verdict": "resolves",
+      "text": "throw new Error(`Refusing repository-local ${name} executable: ${candidate}`);"
+    },
+    {
+      "path": "src/lib/trusted-executable.ts",
+      "line": 142,
+      "key": "src/lib/trusted-executable.ts:142",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/trusted-executable.ts",
+      "lines": 167,
+      "verdict": "resolves",
+      "text": "const forbiddenRoots = [...new Set([canonicalCwd, ...resolveEnclosingGitTrustRoots(canonicalCwd)])].filter("
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 353,
+      "key": "src/genie-commands/install.ts:353",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok);"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 367,
+      "key": "src/genie-commands/install.ts:367",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "'  \\x1b[33m!\\x1b[0m Skipped agent-sync: codex integration failed under --integrations auto (rerun with --integrations cl"
+    },
+    {
+      "path": "src/genie-commands/doctor.ts",
+      "line": 1001,
+      "key": "src/genie-commands/doctor.ts:1001",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "function councilStampState(councilPath: string, pluginRoot: string): { stale: boolean; label: string } {"
+    },
+    {
+      "path": "src/genie-commands/doctor.ts",
+      "line": 1008,
+      "key": "src/genie-commands/doctor.ts:1008",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "const match = content.match(/const LENS_ROOT = '([^']*)'/);"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 1008,
+      "key": "doctor.ts:1008",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "const match = content.match(/const LENS_ROOT = '([^']*)'/);"
+    },
+    {
+      "path": "src/genie.ts",
+      "line": 49,
+      "key": "src/genie.ts:49",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie.ts",
+      "lines": 204,
+      "verdict": "resolves",
+      "text": "program.option('--no-interactive', 'Disable interactive prompts (exit 2 instead of prompting)');"
+    },
+    {
+      "path": "src/lib/interactivity.ts",
+      "line": 25,
+      "key": "src/lib/interactivity.ts:25",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/interactivity.ts",
+      "lines": 170,
+      "verdict": "resolves",
+      "text": "if (process.argv.includes('--no-interactive')) return false;"
+    },
+    {
+      "path": "src/genie-commands/uninstall.ts",
+      "line": 33,
+      "key": "src/genie-commands/uninstall.ts:33",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "import { confirm } from '@inquirer/prompts';"
+    },
+    {
+      "path": "src/genie-commands/uninstall.ts",
+      "line": 3579,
+      "key": "src/genie-commands/uninstall.ts:3579",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "const proceed = await askConfirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 11,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/runtime-integrations.ts:2171",
+      "anchoredOn": "const cwd = options.cwd ?? process.cwd()",
+      "claim": "**childCwd = process.cwd() confirmed:** `src/lib/runtime-integrations.ts:481-490` (`resolveRuntimeExecutable` → `validateTrustedExecutablePath(..., cwd)`), fed ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "const",
+        "process.cwd()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "**File:** `src/genie-commands/install.ts:156-175` const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok); // 156",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "codexFailed"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/agent-sync.ts:3521",
+      "anchoredOn": "syncOneSkill",
+      "claim": "**File:** `src/lib/agent-sync.ts:3521-3532` (`syncOneSkill`)",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/doctor.ts:984",
+      "anchoredOn": "sourceDigest === managedDigest && computeDirDigest(dir) === managedDigest",
+      "claim": "- **doctor:** `src/genie-commands/doctor.ts:797-817` (`summarizeManagedSkills`). Line 811 requires `sourceDigest === managedDigest && computeDirDigest(dir) === ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "plugins/genie/workflows/council.js:23",
+      "anchoredOn": "__GENIE_LENS_ROOT__",
+      "claim": "**What/where:** `LENS_ROOT` is the absolute path to the installed genie plugin dir, injected into the `/council` workflow. Template ships unstamped: `plugins/ge",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "__GENIE_LENS_ROOT__"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/agent-sync.ts:5078",
+      "anchoredOn": "stampWorkflowTemplate",
+      "claim": "**Stamping:** `src/lib/agent-sync.ts:5060-5066` (`stampWorkflowTemplate`):",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/doctor.ts:1001",
+      "anchoredOn": "councilStampState",
+      "claim": "`src/genie-commands/doctor.ts:828-838` (`councilStampState`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "councilStampState"
+      ]
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/interactivity.ts:22",
+      "anchoredOn": "isInteractive",
+      "claim": "**Sole consumer:** `src/lib/interactivity.ts:22-27` (`isInteractive`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "isInteractive"
+      ]
+    },
+    {
+      "id": "F9",
+      "anchor": "src/genie-commands/uninstall.ts:3468",
+      "anchoredOn": "uninstallCommand",
+      "claim": "**Root cause.** `uninstallCommand` (`src/genie-commands/uninstall.ts:3426`, signature `options: { removeMarketplace?: boolean } = {}`) **never calls `isInteract",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "| A2 | agent-sync scope gated on a codex-only `codexFailed` flag under `auto` → claude/hermes skipped too | `src/genie-commands/install.ts:162-175` | One block,",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "codexFailed"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "task": 4,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/4.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/xdna-top",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-3-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T09:20:48.517Z",
+  "question": "This project can both record telemetry to a file and serve it to Prometheus. For the recorder: what identifies an event and how is a line written? For the exporter: how is it wired to the metrics registry and is there any naming rule I have to know about before adding a metric? path:line citations please.",
+  "provenance": {
+    "promptSha256": "4eafbb3d7e817d8bd4ea3fe37bc050c91f7e6ebfd25890014cf6d5993ad12ccb",
+    "promptChars": 32924,
+    "promptSnapshot": "parity/prompts/4eafbb3d7e817d8bd4ea3fe37bc050c91f7e6ebfd25890014cf6d5993ad12ccb.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "c05ea15edbaba8dbaf87c69a3d267b65ac0b69a8",
+      "branch": "main",
+      "dirty": false
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 247,
+  "requestChars": 319,
+  "resultChars": 2385,
+  "answer": "**Recorder (src/xdna_top/record.py)**\n\n- **What identifies an event:** Each event carries a `\"type\"` field set to `\"telemetry\"` (line 31) or `\"mark\"` (line 42), and a `\"schema_version\"` set to the constant `RECORD_SCHEMA_VERSION = \"1.0\"` (line 22). These two fields together distinguish one event kind from another.\n\n- **How a line is written:** The helper `_dump(event)` (line 226) serialises the event as `json.dumps(event) + \"\\n\"`. The caller `append_event` (line 49) calls `handle.write(line)` where `line = _dump(event)` (line 59) to append a JSONL line to the file.\n\n**Exporter (src/xdna_top/exporter.py)**\n\n- **Wiring to the metrics registry:** The `serve()` function (line 103) creates a `CollectorRegistry()` (line 105), registers a `XdnaCollector` instance on it via `registry.register(XdnaCollector(...))` (line 106), and passes the registry to `start_http_server(port, addr=host, registry=registry)` (line 107). The `XdnaCollector.collect()` method (line 142) yields metric families at scrape time.\n\n- **Naming rules for new metrics:**\n  Every metric name must begin with the prefix **`xdna_`** — every built-in metric follows this pattern (e.g. `\"xdna_up\"` at line 32, `\"xdna_igpu_busy_percent\"` at line 36). **Counter families must omit the `_total` suffix** — the comment at line 62 states: *\"Counter families are named WITHOUT _total; prometheus_client appends it.\"* Names use snake_case and typically include the unit (e.g. `percent`, `watts`, `mhz`).\n\nCitations:\n- src/xdna_top/record.py:22 — `RECORD_SCHEMA_VERSION = \"1.0\"`\n- src/xdna_top/record.py:31 — `\"type\": \"telemetry\"`\n- src/xdna_top/record.py:42 — `\"type\": \"mark\"`\n- src/xdna_top/record.py:226 — `def _dump(event: dict[str, Any]) -> str:` (body: `json.dumps(event) + \"\\n\"`)\n- src/xdna_top/record.py:59 — `handle.write(line)`\n- src/xdna_top/exporter.py:105 — `registry = CollectorRegistry()`\n- src/xdna_top/exporter.py:106 — `registry.register(XdnaCollector(...))`\n- src/xdna_top/exporter.py:107 — `start_http_server(port, addr=host, registry=registry)`\n- src/xdna_top/exporter.py:32 — `\"xdna_up\"`\n- src/xdna_top/exporter.py:62 — `# Counter families are named WITHOUT _total; prometheus_client appends it.`\n- src/xdna_top/exporter.py:36 — `\"xdna_igpu_busy_percent\"`\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 97,396 in / 14,744 out · $0.02 · 246.8s · session sess_38bc241a5094c7e8",
+  "fullText": "**Recorder (src/xdna_top/record.py)**\n\n- **What identifies an event:** Each event carries a `\"type\"` field set to `\"telemetry\"` (line 31) or `\"mark\"` (line 42), and a `\"schema_version\"` set to the constant `RECORD_SCHEMA_VERSION = \"1.0\"` (line 22). These two fields together distinguish one event kind from another.\n\n- **How a line is written:** The helper `_dump(event)` (line 226) serialises the event as `json.dumps(event) + \"\\n\"`. The caller `append_event` (line 49) calls `handle.write(line)` where `line = _dump(event)` (line 59) to append a JSONL line to the file.\n\n**Exporter (src/xdna_top/exporter.py)**\n\n- **Wiring to the metrics registry:** The `serve()` function (line 103) creates a `CollectorRegistry()` (line 105), registers a `XdnaCollector` instance on it via `registry.register(XdnaCollector(...))` (line 106), and passes the registry to `start_http_server(port, addr=host, registry=registry)` (line 107). The `XdnaCollector.collect()` method (line 142) yields metric families at scrape time.\n\n- **Naming rules for new metrics:**\n  Every metric name must begin with the prefix **`xdna_`** — every built-in metric follows this pattern (e.g. `\"xdna_up\"` at line 32, `\"xdna_igpu_busy_percent\"` at line 36). **Counter families must omit the `_total` suffix** — the comment at line 62 states: *\"Counter families are named WITHOUT _total; prometheus_client appends it.\"* Names use snake_case and typically include the unit (e.g. `percent`, `watts`, `mhz`).\n\nCitations:\n- src/xdna_top/record.py:22 — `RECORD_SCHEMA_VERSION = \"1.0\"`\n- src/xdna_top/record.py:31 — `\"type\": \"telemetry\"`\n- src/xdna_top/record.py:42 — `\"type\": \"mark\"`\n- src/xdna_top/record.py:226 — `def _dump(event: dict[str, Any]) -> str:` (body: `json.dumps(event) + \"\\n\"`)\n- src/xdna_top/record.py:59 — `handle.write(line)`\n- src/xdna_top/exporter.py:105 — `registry = CollectorRegistry()`\n- src/xdna_top/exporter.py:106 — `registry.register(XdnaCollector(...))`\n- src/xdna_top/exporter.py:107 — `start_http_server(port, addr=host, registry=registry)`\n- src/xdna_top/exporter.py:32 — `\"xdna_up\"`\n- src/xdna_top/exporter.py:62 — `# Counter families are named WITHOUT _total; prometheus_client appends it.`\n- src/xdna_top/exporter.py:36 — `\"xdna_igpu_busy_percent\"`\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 97,396 in / 14,744 out · $0.02 · 246.8s · session sess_38bc241a5094c7e8",
+  "structuredContent": {
+    "session_id": "sess_38bc241a5094c7e8"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · working 30s",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 2 · 1 recursive spawn",
+    "agent=explore-r · iteration 2 · 2 recursive spawns",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · working 135s",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · working 165s",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

@@ -1,0 +1,4199 @@
+{
+  "version": "mikro-prime-sdk-model-benchmark-v2",
+  "manifest": {
+    "version": "mikro-prime-sdk-model-benchmark-v2",
+    "baseSha": "61993273b1085ba155c05e84e537b3479a92df01",
+    "harnessSha256": "9fb1ae3fd70bb65c4f2439adf8fd1b72ddd526bbe8d222e344ac7f3de3a5bdbf",
+    "fixtureHarnessSha256": "b27b1f34e147ecbbec4e6457f4aa49343f1ddbb82438922c7577d5d638fe4b89",
+    "primeSdkAdapterSha256": "2dd9ac3b0ec9705d967fb099347adc43fbdec9ecd08a79ce9fb351e30ba3857f",
+    "primeVersion": "0.8.1",
+    "runtime": "Mikro PrimeSdkBackend using Prime Agent 0.8.1 in-process SDK",
+    "wire": "Prime AgentSession -> prime-agent-ai -> OpenRouter and direct DeepSeek OpenAI chat completions",
+    "routePolicy": "GLM via pinned OpenRouter FP8; DeepSeek via its official direct API",
+    "routes": {
+      "z-ai/glm-5.3": {
+        "provider": "GMICloud",
+        "slug": "gmicloud",
+        "tag": "gmicloud/fp8",
+        "quantization": "fp8"
+      },
+      "z-ai/glm-5.3-flash": {
+        "provider": "GMICloud",
+        "slug": "gmicloud",
+        "tag": "gmicloud/fp8",
+        "quantization": "fp8"
+      },
+      "deepseek/deepseek-v4-flash-0731": {
+        "provider": "DeepSeek",
+        "tag": "deepseek-direct",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-flash",
+        "quantization": "provider-managed"
+      },
+      "deepseek/deepseek-v4-pro-0813": {
+        "provider": "DeepSeek",
+        "tag": "deepseek-direct",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-pro",
+        "quantization": "provider-managed"
+      }
+    },
+    "routesEnforced": true,
+    "commonUpstream": false,
+    "modelOnlyLeaderboardEligible": false,
+    "upstreamObservable": true,
+    "models": [
+      {
+        "id": "z-ai/glm-5.3",
+        "wireProvider": "openrouter",
+        "wireModel": "z-ai/glm-5.3",
+        "promptRate": 1.4,
+        "completionRate": 4.4,
+        "builtIn": true
+      },
+      {
+        "id": "z-ai/glm-5.3-flash",
+        "wireProvider": "openrouter",
+        "wireModel": "z-ai/glm-5.3-flash",
+        "promptRate": 0.075,
+        "completionRate": 0.25,
+        "builtIn": false
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-0731",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-flash",
+        "promptRate": 0.44,
+        "completionRate": 1.32,
+        "cacheReadRate": 0.014,
+        "builtIn": true
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro-0813",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-pro",
+        "promptRate": 1.32,
+        "completionRate": 3.96,
+        "cacheReadRate": 0.044,
+        "builtIn": true
+      }
+    ],
+    "cases": [
+      {
+        "id": "shortest-path-01",
+        "family": "shortest-path",
+        "seed": 1408346567,
+        "promptSha256": "df7cb018db97539a33cb69f6a84cf289e913ef4950052fc255b6a855b4ae2bc0",
+        "expectedSha256": "2c65c3b9ba8faa055117959095e0423526301ec4cc0ed2e5c9a889260e840434"
+      },
+      {
+        "id": "shortest-path-02",
+        "family": "shortest-path",
+        "seed": 1408346664,
+        "promptSha256": "bcd493fdb54767ae9b9203953bcaec59824ac9151f5521876f24d8ed65c01c39",
+        "expectedSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b"
+      },
+      {
+        "id": "shortest-path-03",
+        "family": "shortest-path",
+        "seed": 1408346761,
+        "promptSha256": "36bd4be8dfaca4b8be767fc620e7ff94b915ec75a7d1edddc1e100779f1c2060",
+        "expectedSha256": "79eb311af69f7b24bfa1768e6c96462c61aba4396b344193cce5c92a2a2cb5b3"
+      },
+      {
+        "id": "shortest-path-04",
+        "family": "shortest-path",
+        "seed": 1408346858,
+        "promptSha256": "f6cde16c42eacf5c84f3bcd5c7dde7299b0154d397df1cae3e3d05bfa1749d70",
+        "expectedSha256": "d0c8f06255dfef8b04213cddfd36a8925ae4a941f929a2be7b14c6e64d146e70"
+      },
+      {
+        "id": "shortest-path-05",
+        "family": "shortest-path",
+        "seed": 1408346955,
+        "promptSha256": "b349537559f268309fa294720fd280120a06fa9c0ebb66b2b473a795aee497cd",
+        "expectedSha256": "25d8c40d7d7bd310e9e5c9f661d4d11c2471cfdd86f4a3a49b6b9527b17959c4"
+      },
+      {
+        "id": "shortest-path-06",
+        "family": "shortest-path",
+        "seed": 1408347052,
+        "promptSha256": "eb54b9fe46008d87bd1351777571826143cb1d7abd59961737bad9b1bd0ff059",
+        "expectedSha256": "c307a2f2444930d51330220191640daa18c2adcfd6ef95e6515a49a2fa29b0b6"
+      },
+      {
+        "id": "shortest-path-07",
+        "family": "shortest-path",
+        "seed": 1408347149,
+        "promptSha256": "62667ab6ea6a6d7803d78a322a5fd30a284c7f7aa53bb85efed4233c29ed7676",
+        "expectedSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5"
+      },
+      {
+        "id": "shortest-path-08",
+        "family": "shortest-path",
+        "seed": 1408347246,
+        "promptSha256": "716e2e20172bb86020009400332b4b9d32acb7dd890da76e962fd59be7c768c7",
+        "expectedSha256": "8467da4fb6cd977f76a80ce1f7cd0515bbdf2226ab0967a655c2afeafbf9706f"
+      },
+      {
+        "id": "shortest-path-09",
+        "family": "shortest-path",
+        "seed": 1408347343,
+        "promptSha256": "0b37d161b37856b70a69e7e239130cb6698c97af6944ff7d80ceee713b01ef67",
+        "expectedSha256": "4da5bb96907d26734f0bb3726e39191a4dce23f72601b6f6016aad2f6c93909f"
+      },
+      {
+        "id": "shortest-path-10",
+        "family": "shortest-path",
+        "seed": 1408347440,
+        "promptSha256": "e53f677a45c6294cf1a9e71ede99fb1ddfe4bb1856d381378078ada2d9d4dd7c",
+        "expectedSha256": "a79fffa8b7267d33787d58c2bbdf0f1f166834db4244fe76f4ce4022878d7b91"
+      },
+      {
+        "id": "critical-path-01",
+        "family": "critical-path",
+        "seed": 1408356567,
+        "promptSha256": "94e90965eb7c9fa66901d64a85b9fa862523ccbcf7109d931f1d7aef2c72694c",
+        "expectedSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee"
+      },
+      {
+        "id": "critical-path-02",
+        "family": "critical-path",
+        "seed": 1408356664,
+        "promptSha256": "bb02c69b8b59bdf87dc124c241e58ac29c821c90cf7c036d835da16523861368",
+        "expectedSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d"
+      },
+      {
+        "id": "critical-path-03",
+        "family": "critical-path",
+        "seed": 1408356761,
+        "promptSha256": "7500cfe675c178b9d0497248972d2061321c6301485bbf9af0bab36d5f8f2da2",
+        "expectedSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae"
+      },
+      {
+        "id": "critical-path-04",
+        "family": "critical-path",
+        "seed": 1408356858,
+        "promptSha256": "bf95f827b11f1717192d79ca58a526e8148f4067071d09f57c42a79981ad3d9e",
+        "expectedSha256": "cb00e3a7bf4550cf5201ce7f5a0afa5e68dedb958a4eb1747f700e03b0407930"
+      },
+      {
+        "id": "critical-path-05",
+        "family": "critical-path",
+        "seed": 1408356955,
+        "promptSha256": "862f5a19e0d9a074c1331ffaf7502f4b85803b2a3ce985de7d4db31bbe121401",
+        "expectedSha256": "ce28e25630a4277de9275b9959e5d9f37501066f769c856b5912fccb50c90c8d"
+      },
+      {
+        "id": "critical-path-06",
+        "family": "critical-path",
+        "seed": 1408357052,
+        "promptSha256": "d58091104d29b45951a18bd49da42171d27b36c6677a345ae9309595fb5e899a",
+        "expectedSha256": "2e0a00b4747f48de9e99a46cf28e3e661ebe60e95f61d96e394488eb188265ba"
+      },
+      {
+        "id": "critical-path-07",
+        "family": "critical-path",
+        "seed": 1408357149,
+        "promptSha256": "98a16b902db228f4f01dfd208475e819fa9c7e876e60e7db55816acd931ce13b",
+        "expectedSha256": "cc9ad16b9d4132a54021454f030fec63c29ec4ed42e03cf3b74e68f9592b2fa9"
+      },
+      {
+        "id": "critical-path-08",
+        "family": "critical-path",
+        "seed": 1408357246,
+        "promptSha256": "b1fee6c6c8d415bf2523b729eaeadd95d660016e4906fe8ebb31e21c7684131d",
+        "expectedSha256": "3dfb248939248af50c4a1d9878188e8d6b17a930fe1cd399896f621f1e44857d"
+      },
+      {
+        "id": "critical-path-09",
+        "family": "critical-path",
+        "seed": 1408357343,
+        "promptSha256": "ed10b40bfb5b69b969ce45c4f91fa5f5d7fc6f110d0207f650f32f042de6c8b4",
+        "expectedSha256": "11f1a528e7c87843b5418c9588a13bc28c3b1d8703c150e3aaf1134ee0b0a3cf"
+      },
+      {
+        "id": "critical-path-10",
+        "family": "critical-path",
+        "seed": 1408357440,
+        "promptSha256": "bd038906595b38122f237bc87fc29ad573d34f0627728221e5003e6ad5c804c3",
+        "expectedSha256": "d780a20bc64a73f478bf4a976748549c62dc739498e0c51982ae9c48eb3ee720"
+      },
+      {
+        "id": "event-ledger-01",
+        "family": "event-ledger",
+        "seed": 1408366567,
+        "promptSha256": "3040062a3a3774af1ab927c18b80a8216ebf66562837ab10c1f972cfc8f7eae2",
+        "expectedSha256": "e6ee969dc0826e37b5ebad141f3fb71629d71cbb8c6520bcf0771c9854078ee8"
+      },
+      {
+        "id": "event-ledger-02",
+        "family": "event-ledger",
+        "seed": 1408366664,
+        "promptSha256": "074a1768aea0fb39be498e9782ed8b98f4432dfb3dd3f83c829eded6a6f081c8",
+        "expectedSha256": "8364a50965365b3f85625506bd13802084d6797aca1c9f3bfc309d81f63975c5"
+      },
+      {
+        "id": "event-ledger-03",
+        "family": "event-ledger",
+        "seed": 1408366761,
+        "promptSha256": "76502f567c0101a743654bfa59d17f96e0b6b5e7d239c94a6723f78b6248b227",
+        "expectedSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f"
+      },
+      {
+        "id": "event-ledger-04",
+        "family": "event-ledger",
+        "seed": 1408366858,
+        "promptSha256": "839533c55fd2d23ff1f507a13ba4ca8a014313d45a53e5e409073a1d8d2779c3",
+        "expectedSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11"
+      },
+      {
+        "id": "event-ledger-05",
+        "family": "event-ledger",
+        "seed": 1408366955,
+        "promptSha256": "87ce6beb1b51a5eb9c910b294c1b9c17a9252e157e484e8e94f74d9e58b0494b",
+        "expectedSha256": "fcc9d70b155e5fe5940b0124c626f4d6590db6a9e2eba4846a847cbac533c491"
+      },
+      {
+        "id": "event-ledger-06",
+        "family": "event-ledger",
+        "seed": 1408367052,
+        "promptSha256": "1ed16466659bf00bd65908df6bb4d26c903af7d373e0a6783190aeb7c44103c5",
+        "expectedSha256": "b6dbfad50555c3b7246c901a0d9f4cc7bed0d0e03f8c49f3c6424a7862bda769"
+      },
+      {
+        "id": "event-ledger-07",
+        "family": "event-ledger",
+        "seed": 1408367149,
+        "promptSha256": "ee20a5f4bf3ae33f535cc1529262a62f3f8a64c31e6ec37056e1edd7023eea92",
+        "expectedSha256": "5da15b2908c4aead506958450ec01679fee027dcb9b7d32fb5488ad857a27082"
+      },
+      {
+        "id": "event-ledger-08",
+        "family": "event-ledger",
+        "seed": 1408367246,
+        "promptSha256": "1ce0eb93d9ae6ff382c26fcc5a99df68766eed5db250e3e21082e0d4720a16e6",
+        "expectedSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794"
+      },
+      {
+        "id": "event-ledger-09",
+        "family": "event-ledger",
+        "seed": 1408367343,
+        "promptSha256": "ba99829f926352e04b54f4bdfa4b0c1a1fad9f1e97646cbd48ad1ac21ba4c29c",
+        "expectedSha256": "89724af90fe4559a0d70dc31bfe28dcb8051722e860c378594f948aa87e5bf8e"
+      },
+      {
+        "id": "event-ledger-10",
+        "family": "event-ledger",
+        "seed": 1408367440,
+        "promptSha256": "ab42ade97c0219b3a7d60029fd2dea3c38607d30b351857d7675f94ed60f2e2c",
+        "expectedSha256": "c70e1107712cda7ea8f18bd7eff765abe6d0edfdc0a12a7995e2fbace1e132f4"
+      },
+      {
+        "id": "relational-join-01",
+        "family": "relational-join",
+        "seed": 1408376567,
+        "promptSha256": "7d4ee96bfaf24e06847f39eb754ef72a2250e1523f14cf04892916dcee427f2a",
+        "expectedSha256": "c70b9d905d475e70924239f667067fd1047516ea49be476bfe6af7450a78aeab"
+      },
+      {
+        "id": "relational-join-02",
+        "family": "relational-join",
+        "seed": 1408376664,
+        "promptSha256": "7ca0050ee9ac50c6c2e03201f0a4889816104ccffcda6bc271e64a4aa48ce327",
+        "expectedSha256": "79ac644354245222041e6fcf4af8d34f7627be055f53d739775be5b257782f3e"
+      },
+      {
+        "id": "relational-join-03",
+        "family": "relational-join",
+        "seed": 1408376761,
+        "promptSha256": "50cacab78102b0360ded5e883ea56361a6758b3de623ea9d2762bcf39fbc186d",
+        "expectedSha256": "5a88cd1e28a2629734bb2c9eb6db2fb0ce9eb172c8ff012102da94b1adcf4d3c"
+      },
+      {
+        "id": "relational-join-04",
+        "family": "relational-join",
+        "seed": 1408376858,
+        "promptSha256": "25357a7f565ddbd1abbdffec5ac6fed7774222e8c1e9f03f53d77c3b3ae61470",
+        "expectedSha256": "701a31d51de238034afc31258526d1ad60d7d5d7a0d0745abdbc9f935a53baa6"
+      },
+      {
+        "id": "relational-join-05",
+        "family": "relational-join",
+        "seed": 1408376955,
+        "promptSha256": "fcb7c0473c39262e75d04d04d127ec71a79ad2ce32fdc6b33b0fef76b44356ce",
+        "expectedSha256": "9b78985d4c78a8d76a4ce6292f230902256fe93f359a4ef9338b2f594db15ee1"
+      },
+      {
+        "id": "relational-join-06",
+        "family": "relational-join",
+        "seed": 1408377052,
+        "promptSha256": "5500372f9a73df6117abba1bfd223e9c973cb53c9a7a6311c303952c6cacbe00",
+        "expectedSha256": "d483f71838aed8a6820bc1e972f8296c01e2043617e9024795ec8cd327dccc82"
+      },
+      {
+        "id": "relational-join-07",
+        "family": "relational-join",
+        "seed": 1408377149,
+        "promptSha256": "d664499db0a8cb252a44a40f2f7f327deb0730a4c648e138153908e0d177f52c",
+        "expectedSha256": "733bf0cb9fd4bc261c6a47de5f500b0d72d53f7c50b570a47ae817853959b45f"
+      },
+      {
+        "id": "relational-join-08",
+        "family": "relational-join",
+        "seed": 1408377246,
+        "promptSha256": "d7c905b84d470e803aac97c9c6eea908cd931f6522fa9fc46b18ff4f97ccb65c",
+        "expectedSha256": "079476842223ab7e3a8cdde5d619ab672018e785500ebd52e22d5b771f69e78d"
+      },
+      {
+        "id": "relational-join-09",
+        "family": "relational-join",
+        "seed": 1408377343,
+        "promptSha256": "34b3f44bb836610e18dd457728021dcae937593796e3f528c3bcb2d914909c86",
+        "expectedSha256": "251da01b34376fc6374115d71b2d66eed4d7e2fd2ab75412942bbc44639b630f"
+      },
+      {
+        "id": "relational-join-10",
+        "family": "relational-join",
+        "seed": 1408377440,
+        "promptSha256": "5fa901217cfb089da205a595deba3977a4929b3da313be553880e45973ab71e0",
+        "expectedSha256": "ef2dd4c222c1e2a0461cb0b41fbc965603d969c72d444c80dfdbd7521f16fb0a"
+      },
+      {
+        "id": "boolean-circuit-01",
+        "family": "boolean-circuit",
+        "seed": 1408386567,
+        "promptSha256": "7fcccc4b246a62fdefa76f4865c9803b810dfaef653cca9bba3e172641523467",
+        "expectedSha256": "fa6a02864853a4efd54ed6bacec62d3af01588306d0e08e7f10c07ab6754cf53"
+      },
+      {
+        "id": "boolean-circuit-02",
+        "family": "boolean-circuit",
+        "seed": 1408386664,
+        "promptSha256": "f46430508dc251eef471843a84c17b6fd4cc16440d57c4ae3431b26b750cc96f",
+        "expectedSha256": "8f051d9ed81af91b4d9fb43912a1292be57bef7a849acf26742bdfe17c608bbd"
+      },
+      {
+        "id": "boolean-circuit-03",
+        "family": "boolean-circuit",
+        "seed": 1408386761,
+        "promptSha256": "dc3a058f1309eeb66b78765cbeb0b29a83d95d93141d48cde3c69d545a0573e2",
+        "expectedSha256": "3ab73d51ad90ef5a8047ad36924edd2d76c3124a5e6a0da9c3038ec4922ebba7"
+      },
+      {
+        "id": "boolean-circuit-04",
+        "family": "boolean-circuit",
+        "seed": 1408386858,
+        "promptSha256": "1847728cac06cae06ffd5cca0ccac9237077416ea1877ee87f59e32fc3dec99c",
+        "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7"
+      },
+      {
+        "id": "boolean-circuit-05",
+        "family": "boolean-circuit",
+        "seed": 1408386955,
+        "promptSha256": "1e425fc8789b0c33e8293e5963add68aaf0242c3fb3635c0223f29c452c644c1",
+        "expectedSha256": "8451c1d0b661003cab0a29d3aa82da656a2d48f63dfd9b9cae04ef829321473b"
+      },
+      {
+        "id": "boolean-circuit-06",
+        "family": "boolean-circuit",
+        "seed": 1408387052,
+        "promptSha256": "912039d135fb90db0926ad49fafb2cade4aa99a73e40c839ed5f7dd0e7ee66c0",
+        "expectedSha256": "bd0972afb84382b7cd7e0243dc0031c39c3d35f9e38f5e1c5f982e1e3243f66d"
+      },
+      {
+        "id": "boolean-circuit-07",
+        "family": "boolean-circuit",
+        "seed": 1408387149,
+        "promptSha256": "f8bb6be4e63087ce919cb31885f4a339f5d1abf60dde8f731a641be964fa76b3",
+        "expectedSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764"
+      },
+      {
+        "id": "boolean-circuit-08",
+        "family": "boolean-circuit",
+        "seed": 1408387246,
+        "promptSha256": "1b2a10c2784bbe77f83631cd08f686f2dd80805584c7512844297f869c066ae7",
+        "expectedSha256": "b2f10265902297a63df7ee36fd7da5b5ed39ae3fd3a5852a8d270fd16514680a"
+      },
+      {
+        "id": "boolean-circuit-09",
+        "family": "boolean-circuit",
+        "seed": 1408387343,
+        "promptSha256": "bf65a3dcf3b4721bb7eca1f57badff2fc8a4fac59e98d192b8df661f0f80ac50",
+        "expectedSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3"
+      },
+      {
+        "id": "boolean-circuit-10",
+        "family": "boolean-circuit",
+        "seed": 1408387440,
+        "promptSha256": "1b681622cdb0ddf0fa9b0082fab4edfe2fccbbf4ff332ff585697d0741de938e",
+        "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7"
+      },
+      {
+        "id": "weighted-set-cover-01",
+        "family": "weighted-set-cover",
+        "seed": 1408396567,
+        "promptSha256": "d5b7c42af3c86be9f273c47d8e95dd51d29b746a5711a2511bec03d2dfae6155",
+        "expectedSha256": "2dba7996f991c474853162da2a057b2498dcd61cefbca0decc31cbe3a6fe459a"
+      },
+      {
+        "id": "weighted-set-cover-02",
+        "family": "weighted-set-cover",
+        "seed": 1408396664,
+        "promptSha256": "ed6fd3fdcff0db409a1439e0150f978fb097fa837338a2a414b34405a8964a79",
+        "expectedSha256": "49c3e9d2507c2fadbff70fc8cd9564bfd0f6af5ddb20769c72beb937c5ccd8e5"
+      },
+      {
+        "id": "weighted-set-cover-03",
+        "family": "weighted-set-cover",
+        "seed": 1408396761,
+        "promptSha256": "860d93d4bbcae498208873fe8267fd7d266cbe7b44865347a7f3dd13971b0a8a",
+        "expectedSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a"
+      },
+      {
+        "id": "weighted-set-cover-04",
+        "family": "weighted-set-cover",
+        "seed": 1408396858,
+        "promptSha256": "c72df0d6eeff39c979adc3d1706e60dbb09e2d07973a768092fefc2436af8696",
+        "expectedSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb"
+      },
+      {
+        "id": "weighted-set-cover-05",
+        "family": "weighted-set-cover",
+        "seed": 1408396955,
+        "promptSha256": "9173eac0ea2c6cdc426d782cc6f0f097d94e3d73cd723d09bfbf2f094ce1f38a",
+        "expectedSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e"
+      },
+      {
+        "id": "weighted-set-cover-06",
+        "family": "weighted-set-cover",
+        "seed": 1408397052,
+        "promptSha256": "e6e376a600fa6e6804905c5f2da48150c61b35bd49b260981b5d393ad8e3977c",
+        "expectedSha256": "8e4c1a7d813e3d0f74d4476082cc071762a9c55fb0c80d5885a0371402f76772"
+      },
+      {
+        "id": "weighted-set-cover-07",
+        "family": "weighted-set-cover",
+        "seed": 1408397149,
+        "promptSha256": "be64166b4d85feb8266b9f99c913690e8e12f03fcc7b5dd936009e1052b818ac",
+        "expectedSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551"
+      },
+      {
+        "id": "weighted-set-cover-08",
+        "family": "weighted-set-cover",
+        "seed": 1408397246,
+        "promptSha256": "fd4159085b99cd78ccfaf250f29288654210599151b5265c7e6209c34006b657",
+        "expectedSha256": "2c6de95e8dea3320e88141e23d59d9ac5462f7ca385c714475423de162fb3cd6"
+      },
+      {
+        "id": "weighted-set-cover-09",
+        "family": "weighted-set-cover",
+        "seed": 1408397343,
+        "promptSha256": "f4694026954c9d50ea57af5d207eeda28f6d92c28ace20a187581d6c984ab800",
+        "expectedSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6"
+      },
+      {
+        "id": "weighted-set-cover-10",
+        "family": "weighted-set-cover",
+        "seed": 1408397440,
+        "promptSha256": "5f8bfbef3924fb382b3354ca45aa8be1f51a2a0925eb0649c2f415044cb79731",
+        "expectedSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf"
+      }
+    ],
+    "fullCalls": 240,
+    "probeCalls": 4,
+    "fullProviderCalls": 480,
+    "probeProviderCalls": 8,
+    "maxIterations": 2,
+    "maxInputTokens": 32768,
+    "rootOutputTokens": 8192,
+    "providerModelMaxTokens": 17408,
+    "deadlineMs": 180000,
+    "retries": 0,
+    "reasoning": "low",
+    "temperature": 0,
+    "inferenceSeed": null,
+    "fixtureSeedPolicy": "deterministic task generation; provider sampling seed omitted for official DeepSeek compatibility",
+    "responseFormat": null,
+    "structuredOutputChannel": "Prime emit_done tool with output.schema validation",
+    "toolChoice": "omitted for all models; compliance with the sole emit_done tool is measured as reliability",
+    "payloadContractEvidence": "sanitized fields and metadata hash per provider call",
+    "rawAnswersPersisted": false,
+    "billingAuthority": "OpenRouter key usage delta per GLM calls; DeepSeek USD balance delta per direct calls",
+    "scoring": "semantic exact + field accuracy; deterministic; no judge model"
+  },
+  "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+  "stage": "full",
+  "models": [
+    "z-ai/glm-5.3-flash"
+  ],
+  "authorizedCalls": 60,
+  "authorizedUsd": 1,
+  "startedAt": "2026-09-02T18:58:23.215Z",
+  "complete": true,
+  "records": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T18:58:23.215Z",
+      "task": "relational-join-05",
+      "family": "relational-join",
+      "seed": 1408376955,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.2857142857142857,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "e7ff42a60040ccf203f8be61cd314c6c8745c3ab277cf2bbba73925547ff9228",
+      "promptSha256": "fcb7c0473c39262e75d04d04d127ec71a79ad2ce32fdc6b33b0fef76b44356ce",
+      "expectedSha256": "9b78985d4c78a8d76a4ce6292f230902256fe93f359a4ef9338b2f594db15ee1",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1912,
+        "outputTokens": 266,
+        "totalCost": 0.0002099
+      },
+      "wallMs": 6240,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T18:58:29.477Z",
+      "task": "relational-join-07",
+      "family": "relational-join",
+      "seed": 1408377149,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "648d7c6ad6d89f346d55666ff4d9ef9a0d527237032d40ba143b6b46966e7f87",
+      "promptSha256": "d664499db0a8cb252a44a40f2f7f327deb0730a4c648e138153908e0d177f52c",
+      "expectedSha256": "733bf0cb9fd4bc261c6a47de5f500b0d72d53f7c50b570a47ae817853959b45f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1911,
+        "outputTokens": 264,
+        "totalCost": 0.000209325
+      },
+      "wallMs": 11991,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T18:58:41.489Z",
+      "task": "critical-path-04",
+      "family": "critical-path",
+      "seed": 1408356858,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.6666666666666666,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "c831bc9f082cd8f3a92bebb309a41034c4b9a019087a4ce8847d713d3ecf0989",
+      "promptSha256": "bf95f827b11f1717192d79ca58a526e8148f4067071d09f57c42a79981ad3d9e",
+      "expectedSha256": "cb00e3a7bf4550cf5201ce7f5a0afa5e68dedb958a4eb1747f700e03b0407930",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1389,
+        "outputTokens": 183,
+        "totalCost": 0.000149925
+      },
+      "wallMs": 10377,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T18:58:51.887Z",
+      "task": "relational-join-03",
+      "family": "relational-join",
+      "seed": 1408376761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "5a88cd1e28a2629734bb2c9eb6db2fb0ce9eb172c8ff012102da94b1adcf4d3c",
+      "promptSha256": "50cacab78102b0360ded5e883ea56361a6758b3de623ea9d2762bcf39fbc186d",
+      "expectedSha256": "5a88cd1e28a2629734bb2c9eb6db2fb0ce9eb172c8ff012102da94b1adcf4d3c",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1917,
+        "outputTokens": 1063,
+        "totalCost": 0.000409525
+      },
+      "wallMs": 26343,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T18:59:18.285Z",
+      "task": "event-ledger-01",
+      "family": "event-ledger",
+      "seed": 1408366567,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "timeout",
+      "parsedFormat": "none",
+      "failureCategory": "timeout",
+      "answerSha256": "feb518431d92156b2f34e1e55c044e3765827c300e9e8dd502b02c7526b81e46",
+      "promptSha256": "3040062a3a3774af1ab927c18b80a8216ebf66562837ab10c1f972cfc8f7eae2",
+      "expectedSha256": "e6ee969dc0826e37b5ebad141f3fb71629d71cbb8c6520bcf0771c9854078ee8",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0
+      },
+      "wallMs": 180020,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:02:18.583Z",
+      "task": "event-ledger-09",
+      "family": "event-ledger",
+      "seed": 1408367343,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5714285714285714,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "bac2d62d14eb5aeb30137c02b99de9d2ca3e8f24583fcd3a653e99de1104cae8",
+      "promptSha256": "ba99829f926352e04b54f4bdfa4b0c1a1fad9f1e97646cbd48ad1ac21ba4c29c",
+      "expectedSha256": "89724af90fe4559a0d70dc31bfe28dcb8051722e860c378594f948aa87e5bf8e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1635,
+        "outputTokens": 509,
+        "totalCost": 0.000249875
+      },
+      "wallMs": 18960,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:02:37.566Z",
+      "task": "critical-path-07",
+      "family": "critical-path",
+      "seed": 1408357149,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.3333333333333333,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4483ad46576b77037e771f3cdea34d81169cf33d96c1859c937b4305493cae0e",
+      "promptSha256": "98a16b902db228f4f01dfd208475e819fa9c7e876e60e7db55816acd931ce13b",
+      "expectedSha256": "cc9ad16b9d4132a54021454f030fec63c29ec4ed42e03cf3b74e68f9592b2fa9",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1399,
+        "outputTokens": 182,
+        "totalCost": 0.00015042499999999998
+      },
+      "wallMs": 13270,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:02:50.972Z",
+      "task": "relational-join-10",
+      "family": "relational-join",
+      "seed": 1408377440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "ef2dd4c222c1e2a0461cb0b41fbc965603d969c72d444c80dfdbd7521f16fb0a",
+      "promptSha256": "5fa901217cfb089da205a595deba3977a4929b3da313be553880e45973ab71e0",
+      "expectedSha256": "ef2dd4c222c1e2a0461cb0b41fbc965603d969c72d444c80dfdbd7521f16fb0a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1920,
+        "outputTokens": 251,
+        "totalCost": 0.00020675
+      },
+      "wallMs": 10503,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:03:01.495Z",
+      "task": "shortest-path-02",
+      "family": "shortest-path",
+      "seed": 1408346664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b",
+      "promptSha256": "bcd493fdb54767ae9b9203953bcaec59824ac9151f5521876f24d8ed65c01c39",
+      "expectedSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1415,
+        "outputTokens": 473,
+        "totalCost": 0.000224375
+      },
+      "wallMs": 18212,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:03:19.740Z",
+      "task": "event-ledger-08",
+      "family": "event-ledger",
+      "seed": 1408367246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794",
+      "promptSha256": "1ce0eb93d9ae6ff382c26fcc5a99df68766eed5db250e3e21082e0d4720a16e6",
+      "expectedSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1634,
+        "outputTokens": 1573,
+        "totalCost": 0.0005158
+      },
+      "wallMs": 40411,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:04:00.198Z",
+      "task": "event-ledger-10",
+      "family": "event-ledger",
+      "seed": 1408367440,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.7142857142857143,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "79147ab690e3bcfaaa1ae3115fdd2c1473f303d94f41b28a5cc00ed90a756122",
+      "promptSha256": "ab42ade97c0219b3a7d60029fd2dea3c38607d30b351857d7675f94ed60f2e2c",
+      "expectedSha256": "c70e1107712cda7ea8f18bd7eff765abe6d0edfdc0a12a7995e2fbace1e132f4",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1631,
+        "outputTokens": 354,
+        "totalCost": 0.000210825
+      },
+      "wallMs": 6717,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:04:06.948Z",
+      "task": "event-ledger-03",
+      "family": "event-ledger",
+      "seed": 1408366761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f",
+      "promptSha256": "76502f567c0101a743654bfa59d17f96e0b6b5e7d239c94a6723f78b6248b227",
+      "expectedSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1567,
+        "outputTokens": 1756,
+        "totalCost": 0.000556525
+      },
+      "wallMs": 32210,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:04:39.195Z",
+      "task": "weighted-set-cover-10",
+      "family": "weighted-set-cover",
+      "seed": 1408397440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf",
+      "promptSha256": "5f8bfbef3924fb382b3354ca45aa8be1f51a2a0925eb0649c2f415044cb79731",
+      "expectedSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1409,
+        "outputTokens": 2323,
+        "totalCost": 0.000686425
+      },
+      "wallMs": 54613,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:05:34.038Z",
+      "task": "critical-path-08",
+      "family": "critical-path",
+      "seed": 1408357246,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "timeout",
+      "parsedFormat": "none",
+      "failureCategory": "timeout",
+      "answerSha256": "feb518431d92156b2f34e1e55c044e3765827c300e9e8dd502b02c7526b81e46",
+      "promptSha256": "b1fee6c6c8d415bf2523b729eaeadd95d660016e4906fe8ebb31e21c7684131d",
+      "expectedSha256": "3dfb248939248af50c4a1d9878188e8d6b17a930fe1cd399896f621f1e44857d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0
+      },
+      "wallMs": 180021,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:08:34.123Z",
+      "task": "boolean-circuit-05",
+      "family": "boolean-circuit",
+      "seed": 1408386955,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "structured-output-missing",
+      "failureCategory": "structured-output-missing",
+      "errorClass": "Error",
+      "errorSha256": "ec5787e39adf36581df43cef806a954fa0d7c46d915d74581de3f5e01d7c800c",
+      "promptSha256": "1e425fc8789b0c33e8293e5963add68aaf0242c3fb3635c0223f29c452c644c1",
+      "expectedSha256": "8451c1d0b661003cab0a29d3aa82da656a2d48f63dfd9b9cae04ef829321473b",
+      "wallMs": 35166,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:09:09.326Z",
+      "task": "critical-path-09",
+      "family": "critical-path",
+      "seed": 1408357343,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5555555555555556,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4d0087add1eaac62bb218c816e3d89961e30b318c4a1928f833e1dfde8fd1aa6",
+      "promptSha256": "ed10b40bfb5b69b969ce45c4f91fa5f5d7fc6f110d0207f650f32f042de6c8b4",
+      "expectedSha256": "11f1a528e7c87843b5418c9588a13bc28c3b1d8703c150e3aaf1134ee0b0a3cf",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 178,
+        "outputTokens": 315,
+        "totalCost": 0.00009209999999999999
+      },
+      "wallMs": 13900,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:09:23.250Z",
+      "task": "weighted-set-cover-05",
+      "family": "weighted-set-cover",
+      "seed": 1408396955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e",
+      "promptSha256": "9173eac0ea2c6cdc426d782cc6f0f097d94e3d73cd723d09bfbf2f094ce1f38a",
+      "expectedSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1404,
+        "outputTokens": 1490,
+        "totalCost": 0.0004778
+      },
+      "wallMs": 58566,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:10:22.062Z",
+      "task": "boolean-circuit-01",
+      "family": "boolean-circuit",
+      "seed": 1408386567,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.3333333333333333,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "b5b777247c1ea72bb21329d7f5808ede8f6ac31ecc0bdfe7338e9b5d29e729d5",
+      "promptSha256": "7fcccc4b246a62fdefa76f4865c9803b810dfaef653cca9bba3e172641523467",
+      "expectedSha256": "fa6a02864853a4efd54ed6bacec62d3af01588306d0e08e7f10c07ab6754cf53",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 45,
+        "outputTokens": 773,
+        "totalCost": 0.00019662499999999997
+      },
+      "wallMs": 25184,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:10:47.278Z",
+      "task": "shortest-path-06",
+      "family": "shortest-path",
+      "seed": 1408347052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.6666666666666666,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "d96057e0f080fc43653db1dffb6abc9f715b1ccfbf5d10d230653387f0f99073",
+      "promptSha256": "eb54b9fe46008d87bd1351777571826143cb1d7abd59961737bad9b1bd0ff059",
+      "expectedSha256": "c307a2f2444930d51330220191640daa18c2adcfd6ef95e6515a49a2fa29b0b6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1395,
+        "outputTokens": 304,
+        "totalCost": 0.00018062499999999999
+      },
+      "wallMs": 3917,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:10:51.218Z",
+      "task": "weighted-set-cover-01",
+      "family": "weighted-set-cover",
+      "seed": 1408396567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "2dba7996f991c474853162da2a057b2498dcd61cefbca0decc31cbe3a6fe459a",
+      "promptSha256": "d5b7c42af3c86be9f273c47d8e95dd51d29b746a5711a2511bec03d2dfae6155",
+      "expectedSha256": "2dba7996f991c474853162da2a057b2498dcd61cefbca0decc31cbe3a6fe459a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1349,
+        "outputTokens": 1009,
+        "totalCost": 0.000353425
+      },
+      "wallMs": 8447,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:10:59.708Z",
+      "task": "weighted-set-cover-07",
+      "family": "weighted-set-cover",
+      "seed": 1408397149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551",
+      "promptSha256": "be64166b4d85feb8266b9f99c913690e8e12f03fcc7b5dd936009e1052b818ac",
+      "expectedSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1404,
+        "outputTokens": 1219,
+        "totalCost": 0.00041005
+      },
+      "wallMs": 35865,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:11:35.609Z",
+      "task": "shortest-path-07",
+      "family": "shortest-path",
+      "seed": 1408347149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5",
+      "promptSha256": "62667ab6ea6a6d7803d78a322a5fd30a284c7f7aa53bb85efed4233c29ed7676",
+      "expectedSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1443,
+        "outputTokens": 410,
+        "totalCost": 0.00021072499999999999
+      },
+      "wallMs": 16398,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:11:52.027Z",
+      "task": "boolean-circuit-09",
+      "family": "boolean-circuit",
+      "seed": 1408387343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3",
+      "promptSha256": "bf65a3dcf3b4721bb7eca1f57badff2fc8a4fac59e98d192b8df661f0f80ac50",
+      "expectedSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1518,
+        "outputTokens": 439,
+        "totalCost": 0.0002236
+      },
+      "wallMs": 16849,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:12:08.906Z",
+      "task": "critical-path-03",
+      "family": "critical-path",
+      "seed": 1408356761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae",
+      "promptSha256": "7500cfe675c178b9d0497248972d2061321c6301485bbf9af0bab36d5f8f2da2",
+      "expectedSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1330,
+        "outputTokens": 107,
+        "totalCost": 0.00012649999999999998
+      },
+      "wallMs": 10785,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:12:19.728Z",
+      "task": "boolean-circuit-02",
+      "family": "boolean-circuit",
+      "seed": 1408386664,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "timeout",
+      "parsedFormat": "none",
+      "failureCategory": "timeout",
+      "answerSha256": "feb518431d92156b2f34e1e55c044e3765827c300e9e8dd502b02c7526b81e46",
+      "promptSha256": "f46430508dc251eef471843a84c17b6fd4cc16440d57c4ae3431b26b750cc96f",
+      "expectedSha256": "8f051d9ed81af91b4d9fb43912a1292be57bef7a849acf26742bdfe17c608bbd",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0
+      },
+      "wallMs": 180014,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:15:19.981Z",
+      "task": "shortest-path-03",
+      "family": "shortest-path",
+      "seed": 1408346761,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "timeout",
+      "parsedFormat": "none",
+      "failureCategory": "timeout",
+      "answerSha256": "feb518431d92156b2f34e1e55c044e3765827c300e9e8dd502b02c7526b81e46",
+      "promptSha256": "36bd4be8dfaca4b8be767fc620e7ff94b915ec75a7d1edddc1e100779f1c2060",
+      "expectedSha256": "79eb311af69f7b24bfa1768e6c96462c61aba4396b344193cce5c92a2a2cb5b3",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0
+      },
+      "wallMs": 180012,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:18:20.221Z",
+      "task": "boolean-circuit-08",
+      "family": "boolean-circuit",
+      "seed": 1408387246,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.6666666666666666,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "545c3497900ab77f7cae461830069fbfebbaf2f4c9719e6aff1290fa2613a865",
+      "promptSha256": "1b2a10c2784bbe77f83631cd08f686f2dd80805584c7512844297f869c066ae7",
+      "expectedSha256": "b2f10265902297a63df7ee36fd7da5b5ed39ae3fd3a5852a8d270fd16514680a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1450,
+        "outputTokens": 336,
+        "totalCost": 0.00019275
+      },
+      "wallMs": 3702,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:18:23.958Z",
+      "task": "weighted-set-cover-03",
+      "family": "weighted-set-cover",
+      "seed": 1408396761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a",
+      "promptSha256": "860d93d4bbcae498208873fe8267fd7d266cbe7b44865347a7f3dd13971b0a8a",
+      "expectedSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1413,
+        "outputTokens": 2612,
+        "totalCost": 0.000758975
+      },
+      "wallMs": 98685,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:20:02.873Z",
+      "task": "critical-path-10",
+      "family": "critical-path",
+      "seed": 1408357440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "d780a20bc64a73f478bf4a976748549c62dc739498e0c51982ae9c48eb3ee720",
+      "promptSha256": "bd038906595b38122f237bc87fc29ad573d34f0627728221e5003e6ad5c804c3",
+      "expectedSha256": "d780a20bc64a73f478bf4a976748549c62dc739498e0c51982ae9c48eb3ee720",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1340,
+        "outputTokens": 208,
+        "totalCost": 0.0001525
+      },
+      "wallMs": 3224,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:20:06.128Z",
+      "task": "shortest-path-08",
+      "family": "shortest-path",
+      "seed": 1408347246,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "timeout",
+      "parsedFormat": "none",
+      "failureCategory": "timeout",
+      "answerSha256": "feb518431d92156b2f34e1e55c044e3765827c300e9e8dd502b02c7526b81e46",
+      "promptSha256": "716e2e20172bb86020009400332b4b9d32acb7dd890da76e962fd59be7c768c7",
+      "expectedSha256": "8467da4fb6cd977f76a80ce1f7cd0515bbdf2226ab0967a655c2afeafbf9706f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "totalCost": 0
+      },
+      "wallMs": 180012,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:23:06.357Z",
+      "task": "boolean-circuit-10",
+      "family": "boolean-circuit",
+      "seed": 1408387440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "promptSha256": "1b681622cdb0ddf0fa9b0082fab4edfe2fccbbf4ff332ff585697d0741de938e",
+      "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1518,
+        "outputTokens": 678,
+        "totalCost": 0.00028335
+      },
+      "wallMs": 21668,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:23:28.067Z",
+      "task": "relational-join-09",
+      "family": "relational-join",
+      "seed": 1408377343,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.3333333333333333,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "551bc74f4d33fdab31baea47c68662171c02b948de952b7bcfadc8223fa30f46",
+      "promptSha256": "34b3f44bb836610e18dd457728021dcae937593796e3f528c3bcb2d914909c86",
+      "expectedSha256": "251da01b34376fc6374115d71b2d66eed4d7e2fd2ab75412942bbc44639b630f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1917,
+        "outputTokens": 237,
+        "totalCost": 0.000203025
+      },
+      "wallMs": 11186,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:23:39.293Z",
+      "task": "critical-path-01",
+      "family": "critical-path",
+      "seed": 1408356567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee",
+      "promptSha256": "94e90965eb7c9fa66901d64a85b9fa862523ccbcf7109d931f1d7aef2c72694c",
+      "expectedSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1401,
+        "outputTokens": 1028,
+        "totalCost": 0.000362075
+      },
+      "wallMs": 25940,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:24:05.256Z",
+      "task": "relational-join-04",
+      "family": "relational-join",
+      "seed": 1408376858,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.4444444444444444,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "749894cb7fad4d2419265672eada3cc8f883620637a013ff7e53bf323efe007c",
+      "promptSha256": "25357a7f565ddbd1abbdffec5ac6fed7774222e8c1e9f03f53d77c3b3ae61470",
+      "expectedSha256": "701a31d51de238034afc31258526d1ad60d7d5d7a0d0745abdbc9f935a53baa6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1853,
+        "outputTokens": 294,
+        "totalCost": 0.000212475
+      },
+      "wallMs": 11544,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:24:16.825Z",
+      "task": "critical-path-02",
+      "family": "critical-path",
+      "seed": 1408356664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d",
+      "promptSha256": "bb02c69b8b59bdf87dc124c241e58ac29c821c90cf7c036d835da16523861368",
+      "expectedSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 184,
+        "outputTokens": 168,
+        "totalCost": 0.0000558
+      },
+      "wallMs": 2705,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:24:19.554Z",
+      "task": "shortest-path-10",
+      "family": "shortest-path",
+      "seed": 1408347440,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.2857142857142857,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "2be12e4023604a872cb1e79435bc6f773df2b1402c103742683c6c1df7d68a02",
+      "promptSha256": "e53f677a45c6294cf1a9e71ede99fb1ddfe4bb1856d381378078ada2d9d4dd7c",
+      "expectedSha256": "a79fffa8b7267d33787d58c2bbdf0f1f166834db4244fe76f4ce4022878d7b91",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1430,
+        "outputTokens": 871,
+        "totalCost": 0.000325
+      },
+      "wallMs": 20816,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:24:40.421Z",
+      "task": "relational-join-01",
+      "family": "relational-join",
+      "seed": 1408376567,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.3333333333333333,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "0af6f22845575588764ab5ad2b891fc3380144d15908f26637eb5183a4562b15",
+      "promptSha256": "7d4ee96bfaf24e06847f39eb754ef72a2250e1523f14cf04892916dcee427f2a",
+      "expectedSha256": "c70b9d905d475e70924239f667067fd1047516ea49be476bfe6af7450a78aeab",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1920,
+        "outputTokens": 1064,
+        "totalCost": 0.00041
+      },
+      "wallMs": 28385,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:25:08.832Z",
+      "task": "event-ledger-07",
+      "family": "event-ledger",
+      "seed": 1408367149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "5da15b2908c4aead506958450ec01679fee027dcb9b7d32fb5488ad857a27082",
+      "promptSha256": "ee20a5f4bf3ae33f535cc1529262a62f3f8a64c31e6ec37056e1edd7023eea92",
+      "expectedSha256": "5da15b2908c4aead506958450ec01679fee027dcb9b7d32fb5488ad857a27082",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1634,
+        "outputTokens": 638,
+        "totalCost": 0.00028205
+      },
+      "wallMs": 19637,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:25:28.504Z",
+      "task": "weighted-set-cover-09",
+      "family": "weighted-set-cover",
+      "seed": 1408397343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6",
+      "promptSha256": "f4694026954c9d50ea57af5d207eeda28f6d92c28ace20a187581d6c984ab800",
+      "expectedSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1349,
+        "outputTokens": 4846,
+        "totalCost": 0.001312675
+      },
+      "wallMs": 28165,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:25:56.694Z",
+      "task": "event-ledger-04",
+      "family": "event-ledger",
+      "seed": 1408366858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11",
+      "promptSha256": "839533c55fd2d23ff1f507a13ba4ca8a014313d45a53e5e409073a1d8d2779c3",
+      "expectedSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1569,
+        "outputTokens": 971,
+        "totalCost": 0.000360425
+      },
+      "wallMs": 6809,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:26:03.539Z",
+      "task": "shortest-path-01",
+      "family": "shortest-path",
+      "seed": 1408346567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "2c65c3b9ba8faa055117959095e0423526301ec4cc0ed2e5c9a889260e840434",
+      "promptSha256": "df7cb018db97539a33cb69f6a84cf289e913ef4950052fc255b6a855b4ae2bc0",
+      "expectedSha256": "2c65c3b9ba8faa055117959095e0423526301ec4cc0ed2e5c9a889260e840434",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1407,
+        "outputTokens": 568,
+        "totalCost": 0.00024752499999999996
+      },
+      "wallMs": 4603,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:26:08.180Z",
+      "task": "relational-join-06",
+      "family": "relational-join",
+      "seed": 1408377052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.42857142857142855,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "405033af5e0b7f355311d117a22072228871770238d22506d81d83b4943f32a9",
+      "promptSha256": "5500372f9a73df6117abba1bfd223e9c973cb53c9a7a6311c303952c6cacbe00",
+      "expectedSha256": "d483f71838aed8a6820bc1e972f8296c01e2043617e9024795ec8cd327dccc82",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 636,
+        "outputTokens": 230,
+        "totalCost": 0.0001052
+      },
+      "wallMs": 3285,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:26:11.486Z",
+      "task": "boolean-circuit-04",
+      "family": "boolean-circuit",
+      "seed": 1408386858,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.8333333333333334,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "573bc94ab12e9c7993f52160add3447ce95a1ff1619b9cbbd7bb4d048ab31111",
+      "promptSha256": "1847728cac06cae06ffd5cca0ccac9237077416ea1877ee87f59e32fc3dec99c",
+      "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1517,
+        "outputTokens": 311,
+        "totalCost": 0.000191525
+      },
+      "wallMs": 13596,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:26:25.098Z",
+      "task": "weighted-set-cover-02",
+      "family": "weighted-set-cover",
+      "seed": 1408396664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "49c3e9d2507c2fadbff70fc8cd9564bfd0f6af5ddb20769c72beb937c5ccd8e5",
+      "promptSha256": "ed6fd3fdcff0db409a1439e0150f978fb097fa837338a2a414b34405a8964a79",
+      "expectedSha256": "49c3e9d2507c2fadbff70fc8cd9564bfd0f6af5ddb20769c72beb937c5ccd8e5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1408,
+        "outputTokens": 1564,
+        "totalCost": 0.0004965999999999999
+      },
+      "wallMs": 45790,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:27:11.104Z",
+      "task": "event-ledger-05",
+      "family": "event-ledger",
+      "seed": 1408366955,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.42857142857142855,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "fd1ae14c162d69656eb682a3ae73dac92477d0241e59489fe3d279a4b8c00ea6",
+      "promptSha256": "87ce6beb1b51a5eb9c910b294c1b9c17a9252e157e484e8e94f74d9e58b0494b",
+      "expectedSha256": "fcc9d70b155e5fe5940b0124c626f4d6590db6a9e2eba4846a847cbac533c491",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1632,
+        "outputTokens": 514,
+        "totalCost": 0.00025089999999999997
+      },
+      "wallMs": 20303,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:27:31.436Z",
+      "task": "boolean-circuit-03",
+      "family": "boolean-circuit",
+      "seed": 1408386761,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.8333333333333334,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "73cc50bf26a85109259dc7786f827ce754ddb8c94539d5fbbdbd2283906d5841",
+      "promptSha256": "dc3a058f1309eeb66b78765cbeb0b29a83d95d93141d48cde3c69d545a0573e2",
+      "expectedSha256": "3ab73d51ad90ef5a8047ad36924edd2d76c3124a5e6a0da9c3038ec4922ebba7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 238,
+        "outputTokens": 551,
+        "totalCost": 0.0001556
+      },
+      "wallMs": 4000,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:27:35.476Z",
+      "task": "weighted-set-cover-06",
+      "family": "weighted-set-cover",
+      "seed": 1408397052,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "structured-output-missing",
+      "failureCategory": "structured-output-missing",
+      "errorClass": "Error",
+      "errorSha256": "ec5787e39adf36581df43cef806a954fa0d7c46d915d74581de3f5e01d7c800c",
+      "promptSha256": "e6e376a600fa6e6804905c5f2da48150c61b35bd49b260981b5d393ad8e3977c",
+      "expectedSha256": "8e4c1a7d813e3d0f74d4476082cc071762a9c55fb0c80d5885a0371402f76772",
+      "wallMs": 23977,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:27:59.505Z",
+      "task": "event-ledger-06",
+      "family": "event-ledger",
+      "seed": 1408367052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5714285714285714,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "e10ba1ea569f450bac6431ce25eea9c1aadb7d1e1b94bbd938def3a4e71f7825",
+      "promptSha256": "1ed16466659bf00bd65908df6bb4d26c903af7d373e0a6783190aeb7c44103c5",
+      "expectedSha256": "b6dbfad50555c3b7246c901a0d9f4cc7bed0d0e03f8c49f3c6424a7862bda769",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 411,
+        "outputTokens": 797,
+        "totalCost": 0.000230075
+      },
+      "wallMs": 6246,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:28:05.783Z",
+      "task": "shortest-path-09",
+      "family": "shortest-path",
+      "seed": 1408347343,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.16666666666666666,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "c9266b784401894ca53a3960effff11404e6ac70485c0ff0b3fc16b07c9ba95b",
+      "promptSha256": "0b37d161b37856b70a69e7e239130cb6698c97af6944ff7d80ceee713b01ef67",
+      "expectedSha256": "4da5bb96907d26734f0bb3726e39191a4dce23f72601b6f6016aad2f6c93909f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 199,
+        "outputTokens": 558,
+        "totalCost": 0.000154425
+      },
+      "wallMs": 4838,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:28:10.640Z",
+      "task": "shortest-path-04",
+      "family": "shortest-path",
+      "seed": 1408346858,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "structured-output-missing",
+      "failureCategory": "structured-output-missing",
+      "errorClass": "Error",
+      "errorSha256": "ec5787e39adf36581df43cef806a954fa0d7c46d915d74581de3f5e01d7c800c",
+      "promptSha256": "f6cde16c42eacf5c84f3bcd5c7dde7299b0154d397df1cae3e3d05bfa1749d70",
+      "expectedSha256": "d0c8f06255dfef8b04213cddfd36a8925ae4a941f929a2be7b14c6e64d146e70",
+      "wallMs": 52315,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:29:03.189Z",
+      "task": "relational-join-08",
+      "family": "relational-join",
+      "seed": 1408377246,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "51750ba4740647a3fb9dc6059814ae55e32d03f970042742def904e14a72c373",
+      "promptSha256": "d7c905b84d470e803aac97c9c6eea908cd931f6522fa9fc46b18ff4f97ccb65c",
+      "expectedSha256": "079476842223ab7e3a8cdde5d619ab672018e785500ebd52e22d5b771f69e78d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1913,
+        "outputTokens": 1770,
+        "totalCost": 0.000585975
+      },
+      "wallMs": 40009,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:29:43.238Z",
+      "task": "boolean-circuit-06",
+      "family": "boolean-circuit",
+      "seed": 1408387052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.3333333333333333,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4a0cd33fa26c38754128f551e6e6b19401ea6de53cfa28717f28275ecce04309",
+      "promptSha256": "912039d135fb90db0926ad49fafb2cade4aa99a73e40c839ed5f7dd0e7ee66c0",
+      "expectedSha256": "bd0972afb84382b7cd7e0243dc0031c39c3d35f9e38f5e1c5f982e1e3243f66d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 231,
+        "outputTokens": 1073,
+        "totalCost": 0.000285575
+      },
+      "wallMs": 9092,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:29:52.352Z",
+      "task": "weighted-set-cover-08",
+      "family": "weighted-set-cover",
+      "seed": 1408397246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "2c6de95e8dea3320e88141e23d59d9ac5462f7ca385c714475423de162fb3cd6",
+      "promptSha256": "fd4159085b99cd78ccfaf250f29288654210599151b5265c7e6209c34006b657",
+      "expectedSha256": "2c6de95e8dea3320e88141e23d59d9ac5462f7ca385c714475423de162fb3cd6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1412,
+        "outputTokens": 3355,
+        "totalCost": 0.00094465
+      },
+      "wallMs": 98189,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:31:30.749Z",
+      "task": "relational-join-02",
+      "family": "relational-join",
+      "seed": 1408376664,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.4444444444444444,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "695fdf9b9f86ac1515e5b7c31861a4afe556504eb7daa46dfb803b5d66f28cd6",
+      "promptSha256": "7ca0050ee9ac50c6c2e03201f0a4889816104ccffcda6bc271e64a4aa48ce327",
+      "expectedSha256": "79ac644354245222041e6fcf4af8d34f7627be055f53d739775be5b257782f3e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 635,
+        "outputTokens": 272,
+        "totalCost": 0.000115625
+      },
+      "wallMs": 3599,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:31:34.371Z",
+      "task": "shortest-path-05",
+      "family": "shortest-path",
+      "seed": 1408346955,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "structured-output-missing",
+      "failureCategory": "structured-output-missing",
+      "errorClass": "Error",
+      "errorSha256": "ec5787e39adf36581df43cef806a954fa0d7c46d915d74581de3f5e01d7c800c",
+      "promptSha256": "b349537559f268309fa294720fd280120a06fa9c0ebb66b2b473a795aee497cd",
+      "expectedSha256": "25d8c40d7d7bd310e9e5c9f661d4d11c2471cfdd86f4a3a49b6b9527b17959c4",
+      "wallMs": 119858,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:33:34.481Z",
+      "task": "boolean-circuit-07",
+      "family": "boolean-circuit",
+      "seed": 1408387149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764",
+      "promptSha256": "f8bb6be4e63087ce919cb31885f4a339f5d1abf60dde8f731a641be964fa76b3",
+      "expectedSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 238,
+        "outputTokens": 147,
+        "totalCost": 0.0000546
+      },
+      "wallMs": 3735,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:33:38.274Z",
+      "task": "event-ledger-02",
+      "family": "event-ledger",
+      "seed": 1408366664,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.7142857142857143,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "06cd02e1bea1f990b131b07b5f3bf1bbc90e670d893f26c5c9f3faaf9e7febff",
+      "promptSha256": "074a1768aea0fb39be498e9782ed8b98f4432dfb3dd3f83c829eded6a6f081c8",
+      "expectedSha256": "8364a50965365b3f85625506bd13802084d6797aca1c9f3bfc309d81f63975c5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 415,
+        "outputTokens": 397,
+        "totalCost": 0.000130375
+      },
+      "wallMs": 6145,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:33:44.438Z",
+      "task": "critical-path-05",
+      "family": "critical-path",
+      "seed": 1408356955,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.25,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "cdec5fe1798f926166618f18d189c5689c8587738aeb3898ee4c8377d7de3651",
+      "promptSha256": "862f5a19e0d9a074c1331ffaf7502f4b85803b2a3ce985de7d4db31bbe121401",
+      "expectedSha256": "ce28e25630a4277de9275b9959e5d9f37501066f769c856b5912fccb50c90c8d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1392,
+        "outputTokens": 357,
+        "totalCost": 0.00019365
+      },
+      "wallMs": 14739,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:33:59.199Z",
+      "task": "weighted-set-cover-04",
+      "family": "weighted-set-cover",
+      "seed": 1408396858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb",
+      "promptSha256": "c72df0d6eeff39c979adc3d1706e60dbb09e2d07973a768092fefc2436af8696",
+      "expectedSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 198,
+        "outputTokens": 1706,
+        "totalCost": 0.00044134999999999997
+      },
+      "wallMs": 19453,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "wireProvider": "openrouter",
+      "wireModel": "z-ai/glm-5.3-flash",
+      "startedAt": "2026-09-02T19:34:18.702Z",
+      "task": "critical-path-06",
+      "family": "critical-path",
+      "seed": 1408357052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.42857142857142855,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "68ce1584a1d21c4c0c0834693296c9b37f6884389f24e6482d43ef26f6de62f2",
+      "promptSha256": "d58091104d29b45951a18bd49da42171d27b36c6677a345ae9309595fb5e899a",
+      "expectedSha256": "2e0a00b4747f48de9e99a46cf28e3e661ebe60e95f61d96e394488eb188265ba",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 182,
+        "outputTokens": 207,
+        "totalCost": 0.00006539999999999999
+      },
+      "wallMs": 5688,
+      "limitCompliant": true,
+      "route": "gmicloud/fp8",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": {
+            "effort": "low"
+          },
+          "thinking": null,
+          "reasoningEffort": null,
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": {
+            "only": [
+              "gmicloud"
+            ],
+            "order": [
+              "gmicloud"
+            ],
+            "allow_fallbacks": false,
+            "require_parameters": true,
+            "quantizations": [
+              "fp8"
+            ]
+          },
+          "contractPass": true,
+          "sha256": "9e5a80b1196c2b9d1cd08fdebc4d1e19abb3d57fe9aa7365c8821319aa5eaabe"
+        }
+      ]
+    }
+  ],
+  "openRouterUsageStartUsd": 1.122653107,
+  "openRouterUsageCurrentUsd": 1.462618647,
+  "openRouterUsageDeltaUsd": 0.3399655399999999,
+  "deepSeekBalanceStartUsd": null,
+  "deepSeekBalanceCurrentUsd": null,
+  "deepSeekSpendDeltaUsd": 0,
+  "totalAuthoritativeSpendUsd": 0.3399655399999999,
+  "billing": {
+    "authority": "provider-native-account-deltas",
+    "status": "unsettled",
+    "openrouter": {
+      "status": "contaminated",
+      "responseUsageCostUsd": 0.015611275,
+      "differenceUsd": 0.3243542649999999,
+      "toleranceUsd": 0.0003122255
+    },
+    "deepseek": {
+      "status": "not-used",
+      "estimatedCostUsd": 0,
+      "differenceUsd": 0,
+      "toleranceUsd": 0.000001,
+      "spendDeltaUsd": 0
+    }
+  },
+  "claimEligible": false,
+  "completedAt": "2026-09-02T19:34:24.418Z"
+}

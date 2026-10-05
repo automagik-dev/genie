@@ -1,0 +1,54 @@
+{
+  "leg": "legacy",
+  "scoredAt": "2026-08-16T19:28:02.409Z",
+  "tasks": [
+    {
+      "task": 1,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-1.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-1.score.json",
+      "stdout": "{\n  \"task\": 1,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 5180,\n  \"citations\": 25,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"13/14\",\n  \"factTermHits\": 1,\n  \"factPathHits\": 3,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-1.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    },
+    {
+      "task": 2,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-2.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-2.score.json",
+      "stdout": "{\n  \"task\": 2,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 5193,\n  \"citations\": 22,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"9/10\",\n  \"factTermHits\": 9,\n  \"factPathHits\": 8,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-2.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    },
+    {
+      "task": 3,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-3.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-3.score.json",
+      "stdout": "{\n  \"task\": 3,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 5211,\n  \"citations\": 26,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"10/11\",\n  \"factTermHits\": 1,\n  \"factPathHits\": 4,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-3.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    },
+    {
+      "task": 4,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-4.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-4.score.json",
+      "stdout": "{\n  \"task\": 4,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 4441,\n  \"citations\": 25,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"11/12\",\n  \"factTermHits\": 4,\n  \"factPathHits\": 3,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-4.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    },
+    {
+      "task": 5,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-5.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-5.score.json",
+      "stdout": "{\n  \"task\": 5,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 1078,\n  \"citations\": 0,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"5/5\",\n  \"factTermHits\": 0,\n  \"factPathHits\": 0,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-5.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    },
+    {
+      "task": 6,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-6.json",
+      "scoreFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-6.score.json",
+      "stdout": "{\n  \"task\": 6,\n  \"arm\": \"rlmx\",\n  \"model\": \"deepseek/deepseek-v4-flash\",\n  \"answerChars\": 3687,\n  \"citations\": 5,\n  \"c2\": \"PASS\",\n  \"c3\": \"PASS\",\n  \"factsNeed\": \"8/8\",\n  \"factTermHits\": 2,\n  \"factPathHits\": 3,\n  \"out\": \"/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-6.score.json\"\n}",
+      "stderr": "",
+      "exit": 0
+    }
+  ]
+}

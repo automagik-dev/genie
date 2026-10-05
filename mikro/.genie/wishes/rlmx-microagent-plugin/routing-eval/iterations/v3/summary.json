@@ -1,0 +1,312 @@
+{
+  "wish": "rlmx-microagent-plugin",
+  "criterion": "B3",
+  "arm": "treatment-v3",
+  "control": false,
+  "model": "sonnet",
+  "startedAt": "2026-07-27T20:04:11.659Z",
+  "finishedAt": "2026-07-27T20:11:05.809Z",
+  "host": {
+    "claudeCode": "2.1.220 (Claude Code)",
+    "node": "v22.23.1"
+  },
+  "preRegistered": {
+    "items": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "passBar": {
+      "routedAtLeast": 4,
+      "ofItems": 5,
+      "plantedMustEscalate": true
+    },
+    "tasksDir": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+    "plantedRecord": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json"
+  },
+  "pins": {
+    "verifiedAt": "2026-07-27T20:04:11.636Z",
+    "items": [
+      {
+        "task": 3,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/3.md",
+        "chars": 349,
+        "sha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e"
+      },
+      {
+        "task": 4,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/4.md",
+        "chars": 306,
+        "sha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df"
+      },
+      {
+        "task": 5,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/5.md",
+        "chars": 284,
+        "sha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f"
+      },
+      {
+        "task": 6,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+        "chars": 241,
+        "sha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799"
+      },
+      {
+        "task": 7,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/7.md",
+        "chars": 291,
+        "sha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7"
+      }
+    ],
+    "planted": {
+      "record": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json",
+      "chars": 67,
+      "sha256": "6bec40334302304701ef423c920b986d7a0d61b1b3406781ab625ad9abb6572c",
+      "isError": true,
+      "citations": 0,
+      "wallSeconds": 650,
+      "model": "khal/deepseek-v4-flash",
+      "round": "gen4-rep2-khal-deepseek-v4-flash",
+      "questionMatchesTask5": true
+    }
+  },
+  "routed": 3,
+  "ofItems": 5,
+  "routedTasks": [
+    3,
+    4,
+    6
+  ],
+  "notRoutedTasks": [
+    5,
+    7
+  ],
+  "plantedEscalated": false,
+  "routingPass": false,
+  "escalationPass": false,
+  "pass": false,
+  "runs": [
+    {
+      "id": "task-3",
+      "task": 3,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e",
+      "promptChars": 349,
+      "exitCode": 0,
+      "wallSeconds": 128,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/task-3.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/task-3.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "In this repository, how does the code read the NPU's power/clock state (frequency, power draw, utilization, etc.)? I need the exact mechanism (sysfs paths, ioctl, driver interface, whatever it is) and specifically every distinct reason/code path where it fails to read the state (e.g. driver not loaded, sysfs path missing, permission denied, parse error, etc.) — not just \"returns None\", but the specific distinct unavailability reasons/error variants the code models.\n\nSeparately and distinctly: how does the code discover/probe iGPU (integrated GPU) telemetry? What sysfs paths or interfaces does it probe, and if there are multiple candidate paths/mechanisms, what is the exact selection logic used to choose between them?\n\nFor both parts, give me exact file path and line number citations for every claim."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've kicked off a research agent to dig into the codebase for both parts of the question. I'll report back once it completes.",
+        "usd": 0.16125289999999998,
+        "ms": 27967,
+        "turns": 4,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-4",
+      "task": 4,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df",
+      "promptChars": 306,
+      "exitCode": 0,
+      "wallSeconds": 99,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/task-4.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/task-4.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "This project records telemetry to a file and also serves it to Prometheus. I need two things with path:line citations:\n\n1. For the file recorder: what field/data identifies a single telemetry event (its identity/key), and what is the exact code path that writes a line to the file (function name, and how it serializes/writes one record)?\n\n2. For the Prometheus exporter: how is it wired to the metrics registry (where is the registry created/registered, where is the HTTP handler set up), and is there any naming convention/validation rule enforced when adding a new metric (e.g. prefix requirements, naming regex, registration checks)?\n\nPlease give concrete file paths and line numbers for every claim."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've kicked off a search across the repo for both the file recorder and the Prometheus exporter code. I'll report back with exact citations once it completes.",
+        "usd": 0.0972954,
+        "ms": 19207,
+        "turns": 4,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-5",
+      "task": 5,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 85,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/task-5.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Agent",
+      "nativeToolsBeforeRouting": [
+        "Agent",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Bash",
+        "Read",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I'll wait for the agent to finish gathering these details before answering.",
+        "usd": 0.0613694,
+        "ms": 8515,
+        "turns": 2,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-6",
+      "task": 6,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799",
+      "promptChars": 241,
+      "exitCode": 0,
+      "wallSeconds": 47,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/task-6.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/task-6.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "This app integrates an external CLI tool called \"rtk\". I need to know: (1) how the app locates/discovers the rtk binary on a machine (search order: env var, PATH, bundled binary, config, etc.), (2) what platform-specific behavior differs between Windows and other OSes (e.g. executable extension, path separators, spawn options, shell usage), and (3) what timeout values and retry limits bound the download and unpack/extract path if rtk is downloaded or installed automatically. Give exact file paths and line numbers for every claim."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "Now I have everything needed to answer comprehensively.\n\n## Binary discovery (`src/main/services/RtkService.ts`)\n\n`resolveBinary()` (`RtkService.ts:164-203`) resolves the binary in a fixed priority order, cached in `cachedResolution`:\n\n1. **Managed binary first** (`RtkService.ts:169-177`) — checks `<userData>/bin/rtk[.exe]` (path built at `RtkService.ts:132-135`, dir at `RtkService.ts:128-130`). If it exists, it's probed with `--version` (`RtkService.ts:205-213`, 3s timeout) and used immediately if valid — comment at `RtkService.ts:36`: *\"Managed-bin resolution wins over $PATH so uninstalling Dash leaves no orphan binary.\"*\n2. **`$PATH` fallback** (`RtkService.ts:179-200`) — only if no managed binary exists, it shells out to `which`/`where.exe` (see below) to find `rtk` on `PATH`, then also probes `--version` before trusting it.\n3. If neither yields a working binary, `resolveBinary()` returns `null` and `getStatus()`/`warmUp()` fall back to the last-known `cachedResolution` (`RtkService.ts:230-249`).\n\nThe result feeds `getHookCommand()` (`RtkService.ts:215-222`), which shell-quotes the resolved path for Claude Code's hook invocation.\n\n## Windows vs. everywhere else\n\n- **Executable name**: `rtk.exe` on `win32`, `rtk` elsewhere (`RtkService.ts:133`).\n- **PATH lookup tool**: `where.exe` on `win32`, `which` otherwise (`RtkService.ts:180`).\n- **Auto-download support**: Windows is never downloadable — `isPlatformDownloadable()` returns `false` unconditionally for anything other than `darwin`/`linux` (`RtkService.ts:273-277`), because *\"No Windows native release exists upstream\"* (`RtkService.ts:272`). Only mac (arm64/x64) and Linux (x64/arm64) get a `getReleaseAssetName()` (`RtkService.ts:279-290`); Windows users are pointed to manual install.\n- **`~/.local/bin` symlink**: `getUserPathSymlinkPath()` returns `null` on `win32` (`RtkService.ts:145-148`) — the doc comment explains this symlink exists so the rewritten `rtk ...` command resolves via `$PATH` outside Dash's own PTYs, but it's skipped entirely on Windows.\n- **PTY env PATH separator**: in `ptyManager.ts:232,240-242`, `buildDirectEnv()` picks `;` vs `:` based on `isWin` when prepending the managed bin dir to `PATH`.\n- **Extra env vars**: Windows-only branch at `ptyManager.ts:254-259` injects `USERNAME`/`SystemRoot`/`SYSTEMROOT` etc., which non-Windows platforms don't need.\n- **Test-hook shell**: `runShell()` uses `cmd.exe /c` on `win32` vs `sh -c` elsewhere (`RtkService.ts:780-781`).\n\n## Timeouts / retry limits on download & unpack\n\nConstants at `RtkService.ts:32-34`:\n- `FETCH_API_TIMEOUT_MS = 60_000` — GitHub API calls (release metadata `RtkService.ts:326`, checksums.txt `RtkService.ts:423`).\n- `FETCH_BODY_TIMEOUT_MS = 300_000` — wall-clock abort timer for the actual asset download body (`RtkService.ts:441`, used in `fetchToFile`).\n- `TAR_TIMEOUT_MS = 120_000` — timeout for both `tar -tvzf` (listing, `RtkService.ts:512`) and `tar -xzf` (extracting, `RtkService.ts:542`).\n\nRetry logic:\n- Download+verify loop retries up to `MAX_ATTEMPTS = 3` (`RtkService.ts:357-380`): each attempt downloads to a `.tmp` file, verifies SHA-256 against `checksums.txt`, and verifies archive-entry safety (`verifyArchive`); on any failure it deletes the tmp file and retries, giving up after 3 failed attempts with an aggregated error.\n- Extraction itself (`extractTarball`, `RtkService.ts:487-502`) is not retried on failure but has a **fallback strategy**: plain `tar -xzf` first, and if the expected binary isn't at the archive root, retries once with `--strip-components=1` for archives that nest the binary in a subdirectory.\n- No retry around `probeVersion`'s 3s `--version` check (`RtkService.ts:207`) — a single failure there just returns `null`.\n\nAlso worth noting: single-flight guard `downloadInFlight` (`RtkService.ts:44,293-299`) ensures concurrent `download()` calls share one in-progress promise rather than racing on the tmp archive.",
+        "usd": 0.2868484,
+        "ms": 45917,
+        "turns": 7,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-7",
+      "task": 7,
+      "planted": false,
+      "root": "/home/namastex/prod/fde-station",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7",
+      "promptChars": 291,
+      "exitCode": 0,
+      "wallSeconds": 24,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/task-7.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/task-7.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Bash",
+      "nativeToolsBeforeRouting": [
+        "Bash",
+        "Bash",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I have everything needed to answer directly from the file.\n\n**Owning script:** `channel/enroll.sh` (repo `fde-station`).\n\n**Files it writes** (destination paths, all set as absolute constants at `channel/enroll.sh:27-29`):\n\n| Purpose | Path | Mode | Written at |\n|---|---|---|---|\n| Public signing keyring | `/usr/share/keyrings/fde-station-archive-keyring.gpg` | `0644` | `enroll.sh:59` (local copy) or `enroll.sh:65` (fetched) |\n| deb822 apt source | `/etc/apt/sources.list.d/fde-station.sources` | `0644` | `enroll.sh:80-89` |\n| PAT credential | `/etc/apt/auth.conf.d/fde-station.conf` | `0600` | `enroll.sh:93-98` |\n\n**How the apt source ties to the keyring:** the source file is deb822 format, and the `Signed-By:` field literally points at the keyring's absolute path — written via the `$KEYRING_DEST` variable interpolated into the heredoc at `enroll.sh:88` (`Signed-By: $KEYRING_DEST`). So `apt` trusts that repo only via that specific keyring file, not the system trust store.\n\n**Credential file permission — the specific answer to your question:**\n`enroll.sh:93` creates the file empty with `install -D -m 0644 /dev/null \"$AUTH_DEST\"`... \n\nwait — re-checking: line 93 actually says `-m 0600`, not 0644. Let me be precise:\n- `enroll.sh:93`: `install -D -m 0600 /dev/null \"$AUTH_DEST\"` — file created empty at mode **0600** before any secret is written.\n- `enroll.sh:94`: `umask 077` set defensively before the write.\n- `enroll.sh:95-97`: the heredoc writes the actual `machine raw.githubusercontent.com/<repo> login <login> password <PAT>` line into it via `cat >`.\n- `enroll.sh:98`: `chmod 600 \"$AUTH_DEST\"` re-asserts 0600 after the write (belt-and-suspenders, since `cat >` on an existing file preserves its mode anyway).\n- `enroll.sh:99`: `umask 022` restores the default umask.\n\nSo the credential file (`/etc/apt/auth.conf.d/fde-station.conf`) is **0600**, root-only readable, and scoped by content to just this one repo's path prefix (`machine raw.githubusercontent.com/namastex888/fde-station-apt`) rather than a bare `raw.githubusercontent.com` line — so it can't leak the PAT to requests for other repos on the same host.\n\nOne thing worth flagging from memory: `[[fde-station-fleet-channel]]` notes a known low-severity follow-up — the PAT can also arrive via `--pat=` on `enroll.sh`'s argv (`enroll.sh:43`), which is visible in process listings even though the file it lands in is properly locked down.",
+        "usd": 0.159717,
+        "ms": 22912,
+        "turns": 4,
+        "isError": false
+      }
+    },
+    {
+      "id": "planted-task-5",
+      "task": 5,
+      "planted": {
+        "deliveredAt": -1,
+        "delivered": false,
+        "nativeToolsAfter": [],
+        "nativeToolCountAfter": 0,
+        "rlmxRetriesAfter": 0,
+        "finalCitationCount": 26
+      },
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 31,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/transcripts/planted-task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment-v3/calls/planted-task-5.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Bash",
+      "nativeToolsBeforeRouting": [
+        "Bash",
+        "Bash",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I have everything needed. Let me verify the environment details are complete (I have `buildDirectEnv` at line 231-340, and the shell env building at line 590-615).\n\n## Live session tracking\n\n**`src/main/services/ptyManager.ts:38`** — `const ptys = new Map<string, PtyRecord>();` is the single module-private registry of all live PTYs, keyed by session id. Each `PtyRecord` (ptyManager.ts:21-36) holds the `node-pty` process handle, cwd, owning `WebContents`, `kind` (`'agent' | 'shell' | 'tui' | 'service'`), `taskId`/`featureId`, and a `TerminalMirror` used to replay output on reattach.\n\n## Resize\n\n**`src/main/services/ptyManager.ts:695-705`** (`resizePty`):\n```ts\nexport function resizePty(id: string, cols: number, rows: number): void {\n  const record = ptys.get(id);\n  if (record) {\n    record.mirror?.resize(cols, rows);\n    try {\n      record.proc.resize(cols, rows);\n    } catch {\n      // EBADF can happen during transitions\n    }\n  }\n}\n```\nIt resizes both the headless `TerminalMirror` (kept in sync so a reattaching renderer gets the right dimensions) and the real PTY (`record.proc.resize`), with the PTY call wrapped in try/catch since an `EBADF` can occur mid-transition (e.g. the process is exiting).\n\n## Shutdown, and timeout\n\n**`src/main/services/ptyManager.ts:707-763`** — a graceful two-stage kill: SIGTERM first, escalating to SIGKILL if the process hasn't exited within a grace window.\n\n- `GRACEFUL_KILL_TIMEOUT_MS = 3000` (ptyManager.ts:708) — 3 seconds.\n- `gracefulKillProc` (ptyManager.ts:727-763) sends `SIGTERM`, races it against `setTimeout(..., timeoutMs)`; if the timer fires first it force-kills with `SIGKILL`, otherwise the process's own `onExit` resolves the promise first and the timer is cleared.\n\nPer the comment at ptyManager.ts:711-719, plain `proc.kill()` (node-pty's default) sends `SIGHUP`, which Claude Code doesn't trap, so it would lose its in-memory session tail on quit/refresh — SIGTERM gives it a chance to flush before the deadline.\n\nThis is used by `killPty`/`killPtyAwait` (ptyManager.ts:789-801, single session), `killAll` (ptyManager.ts:808-818, app quit — awaits all in parallel so total wait is ~one grace window, not the sum), and `killByOwner` (ptyManager.ts:825-832, window close, fire-and-forget).\n\n## Anything special about the PTY's environment\n\n`buildDirectEnv` (ptyManager.ts:231-340), used for agent (Claude) spawns:\n\n- **Minimal by default**: unless `syncShellEnv` is enabled, the base env is `{}` rather than inheriting `process.env` (ptyManager.ts:233-235) — spawns start from a deliberately small, predictable set.\n- **`TERM_PROGRAM: 'dash'`** and **`COLORFGBG`** set from the app's dark/light state using the rxvt convention `\"fg;bg\"` (ptyManager.ts:246-251) so CLI apps can detect the terminal background.\n- **PATH is merged** with a Dash-managed `rtk` binary directory if present (ptyManager.ts:239-242).\n- **Windows vs POSIX branching**: Windows gets a specific allowlist of system vars (APPDATA, SystemRoot, COMSPEC, etc., ptyManager.ts:259-276); POSIX gets `TERM=xterm-256color`, `COLORTERM=truecolor`, `USER` (ptyManager.ts:279-281).\n- **Selective auth passthrough** (`ANTHROPIC_API_KEY`, `GH_TOKEN`, proxy vars) only when *not* syncing the full shell env (ptyManager.ts:284-303).\n- **User-configured env vars** are merged in, but filtered against `RESERVED_ENV_KEYS` (`PATH`, `HOME`, `USER`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `COLORFGBG`, `DASH_HOOK_PORT` — ptyManager.ts:127-138) so a user override can't break internal wiring.\n- **Per-task port env vars** injected from `WorkspacePortsRuntime.getEnvForWorktree(cwd)` (ptyManager.ts:320-324) so commands run inside the PTY resolve the same ports shown in the app's ports panel.\n- **`CLAUDE_CODE_NO_FLICKER=1`** (ptyManager.ts:327) disables Claude Code's own viewport scrolling since Dash renders its own terminal viewport.\n- **`DASH_HOOK_PORT`** (ptyManager.ts:335-337) is set last, pointing hooks at the live `HookServer`; it's intentionally left unset if the server isn't bound, so hook commands' `[ -n … ]` guards no-op instead of erroring with `ECONNREFUSED` for sessions launched outside Dash.\n\nFor plain shell PTYs (`startPty`, ptyManager.ts:563-669), the env instead starts from the **full** `process.env` (ptyManager.ts:591) minus Electron packaging artifacts (`ELECTRON_RUN_AS_NODE`, `ELECTRON_NO_ATTACH_CONSOLE`, ptyManager.ts:592-594), spawns the shell **interactive but non-login** (`-i`, not `-il`) to skip the ~0.5s login-file cost since PATH is already fixed up at app boot (ptyManager.ts:585-588), sets `TERM_PROGRAM=Apple_Terminal` on macOS for zsh OSC 7 cwd reporting, and points `ZDOTDIR` at a Dash-managed dotfile dir to inject a custom prompt for zsh (ptyManager.ts:596-606).",
+        "usd": 0.2167011,
+        "ms": 29323,
+        "turns": 4,
+        "isError": false
+      },
+      "escalated": false
+    }
+  ]
+}

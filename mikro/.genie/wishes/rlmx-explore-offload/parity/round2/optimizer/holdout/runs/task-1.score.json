@@ -1,0 +1,316 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "khal/deepseek-v4-flash",
+  "round": "holdout-gen1-khal-deepseek-v4-flash",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 13 iterations · 239,783 in / 32,802 out · $0.04 · 520.7s · session sess_8800cda4658a5e07",
+  "wallSeconds": 521,
+  "requestChars": 493,
+  "resultChars": 4552,
+  "ok": true,
+  "root": "/home/namastex/prod/rlmx",
+  "outOfScope": [],
+  "need": 7,
+  "factTotal": 7,
+  "answerChars": 4409,
+  "citations": [
+    {
+      "path": "src/llm.ts",
+      "line": 710,
+      "key": "src/llm.ts:710",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "const MAX_CONCURRENT = 4;"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 93,
+      "key": "src/cli.ts:93",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/cli.ts",
+      "lines": 1070,
+      "verdict": "resolves",
+      "text": "--parallel <n>          Concurrent questions for batch command (default: 1)"
+    },
+    {
+      "path": "src/batch.ts",
+      "line": 37,
+      "key": "src/batch.ts:37",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/batch.ts",
+      "lines": 151,
+      "verdict": "resolves",
+      "text": "parallel?: number;"
+    },
+    {
+      "path": "src/rlm.ts",
+      "line": 83,
+      "key": "src/rlm.ts:83",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/rlm.ts",
+      "lines": 1032,
+      "verdict": "resolves",
+      "text": "maxIterations: 30,"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 465,
+      "key": "src/llm.ts:465",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "if (options.maxIterations !== undefined) args.push(\"--max-iterations\", String(options.maxIterations));"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 130,
+      "key": "src/config.ts:130",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "maxDepth: null,"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 396,
+      "key": "src/config.ts:396",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "maxDepth: cfg.budget?.[\"max-depth\"] ?? DEFAULT_BUDGET.maxDepth,"
+    },
+    {
+      "path": "src/rlm.ts",
+      "line": 438,
+      "key": "src/rlm.ts:438",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/rlm.ts",
+      "lines": 1032,
+      "verdict": "resolves",
+      "text": "maxDepth: config.budget.maxDepth ?? 3,"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 467,
+      "key": "src/llm.ts:467",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "if (options.maxDepth !== undefined) args.push(\"--max-depth\", String(options.maxDepth));"
+    },
+    {
+      "path": "src/rlm.ts",
+      "line": 973,
+      "key": "src/rlm.ts:973",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/rlm.ts",
+      "lines": 1032,
+      "verdict": "resolves",
+      "text": "function buildRemainingChildBudget(config: RlmxConfig, budget: BudgetTracker): {"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 468,
+      "key": "src/llm.ts:468",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "if (options.maxCost !== undefined && options.maxCost !== null) args.push(\"--max-cost\", String(options.maxCost));"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 611,
+      "key": "src/llm.ts:611",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "const child = spawn("
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 616,
+      "key": "src/llm.ts:616",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "detached: process.platform !== \"win32\","
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 626,
+      "key": "src/llm.ts:626",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "process.kill(-child.pid, \"SIGTERM\");"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 738,
+      "key": "src/llm.ts:738",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "export function resolveChildModelRef(config: RlmxConfig, requestedModel?: string): string {"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 122,
+      "key": "src/config.ts:122",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "const DEFAULT_MODEL: ModelConfig = {"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 366,
+      "key": "src/config.ts:366",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "model: cfg.model?.model ?? DEFAULT_MODEL.model,"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 369,
+      "key": "src/config.ts:369",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "model.subCallModel = cfg.model[\"sub-call-model\"];"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 762,
+      "key": "src/llm.ts:762",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "const subCallModel: ModelConfig = config.model.subCallModel"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 464,
+      "key": "src/llm.ts:464",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "if (options.model) args.push(\"--model\", options.model);"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 791,
+      "key": "src/llm.ts:791",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "{ ...recursiveOptions, model: resolveChildModelRef(config, request.model) }"
+    },
+    {
+      "path": "src/llm.ts",
+      "line": 805,
+      "key": "src/llm.ts:805",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/llm.ts",
+      "lines": 915,
+      "verdict": "resolves",
+      "text": "{ ...recursiveOptions, model: resolveChildModelRef(config, request.model) }"
+    },
+    {
+      "path": "src/config.ts",
+      "line": 124,
+      "key": "src/config.ts:124",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/config.ts",
+      "lines": 632,
+      "verdict": "resolves",
+      "text": "model: \"gemini-3.1-flash-lite-preview\","
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 23,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/llm.ts:667",
+      "anchoredOn": "MAX_CONCURRENT",
+      "claim": "A batched fan-out runs at most four children at a time: MAX_CONCURRENT is 4, so a list of nine prompts runs as three blocking waves rather than nine parallel pr",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "MAX_CONCURRENT"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/rlm.ts:436",
+      "anchoredOn": "maxIterations: opts.maxIterations",
+      "claim": "The child inherits the parent's iteration cap unreduced — the request options pass maxIterations: opts.maxIterations straight through — so a fan-out multiplies ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "maxIterations:"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/rlm.ts:438",
+      "anchoredOn": "config.budget.maxDepth ?? 3",
+      "claim": "The depth ceiling comes from the ambient config and not from the agent: the child is handed config.budget.maxDepth ?? 3, so a max_depth declared in agent.yaml n",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "config.budget.maxDepth"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/llm.ts:563",
+      "anchoredOn": "detached",
+      "claim": "Every child is spawned detached into its own process group on non-Windows platforms, which is why children outlive a parent block that was killed while waiting ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "detached"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/mcp/server.ts:487",
+      "anchoredOn": "provider: parsed.provider",
+      "claim": "Applying an agent's model replaces only the provider and the model id over the ambient model config — provider: parsed.provider is spread onto config.model — so",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/cli.ts:35",
+      "anchoredOn": "CLI flags > settings.json > rlmx.yaml",
+      "claim": "Model precedence is CLI flags > settings.json > rlmx.yaml > hardcoded defaults, which is what makes a settings file in the process's HOME able to pin the model ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/config.ts:122",
+      "anchoredOn": "DEFAULT_MODEL",
+      "claim": "When neither a settings file nor a local yaml supplies a model, the child falls back to DEFAULT_MODEL, the hardcoded bottom of that precedence chain.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "DEFAULT_MODEL"
+      ]
+    }
+  ]
+}

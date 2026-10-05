@@ -1,0 +1,14 @@
+# gen-4 holdout (reporting only) · khal/deepseek-v4-flash · 2 replicates · recipe SYSTEM.md 640dfa69 / agent.yaml 20f8e018
+# replicates: rep-1, rep-2  (separate scratch HOMEs — one per run label)
+# union rule: a fact counts if HIT in >=1 replicate. FABRICATION RULE: a c3 (or c2) failure in EITHER replicate counts against the union.
+# VACUOUS: a c2/c3 PASS from a replicate that did not score, is !ok, or emitted 0 citations decided nothing — score-task.mjs had no citation to fail. Marked, never re-decided.
+# HOLDOUT — reporting only. The recipe was never selected on these tasks; this number must not feed a mutation.
+TASK 1 union=2/7 per-replicate=[2, 2] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[0, 4] iters=[14, 14] wall=[93.4, 340.1]s cost=[$0.01, $0.04]
+  UNIONMISS F2 src/rlm.ts:436 `maxIterations: opts.maxIterations` — [MISS, MISS]
+  UNIONMISS F3 src/rlm.ts:438 `config.budget.maxDepth ?? 3` — [MISS, MISS]
+  UNIONMISS F5 src/mcp/server.ts:487 `provider: parsed.provider` — [MISS, MISS]
+  UNIONMISS F6 src/cli.ts:35 `CLI flags > settings.json > rlmx.yaml` — [MISS, MISS]
+  UNIONMISS F7 src/config.ts:122 `DEFAULT_MODEL` — [MISS, MISS]
+TASK 2 union=6/7 per-replicate=[6, 6] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[4, 0] iters=[7, 12] wall=[285.9, 269.7]s cost=[$0.03, $0.01]
+  UNIONMISS F7 src/khal-provider.ts:103 `NON_CHAT_MODES` — [MISS, MISS]
+UNION facts=8/14 coverage=0.5714 perReplicate=[8, 8]/14 spread=0 unionLift=+0 runsOk=[2, 2]/2 c2fail=0 c3fail=0 vacuousCriteria=0 fabrications=0 citeFail=0 cites=[30/30, 39/39] spawns=[4, 4] perRun=0..4 cost=[$0.04, $0.05] wall=[379.7, 610.2]s

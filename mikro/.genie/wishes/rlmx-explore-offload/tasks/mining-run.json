@@ -1,0 +1,152 @@
+{
+  "minedAt": "2026-07-26T23:20:19Z",
+  "windowHours": 168,
+  "windowAttempts": [
+    {
+      "windowHours": 24,
+      "transcriptsScanned": 42,
+      "candidatesFound": 3,
+      "selectable": 2
+    },
+    {
+      "windowHours": 168,
+      "transcriptsScanned": 613,
+      "candidatesFound": 8,
+      "selectable": 6
+    }
+  ],
+  "widenedBecause": "the 24h window yielded 2 selectable task(s) of 3 candidate(s), below the 5-task floor",
+  "transcriptsScanned": 613,
+  "candidatesFound": 8,
+  "written": 6,
+  "diversity": {
+    "sessions": 4,
+    "repos": 2,
+    "maxPerSession": 2,
+    "maxPerRoot": 3,
+    "skippedForDiversity": [
+      {
+        "score": 43,
+        "root": "/home/namastex/prod/brain",
+        "session": "55c38d33-784e-49eb-8e39-7042e9fc806a",
+        "cap": "2 per session",
+        "title": "In /home/namastex/prod/brain (READ-ONLY — never edit), verif"
+      }
+    ]
+  },
+  "thresholds": {
+    "minReadOps": 5,
+    "minAnswerChars": 300,
+    "minVerifiedFacts": 3,
+    "minClaimChars": 40,
+    "maxClaimChars": 260,
+    "maxAnchorHits": "8 lines, or 5% of the file, whichever is smaller",
+    "mutationsAllowed": 0,
+    "reviewCommissions": "rejected — a verdict is not a citation (WISH.md:66)",
+    "factKinds": "path:line claims about the task root only, anchored on a term the claim itself supplies (exact | re-anchored)"
+  },
+  "tasks": [
+    {
+      "file": "1.md",
+      "score": 76,
+      "root": "/home/namastex/prod/brain",
+      "sessionCwd": "/home/namastex/prod/ryzen-ai-station",
+      "siblingRoots": [
+        "/home/namastex/prod/ryzen-ai-station"
+      ],
+      "session": "63144f8d-854f-49fa-9740-9d612f1067e8",
+      "askedAt": "2026-07-21T02:58:29.337Z",
+      "readOps": 19,
+      "requiredFacts": 14,
+      "factsToPass": 13,
+      "inRootCitations": 39,
+      "crossTreeClaims": 0,
+      "droppedClaims": 21,
+      "nativeTokens": 2943691
+    },
+    {
+      "file": "2.md",
+      "score": 63,
+      "root": "/home/namastex/workspace/repos/genie",
+      "sessionCwd": "/home/namastex/workspace/repos/genie",
+      "siblingRoots": [],
+      "session": "9e70f460-c422-4fe5-b509-6f59e027508f",
+      "askedAt": "2026-07-20T19:30:44.731Z",
+      "readOps": 19,
+      "requiredFacts": 10,
+      "factsToPass": 9,
+      "inRootCitations": 14,
+      "crossTreeClaims": 0,
+      "droppedClaims": 4,
+      "nativeTokens": 3098197
+    },
+    {
+      "file": "3.md",
+      "score": 56,
+      "root": "/home/namastex/prod/brain",
+      "sessionCwd": "/home/namastex/prod/brain",
+      "siblingRoots": [],
+      "session": "55c38d33-784e-49eb-8e39-7042e9fc806a",
+      "askedAt": "2026-07-26T20:44:23.498Z",
+      "readOps": 15,
+      "requiredFacts": 11,
+      "factsToPass": 10,
+      "inRootCitations": 19,
+      "crossTreeClaims": 0,
+      "droppedClaims": 7,
+      "nativeTokens": 2976188
+    },
+    {
+      "file": "4.md",
+      "score": 55,
+      "root": "/home/namastex/prod/brain",
+      "sessionCwd": "/home/namastex/prod/brain",
+      "siblingRoots": [
+        "/home/namastex/brain-station-validation"
+      ],
+      "session": "55c38d33-784e-49eb-8e39-7042e9fc806a",
+      "askedAt": "2026-07-26T20:43:49.249Z",
+      "readOps": 11,
+      "requiredFacts": 12,
+      "factsToPass": 11,
+      "inRootCitations": 18,
+      "crossTreeClaims": 0,
+      "droppedClaims": 6,
+      "nativeTokens": 2186864
+    },
+    {
+      "file": "5.md",
+      "score": 45,
+      "root": "/home/namastex/workspace/repos/genie",
+      "sessionCwd": "/home/namastex/workspace/repos/genie",
+      "siblingRoots": [],
+      "session": "9e70f460-c422-4fe5-b509-6f59e027508f",
+      "askedAt": "2026-07-20T19:30:28.256Z",
+      "readOps": 17,
+      "requiredFacts": 5,
+      "factsToPass": 5,
+      "inRootCitations": 7,
+      "crossTreeClaims": 0,
+      "droppedClaims": 2,
+      "nativeTokens": 1499747
+    },
+    {
+      "file": "6.md",
+      "score": 36,
+      "root": "/home/namastex/workspace/repos/genie",
+      "sessionCwd": "/home/namastex/workspace/repos/genie",
+      "siblingRoots": [
+        "/home/namastex/.genie"
+      ],
+      "session": "a9cb6b2e-8b66-459a-b27f-e58377dcc7ea",
+      "askedAt": "2026-07-20T20:34:10.715Z",
+      "readOps": 6,
+      "requiredFacts": 8,
+      "factsToPass": 8,
+      "inRootCitations": 9,
+      "crossTreeClaims": 0,
+      "droppedClaims": 0,
+      "nativeTokens": 3319167
+    }
+  ]
+}

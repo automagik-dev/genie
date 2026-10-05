@@ -1,0 +1,83 @@
+{
+  "arm": "khal/deepseek-v4-pro",
+  "kind": "model-matrix — measurement only, no prompt edits",
+  "suite": "round2-train fitness set (3,4,5,6,7,8); 1 and 2 held out and never run",
+  "recipe": {
+    "generation": 1,
+    "installedFrom": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "agentYamlSha256": "20f8e018",
+    "whyThisGeneration": "totals history [28, 29, 28, 29]: gen-1 and gen-3 tie at facts=29/34 (fitness 0.8529). gen-1 wins the tie on tasksPassed (3/6 vs 2/6) and is the incumbent best the EVOLUTION log already selected; a challenger that ties does not displace it. gen-0=28, gen-2=28 (gen-2 strictly dominated by gen-1).",
+    "note": "optimizer/current/ was NOT modified by this arm — it holds gen-3 (4eafbb3d) and may be owned by a concurrent optimize arm. The gen-1 snapshot was installed per-run via run-train-round.mjs --recipe, which copies it into each run's scratch HOME at ~/.rlmx/agents/explore-r/ with `model:` rewritten to the arm's model. agent.yaml budget untouched: max_iterations 14, max_cost 2.00, max_depth 2."
+  },
+  "primaryRound": {
+    "command": "node .genie/wishes/rlmx-explore-offload/parity/round2/run-train-round.mjs --gen 1302 --model khal/deepseek-v4-pro --recipe .genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe --label matrix-khal-deepseek-v4-pro --concurrency 2",
+    "env": {
+      "RLMX_REPL_TIMEOUT_MS": "600000",
+      "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+      "PARITY_CALL_TIMEOUT_MS": "600000",
+      "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+    },
+    "envIdenticalToFlashBaseline": true,
+    "producedAt": "optimizer/gens/gen-1302",
+    "relocatedTo": "optimizer/matrix/khal_deepseek-v4-pro",
+    "relocationCaveat": "round.json's `genDir` and `perTask[].runJson`/`.log` paths are the pre-move gens/gen-1302 paths. summary.json/summary.txt were regenerated in place after the move (node round2/summarize-train-round.mjs <dir>), so their paths are current. Nothing else was edited.",
+    "totals": {
+      "facts": "25/34",
+      "fitness": 0.7353,
+      "tasksPassed": "2/6",
+      "runsOk": "5/6",
+      "c2fail": 0,
+      "c3fail": 0,
+      "citationsResolved": "65/65",
+      "fabrications": 0,
+      "recursiveSpawns": 19,
+      "costUsd": 1.3,
+      "wallSeconds": 1162
+    },
+    "costCaveat": "costUsd sums the per-run footers; task 5 returned an error with no footer, so its real spend (a parent plus four pro children) is NOT in that number."
+  },
+  "task5Loss": {
+    "what": "task 5 returned `rlmx rlmx_explore-r failed: REPL execution timed out after 600000ms` at 621.2s — the whole run lost, answer 67 chars, 0/5 facts, 0 citations.",
+    "class": "environment wall, not a model or prompt failure — recursion-recon.md §4.1: rlm_query_batched blocks the parent's Python REPL for the whole fan-out wave, and the per-block REPL clock is separate from the run clock. 4 spawns were observed before the wall.",
+    "load": "the round ran concurrently with three sibling matrix arms on the same khal key (khal_deepseek-v4-flash, khal_glm-5.2, khal_qwen3.7-max present under optimizer/matrix/), i.e. well beyond the 4-concurrent-children figure §6.1 measured."
+  },
+  "task5Rerun": {
+    "dir": "rerun-task5-repl-wall",
+    "command": "RLMX_REPL_TIMEOUT_MS=1500000 RLMX_MCP_RUN_TIMEOUT_MS=1800000 PARITY_CALL_TIMEOUT_MS=1500000 node .genie/wishes/rlmx-explore-offload/parity/round2/run-train-round.mjs --gen 13025 --model khal/deepseek-v4-pro --recipe <gen-1 recipe> --label matrix-khal-deepseek-v4-pro-t5-wall --tasks 5 --concurrency 1 --task-timeout-s 2300",
+    "result": "facts=5/5, c2 PASS, c3 PASS, cites=16/16, 4 spawns, 362.9s, $0.22 — it finished in 363s, well inside even the original 600s wall, so the primary loss is attributable to gateway load, not to the model needing more than 600s.",
+    "producedAt": "optimizer/gens/gen-13025 (relocated here, same caveat as above)",
+    "howToRead": "NOT protocol-identical to the primary round or to the flash baselines: different REPL/run walls and concurrency 1. It is a diagnosis of the task-5 loss, not a substitute measurement. Substituting it would read 30/34 (0.8824); the comparable arm number is 25/34."
+  },
+  "scorersUntouched": "parity/score-task.mjs and parity/verify-native.mjs unchanged (no flags, no defaults, no bytes). examples/agents/explore-r/** unchanged. optimizer/current/** unchanged. Frozen eval tasks not read, not run, not referenced. Held-out train tasks 1 and 2 not read and not run — run-train-round.mjs refused them by construction.",
+  "rlmxGit": {
+    "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+    "branch": "wish/rlmx-explore-offload"
+  },
+
+  "corrections": {
+    "addedAt": "2026-07-27",
+    "by": "round-2 campaign verifier",
+    "method": "text-level only — no round re-run, no score recomputed, no scorer touched. Every field above is left byte-exact so the corrected claim can be read against the original.",
+
+    "optimizerCurrentHoldsGen1NotGen3": {
+      "wrongClaim": "recipe.note: 'optimizer/current/ was NOT modified by this arm — it holds gen-3 (4eafbb3d)'",
+      "measured": "sha256(optimizer/current/SYSTEM.md) = 02184f35… — that is gen-1, byte-identical to optimizer/gens/gen-1/recipe/{SYSTEM.md,agent.yaml}. gen-3 is 4eafbb3d…, and lives only at gens/gen-3/recipe/.",
+      "when": "mtime of both files in current/ is 2026-07-27T09:47:43.36Z — 0.6s after THIS arm's round started (09:47:42.77Z), 38s after the qwen arm's, 88s after the flash arm's, 52s before the glm arm's",
+      "attribution": "UNATTRIBUTABLE from the artifacts. No record under round2/ documents the write. The proximity to this arm's start is noted because it is the closest in time and this arm is the one asserting current/ held gen-3 — but run-train-round.mjs --recipe copies into a per-run scratch HOME (~/.rlmx/agents/explore-r/) and never writes current/, so the arm's ROUND did not do it. Setup steps around any of the four arms are equally consistent with the timestamp.",
+      "whatSurvives": "'optimizer/current/ was NOT modified by this arm' — the round provably could not write it. What is wrong is the description of what current/ contained.",
+      "consequence": "the optimizer's mutation pointer silently lost gen-3; current/ is one generation behind EVOLUTION.md. gens/gen-3/recipe/ is intact and authoritative. See optimizer/README.md (State of current/) and EVOLUTION.md (gen-3, closed)."
+    },
+
+    "scorersUntouchedWordingIsWrong": {
+      "wrongClaim": "scorersUntouched: 'parity/score-task.mjs and parity/verify-native.mjs unchanged (no flags, no defaults, no bytes)'",
+      "fact": "both gained a flag in commit 4cfb587 ('test(parity): round-2 prep'): score-task.mjs gained --tasks-dir (+60 lines), verify-native.mjs gained --dir (+40 lines)",
+      "corrected": "no scorer byte changed during the optimizer loop or during this arm — 4cfb587 predates gen-0 — and both flags default to the frozen eval suite, so the default path is unchanged and no rubric, threshold or fact rule moved. train-tasks/README.md states it correctly.",
+      "restOfTheFieldStands": "examples/agents/explore-r/** unchanged; frozen eval tasks not read/run/referenced; held-out train tasks 1 and 2 refused by construction."
+    },
+
+    "spawnsGuardAppliesHereToo": "task 3 of this arm ran spawns=2 on the SELECTED recipe (gen-1, 02184f35) — the same condition EVOLUTION.md's gen-3 entry pre-registered as a hard guard ('>= 3 on every run') and that the flash/qwen arm docs cite as a reason to reject gen-3. Three of the four matrix arms break it on gen-1's exact snapshot (flash spawns=0 on task 6, pro spawns=2 on task 3, qwen spawns=2 on task 3). It is a round property, not a prompt property; withdrawn as a selection reason, selection unchanged.",
+
+    "flashComparisonBand": "any comparison drawn against the flash arm's 32/34 should use the corrected band 29-31/34 — three live task-4 replicates scored 3/6, 5/6, 4/6 against the published 6/6 (replicate records not committed; verifier-reported). This arm's own 25/34 and its task-5 loss are unaffected. See matrix/README.md and matrix/khal_deepseek-v4-flash/README.md."
+  }
+}

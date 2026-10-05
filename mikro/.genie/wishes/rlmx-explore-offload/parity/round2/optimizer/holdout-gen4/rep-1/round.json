@@ -1,0 +1,89 @@
+{
+  "gen": 4,
+  "label": "gen4-holdout-rep1-khal-deepseek-v4-flash",
+  "model": "khal/deepseek-v4-flash",
+  "concurrency": 1,
+  "taskTimeoutS": 2400,
+  "tasks": [
+    1,
+    2
+  ],
+  "heldOutRefused": [],
+  "holdout": true,
+  "heldOutRun": [
+    {
+      "task": 1,
+      "reason": "Training-signal contamination: this task is authored about the tree the round-2 prompt was written in, and its F1-F7 anchor on the same line set (src/llm.ts:667, src/rlm.ts:436, src/rlm.ts:438, src/llm.ts:563, src/mcp/server.ts:487, src/cli.ts:35, src/config.ts:122) that parity/round2/recursion-recon.md §2/§3/§4 is built from. F6 anchors src/cli.ts:35, whose verified text exists only because the same change corrected src/settings.ts. Selecting on it would tune the prompt against ground truth authored by the investigation that produced the prompt — a self-consistency loop, not a training signal. Kept as a held-out diagnostic."
+    },
+    {
+      "task": 2,
+      "reason": "Training-signal contamination by root: authored about the same working tree the round-2 prompt was written in, by the same author, in the same sitting. Its anchor files (src/khal-provider.ts) are not the recursion-recon line set, so the loop is looser than task 1's — but 'same tree, same author, same sitting' is the condition the disjointness test exists to break, and a fitness set should not have to argue about degree. Kept as a held-out diagnostic."
+    }
+  ],
+  "holdoutIsReportingOnly": "Scored for reporting after the recipe was selected. This number must not feed a mutation, a revert, a Pareto comparison or a model choice — the recipe was never selected on these tasks and that is the only reason the number means anything.",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "suite": "round2-train",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "systemSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "systemChars": 36806,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "600000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+    "PARITY_CALL_TIMEOUT_MS": "600000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "pinChildModel": true,
+  "groundTruthDrift": [
+    "task 1 F1 src/llm.ts:667 → text-mismatch: got \"depth,\"",
+    "task 1 F4 src/llm.ts:563 → text-mismatch: got \"* The child inherits the parent's cwd (and thus .md configs).\"",
+    "task 1 F5 src/mcp/server.ts:487 → text-mismatch: got \"* composed `provider: khal` with a Google model id, and every bare\""
+  ],
+  "groundTruthDriftAllowed": true,
+  "roots": [
+    {
+      "root": "/home/namastex/prod/rlmx",
+      "rlmxExistedBefore": true,
+      "rlmxExistsAfter": true,
+      "createdByThisRound": false,
+      "cleanedUp": false
+    }
+  ],
+  "rlmxGit": {
+    "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+    "branch": "wish/rlmx-explore-offload",
+    "dirty": true
+  },
+  "genDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1",
+  "startedAt": "2026-07-27T12:43:16.982Z",
+  "finishedAt": "2026-07-27T12:49:36.698Z",
+  "wallSeconds": 379.7,
+  "perTask": [
+    {
+      "task": 1,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 93.5,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/runs/task-1.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/logs/task-1.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/runs/task-1.score.json"
+    },
+    {
+      "task": 2,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 286.1,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/runs/task-2.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/logs/task-2.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1/runs/task-2.score.json"
+    }
+  ],
+  "failedTasks": [],
+  "exitCode": 0
+}

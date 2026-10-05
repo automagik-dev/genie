@@ -1,0 +1,227 @@
+{
+  "arm": "rlmx",
+  "task": 4,
+  "model": "khal/qwen3.7-max",
+  "round": "matrix-gen1-khal-qwen3-7-max",
+  "footer": "rlmx · agent=explore-r · khal/qwen3.7-max · 6 iterations · 55,817 in / 33,131 out · $0.45 · 451.8s · session sess_10e4a3dd4acc9124",
+  "wallSeconds": 452.1,
+  "requestChars": 319,
+  "resultChars": 2885,
+  "ok": true,
+  "root": "/home/namastex/prod/xdna-top",
+  "outOfScope": [],
+  "need": 6,
+  "factTotal": 6,
+  "answerChars": 2750,
+  "citations": [
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 22,
+      "key": "src/xdna_top/record.py:22",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "RECORD_SCHEMA_VERSION = \"1.0\""
+    },
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 26,
+      "key": "src/xdna_top/record.py:26",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "def build_telemetry_event("
+    },
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 226,
+      "key": "src/xdna_top/record.py:226",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "def _dump(event: dict[str, Any]) -> str:"
+    },
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 198,
+      "key": "src/xdna_top/record.py:198",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "def _open_writer("
+    },
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 49,
+      "key": "src/xdna_top/record.py:49",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "def append_event(event: dict[str, Any], out_path: str | Path | None) -> None:"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 103,
+      "key": "src/xdna_top/exporter.py:103",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "def serve(host: str, port: int, gauge: HardwareGauge, npu_device: str | None) -> None:"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 105,
+      "key": "src/xdna_top/exporter.py:105",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "registry = CollectorRegistry()"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 128,
+      "key": "src/xdna_top/exporter.py:128",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "class XdnaCollector:"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 106,
+      "key": "src/xdna_top/exporter.py:106",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "registry.register(XdnaCollector(_hardware_reader(gauge, npu_device)))"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 107,
+      "key": "src/xdna_top/exporter.py:107",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "start_http_server(port, addr=host, registry=registry)"
+    },
+    {
+      "path": "docs/archive/prometheus-exporter-plan.md",
+      "line": 21,
+      "key": "docs/archive/prometheus-exporter-plan.md:21",
+      "resolvedAs": "/home/namastex/prod/xdna-top/docs/archive/prometheus-exporter-plan.md",
+      "lines": 677,
+      "verdict": "resolves",
+      "text": "- Counter families are named **without** the `_total` suffix (e.g. `xdna_npu_submissions`); `prometheus_client` appends "
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 32,
+      "key": "src/xdna_top/exporter.py:32",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "\"xdna_up\", \"1 if the last hardware scrape succeeded, else 0\", value=1.0"
+    },
+    {
+      "path": "src/xdna_top/exporter.py",
+      "line": 36,
+      "key": "src/xdna_top/exporter.py:36",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/exporter.py",
+      "lines": 152,
+      "verdict": "resolves",
+      "text": "busy = GaugeMetricFamily(\"xdna_igpu_busy_percent\", \"iGPU busy percentage (0-100)\")"
+    },
+    {
+      "path": "src/xdna_top/record.py",
+      "line": 31,
+      "key": "src/xdna_top/record.py:31",
+      "resolvedAs": "/home/namastex/prod/xdna-top/src/xdna_top/record.py",
+      "lines": 228,
+      "verdict": "resolves",
+      "text": "\"type\": \"telemetry\","
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 14,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/xdna_top/record.py:22",
+      "anchoredOn": "RECORD_SCHEMA_VERSION",
+      "claim": "Every recorded event carries an explicit schema version constant, RECORD_SCHEMA_VERSION, so a reader can tell which layout it is parsing without guessing from t",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "RECORD_SCHEMA_VERSION"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/xdna_top/record.py:23",
+      "anchoredOn": "RECORD_KIND",
+      "claim": "Events are discriminated by the RECORD_KIND constant rather than by shape, so a telemetry event and a mark event can share one stream unambiguously.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/xdna_top/record.py:227",
+      "anchoredOn": "json.dumps(event)",
+      "claim": "The stream is JSONL: one event per line, produced by json.dumps(event) with a trailing newline, which is what lets a killed run keep everything already written.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "json.dumps(event)"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/xdna_top/exporter.py:13",
+      "anchoredOn": "start_http_server",
+      "claim": "The exporter is built on the Prometheus client library, importing start_http_server together with the registry type it registers its collector into.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "start_http_server"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/xdna_top/exporter.py:106",
+      "anchoredOn": "XdnaCollector",
+      "claim": "A single custom collector, XdnaCollector, is registered into the registry, and it reads the hardware at scrape time rather than on a background timer.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "XdnaCollector"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": "src/xdna_top/exporter.py:62",
+      "anchoredOn": "named WITHOUT _total",
+      "claim": "There is a naming rule to know before adding a metric: counter families are named WITHOUT _total because the client library appends that suffix itself.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "named",
+        "WITHOUT",
+        "_total"
+      ]
+    }
+  ]
+}

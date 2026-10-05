@@ -1,0 +1,25 @@
+{
+  "leg": "prime",
+  "backendField": "prime",
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 6.5,
+  "question": "In this repository, which file declares the npm package name, and on which line? Answer with one path:line citation.",
+  "answer": "```repl\nimport os, re\n\nSKIP = {\".git\", \"node_modules\", \"dist\", \"build\", \"target\", \".venv\",\n        \"__pycache__\", \"coverage\", \"vendor\"}\n\ndef walk(root=\".\"):\n    for d, subs, names in os.walk(root):\n        subs[:] = [s for s in subs if s not in SKIP and not s.startswith(\".\")]\n        for n in names:\n            yield os.path.relpath(os.path.join(d, n), root)\n\ndef look(root=\".\", depth=2):\n    \"\"\"Print the layout down to `depth` levels — orientation, not a census.\"\"\"\n    for d, subs, names in os.walk(root):\n        rel = os.path.relpath(d, root)\n        level = 0 if rel == \".\" else rel.count(os.sep) + 1\n        subs[:] = [] if level >= depth else [s for s in subs if s not in SKIP and not s.startswith(\".\")]\n        prefix = \"\" if rel == \".\" else rel + os.sep\n        for s in sorted(subs): print(prefix + s + os.sep)\n        for n in sorted(names)[:25]: print(prefix + n)\n        if len(names) > 25: print(f\"{prefix}… {len(names) - 25} more files\")\n    print(\"cwd:\", os.path.abspath(root))\n\ndef search(pattern, exts=None, root=\".\", limit=30):\n    \"\"\"Print `path:line: text` per match. Those line numbers are your citations.\"\"\"\n    hits = 0\n    for p in walk(root):\n        if exts and not p.endswith(tuple(exts)): continue\n        try:\n            with open(os.path.join(root, p), errors=\"replace\") as fh:\n                for i, line in enumerate(fh, 1):\n                    if re.search(pattern, line):\n                        print(f\"{p}:{i}: {line.rstrip()[:160]}\")\n                        hits += 1\n                        if hits >= limit: return print(f\"[{hits} hits, truncated]\")\n        except OSError: pass\n    print(f\"[{hits} hits for {pattern!r}]\")\n\ndef read(path, start=1, end=10**9):\n    \"\"\"Print a numbered slice, so what you read is what you cite.\"\"\"\n    with open(path, errors=\"replace\") as fh:\n        for i, line in enumerate(fh, 1):\n            if start <= i <= end: print(f\"{i}: {line.rstrip()}\")\n\nlook()\n```\n",
+  "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 1 iteration · 6,733 in / 609 out · $0.0011 · 5.6s · session sess_7eb85fa968a9f8cb",
+  "footerModel": "deepseek/deepseek-v4-flash",
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore"
+  ],
+  "cwd": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/rlmx",
+  "realCwd": "/Users/feliperosa/workspace/repos/rlmx",
+  "argvLog": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/argv-logs/probe-prime.log",
+  "toolErrorText": null,
+  "primeArgv": "--mode json -p --no-session --cwd /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/rlmx -nc -ne -ns -np --provider deepseek --model deepseek-v4-flash --append-system-prompt You are operating as the rlmx microagent \"explore\", dispatched by an rlmx MCP host to complete one delegated task. Work autonomously to completion — you cannot ask the host follow-up questions mid-run — and end with your final report: the complete answer to the task, self-contained and written for the host's user.",
+  "primeVersionProbes": 1,
+  "primeModelOk": true,
+  "primeHermeticFlagsOk": true,
+  "primeNoSystemPromptReplace": true,
+  "primeCwdOk": true
+}

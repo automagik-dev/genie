@@ -1,0 +1,230 @@
+{
+  "label": "gen-4 holdout (reporting only)",
+  "holdout": true,
+  "holdoutIsReportingOnly": "Held-out tasks, scored after the recipe was fixed. This number must not feed a mutation, a revert, a Pareto comparison or a model choice.",
+  "model": "khal/deepseek-v4-flash",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "systemSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "systemChars": 36806,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "replicates": [
+    {
+      "name": "rep-1",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-1",
+      "label": "gen4-holdout-rep1-khal-deepseek-v4-flash"
+    },
+    {
+      "name": "rep-2",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-2",
+      "label": "gen4-holdout-rep2-khal-deepseek-v4-flash"
+    }
+  ],
+  "rules": {
+    "coverage": "a fact counts in the union if it is HIT in at least one replicate; WEAK never counts",
+    "fabrication": "criterion 3 (and criterion 2) PASS in the union only if EVERY replicate passed — a failure in either counts against the union",
+    "needed": "the fact count must be identical across replicates or the pooling is refused",
+    "provenance": "verdicts are read verbatim from each replicate's summary.json; no scorer is re-run and no rule is re-decided here",
+    "vacuous": "criteria 2 and 3 from a replicate that did not score, whose run is !ok, or that emitted 0 citations are VACUOUS — score-task.mjs had no citation to fail, so the PASS is the absence of a measurement. The combining rule is unchanged; the support is labelled (tasks[].criteriaVacuous, totals.vacuousCriteria) so a PASS cannot be read as evidence."
+  },
+  "totals": {
+    "replicates": 2,
+    "tasks": 2,
+    "needed": 14,
+    "perReplicateFound": [
+      8,
+      8
+    ],
+    "unionFound": 8,
+    "runsOk": [
+      2,
+      2
+    ],
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "vacuousCriteria": 0,
+    "vacuousCriteriaDetail": [],
+    "fabrications": 0,
+    "citationFailures": 0,
+    "citations": [
+      30,
+      39
+    ],
+    "citationsResolved": [
+      30,
+      39
+    ],
+    "spawnsTotal": [
+      4,
+      4
+    ],
+    "spawnsMinPerRun": 0,
+    "spawnsMaxPerRun": 4,
+    "costUsd": [
+      0.04,
+      0.05
+    ],
+    "wallSeconds": [
+      379.7,
+      610.2
+    ],
+    "perReplicateCoverage": [
+      0.5714,
+      0.5714
+    ],
+    "unionCoverage": 0.5714,
+    "replicateSpread": 0,
+    "unionLift": 0
+  },
+  "tasks": [
+    {
+      "task": 1,
+      "needed": 7,
+      "perReplicate": [
+        2,
+        2
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 2,
+      "unionMisses": [
+        {
+          "id": "F2",
+          "anchor": "src/rlm.ts:436",
+          "anchoredOn": "maxIterations: opts.maxIterations",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/rlm.ts:438",
+          "anchoredOn": "config.budget.maxDepth ?? 3",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/mcp/server.ts:487",
+          "anchoredOn": "provider: parsed.provider",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F6",
+          "anchor": "src/cli.ts:35",
+          "anchoredOn": "CLI flags > settings.json > rlmx.yaml",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F7",
+          "anchor": "src/config.ts:122",
+          "anchoredOn": "DEFAULT_MODEL",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        10,
+        19
+      ],
+      "citationsResolved": [
+        10,
+        19
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        4
+      ],
+      "iterations": [
+        14,
+        14
+      ],
+      "wallSeconds": [
+        93.4,
+        340.1
+      ],
+      "costUsd": [
+        0.01,
+        0.04
+      ]
+    },
+    {
+      "task": 2,
+      "needed": 7,
+      "perReplicate": [
+        6,
+        6
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 6,
+      "unionMisses": [
+        {
+          "id": "F7",
+          "anchor": "src/khal-provider.ts:103",
+          "anchoredOn": "NON_CHAT_MODES",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        20,
+        20
+      ],
+      "citationsResolved": [
+        20,
+        20
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        4,
+        0
+      ],
+      "iterations": [
+        7,
+        12
+      ],
+      "wallSeconds": [
+        285.9,
+        269.7
+      ],
+      "costUsd": [
+        0.03,
+        0.01
+      ]
+    }
+  ]
+}

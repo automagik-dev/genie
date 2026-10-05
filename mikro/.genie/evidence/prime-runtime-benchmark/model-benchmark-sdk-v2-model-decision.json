@@ -1,0 +1,48 @@
+{
+  "version": "model-benchmark-sdk-v2-model-decision-v1",
+  "createdAt": "2026-09-02T22:37:37.217Z",
+  "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+  "population": { "models": 4, "casesPerModel": 60, "totalCells": 240 },
+  "selectionRule": "quality first: semantic passes; then reliability, mean field accuracy, median latency, cost per solve",
+  "selectedCircuit": { "model": "deepseek/deepseek-v4-pro-0813", "route": "deepseek-direct" },
+  "modelOnlyLeaderboardEligible": false,
+  "billingStatus": "contaminated by intentionally parallel per-provider runs; per-response token costs retained as estimates",
+  "ranking": [
+    {
+      "model": "deepseek/deepseek-v4-pro-0813", "route": "deepseek-direct",
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-deepseek-v4-pro.json",
+      "artifactSha256": "0dc5a154f4d2374375ee95e6f723f17d3a0dbdeef470d93997608cfe2c30cf41",
+      "n": 60, "complete": true, "semanticPasses": 51, "formatPasses": 60, "reliableCalls": 60,
+      "meanFieldAccuracy": 0.9162037037037035, "medianWallMs": 12286, "p90WallMs": 30461,
+      "inputTokens": 26264, "outputTokens": 73956, "estimatedCostUsd": 0.16543982399999999,
+      "costPerSolveUsd": 0.0032439181176470585, "failures": {}
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731", "route": "deepseek-direct",
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-deepseek-v4-flash.json",
+      "artifactSha256": "c562b29bf6866b30fe14dbaf4f0a61b1e50863597e7e865adb4efc8875f42667",
+      "n": 60, "complete": true, "semanticPasses": 46, "formatPasses": 59, "reliableCalls": 59,
+      "meanFieldAccuracy": 0.8667328042328042, "medianWallMs": 5707, "p90WallMs": 18111,
+      "inputTokens": 24952, "outputTokens": 74522, "estimatedCostUsd": 0.05520528800000002,
+      "costPerSolveUsd": 0.0012001149565217396, "failures": { "structured-output-missing": 1 }
+    },
+    {
+      "model": "z-ai/glm-5.3-flash", "route": "gmicloud/fp8",
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-glm-5.3-flash.json",
+      "artifactSha256": "0c5fb9f4cd234476f9c05937b60fb00a665c345ff75ee2d8a80b81ce66bfef76",
+      "n": 60, "complete": true, "semanticPasses": 25, "formatPasses": 51, "reliableCalls": 51,
+      "meanFieldAccuracy": 0.6270502645502646, "medianWallMs": 16849, "p90WallMs": 98685,
+      "inputTokens": 62847, "outputTokens": 43591, "estimatedCostUsd": 0.015611275,
+      "costPerSolveUsd": 0.000624451, "failures": { "timeout": 5, "structured-output-missing": 4 }
+    },
+    {
+      "model": "z-ai/glm-5.3", "route": "gmicloud/fp8",
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-glm-5.3.json",
+      "artifactSha256": "de35f34c571db8558071976c6fffb403bf8374a03bb27be481c12baf5afd977f",
+      "n": 60, "complete": true, "semanticPasses": 23, "formatPasses": 57, "reliableCalls": 57,
+      "meanFieldAccuracy": 0.6696494708994708, "medianWallMs": 5645, "p90WallMs": 23469,
+      "inputTokens": 27160, "outputTokens": 33368, "estimatedCostUsd": 0.18484319999999999,
+      "costPerSolveUsd": 0.008036660869565216, "failures": { "structured-output-missing": 3 }
+    }
+  ]
+}

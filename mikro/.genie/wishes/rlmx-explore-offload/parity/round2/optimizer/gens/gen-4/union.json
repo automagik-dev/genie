@@ -1,0 +1,452 @@
+{
+  "label": "gen-4 fitness",
+  "model": "khal/deepseek-v4-flash",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "systemSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "systemChars": 36806,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "replicates": [
+    {
+      "name": "rep-1",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-1",
+      "label": "gen4-rep1-khal-deepseek-v4-flash"
+    },
+    {
+      "name": "rep-2",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2",
+      "label": "gen4-rep2-khal-deepseek-v4-flash"
+    }
+  ],
+  "rules": {
+    "coverage": "a fact counts in the union if it is HIT in at least one replicate; WEAK never counts",
+    "fabrication": "criterion 3 (and criterion 2) PASS in the union only if EVERY replicate passed — a failure in either counts against the union",
+    "needed": "the fact count must be identical across replicates or the pooling is refused",
+    "provenance": "verdicts are read verbatim from each replicate's summary.json; no scorer is re-run and no rule is re-decided here",
+    "vacuous": "criteria 2 and 3 from a replicate that did not score, whose run is !ok, or that emitted 0 citations are VACUOUS — score-task.mjs had no citation to fail, so the PASS is the absence of a measurement. The combining rule is unchanged; the support is labelled (tasks[].criteriaVacuous, totals.vacuousCriteria) so a PASS cannot be read as evidence."
+  },
+  "totals": {
+    "replicates": 2,
+    "tasks": 6,
+    "needed": 34,
+    "perReplicateFound": [
+      30,
+      26
+    ],
+    "unionFound": 32,
+    "runsOk": [
+      6,
+      5
+    ],
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "vacuousCriteria": 1,
+    "vacuousCriteriaDetail": [
+      {
+        "task": 5,
+        "replicate": "rep-2",
+        "why": "run !ok — no answer to decide criteria 2/3 over",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 67
+      }
+    ],
+    "fabrications": 0,
+    "citationFailures": 0,
+    "citations": [
+      91,
+      54
+    ],
+    "citationsResolved": [
+      91,
+      54
+    ],
+    "spawnsTotal": [
+      18,
+      24
+    ],
+    "spawnsMinPerRun": 0,
+    "spawnsMaxPerRun": 6,
+    "costUsd": [
+      0.167,
+      0.14
+    ],
+    "wallSeconds": [
+      1426.8,
+      2002
+    ],
+    "perReplicateCoverage": [
+      0.8824,
+      0.7647
+    ],
+    "unionCoverage": 0.9412,
+    "replicateSpread": 4,
+    "unionLift": 2
+  },
+  "tasks": [
+    {
+      "task": 3,
+      "needed": 7,
+      "perReplicate": [
+        5,
+        5
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 6,
+      "unionMisses": [
+        {
+          "id": "F5",
+          "anchor": "src/xdna_top/npu_power.py:84",
+          "anchoredOn": "m.group(\"lb\") == \"[\"",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/discover_sysfs.py:18",
+          "verdicts": [
+            "MISS",
+            "HIT"
+          ]
+        },
+        {
+          "id": "F7",
+          "anchor": "src/xdna_top/discover_sysfs.py:55",
+          "verdicts": [
+            "HIT",
+            "WEAK"
+          ]
+        }
+      ],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        20,
+        15
+      ],
+      "citationsResolved": [
+        20,
+        15
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        4,
+        4
+      ],
+      "iterations": [
+        9,
+        8
+      ],
+      "wallSeconds": [
+        320.6,
+        252.8
+      ],
+      "costUsd": [
+        0.04,
+        0.04
+      ]
+    },
+    {
+      "task": 4,
+      "needed": 6,
+      "perReplicate": [
+        5,
+        6
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 6,
+      "unionMisses": [],
+      "unstable": [
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/exporter.py:62",
+          "verdicts": [
+            "MISS",
+            "HIT"
+          ]
+        }
+      ],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        12,
+        12
+      ],
+      "citationsResolved": [
+        12,
+        12
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        4,
+        6
+      ],
+      "iterations": [
+        7,
+        9
+      ],
+      "wallSeconds": [
+        254.1,
+        377
+      ],
+      "costUsd": [
+        0.03,
+        0.03
+      ]
+    },
+    {
+      "task": 5,
+      "needed": 5,
+      "perReplicate": [
+        5,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        false
+      ],
+      "unionFound": 5,
+      "unionMisses": [],
+      "unstable": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/ptyManager.ts:38",
+          "verdicts": [
+            "HIT",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/ptyManager.ts:695",
+          "verdicts": [
+            "HIT",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/ptyManager.ts:708",
+          "verdicts": [
+            "HIT",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/ptyManager.ts:727",
+          "verdicts": [
+            "HIT",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/ptyManager.ts:127",
+          "verdicts": [
+            "HIT",
+            "MISS"
+          ]
+        }
+      ],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-2",
+          "why": "run !ok — no answer to decide criteria 2/3 over",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 67
+        }
+      ],
+      "citations": [
+        21,
+        0
+      ],
+      "citationsResolved": [
+        21,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        4,
+        4
+      ],
+      "iterations": [
+        14,
+        null
+      ],
+      "wallSeconds": [
+        264.7,
+        650
+      ],
+      "costUsd": [
+        0.04,
+        null
+      ]
+    },
+    {
+      "task": 6,
+      "needed": 5,
+      "perReplicate": [
+        5,
+        5
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 5,
+      "unionMisses": [],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        12,
+        6
+      ],
+      "citationsResolved": [
+        12,
+        6
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        4,
+        2
+      ],
+      "iterations": [
+        11,
+        5
+      ],
+      "wallSeconds": [
+        242.7,
+        197.8
+      ],
+      "costUsd": [
+        0.03,
+        0.02
+      ]
+    },
+    {
+      "task": 7,
+      "needed": 6,
+      "perReplicate": [
+        5,
+        5
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 5,
+      "unionMisses": [
+        {
+          "id": "F6",
+          "anchor": "channel/enroll.sh:23",
+          "anchoredOn": "SUITE",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        7,
+        7
+      ],
+      "citationsResolved": [
+        7,
+        7
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        4
+      ],
+      "iterations": [
+        8,
+        7
+      ],
+      "wallSeconds": [
+        92.9,
+        205.8
+      ],
+      "costUsd": [
+        0.007,
+        0.02
+      ]
+    },
+    {
+      "task": 8,
+      "needed": 5,
+      "perReplicate": [
+        5,
+        5
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 5,
+      "unionMisses": [],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [],
+      "citations": [
+        19,
+        14
+      ],
+      "citationsResolved": [
+        19,
+        14
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        2,
+        4
+      ],
+      "iterations": [
+        8,
+        5
+      ],
+      "wallSeconds": [
+        250.8,
+        315.5
+      ],
+      "costUsd": [
+        0.02,
+        0.03
+      ]
+    }
+  ]
+}

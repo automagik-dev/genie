@@ -1,0 +1,238 @@
+{
+  "arm": "native",
+  "task": 2,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 9,
+  "factTotal": 10,
+  "answerChars": 4029,
+  "citations": [
+    {
+      "path": "src/lib/trusted-executable.ts",
+      "line": 111,
+      "key": "src/lib/trusted-executable.ts:111",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/trusted-executable.ts",
+      "lines": 167,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/trusted-executable.ts",
+      "line": 132,
+      "key": "src/lib/trusted-executable.ts:132",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/trusted-executable.ts",
+      "lines": 167,
+      "verdict": "resolves",
+      "text": "childCwd: string,"
+    },
+    {
+      "path": "src/lib/runtime-integrations.ts",
+      "line": 481,
+      "key": "src/lib/runtime-integrations.ts:481",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/runtime-integrations.ts",
+      "lines": 4270,
+      "verdict": "resolves",
+      "text": "child.stderr.on('data', (chunk) => append('stderr', chunk));"
+    },
+    {
+      "path": "src/lib/runtime-integrations.ts",
+      "line": 490,
+      "key": "src/lib/runtime-integrations.ts:490",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/runtime-integrations.ts",
+      "lines": 4270,
+      "verdict": "resolves",
+      "text": "setTimeout(() => terminate('timeout'), timeoutMs);"
+    },
+    {
+      "path": "runtime-integrations.ts",
+      "line": 1838,
+      "key": "runtime-integrations.ts:1838",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/runtime-integrations.ts",
+      "lines": 4270,
+      "verdict": "resolves",
+      "text": "const sourcePrefix = name.startsWith(CODEX_AGENT_TRANSACTION_PREFIX)"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 156,
+      "key": "src/genie-commands/install.ts:156",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "deliveryComplete: true,"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 175,
+      "key": "src/genie-commands/install.ts:175",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "return 'stable';"
+    },
+    {
+      "path": "install.ts",
+      "line": 194,
+      "key": "install.ts:194",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "if (delivery.action === 'failed' || delivery.action === 'busy' || delivery.action === 'route-upgrade')"
+    },
+    {
+      "path": "install.ts",
+      "line": 196,
+      "key": "install.ts:196",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "return delivery;"
+    },
+    {
+      "path": "install.ts",
+      "line": 162,
+      "key": "install.ts:162",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "function resolveDeliveryChannelForInstall(): DeliveryEvidenceChannel {"
+    },
+    {
+      "path": "install.ts",
+      "line": 175,
+      "key": "install.ts:175",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "return 'stable';"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 3521,
+      "key": "src/lib/agent-sync.ts:3521",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "report.skills.push({ name: skill.name, ...syncOneSkill(ctx, skill, targetParent) });"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 12,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/runtime-integrations.ts:2171",
+      "anchoredOn": "const cwd = options.cwd ?? process.cwd()",
+      "claim": "**childCwd = process.cwd() confirmed:** `src/lib/runtime-integrations.ts:481-490` (`resolveRuntimeExecutable` → `validateTrustedExecutablePath(..., cwd)`), fed ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "const",
+        "options.cwd",
+        "process.cwd()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "**File:** `src/genie-commands/install.ts:156-175` const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok); // 156",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "codexFailed"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/agent-sync.ts:3521",
+      "anchoredOn": "syncOneSkill",
+      "claim": "**File:** `src/lib/agent-sync.ts:3521-3532` (`syncOneSkill`)",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/doctor.ts:984",
+      "anchoredOn": "sourceDigest === managedDigest && computeDirDigest(dir) === managedDigest",
+      "claim": "- **doctor:** `src/genie-commands/doctor.ts:797-817` (`summarizeManagedSkills`). Line 811 requires `sourceDigest === managedDigest && computeDirDigest(dir) === ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "plugins/genie/workflows/council.js:23",
+      "anchoredOn": "__GENIE_LENS_ROOT__",
+      "claim": "**What/where:** `LENS_ROOT` is the absolute path to the installed genie plugin dir, injected into the `/council` workflow. Template ships unstamped: `plugins/ge",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/agent-sync.ts:5078",
+      "anchoredOn": "stampWorkflowTemplate",
+      "claim": "**Stamping:** `src/lib/agent-sync.ts:5060-5066` (`stampWorkflowTemplate`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/doctor.ts:1001",
+      "anchoredOn": "councilStampState",
+      "claim": "`src/genie-commands/doctor.ts:828-838` (`councilStampState`):",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/interactivity.ts:22",
+      "anchoredOn": "isInteractive",
+      "claim": "**Sole consumer:** `src/lib/interactivity.ts:22-27` (`isInteractive`):",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/genie-commands/uninstall.ts:3468",
+      "anchoredOn": "uninstallCommand",
+      "claim": "**Root cause.** `uninstallCommand` (`src/genie-commands/uninstall.ts:3426`, signature `options: { removeMarketplace?: boolean } = {}`) **never calls `isInteract",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "| A2 | agent-sync scope gated on a codex-only `codexFailed` flag under `auto` → claude/hermes skipped too | `src/genie-commands/install.ts:162-175` | One block,",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "codexFailed"
+      ]
+    }
+  ]
+}

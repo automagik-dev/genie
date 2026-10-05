@@ -1,0 +1,26 @@
+{
+  "exercise": "abort-deadline",
+  "leg": "legacy",
+  "backendField": "rlmx",
+  "mechanism": "RLMX_MCP_RUN_TIMEOUT_MS=20000 (wall-clock deadline, mid-run)",
+  "question": "task 1 verbatim (frozen suite)",
+  "fixtureRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/abort/deadline-legacy",
+  "serverDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 20,
+  "answer": "\n",
+  "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 7 iterations · 4,041 in / 1,652 out · $0.0011 · 20.0s · session sess_4e5f9be167ca6667",
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore"
+  ],
+  "expected": {
+    "answer": "Error: RLM query timed out",
+    "isError": true
+  },
+  "observed": {
+    "isError": false,
+    "timedOutAnswer": false
+  }
+}

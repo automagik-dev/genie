@@ -1,0 +1,62 @@
+{
+  "name": "mikro",
+  "version": "1.260907.1",
+  "private": true,
+  "description": "mikro — microagent runtime for coding agents: prompt externalization, Python REPL with symbolic recursion, code-driven navigation",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "bin",
+    "dist/src",
+    "src/templates",
+    "python/*.py",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/src/cli.js && cp src/benchmark-data.json dist/src/ && rm -rf dist/src/templates && cp -r src/templates dist/src/templates",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/tests/*.test.js",
+    "prepare": "node scripts/prepare.mjs",
+    "bump-version": "node scripts/version.mjs",
+    "check": "tsc --noEmit",
+    "deps:ci": "node scripts/check-npm-authority.mjs && npm ci",
+    "install:local": "bash scripts/install.sh"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.26.0",
+    "@earendil-works/pi-ai": "0.80.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "js-yaml": "^4.3.2",
+    "pg": "^8.20.0",
+    "pgserve": "^1.1.10"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "husky": "^9.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "rlm",
+    "llm",
+    "repl",
+    "research",
+    "agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/automagik-dev/mikro.git"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.11"
+  }
+}

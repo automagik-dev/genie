@@ -1,0 +1,420 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "deepseek/deepseek-v4-flash",
+  "round": "gate-v2-legacy",
+  "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 24 iterations · 31,192 in / 3,799 out · $0.0069 · 60.7s · session sess_f6523eed6c95cec9",
+  "wallSeconds": 61.1,
+  "requestChars": 1595,
+  "resultChars": 5324,
+  "ok": true,
+  "root": "/Users/feliperosa/workspace/repos/brain",
+  "rootFrozen": "/home/namastex/prod/brain",
+  "rootOverride": "/Users/feliperosa/workspace/repos/brain",
+  "outOfScope": [
+    "/home/namastex/prod/ryzen-ai-station"
+  ],
+  "need": 13,
+  "factTotal": 14,
+  "answerChars": 5180,
+  "citations": [
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 38,
+      "key": "rlmx-bridge.ts:38",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "import { sdk } from \"@automagik/rlmx\";"
+    },
+    {
+      "path": "analyze.ts",
+      "line": 266,
+      "key": "analyze.ts:266",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/analyze.ts",
+      "lines": 345,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\""
+    },
+    {
+      "path": "package.json",
+      "line": 45,
+      "key": "package.json:45",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/package.json",
+      "lines": 66,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\": \"0.260528.2\","
+    },
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 10,
+      "key": "rlmx-bridge.ts:10",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "*   - env `BRAIN_USE_RLMX_SDK=1`"
+    },
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 11,
+      "key": "rlmx-bridge.ts:11",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "*   - `rlmx_mode: true` in `.agents/<name>/agent.yaml`"
+    },
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 83,
+      "key": "rlmx-bridge.ts:83",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "const envFlag = env.BRAIN_USE_RLMX_SDK;"
+    },
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 102,
+      "key": "rlmx-bridge.ts:102",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "return { enabled: true, reason: \"env BRAIN_USE_RLMX_SDK=1 (enable-all)\" };"
+    },
+    {
+      "path": "rlmx-bridge.ts",
+      "line": 689,
+      "key": "rlmx-bridge.ts:689",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "*     passed `--rlmx-sdk` — CLI flag IS the explicit opt-in."
+    },
+    {
+      "path": "analyze.ts",
+      "line": 295,
+      "key": "analyze.ts:295",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/analyze.ts",
+      "lines": 345,
+      "verdict": "resolves",
+      "text": "const result = await rlmLoop(options.query, context, config, {"
+    },
+    {
+      "path": "analyze.ts",
+      "line": 280,
+      "key": "analyze.ts:280",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/analyze.ts",
+      "lines": 345,
+      "verdict": "resolves",
+      "text": "config.model.provider = modelConfig.provider;"
+    },
+    {
+      "path": "analyze.ts",
+      "line": 281,
+      "key": "analyze.ts:281",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/analyze.ts",
+      "lines": 345,
+      "verdict": "resolves",
+      "text": "config.model.model = modelConfig.model;"
+    },
+    {
+      "path": "README.md",
+      "line": 24,
+      "key": "README.md:24",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "- **9 Brain skills** copied into `~/.claude/skills/brain-*` so Claude Code (and any agent that scans `~/.claude/skills`)"
+    },
+    {
+      "path": "README.md",
+      "line": 63,
+      "key": "README.md:63",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "ls ~/.claude/skills/brain # 9 brain-* skills"
+    },
+    {
+      "path": "README.md",
+      "line": 123,
+      "key": "README.md:123",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "Brain ships **skills** — short prompt files that teach an agent how to drive Brain by intent rather than by CLI flags. T"
+    },
+    {
+      "path": "db.ts",
+      "line": 710,
+      "key": "db.ts:710",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "CREATE TABLE IF NOT EXISTS brain_schema_migrations ("
+    },
+    {
+      "path": "db.ts",
+      "line": 723,
+      "key": "db.ts:723",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "`;"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 403,
+      "key": "doctor.ts:403",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/doctor.ts",
+      "lines": 1683,
+      "verdict": "resolves",
+      "text": "\"021-brain-pgvector-retry.sql\":"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 404,
+      "key": "doctor.ts:404",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/doctor.ts",
+      "lines": 1683,
+      "verdict": "resolves",
+      "text": "\"vector columns/indexes not created — semantic search stays OFF (BM25 + trigram only) until pgvector is installed and mi"
+    },
+    {
+      "path": "audio.ts",
+      "line": 17,
+      "key": "audio.ts:17",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/processors/audio.ts",
+      "lines": 131,
+      "verdict": "resolves",
+      "text": "const TOOLS_DIR = process.env.GENIE_TOOLS_DIR ?? \"/home/genie/tools\";"
+    },
+    {
+      "path": "image.ts",
+      "line": 18,
+      "key": "image.ts:18",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/processors/image.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "const TOOLS_DIR = process.env.GENIE_TOOLS_DIR ?? \"/home/genie/tools\";"
+    },
+    {
+      "path": "pgserve.ts",
+      "line": 4,
+      "key": "pgserve.ts:4",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "* Brain no longer owns a Postgres process. Runtime database access is resolved"
+    },
+    {
+      "path": "pgserve.ts",
+      "line": 6,
+      "key": "pgserve.ts:6",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "* retained for historical imports that still need database-name derivation,"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 933,
+      "key": "doctor.ts:933",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/doctor.ts",
+      "lines": 1683,
+      "verdict": "resolves",
+      "text": "const vector = deps.find((d) => d.name === \"pgvector\");"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 952,
+      "key": "doctor.ts:952",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/doctor.ts",
+      "lines": 1683,
+      "verdict": "resolves",
+      "text": "label: \"install pgvector, then re-run deferred migrations\","
+    },
+    {
+      "path": "doctor.ts",
+      "line": 594,
+      "key": "doctor.ts:594",
+      "resolvedAs": "/Users/feliperosa/workspace/repos/brain/src/lib/doctor.ts",
+      "lines": 1683,
+      "verdict": "resolves",
+      "text": "cmd: \"export BRAIN_CAG_KV_ENDPOINT=http://localhost:13305/api/v1 BRAIN_CAG_KV_MODEL=<model>\","
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 25,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/rlmx-config.ts:54",
+      "anchoredOn": "provider: google",
+      "claim": "- rlmx-brain config generator hardcodes provider/model: `src/lib/rlmx-config.ts:53-55` → `provider: google`, `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "google"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/agent/rlmx-bridge.ts:131",
+      "anchoredOn": "modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"",
+      "claim": "- `src/agent/rlmx-bridge.ts:130-136` provider `\"google\"`, `modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"`, resolved via `piAi.getModel(provid",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "\"gemini-3.1-flash-lite-preview\""
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/agent/scaffold.ts:70",
+      "anchoredOn": "model: gemini-3.1-flash-lite-preview",
+      "claim": "- `src/agent/scaffold.ts:70` scaffolds `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "model:",
+        "gemini-3.1-flash-lite-preview"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/auto-kb/evaluation/answer-judge.ts:47",
+      "anchoredOn": "GEMINI_API_KEY",
+      "claim": "- `src/auto-kb/evaluation/answer-judge.ts:47-50` — LLM-as-judge, requires `GEMINI_API_KEY`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/processors/image.ts:45",
+      "anchoredOn": "callGeminiVision",
+      "claim": "- `src/lib/processors/image.ts:45-100` — `callGeminiVision()`, model `process.env.BRAIN_VISION_MODEL ?? \"gemini-3.1-flash-lite-preview\"` (`:60-61`), endpoint `.",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/ask-pipeline.ts:57",
+      "anchoredOn": "RLMX_API_KEY_ENV_MAP",
+      "claim": "`src/lib/ask-pipeline.ts:57-71` `RLMX_API_KEY_ENV_MAP` injects, from `~/.rlmx/settings.json` into `process.env`, keys for: **Gemini, Google, Anthropic, OpenAI, ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/cache.ts:69",
+      "anchoredOn": "gpt-4o-mini",
+      "claim": "- `src/lib/cache.ts:69,75` pricing constants reference `gpt-4o-mini` and `claude-3.5-sonnet` (cost estimation only, not calls).",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/db/migrations/005-brain-embeddings.sql:41",
+      "anchoredOn": "embed_dims",
+      "claim": "- **embedDims defaults:** `DEFAULT_DIMS = 768` (`embedding.ts:29`). Schema defaults: `brain_documents.embed_dims INT DEFAULT 768` and `brain_chunks.embed_dims I",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:18",
+      "anchoredOn": "EMBEDDED_MIGRATIONS",
+      "claim": "- **Schema/migrations location:** `src/db/migrations/*.sql`; embedded into the binary via `src/db/embedded-migrations.ts` (`EMBEDDED_MIGRATIONS`, referenced `sr",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/pgserve.ts:16",
+      "anchoredOn": "type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"",
+      "claim": "- **Three deployment modes:** `src/lib/pgserve.ts:16` `type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"`, detected in `detectDeploymentMode()` (`:7",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "\"persistent\"",
+        "\"data-dir\"",
+        "\"ephemeral\""
+      ]
+    },
+    {
+      "id": "F11",
+      "anchor": "memory/tests/test_embeddings_multilingual.py:95",
+      "anchoredOn": "MNEMOSYNE_EMBEDDING_API_URL",
+      "claim": "- **OpenAI-compatible / remote embedding API:** `embeddings.py:60-64` — `MNEMOSYNE_EMBEDDING_API_URL` (default OpenRouter), `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEM",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F12",
+      "anchor": "memory/mnemosyne/core/extraction.py:143",
+      "anchoredOn": "_llm_backend",
+      "claim": "- **Local LLM (llama.cpp / ctransformers) for consolidation:** `memory/mnemosyne/core/local_llm.py` — `_llm_backend` = `\"llamacpp\"` | `\"ctransformers\"` | None (",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F13",
+      "anchor": ".archive/memory/docs/configuration.md:138",
+      "anchoredOn": "Works with: llama.cpp server, vLLM, Ollama, LM Studio, or any OpenAI-compatible",
+      "claim": "- **Docs explicitly naming local backends:** `.archive/memory/docs/configuration.md:138` \"Works with: **llama.cpp server, vLLM, Ollama, LM Studio**, or any Open",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "llama.cpp",
+        "Ollama",
+        "OpenAI-compatible"
+      ]
+    },
+    {
+      "id": "F14",
+      "anchor": ".genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166",
+      "anchoredOn": "brain lacks MCP, local embeddings, and any [local model support]",
+      "claim": "- **Strategic note:** `.genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166` observes \"brain lacks MCP, **local embeddings**, and any [local model support",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "brain",
+        "local",
+        "embeddings",
+        "model"
+      ]
+    }
+  ]
+}

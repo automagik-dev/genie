@@ -1,0 +1,339 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/mimo-v2.5",
+  "round": "r7-mimo-tune2",
+  "footer": "rlmx · agent=explore · khal/mimo-v2.5 · 24 iterations · 47,264 in / 7,430 out · $0.08 · 147.2s · session sess_33c8dd875a5e4485",
+  "wallSeconds": 147.5,
+  "requestChars": 1685,
+  "resultChars": 7992,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 7861,
+  "citations": [
+    {
+      "path": "install.sh",
+      "line": 358,
+      "key": "install.sh:358",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "local channel=\"${GENIE_CHANNEL:-stable}\""
+    },
+    {
+      "path": "install.sh",
+      "line": 363,
+      "key": "install.sh:363",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "stable|homolog|dev) echo \"$channel\" ;;"
+    },
+    {
+      "path": "install.sh",
+      "line": 386,
+      "key": "install.sh:386",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "resolve_manifest_url() {"
+    },
+    {
+      "path": "install.sh",
+      "line": 390,
+      "key": "install.sh:390",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "install.sh",
+      "line": 632,
+      "key": "install.sh:632",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "extract_and_link() {"
+    },
+    {
+      "path": "install.sh",
+      "line": 650,
+      "key": "install.sh:650",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "die \"could not relock private staging root after extraction: $STAGING_DIR\" 1"
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 161,
+      "key": "scripts/build-binary.sh:161",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "tar czf \"${TARBALL}\" -C \"${STAGE}\" ."
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 159,
+      "key": "scripts/build-binary.sh:159",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "chmod 700 \"${STAGE}\""
+    },
+    {
+      "path": "version.yml",
+      "line": 107,
+      "key": "version.yml:107",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "dev)"
+    },
+    {
+      "path": "version.yml",
+      "line": 111,
+      "key": "version.yml:111",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "echo \"should_bump=true\" >> \"$GITHUB_OUTPUT\""
+    },
+    {
+      "path": "version.yml",
+      "line": 177,
+      "key": "version.yml:177",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "- name: Derive version"
+    },
+    {
+      "path": "version.yml",
+      "line": 188,
+      "key": "version.yml:188",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "echo \"Derived version: ${VERSION}\""
+    },
+    {
+      "path": "version.yml",
+      "line": 279,
+      "key": "version.yml:279",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "- name: Commit and bind the version-only child"
+    },
+    {
+      "path": "version.yml",
+      "line": 293,
+      "key": "version.yml:293",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "echo \"source_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\""
+    },
+    {
+      "path": "version.yml",
+      "line": 324,
+      "key": "version.yml:324",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "if ! gh workflow run ci.yml --repo \"${GITHUB_REPOSITORY}\" --ref \"v${VERSION}\"; then"
+    },
+    {
+      "path": "version.yml",
+      "line": 327,
+      "key": "version.yml:327",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "fi"
+    },
+    {
+      "path": "version.yml",
+      "line": 427,
+      "key": "version.yml:427",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "release-automated:"
+    },
+    {
+      "path": "version.yml",
+      "line": 445,
+      "key": "version.yml:445",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "secrets: inherit"
+    },
+    {
+      "path": "version.yml",
+      "line": 144,
+      "key": "version.yml:144",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "- name: Verify dev promotion (main/homolog no-bump path)"
+    },
+    {
+      "path": "version.yml",
+      "line": 169,
+      "key": "version.yml:169",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "fi"
+    },
+    {
+      "path": "version.yml",
+      "line": 344,
+      "key": "version.yml:344",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "- name: Resolve promoted tag identity"
+    },
+    {
+      "path": "version.yml",
+      "line": 376,
+      "key": "version.yml:376",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "esac"
+    },
+    {
+      "path": "version.yml",
+      "line": 388,
+      "key": "version.yml:388",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "- name: Require human initiation for stable release"
+    },
+    {
+      "path": "version.yml",
+      "line": 409,
+      "key": "version.yml:409",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "} >> \"$GITHUB_STEP_SUMMARY\""
+    },
+    {
+      "path": "release.yml",
+      "line": 113,
+      "key": "release.yml:113",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release.yml",
+      "lines": 196,
+      "verdict": "resolves",
+      "text": "approve-stable:"
+    },
+    {
+      "path": "release.yml",
+      "line": 127,
+      "key": "release.yml:127",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release.yml",
+      "lines": 196,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": ".github/workflows/release-publish.yml",
+      "line": 1024,
+      "key": ".github/workflows/release-publish.yml:1024",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "manifests:"
+    },
+    {
+      "path": ".github/workflows/release-publish.yml",
+      "line": 1159,
+      "key": ".github/workflows/release-publish.yml:1159",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "fi"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 28,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": ".github/workflows/build-tarballs.yml:34",
+      "anchoredOn": "workflow_call",
+      "claim": "- Workflow: `.github/workflows/build-tarballs.yml`, job **`build`** (`:77`, matrix over platforms). Trigger `workflow_call` (`:34`, from release.yml) or `pull_r",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "scripts/build-binary.sh:65",
+      "anchoredOn": "TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"",
+      "claim": "where `TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"` (`scripts/build-binary.sh:65`). For `PLATFORM=linux-x64-glibc` this yields `genie-<version>-li",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "scripts/build-binary.sh:161",
+      "anchoredOn": "-C \"${STAGE}\" .",
+      "claim": "- **Yes, it uses `-C \"${STAGE}\" .`** — archiving `.` from inside the staging dir, which produces a leading `./` root entry in the archive (member paths like `./",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "\"${STAGE}\""
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": ".github/workflows/version.yml:69",
+      "anchoredOn": "conclusion == 'success'",
+      "claim": "(`.github/workflows/version.yml:36-40`). Job gate at `:69-78` requires `conclusion == 'success'`, `event == 'push'`, and excludes commits tagged `[auto-version]",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": ".github/workflows/sign-attest.yml:76",
+      "anchoredOn": "Bind caller workflow and control commit",
+      "claim": "- **The stable-release-security-gate (PR #2596)** is the `admit` job in `.github/workflows/sign-attest.yml:70-121` (\"Bind caller workflow and control commit\"). ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "caller",
+        "workflow",
+        "commit"
+      ]
+    }
+  ]
+}

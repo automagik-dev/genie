@@ -1,0 +1,1023 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r2-flash-tune1",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 16 iterations · 95,451 in / 7,988 out · $0.02 · 282.4s · session sess_7854d414bf4e7cc0",
+  "wallSeconds": 282.7,
+  "requestChars": 1595,
+  "resultChars": 15349,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/prod/ryzen-ai-station"
+  ],
+  "need": 13,
+  "factTotal": 14,
+  "answerChars": 15210,
+  "citations": [
+    {
+      "path": "brain/brain.json",
+      "line": 17,
+      "key": "brain/brain.json:17",
+      "resolvedAs": "/home/namastex/prod/brain/brain/brain.json",
+      "lines": 31,
+      "verdict": "resolves",
+      "text": "\"model\": \"gemini-embedding-2-preview\","
+    },
+    {
+      "path": "brain/brain.json",
+      "line": 18,
+      "key": "brain/brain.json:18",
+      "resolvedAs": "/home/namastex/prod/brain/brain/brain.json",
+      "lines": 31,
+      "verdict": "resolves",
+      "text": "\"dims\": 768"
+    },
+    {
+      "path": "README.md",
+      "line": 272,
+      "key": "README.md:272",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "\"embedModel\": \"gemini-embedding-2-preview\","
+    },
+    {
+      "path": "README.md",
+      "line": 273,
+      "key": "README.md:273",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "\"embedDims\": 768"
+    },
+    {
+      "path": "src/agent/rlmx-bridge.ts",
+      "line": 2,
+      "key": "src/agent/rlmx-bridge.ts:2",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "* rlmx SDK bridge — opt-in path for folder-based agents."
+    },
+    {
+      "path": "src/agent/rlmx-bridge.ts",
+      "line": 14,
+      "key": "src/agent/rlmx-bridge.ts:14",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "* Once this bridge dogfood-validates (≥27/30 match rate on the"
+    },
+    {
+      "path": "package.json",
+      "line": 45,
+      "key": "package.json:45",
+      "resolvedAs": "/home/namastex/prod/brain/package.json",
+      "lines": 66,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\": \"0.260528.2\","
+    },
+    {
+      "path": "bun.lock",
+      "line": 64,
+      "key": "bun.lock:64",
+      "resolvedAs": "/home/namastex/prod/brain/bun.lock",
+      "lines": 1923,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\": [\"@automagik/rlmx@0.260528.2\", \"\", { \"dependencies\": { \"@earendil-works/pi-ai\": \"0.75.5\", \"js-yaml\": "
+    },
+    {
+      "path": "runbooks/custom-rlmx-agents.md",
+      "line": 118,
+      "key": "runbooks/custom-rlmx-agents.md:118",
+      "resolvedAs": "/home/namastex/prod/brain/runbooks/custom-rlmx-agents.md",
+      "lines": 584,
+      "verdict": "resolves",
+      "text": "model: gemini-3.1-flash-lite-preview"
+    },
+    {
+      "path": "runbooks/custom-rlmx-agents.md",
+      "line": 191,
+      "key": "runbooks/custom-rlmx-agents.md:191",
+      "resolvedAs": "/home/namastex/prod/brain/runbooks/custom-rlmx-agents.md",
+      "lines": 584,
+      "verdict": "resolves",
+      "text": "model: gemini-3.1-flash-lite-preview"
+    },
+    {
+      "path": "runbooks/custom-rlmx-agents.md",
+      "line": 236,
+      "key": "runbooks/custom-rlmx-agents.md:236",
+      "resolvedAs": "/home/namastex/prod/brain/runbooks/custom-rlmx-agents.md",
+      "lines": 584,
+      "verdict": "resolves",
+      "text": "model: gemini-3.1-flash-lite-preview"
+    },
+    {
+      "path": "runbooks/custom-rlmx-agents.md",
+      "line": 281,
+      "key": "runbooks/custom-rlmx-agents.md:281",
+      "resolvedAs": "/home/namastex/prod/brain/runbooks/custom-rlmx-agents.md",
+      "lines": 584,
+      "verdict": "resolves",
+      "text": "model: gemini-3.1-flash-lite-preview"
+    },
+    {
+      "path": "benchmarks/leaderboard/run.ts",
+      "line": 515,
+      "key": "benchmarks/leaderboard/run.ts:515",
+      "resolvedAs": "/home/namastex/prod/brain/benchmarks/leaderboard/run.ts",
+      "lines": 795,
+      "verdict": "resolves",
+      "text": "console.log(\"   Model: gemini-3.1-flash-lite-preview\");"
+    },
+    {
+      "path": "benchmarks/leaderboard/run.ts",
+      "line": 761,
+      "key": "benchmarks/leaderboard/run.ts:761",
+      "resolvedAs": "/home/namastex/prod/brain/benchmarks/leaderboard/run.ts",
+      "lines": 795,
+      "verdict": "resolves",
+      "text": "model: \"gemini-3.1-flash-lite-preview\","
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 43,
+      "key": "src/auto-kb/gemini.ts:43",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "\"gemini-3.1-flash-lite-preview\": { input: 15, output: 60, cachedInput: 3.75 },"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 67,
+      "key": "src/auto-kb/gemini.ts:67",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "const apiKey = process.env.GEMINI_API_KEY;"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 141,
+      "key": "src/auto-kb/gemini.ts:141",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "export async function generateContent("
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 223,
+      "key": "src/auto-kb/gemini.ts:223",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "};"
+    },
+    {
+      "path": "src/lib/cache.ts",
+      "line": 68,
+      "key": "src/lib/cache.ts:68",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/cache.ts",
+      "lines": 284,
+      "verdict": "resolves",
+      "text": "openai: {"
+    },
+    {
+      "path": "src/lib/cache.ts",
+      "line": 75,
+      "key": "src/lib/cache.ts:75",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/cache.ts",
+      "lines": 284,
+      "verdict": "resolves",
+      "text": "inputPerToken: 0.000003, // claude-3.5-sonnet: $3/1M"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 63,
+      "key": "memory/mnemosyne/core/embeddings.py:63",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "_OPENAI_API_KEY = os.environ.get(\"MNEMOSYNE_EMBEDDING_API_KEY\", os.environ.get(\"OPENAI_API_KEY\", \"\"))"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 64,
+      "key": "memory/mnemosyne/core/embeddings.py:64",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "_OPENAI_BASE_URL = os.environ.get(\"MNEMOSYNE_EMBEDDING_API_URL\", \"https://openrouter.ai/api/v1\")"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 90,
+      "key": "memory/mnemosyne/core/embeddings.py:90",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "if model_name.startswith(\"openai/\") or \"text-embedding\" in model_name or model_name.startswith(\"text-embedding\"):"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 91,
+      "key": "memory/mnemosyne/core/embeddings.py:91",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return True"
+    },
+    {
+      "path": "memory/mnemosyne/core/llm_conflict_detector.py",
+      "line": 26,
+      "key": "memory/mnemosyne/core/llm_conflict_detector.py:26",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/llm_conflict_detector.py",
+      "lines": 216,
+      "verdict": "resolves",
+      "text": "LLM_REMOTE_MODEL = os.environ.get(\"MNEMOSYNE_LLM_MODEL\", \"google/gemini-flash-1.5\")"
+    },
+    {
+      "path": "memory/mnemosyne/core/llm_conflict_detector.py",
+      "line": 37,
+      "key": "memory/mnemosyne/core/llm_conflict_detector.py:37",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/llm_conflict_detector.py",
+      "lines": 216,
+      "verdict": "resolves",
+      "text": "\"gemini-1.5-flash\": {\"input\": 0.075, \"output\": 0.30},"
+    },
+    {
+      "path": "memory/mnemosyne/extraction/client.py",
+      "line": 18,
+      "key": "memory/mnemosyne/extraction/client.py:18",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/extraction/client.py",
+      "lines": 234,
+      "verdict": "resolves",
+      "text": "\"google/gemini-2.5-flash\","
+    },
+    {
+      "path": "memory/mnemosyne/extraction/client.py",
+      "line": 26,
+      "key": "memory/mnemosyne/extraction/client.py:26",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/extraction/client.py",
+      "lines": 234,
+      "verdict": "resolves",
+      "text": "\"google/gemini-flash-latest\","
+    },
+    {
+      "path": "embeddings.py",
+      "line": 31,
+      "key": "embeddings.py:31",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "from fastembed import TextEmbedding"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 38,
+      "key": "embeddings.py:38",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return np is not None and TextEmbedding is not None"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 212,
+      "key": "embeddings.py:212",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "def _embed_api(texts: List[str]) -> Optional[np.ndarray]:"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 256,
+      "key": "embeddings.py:256",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return None"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 4,
+      "key": "embeddings.py:4",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "Falls back to keyword-only if neither is available."
+    },
+    {
+      "path": "embeddings.py",
+      "line": 169,
+      "key": "embeddings.py:169",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "if not _is_fastembed_available():"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 170,
+      "key": "embeddings.py:170",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return None"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 67,
+      "key": "embeddings.py:67",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "_DEFAULT_MODEL = os.environ.get(\"MNEMOSYNE_EMBEDDING_MODEL\", \"BAAI/bge-small-en-v1.5\")"
+    },
+    {
+      "path": "gemini.ts",
+      "line": 67,
+      "key": "gemini.ts:67",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "const apiKey = process.env.GEMINI_API_KEY;"
+    },
+    {
+      "path": "gemini.ts",
+      "line": 71,
+      "key": "gemini.ts:71",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "genai = new GoogleGenerativeAI(apiKey);"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 324,
+      "key": "memory/mnemosyne/core/embeddings.py:324",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "EMBEDDING_DIM = _get_embedding_dim(_DEFAULT_MODEL)"
+    },
+    {
+      "path": "embeddings.py",
+      "line": 119,
+      "key": "embeddings.py:119",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "\"BAAI/bge-small-en-v1.5\": 384,"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 110,
+      "key": "memory/mnemosyne/core/embeddings.py:110",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "def _get_embedding_dim(model_name: str) -> int:"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 153,
+      "key": "memory/mnemosyne/core/embeddings.py:153",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return dims.get(model_name, 384)"
+    },
+    {
+      "path": "memory/mnemosyne/docs/api/configuration.mdx",
+      "line": 49,
+      "key": "memory/mnemosyne/docs/api/configuration.mdx:49",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "memory/mnemosyne/core/beam.py",
+      "line": 2218,
+      "key": "memory/mnemosyne/core/beam.py:2218",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/beam.py",
+      "lines": 8619,
+      "verdict": "resolves",
+      "text": "f\"CREATE VIRTUAL TABLE {table} USING vec0(embedding {vec_type}[{target_dim}])\""
+    },
+    {
+      "path": "python/brain_tools.py",
+      "line": 252,
+      "key": "python/brain_tools.py:252",
+      "resolvedAs": "/home/namastex/prod/brain/python/brain_tools.py",
+      "lines": 318,
+      "verdict": "resolves",
+      "text": "# Matches placeholder lines like `[audio path/to/clip.opus]` produced by"
+    },
+    {
+      "path": "python/brain_tools.py",
+      "line": 268,
+      "key": "python/brain_tools.py:268",
+      "resolvedAs": "/home/namastex/prod/brain/python/brain_tools.py",
+      "lines": 318,
+      "verdict": "resolves",
+      "text": "\"\"\"Replace `[audio …]` etc placeholders with their description text"
+    },
+    {
+      "path": "python/brain_tools.py",
+      "line": 192,
+      "key": "python/brain_tools.py:192",
+      "resolvedAs": "/home/namastex/prod/brain/python/brain_tools.py",
+      "lines": 318,
+      "verdict": "resolves",
+      "text": "with `transcription` / `imageDescription` / `videoDescription` /"
+    },
+    {
+      "path": "python/brain_tools.py",
+      "line": 193,
+      "key": "python/brain_tools.py:193",
+      "resolvedAs": "/home/namastex/prod/brain/python/brain_tools.py",
+      "lines": 318,
+      "verdict": "resolves",
+      "text": "`documentExtraction` fields encoded as `[audio]`/`[image]`/etc tags"
+    },
+    {
+      "path": "src/agent/python-tools.test.ts",
+      "line": 151,
+      "key": "src/agent/python-tools.test.ts:151",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/python-tools.test.ts",
+      "lines": 212,
+      "verdict": "resolves",
+      "text": "test(\"read inlines transcription field for [audio] placeholders\", () => {"
+    },
+    {
+      "path": "src/agent/python-tools.test.ts",
+      "line": 187,
+      "key": "src/agent/python-tools.test.ts:187",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/python-tools.test.ts",
+      "lines": 212,
+      "verdict": "resolves",
+      "text": "expect(r.stdout).toContain(\"[image media/missing.jpg]\");"
+    },
+    {
+      "path": "src/bench/routes/files.ts",
+      "line": 54,
+      "key": "src/bench/routes/files.ts:54",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/files.ts",
+      "lines": 373,
+      "verdict": "resolves",
+      "text": "): \"text\" | \"image\" | \"audio\" | \"video\" | \"pdf\" | \"code\" {"
+    },
+    {
+      "path": "src/bench/routes/files.ts",
+      "line": 62,
+      "key": "src/bench/routes/files.ts:62",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/files.ts",
+      "lines": 373,
+      "verdict": "resolves",
+      "text": "if (e === \".pdf\") return \"pdf\";"
+    },
+    {
+      "path": "src/db/embedded-migrations.ts",
+      "line": 73,
+      "key": "src/db/embedded-migrations.ts:73",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/embedded-migrations.ts",
+      "lines": 106,
+      "verdict": "resolves",
+      "text": "export const EMBEDDED_MIGRATIONS: ReadonlyArray<readonly [string, string]> = ["
+    },
+    {
+      "path": "src/db/embedded-migrations.ts",
+      "line": 102,
+      "key": "src/db/embedded-migrations.ts:102",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/embedded-migrations.ts",
+      "lines": 106,
+      "verdict": "resolves",
+      "text": "[\"029-brain-memory-canonical.sql\", m029],"
+    },
+    {
+      "path": "pgserve.d.ts",
+      "line": 1,
+      "key": "pgserve.d.ts:1",
+      "resolvedAs": "/home/namastex/prod/brain/src/pgserve.d.ts",
+      "lines": 32,
+      "verdict": "resolves",
+      "text": "/** Type declarations for pgserve — embedded PostgreSQL server SDK. */"
+    },
+    {
+      "path": "pgserve.d.ts",
+      "line": 2,
+      "key": "pgserve.d.ts:2",
+      "resolvedAs": "/home/namastex/prod/brain/src/pgserve.d.ts",
+      "lines": 32,
+      "verdict": "resolves",
+      "text": "declare module \"pgserve\" {"
+    },
+    {
+      "path": "src/lib/pgserve.ts",
+      "line": 2,
+      "key": "src/lib/pgserve.ts:2",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "* Legacy pgserve compatibility facade."
+    },
+    {
+      "path": "src/lib/pgserve.ts",
+      "line": 47,
+      "key": "src/lib/pgserve.ts:47",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "`pgserve could not find a free port in [${range[0]}..${range[1]}]. Pass --port explicitly or kill the process holding th"
+    },
+    {
+      "path": "README.md",
+      "line": 303,
+      "key": "README.md:303",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| **Persistent** | `DATABASE_URL` set | pgserve RAM + WAL sync to remote Postgres |"
+    },
+    {
+      "path": "README.md",
+      "line": 305,
+      "key": "README.md:305",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| **Ephemeral** | Neither set | pgserve RAM-only (test / dev) |"
+    },
+    {
+      "path": "README.md",
+      "line": 301,
+      "key": "README.md:301",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| Mode | Trigger | Storage |"
+    },
+    {
+      "path": "memory/mnemosyne/core/polyphonic_recall.py",
+      "line": 50,
+      "key": "memory/mnemosyne/core/polyphonic_recall.py:50",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/polyphonic_recall.py",
+      "lines": 879,
+      "verdict": "resolves",
+      "text": "# Cached embedding dim for vector normalization — resolved once at import time."
+    },
+    {
+      "path": "memory/mnemosyne/core/beam.py",
+      "line": 2162,
+      "key": "memory/mnemosyne/core/beam.py:2162",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/beam.py",
+      "lines": 8619,
+      "verdict": "resolves",
+      "text": "embedding model, recreating the sqlite-vec tables at the active dimension."
+    },
+    {
+      "path": "memory/CHANGELOG.md",
+      "line": 212,
+      "key": "memory/CHANGELOG.md:212",
+      "resolvedAs": "/home/namastex/prod/brain/memory/CHANGELOG.md",
+      "lines": 1201,
+      "verdict": "resolves",
+      "text": "embedding model or dimension change. Reuses existing write helpers for"
+    },
+    {
+      "path": "memory/mnemosyne/cli.py",
+      "line": 642,
+      "key": "memory/mnemosyne/cli.py:642",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/cli.py",
+      "lines": 795,
+      "verdict": "resolves",
+      "text": "\"\"\"Rebuild vector indexes from source text with the active embedding model."
+    },
+    {
+      "path": "memory/mnemosyne/cli.py",
+      "line": 646,
+      "key": "memory/mnemosyne/cli.py:646",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/cli.py",
+      "lines": 795,
+      "verdict": "resolves",
+      "text": "Use after changing the embedding model/dimension. Synchronous and blocking —"
+    },
+    {
+      "path": "memory/mnemosyne/tool_schemas.py",
+      "line": 494,
+      "key": "memory/mnemosyne/tool_schemas.py:494",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/tool_schemas.py",
+      "lines": 636,
+      "verdict": "resolves",
+      "text": "\"description\": \"If true, idempotently backfill missing vec_working rows from memory_embeddings.\","
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 5,
+      "key": "memory/mnemosyne/core/local_llm.py:5",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "Uses llama-cpp-python (ARM64 + x86_64 native) with ctransformers fallback."
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 68,
+      "key": "memory/mnemosyne/core/local_llm.py:68",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "_llm_backend = None  # \"llamacpp\", \"ctransformers\", or None"
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 81,
+      "key": "memory/mnemosyne/core/local_llm.py:81",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "\"\"\"Return path to the local GGUF model file, or None if not downloaded.\"\"\""
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 109,
+      "key": "memory/mnemosyne/core/local_llm.py:109",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "def _load_llm_llamacpp(model_path: Path):"
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 112,
+      "key": "memory/mnemosyne/core/local_llm.py:112",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "from llama_cpp import Llama"
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 152,
+      "key": "memory/mnemosyne/core/local_llm.py:152",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "Priority: llama-cpp-python > ctransformers (x86_64 fallback)."
+    },
+    {
+      "path": "memory/mnemosyne/core/local_llm.py",
+      "line": 173,
+      "key": "memory/mnemosyne/core/local_llm.py:173",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/local_llm.py",
+      "lines": 650,
+      "verdict": "resolves",
+      "text": "# Try llama-cpp-python first (works on ARM64 + x86_64)"
+    },
+    {
+      "path": "memory/mnemosyne/core/extraction.py",
+      "line": 137,
+      "key": "memory/mnemosyne/core/extraction.py:137",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/extraction.py",
+      "lines": 365,
+      "verdict": "resolves",
+      "text": "llama-cpp-python exposes ``max_tokens`` via its completion/chat APIs,"
+    },
+    {
+      "path": "memory/mnemosyne/core/extraction.py",
+      "line": 143,
+      "key": "memory/mnemosyne/core/extraction.py:143",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/extraction.py",
+      "lines": 365,
+      "verdict": "resolves",
+      "text": "if getattr(local_llm, \"_llm_backend\", None) == \"llamacpp\":"
+    },
+    {
+      "path": "src/lib/kv-slot.ts",
+      "line": 2,
+      "key": "src/lib/kv-slot.ts:2",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/kv-slot.ts",
+      "lines": 1592,
+      "verdict": "resolves",
+      "text": "* Owned llama.cpp KV-slot manager — brain's native local backend for the CAG"
+    },
+    {
+      "path": "src/lib/kv-slot.ts",
+      "line": 211,
+      "key": "src/lib/kv-slot.ts:211",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/kv-slot.ts",
+      "lines": 1592,
+      "verdict": "resolves",
+      "text": "/** Thin, bounded client over a llama.cpp / Lemonade slot endpoint. Every method"
+    },
+    {
+      "path": "src/lib/kv-slot.ts",
+      "line": 213,
+      "key": "src/lib/kv-slot.ts:213",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/kv-slot.ts",
+      "lines": 1592,
+      "verdict": "resolves",
+      "text": "* except the documented probe-empty case on save/restore. */"
+    },
+    {
+      "path": "src/lib/brain-config.ts",
+      "line": 163,
+      "key": "src/lib/brain-config.ts:163",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/brain-config.ts",
+      "lines": 701,
+      "verdict": "resolves",
+      "text": "* at a local slot-capable llama.cpp/Lemonade endpoint and, OPTIONALLY, supplies"
+    },
+    {
+      "path": "src/lib/brain-config.ts",
+      "line": 208,
+      "key": "src/lib/brain-config.ts:208",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/brain-config.ts",
+      "lines": 701,
+      "verdict": "resolves",
+      "text": "'Host loader argv prefix, e.g. [\"lemonade\",\"load\"]; the target id is ' +"
+    },
+    {
+      "path": "src/lib/brain-config.ts",
+      "line": 181,
+      "key": "src/lib/brain-config.ts:181",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/brain-config.ts",
+      "lines": 701,
+      "verdict": "resolves",
+      "text": ".describe(\"Base URL of the local slot-capable llama.cpp/Lemonade endpoint\"),"
+    },
+    {
+      "path": "src/db/migrations/030-brain-kv-cache.sql",
+      "line": 4,
+      "key": "src/db/migrations/030-brain-kv-cache.sql:4",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/030-brain-kv-cache.sql",
+      "lines": 78,
+      "verdict": "resolves",
+      "text": "-- Backs `src/lib/kv-slot.ts` — the OWNED llama.cpp KV-slot backend of brain's"
+    },
+    {
+      "path": "src/db/migrations/030-brain-kv-cache.sql",
+      "line": 6,
+      "key": "src/db/migrations/030-brain-kv-cache.sql:6",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/030-brain-kv-cache.sql",
+      "lines": 78,
+      "verdict": "resolves",
+      "text": "-- prefix, prefilled into a pinned llama-server slot, and persisted to a `.bin`"
+    },
+    {
+      "path": "src/lib/execute.ts",
+      "line": 1244,
+      "key": "src/lib/execute.ts:1244",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/execute.ts",
+      "lines": 3608,
+      "verdict": "resolves",
+      "text": "// elsewhere (e.g. /var/lib/lemonade/slots): orphans were never swept and"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 31,
+      "key": "memory/mnemosyne/core/embeddings.py:31",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "from fastembed import TextEmbedding"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 38,
+      "key": "memory/mnemosyne/core/embeddings.py:38",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return np is not None and TextEmbedding is not None"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 67,
+      "key": "memory/mnemosyne/core/embeddings.py:67",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "_DEFAULT_MODEL = os.environ.get(\"MNEMOSYNE_EMBEDDING_MODEL\", \"BAAI/bge-small-en-v1.5\")"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 176,
+      "key": "memory/mnemosyne/core/embeddings.py:176",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "_embedding_model = TextEmbedding("
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 179,
+      "key": "memory/mnemosyne/core/embeddings.py:179",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": ")"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 167,
+      "key": "memory/mnemosyne/core/embeddings.py:167",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "if _is_api_model(_DEFAULT_MODEL):"
+    },
+    {
+      "path": "memory/mnemosyne/core/embeddings.py",
+      "line": 168,
+      "key": "memory/mnemosyne/core/embeddings.py:168",
+      "resolvedAs": "/home/namastex/prod/brain/memory/mnemosyne/core/embeddings.py",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "return \"api\"  # Sentinel for API mode"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 92,
+    "failures": [
+      "memory/mnemosyne/docs/api/configuration.mdx:49 (missing-file)"
+    ],
+    "pass": false
+  },
+  "criterion3": {
+    "failures": [
+      "memory/mnemosyne/docs/api/configuration.mdx:49 (missing-file)"
+    ],
+    "pass": false
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/rlmx-config.ts:54",
+      "anchoredOn": "provider: google",
+      "claim": "- rlmx-brain config generator hardcodes provider/model: `src/lib/rlmx-config.ts:53-55` → `provider: google`, `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "google"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/agent/rlmx-bridge.ts:131",
+      "anchoredOn": "modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"",
+      "claim": "- `src/agent/rlmx-bridge.ts:130-136` provider `\"google\"`, `modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"`, resolved via `piAi.getModel(provid",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "\"gemini-3.1-flash-lite-preview\""
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/agent/scaffold.ts:70",
+      "anchoredOn": "model: gemini-3.1-flash-lite-preview",
+      "claim": "- `src/agent/scaffold.ts:70` scaffolds `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "model:",
+        "gemini-3.1-flash-lite-preview"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/auto-kb/evaluation/answer-judge.ts:47",
+      "anchoredOn": "GEMINI_API_KEY",
+      "claim": "- `src/auto-kb/evaluation/answer-judge.ts:47-50` — LLM-as-judge, requires `GEMINI_API_KEY`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/processors/image.ts:45",
+      "anchoredOn": "callGeminiVision",
+      "claim": "- `src/lib/processors/image.ts:45-100` — `callGeminiVision()`, model `process.env.BRAIN_VISION_MODEL ?? \"gemini-3.1-flash-lite-preview\"` (`:60-61`), endpoint `.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/ask-pipeline.ts:57",
+      "anchoredOn": "RLMX_API_KEY_ENV_MAP",
+      "claim": "`src/lib/ask-pipeline.ts:57-71` `RLMX_API_KEY_ENV_MAP` injects, from `~/.rlmx/settings.json` into `process.env`, keys for: **Gemini, Google, Anthropic, OpenAI, ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/cache.ts:69",
+      "anchoredOn": "gpt-4o-mini",
+      "claim": "- `src/lib/cache.ts:69,75` pricing constants reference `gpt-4o-mini` and `claude-3.5-sonnet` (cost estimation only, not calls).",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/db/migrations/005-brain-embeddings.sql:41",
+      "anchoredOn": "embed_dims",
+      "claim": "- **embedDims defaults:** `DEFAULT_DIMS = 768` (`embedding.ts:29`). Schema defaults: `brain_documents.embed_dims INT DEFAULT 768` and `brain_chunks.embed_dims I",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:18",
+      "anchoredOn": "EMBEDDED_MIGRATIONS",
+      "claim": "- **Schema/migrations location:** `src/db/migrations/*.sql`; embedded into the binary via `src/db/embedded-migrations.ts` (`EMBEDDED_MIGRATIONS`, referenced `sr",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/pgserve.ts:16",
+      "anchoredOn": "type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"",
+      "claim": "- **Three deployment modes:** `src/lib/pgserve.ts:16` `type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"`, detected in `detectDeploymentMode()` (`:7",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "memory/tests/test_embeddings_multilingual.py:95",
+      "anchoredOn": "MNEMOSYNE_EMBEDDING_API_URL",
+      "claim": "- **OpenAI-compatible / remote embedding API:** `embeddings.py:60-64` — `MNEMOSYNE_EMBEDDING_API_URL` (default OpenRouter), `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEM",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "MNEMOSYNE_EMBEDDING_API_URL"
+      ]
+    },
+    {
+      "id": "F12",
+      "anchor": "memory/mnemosyne/core/extraction.py:143",
+      "anchoredOn": "_llm_backend",
+      "claim": "- **Local LLM (llama.cpp / ctransformers) for consolidation:** `memory/mnemosyne/core/local_llm.py` — `_llm_backend` = `\"llamacpp\"` | `\"ctransformers\"` | None (",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F13",
+      "anchor": ".archive/memory/docs/configuration.md:138",
+      "anchoredOn": "Works with: llama.cpp server, vLLM, Ollama, LM Studio, or any OpenAI-compatible",
+      "claim": "- **Docs explicitly naming local backends:** `.archive/memory/docs/configuration.md:138` \"Works with: **llama.cpp server, vLLM, Ollama, LM Studio**, or any Open",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "Works",
+        "llama.cpp",
+        "server",
+        "Ollama",
+        "OpenAI-compatible"
+      ]
+    },
+    {
+      "id": "F14",
+      "anchor": ".genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166",
+      "anchoredOn": "brain lacks MCP, local embeddings, and any [local model support]",
+      "claim": "- **Strategic note:** `.genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166` observes \"brain lacks MCP, **local embeddings**, and any [local model support",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "brain",
+        "local",
+        "embeddings",
+        "model"
+      ]
+    }
+  ]
+}

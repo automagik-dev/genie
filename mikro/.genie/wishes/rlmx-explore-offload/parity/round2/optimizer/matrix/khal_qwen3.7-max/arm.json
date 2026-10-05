@@ -1,0 +1,132 @@
+{
+  "arm": "model-matrix",
+  "model": "khal/qwen3.7-max",
+  "suite": "round2-train",
+  "tasks": [3, 4, 5, 6, 7, 8],
+  "heldOutNeverRunNeverRead": [1, 2],
+  "measurementOnly": true,
+  "promptEdits": "none — optimizer/current/ was neither read into this run nor written; the recipe came from the frozen gens/gen-1 snapshot via --recipe",
+
+  "recipeUnderTest": {
+    "generation": 1,
+    "source": "optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "whyThisGeneration": [
+      "totals history over the four recorded generations is [28, 29, 28, 29] facts of 34 — gen-1 and gen-3 tie on the primary metric (fitness 0.8529 each)",
+      "gen-1 wins the tie on tasksMechanicalPass, 3/6 vs gen-3's 2/6, and on required anchors cited, 27 vs 26",
+      "gen-3 broke guards its own EVOLUTION.md entry pre-registered: T5 F5 (ptyManager.ts:127 RESERVED_ENV_KEYS) regressed again, and spawns fell to 2 on tasks 3 and 4 against the stated '>= 3 on every run'",
+      "EVOLUTION.md's Pareto discipline already named gen-1 the best point at gen-2 -> gen-3, and a tie does not displace it"
+    ]
+  },
+
+  "howItWasRun": {
+    "driver": "parity/round2/run-train-round.mjs",
+    "argv": "--gen 901 --model khal/qwen3.7-max --recipe <optimizer/gens/gen-1/recipe> --label matrix-gen1-khal-qwen3-7-max --concurrency 2",
+    "genNumberIsADirectoryNameOnly": "run-train-round.mjs writes to optimizer/gens/gen-<N>/ and has no output-dir flag. 901 is an out-of-band scratch number chosen so a concurrent matrix arm could not land in the same directory. It is NOT a generation.",
+    "moved": "optimizer/gens/gen-901 -> optimizer/matrix/khal_qwen3.7-max (whole tree, after the round exited 0)",
+    "summaryRegeneratedHere": true,
+    "staleAbsolutePaths": "round.json is kept byte-exact as written, so its genDir and perTask[].runJson/log fields still name .../gens/gen-901. summary.json was regenerated at this path and its runJson/scoreJson fields are correct. Nothing else references the old path.",
+    "pinChildModel": true,
+    "concurrency": 2,
+    "envCorrections": {
+      "RLMX_REPL_TIMEOUT_MS": "600000",
+      "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+      "PARITY_CALL_TIMEOUT_MS": "600000",
+      "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+    },
+    "rlmxGitHead": "6ec4822",
+    "groundTruthDrift": [],
+    "startedAt": "2026-07-27T09:47:05.708Z",
+    "finishedAt": "2026-07-27T10:07:36.019Z",
+    "rootsLeftClean": "xdna-top was already scaffolded by a sibling arm when this round started (rlmxExistedBefore: true, createdByThisRound: false), so this round removed nothing; all three roots are .rlmx-free now"
+  },
+
+  "result": {
+    "factsFound": 28,
+    "factsNeeded": 34,
+    "fitness": 0.8235,
+    "factsWeak": 2,
+    "tasksMechanicalPass": 2,
+    "runsOk": 6,
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "citations": 64,
+    "citationsResolved": 64,
+    "recursiveSpawns": 17,
+    "costUsd": 2.82,
+    "wallSeconds": 1230.3,
+    "tokensIn": 381511,
+    "tokensOut": 177164,
+    "misses": [
+      "task 3 F5 src/xdna_top/npu_power.py:84 — never writes `m.group(\"lb\") == \"[\"`",
+      "task 4 F2 src/xdna_top/record.py:23 — never writes `RECORD_KIND` (F1 `RECORD_SCHEMA_VERSION` on :22 was found)",
+      "task 5 F5 src/main/services/ptyManager.ts:127 — never writes `RESERVED_ENV_KEYS`",
+      "task 7 F6 channel/enroll.sh:23 — never writes `SUITE`"
+    ],
+    "weak": [
+      "task 3 F6 src/xdna_top/discover_sysfs.py:18 — 1/2 long tokens of `CPU-only fallback`",
+      "task 4 F6 src/xdna_top/exporter.py:62 — 3/3 long tokens of `named WITHOUT _total`, not the exact phrase"
+    ]
+  },
+
+  "comparisonToTheMatchedFlashControl": {
+    "note": "the khal_deepseek-v4-flash matrix arm is the same recipe, the same suite, the same harness, at the same rlmx HEAD, and it ran CONCURRENTLY with this one (09:46:15-09:58:10 against 09:47:05-10:07:36), sharing the khal key and the three task roots. It is the matched control for this arm — contention, key and ground truth are all identical.",
+    "flashControl": { "facts": 32, "fitness": 0.9412, "tasksPassed": 4, "cites": "109/109", "spawns": 15, "costUsd": 0.15, "wallSeconds": 714.4, "tokensIn": 841504, "tokensOut": 115749 },
+    "thisArm": { "facts": 28, "fitness": 0.8235, "tasksPassed": 2, "cites": "64/64", "spawns": 17, "costUsd": 2.82, "wallSeconds": 1230.3, "tokensIn": 381511, "tokensOut": 177164 },
+    "perTaskFactDelta": { "3": "-1", "4": "-2", "5": "-1", "6": "0", "7": "0", "8": "0" },
+    "costPerFact": { "flashControl": 0.0047, "thisArm": 0.1007, "ratio": "21.5x" },
+    "consequence": "qwen3.7-max is 4 facts BEHIND deepseek-v4-flash on the same recipe at 18.8x the round cost. Criteria 2 and 3 are clean on both, so this is a criterion-1 coverage gap, not a discipline failure."
+  },
+
+  "comparisonToGen1sOwnRound": {
+    "note": "gen-1's recorded round is the same recipe and suite on flash, 84 minutes earlier and uncontended. Included because it is the number EVOLUTION.md carries, but the flash control above is the better comparison.",
+    "gen1": { "facts": 29, "fitness": 0.8529, "tasksPassed": 3, "cites": "97/97", "costUsd": 0.15 },
+    "thisArm": { "facts": 28, "fitness": 0.8235, "tasksPassed": 2, "cites": "64/64", "costUsd": 2.82 },
+    "caveat": "the flash arm measured a +3-fact swing (29 -> 32) on an identical (recipe, model, suite) triple, so a 1-fact gap against gen-1 is inside run-to-run noise and carries no signal on its own. The 4-fact gap against the matched, concurrent flash control is at the edge of that measured band."
+  },
+
+  "deviationsWorthReading": [
+    "qwen3.7-max is the terser arm by a wide margin: 64 citations against the control's 109, and 381,511 input tokens against 841,504 — it reads less and says less. Its output tokens are HIGHER (177,164 vs 115,749) because the model emits reasoning tokens, which is also why the round costs 18.8x rather than the ~25x its input price alone implies.",
+    "every run stopped at 5-6 iterations of the 14 available, against the control's 5-14. No run was short of turns, so the coverage gap is not a budget effect.",
+    "the fan-out held: 17 spawns over 6 runs, 3 on every task except task 3 (2). This model does not skip the mandatory fan-out the way gen-2's prompt and the flash control's task 6 did.",
+    "task 3 F5 (npu_power.py:84) missed here as it has in every recorded round, gen-0 through gen-3 and in both matrix arms. It is the one fact no configuration has ever produced.",
+    "task 5 F5 (ptyManager.ts:127 RESERVED_ENV_KEYS) missed here. gen-1 and the flash control both hold it, so this is a model effect on the gen-1 prompt, not the gen-2/gen-3 prose regression."
+  ],
+
+  "corrections": {
+    "addedAt": "2026-07-27",
+    "by": "round-2 campaign verifier",
+    "method": "text-level only — no round re-run, no score recomputed, no scorer touched. Every field above is left byte-exact so the corrected claim can be read against the original.",
+
+    "optimizerCurrentHoldsGen1NotGen3": {
+      "wrongClaim": "README.md: `optimizer/current/` was left untouched (it holds gen-3's SYSTEM.md, 4eafbb3d)",
+      "measured": "sha256(optimizer/current/SYSTEM.md) = 02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4 — that is gen-1. cmp against optimizer/gens/gen-1/recipe/{SYSTEM.md,agent.yaml} is byte-identical on both files. gen-3 is 4eafbb3d7e817d8bd4ea3fe37bc050c91f7e6ebfd25890014cf6d5993ad12ccb.",
+      "when": "mtime of both files in current/ is 2026-07-27T09:47:43Z — 38s after this arm started (09:47:05Z) and 88s after the flash arm started (09:46:15Z), i.e. inside the matrix window",
+      "whoDidIt": "unrecorded. No artifact under round2/ documents the write. This arm did not do it: it ran --recipe optimizer/gens/gen-1/recipe, which run-train-round.mjs copies into a per-run scratch HOME (~/.rlmx/agents/explore-r/) and never writes back to current/. `promptEdits` above stays true as written.",
+      "consequence": "the optimizer's mutation pointer silently lost gen-3 — current/ is one generation behind EVOLUTION.md, and a gen-4 edited on top of it would mutate gen-1 while claiming gen-3 as parent. gens/gen-3/recipe/ is intact and authoritative. Documented in optimizer/README.md (State of current/) and EVOLUTION.md (gen-3, closed)."
+    },
+
+    "flashControlDoesNotReproduce": {
+      "publishedFlashControl": { "facts": "32/34", "fitness": 0.9412, "tasksPassed": 4, "task4": "6/6" },
+      "replicates": "three live re-runs of task 4 on the same (recipe khal gen-1 02184f35, model khal/deepseek-v4-flash, task round2-train/4.md) scored 3/6, 5/6, 4/6 against the published 6/6",
+      "correctedArmLevel": "29-31/34 as a band — the five non-task-4 tasks held at their published values (26 facts) plus each replicate: 26+3=29, 26+4=30, 26+5=31. The published 32/34 is the maximum of four observations of that task and was not reproduced in three attempts.",
+      "replicateRecordsNotCommitted": "the three replicate runs were executed live by the campaign verifier and their run/score JSON is NOT committed under this wish. Only the scored task-4 totals (3/6, 5/6, 4/6) are on record here. Treat the band as verifier-reported, not as re-derivable from this tree.",
+      "effectOnThisArmsNumbers": "none. This arm's own 28/34, its per-task rows, its cost and its citation resolution are unchanged; only the flashControl column it is compared against moves."
+    },
+
+    "consequenceRestated": {
+      "original": "qwen3.7-max is 4 facts BEHIND deepseek-v4-flash on the same recipe at 18.8x the round cost.",
+      "corrected": "qwen3.7-max costs 18.8x more per round and 19-21x more per fact than deepseek-v4-flash on the same recipe, and is NOT measurably worse at finding facts. Against flash's corrected band the gap is +1 to +3 facts, inside the +/-3 run-to-run spread measured on flash itself (29 in gen-1's round, 32 in the matrix arm), and this arm is n=1 with no band measured at all.",
+      "costRankingIsRobust": "flash $0.0047/fact published, $0.0048-$0.0052/fact across its band, against this arm's $0.1007/fact — a 19x-21x ratio that a +/-3-fact band moves by ~10%. The cost ordering of the four arms does not depend on the disputed fact counts.",
+      "winnerFraming": "'flash wins the matrix' is only defensible on cost. On facts the matrix is n=1 per arm and does not resolve an ordering between flash and qwen3.7-max. See matrix/README.md."
+    },
+
+    "gen3SpawnsArgument": {
+      "withdrawn": "recipeUnderTest.whyThisGeneration bullet 3 — 'spawns fell to 2 on tasks 3 and 4 against the stated >= 3 on every run'",
+      "whyWithdrawn": "the observation is correct but does not discriminate: the SELECTED recipe (gen-1, 02184f35) breaks the same guard in 3 of its 4 matrix arms — this arm spawns=2 on task 3, the pro arm spawns=2 on task 3, and the flash arm whose result the campaign published spawns=0 on task 6. gen-0, the shipped recipe, ran 2/2/0 on tasks 3/4/6. spawns<3 is a property of a round (model, load, question), not of gen-3's prose.",
+      "whatStillHolds": "the T5 F5 regression bullet, and the tie-break on tasksMechanicalPass (3/6 vs 2/6) and required anchors cited (27 vs 26) — both n=1 and thin. The defensible reason gen-1 was kept is that a tie does not displace an incumbent.",
+      "selectionUnchanged": true
+    }
+  }
+}

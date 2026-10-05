@@ -1,0 +1,78 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/mimo-v2.5",
+  "round": "r8-mimo-tune3",
+  "footer": "rlmx · agent=explore · khal/mimo-v2.5 · 24 iterations · 87,547 in / 14,340 out · $0.11 · 588.0s · session sess_03f48f875b6a158e",
+  "wallSeconds": 588.3,
+  "requestChars": 1685,
+  "resultChars": 708,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 576,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": ".github/workflows/build-tarballs.yml:34",
+      "anchoredOn": "workflow_call",
+      "claim": "- Workflow: `.github/workflows/build-tarballs.yml`, job **`build`** (`:77`, matrix over platforms). Trigger `workflow_call` (`:34`, from release.yml) or `pull_r",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "scripts/build-binary.sh:65",
+      "anchoredOn": "TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"",
+      "claim": "where `TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"` (`scripts/build-binary.sh:65`). For `PLATFORM=linux-x64-glibc` this yields `genie-<version>-li",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "scripts/build-binary.sh:161",
+      "anchoredOn": "-C \"${STAGE}\" .",
+      "claim": "- **Yes, it uses `-C \"${STAGE}\" .`** — archiving `.` from inside the staging dir, which produces a leading `./` root entry in the archive (member paths like `./",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": ".github/workflows/version.yml:69",
+      "anchoredOn": "conclusion == 'success'",
+      "claim": "(`.github/workflows/version.yml:36-40`). Job gate at `:69-78` requires `conclusion == 'success'`, `event == 'push'`, and excludes commits tagged `[auto-version]",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": ".github/workflows/sign-attest.yml:76",
+      "anchoredOn": "Bind caller workflow and control commit",
+      "claim": "- **The stable-release-security-gate (PR #2596)** is the `admit` job in `.github/workflows/sign-attest.yml:70-121` (\"Bind caller workflow and control commit\"). ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

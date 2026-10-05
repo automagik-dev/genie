@@ -1,0 +1,364 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "khal/kimi-code",
+  "round": "r10-kimi-tune1",
+  "footer": "rlmx · agent=explore · khal/kimi-code · 24 iterations · 84,069 in / 11,079 out · $0.16 · 124.4s · session sess_5733850ccdaeaedb",
+  "wallSeconds": 124.8,
+  "requestChars": 1595,
+  "resultChars": 4608,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/prod/ryzen-ai-station"
+  ],
+  "need": 13,
+  "factTotal": 14,
+  "answerChars": 4476,
+  "citations": [
+    {
+      "path": "README.md",
+      "line": 296,
+      "key": "README.md:296",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| `GEMINI_API_KEY` | Gemini API key for embeddings |"
+    },
+    {
+      "path": "khal-app.json",
+      "line": 45,
+      "key": "khal-app.json:45",
+      "resolvedAs": "/home/namastex/prod/brain/khal-app.json",
+      "lines": 60,
+      "verdict": "resolves",
+      "text": "\"key\": \"GEMINI_API_KEY\","
+    },
+    {
+      "path": "deploy/PORTABILITY.md",
+      "line": 107,
+      "key": "deploy/PORTABILITY.md:107",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/PORTABILITY.md",
+      "lines": 288,
+      "verdict": "resolves",
+      "text": "| `apiKeysSecret` | `\"\"` | Optional Secret consumed via `envFrom` — every key becomes an env var. Known keys: `GEMINI_AP"
+    },
+    {
+      "path": "deploy/helm/brain/values.yaml",
+      "line": 28,
+      "key": "deploy/helm/brain/values.yaml:28",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/helm/brain/values.yaml",
+      "lines": 258,
+      "verdict": "resolves",
+      "text": "#        GEMINI_API_KEY   — LLM features"
+    },
+    {
+      "path": "deploy/helm/brain/values-hml.yaml",
+      "line": 50,
+      "key": "deploy/helm/brain/values-hml.yaml:50",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/helm/brain/values-hml.yaml",
+      "lines": 77,
+      "verdict": "resolves",
+      "text": "# API keys (GEMINI_API_KEY / OMNI_API_KEY / GENIE_DB_URL) — the Secret is"
+    },
+    {
+      "path": "deploy/helm/brain/values-prod.yaml",
+      "line": 59,
+      "key": "deploy/helm/brain/values-prod.yaml:59",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/helm/brain/values-prod.yaml",
+      "lines": 96,
+      "verdict": "resolves",
+      "text": "# API keys (GEMINI_API_KEY; add OMNI_API_KEY / GENIE_DB_URL if those features"
+    },
+    {
+      "path": "brain-lab/l2-trace-diff-window.ts",
+      "line": 289,
+      "key": "brain-lab/l2-trace-diff-window.ts:289",
+      "resolvedAs": "/home/namastex/prod/brain/brain-lab/l2-trace-diff-window.ts",
+      "lines": 403,
+      "verdict": "resolves",
+      "text": "if (!process.env.GEMINI_API_KEY) {"
+    },
+    {
+      "path": "brain-lab/iter-budget-harness.ts",
+      "line": 373,
+      "key": "brain-lab/iter-budget-harness.ts:373",
+      "resolvedAs": "/home/namastex/prod/brain/brain-lab/iter-budget-harness.ts",
+      "lines": 608,
+      "verdict": "resolves",
+      "text": "if (!process.env.GEMINI_API_KEY) {"
+    },
+    {
+      "path": "brain-lab/triage-new-run.ts",
+      "line": 167,
+      "key": "brain-lab/triage-new-run.ts:167",
+      "resolvedAs": "/home/namastex/prod/brain/brain-lab/triage-new-run.ts",
+      "lines": 326,
+      "verdict": "resolves",
+      "text": "if (!process.env.GEMINI_API_KEY) {"
+    },
+    {
+      "path": "brain-lab/triage-baseline-run.ts",
+      "line": 156,
+      "key": "brain-lab/triage-baseline-run.ts:156",
+      "resolvedAs": "/home/namastex/prod/brain/brain-lab/triage-baseline-run.ts",
+      "lines": 301,
+      "verdict": "resolves",
+      "text": "if (!process.env.GEMINI_API_KEY) {"
+    },
+    {
+      "path": "brain-lab/triage-rlmx-bridge.sh",
+      "line": 30,
+      "key": "brain-lab/triage-rlmx-bridge.sh:30",
+      "resolvedAs": "/home/namastex/prod/brain/brain-lab/triage-rlmx-bridge.sh",
+      "lines": 46,
+      "verdict": "resolves",
+      "text": "if [[ -z \"${GEMINI_API_KEY:-}\" ]]; then"
+    },
+    {
+      "path": "README.md",
+      "line": 272,
+      "key": "README.md:272",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "\"embedModel\": \"gemini-embedding-2-preview\","
+    },
+    {
+      "path": "package.json",
+      "line": 45,
+      "key": "package.json:45",
+      "resolvedAs": "/home/namastex/prod/brain/package.json",
+      "lines": 66,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\": \"0.260528.2\","
+    },
+    {
+      "path": "bun.lock",
+      "line": 9,
+      "key": "bun.lock:9",
+      "resolvedAs": "/home/namastex/prod/brain/bun.lock",
+      "lines": 1923,
+      "verdict": "resolves",
+      "text": "\"@automagik/rlmx\": \"0.260528.2\","
+    },
+    {
+      "path": "README.md",
+      "line": 220,
+      "key": "README.md:220",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| `brain analyze <query>` | LLM-powered analysis via rlmx |"
+    },
+    {
+      "path": "deploy/helm/brain/values.yaml",
+      "line": 173,
+      "key": "deploy/helm/brain/values.yaml:173",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/helm/brain/values.yaml",
+      "lines": 258,
+      "verdict": "resolves",
+      "text": "# (GEMINI_API_KEY, OMNI_API_KEY, GENIE_DB_URL, ...)."
+    },
+    {
+      "path": "README.md",
+      "line": 12,
+      "key": "README.md:12",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "> Knowledge graph engine for AI agents. Postgres-backed search with BM25 + vector + trigram fusion, Obsidian-compatible "
+    },
+    {
+      "path": "deploy/PORTABILITY.md",
+      "line": 32,
+      "key": "deploy/PORTABILITY.md:32",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/PORTABILITY.md",
+      "lines": 288,
+      "verdict": "resolves",
+      "text": "on — a bundled single-node pgvector Postgres (StatefulSet + headless"
+    },
+    {
+      "path": "runbooks/autopg-v3-signed-app.md",
+      "line": 12,
+      "key": "runbooks/autopg-v3-signed-app.md:12",
+      "resolvedAs": "/home/namastex/prod/brain/runbooks/autopg-v3-signed-app.md",
+      "lines": 90,
+      "verdict": "resolves",
+      "text": "Brain uses autopg v3 as its Postgres host when available. The filesystem vault remains the content source of truth; auto"
+    },
+    {
+      "path": "memory/uv.lock",
+      "line": 1061,
+      "key": "memory/uv.lock:1061",
+      "resolvedAs": "/home/namastex/prod/brain/memory/uv.lock",
+      "lines": 2478,
+      "verdict": "resolves",
+      "text": "provides-extras = [\"llm\", \"embeddings\", \"mcp\", \"openclaw\", \"sync\", \"test\", \"all\", \"dev\"]"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 20,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/rlmx-config.ts:54",
+      "anchoredOn": "provider: google",
+      "claim": "- rlmx-brain config generator hardcodes provider/model: `src/lib/rlmx-config.ts:53-55` → `provider: google`, `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "google"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/agent/rlmx-bridge.ts:131",
+      "anchoredOn": "modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"",
+      "claim": "- `src/agent/rlmx-bridge.ts:130-136` provider `\"google\"`, `modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"`, resolved via `piAi.getModel(provid",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/agent/scaffold.ts:70",
+      "anchoredOn": "model: gemini-3.1-flash-lite-preview",
+      "claim": "- `src/agent/scaffold.ts:70` scaffolds `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/auto-kb/evaluation/answer-judge.ts:47",
+      "anchoredOn": "GEMINI_API_KEY",
+      "claim": "- `src/auto-kb/evaluation/answer-judge.ts:47-50` — LLM-as-judge, requires `GEMINI_API_KEY`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/processors/image.ts:45",
+      "anchoredOn": "callGeminiVision",
+      "claim": "- `src/lib/processors/image.ts:45-100` — `callGeminiVision()`, model `process.env.BRAIN_VISION_MODEL ?? \"gemini-3.1-flash-lite-preview\"` (`:60-61`), endpoint `.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/ask-pipeline.ts:57",
+      "anchoredOn": "RLMX_API_KEY_ENV_MAP",
+      "claim": "`src/lib/ask-pipeline.ts:57-71` `RLMX_API_KEY_ENV_MAP` injects, from `~/.rlmx/settings.json` into `process.env`, keys for: **Gemini, Google, Anthropic, OpenAI, ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/cache.ts:69",
+      "anchoredOn": "gpt-4o-mini",
+      "claim": "- `src/lib/cache.ts:69,75` pricing constants reference `gpt-4o-mini` and `claude-3.5-sonnet` (cost estimation only, not calls).",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/db/migrations/005-brain-embeddings.sql:41",
+      "anchoredOn": "embed_dims",
+      "claim": "- **embedDims defaults:** `DEFAULT_DIMS = 768` (`embedding.ts:29`). Schema defaults: `brain_documents.embed_dims INT DEFAULT 768` and `brain_chunks.embed_dims I",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:18",
+      "anchoredOn": "EMBEDDED_MIGRATIONS",
+      "claim": "- **Schema/migrations location:** `src/db/migrations/*.sql`; embedded into the binary via `src/db/embedded-migrations.ts` (`EMBEDDED_MIGRATIONS`, referenced `sr",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/pgserve.ts:16",
+      "anchoredOn": "type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"",
+      "claim": "- **Three deployment modes:** `src/lib/pgserve.ts:16` `type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"`, detected in `detectDeploymentMode()` (`:7",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "memory/tests/test_embeddings_multilingual.py:95",
+      "anchoredOn": "MNEMOSYNE_EMBEDDING_API_URL",
+      "claim": "- **OpenAI-compatible / remote embedding API:** `embeddings.py:60-64` — `MNEMOSYNE_EMBEDDING_API_URL` (default OpenRouter), `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEM",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F12",
+      "anchor": "memory/mnemosyne/core/extraction.py:143",
+      "anchoredOn": "_llm_backend",
+      "claim": "- **Local LLM (llama.cpp / ctransformers) for consolidation:** `memory/mnemosyne/core/local_llm.py` — `_llm_backend` = `\"llamacpp\"` | `\"ctransformers\"` | None (",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F13",
+      "anchor": ".archive/memory/docs/configuration.md:138",
+      "anchoredOn": "Works with: llama.cpp server, vLLM, Ollama, LM Studio, or any OpenAI-compatible",
+      "claim": "- **Docs explicitly naming local backends:** `.archive/memory/docs/configuration.md:138` \"Works with: **llama.cpp server, vLLM, Ollama, LM Studio**, or any Open",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "llama.cpp",
+        "Ollama",
+        "OpenAI-compatible"
+      ]
+    },
+    {
+      "id": "F14",
+      "anchor": ".genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166",
+      "anchoredOn": "brain lacks MCP, local embeddings, and any [local model support]",
+      "claim": "- **Strategic note:** `.genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166` observes \"brain lacks MCP, **local embeddings**, and any [local model support",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "brain",
+        "local",
+        "embeddings",
+        "model"
+      ]
+    }
+  ]
+}

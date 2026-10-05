@@ -1,0 +1,46 @@
+{
+  "verifiedAt": "2026-07-27T20:11:45.465Z",
+  "items": [
+    {
+      "task": 3,
+      "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/3.md",
+      "chars": 349,
+      "sha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e"
+    },
+    {
+      "task": 4,
+      "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/4.md",
+      "chars": 306,
+      "sha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df"
+    },
+    {
+      "task": 5,
+      "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/5.md",
+      "chars": 284,
+      "sha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f"
+    },
+    {
+      "task": 6,
+      "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+      "chars": 241,
+      "sha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799"
+    },
+    {
+      "task": 7,
+      "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/7.md",
+      "chars": 291,
+      "sha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7"
+    }
+  ],
+  "planted": {
+    "record": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json",
+    "chars": 67,
+    "sha256": "6bec40334302304701ef423c920b986d7a0d61b1b3406781ab625ad9abb6572c",
+    "isError": true,
+    "citations": 0,
+    "wallSeconds": 650,
+    "model": "khal/deepseek-v4-flash",
+    "round": "gen4-rep2-khal-deepseek-v4-flash",
+    "questionMatchesTask5": true
+  }
+}

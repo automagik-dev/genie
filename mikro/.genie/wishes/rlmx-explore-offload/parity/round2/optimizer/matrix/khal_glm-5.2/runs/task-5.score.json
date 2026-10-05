@@ -1,0 +1,331 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/glm-5.2",
+  "round": "matrix-khal-glm-5-2",
+  "footer": "rlmx · agent=explore-r · khal/glm-5.2 · 8 iterations · 158,475 in / 15,875 out · $0.26 · 215.9s · session sess_15162d87684a6cd7",
+  "wallSeconds": 216.1,
+  "requestChars": 297,
+  "resultChars": 5064,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 4932,
+  "citations": [
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 38,
+      "key": "src/main/services/ptyManager.ts:38",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const ptys = new Map<string, PtyRecord>();"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 21,
+      "key": "src/main/services/ptyManager.ts:21",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "interface PtyRecord {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 19,
+      "key": "src/main/services/ptyManager.ts:19",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export type PtyKind = 'agent' | 'shell' | 'tui' | 'service';"
+    },
+    {
+      "path": "src/renderer/terminal/TerminalSessionManager.ts",
+      "line": 1002,
+      "key": "src/renderer/terminal/TerminalSessionManager.ts:1002",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/renderer/terminal/TerminalSessionManager.ts",
+      "lines": 1231,
+      "verdict": "resolves",
+      "text": "window.electronAPI.ptyResize({ id: this.id, cols, rows: dims.rows });"
+    },
+    {
+      "path": "src/main/preload.ts",
+      "line": 73,
+      "key": "src/main/preload.ts:73",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/preload.ts",
+      "lines": 647,
+      "verdict": "resolves",
+      "text": "ipcRenderer.send('pty:resize', args),"
+    },
+    {
+      "path": "src/main/ipc/ptyIpc.ts",
+      "line": 103,
+      "key": "src/main/ipc/ptyIpc.ts:103",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/ipc/ptyIpc.ts",
+      "lines": 280,
+      "verdict": "resolves",
+      "text": "ipcMain.on('pty:resize', (_event, args: { id: string; cols: number; rows: number }) => {"
+    },
+    {
+      "path": "src/main/ipc/ptyIpc.ts",
+      "line": 110,
+      "key": "src/main/ipc/ptyIpc.ts:110",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/ipc/ptyIpc.ts",
+      "lines": 280,
+      "verdict": "resolves",
+      "text": "resizePty(args.id, args.cols, args.rows);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 698,
+      "key": "src/main/services/ptyManager.ts:698",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "record.mirror?.resize(cols, rows);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 700,
+      "key": "src/main/services/ptyManager.ts:700",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "record.proc.resize(cols, rows);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 777,
+      "key": "src/main/services/ptyManager.ts:777",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "function killPtyInternal(id: string): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 727,
+      "key": "src/main/services/ptyManager.ts:727",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "function gracefulKillProc(proc: KillableProc, timeoutMs = GRACEFUL_KILL_TIMEOUT_MS): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 708,
+      "key": "src/main/services/ptyManager.ts:708",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const GRACEFUL_KILL_TIMEOUT_MS = 3000;"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 757,
+      "key": "src/main/services/ptyManager.ts:757",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "proc.kill('SIGTERM');"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 750,
+      "key": "src/main/services/ptyManager.ts:750",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "proc.kill('SIGKILL');"
+    },
+    {
+      "path": "src/main/main.ts",
+      "line": 312,
+      "key": "src/main/main.ts:312",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/main.ts",
+      "lines": 371,
+      "verdict": "resolves",
+      "text": "await killAll();"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 808,
+      "key": "src/main/services/ptyManager.ts:808",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export async function killAll(): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 817,
+      "key": "src/main/services/ptyManager.ts:817",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "await Promise.all(pending);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 231,
+      "key": "src/main/services/ptyManager.ts:231",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function buildDirectEnv(isDark: boolean, cwd?: string): Record<string, string> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 508,
+      "key": "src/main/services/ptyManager.ts:508",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env: spawnPlan.env,"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 246,
+      "key": "src/main/services/ptyManager.ts:246",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "TERM_PROGRAM: 'dash',"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 251,
+      "key": "src/main/services/ptyManager.ts:251",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "COLORFGBG: isDark ? '15;0' : '0;15',"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 279,
+      "key": "src/main/services/ptyManager.ts:279",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.TERM = 'xterm-256color';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 280,
+      "key": "src/main/services/ptyManager.ts:280",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.COLORTERM = 'truecolor';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 327,
+      "key": "src/main/services/ptyManager.ts:327",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.CLAUDE_CODE_NO_FLICKER = '1';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 336,
+      "key": "src/main/services/ptyManager.ts:336",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.DASH_HOOK_PORT = String(hookServer.port);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 695,
+      "key": "src/main/services/ptyManager.ts:695",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function resizePty(id: string, cols: number, rows: number): void {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 812,
+      "key": "src/main/services/ptyManager.ts:812",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "pending.push(gracefulKillProc(record.proc));"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 27,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/ptyManager.ts:38",
+      "anchoredOn": "new Map<string, PtyRecord>()",
+      "claim": "Live PTY sessions live in one module-level registry keyed by session id — new Map<string, PtyRecord>() at module scope — rather than being tracked per window.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "Map<string",
+        "PtyRecord>()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/ptyManager.ts:695",
+      "anchoredOn": "resizePty",
+      "claim": "Resizing is an explicit operation on a session id: resizePty takes the column and row counts, so geometry changes are not a side effect of rendering.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "resizePty"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/ptyManager.ts:708",
+      "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+      "claim": "Shutdown is graceful-then-forced on a fixed budget, GRACEFUL_KILL_TIMEOUT_MS, which is 3000 milliseconds.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "GRACEFUL_KILL_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/ptyManager.ts:727",
+      "anchoredOn": "gracefulKillProc",
+      "claim": "The kill helper gracefulKillProc takes that budget as a default parameter, so an individual caller can shorten or lengthen it without editing the shared constan",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "gracefulKillProc"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/ptyManager.ts:127",
+      "anchoredOn": "RESERVED_ENV_KEYS",
+      "claim": "A PTY does not simply inherit the parent environment: RESERVED_ENV_KEYS names the variables the app manages itself and that a caller-supplied environment must n",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

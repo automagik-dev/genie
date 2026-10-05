@@ -1,0 +1,136 @@
+schema_version: 1
+tools_api: 1
+
+# ── CITATION PIN: every `path:line` in this file resolves at `2a32fd9` ──────
+#
+# Same pin as parity/round2/recursion-recon.md, and stated here for the same
+# reason that document states it: a line number is a fact about a revision, not
+# about a file. All 23 anchors below were re-resolved against `2a32fd9` on
+# 2026-07-27. They were originally written against `9abd6fa`; `2a32fd9` rewrote
+# src/mcp/server.ts (+37/-21) underneath them, and two of them silently stopped
+# pointing at what they name — the shape read (461 → 477) and `applyAgent`
+# (463-482 → 481-500). Re-resolve before trusting them at any later revision:
+#
+#   git rev-parse --short HEAD   # expect 2a32fd9
+#
+# ───────────────────────────────────────────────────────────────────────────
+
+# `recurse`, and the label is all it is. `shape` is parsed at
+# src/sdk/agent-spec.ts:120-124 and read in exactly three places
+# (src/mcp/agents.ts:97, src/mcp/server.ts:176, src/mcp/server.ts:477); only
+# `single-step` changes behaviour, by capping iterations at 1. `recurse` and
+# `loop` are byte-for-byte identical at runtime — recursion is a REPL namespace
+# binding (python/repl_server.py:90-93), available to every shape. So the whole
+# of this variant lives in SYSTEM.md and in the budget below, and `recurse` is
+# here because it is the true description of what the prompt does, not because
+# it switches anything on. See parity/round2/recursion-recon.md §5.
+shape: recurse
+model: khal/deepseek-v4-flash
+
+description: >-
+  Answers a question about the codebase in the server's working directory by
+  partitioning it across recursive sub-agents, then verifying every citation
+  itself. Returns the answer with resolvable file:line citations. Use it
+  instead of grepping and reading a large tree inline.
+
+system: SYSTEM.md
+
+budget:
+  # ── ONE number, TWO roles, and the second one is a WALL-CLOCK budget. ──
+  # src/rlm.ts:436 hands a child `maxIterations: opts.maxIterations` — the
+  # parent's own cap, unreduced. So this number is simultaneously the parent's
+  # turn budget AND every sub-agent's. That second role dominates, because the
+  # fan-out blocks the parent's REPL and the whole batch has to finish inside
+  # RLMX_REPL_TIMEOUT_MS (see INSTALL REQUIREMENT 1) or the run returns nothing.
+  #
+  # Measured on khal/deepseek-v4-flash against this tree:
+  #   · one child, alone, focused question ....... 3 iterations,  27s
+  #   · four children concurrently ............... 1/9/12/18 iterations,
+  #                                                61/74/154/233s, ~8.5s per
+  #                                                iteration under contention
+  # A child running the *ambient* prompt does not stop when it has the answer —
+  # one of those four ran the cap out at 18. So the cap IS the child's wall
+  # clock: 14 x ~8.5s ~= 120s per child, ~240s for a contended wave, comfortably
+  # inside a 600s REPL block. At 18 a wave overran 600s and killed the whole run
+  # (parity/round2/smoke/smoke-3.json, and that is why 18 is not the number).
+  #
+  # 14 is also enough for the parent, whose path is 8 turns: survey · fan-out ·
+  # aggregate · three verification reads · verification block · FINAL. Six
+  # spare. 24 (round 1's number, docs/parity-explore.md r6) was sized for an
+  # agent that did *all* the reading itself; here it would be spent on child
+  # wandering at 4x. 10 was rejected the other way — it leaves the
+  # verify-then-answer tail with no slack, the failure that dominated r5-r8.
+  max_iterations: 14
+
+  # Rail, not a target — and deliberately the SAME 2.00 as
+  # examples/agents/explore/agent.yaml, so the two arms differ in prompt and
+  # shape and in nothing else.
+  #
+  # Sized from measurement, not taste: r15-flash-control task 6 spent $0.02 on
+  # 24 parent iterations of `khal/deepseek-v4-flash`, and a single 3-iteration
+  # child measured $0.0016. A worst-case explore-r run is one parent plus four
+  # children at 14 turns each, so ~5 x $0.012 ~= $0.06. 2.00 is ~30x headroom on
+  # flash and still a real rail on `khal/claude-haiku`, where 0.25 was found to
+  # end runs rather than catch them.
+  #
+  # It must not be tightened. src/rlm.ts:439 + src/rlm.ts:973-986 hand each
+  # child the parent's *remaining* budget, and children are spawned late — so a
+  # tight rail starves the sub-agents specifically and silently, which is
+  # exactly the failure mode this variant exists to escape.
+  max_cost: 2.00
+
+  # DECLARATIVE ONLY — NOT ENFORCED. `applyAgent` (src/mcp/server.ts:481-500)
+  # copies model, system and budget.maxCost from agent.yaml and nothing else, so
+  # this key never reaches `config.budget`. `max_iterations` above is rescued by
+  # a separate path (`agentMaxIterations`, src/mcp/server.ts:474-478); max_depth
+  # has no such path. The effective ceiling is
+  # `config.budget.maxDepth ?? 3` (src/rlm.ts:438) read from the *ambient*
+  # rlmx.yaml at the server's --dir. It is stated here because the intent is
+  # real — this agent wants one level of children and no grandchildren — and
+  # because a reader is entitled to know the key is inert.
+  max_depth: 2
+
+# ── INSTALL REQUIREMENT 1 of 2 — RLMX_REPL_TIMEOUT_MS. ─────────────────────
+#
+# `rlm_query_batched` BLOCKS the parent's Python REPL until every child exits
+# (python/llm_bridge.py:33-40). The parent's per-block REPL timeout defaults to
+# 30s (src/repl.ts:81-87) — while the children it is waiting on are handed
+# `--timeout 900000` and `--max-iterations 18`, i.e. the parent's own caps
+# (src/rlm.ts:436-437). Nothing reconciles the two. At 30s the wait is killed,
+# `src/repl.ts:427` rejects, and because `repl.execute` at src/rlm.ts:681 is
+# not wrapped, the rejection escapes rlmLoop entirely: the MCP handler returns
+# `rlmx <tool> failed: REPL execution timed out after 30000ms` with no answer
+# at all. Measured, not theorised — parity/round2/smoke/smoke-2.json.
+#
+# So the environment MUST set, on the `rlmx mcp` process:
+#
+#   RLMX_REPL_TIMEOUT_MS=600000
+#
+# There is no in-repo way to set it: `RLMX_MCP_RUN_TIMEOUT_MS` lifts the *run*
+# wall clock only (src/mcp/server.ts:562-570) and has no per-block equivalent.
+# 600000 leaves ~300s of a 900s run for the phases either side of the fan-out.
+#
+# ── INSTALL REQUIREMENT 2 of 2 — the child model pin. ──────────────────────
+#
+# The `model:` above pins THIS agent. It does NOT pin its recursive children.
+# `rlm_query` spawns a fresh `rlmx` CLI process (src/llm.ts:558-566) whose argv
+# carries no --model (src/llm.ts:457-469; the CLI has no such flag at all,
+# src/cli.ts:148-174). The child resolves its own model by the ordinary
+# precedence: ~/.rlmx/settings.json > <--dir>/.rlmx/rlmx.yaml > the hardcoded
+# google default (src/cli.ts:34-38, src/cli.ts:324-325, src/config.ts:122-125).
+#
+# So the environment that runs this agent MUST place, in the HOME the server
+# and its children inherit:
+#
+#   ~/.rlmx/settings.json
+#   { "model.provider": "khal",
+#     "model.model": "deepseek-v4-flash",
+#     "model.sub-call-model": "deepseek-v4-flash" }
+#
+# (the API key comes from the environment, never from this file). Without it
+# the children run whatever the target repo's rlmx.yaml says — and if no key
+# for that provider is present they exit 0 with an empty answer, which
+# src/repl.ts:449-462 hands back as a normal result and nothing anywhere
+# reports. That is not hypothetical: it is what happened to the only three
+# recursive spawns in round 1's entire 97-run record. Full evidence in
+# parity/round2/recursion-recon.md §2.2 and §6.

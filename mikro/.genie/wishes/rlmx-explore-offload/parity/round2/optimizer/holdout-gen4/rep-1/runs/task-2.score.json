@@ -1,0 +1,291 @@
+{
+  "arm": "rlmx",
+  "task": 2,
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen4-holdout-rep1-khal-deepseek-v4-flash",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 7 iterations · 166,439 in / 24,390 out · $0.03 · 285.6s · session sess_7f26070e621e3325",
+  "wallSeconds": 285.9,
+  "requestChars": 373,
+  "resultChars": 3210,
+  "ok": true,
+  "root": "/home/namastex/prod/rlmx",
+  "outOfScope": [],
+  "need": 7,
+  "factTotal": 7,
+  "answerChars": 3068,
+  "citations": [
+    {
+      "path": "src/khal-provider.ts",
+      "line": 40,
+      "key": "src/khal-provider.ts:40",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_PROVIDER_ID = \"khal\";"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 47,
+      "key": "src/khal-provider.ts:47",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_BASE_URL = process.env.KHAL_BASE_URL ?? \"https://llm.khal.ai/v1\";"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 55,
+      "key": "src/khal-provider.ts:55",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_MISSING_KEY_ERROR = \"khal provider requires KHAL_API_KEY\";"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 63,
+      "key": "src/khal-provider.ts:63",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_REJECTED_KEY_ERROR = \"khal gateway rejected\";"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 71,
+      "key": "src/khal-provider.ts:71",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_EMPTY_CATALOG_ERROR = \"khal catalog unavailable\";"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 74,
+      "key": "src/khal-provider.ts:74",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export const KHAL_API_KEY_ENV = [\"KHAL_API_KEY\", \"RLMX_KHAL_API_KEY\"] as const;"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 78,
+      "key": "src/khal-provider.ts:78",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "function khalCredential(): { name: KhalKeyEnv; value: string } | undefined {"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 84,
+      "key": "src/khal-provider.ts:84",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 148,
+      "key": "src/khal-provider.ts:148",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export function perMillionDollars(value: unknown): number {"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 150,
+      "key": "src/khal-provider.ts:150",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "return Math.round(value * 1e6 * 1e10) / 1e10;"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 273,
+      "key": "src/khal-provider.ts:273",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "input: perMillionDollars(info.input_cost_per_token),"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 276,
+      "key": "src/khal-provider.ts:276",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "cacheWrite: perMillionDollars(info.cache_creation_input_token_cost),"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 335,
+      "key": "src/khal-provider.ts:335",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "class KhalHttpError extends Error {"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 362,
+      "key": "src/khal-provider.ts:362",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "`${KHAL_REJECTED_KEY_ERROR} ${source} (HTTP ${status}) — the key is invalid, ` +"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 374,
+      "key": "src/khal-provider.ts:374",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "if (!res.ok) throw new KhalHttpError(res.status);"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 464,
+      "key": "src/khal-provider.ts:464",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export function khalProvider("
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 500,
+      "key": "src/khal-provider.ts:500",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "if (!khalApiKey()) throw new Error(KHAL_MISSING_KEY_ERROR);"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 521,
+      "key": "src/khal-provider.ts:521",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "throw new Error("
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 524,
+      "key": "src/khal-provider.ts:524",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": ");"
+    },
+    {
+      "path": "src/khal-provider.ts",
+      "line": 540,
+      "key": "src/khal-provider.ts:540",
+      "resolvedAs": "/home/namastex/prod/rlmx/src/khal-provider.ts",
+      "lines": 543,
+      "verdict": "resolves",
+      "text": "export function registerKhalProvider(models: MutableModels): void {"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 20,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/khal-provider.ts:40",
+      "anchoredOn": "KHAL_PROVIDER_ID",
+      "claim": "The provider identifies itself through the KHAL_PROVIDER_ID constant rather than a bare string literal, so every match on the provider name goes through one def",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "KHAL_PROVIDER_ID"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/khal-provider.ts:74",
+      "anchoredOn": "KHAL_API_KEY_ENV",
+      "claim": "Two environment variables can supply the credential, in the fixed order given by KHAL_API_KEY_ENV — the plain name first and the namespaced one as a fallback.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "KHAL_API_KEY_ENV"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/khal-provider.ts:55",
+      "anchoredOn": "KHAL_MISSING_KEY_ERROR",
+      "claim": "A missing credential is its own failure mode, reported through KHAL_MISSING_KEY_ERROR rather than folded into a generic request failure.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "KHAL_MISSING_KEY_ERROR"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/khal-provider.ts:63",
+      "anchoredOn": "KHAL_REJECTED_KEY_ERROR",
+      "claim": "A credential the gateway refuses is distinguished from a missing one by KHAL_REJECTED_KEY_ERROR, so an authentication failure is not reported as an absent key.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "KHAL_REJECTED_KEY_ERROR"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/khal-provider.ts:71",
+      "anchoredOn": "KHAL_EMPTY_CATALOG_ERROR",
+      "claim": "A gateway that answers but advertises no usable models is a third distinct state, KHAL_EMPTY_CATALOG_ERROR, not a variant of an auth failure.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "KHAL_EMPTY_CATALOG_ERROR"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": "src/khal-provider.ts:148",
+      "anchoredOn": "perMillionDollars",
+      "claim": "The gateway quotes prices per million tokens, and perMillionDollars is the single conversion into the per-token dollar figures the rest of the cost accounting u",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "perMillionDollars"
+      ]
+    },
+    {
+      "id": "F7",
+      "anchor": "src/khal-provider.ts:103",
+      "anchoredOn": "NON_CHAT_MODES",
+      "claim": "The advertised catalogue is filtered rather than taken wholesale: NON_CHAT_MODES names the modes that are not chat completions and are excluded from the model l",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

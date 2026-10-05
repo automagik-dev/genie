@@ -1,0 +1,69 @@
+{
+  "task": 6,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/genie-desktop",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-0-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T07:59:57.261Z",
+  "question": "This app integrates an external CLI called rtk. How does it find the binary on a machine, what happens on Windows versus everywhere else, and what timeouts and retry limits bound the download and unpack path? Answer with path:line citations.",
+  "provenance": {
+    "promptSha256": "06c6ea947c34a73437bb90220ac68e940532dbc72e3da6d24fea4d1556f6abb9",
+    "promptChars": 21327,
+    "promptSnapshot": "parity/prompts/06c6ea947c34a73437bb90220ac68e940532dbc72e3da6d24fea4d1556f6abb9.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "3da8750fdc543ff3b7b2ab4c1a2d16aec7f74d35",
+      "branch": "wish/khal-native-theme",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 82.3,
+  "requestChars": 254,
+  "resultChars": 4620,
+  "answer": "## How the app finds the `rtk` binary, Windows vs. non-Windows behavior, and timeouts/retries\n\n### Binary discovery\n\n`RtkService.resolveBinary()` (src/main/services/RtkService.ts:164) checks two locations in priority order:\n\n1. **Managed binary** — The file `{userData}/bin/rtk` (`.exe` on Windows) is checked first (line 169–170). If it exists, the class runs `rtk --version` to confirm it works (line 171). The managed-bin directory is `app.getPath('userData')/bin` (line 128–129), and the binary is named `rtk.exe` on Windows, `rtk` everywhere else (line 133).\n\n2. **PATH via `which`/`where.exe`** — If no managed binary is found, the app runs `which rtk` on Linux/macOS or `where.exe rtk` on Windows (line 179–181). The first line of output is taken as the resolved path (line 182). Again `--version` is run to validate (line 184). Errors with exit code 1 or `ENOENT` are treated as \"not found\" (lines 196–197).\n\nThe result is cached in `cachedResolution` (lines 230–232), and the cache is only overwritten by a *successful* resolution — transient failures do not clobber a previously-good resolution (lines 226–230).\n\n### Windows vs. everywhere else\n\n- **Binary naming**: `rtk.exe` on Windows, `rtk` elsewhere (src/main/services/RtkService.ts:133).\n- **Discovery command**: `where.exe` on Windows, `which` on Linux/macOS (src/main/services/RtkService.ts:180).\n- **`~/.local/bin` symlink**: On non-Windows platforms, after installation a symlink is created at `~/.local/bin/rtk` pointing at the managed binary (lines 145–148). This ensures `rtk` resolves via `$PATH` for Claude Code's Bash tool. On Windows, `getUserPathSymlinkPath()` returns `null` because \"no native release exists upstream\" (line 146).\n- **Downloadability**: `isPlatformDownloadable()` (line 273) returns `true` for macOS (any arch) and Linux x64/arm64. For Windows it returns `false` — line 272 states \"No Windows native release exists upstream — manual-install guidance only there.\" The `getReleaseAssetName()` function (line 279) likewise returns `null` for any platform other than macOS or Linux x64/arm64, which causes `doDownload()` to throw (lines 308–310).\n\n### Timeouts bounding the download and unpack path\n\nThe following timeouts are defined at module scope (src/main/services/RtkService.ts:32–34):\n\n| Constant | Value | Applied to |\n|---|---|---|\n| `FETCH_API_TIMEOUT_MS` | 60,000 ms | GitHub API call to find the latest release (line 321–326) and fetching `checksums.txt` (line 423) |\n| `FETCH_BODY_TIMEOUT_MS` | 300,000 ms | The actual download of the archive tarball — an `AbortController` wall-clock timer in `fetchToFile()` (line 439–467) |\n| `TAR_TIMEOUT_MS` | 120,000 ms | Both `tar -tvzf` (listing, line 512) and `tar -xzf` (extraction, line 541) via `spawn` timeout |\n\nAdditionally, `probeVersion()` has a 3000 ms timeout on the `execFile` call (line 207).\n\n### Retry limits for download\n\nThe fetch-and-verify loop (src/main/services/RtkService.ts:357–380) uses `MAX_ATTEMPTS = 3` (line 357). Each attempt downloads the tarball to a temporary file, verifies its SHA-256 checksum against the release's `checksums.txt`, and runs a pre-extraction archive integrity check (`verifyArchive`). On failure the temp file is removed (line 370) and the attempt counter increments. If all 3 attempts fail, a final error is thrown stating \"Download repeatedly failed (3 attempts)\" (lines 376–380).\n\n### Citations\n\n- src/main/services/RtkService.ts:164–203 — `resolveBinary()` checks managed bin first, then PATH via `which`/`where.exe`\n- src/main/services/RtkService.ts:128–134 — managed bin dir is `{userData}/bin`, binary named `rtk` or `rtk.exe`\n- src/main/services/RtkService.ts:145–148 — `getUserPathSymlinkPath()` returns null on Windows; otherwise `~/.local/bin/rtk`\n- src/main/services/RtkService.ts:272–276 — `isPlatformDownloadable()`: macOS and Linux x64/arm64 yes, Windows no\n- src/main/services/RtkService.ts:279–289 — `getReleaseAssetName()` returns null for Windows/unrecognized arch\n- src/main/services/RtkService.ts:32–34 — `FETCH_API_TIMEOUT_MS = 60_000`, `FETCH_BODY_TIMEOUT_MS = 300_000`, `TAR_TIMEOUT_MS = 120_000`\n- src/main/services/RtkService.ts:207 — `probeVersion` has 3000 ms timeout\n- src/main/services/RtkService.ts:357–380 — retry loop with `MAX_ATTEMPTS = 3`\n- src/main/services/RtkService.ts:439–467 — `fetchToFile()` uses AbortController with `FETCH_BODY_TIMEOUT_MS`\n- src/main/services/RtkService.ts:994–1006 — `fetchWithTimeout()` helper using AbortController\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 72,621 in / 3,306 out · $0.0094 · 82.1s · session sess_28ab302bc3c8339e",
+  "fullText": "## How the app finds the `rtk` binary, Windows vs. non-Windows behavior, and timeouts/retries\n\n### Binary discovery\n\n`RtkService.resolveBinary()` (src/main/services/RtkService.ts:164) checks two locations in priority order:\n\n1. **Managed binary** — The file `{userData}/bin/rtk` (`.exe` on Windows) is checked first (line 169–170). If it exists, the class runs `rtk --version` to confirm it works (line 171). The managed-bin directory is `app.getPath('userData')/bin` (line 128–129), and the binary is named `rtk.exe` on Windows, `rtk` everywhere else (line 133).\n\n2. **PATH via `which`/`where.exe`** — If no managed binary is found, the app runs `which rtk` on Linux/macOS or `where.exe rtk` on Windows (line 179–181). The first line of output is taken as the resolved path (line 182). Again `--version` is run to validate (line 184). Errors with exit code 1 or `ENOENT` are treated as \"not found\" (lines 196–197).\n\nThe result is cached in `cachedResolution` (lines 230–232), and the cache is only overwritten by a *successful* resolution — transient failures do not clobber a previously-good resolution (lines 226–230).\n\n### Windows vs. everywhere else\n\n- **Binary naming**: `rtk.exe` on Windows, `rtk` elsewhere (src/main/services/RtkService.ts:133).\n- **Discovery command**: `where.exe` on Windows, `which` on Linux/macOS (src/main/services/RtkService.ts:180).\n- **`~/.local/bin` symlink**: On non-Windows platforms, after installation a symlink is created at `~/.local/bin/rtk` pointing at the managed binary (lines 145–148). This ensures `rtk` resolves via `$PATH` for Claude Code's Bash tool. On Windows, `getUserPathSymlinkPath()` returns `null` because \"no native release exists upstream\" (line 146).\n- **Downloadability**: `isPlatformDownloadable()` (line 273) returns `true` for macOS (any arch) and Linux x64/arm64. For Windows it returns `false` — line 272 states \"No Windows native release exists upstream — manual-install guidance only there.\" The `getReleaseAssetName()` function (line 279) likewise returns `null` for any platform other than macOS or Linux x64/arm64, which causes `doDownload()` to throw (lines 308–310).\n\n### Timeouts bounding the download and unpack path\n\nThe following timeouts are defined at module scope (src/main/services/RtkService.ts:32–34):\n\n| Constant | Value | Applied to |\n|---|---|---|\n| `FETCH_API_TIMEOUT_MS` | 60,000 ms | GitHub API call to find the latest release (line 321–326) and fetching `checksums.txt` (line 423) |\n| `FETCH_BODY_TIMEOUT_MS` | 300,000 ms | The actual download of the archive tarball — an `AbortController` wall-clock timer in `fetchToFile()` (line 439–467) |\n| `TAR_TIMEOUT_MS` | 120,000 ms | Both `tar -tvzf` (listing, line 512) and `tar -xzf` (extraction, line 541) via `spawn` timeout |\n\nAdditionally, `probeVersion()` has a 3000 ms timeout on the `execFile` call (line 207).\n\n### Retry limits for download\n\nThe fetch-and-verify loop (src/main/services/RtkService.ts:357–380) uses `MAX_ATTEMPTS = 3` (line 357). Each attempt downloads the tarball to a temporary file, verifies its SHA-256 checksum against the release's `checksums.txt`, and runs a pre-extraction archive integrity check (`verifyArchive`). On failure the temp file is removed (line 370) and the attempt counter increments. If all 3 attempts fail, a final error is thrown stating \"Download repeatedly failed (3 attempts)\" (lines 376–380).\n\n### Citations\n\n- src/main/services/RtkService.ts:164–203 — `resolveBinary()` checks managed bin first, then PATH via `which`/`where.exe`\n- src/main/services/RtkService.ts:128–134 — managed bin dir is `{userData}/bin`, binary named `rtk` or `rtk.exe`\n- src/main/services/RtkService.ts:145–148 — `getUserPathSymlinkPath()` returns null on Windows; otherwise `~/.local/bin/rtk`\n- src/main/services/RtkService.ts:272–276 — `isPlatformDownloadable()`: macOS and Linux x64/arm64 yes, Windows no\n- src/main/services/RtkService.ts:279–289 — `getReleaseAssetName()` returns null for Windows/unrecognized arch\n- src/main/services/RtkService.ts:32–34 — `FETCH_API_TIMEOUT_MS = 60_000`, `FETCH_BODY_TIMEOUT_MS = 300_000`, `TAR_TIMEOUT_MS = 120_000`\n- src/main/services/RtkService.ts:207 — `probeVersion` has 3000 ms timeout\n- src/main/services/RtkService.ts:357–380 — retry loop with `MAX_ATTEMPTS = 3`\n- src/main/services/RtkService.ts:439–467 — `fetchToFile()` uses AbortController with `FETCH_BODY_TIMEOUT_MS`\n- src/main/services/RtkService.ts:994–1006 — `fetchWithTimeout()` helper using AbortController\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 72,621 in / 3,306 out · $0.0094 · 82.1s · session sess_28ab302bc3c8339e",
+  "structuredContent": {
+    "session_id": "sess_28ab302bc3c8339e"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · working 60s",
+    "agent=explore-r · working 75s"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

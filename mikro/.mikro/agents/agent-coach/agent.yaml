@@ -1,0 +1,43 @@
+schema_version: 1
+tools_api: 1
+
+# ── ACTIVE — created 2026-08-16 as part of the colony (/goal directive) ─────
+#
+# The colony's self-improvement engine: each cycle it audits one sibling
+# agent — its SYSTEM.md against the workspace's own prompt conventions, and
+# its latest committed report against that agent's report contract — and
+# returns findings plus verbatim PATCH blocks for the host to review and
+# apply. It never edits anything itself; a patch is a proposal until a human
+# or the orchestrating host applies and commits it.
+#
+# Withdraw by renaming:  mv .mikro/agents/agent-coach .mikro/agents/agent-coach.proposed
+# ────────────────────────────────────────────────────────────────────────────
+
+shape: loop
+
+# Same sizing rationale as readme-polish/agent.yaml: `deepseek/` because this
+# host has DEEPSEEK_API_KEY and pi-ai's builtin registry carries the model
+# directly; `khal/deepseek-v4-flash` is the equivalent ref on gatewayed hosts.
+model: deepseek/deepseek-v4-flash
+
+description: >-
+  Audits one of the colony's microagents: its SYSTEM.md against the prompt
+  conventions this workspace validated, and its most recent committed report
+  under .mikro/loop/reports/ against that agent's own report contract —
+  re-resolving a sample of the report's citations to catch fabrication.
+  Returns severity-ordered findings plus verbatim PATCH blocks a reviewer can
+  apply. It never edits files.
+
+system: SYSTEM.md
+
+budget:
+  # 14, raised from 12 on cycle-002 evidence: the first successful-status run
+  # burned 12/12 on reading (91,384 in / 44,489 out) and returned an EMPTY
+  # final answer — the same ran-to-rail-without-FINAL class readme-polish hit
+  # in cycle-001. Two more turns is the same remedy. A rail, not a target.
+  max_iterations: 14
+  # 0.50 — the standard single-process rail (see readme-polish/agent.yaml).
+  max_cost: 0.50
+  # DECLARATIVE ONLY — NOT ENFORCED (applyAgent copies model/system/maxCost;
+  # max_iterations is rescued separately). This agent spawns nothing.
+  max_depth: 0

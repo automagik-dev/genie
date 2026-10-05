@@ -1,0 +1,279 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen4-rep1-khal-deepseek-v4-flash",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 196,634 in / 33,887 out · $0.04 · 264.5s · session sess_cd5bb10e2b5ea39d",
+  "wallSeconds": 264.7,
+  "requestChars": 297,
+  "resultChars": 3893,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 3750,
+  "citations": [
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 38,
+      "key": "src/main/services/ptyManager.ts:38",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const ptys = new Map<string, PtyRecord>();"
+    },
+    {
+      "path": "ptyShellConfig.ts",
+      "line": 60,
+      "key": "ptyShellConfig.ts:60",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyShellConfig.ts",
+      "lines": 87,
+      "verdict": "resolves",
+      "text": "export function ensureShellConfig(): string {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 695,
+      "key": "src/main/services/ptyManager.ts:695",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function resizePty(id: string, cols: number, rows: number): void {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 708,
+      "key": "src/main/services/ptyManager.ts:708",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const GRACEFUL_KILL_TIMEOUT_MS = 3000;"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 727,
+      "key": "src/main/services/ptyManager.ts:727",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "function gracefulKillProc(proc: KillableProc, timeoutMs = GRACEFUL_KILL_TIMEOUT_MS): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 757,
+      "key": "src/main/services/ptyManager.ts:757",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "proc.kill('SIGTERM');"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 750,
+      "key": "src/main/services/ptyManager.ts:750",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "proc.kill('SIGKILL');"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 789,
+      "key": "src/main/services/ptyManager.ts:789",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function killPty(id: string): void {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 799,
+      "key": "src/main/services/ptyManager.ts:799",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function killPtyAwait(id: string): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 808,
+      "key": "src/main/services/ptyManager.ts:808",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export async function killAll(): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 231,
+      "key": "src/main/services/ptyManager.ts:231",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function buildDirectEnv(isDark: boolean, cwd?: string): Record<string, string> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 246,
+      "key": "src/main/services/ptyManager.ts:246",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "TERM_PROGRAM: 'dash',"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 279,
+      "key": "src/main/services/ptyManager.ts:279",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.TERM = 'xterm-256color';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 280,
+      "key": "src/main/services/ptyManager.ts:280",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.COLORTERM = 'truecolor';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 327,
+      "key": "src/main/services/ptyManager.ts:327",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.CLAUDE_CODE_NO_FLICKER = '1';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 336,
+      "key": "src/main/services/ptyManager.ts:336",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.DASH_HOOK_PORT = String(hookServer.port);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 127,
+      "key": "src/main/services/ptyManager.ts:127",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const RESERVED_ENV_KEYS = new Set(["
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 116,
+      "key": "src/main/services/ptyManager.ts:116",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "let claudeEnvVars: Record<string, string> = {};"
+    },
+    {
+      "path": "src/main/services/ptyShellConfig.ts",
+      "line": 60,
+      "key": "src/main/services/ptyShellConfig.ts:60",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyShellConfig.ts",
+      "lines": 87,
+      "verdict": "resolves",
+      "text": "export function ensureShellConfig(): string {"
+    },
+    {
+      "path": "src/main/services/ptyShellConfig.ts",
+      "line": 16,
+      "key": "src/main/services/ptyShellConfig.ts:16",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyShellConfig.ts",
+      "lines": 87,
+      "verdict": "resolves",
+      "text": "export __DASH_ZDOTDIR=\"\\${ZDOTDIR}\""
+    },
+    {
+      "path": "src/main/services/ptyShellConfig.ts",
+      "line": 46,
+      "key": "src/main/services/ptyShellConfig.ts:46",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyShellConfig.ts",
+      "lines": 87,
+      "verdict": "resolves",
+      "text": "export VIRTUAL_ENV_DISABLE_PROMPT=1"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 21,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/ptyManager.ts:38",
+      "anchoredOn": "new Map<string, PtyRecord>()",
+      "claim": "Live PTY sessions live in one module-level registry keyed by session id — new Map<string, PtyRecord>() at module scope — rather than being tracked per window.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "Map<string",
+        "PtyRecord>()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/ptyManager.ts:695",
+      "anchoredOn": "resizePty",
+      "claim": "Resizing is an explicit operation on a session id: resizePty takes the column and row counts, so geometry changes are not a side effect of rendering.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "resizePty"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/ptyManager.ts:708",
+      "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+      "claim": "Shutdown is graceful-then-forced on a fixed budget, GRACEFUL_KILL_TIMEOUT_MS, which is 3000 milliseconds.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "GRACEFUL_KILL_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/ptyManager.ts:727",
+      "anchoredOn": "gracefulKillProc",
+      "claim": "The kill helper gracefulKillProc takes that budget as a default parameter, so an individual caller can shorten or lengthen it without editing the shared constan",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "gracefulKillProc"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/ptyManager.ts:127",
+      "anchoredOn": "RESERVED_ENV_KEYS",
+      "claim": "A PTY does not simply inherit the parent environment: RESERVED_ENV_KEYS names the variables the app manages itself and that a caller-supplied environment must n",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "RESERVED_ENV_KEYS"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+schema_version: 1
+tools_api: 1
+
+# `loop`, never `single-step`: rlmx externalizes context into the Python REPL,
+# so the model has to RUN code before it has seen a single line of the tree.
+# One pass means it answers from memory. The iteration cap is what keeps the
+# loop honest — it bounds the search instead of the shape doing it.
+shape: loop
+model: deepseek/deepseek-v4-flash
+
+description: >-
+  Answers a question about the codebase in the server's working directory and
+  returns the answer with resolvable file:line citations. Use it instead of
+  grepping and reading a large tree inline.
+
+system: SYSTEM.md
+
+budget:
+  max_iterations: 24
+  # Rail, not a target: an explore run on the default model costs fractions of
+  # a cent, so anything near this is a loop that stopped converging.
+  #
+  # 2.00, not 0.25: the rail has to be a rail on every model the escalation
+  # ladder reaches, and per-token prices across it span an order of magnitude.
+  # At 0.25 the parity runs on `khal/claude-haiku` hit `budget hit: max-cost`
+  # after five to seven iterations — the cap was ending the search rather than
+  # catching a run that had stopped converging, which is a rail set to the
+  # wrong model's prices, not a run that misbehaved.
+  max_cost: 2.00

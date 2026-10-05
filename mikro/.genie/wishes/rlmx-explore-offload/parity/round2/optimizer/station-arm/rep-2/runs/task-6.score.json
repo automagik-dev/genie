@@ -1,0 +1,78 @@
+{
+  "arm": "rlmx",
+  "task": 6,
+  "model": "station/qwen3.5-2b-FLM",
+  "round": "station-arm-rep2",
+  "footer": "rlmx · agent=explore-r · station/qwen3.5-2b-FLM · 14 iterations · 21,662 in / 4,503 out · $0.00 · 292.1s · session sess_23a531df6d48bbba",
+  "wallSeconds": 292.4,
+  "requestChars": 254,
+  "resultChars": 930,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 789,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/RtkService.ts:180",
+      "anchoredOn": "findCmd",
+      "claim": "Binary lookup is delegated to the platform resolver: findCmd is where.exe on Windows and which everywhere else, so no bespoke PATH walking is done.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/RtkService.ts:32",
+      "anchoredOn": "FETCH_API_TIMEOUT_MS",
+      "claim": "The metadata call is bounded separately from the transfer by FETCH_API_TIMEOUT_MS, which is 60 seconds.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/RtkService.ts:33",
+      "anchoredOn": "FETCH_BODY_TIMEOUT_MS",
+      "claim": "The body download gets its own, much longer budget, FETCH_BODY_TIMEOUT_MS at 300 seconds, because it bounds a real transfer rather than an API round trip.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/RtkService.ts:34",
+      "anchoredOn": "TAR_TIMEOUT_MS",
+      "claim": "Unpacking is bounded independently of both by TAR_TIMEOUT_MS at 120 seconds, so a corrupt archive cannot hang the install indefinitely.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/RtkService.ts:357",
+      "anchoredOn": "MAX_ATTEMPTS",
+      "claim": "Retries are bounded as well: MAX_ATTEMPTS is 3, so a flapping network fails in bounded time rather than spinning against the endpoint.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

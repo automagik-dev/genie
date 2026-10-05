@@ -1,0 +1,426 @@
+{
+  "arm": "rlmx",
+  "task": 4,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r15-flash-control",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 24 iterations · 106,394 in / 5,959 out · $0.02 · 138.5s · session sess_26c3e69d68f646a4",
+  "wallSeconds": 138.7,
+  "requestChars": 1568,
+  "resultChars": 5037,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/brain-station-validation"
+  ],
+  "need": 11,
+  "factTotal": 12,
+  "answerChars": 4897,
+  "citations": [
+    {
+      "path": "src/lib/pgserve.ts",
+      "line": 89,
+      "key": "src/lib/pgserve.ts:89",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "export function deriveDatabaseName(slug: string): string {"
+    },
+    {
+      "path": "src/lib/pgserve.ts",
+      "line": 108,
+      "key": "src/lib/pgserve.ts:108",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "return dbName;"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 376,
+      "key": "src/lib/db.ts:376",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "export async function ensureBrainDatabase("
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 467,
+      "key": "src/lib/db.ts:467",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 301,
+      "key": "src/lib/server.ts:301",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "await ensureBrainDatabase(database);"
+    },
+    {
+      "path": "src/lib/execute.ts",
+      "line": 3407,
+      "key": "src/lib/execute.ts:3407",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/execute.ts",
+      "lines": 3608,
+      "verdict": "resolves",
+      "text": "await ensureBrainDatabase(database);"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 276,
+      "key": "src/lib/db.ts:276",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "* Active database for this process. Set by `setActiveDatabase()` (called from"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 282,
+      "key": "src/lib/db.ts:282",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "* no production deployment runs two brains in the same process."
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 969,
+      "key": "src/lib/db.ts:969",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "try {"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 972,
+      "key": "src/lib/db.ts:972",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "} catch {"
+    },
+    {
+      "path": "src/db/migrations/001-brain-foundation.sql",
+      "line": 9,
+      "key": "src/db/migrations/001-brain-foundation.sql:9",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/001-brain-foundation.sql",
+      "lines": 113,
+      "verdict": "resolves",
+      "text": "CREATE TABLE IF NOT EXISTS brains ("
+    },
+    {
+      "path": "src/db/migrations/001-brain-foundation.sql",
+      "line": 29,
+      "key": "src/db/migrations/001-brain-foundation.sql:29",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/001-brain-foundation.sql",
+      "lines": 113,
+      "verdict": "resolves",
+      "text": ");"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 1034,
+      "key": "src/lib/db.ts:1034",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "WHERE (datname LIKE 'brain_%' OR datname = 'brain')"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 85,
+      "key": "src/lib/db.ts:85",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "export function readPrimaryDsn("
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 101,
+      "key": "src/lib/db.ts:101",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 293,
+      "key": "src/lib/server.ts:293",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "if (isDsnMode()) {"
+    },
+    {
+      "path": "src/lib/pgserve.ts",
+      "line": 106,
+      "key": "src/lib/pgserve.ts:106",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "const dbName = `brain_${sanitized}`;"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 412,
+      "key": "src/lib/db.ts:412",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "await adminSql.unsafe(`CREATE DATABASE \"${database}\"`);"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 291,
+      "key": "src/lib/db.ts:291",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "export async function setActiveDatabase(database: string): Promise<void> {"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 301,
+      "key": "src/lib/db.ts:301",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "activeDatabase = database;"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 579,
+      "key": "src/lib/db.ts:579",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "function resolveDatabase(): string {"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 587,
+      "key": "src/lib/db.ts:587",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 260,
+      "key": "src/lib/server.ts:260",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "const config = loadBrainConfig(brainPath);"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 261,
+      "key": "src/lib/server.ts:261",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "const database = deriveDatabaseName(config.slug);"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 300,
+      "key": "src/lib/server.ts:300",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "await setActiveDatabase(database);"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 1032,
+      "key": "src/lib/db.ts:1032",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "dbRows = (await adminSql`"
+    },
+    {
+      "path": "src/lib/db.ts",
+      "line": 1036,
+      "key": "src/lib/db.ts:1036",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "ORDER BY CASE WHEN datname = 'brain' THEN 0 ELSE 1 END, datname"
+    },
+    {
+      "path": "evidence/before-cli-snippet.js",
+      "line": 36,
+      "key": "evidence/before-cli-snippet.js:36",
+      "resolvedAs": "/home/namastex/prod/brain/evidence/before-cli-snippet.js",
+      "lines": 101,
+      "verdict": "resolves",
+      "text": "const dbName = `brain_${sanitized}`;"
+    },
+    {
+      "path": "evidence/before-cli-snippet.js",
+      "line": 40,
+      "key": "evidence/before-cli-snippet.js:40",
+      "resolvedAs": "/home/namastex/prod/brain/evidence/before-cli-snippet.js",
+      "lines": 101,
+      "verdict": "resolves",
+      "text": "return dbName;"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 29,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/identity.ts:115",
+      "anchoredOn": "const perBrainDb = deriveDatabaseName(shortName);",
+      "claim": "- `/home/namastex/prod/brain/src/lib/identity.ts:115` — `const perBrainDb = deriveDatabaseName(shortName);` inside `createBrain()`, followed by `ensureBrainData",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "const"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/lib/init.ts:327",
+      "anchoredOn": "deriveDatabaseName",
+      "claim": "- `/home/namastex/prod/brain/src/lib/init.ts:327` and `:417` - `/home/namastex/prod/brain/src/lib/lazy-init.ts:96, :120` - `/home/namastex/prod/brain/src/lib/se",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "deriveDatabaseName"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/lazy-init.ts:96",
+      "anchoredOn": "deriveDatabaseName",
+      "claim": "- `/home/namastex/prod/brain/src/lib/lazy-init.ts:96, :120` - `/home/namastex/prod/brain/src/lib/server.ts:261` — `const database = deriveDatabaseName(config.sl",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "deriveDatabaseName"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/lib/server.ts:261",
+      "anchoredOn": "const database = deriveDatabaseName(config.slug);",
+      "claim": "- `/home/namastex/prod/brain/src/lib/server.ts:261` — `const database = deriveDatabaseName(config.slug);`",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "const",
+        "database"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/db.ts:374",
+      "anchoredOn": "DATABASE",
+      "claim": "`/home/namastex/prod/brain/src/lib/db.ts:376-473`. - DSN mode (`db.ts:412`): `await adminSql.unsafe(\\`CREATE DATABASE \"${database}\"\\`)` — **no OWNER clause**. O",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "DATABASE"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": ".genie/wishes/kv-slot-cag/RUNBOOK.md:734",
+      "anchoredOn": "/home/namastex/brain-station-validation",
+      "claim": "`/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md:735`: > Validation brain `brn_vo9nz7`, vault `/home/namastex/brain-station-validation`, DB `brai",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/registry-db.ts:3",
+      "anchoredOn": "brain serve",
+      "claim": "**Nuance that matters:** on a real `brain serve` install, the per-brain DB of the *active* brain also doubles as the **registry** DB. `/home/namastex/prod/brain",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "brain",
+        "serve"
+      ]
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/active-brain.ts:35",
+      "anchoredOn": "brainSlug",
+      "claim": "- `~/.brain/config.json` (`/home/namastex/prod/brain/src/lib/active-brain.ts:33-42`) records `{ database, brainSlug, pid, port, pgPort }` — a **database name**,",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/rls.ts:26",
+      "anchoredOn": "roleNameFor",
+      "claim": "`/home/namastex/prod/brain/src/lib/rls.ts:26-56`: export function roleNameFor(shortName: string): string {",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/omni/checkpoints.ts:125",
+      "anchoredOn": "withBrainRole",
+      "claim": "- `NOLOGIN NOINHERIT` — no password, cannot connect. Used only via `SET LOCAL ROLE` inside a transaction (`withBrainRole`, rls.ts:74-95). Only 5 non-test call s",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "src/lib/init/grants.ts:42",
+      "anchoredOn": "applyBrainGrants",
+      "claim": "- Grants re-applied per brain per DB: `src/lib/init/grants.ts:44-57` (`applyBrainGrants`) and `ensureDefaultPrivileges`; `init.ts:364-376` applies the triple to",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F12",
+      "anchor": ".genie/brainstorms/brain-lxc/DRAFT.md:65",
+      "anchoredOn": "brain_app",
+      "claim": "The \"per-brain DB with dedicated owner\" phrasing appears verbatim as a **future design goal**, not current behavior: `/home/namastex/prod/brain/.genie/brainstor",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

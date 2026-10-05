@@ -1,0 +1,46 @@
+family git-history — git history interrogation
+  496 calls · 9 sessions · 4 projects · 941,136 chars ~235,284 tok · median 1,122 ch/call
+
+  by action (16 distinct actions, top 15 shown):
+      198  git diff
+      138  git status
+       66  git show
+       54  git log
+       13  git ls-files
+       11  git rev-parse
+        5  git branch
+        3  git state
+        1  git tracked
+        1  git --no-pager
+        1  git check-ignore
+        1  git cat-file
+        1  git credential
+        1  git tag
+        1  git tree
+        1  (1 further actions below the top 15)
+    —————
+      496  total — equals the family's 496 calls
+
+  by project:
+      270 calls    588,785 chars  -home-namastex-workspace
+       95 calls    170,427 chars  -home-namastex-workspace-repos-omni
+       89 calls    104,029 chars  -home-namastex-prod-brain
+       42 calls     77,895 chars  -home-namastex-prod
+
+  heaviest 8 calls (ref = transcript:line — open them):
+     21,397 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_2c703ec8-b5b/agent-ac930a9d88b2b7cfe.jsonl:96
+             cd /home/namastex/prod/rlmx && echo "=== mine-explore-tasks.mjs DIFF vs HEAD ===" && git diff HEAD -- scripts/mine-explore-tasks.mjs
+     15,727 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_2c703ec8-b5b/agent-a463a6e03d0653966.jsonl:65
+             cd /home/namastex/prod/rlmx && git diff HEAD -- scripts/mine-explore-tasks.mjs | head -300
+     15,094 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_2c703ec8-b5b/agent-a2eea1bdc289c2aa0.jsonl:26
+             cd /home/namastex/prod/rlmx && echo "=== strict secret grep in full diff (tracked) ===" && git diff HEAD | grep -nE "sk-[A-Za-z0-9_-]{10,}|KHAL_API_KE
+     12,068 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_f79ae5b0-ed4/agent-a9e94a72bc3c24490.jsonl:25
+             cd /home/namastex/prod/rlmx && git show --stat 6ec4822 && echo "=== DIFF ===" && git show 6ec4822 -- src/ | head -200
+     11,777 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_2c703ec8-b5b/agent-a2eea1bdc289c2aa0.jsonl:113
+             cd /home/namastex/prod/rlmx && git diff HEAD -- scripts/mine-explore-tasks.mjs | head -200
+     11,074 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_3e5dad7a-424/agent-a9cba19481ca2a0e9.jsonl:12
+             cd /home/namastex/prod/rlmx && git diff HEAD -- .claude-plugin/ plugins/ CHANGELOG.md
+     10,607 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_3e5dad7a-424/agent-a0ef8d79d5eeb11c9.jsonl:217
+             cd /home/namastex/prod/rlmx && echo "=== FROZEN PATHS vs HEAD ===" && git status --porcelain -- .genie/wishes/rlmx-explore-offload/tasks/ .genie/wishe
+     10,330 ch  /home/namastex/.claude/projects/-home-namastex-workspace/2cbc9745-3e7e-4191-b818-43ee1074af44/subagents/workflows/wf_2c703ec8-b5b/agent-a2eea1bdc289c2aa0.jsonl:116
+             cd /home/namastex/prod/rlmx && git diff HEAD -- scripts/mine-explore-tasks.mjs | sed -n '200,420p'

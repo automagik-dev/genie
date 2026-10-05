@@ -1,0 +1,88 @@
+name: Rolling PR Maintenance
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: rolling-pr
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check/Create Rolling PR
+        env:
+          # Built-in token is enough for read-only discovery. GitHub Actions may
+          # forbid it from creating PRs, so PR creation uses RELEASE_PLEASE_TOKEN
+          # only after validating that the secret is present and usable.
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          PR=$(gh pr list --repo ${{ github.repository }} --base main --head dev --state open --json number --jq '.[0].number // ""')
+          if [ -n "$PR" ]; then
+            echo "Rolling PR #$PR exists and is up to date"
+            exit 0
+          fi
+
+          AHEAD=$(gh api repos/${{ github.repository }}/compare/main...dev --jq '.ahead_by' 2>/tmp/rolling-pr-compare.err || true)
+          if [ -z "$AHEAD" ]; then
+            echo "::warning::Unable to compare main...dev; skipping rolling PR creation"
+            cat /tmp/rolling-pr-compare.err >&2 || true
+            exit 0
+          fi
+
+          if [ "$AHEAD" = "0" ]; then
+            echo "dev has no commits ahead of main; no rolling PR needed"
+            exit 0
+          fi
+
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "::warning::RELEASE_PLEASE_TOKEN is not configured; cannot create rolling PR from scheduled workflow"
+            exit 0
+          fi
+
+          export GH_TOKEN="$RELEASE_PLEASE_TOKEN"
+          if ! gh auth status -h github.com >/tmp/rolling-pr-auth.out 2>/tmp/rolling-pr-auth.err; then
+            echo "::warning::RELEASE_PLEASE_TOKEN is invalid; cannot create rolling PR"
+            cat /tmp/rolling-pr-auth.err >&2 || true
+            exit 0
+          fi
+
+          if ! gh pr create --repo ${{ github.repository }} \
+              --base main --head dev \
+              --title "chore: rolling promotion dev -> main" \
+              --body "$(cat <<'BODY'
+          ## Rolling Promotion PR
+
+          Auto-maintained rolling promotion PR from \`dev\` to \`main\`.
+
+          Merging this PR is the canonical RLMX application release boundary.
+          Git-installed CLIs receive this commit through \`scripts/install.sh\`
+          or \`rlmx update\`. npm remains SDK-only.
+
+          **Process:**
+          - This PR is automatically created and kept open
+          - Human reviews and merges when ready
+          - Label \`ready-to-merge\` added when all checks pass
+
+          > **IMPORTANT: Merge with "Create a merge commit" — NEVER squash.**
+          > Squash merging breaks history sync between dev and main,
+          > causing the next rolling PR to show all commits again.
+
+          > Human approval required for merge to production.
+          BODY
+          )"; then
+            echo "::warning::Unable to create rolling PR"
+            exit 0
+          fi
+          echo "Created new rolling PR"

@@ -1,0 +1,60 @@
+schema_version: 1
+tools_api: 1
+
+# ── ACTIVE — activated by the user on 2026-08-16 ────────────────────────────
+#
+# Written on 2026-08-16 as the first dogfood of mikro v0.260817.1, at the
+# user's direction ("create mikro micro agent, specialized in polishing
+# README.md"), proposed as `readme-polish.proposed/` and activated by the
+# user's own rename the same day. To withdraw it, rename it back:
+#
+#   mv .mikro/agents/readme-polish .mikro/agents/readme-polish.proposed
+#
+# Why this agent, and what is NOT claimed about it: EVIDENCE.md, next to this
+# file. This candidate was chosen by the user, not by the transcript
+# scanner — EVIDENCE.md says so plainly.
+# ────────────────────────────────────────────────────────────────────────────
+
+# `loop`, not `single-step`: the agent has read nothing until its first repl
+# block returns — a one-pass run would "polish" a README it has never seen,
+# which is the fabrication failure git-historian.proposed's run 1 recorded.
+# Not `recurse`: one document audited against one tree is one investigation,
+# no fan-out, so none of explore-r's install requirements apply.
+shape: loop
+# `deepseek/`, not `khal/`: this host has DEEPSEEK_API_KEY but no
+# KHAL_API_KEY, and pi-ai's builtin registry carries the identical model
+# (`deepseek-v4-flash`) on the direct provider. Same model, different door.
+# On a khal-gatewayed host, `khal/deepseek-v4-flash` is the equivalent ref.
+model: deepseek/deepseek-v4-flash
+
+description: >-
+  Audits the README.md of the repository in the server's working directory
+  against what the repo actually contains — flags, commands, paths, names and
+  claims are each checked against source — and returns a prioritized polish
+  report: what is wrong or stale, where (README line), the evidence
+  (path:line), and a concrete suggested rewrite. It never edits the file. Use
+  it instead of reading the whole README plus half the repo into context to
+  review documentation.
+
+system: SYSTEM.md
+
+budget:
+  # 14, raised from 12 on cycle-001 evidence: TASK.md now adds re-verifying
+  # past findings from .mikro/loop/reports/ (~2 turns), and the cycle-001 run
+  # consumed 12/12 and shipped its verification + FINAL blocks unexecuted —
+  # the report arrived wrapped in raw ```repl fences. 14 restores the slack
+  # the original sizing note called for. It is a rail, not a target.
+  max_iterations: 14
+
+  # 0.50, unchanged from the skill default and git-historian's sizing: one
+  # process, no children, ~order-30x headroom on khal/deepseek-v4-flash while
+  # staying a real rail on a pricier model. Do not tighten it — a rail set to
+  # the wrong model's prices ends runs instead of catching them
+  # (docs/parity-explore.md r15/haiku).
+  max_cost: 0.50
+
+  # DECLARATIVE ONLY — NOT ENFORCED. `applyAgent` copies model, system and
+  # budget.maxCost and nothing else; `max_iterations` is rescued separately by
+  # `agentMaxIterations`. Stated because the intent is real (this agent spawns
+  # nothing) and a reader is entitled to know the key is inert.
+  max_depth: 0

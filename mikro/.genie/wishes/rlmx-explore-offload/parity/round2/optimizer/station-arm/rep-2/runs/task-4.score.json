@@ -1,0 +1,88 @@
+{
+  "arm": "rlmx",
+  "task": 4,
+  "model": "station/qwen3.5-2b-FLM",
+  "round": "station-arm-rep2",
+  "footer": "rlmx · agent=explore-r · station/qwen3.5-2b-FLM · 2 iterations · 7,455 in / 449 out · $0.00 · 900.0s · session sess_d8ffdc3279235201",
+  "wallSeconds": 900.4,
+  "requestChars": 319,
+  "resultChars": 138,
+  "ok": true,
+  "root": "/home/namastex/prod/xdna-top",
+  "outOfScope": [],
+  "need": 6,
+  "factTotal": 6,
+  "answerChars": 1,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/xdna_top/record.py:22",
+      "anchoredOn": "RECORD_SCHEMA_VERSION",
+      "claim": "Every recorded event carries an explicit schema version constant, RECORD_SCHEMA_VERSION, so a reader can tell which layout it is parsing without guessing from t",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/xdna_top/record.py:23",
+      "anchoredOn": "RECORD_KIND",
+      "claim": "Events are discriminated by the RECORD_KIND constant rather than by shape, so a telemetry event and a mark event can share one stream unambiguously.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/xdna_top/record.py:227",
+      "anchoredOn": "json.dumps(event)",
+      "claim": "The stream is JSONL: one event per line, produced by json.dumps(event) with a trailing newline, which is what lets a killed run keep everything already written.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/xdna_top/exporter.py:13",
+      "anchoredOn": "start_http_server",
+      "claim": "The exporter is built on the Prometheus client library, importing start_http_server together with the registry type it registers its collector into.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/xdna_top/exporter.py:106",
+      "anchoredOn": "XdnaCollector",
+      "claim": "A single custom collector, XdnaCollector, is registered into the registry, and it reads the hardware at scrape time rather than on a background timer.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/xdna_top/exporter.py:62",
+      "anchoredOn": "named WITHOUT _total",
+      "claim": "There is a naming rule to know before adding a metric: counter families are named WITHOUT _total because the client library appends that suffix itself.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

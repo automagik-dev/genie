@@ -1,0 +1,229 @@
+{
+  "arm": "native",
+  "task": 5,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 4029,
+  "citations": [
+    {
+      "path": "install.sh",
+      "line": 336,
+      "key": "install.sh:336",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "arch=\"$(uname -m)\""
+    },
+    {
+      "path": "install.sh",
+      "line": 337,
+      "key": "install.sh:337",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "case \"$os\" in"
+    },
+    {
+      "path": "install.sh",
+      "line": 356,
+      "key": "install.sh:356",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": "install.sh",
+      "line": 28,
+      "key": "install.sh:28",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "MANIFEST_BASE=\"https://raw.githubusercontent.com/${REPO}/main/.well-known\""
+    },
+    {
+      "path": "install.sh",
+      "line": 364,
+      "key": "install.sh:364",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "next)"
+    },
+    {
+      "path": "install.sh",
+      "line": 368,
+      "key": "install.sh:368",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "echo \"dev\" ;;"
+    },
+    {
+      "path": "install.sh",
+      "line": 13,
+      "key": "install.sh:13",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "# Default flow (gh attestation verify, falls back to cosign verify-blob):"
+    },
+    {
+      "path": "install.sh",
+      "line": 17,
+      "key": "install.sh:17",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "#   INSECURE=1 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash"
+    },
+    {
+      "path": "install.sh",
+      "line": 548,
+      "key": "install.sh:548",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "bootstrap_cosign \"$platform\""
+    },
+    {
+      "path": "install.sh",
+      "line": 550,
+      "key": "install.sh:550",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": "install.sh",
+      "line": 555,
+      "key": "install.sh:555",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "log \"verifying via cosign verify-blob (bundle=${bundle##*/})\""
+    },
+    {
+      "path": "install.sh",
+      "line": 556,
+      "key": "install.sh:556",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "\"$COSIGN_BIN\" verify-blob \\"
+    },
+    {
+      "path": "install.sh",
+      "line": 432,
+      "key": "install.sh:432",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "# `bin/gh`. Never installed system-wide; used from TMP_DIR for this run only."
+    },
+    {
+      "path": "install.sh",
+      "line": 711,
+      "key": "install.sh:711",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "path_contains_local_bin() {"
+    },
+    {
+      "path": "install.sh",
+      "line": 735,
+      "key": "install.sh:735",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "if path_contains_local_bin; then"
+    },
+    {
+      "path": ".github/workflows/build-tarballs.yml",
+      "line": 139,
+      "key": ".github/workflows/build-tarballs.yml:139",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "case \"${INPUT_CHANNEL}\" in"
+    },
+    {
+      "path": ".github/workflows/build-tarballs.yml",
+      "line": 144,
+      "key": ".github/workflows/build-tarballs.yml:144",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "echo \"::error::requested release version '${VERSION}' does not match source package '${PACKAGE_VERSION}'\""
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 17,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": ".github/workflows/build-tarballs.yml:34",
+      "anchoredOn": "workflow_call",
+      "claim": "- Workflow: `.github/workflows/build-tarballs.yml`, job **`build`** (`:77`, matrix over platforms). Trigger `workflow_call` (`:34`, from release.yml) or `pull_r",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "scripts/build-binary.sh:65",
+      "anchoredOn": "TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"",
+      "claim": "where `TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"` (`scripts/build-binary.sh:65`). For `PLATFORM=linux-x64-glibc` this yields `genie-<version>-li",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "scripts/build-binary.sh:161",
+      "anchoredOn": "-C \"${STAGE}\" .",
+      "claim": "- **Yes, it uses `-C \"${STAGE}\" .`** — archiving `.` from inside the staging dir, which produces a leading `./` root entry in the archive (member paths like `./",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": ".github/workflows/version.yml:69",
+      "anchoredOn": "conclusion == 'success'",
+      "claim": "(`.github/workflows/version.yml:36-40`). Job gate at `:69-78` requires `conclusion == 'success'`, `event == 'push'`, and excludes commits tagged `[auto-version]",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": ".github/workflows/sign-attest.yml:76",
+      "anchoredOn": "Bind caller workflow and control commit",
+      "claim": "- **The stable-release-security-gate (PR #2596)** is the `admit` job in `.github/workflows/sign-attest.yml:70-121` (\"Bind caller workflow and control commit\"). ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "workflow"
+      ]
+    }
+  ]
+}

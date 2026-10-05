@@ -1,0 +1,140 @@
+{
+  "arm": "rlmx",
+  "task": 3,
+  "model": "deepseek/deepseek-v4-flash",
+  "round": "gate-v2-prime",
+  "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 1 iteration · 6,315 in / 691 out · $0.0011 · 5.6s · session sess_6b93802671803e68",
+  "wallSeconds": 6.1,
+  "requestChars": 1918,
+  "resultChars": 2074,
+  "ok": true,
+  "root": "/Users/feliperosa/workspace/repos/brain",
+  "rootFrozen": "/home/namastex/prod/brain",
+  "rootOverride": "/Users/feliperosa/workspace/repos/brain",
+  "outOfScope": [],
+  "need": 10,
+  "factTotal": 11,
+  "answerChars": 1936,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/server.ts:395",
+      "anchoredOn": "httpServer",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:395-400`: state.httpServer = Bun.serve({",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/lib/server.ts:244",
+      "anchoredOn": "const port = opts.port ?? 3847;",
+      "claim": "- Default port `3847` — `/home/namastex/prod/brain/src/lib/server.ts:244`: `const port = opts.port ?? 3847;`",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/server.ts:940",
+      "anchoredOn": "handleRequest",
+      "claim": "First-class in `handleRequest` (`/home/namastex/prod/brain/src/lib/server.ts:940-1018`):",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/bench/routes/search.ts:4",
+      "anchoredOn": "POST /api/search",
+      "claim": "- **search**: `POST /api/search` — `/home/namastex/prod/brain/src/bench/routes/search.ts:10`",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/bench/routes/ask.ts:78",
+      "anchoredOn": "/^\\/api\\/brains\\/([^/]+)\\/ask$/",
+      "claim": "- **ask**: `POST /api/brains/:id/ask` — `/home/namastex/prod/brain/src/bench/routes/ask.ts:78` (`/^\\/api\\/brains\\/([^/]+)\\/ask$/`)",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/server.ts:963",
+      "anchoredOn": "const principal = extractPrincipal(req);",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:962`: `const principal = extractPrincipal(req);` — threaded into every handler and **never enforced**. From `/home/",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/active-brain.ts:72",
+      "anchoredOn": "BRAIN_ENDPOINT",
+      "claim": "Note `BRAIN_KHORTEX_PORT` is **port-only, pinned to 127.0.0.1** — it cannot express a remote host. The one true remote knob is **`BRAIN_ENDPOINT`** (`/home/nama",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/brain-memory/store.ts:37",
+      "anchoredOn": "getDb",
+      "claim": "- **Everything else is DSN-direct.** `getDb()` is called at ~12 sites directly in `execute.ts` and pervasively downstream; **52 non-test modules** under `src/li",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:77",
+      "anchoredOn": "BRAIN_ADMIN_DATABASE_URL",
+      "claim": "- DSN comes from **`DATABASE_URL`** — `/home/namastex/prod/brain/src/lib/db.ts:85-90` (`readPrimaryDsn`), with `BRAIN_ADMIN_DATABASE_URL` for admin ops, else au",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:3",
+      "anchoredOn": "the stdio MCP server's process entry point... MCP over stdio is a strict",
+      "claim": "**stdio, and Postgres-direct.** `/home/namastex/prod/brain/src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:1-18` — \"the stdio MCP server's process entry point... ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "src/compiled-entry.ts:34",
+      "anchoredOn": "discoverHookBaseUrl()",
+      "claim": "- `/home/namastex/prod/brain/src/compiled-entry.ts:34-52` `discoverHookBaseUrl()` + `:100` `fetch(\\`${baseUrl}/khortex/session/event\\`)` — the Claude Code hook ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

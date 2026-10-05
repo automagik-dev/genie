@@ -1,0 +1,90 @@
+{
+  "task": 1,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/1.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/rlmx",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen4-holdout-rep2-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T12:49:36.965Z",
+  "question": "In this repository a Python REPL block can call rlm_query() to spawn a child rlmx run. I need to know exactly what the parent controls about that child and what it does not. Which source lines decide (a) how many children can run at once, (b) what iteration cap and depth ceiling the child is handed, (c) how the child is spawned relative to the parent's process group, and (d) what decides the model the child ends up running on? Answer with a path:line citation for every claim.",
+  "provenance": {
+    "promptSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "promptChars": 36806,
+    "promptSnapshot": "parity/prompts/640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 340.1,
+  "requestChars": 493,
+  "resultChars": 4326,
+  "answer": "**How the parent controls a child rlmx run — and what it does not.**\n\n**(a) Concurrency limit** — `rlmQueryBatched` in `src/llm.ts:710` (`const MAX_CONCURRENT = 4;`) processes prompts in batches of up to 4 at once. The CLI batch command has its own separate limit `--parallel` defaulting to 1 (`src/schema.ts:188`).\n\n**(b) Depth ceiling and iteration cap** — The child receives `options.maxDepth` as `--max-depth` argv (`src/llm.ts:467`), with the CLI schema defaulting to `null` / unlimited (`src/schema.ts:137`). At spawn time the parent checks `currentDepth >= options.maxDepth` (`src/llm.ts:581`) using `RLMX_RECURSION_DEPTH` env var (`src/llm.ts:579`). For iteration cap, the parent passes `options.maxIterations` as `--max-iterations` (`src/llm.ts:465`); the CLI default is 30 (`src/schema.ts:67`), while the SDK agent layer defaults to `DEFAULT_MAX_ITERATIONS = 32` (`src/sdk/agent.ts:217`) — the CLI value outranks it. The parent does **not** pass any iteration cap env var; the child re-parses the flag from its own argv.\n\n**(c) Process group** — The child is spawned with `detached: process.platform !== \"win32\"` (`src/llm.ts:616`). On non-Windows, the parent kills the whole process tree via `process.kill(-child.pid, \"SIGTERM\")` (`src/llm.ts:626`); on Windows it falls back to `child.kill(\"SIGTERM\")` (`src/llm.ts:628`). The child inherits the parent's `cwd` (`src/llm.ts:615`), not its process group leader — the `detached` flag creates a new session on Unix, insulating the child from SIGHUP.\n\n**(d) Model choice** — The child's model is decided by `resolveChildModelRef(config, request.model)` (`src/llm.ts:791`), which returns `formatModelRef(config.model.provider, requestedModel || config.model.model)` (`src/llm.ts:739`). If the Python call included `model=\"X\"`, it arrives as `request.model` and overrides the model id; otherwise the parent's `config.model.model` is used (default `\"gemini-3.1-flash-lite-preview\"`, `src/config.ts:124`). The parent's `config.model.subCallModel` (`src/config.ts:18`) is **not** applied to children — it is used only for `llm_query`/`llm_query_batched` (`src/llm.ts:762`). The child receives `--model` in its argv (`src/llm.ts:464`, passed through `buildRlmChildArgs`), so it re-derives its provider from its own config but the model id is pinned.\n\n**What the parent does NOT control:** The child reads its own `rlmx.yaml` / `settings.json` from `cwd` to determine the provider (e.g., `google`, `anthropic`), API keys (via env vars), and any local config overrides. The parent's `--model` only sets the model *name*, not the provider — if the child's config has a different provider, the model id is resolved against that provider. The parent also does not control the child's own sub-call model (`subCallModel` is resolved independently by the child from its own config).\n\n**Citations:**\n\n- `src/llm.ts:710` — `const MAX_CONCURRENT = 4;`\n- `src/schema.ts:188` — `default: 1,` (for `--parallel`)\n- `src/llm.ts:467` — `if (options.maxDepth !== undefined) args.push(\"--max-depth\", String(options.maxDepth));`\n- `src/schema.ts:137` — `default: null,` (for `--max-depth`)\n- `src/llm.ts:581` — `if (options.maxDepth !== undefined && currentDepth >= options.maxDepth)`\n- `src/llm.ts:579` — `const depth = (Number.parseInt(process.env.RLMX_RECURSION_DEPTH ?? \"0\", 10) || 0) + 1;`\n- `src/llm.ts:465` — `if (options.maxIterations !== undefined) args.push(\"--max-iterations\", String(options.maxIterations));`\n- `src/schema.ts:67` — `default: 30,` (for `--max-iterations`)\n- `src/sdk/agent.ts:217` — `const DEFAULT_MAX_ITERATIONS = 32;`\n- `src/llm.ts:616` — `detached: process.platform !== \"win32\",`\n- `src/llm.ts:626` — `process.kill(-child.pid, \"SIGTERM\");`\n- `src/llm.ts:791` — `{ ...recursiveOptions, model: resolveChildModelRef(config, request.model) }`\n- `src/llm.ts:739` — `return formatModelRef(config.model.provider, requestedModel || config.model.model);`\n- `src/config.ts:124` — `model: \"gemini-3.1-flash-lite-preview\",`\n- `src/config.ts:18` — `subCallModel?: string;`\n- `src/llm.ts:762` — `const subCallModel: ModelConfig = config.model.subCallModel`\n- `src/llm.ts:464` — `if (options.model) args.push(\"--model\", options.model);`\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 212,176 in / 36,425 out · $0.04 · 339.8s · session sess_253fa32fa8e760d0",
+  "fullText": "**How the parent controls a child rlmx run — and what it does not.**\n\n**(a) Concurrency limit** — `rlmQueryBatched` in `src/llm.ts:710` (`const MAX_CONCURRENT = 4;`) processes prompts in batches of up to 4 at once. The CLI batch command has its own separate limit `--parallel` defaulting to 1 (`src/schema.ts:188`).\n\n**(b) Depth ceiling and iteration cap** — The child receives `options.maxDepth` as `--max-depth` argv (`src/llm.ts:467`), with the CLI schema defaulting to `null` / unlimited (`src/schema.ts:137`). At spawn time the parent checks `currentDepth >= options.maxDepth` (`src/llm.ts:581`) using `RLMX_RECURSION_DEPTH` env var (`src/llm.ts:579`). For iteration cap, the parent passes `options.maxIterations` as `--max-iterations` (`src/llm.ts:465`); the CLI default is 30 (`src/schema.ts:67`), while the SDK agent layer defaults to `DEFAULT_MAX_ITERATIONS = 32` (`src/sdk/agent.ts:217`) — the CLI value outranks it. The parent does **not** pass any iteration cap env var; the child re-parses the flag from its own argv.\n\n**(c) Process group** — The child is spawned with `detached: process.platform !== \"win32\"` (`src/llm.ts:616`). On non-Windows, the parent kills the whole process tree via `process.kill(-child.pid, \"SIGTERM\")` (`src/llm.ts:626`); on Windows it falls back to `child.kill(\"SIGTERM\")` (`src/llm.ts:628`). The child inherits the parent's `cwd` (`src/llm.ts:615`), not its process group leader — the `detached` flag creates a new session on Unix, insulating the child from SIGHUP.\n\n**(d) Model choice** — The child's model is decided by `resolveChildModelRef(config, request.model)` (`src/llm.ts:791`), which returns `formatModelRef(config.model.provider, requestedModel || config.model.model)` (`src/llm.ts:739`). If the Python call included `model=\"X\"`, it arrives as `request.model` and overrides the model id; otherwise the parent's `config.model.model` is used (default `\"gemini-3.1-flash-lite-preview\"`, `src/config.ts:124`). The parent's `config.model.subCallModel` (`src/config.ts:18`) is **not** applied to children — it is used only for `llm_query`/`llm_query_batched` (`src/llm.ts:762`). The child receives `--model` in its argv (`src/llm.ts:464`, passed through `buildRlmChildArgs`), so it re-derives its provider from its own config but the model id is pinned.\n\n**What the parent does NOT control:** The child reads its own `rlmx.yaml` / `settings.json` from `cwd` to determine the provider (e.g., `google`, `anthropic`), API keys (via env vars), and any local config overrides. The parent's `--model` only sets the model *name*, not the provider — if the child's config has a different provider, the model id is resolved against that provider. The parent also does not control the child's own sub-call model (`subCallModel` is resolved independently by the child from its own config).\n\n**Citations:**\n\n- `src/llm.ts:710` — `const MAX_CONCURRENT = 4;`\n- `src/schema.ts:188` — `default: 1,` (for `--parallel`)\n- `src/llm.ts:467` — `if (options.maxDepth !== undefined) args.push(\"--max-depth\", String(options.maxDepth));`\n- `src/schema.ts:137` — `default: null,` (for `--max-depth`)\n- `src/llm.ts:581` — `if (options.maxDepth !== undefined && currentDepth >= options.maxDepth)`\n- `src/llm.ts:579` — `const depth = (Number.parseInt(process.env.RLMX_RECURSION_DEPTH ?? \"0\", 10) || 0) + 1;`\n- `src/llm.ts:465` — `if (options.maxIterations !== undefined) args.push(\"--max-iterations\", String(options.maxIterations));`\n- `src/schema.ts:67` — `default: 30,` (for `--max-iterations`)\n- `src/sdk/agent.ts:217` — `const DEFAULT_MAX_ITERATIONS = 32;`\n- `src/llm.ts:616` — `detached: process.platform !== \"win32\",`\n- `src/llm.ts:626` — `process.kill(-child.pid, \"SIGTERM\");`\n- `src/llm.ts:791` — `{ ...recursiveOptions, model: resolveChildModelRef(config, request.model) }`\n- `src/llm.ts:739` — `return formatModelRef(config.model.provider, requestedModel || config.model.model);`\n- `src/config.ts:124` — `model: \"gemini-3.1-flash-lite-preview\",`\n- `src/config.ts:18` — `subCallModel?: string;`\n- `src/llm.ts:762` — `const subCallModel: ModelConfig = config.model.subCallModel`\n- `src/llm.ts:464` — `if (options.model) args.push(\"--model\", options.model);`\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 212,176 in / 36,425 out · $0.04 · 339.8s · session sess_253fa32fa8e760d0",
+  "structuredContent": {
+    "session_id": "sess_253fa32fa8e760d0"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · working 30s",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · iteration 7 · 1 recursive spawn",
+    "agent=explore-r · iteration 7 · 2 recursive spawns",
+    "agent=explore-r · iteration 7 · 3 recursive spawns",
+    "agent=explore-r · iteration 7 · 4 recursive spawns",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · working 135s",
+    "agent=explore-r · working 150s",
+    "agent=explore-r · working 165s",
+    "agent=explore-r · working 180s",
+    "agent=explore-r · working 195s",
+    "agent=explore-r · working 210s",
+    "agent=explore-r · working 225s",
+    "agent=explore-r · working 240s",
+    "agent=explore-r · working 255s",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · iteration 11",
+    "agent=explore-r · iteration 12",
+    "agent=explore-r · iteration 13",
+    "agent=explore-r · iteration 14",
+    "agent=explore-r · working 315s",
+    "agent=explore-r · working 330s"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

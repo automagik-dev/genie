@@ -1,0 +1,556 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/claude-haiku",
+  "round": "r14-haiku-tune3",
+  "footer": "rlmx · agent=explore · khal/claude-haiku · 9 iterations · 488,222 in / 44,309 out · $0.71 · 352.0s · session sess_ca4ebe1d53ee345c",
+  "wallSeconds": 352.3,
+  "requestChars": 1685,
+  "resultChars": 5729,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 5594,
+  "citations": [
+    {
+      "path": "install.sh",
+      "line": 23,
+      "key": "install.sh:23",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "REPO=\"automagik-dev/genie\""
+    },
+    {
+      "path": "install.sh",
+      "line": 28,
+      "key": "install.sh:28",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "MANIFEST_BASE=\"https://raw.githubusercontent.com/${REPO}/main/.well-known\""
+    },
+    {
+      "path": "install.sh",
+      "line": 25,
+      "key": "install.sh:25",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "# Resolved at runtime in resolve_manifest_url after the channel is known so"
+    },
+    {
+      "path": "install.sh",
+      "line": 27,
+      "key": "install.sh:27",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "# release-channel-dev (2026-05-11) for the producer-side wiring."
+    },
+    {
+      "path": "README.md",
+      "line": 23,
+      "key": "README.md:23",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/README.md",
+      "lines": 232,
+      "verdict": "resolves",
+      "text": "curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash"
+    },
+    {
+      "path": "install.sh",
+      "line": 50,
+      "key": "install.sh:50",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "TMP_DIR=\"$(umask 077; mktemp -d -t genie-install-XXXXXX)\""
+    },
+    {
+      "path": "build-tarballs.yml",
+      "line": 168,
+      "key": "build-tarballs.yml:168",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "tar -xzf \"${TARBALL}\" -C \"${STAGE}\""
+    },
+    {
+      "path": "install.sh",
+      "line": 49,
+      "key": "install.sh:49",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "LOCAL_BIN=\"$HOME/.local/bin\""
+    },
+    {
+      "path": "build-tarballs.yml",
+      "line": 34,
+      "key": "build-tarballs.yml:34",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "workflow_call:"
+    },
+    {
+      "path": "build-tarballs.yml",
+      "line": 157,
+      "key": "build-tarballs.yml:157",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "run: bash scripts/build-binary.sh --platform \"${PLATFORM}\" --version \"${VERSION}\""
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 161,
+      "key": "scripts/build-binary.sh:161",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "tar czf \"${TARBALL}\" -C \"${STAGE}\" ."
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 159,
+      "key": "scripts/build-binary.sh:159",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "chmod 700 \"${STAGE}\""
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 65,
+      "key": "scripts/build-binary.sh:65",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\""
+    },
+    {
+      "path": "build-binary.sh",
+      "line": 24,
+      "key": "build-binary.sh:24",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "PLATFORMS=(linux-x64-glibc linux-x64-musl linux-arm64 darwin-arm64)"
+    },
+    {
+      "path": "build-binary.sh",
+      "line": 22,
+      "key": "build-binary.sh:22",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "SIZE_BUDGET_MB=80"
+    },
+    {
+      "path": "version.yml",
+      "line": 36,
+      "key": "version.yml:36",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "on:"
+    },
+    {
+      "path": "version.yml",
+      "line": 40,
+      "key": "version.yml:40",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "branches: [main, homolog, dev]"
+    },
+    {
+      "path": "version.yml",
+      "line": 3,
+      "key": "version.yml:3",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "# Single source of version derivation + tag push for @automagik/genie."
+    },
+    {
+      "path": "version.yml",
+      "line": 13,
+      "key": "version.yml:13",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "# the child only when all six changed fields are the deterministic version bump."
+    },
+    {
+      "path": "version.yml",
+      "line": 97,
+      "key": "version.yml:97",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "homolog)"
+    },
+    {
+      "path": "version.yml",
+      "line": 99,
+      "key": "version.yml:99",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/version.yml",
+      "lines": 446,
+      "verdict": "resolves",
+      "text": "# rewriting its CI-approved source tree."
+    },
+    {
+      "path": "release.yml",
+      "line": 11,
+      "key": "release.yml:11",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release.yml",
+      "lines": 196,
+      "verdict": "resolves",
+      "text": "workflow_dispatch:"
+    },
+    {
+      "path": "release.yml",
+      "line": 113,
+      "key": "release.yml:113",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release.yml",
+      "lines": 196,
+      "verdict": "resolves",
+      "text": "approve-stable:"
+    },
+    {
+      "path": "release.yml",
+      "line": 119,
+      "key": "release.yml:119",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release.yml",
+      "lines": 196,
+      "verdict": "resolves",
+      "text": "environment:"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 90,
+      "key": "release-publish.yml:90",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 91,
+      "key": "release-publish.yml:91",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 101,
+      "key": "release-publish.yml:101",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "EXPECTED_EVENT=workflow_dispatch"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 106,
+      "key": "release-publish.yml:106",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "EXPECTED_CALLER=\"$EXPECTED_AUTOMATED_CALLER\""
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1024,
+      "key": "release-publish.yml:1024",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "manifests:"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1159,
+      "key": "release-publish.yml:1159",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "fi"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1034,
+      "key": "release-publish.yml:1034",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "name: release-manifests"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1047,
+      "key": "release-publish.yml:1047",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "#   2. Store it as the environment secret RELEASE_MANIFESTS_TOKEN in the"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1060,
+      "key": "release-publish.yml:1060",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "RELEASE_MANIFESTS_TOKEN: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1072,
+      "key": "release-publish.yml:1072",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "token: ${{ secrets.RELEASE_MANIFESTS_TOKEN }}"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1038,
+      "key": "release-publish.yml:1038",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "# HUMAN SETUP (one-time) — the manifest push authenticates with a"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1055,
+      "key": "release-publish.yml:1055",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "#  into docs/release-process.mdx when that submodule is next updated.)"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1058,
+      "key": "release-publish.yml:1058",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "- name: Preflight — require the manifest push token"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1069,
+      "key": "release-publish.yml:1069",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "fi"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1070,
+      "key": "release-publish.yml:1070",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "- uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1073,
+      "key": "release-publish.yml:1073",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "persist-credentials: true"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1128,
+      "key": "release-publish.yml:1128",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "for f in latest.json homolog.json dev.json; do"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1129,
+      "key": "release-publish.yml:1129",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "[[ -f \".well-known/${f}\" && ! -L \".well-known/${f}\" ]] && MANIFEST_PATHS+=(\".well-known/${f}\")"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1086,
+      "key": "release-publish.yml:1086",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "# Filename map (per wish release-channel-dev, 2026-05-11):"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1089,
+      "key": "release-publish.yml:1089",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "#   homolog → homolog.json"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1105,
+      "key": "release-publish.yml:1105",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "git config user.name \"release-bot\""
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1106,
+      "key": "release-publish.yml:1106",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "git config user.email \"release-bot@namastex.com\""
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1143,
+      "key": "release-publish.yml:1143",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "if push_output=\"$(git push origin \"HEAD:refs/heads/main\" 2>&1)\"; then"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1115,
+      "key": "release-publish.yml:1115",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "for attempt in 1 2 3 4 5; do"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 1154,
+      "key": "release-publish.yml:1154",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "done"
+    },
+    {
+      "path": "build-tarballs.yml",
+      "line": 134,
+      "key": "build-tarballs.yml:134",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "[[ \"${VERSION}\" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || {"
+    },
+    {
+      "path": "build-tarballs.yml",
+      "line": 1,
+      "key": "build-tarballs.yml:1",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/build-tarballs.yml",
+      "lines": 241,
+      "verdict": "resolves",
+      "text": "name: Build Tarballs"
+    },
+    {
+      "path": "release-publish.yml",
+      "line": 29,
+      "key": "release-publish.yml:29",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/.github/workflows/release-publish.yml",
+      "lines": 1225,
+      "verdict": "resolves",
+      "text": "on:"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 52,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": ".github/workflows/build-tarballs.yml:34",
+      "anchoredOn": "workflow_call",
+      "claim": "- Workflow: `.github/workflows/build-tarballs.yml`, job **`build`** (`:77`, matrix over platforms). Trigger `workflow_call` (`:34`, from release.yml) or `pull_r",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "workflow_call"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "scripts/build-binary.sh:65",
+      "anchoredOn": "TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"",
+      "claim": "where `TARBALL=\"${DIST_DIR}/genie-${VERSION}-${PLATFORM}.tar.gz\"` (`scripts/build-binary.sh:65`). For `PLATFORM=linux-x64-glibc` this yields `genie-<version>-li",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "scripts/build-binary.sh:161",
+      "anchoredOn": "-C \"${STAGE}\" .",
+      "claim": "- **Yes, it uses `-C \"${STAGE}\" .`** — archiving `.` from inside the staging dir, which produces a leading `./` root entry in the archive (member paths like `./",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "\"${STAGE}\""
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": ".github/workflows/version.yml:69",
+      "anchoredOn": "conclusion == 'success'",
+      "claim": "(`.github/workflows/version.yml:36-40`). Job gate at `:69-78` requires `conclusion == 'success'`, `event == 'push'`, and excludes commits tagged `[auto-version]",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": ".github/workflows/sign-attest.yml:76",
+      "anchoredOn": "Bind caller workflow and control commit",
+      "claim": "- **The stable-release-security-gate (PR #2596)** is the `admit` job in `.github/workflows/sign-attest.yml:70-121` (\"Bind caller workflow and control commit\"). ",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "caller",
+        "workflow",
+        "control",
+        "commit"
+      ]
+    }
+  ]
+}

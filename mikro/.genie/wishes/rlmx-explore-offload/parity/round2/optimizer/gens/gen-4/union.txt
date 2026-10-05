@@ -1,0 +1,22 @@
+# gen-4 fitness · khal/deepseek-v4-flash · 2 replicates · recipe SYSTEM.md 640dfa69 / agent.yaml 20f8e018
+# replicates: rep-1, rep-2  (separate scratch HOMEs — one per run label)
+# union rule: a fact counts if HIT in >=1 replicate. FABRICATION RULE: a c3 (or c2) failure in EITHER replicate counts against the union.
+# VACUOUS: a c2/c3 PASS from a replicate that did not score, is !ok, or emitted 0 citations decided nothing — score-task.mjs had no citation to fail. Marked, never re-decided.
+TASK 3 union=6/7 per-replicate=[5, 5] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[4, 4] iters=[9, 8] wall=[320.6, 252.8]s cost=[$0.04, $0.04]
+  UNIONMISS F5 src/xdna_top/npu_power.py:84 `m.group("lb") == "["` — [MISS, MISS]
+  UNSTABLE  F6 src/xdna_top/discover_sysfs.py:18 — [MISS, HIT] (reached by some replicates, not all)
+  UNSTABLE  F7 src/xdna_top/discover_sysfs.py:55 — [HIT, WEAK] (reached by some replicates, not all)
+TASK 4 union=6/6 per-replicate=[5, 6] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[4, 6] iters=[7, 9] wall=[254.1, 377]s cost=[$0.03, $0.03]
+  UNSTABLE  F6 src/xdna_top/exporter.py:62 — [MISS, HIT] (reached by some replicates, not all)
+TASK 5 union=5/5 per-replicate=[5, 0] c2=PASS! c3=PASS! fabrications=0 citeFail=0 spawns=[4, 4] iters=[14, ] wall=[264.7, 650]s cost=[$0.04, $null]
+  UNSTABLE  F1 src/main/services/ptyManager.ts:38 — [HIT, MISS] (reached by some replicates, not all)
+  UNSTABLE  F2 src/main/services/ptyManager.ts:695 — [HIT, MISS] (reached by some replicates, not all)
+  UNSTABLE  F3 src/main/services/ptyManager.ts:708 — [HIT, MISS] (reached by some replicates, not all)
+  UNSTABLE  F4 src/main/services/ptyManager.ts:727 — [HIT, MISS] (reached by some replicates, not all)
+  UNSTABLE  F5 src/main/services/ptyManager.ts:127 — [HIT, MISS] (reached by some replicates, not all)
+  VACUOUS   c2=PASS/c3=PASS from rep-2 — run !ok — no answer to decide criteria 2/3 over; the marked `c2=PASS!`/`c3=PASS!` above is that PASS pooled, not corroborated
+TASK 6 union=5/5 per-replicate=[5, 5] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[4, 2] iters=[11, 5] wall=[242.7, 197.8]s cost=[$0.03, $0.02]
+TASK 7 union=5/6 per-replicate=[5, 5] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[0, 4] iters=[8, 7] wall=[92.9, 205.8]s cost=[$0.007, $0.02]
+  UNIONMISS F6 channel/enroll.sh:23 `SUITE` — [MISS, MISS]
+TASK 8 union=5/5 per-replicate=[5, 5] c2=PASS c3=PASS fabrications=0 citeFail=0 spawns=[2, 4] iters=[8, 5] wall=[250.8, 315.5]s cost=[$0.02, $0.03]
+UNION facts=32/34 coverage=0.9412 perReplicate=[30, 26]/34 spread=4 unionLift=+2 runsOk=[6, 5]/6 c2fail=0 c3fail=0 vacuousCriteria=1 fabrications=0 citeFail=0 cites=[91/91, 54/54] spawns=[18, 24] perRun=0..6 cost=[$0.167, $0.14] wall=[1426.8, 2002]s

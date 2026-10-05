@@ -1,0 +1,77 @@
+{
+  "task": 6,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/genie-desktop",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-3-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T09:27:13.394Z",
+  "question": "This app integrates an external CLI called rtk. How does it find the binary on a machine, what happens on Windows versus everywhere else, and what timeouts and retry limits bound the download and unpack path? Answer with path:line citations.",
+  "provenance": {
+    "promptSha256": "4eafbb3d7e817d8bd4ea3fe37bc050c91f7e6ebfd25890014cf6d5993ad12ccb",
+    "promptChars": 32924,
+    "promptSnapshot": "parity/prompts/4eafbb3d7e817d8bd4ea3fe37bc050c91f7e6ebfd25890014cf6d5993ad12ccb.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "3da8750fdc543ff3b7b2ab4c1a2d16aec7f74d35",
+      "branch": "wish/khal-native-theme",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 132.8,
+  "requestChars": 254,
+  "resultChars": 2558,
+  "answer": "The app finds the `rtk` binary through `RtkService.resolveBinary()` (src/main/services/RtkService.ts:164), which first checks the **managed directory** (`getManagedBinDir()` at line 128, joining `app.getPath('userData')` with `'bin'`) for a previously-downloaded binary (`getManagedBinPath()` at line 132). If none is found there, it searches `$PATH` using `findCmd` (line 180): `where.exe` on Windows and `which` everywhere else.\n\n**Windows vs everywhere else:**\n- **Binary name** — `'rtk.exe'` on Windows, `'rtk'` on Unix (line 133, `exe`).\n- **PATH lookup tool** — `'where.exe'` on Windows, `'which'` on Unix (line 180, `findCmd`).\n- **Symlink** — `~/.local/bin/rtk` is created on Unix for `$PATH` visibility (line 147); `getUserPathSymlinkPath()` returns `null` on Windows (line 146).\n- **Downloadability** — `isPlatformDownloadable()` (line 273) returns `true` for `darwin` (line 274), and for `linux` only when `arch` is `x64` or `arm64` (line 275); Windows is **not downloadable** (falls through to `return false` at line 276).\n\n**Timeouts and retry limits:**\n- `FETCH_API_TIMEOUT_MS` = **60,000** ms (60s) — for the GitHub API call and checksums fetch (line 32).\n- `FETCH_BODY_TIMEOUT_MS` = **300,000** ms (5 min) — for the binary download stream (line 33).\n- `TAR_TIMEOUT_MS` = **120,000** ms (2 min) — for `tar` extraction (line 34).\n- `probeVersion()` uses a literal **3,000** ms timeout for `--version` execution (line 207).\n- `MAX_ATTEMPTS` = **3** retries for the download loop on corrupt/truncated bytes (line 357).\n\nAll constants and logic live in `src/main/services/RtkService.ts`.\n\nCitations:\n- src/main/services/RtkService.ts:32 — `FETCH_API_TIMEOUT_MS = 60_000`\n- src/main/services/RtkService.ts:33 — `FETCH_BODY_TIMEOUT_MS = 300_000`\n- src/main/services/RtkService.ts:34 — `TAR_TIMEOUT_MS = 120_000`\n- src/main/services/RtkService.ts:128 — `getManagedBinDir`\n- src/main/services/RtkService.ts:133 — `exe`\n- src/main/services/RtkService.ts:145 — `getUserPathSymlinkPath`\n- src/main/services/RtkService.ts:146 — `return null` on win32\n- src/main/services/RtkService.ts:180 — `findCmd`\n- src/main/services/RtkService.ts:207 — `timeout: 3000`\n- src/main/services/RtkService.ts:273 — `isPlatformDownloadable`\n- src/main/services/RtkService.ts:274 — `'darwin'` returns true\n- src/main/services/RtkService.ts:275 — `'linux'` with arch filter\n- src/main/services/RtkService.ts:357 — `MAX_ATTEMPTS = 3`\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 91,455 in / 11,145 out · $0.02 · 132.6s · session sess_1925cde2e36c8930",
+  "fullText": "The app finds the `rtk` binary through `RtkService.resolveBinary()` (src/main/services/RtkService.ts:164), which first checks the **managed directory** (`getManagedBinDir()` at line 128, joining `app.getPath('userData')` with `'bin'`) for a previously-downloaded binary (`getManagedBinPath()` at line 132). If none is found there, it searches `$PATH` using `findCmd` (line 180): `where.exe` on Windows and `which` everywhere else.\n\n**Windows vs everywhere else:**\n- **Binary name** — `'rtk.exe'` on Windows, `'rtk'` on Unix (line 133, `exe`).\n- **PATH lookup tool** — `'where.exe'` on Windows, `'which'` on Unix (line 180, `findCmd`).\n- **Symlink** — `~/.local/bin/rtk` is created on Unix for `$PATH` visibility (line 147); `getUserPathSymlinkPath()` returns `null` on Windows (line 146).\n- **Downloadability** — `isPlatformDownloadable()` (line 273) returns `true` for `darwin` (line 274), and for `linux` only when `arch` is `x64` or `arm64` (line 275); Windows is **not downloadable** (falls through to `return false` at line 276).\n\n**Timeouts and retry limits:**\n- `FETCH_API_TIMEOUT_MS` = **60,000** ms (60s) — for the GitHub API call and checksums fetch (line 32).\n- `FETCH_BODY_TIMEOUT_MS` = **300,000** ms (5 min) — for the binary download stream (line 33).\n- `TAR_TIMEOUT_MS` = **120,000** ms (2 min) — for `tar` extraction (line 34).\n- `probeVersion()` uses a literal **3,000** ms timeout for `--version` execution (line 207).\n- `MAX_ATTEMPTS` = **3** retries for the download loop on corrupt/truncated bytes (line 357).\n\nAll constants and logic live in `src/main/services/RtkService.ts`.\n\nCitations:\n- src/main/services/RtkService.ts:32 — `FETCH_API_TIMEOUT_MS = 60_000`\n- src/main/services/RtkService.ts:33 — `FETCH_BODY_TIMEOUT_MS = 300_000`\n- src/main/services/RtkService.ts:34 — `TAR_TIMEOUT_MS = 120_000`\n- src/main/services/RtkService.ts:128 — `getManagedBinDir`\n- src/main/services/RtkService.ts:133 — `exe`\n- src/main/services/RtkService.ts:145 — `getUserPathSymlinkPath`\n- src/main/services/RtkService.ts:146 — `return null` on win32\n- src/main/services/RtkService.ts:180 — `findCmd`\n- src/main/services/RtkService.ts:207 — `timeout: 3000`\n- src/main/services/RtkService.ts:273 — `isPlatformDownloadable`\n- src/main/services/RtkService.ts:274 — `'darwin'` returns true\n- src/main/services/RtkService.ts:275 — `'linux'` with arch filter\n- src/main/services/RtkService.ts:357 — `MAX_ATTEMPTS = 3`\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 91,455 in / 11,145 out · $0.02 · 132.6s · session sess_1925cde2e36c8930",
+  "structuredContent": {
+    "session_id": "sess_1925cde2e36c8930"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · iteration 11",
+    "agent=explore-r · iteration 11 · 1 recursive spawn",
+    "agent=explore-r · iteration 11 · 2 recursive spawns",
+    "agent=explore-r · iteration 11 · 3 recursive spawns",
+    "agent=explore-r · working 60s",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · iteration 12",
+    "agent=explore-r · iteration 13",
+    "agent=explore-r · iteration 14"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

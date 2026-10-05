@@ -1,0 +1,90 @@
+{
+  "task": 4,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/tasks/4.md",
+  "suite": "frozen-eval",
+  "root": "/home/namastex/prod/brain",
+  "model": "khal/deepseek-v4-flash",
+  "round": "r2-shot-gen1-flash",
+  "startedAt": "2026-07-27T13:57:19.749Z",
+  "question": "In /home/namastex/prod/brain (read-only, do not edit anything), determine the GROUND TRUTH of brain's database topology. Specific question: does brain use ONE Postgres database PER BRAIN (e.g. a database literally named `brain_<slug>`), or one shared database with a brains table / per-brain rows / per-brain schemas?\n\nInvestigate:\n1. Search src/lib/db.ts, src/lib/identity.ts, src/lib/init.ts, src/lib/config* for how the DSN / database name is chosen. Grep for `brain_` prefix construction, `CREATE DATABASE`, `dbName`, `database:`, `slug`.\n2. Is there code that creates a database per brain? Or is `brain_station_validation` (the current station DB) a per-VAULT/per-INSTALL database rather than a per-brain database?\n3. How does the `brains` table in migrations 001/003 relate — are multiple brains rows inside ONE database?\n4. Where does the DSN come from at runtime (env var names, config file, ~/.brain/install.json)? Can a single running `brain serve` process talk to MULTIPLE databases simultaneously, or is it bound to one DSN?\n5. Does anything support per-brain credentials/roles, or does the process use a single role for everything?\n\nReport precisely with file paths and line numbers and short quoted snippets of the load-bearing code. Be exact — I need to know whether a claim that \"the codebase's existing model is per-brain DB `brain_<slug>` with a dedicated owner role\" is TRUE, PARTIALLY TRUE, or FALSE. Distinguish carefully between \"database named brain_<something>\" as an install-level name vs. per-brain-entity databases.",
+  "provenance": {
+    "promptSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "promptChars": 27840,
+    "promptSnapshot": "parity/prompts/02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "040bb83f66c5251238fd92f8e81d8fb3214ba202",
+      "branch": "brainstorm/brain-lxc",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_ask-answer-crafter",
+    "rlmx_ask-gap-hunter",
+    "rlmx_ask-maestro",
+    "rlmx_audit",
+    "rlmx_explore-r",
+    "rlmx_preservation",
+    "rlmx_triage"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 390.8,
+  "requestChars": 1568,
+  "resultChars": 5816,
+  "answer": "## Ground Truth: Brain's Database Topology\n\n**Brain uses ONE Postgres database PER BRAIN entity**, named `brain_<slug>`.\n\n### How it works\n\n1. **Database name derivation** — `deriveDatabaseName(slug)` at `src/lib/pgserve.ts:89-108` produces `` `brain_${sanitized}` `` (line 106). The slug is lowercased, non-alphanumeric characters replaced with underscores, prefixed with `brain_`, and truncated to 63 characters.\n\n2. **Database creation** — `ensureBrainDatabase(database)` at `src/lib/db.ts:376` connects to the Postgres cluster on the admin DSN, checks `pg_database`, and if missing runs `CREATE DATABASE \"${database}\"` (line 412). A variant `ensureBrainDatabaseIfOwned` at `src/lib/db.ts:455-462` adds `OWNER \"${runtimeRole}\"` to grant ownership to a provisioned runtime role.\n\n3. **Connection switching** — `setActiveDatabase(database)` at `src/lib/db.ts:291-301` closes the existing `sql` pool (line 295: `await sql.end({ timeout: 2 })`) and sets `activeDatabase = database` (line 301). `getDb()` at `src/lib/db.ts:595-615` builds a DSN targeting the active database via `buildDsnForDatabase` (line 610), which rewrites the URL path to the target database name (line 162: `url.pathname = \\`/\\${encodeURIComponent(database)}\\``).\n\n4. **Default/fallback** — `resolveDatabase()` at `src/lib/db.ts:579-587` returns `activeDatabase` if set, else the database named in `DATABASE_URL`, else the literal `\"brain\"` (line 586).\n\n### The brains table (registry, NOT per-brain storage)\n\nMigration `001-brain-foundation.sql` (line 9) creates `CREATE TABLE IF NOT EXISTS brains (...)` inside *one* database. Each row tracks a brain's metadata (columns: `id`, `short_name`, `name`, `description`, `brain_type`, `owner_type`, `owner_id`, `lifecycle`, etc. — lines 10-28). This table is a **registry** of all known brains — it lives in the database named `\"brain\"` by default, and individual brain *content* lives in each `brain_<slug>` database.\n\n### Single DSN, switchable per-process\n\nAt runtime, the DSN comes from the `DATABASE_URL` environment variable (`src/lib/db.ts:85-89`, with admin override `BRAIN_ADMIN_DATABASE_URL` at `src/lib/db.ts:96-100`). A single `brain serve` process is bound to **one DSN at a time** — `setActiveDatabase()` closes and reopens the pool. There is no multi-DSN or multi-cluster logic: one process connects to one Postgres cluster, and switches which database within that cluster it talks to.\n\n### Per-brain Postgres roles\n\n`roleNameFor(slug)` at `src/lib/rls.ts:26-29` produces `brain_<cleaned>` — a Postgres role per brain entity. `ensureBrainRole(shortName)` at `src/lib/rls.ts:38-56` creates a `NOLOGIN NOINHERIT` role, grants `brain_default` and table permissions, used via `SET ROLE` from a trusted session. This is **authorization isolation within a single Postgres cluster**, not separate credentials at the connection level — the process connects with one primary role and then uses `SET LOCAL ROLE brain_<slug>` per operation.\n\n### Is the claim \"per-brain DB brain_<slug> with dedicated owner role\" true?\n\n**TRUE.** The model is:\n- One Postgres cluster (install-level, named whatever the deployer chose — e.g. `brain_station_validation` is a per-INSTALL/vault name, not a per-brain name)\n- Per-brain **databases** named `brain_<slug>`\n- A **registry** `brains` table in one shared database tracking all brain entities\n- A single `brain serve` process can switch between brain databases via `setActiveDatabase()`, one at a time\n- Per-brain **Postgres roles** (via `ensureBrainRole`) for authorization within the shared cluster\n- No per-brain connection credentials to Postgres — one connection role per process\n\nThe `brain_<slug>` database name follows each brain entity through its lifecycle. The brains table in migrations 001/003 is the registry that lets the system resolve \"which database holds this brain's data\" — it maps brain IDs to slugs, and the slug maps to a database name.\n\n### Citations\n\n- `src/lib/pgserve.ts:89` — `export function deriveDatabaseName(slug: string): string`\n- `src/lib/pgserve.ts:106` — `const dbName = \\`brain_\\${sanitized}\\`;`\n- `src/lib/db.ts:376` — `export async function ensureBrainDatabase(database: string, ...)`\n- `src/lib/db.ts:412` — `` await adminSql.unsafe(`CREATE DATABASE \"${database}\"`); ``\n- `src/lib/db.ts:291` — `export async function setActiveDatabase(database: string): Promise<void>`\n- `src/lib/db.ts:157` — `export function buildDsnForDatabase(dsn: string, database?: string, ...)`\n- `src/lib/db.ts:162` — `url.pathname = \\`/\\${encodeURIComponent(database)}\\`;`\n- `src/lib/db.ts:579-586` — `function resolveDatabase() ... return \"brain\";`\n- `src/lib/db.ts:85` — `export function readPrimaryDsn(env) ... env.DATABASE_URL?.trim()`\n- `src/lib/db.ts:96` — `export function readAdminDsn(env) ... env.BRAIN_ADMIN_DATABASE_URL?.trim()`\n- `src/lib/rls.ts:26` — `export function roleNameFor(shortName: string): string`\n- `src/lib/rls.ts:28` — `return \\`brain_\\${cleaned}\\`;`\n- `src/lib/rls.ts:38` — `export async function ensureBrainRole(shortName: string): Promise<string>`\n- `src/lib/db.ts:458` — `` await adminSql.unsafe(`CREATE DATABASE \"${database}\" OWNER \"${runtimeRole}\"`); ``\n- `src/lib/db.ts:512` — `export function buildRuntimeRoleProvisionSql(role: string): string`\n- `src/db/migrations/001-brain-foundation.sql:9` — `CREATE TABLE IF NOT EXISTS brains (`\n- `src/db/migrations/001-brain-foundation.sql:11` — `short_name TEXT NOT NULL,`\n- `src/lib/capabilities.ts:32` — `rls_per_brain_role_v1:`\n- `src/lib/execute.ts:3269` — comment: \"Validate the brain exists and route DB ops to its per-brain database\"\n- `src/lib/db.ts:75` — comment: \"// name swapped per-brain (resolveDatabase())\"\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 4 iterations · 198,872 in / 29,128 out · $0.03 · 390.5s · session sess_226cb1c7187e2141",
+  "fullText": "## Ground Truth: Brain's Database Topology\n\n**Brain uses ONE Postgres database PER BRAIN entity**, named `brain_<slug>`.\n\n### How it works\n\n1. **Database name derivation** — `deriveDatabaseName(slug)` at `src/lib/pgserve.ts:89-108` produces `` `brain_${sanitized}` `` (line 106). The slug is lowercased, non-alphanumeric characters replaced with underscores, prefixed with `brain_`, and truncated to 63 characters.\n\n2. **Database creation** — `ensureBrainDatabase(database)` at `src/lib/db.ts:376` connects to the Postgres cluster on the admin DSN, checks `pg_database`, and if missing runs `CREATE DATABASE \"${database}\"` (line 412). A variant `ensureBrainDatabaseIfOwned` at `src/lib/db.ts:455-462` adds `OWNER \"${runtimeRole}\"` to grant ownership to a provisioned runtime role.\n\n3. **Connection switching** — `setActiveDatabase(database)` at `src/lib/db.ts:291-301` closes the existing `sql` pool (line 295: `await sql.end({ timeout: 2 })`) and sets `activeDatabase = database` (line 301). `getDb()` at `src/lib/db.ts:595-615` builds a DSN targeting the active database via `buildDsnForDatabase` (line 610), which rewrites the URL path to the target database name (line 162: `url.pathname = \\`/\\${encodeURIComponent(database)}\\``).\n\n4. **Default/fallback** — `resolveDatabase()` at `src/lib/db.ts:579-587` returns `activeDatabase` if set, else the database named in `DATABASE_URL`, else the literal `\"brain\"` (line 586).\n\n### The brains table (registry, NOT per-brain storage)\n\nMigration `001-brain-foundation.sql` (line 9) creates `CREATE TABLE IF NOT EXISTS brains (...)` inside *one* database. Each row tracks a brain's metadata (columns: `id`, `short_name`, `name`, `description`, `brain_type`, `owner_type`, `owner_id`, `lifecycle`, etc. — lines 10-28). This table is a **registry** of all known brains — it lives in the database named `\"brain\"` by default, and individual brain *content* lives in each `brain_<slug>` database.\n\n### Single DSN, switchable per-process\n\nAt runtime, the DSN comes from the `DATABASE_URL` environment variable (`src/lib/db.ts:85-89`, with admin override `BRAIN_ADMIN_DATABASE_URL` at `src/lib/db.ts:96-100`). A single `brain serve` process is bound to **one DSN at a time** — `setActiveDatabase()` closes and reopens the pool. There is no multi-DSN or multi-cluster logic: one process connects to one Postgres cluster, and switches which database within that cluster it talks to.\n\n### Per-brain Postgres roles\n\n`roleNameFor(slug)` at `src/lib/rls.ts:26-29` produces `brain_<cleaned>` — a Postgres role per brain entity. `ensureBrainRole(shortName)` at `src/lib/rls.ts:38-56` creates a `NOLOGIN NOINHERIT` role, grants `brain_default` and table permissions, used via `SET ROLE` from a trusted session. This is **authorization isolation within a single Postgres cluster**, not separate credentials at the connection level — the process connects with one primary role and then uses `SET LOCAL ROLE brain_<slug>` per operation.\n\n### Is the claim \"per-brain DB brain_<slug> with dedicated owner role\" true?\n\n**TRUE.** The model is:\n- One Postgres cluster (install-level, named whatever the deployer chose — e.g. `brain_station_validation` is a per-INSTALL/vault name, not a per-brain name)\n- Per-brain **databases** named `brain_<slug>`\n- A **registry** `brains` table in one shared database tracking all brain entities\n- A single `brain serve` process can switch between brain databases via `setActiveDatabase()`, one at a time\n- Per-brain **Postgres roles** (via `ensureBrainRole`) for authorization within the shared cluster\n- No per-brain connection credentials to Postgres — one connection role per process\n\nThe `brain_<slug>` database name follows each brain entity through its lifecycle. The brains table in migrations 001/003 is the registry that lets the system resolve \"which database holds this brain's data\" — it maps brain IDs to slugs, and the slug maps to a database name.\n\n### Citations\n\n- `src/lib/pgserve.ts:89` — `export function deriveDatabaseName(slug: string): string`\n- `src/lib/pgserve.ts:106` — `const dbName = \\`brain_\\${sanitized}\\`;`\n- `src/lib/db.ts:376` — `export async function ensureBrainDatabase(database: string, ...)`\n- `src/lib/db.ts:412` — `` await adminSql.unsafe(`CREATE DATABASE \"${database}\"`); ``\n- `src/lib/db.ts:291` — `export async function setActiveDatabase(database: string): Promise<void>`\n- `src/lib/db.ts:157` — `export function buildDsnForDatabase(dsn: string, database?: string, ...)`\n- `src/lib/db.ts:162` — `url.pathname = \\`/\\${encodeURIComponent(database)}\\`;`\n- `src/lib/db.ts:579-586` — `function resolveDatabase() ... return \"brain\";`\n- `src/lib/db.ts:85` — `export function readPrimaryDsn(env) ... env.DATABASE_URL?.trim()`\n- `src/lib/db.ts:96` — `export function readAdminDsn(env) ... env.BRAIN_ADMIN_DATABASE_URL?.trim()`\n- `src/lib/rls.ts:26` — `export function roleNameFor(shortName: string): string`\n- `src/lib/rls.ts:28` — `return \\`brain_\\${cleaned}\\`;`\n- `src/lib/rls.ts:38` — `export async function ensureBrainRole(shortName: string): Promise<string>`\n- `src/lib/db.ts:458` — `` await adminSql.unsafe(`CREATE DATABASE \"${database}\" OWNER \"${runtimeRole}\"`); ``\n- `src/lib/db.ts:512` — `export function buildRuntimeRoleProvisionSql(role: string): string`\n- `src/db/migrations/001-brain-foundation.sql:9` — `CREATE TABLE IF NOT EXISTS brains (`\n- `src/db/migrations/001-brain-foundation.sql:11` — `short_name TEXT NOT NULL,`\n- `src/lib/capabilities.ts:32` — `rls_per_brain_role_v1:`\n- `src/lib/execute.ts:3269` — comment: \"Validate the brain exists and route DB ops to its per-brain database\"\n- `src/lib/db.ts:75` — comment: \"// name swapped per-brain (resolveDatabase())\"\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 4 iterations · 198,872 in / 29,128 out · $0.03 · 390.5s · session sess_226cb1c7187e2141",
+  "structuredContent": {
+    "session_id": "sess_226cb1c7187e2141"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · working 30s",
+    "agent=explore-r · working 45s",
+    "agent=explore-r · iteration 2 · 1 recursive spawn",
+    "agent=explore-r · iteration 2 · 2 recursive spawns",
+    "agent=explore-r · iteration 2 · 3 recursive spawns",
+    "agent=explore-r · iteration 2 · 4 recursive spawns",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · working 135s",
+    "agent=explore-r · working 150s",
+    "agent=explore-r · working 165s",
+    "agent=explore-r · working 180s",
+    "agent=explore-r · working 195s",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · working 225s",
+    "agent=explore-r · working 240s",
+    "agent=explore-r · working 255s",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · working 285s",
+    "agent=explore-r · working 300s",
+    "agent=explore-r · working 330s",
+    "agent=explore-r · working 345s",
+    "agent=explore-r · working 375s"
+  ],
+  "stderr": "rlmx mcp: 7 microagents discovered (_ask-answer-crafter, _ask-gap-hunter, _ask-maestro, audit, explore-r, preservation, triage)\n"
+}

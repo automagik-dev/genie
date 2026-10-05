@@ -1,0 +1,178 @@
+{
+  "arm": "rlmx",
+  "task": 6,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r15-flash-control",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 24 iterations · 70,243 in / 10,753 out · $0.02 · 280.1s · session sess_ce6d2f6f4a6cfd88",
+  "wallSeconds": 280.4,
+  "requestChars": 1858,
+  "resultChars": 4432,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [
+    "/home/namastex/.genie"
+  ],
+  "need": 8,
+  "factTotal": 8,
+  "answerChars": 4292,
+  "citations": [
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 1759,
+      "key": "src/genie-commands/update.ts:1759",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "sync: typeof runAgentSyncSafe = runAgentSyncSafe,"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 362,
+      "key": "src/genie-commands/install.ts:362",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "runSync(agentSyncSelection);"
+    },
+    {
+      "path": "src/genie-commands/uninstall.ts",
+      "line": 61,
+      "key": "src/genie-commands/uninstall.ts:61",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "} from '../lib/agent-sync.js';"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 6927,
+      "key": "src/lib/agent-sync.ts:6927",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 6962,
+      "key": "src/lib/agent-sync.ts:6962",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 5645,
+      "key": "src/lib/agent-sync.ts:5645",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "function syncClaude(ctx: RunContext, report: AgentReport): void {"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 5669,
+      "key": "src/lib/agent-sync.ts:5669",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 7,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/hermes-skills-config.ts:14",
+      "anchoredOn": "$GENIE_HOME/skills",
+      "claim": "- **Hermes never reads `~/.claude/skills`**: `syncHermes` (**:5666**) only symlinks `~/.hermes/plugins/genie` → `<GENIE_HOME>/plugins/hermes-genie` and merges `",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/update.ts:2661",
+      "anchoredOn": "~/.genie/.last-agent-sync",
+      "claim": "Wrapper: `runAgentSyncSafe()` — `src/genie-commands/update.ts:2046` (calls `runAgentSync`, touches `~/.genie/.last-agent-sync` marker at :2060; marker is write-",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/genie.ts:161",
+      "anchoredOn": "installCommand",
+      "claim": "| 1 | `genie install` (invoked by `install.sh` line 679 after binary promotion; CLI registered at `src/genie.ts:128`) | `installCommand` → `runSync` default = `",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/update.ts:1759",
+      "anchoredOn": "runAgentSyncSafe",
+      "claim": "| 2 | `genie update` (normal, already-up-to-date) | `updateCommand` → `runTrackedManualUpdateConvergence` → `runManualUpdateConvergence` → `runAgentSyncSafe` | ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "runAgentSyncSafe"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/genie-commands/doctor.ts:32",
+      "anchoredOn": "CLAUDE_EXCLUDED_SKILLS",
+      "claim": "| 6 | `genie doctor` | **READ-ONLY** — never calls `runAgentSync`. `checkAgentSync` :1436 → `checkClaudeSync` :1023 computes expected mirror as source-skills mi",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "CLAUDE_EXCLUDED_SKILLS"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": "src/genie-commands/uninstall.ts:45",
+      "anchoredOn": "MANIFEST_NAME",
+      "claim": "| 7 | `genie uninstall` | does not sync; imports `MANIFEST_NAME`/`inspectManagedSkillTree`/`removeManagedSkillTree` etc. (`src/genie-commands/uninstall.ts:40-61",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/setup.ts:12",
+      "anchoredOn": "acquireLifecycleLease",
+      "claim": "| 8 | `genie setup` | no sync — imports only `acquireLifecycleLease` (`src/genie-commands/setup.ts:11`) |",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/smart-install-hook.test.ts:57",
+      "anchoredOn": "SessionStart",
+      "claim": "| 9 | Claude Code plugin hooks (`plugins/genie/hooks/hooks.json`: SessionStart `session-context.cjs`, PreToolUse `dispatch-runtime.cjs` → `genie hook dispatch`)",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

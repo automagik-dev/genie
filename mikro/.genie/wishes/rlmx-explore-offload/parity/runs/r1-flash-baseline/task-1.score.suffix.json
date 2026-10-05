@@ -1,0 +1,557 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r1-flash-baseline",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 10 iterations · 63,373 in / 6,302 out · $0.0098 · 101.2s · session sess_63bab2bf64d8aa60",
+  "wallSeconds": 101.5,
+  "requestChars": 1595,
+  "resultChars": 5874,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/prod/ryzen-ai-station"
+  ],
+  "need": 13,
+  "factTotal": 14,
+  "answerChars": 5733,
+  "citations": [
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 28,
+      "key": "src/lib/embedding.ts:28",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "const DEFAULT_MODEL = \"gemini-embedding-2-preview\";"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 18,
+      "key": "src/lib/embedding.ts:18",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "export type EmbeddingTaskType ="
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 26,
+      "key": "src/lib/embedding.ts:26",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "| \"CODE_RETRIEVAL_QUERY\";"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 36,
+      "key": "src/lib/embedding.ts:36",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "function usesV2TaskPrefix(model: string): boolean {"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 38,
+      "key": "src/lib/embedding.ts:38",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 133,
+      "key": "src/lib/embedding.ts:133",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 118,
+      "key": "src/lib/embedding.ts:118",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 127,
+      "key": "src/lib/embedding.ts:127",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "process.env.GEMINI_API_KEY = settings.GEMINI_API_KEY;"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 43,
+      "key": "src/auto-kb/gemini.ts:43",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "\"gemini-3.1-flash-lite-preview\": { input: 15, output: 60, cachedInput: 3.75 },"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 91,
+      "key": "src/auto-kb/gemini.ts:91",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "model = \"gemini-3.1-flash-lite-preview\","
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 146,
+      "key": "src/auto-kb/gemini.ts:146",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "const modelName = options.model ?? \"gemini-3.1-flash-lite-preview\";"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 67,
+      "key": "src/auto-kb/gemini.ts:67",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "const apiKey = process.env.GEMINI_API_KEY;"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 69,
+      "key": "src/auto-kb/gemini.ts:69",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "throw new Error(\"GEMINI_API_KEY environment variable required\");"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 104,
+      "key": "src/auto-kb/gemini.ts:104",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "const apiKey = process.env.GEMINI_API_KEY;"
+    },
+    {
+      "path": "src/auto-kb/gemini.ts",
+      "line": 105,
+      "key": "src/auto-kb/gemini.ts:105",
+      "resolvedAs": "/home/namastex/prod/brain/src/auto-kb/gemini.ts",
+      "lines": 255,
+      "verdict": "resolves",
+      "text": "if (!apiKey) throw new Error(\"GEMINI_API_KEY required\");"
+    },
+    {
+      "path": "src/agent/rlmx-bridge.ts",
+      "line": 131,
+      "key": "src/agent/rlmx-bridge.ts:131",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/rlmx-bridge.ts",
+      "lines": 1203,
+      "verdict": "resolves",
+      "text": "const modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\";"
+    },
+    {
+      "path": "src/agent/runner.ts",
+      "line": 139,
+      "key": "src/agent/runner.ts:139",
+      "resolvedAs": "/home/namastex/prod/brain/src/agent/runner.ts",
+      "lines": 188,
+      "verdict": "resolves",
+      "text": "const modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\";"
+    },
+    {
+      "path": "src/cortex/_design-v2/project/mock-server/server.ts",
+      "line": 146,
+      "key": "src/cortex/_design-v2/project/mock-server/server.ts:146",
+      "resolvedAs": "/home/namastex/prod/brain/src/cortex/_design-v2/project/mock-server/server.ts",
+      "lines": 375,
+      "verdict": "resolves",
+      "text": "Backends fused: **BM25**, **trigram**, **vector** (gemini-embedding-2). Then **link boost** uplifts neighbors of top hit"
+    },
+    {
+      "path": "src/lib/autoschema-agent.ts",
+      "line": 84,
+      "key": "src/lib/autoschema-agent.ts:84",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/autoschema-agent.ts",
+      "lines": 558,
+      "verdict": "resolves",
+      "text": "if (settings.GEMINI_API_KEY && !process.env.GEMINI_API_KEY)"
+    },
+    {
+      "path": "README.md",
+      "line": 295,
+      "key": "README.md:295",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| `BRAIN_DATA_DIR` | pgserve data directory (data-dir mode) |"
+    },
+    {
+      "path": "README.md",
+      "line": 297,
+      "key": "README.md:297",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| `BRAIN_PG_PORT` | pgserve port (default 15432) |"
+    },
+    {
+      "path": "README.md",
+      "line": 303,
+      "key": "README.md:303",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| **Persistent** | `DATABASE_URL` set | pgserve RAM + WAL sync to remote Postgres |"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 49,
+      "key": "src/lib/embedding.ts:49",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "* - CODE_RETRIEVAL_QUERY → `task: code retrieval | query: {content}`"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 51,
+      "key": "src/lib/embedding.ts:51",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "function applyV2TaskPrefix(text: string, taskType: EmbeddingTaskType): string {"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 91,
+      "key": "src/lib/embedding.ts:91",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "export function isEmbeddingAvailable(): boolean {"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 96,
+      "key": "src/lib/embedding.ts:96",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/brain-config.ts",
+      "line": 97,
+      "key": "src/lib/brain-config.ts:97",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/brain-config.ts",
+      "lines": 701,
+      "verdict": "resolves",
+      "text": ".default(768)"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 29,
+      "key": "src/lib/embedding.ts:29",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "const DEFAULT_DIMS = 768; // Matryoshka: 768 for pgvector compat"
+    },
+    {
+      "path": "skills/brain-init/SKILL.md",
+      "line": 222,
+      "key": "skills/brain-init/SKILL.md:222",
+      "resolvedAs": "/home/namastex/prod/brain/skills/brain-init/SKILL.md",
+      "lines": 248,
+      "verdict": "resolves",
+      "text": "**Cause:** you init'd a brain on a host that didn't yet have pgvector, then later pgvector landed (e.g. autopg v3.0.7 sh"
+    },
+    {
+      "path": "skills/brain-build/SKILL.md",
+      "line": 93,
+      "key": "skills/brain-build/SKILL.md:93",
+      "resolvedAs": "/home/namastex/prod/brain/skills/brain-build/SKILL.md",
+      "lines": 232,
+      "verdict": "resolves",
+      "text": "2. **Chunk heading-aware** — paragraphs respect markdown structure, no mid-sentence breaks, chunk sizes tuned for embedd"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 56,
+      "key": "src/lib/embedding.ts:56",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "return `task: search result | query: ${text}`;"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 71,
+      "key": "src/lib/embedding.ts:71",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 196,
+      "key": "src/lib/embedding.ts:196",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "* Embed multiple texts in batch."
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 211,
+      "key": "src/lib/embedding.ts:211",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "const dims = options.dims ?? DEFAULT_DIMS;"
+    },
+    {
+      "path": "README.md",
+      "line": 304,
+      "key": "README.md:304",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| **Data-dir** | `BRAIN_DATA_DIR` set | pgserve persists to disk |"
+    },
+    {
+      "path": "README.md",
+      "line": 305,
+      "key": "README.md:305",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| **Ephemeral** | Neither set | pgserve RAM-only (test / dev) |"
+    },
+    {
+      "path": "README.md",
+      "line": 213,
+      "key": "README.md:213",
+      "resolvedAs": "/home/namastex/prod/brain/README.md",
+      "lines": 366,
+      "verdict": "resolves",
+      "text": "| `brain serve` | Start standalone server with embedded pgserve |"
+    },
+    {
+      "path": "deploy/helm/brain/values.yaml",
+      "line": 104,
+      "key": "deploy/helm/brain/values.yaml:104",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/helm/brain/values.yaml",
+      "lines": 258,
+      "verdict": "resolves",
+      "text": "repository: pgvector/pgvector"
+    },
+    {
+      "path": "skills/brain-init/SKILL.md",
+      "line": 130,
+      "key": "skills/brain-init/SKILL.md:130",
+      "resolvedAs": "/home/namastex/prod/brain/skills/brain-init/SKILL.md",
+      "lines": 248,
+      "verdict": "resolves",
+      "text": "3. Runs all migrations (5 of them right now — foundation, embeddings, intelligence, observability, identity)"
+    },
+    {
+      "path": "deploy/PORTABILITY.md",
+      "line": 112,
+      "key": "deploy/PORTABILITY.md:112",
+      "resolvedAs": "/home/namastex/prod/brain/deploy/PORTABILITY.md",
+      "lines": 288,
+      "verdict": "resolves",
+      "text": "| `memory.consolidate.every` | `\"\"` (scheduler off) | Episodic-consolidation cadence => `BRAIN_MEMORY_CONSOLIDATE_EVERY`"
+    },
+    {
+      "path": "memory/CHANGELOG.md",
+      "line": 460,
+      "key": "memory/CHANGELOG.md:460",
+      "resolvedAs": "/home/namastex/prod/brain/memory/CHANGELOG.md",
+      "lines": 1201,
+      "verdict": "resolves",
+      "text": "Embedding models can now use local llama.cpp, OpenAI, Anthropic, or any"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 41,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/rlmx-config.ts:54",
+      "anchoredOn": "provider: google",
+      "claim": "- rlmx-brain config generator hardcodes provider/model: `src/lib/rlmx-config.ts:53-55` → `provider: google`, `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "google"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/agent/rlmx-bridge.ts:131",
+      "anchoredOn": "modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"",
+      "claim": "- `src/agent/rlmx-bridge.ts:130-136` provider `\"google\"`, `modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"`, resolved via `piAi.getModel(provid",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/agent/scaffold.ts:70",
+      "anchoredOn": "model: gemini-3.1-flash-lite-preview",
+      "claim": "- `src/agent/scaffold.ts:70` scaffolds `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "model:",
+        "gemini-3.1-flash-lite-preview"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/auto-kb/evaluation/answer-judge.ts:47",
+      "anchoredOn": "GEMINI_API_KEY",
+      "claim": "- `src/auto-kb/evaluation/answer-judge.ts:47-50` — LLM-as-judge, requires `GEMINI_API_KEY`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/processors/image.ts:45",
+      "anchoredOn": "callGeminiVision",
+      "claim": "- `src/lib/processors/image.ts:45-100` — `callGeminiVision()`, model `process.env.BRAIN_VISION_MODEL ?? \"gemini-3.1-flash-lite-preview\"` (`:60-61`), endpoint `.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/ask-pipeline.ts:57",
+      "anchoredOn": "RLMX_API_KEY_ENV_MAP",
+      "claim": "`src/lib/ask-pipeline.ts:57-71` `RLMX_API_KEY_ENV_MAP` injects, from `~/.rlmx/settings.json` into `process.env`, keys for: **Gemini, Google, Anthropic, OpenAI, ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/cache.ts:69",
+      "anchoredOn": "gpt-4o-mini",
+      "claim": "- `src/lib/cache.ts:69,75` pricing constants reference `gpt-4o-mini` and `claude-3.5-sonnet` (cost estimation only, not calls).",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/db/migrations/005-brain-embeddings.sql:41",
+      "anchoredOn": "embed_dims",
+      "claim": "- **embedDims defaults:** `DEFAULT_DIMS = 768` (`embedding.ts:29`). Schema defaults: `brain_documents.embed_dims INT DEFAULT 768` and `brain_chunks.embed_dims I",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:18",
+      "anchoredOn": "EMBEDDED_MIGRATIONS",
+      "claim": "- **Schema/migrations location:** `src/db/migrations/*.sql`; embedded into the binary via `src/db/embedded-migrations.ts` (`EMBEDDED_MIGRATIONS`, referenced `sr",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/pgserve.ts:16",
+      "anchoredOn": "type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"",
+      "claim": "- **Three deployment modes:** `src/lib/pgserve.ts:16` `type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"`, detected in `detectDeploymentMode()` (`:7",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "memory/tests/test_embeddings_multilingual.py:95",
+      "anchoredOn": "MNEMOSYNE_EMBEDDING_API_URL",
+      "claim": "- **OpenAI-compatible / remote embedding API:** `embeddings.py:60-64` — `MNEMOSYNE_EMBEDDING_API_URL` (default OpenRouter), `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEM",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F12",
+      "anchor": "memory/mnemosyne/core/extraction.py:143",
+      "anchoredOn": "_llm_backend",
+      "claim": "- **Local LLM (llama.cpp / ctransformers) for consolidation:** `memory/mnemosyne/core/local_llm.py` — `_llm_backend` = `\"llamacpp\"` | `\"ctransformers\"` | None (",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F13",
+      "anchor": ".archive/memory/docs/configuration.md:138",
+      "anchoredOn": "Works with: llama.cpp server, vLLM, Ollama, LM Studio, or any OpenAI-compatible",
+      "claim": "- **Docs explicitly naming local backends:** `.archive/memory/docs/configuration.md:138` \"Works with: **llama.cpp server, vLLM, Ollama, LM Studio**, or any Open",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "llama.cpp",
+        "server",
+        "Ollama",
+        "OpenAI-compatible"
+      ]
+    },
+    {
+      "id": "F14",
+      "anchor": ".genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166",
+      "anchoredOn": "brain lacks MCP, local embeddings, and any [local model support]",
+      "claim": "- **Strategic note:** `.genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166` observes \"brain lacks MCP, **local embeddings**, and any [local model support",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "brain",
+        "local",
+        "embeddings",
+        "model"
+      ]
+    }
+  ]
+}

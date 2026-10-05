@@ -1,0 +1,55 @@
+{
+  "version": "mikro-runtime-benchmark-v2-decision-v1",
+  "createdAt": "2026-09-02T22:47:51Z",
+  "manifestSha256": "02790c0efac06122a10ab925695ce958d2132e8b8a5cb7ed8f449d04ca0f3da1",
+  "sourceArtifact": ".genie/evidence/prime-runtime-benchmark/runtime-benchmark-v2-full.json",
+  "sourceArtifactSha256": "2915247c2fb5110b7dd10aae869da1e9d37f49864cc5b11460a92fe6045a9112",
+  "selectedModelEvidence": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-model-decision.json",
+  "selectedModelEvidenceSha256": "96f1b2ec3c351cb1a326e4dfe2378385e7940acfb400be228d138fa4c2b286c2",
+  "selectedCircuit": {
+    "model": "deepseek/deepseek-v4-pro-0813",
+    "provider": "DeepSeek official direct API",
+    "wireModel": "deepseek-v4-pro"
+  },
+  "selectionRule": "Prime SDK promotion requires no solve-rate loss versus Mikro; then compare reliability, latency, and cost per successful journey.",
+  "decision": {
+    "defaultBackend": "mikro",
+    "action": "preserve-current-default",
+    "primeSdkStatus": "optional-experimental",
+    "primeCliStatus": "ineligible-for-required-feature-set"
+  },
+  "results": {
+    "mikro": {
+      "solved": 4,
+      "total": 9,
+      "formatPasses": 9,
+      "runtimeErrors": 0,
+      "medianWallMs": 39396,
+      "p90WallMs": 123564,
+      "estimatedCostUsd": 0.06520412800000001,
+      "costPerSolveUsd": 0.016301032000000003
+    },
+    "prime-sdk": {
+      "solved": 1,
+      "total": 9,
+      "formatPasses": 8,
+      "runtimeErrors": 0,
+      "medianWallMs": 6630,
+      "p90WallMs": 63571,
+      "estimatedCostUsd": 0.027764176,
+      "costPerSolveUsd": 0.027764176
+    }
+  },
+  "reason": "Prime SDK was faster and cheaper per attempted journey, but lost three solved journeys and cost more per successful journey; it fails the no-quality-loss promotion gate.",
+  "billing": {
+    "status": "unsettled",
+    "observedSpendUsd": 0.0799999999999983,
+    "estimatedCostUsd": 0.09296830400000003
+  },
+  "limitations": [
+    "Runtime sample is 3 journeys x 3 repetitions per eligible backend.",
+    "Model benchmark compares complete model/provider circuits, not provider-independent model weights.",
+    "DeepSeek account balance had not fully reconciled to token-estimated cost at closeout.",
+    "Prime CLI was excluded from paid journeys because it rejects output.schema, dict context, and budget.maxDepth."
+  ]
+}

@@ -1,0 +1,514 @@
+{
+  "gen": 0,
+  "label": "gen-0-khal-deepseek-v4-flash",
+  "model": "khal/deepseek-v4-flash",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "heldOutNeverRun": [
+    1,
+    2
+  ],
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "systemSha256": "06c6ea947c34a73437bb90220ac68e940532dbc72e3da6d24fea4d1556f6abb9",
+    "systemChars": 21327,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "600000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+    "PARITY_CALL_TIMEOUT_MS": "600000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "factRule": {
+    "HIT": "namesAnchorPath && termHit — counts as found",
+    "WEAK": "namesAnchorPath && >= half the term's long tokens — reported, NOT counted",
+    "MISS": "everything else",
+    "caveat": "a mechanical proxy for criterion 1, strictly harsher than the rubric and blind to whether the claim is correct; a training signal, never a parity number"
+  },
+  "totals": {
+    "tasks": 6,
+    "runsOk": 6,
+    "scoredTasks": 6,
+    "factsFound": 28,
+    "factsWeak": 1,
+    "factsNeeded": 34,
+    "tasksMechanicalPass": 1,
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "citations": 101,
+    "citationsResolved": 101,
+    "recursiveSpawns": 14,
+    "costUsd": 0.1194,
+    "wallSeconds": 641.2,
+    "fitness": 0.8235
+  },
+  "tasks": [
+    {
+      "task": 3,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-3.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-3.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/xdna-top",
+      "model": "khal/deepseek-v4-flash",
+      "need": 7,
+      "factTotal": 7,
+      "found": 6,
+      "weak": 0,
+      "missed": 1,
+      "anchorsCited": 5,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 14,
+      "citationsResolved": 14,
+      "answerChars": 2803,
+      "wallSeconds": 174.9,
+      "iterations": 14,
+      "tokensIn": 104271,
+      "tokensOut": 11603,
+      "costUsd": 0.02,
+      "recursiveSpawns": 2,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 104,271 in / 11,603 out · $0.02 · 174.7s · session sess_ba68c8349cc8a108",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/xdna_top/npu_power.py:30",
+          "anchoredOn": "DEBUGFS_ACCEL",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F2",
+          "anchor": "src/xdna_top/npu_power.py:115",
+          "anchoredOn": "debugfs_accel_absent",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "src/xdna_top/npu_power.py:123",
+          "anchoredOn": "debugfs_nodes_unreadable",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "src/xdna_top/npu_power.py:130",
+          "anchoredOn": "debugfs_nodes_unparsable",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F5",
+          "anchor": "src/xdna_top/npu_power.py:84",
+          "anchoredOn": "m.group(\"lb\") == \"[\"",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `m.group(\"lb\") == \"[\"` (0/1 long tokens)",
+          "anchorCited": false
+        },
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/discover_sysfs.py:18",
+          "anchoredOn": "CPU-only fallback",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F7",
+          "anchor": "src/xdna_top/discover_sysfs.py:55",
+          "anchoredOn": "name == \"amdgpu\"",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 4,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-4.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-4.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/xdna-top",
+      "model": "khal/deepseek-v4-flash",
+      "need": 6,
+      "factTotal": 6,
+      "found": 4,
+      "weak": 0,
+      "missed": 2,
+      "anchorsCited": 2,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 9,
+      "citationsResolved": 9,
+      "answerChars": 2077,
+      "wallSeconds": 218.4,
+      "iterations": 13,
+      "tokensIn": 74374,
+      "tokensOut": 15672,
+      "costUsd": 0.02,
+      "recursiveSpawns": 2,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 13 iterations · 74,374 in / 15,672 out · $0.02 · 218.1s · session sess_8c4d9f9dc28a60ca",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/xdna_top/record.py:22",
+          "anchoredOn": "RECORD_SCHEMA_VERSION",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `RECORD_SCHEMA_VERSION` (0/1 long tokens)",
+          "anchorCited": false
+        },
+        {
+          "id": "F2",
+          "anchor": "src/xdna_top/record.py:23",
+          "anchoredOn": "RECORD_KIND",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `RECORD_KIND` (0/1 long tokens)",
+          "anchorCited": false
+        },
+        {
+          "id": "F3",
+          "anchor": "src/xdna_top/record.py:227",
+          "anchoredOn": "json.dumps(event)",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "src/xdna_top/exporter.py:13",
+          "anchoredOn": "start_http_server",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F5",
+          "anchor": "src/xdna_top/exporter.py:106",
+          "anchoredOn": "XdnaCollector",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/exporter.py:62",
+          "anchoredOn": "named WITHOUT _total",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 5,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-5.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-5.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/genie-desktop",
+      "model": "khal/deepseek-v4-flash",
+      "need": 5,
+      "factTotal": 5,
+      "found": 4,
+      "weak": 1,
+      "missed": 0,
+      "anchorsCited": 5,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 40,
+      "citationsResolved": 40,
+      "answerChars": 5023,
+      "wallSeconds": 279.3,
+      "iterations": 10,
+      "tokensIn": 173442,
+      "tokensOut": 26220,
+      "costUsd": 0.03,
+      "recursiveSpawns": 4,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 173,442 in / 26,220 out · $0.03 · 279.1s · session sess_50fc7d1a8e9dfded",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/ptyManager.ts:38",
+          "anchoredOn": "new Map<string, PtyRecord>()",
+          "verdict": "WEAK",
+          "why": "names the path but not the exact term `new Map<string, PtyRecord>()` (1/2 of its long tokens present)",
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/ptyManager.ts:695",
+          "anchoredOn": "resizePty",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/ptyManager.ts:708",
+          "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/ptyManager.ts:727",
+          "anchoredOn": "gracefulKillProc",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/ptyManager.ts:127",
+          "anchoredOn": "RESERVED_ENV_KEYS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 6,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-6.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-6.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/genie-desktop",
+      "model": "khal/deepseek-v4-flash",
+      "need": 5,
+      "factTotal": 5,
+      "found": 4,
+      "weak": 0,
+      "missed": 1,
+      "anchorsCited": 3,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 12,
+      "citationsResolved": 12,
+      "answerChars": 4478,
+      "wallSeconds": 82.3,
+      "iterations": 10,
+      "tokensIn": 72621,
+      "tokensOut": 3306,
+      "costUsd": 0.0094,
+      "recursiveSpawns": 0,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 10 iterations · 72,621 in / 3,306 out · $0.0094 · 82.1s · session sess_28ab302bc3c8339e",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/RtkService.ts:180",
+          "anchoredOn": "findCmd",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `findCmd` (0/1 long tokens)",
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/RtkService.ts:32",
+          "anchoredOn": "FETCH_API_TIMEOUT_MS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/RtkService.ts:33",
+          "anchoredOn": "FETCH_BODY_TIMEOUT_MS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/RtkService.ts:34",
+          "anchoredOn": "TAR_TIMEOUT_MS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/RtkService.ts:357",
+          "anchoredOn": "MAX_ATTEMPTS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 7,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-7.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-7.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/fde-station",
+      "model": "khal/deepseek-v4-flash",
+      "need": 6,
+      "factTotal": 6,
+      "found": 5,
+      "weak": 0,
+      "missed": 1,
+      "anchorsCited": 5,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 6,
+      "citationsResolved": 6,
+      "answerChars": 1005,
+      "wallSeconds": 114.3,
+      "iterations": 5,
+      "tokensIn": 71658,
+      "tokensOut": 10154,
+      "costUsd": 0.01,
+      "recursiveSpawns": 3,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 5 iterations · 71,658 in / 10,154 out · $0.01 · 114.0s · session sess_4c1733b4ed8a717e",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "channel/enroll.sh:27",
+          "anchoredOn": "KEYRING_DEST",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "channel/enroll.sh:28",
+          "anchoredOn": "SOURCES_DEST",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "channel/enroll.sh:29",
+          "anchoredOn": "AUTH_DEST",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "channel/enroll.sh:88",
+          "anchoredOn": "Signed-By: $KEYRING_DEST",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F5",
+          "anchor": "channel/enroll.sh:98",
+          "anchoredOn": "chmod 600",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F6",
+          "anchor": "channel/enroll.sh:23",
+          "anchoredOn": "SUITE",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `SUITE` (0/1 long tokens)",
+          "anchorCited": false
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 8,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-8.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-8.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/fde-station",
+      "model": "khal/deepseek-v4-flash",
+      "need": 5,
+      "factTotal": 5,
+      "found": 5,
+      "weak": 0,
+      "missed": 0,
+      "anchorsCited": 4,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 20,
+      "citationsResolved": 20,
+      "answerChars": 2776,
+      "wallSeconds": 225.5,
+      "iterations": 5,
+      "tokensIn": 138904,
+      "tokensOut": 19514,
+      "costUsd": 0.03,
+      "recursiveSpawns": 3,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 5 iterations · 138,904 in / 19,514 out · $0.03 · 225.3s · session sess_c271e493c266948d",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "channel/publish.sh:52",
+          "anchoredOn": "REPO_SLUG",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "channel/publish.sh:56",
+          "anchoredOn": "KEEP",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "channel/publish.sh:59",
+          "anchoredOn": "ORIGIN",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "channel/publish.sh:64",
+          "anchoredOn": "ARCH",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F5",
+          "anchor": "channel/publish.sh:175",
+          "anchoredOn": "DIST_DIR",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": true
+    }
+  ]
+}

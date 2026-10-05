@@ -1,0 +1,24 @@
+node_modules/
+# dist/ is committed to the repo so git-URL consumers (e.g.
+# `bun add git+https://github.com/...#<sha>`) get a working build WITHOUT
+# needing to run the `prepare` hook. Bun's default-off trusted-script
+# policy and devDependency resolution quirks make prepare unreliable for
+# some install flows; committing dist/ sidesteps both. Trade-off:
+# +≈500 KB git size and dist/ diffs accompanying src/ edits. See
+# khal-os/brain PR #353 CI failure that triggered this switch.
+*.js.map
+*.d.ts.map
+.env
+.env.*
+
+# Scaffolded config files (user-generated, not part of the package)
+/SYSTEM.md
+/CONTEXT.md
+/TOOLS.md
+/CRITERIA.md
+/MODEL.md
+python/__pycache__/
+competition/
+
+# Gate work artifacts (wish rlmx-v2-prime-backend): mirrors, fixtures, argv logs
+.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/

@@ -1,0 +1,5 @@
+# gen-13025 · khal/deepseek-v4-pro · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 5 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=16/16 pass=true iters=8 spawns=4 wall=362.7s cost=$0.22 chars=4055 root=/home/namastex/prod/genie-desktop
+ROUND gen=13025 facts=5/5 fitness=1 weak=0 tasksPassed=1/1 runsOk=1/1 c2fail=0 c3fail=0 cites=16/16 spawns=4 cost=$0.22 wall=362.9s

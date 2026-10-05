@@ -1,0 +1,832 @@
+{
+  "label": "station arm (station/qwen3.5-2b-FLM, n=2, NOT rank-comparable)",
+  "model": "station/qwen3.5-2b-FLM",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "systemChars": 27840,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "replicates": [
+    {
+      "name": "rep-1",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/station-arm/rep-1",
+      "label": "station-arm-rep1"
+    },
+    {
+      "name": "rep-2",
+      "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/station-arm/rep-2",
+      "label": "station-arm-rep2"
+    }
+  ],
+  "rules": {
+    "coverage": "a fact counts in the union if it is HIT in at least one replicate; WEAK never counts",
+    "fabrication": "criterion 3 (and criterion 2) PASS in the union only if EVERY replicate passed — a failure in either counts against the union",
+    "needed": "the fact count must be identical across replicates or the pooling is refused",
+    "provenance": "verdicts are read verbatim from each replicate's summary.json; no scorer is re-run and no rule is re-decided here",
+    "vacuous": "criteria 2 and 3 from a replicate that did not score, whose run is !ok, or that emitted 0 citations are VACUOUS — score-task.mjs had no citation to fail, so the PASS is the absence of a measurement. The combining rule is unchanged; the support is labelled (tasks[].criteriaVacuous, totals.vacuousCriteria) so a PASS cannot be read as evidence."
+  },
+  "totals": {
+    "replicates": 2,
+    "tasks": 6,
+    "needed": 34,
+    "perReplicateFound": [
+      0,
+      0
+    ],
+    "unionFound": 0,
+    "runsOk": [
+      6,
+      6
+    ],
+    "c2Failures": 1,
+    "c3Failures": 1,
+    "vacuousCriteria": 6,
+    "vacuousCriteriaDetail": [
+      {
+        "task": 3,
+        "replicate": "rep-1",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 809
+      },
+      {
+        "task": 3,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 572
+      },
+      {
+        "task": 4,
+        "replicate": "rep-1",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 397
+      },
+      {
+        "task": 4,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 1
+      },
+      {
+        "task": 5,
+        "replicate": "rep-1",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 1074
+      },
+      {
+        "task": 5,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 6478
+      },
+      {
+        "task": 6,
+        "replicate": "rep-1",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 449
+      },
+      {
+        "task": 6,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 789
+      },
+      {
+        "task": 7,
+        "replicate": "rep-1",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 174
+      },
+      {
+        "task": 7,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 1495
+      },
+      {
+        "task": 8,
+        "replicate": "rep-2",
+        "why": "0 citations — nothing for criteria 2/3 to fail",
+        "c2": "PASS",
+        "c3": "PASS",
+        "answerChars": 661
+      }
+    ],
+    "fabrications": 1,
+    "citationFailures": 1,
+    "citations": [
+      1,
+      0
+    ],
+    "citationsResolved": [
+      0,
+      0
+    ],
+    "spawnsTotal": [
+      0,
+      0
+    ],
+    "spawnsMinPerRun": 0,
+    "spawnsMaxPerRun": 0,
+    "costUsd": [
+      0,
+      0
+    ],
+    "wallSeconds": [
+      2082,
+      2277
+    ],
+    "perReplicateCoverage": [
+      0,
+      0
+    ],
+    "unionCoverage": 0,
+    "replicateSpread": 0,
+    "unionLift": 0
+  },
+  "tasks": [
+    {
+      "task": 3,
+      "needed": 7,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "src/xdna_top/npu_power.py:30",
+          "anchoredOn": "DEBUGFS_ACCEL",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "src/xdna_top/npu_power.py:115",
+          "anchoredOn": "debugfs_accel_absent",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/xdna_top/npu_power.py:123",
+          "anchoredOn": "debugfs_nodes_unreadable",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "src/xdna_top/npu_power.py:130",
+          "anchoredOn": "debugfs_nodes_unparsable",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/xdna_top/npu_power.py:84",
+          "anchoredOn": "m.group(\"lb\") == \"[\"",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/discover_sysfs.py:18",
+          "anchoredOn": "CPU-only fallback",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F7",
+          "anchor": "src/xdna_top/discover_sysfs.py:55",
+          "anchoredOn": "name == \"amdgpu\"",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-1",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 809
+        },
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 572
+        }
+      ],
+      "citations": [
+        0,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        14,
+        14
+      ],
+      "wallSeconds": [
+        893.3,
+        187
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    },
+    {
+      "task": 4,
+      "needed": 6,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "src/xdna_top/record.py:22",
+          "anchoredOn": "RECORD_SCHEMA_VERSION",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "src/xdna_top/record.py:23",
+          "anchoredOn": "RECORD_KIND",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/xdna_top/record.py:227",
+          "anchoredOn": "json.dumps(event)",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "src/xdna_top/exporter.py:13",
+          "anchoredOn": "start_http_server",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/xdna_top/exporter.py:106",
+          "anchoredOn": "XdnaCollector",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F6",
+          "anchor": "src/xdna_top/exporter.py:62",
+          "anchoredOn": "named WITHOUT _total",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-1",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 397
+        },
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 1
+        }
+      ],
+      "citations": [
+        0,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        14,
+        2
+      ],
+      "wallSeconds": [
+        167.4,
+        900.4
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    },
+    {
+      "task": 5,
+      "needed": 5,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/ptyManager.ts:38",
+          "anchoredOn": "new Map<string, PtyRecord>()",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/ptyManager.ts:695",
+          "anchoredOn": "resizePty",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/ptyManager.ts:708",
+          "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/ptyManager.ts:727",
+          "anchoredOn": "gracefulKillProc",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/ptyManager.ts:127",
+          "anchoredOn": "RESERVED_ENV_KEYS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-1",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 1074
+        },
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 6478
+        }
+      ],
+      "citations": [
+        0,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        14,
+        14
+      ],
+      "wallSeconds": [
+        199,
+        405
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    },
+    {
+      "task": 6,
+      "needed": 5,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/RtkService.ts:180",
+          "anchoredOn": "findCmd",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/RtkService.ts:32",
+          "anchoredOn": "FETCH_API_TIMEOUT_MS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/RtkService.ts:33",
+          "anchoredOn": "FETCH_BODY_TIMEOUT_MS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/RtkService.ts:34",
+          "anchoredOn": "TAR_TIMEOUT_MS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/RtkService.ts:357",
+          "anchoredOn": "MAX_ATTEMPTS",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-1",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 449
+        },
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 789
+        }
+      ],
+      "citations": [
+        0,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        14,
+        14
+      ],
+      "wallSeconds": [
+        413.5,
+        292.4
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    },
+    {
+      "task": 7,
+      "needed": 6,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "channel/enroll.sh:27",
+          "anchoredOn": "KEYRING_DEST",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "channel/enroll.sh:28",
+          "anchoredOn": "SOURCES_DEST",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "channel/enroll.sh:29",
+          "anchoredOn": "AUTH_DEST",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "channel/enroll.sh:88",
+          "anchoredOn": "Signed-By: $KEYRING_DEST",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "channel/enroll.sh:98",
+          "anchoredOn": "chmod 600",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F6",
+          "anchor": "channel/enroll.sh:23",
+          "anchoredOn": "SUITE",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "PASS",
+      "c3": "PASS",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-1",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 174
+        },
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 1495
+        }
+      ],
+      "citations": [
+        0,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 0,
+      "fabrications": 0,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        6,
+        14
+      ],
+      "wallSeconds": [
+        258.7,
+        303.5
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    },
+    {
+      "task": 8,
+      "needed": 5,
+      "perReplicate": [
+        0,
+        0
+      ],
+      "perReplicateOk": [
+        true,
+        true
+      ],
+      "unionFound": 0,
+      "unionMisses": [
+        {
+          "id": "F1",
+          "anchor": "channel/publish.sh:52",
+          "anchoredOn": "REPO_SLUG",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F2",
+          "anchor": "channel/publish.sh:56",
+          "anchoredOn": "KEEP",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F3",
+          "anchor": "channel/publish.sh:59",
+          "anchoredOn": "ORIGIN",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F4",
+          "anchor": "channel/publish.sh:64",
+          "anchoredOn": "ARCH",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        },
+        {
+          "id": "F5",
+          "anchor": "channel/publish.sh:175",
+          "anchoredOn": "DIST_DIR",
+          "verdicts": [
+            "MISS",
+            "MISS"
+          ]
+        }
+      ],
+      "unstable": [],
+      "c2": "FAIL",
+      "c3": "FAIL",
+      "criteriaVacuous": [
+        {
+          "replicate": "rep-2",
+          "why": "0 citations — nothing for criteria 2/3 to fail",
+          "c2": "PASS",
+          "c3": "PASS",
+          "answerChars": 661
+        }
+      ],
+      "citations": [
+        1,
+        0
+      ],
+      "citationsResolved": [
+        0,
+        0
+      ],
+      "citationFailures": 1,
+      "fabrications": 1,
+      "spawns": [
+        0,
+        0
+      ],
+      "iterations": [
+        14,
+        14
+      ],
+      "wallSeconds": [
+        134.8,
+        186.1
+      ],
+      "costUsd": [
+        0,
+        0
+      ]
+    }
+  ]
+}

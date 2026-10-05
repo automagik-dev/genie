@@ -1,0 +1,122 @@
+{
+  "gen": 13025,
+  "label": "matrix-khal-deepseek-v4-pro-t5-wall",
+  "model": "khal/deepseek-v4-pro",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "heldOutNeverRun": [
+    1,
+    2
+  ],
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "systemChars": 27840,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "1500000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "1800000",
+    "PARITY_CALL_TIMEOUT_MS": "1500000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "factRule": {
+    "HIT": "namesAnchorPath && termHit — counts as found",
+    "WEAK": "namesAnchorPath && >= half the term's long tokens — reported, NOT counted",
+    "MISS": "everything else",
+    "caveat": "a mechanical proxy for criterion 1, strictly harsher than the rubric and blind to whether the claim is correct; a training signal, never a parity number"
+  },
+  "totals": {
+    "tasks": 1,
+    "runsOk": 1,
+    "scoredTasks": 1,
+    "factsFound": 5,
+    "factsWeak": 0,
+    "factsNeeded": 5,
+    "tasksMechanicalPass": 1,
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "citations": 16,
+    "citationsResolved": 16,
+    "recursiveSpawns": 4,
+    "costUsd": 0.22,
+    "wallSeconds": 362.9,
+    "fitness": 1
+  },
+  "tasks": [
+    {
+      "task": 5,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/matrix/khal_deepseek-v4-pro/rerun-task5-repl-wall/runs/task-5.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/matrix/khal_deepseek-v4-pro/rerun-task5-repl-wall/runs/task-5.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/genie-desktop",
+      "model": "khal/deepseek-v4-pro",
+      "need": 5,
+      "factTotal": 5,
+      "found": 5,
+      "weak": 0,
+      "missed": 0,
+      "anchorsCited": 5,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 16,
+      "citationsResolved": 16,
+      "answerChars": 4055,
+      "wallSeconds": 362.7,
+      "iterations": 8,
+      "tokensIn": 112842,
+      "tokensOut": 17949,
+      "costUsd": 0.22,
+      "recursiveSpawns": 4,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-pro · 8 iterations · 112,842 in / 17,949 out · $0.22 · 362.5s · session sess_54c6a911b14ad6b9",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/main/services/ptyManager.ts:38",
+          "anchoredOn": "new Map<string, PtyRecord>()",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "src/main/services/ptyManager.ts:695",
+          "anchoredOn": "resizePty",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "src/main/services/ptyManager.ts:708",
+          "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "src/main/services/ptyManager.ts:727",
+          "anchoredOn": "gracefulKillProc",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F5",
+          "anchor": "src/main/services/ptyManager.ts:127",
+          "anchoredOn": "RESERVED_ENV_KEYS",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        }
+      ],
+      "mechanicalPass": true
+    }
+  ]
+}

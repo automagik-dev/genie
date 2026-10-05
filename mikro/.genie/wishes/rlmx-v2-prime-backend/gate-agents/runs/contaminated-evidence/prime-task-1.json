@@ -1,0 +1,57 @@
+{
+  "task": 1,
+  "tasksDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+  "taskFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks/1.md",
+  "suite": "frozen-eval",
+  "root": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+  "model": "deepseek/deepseek-v4-flash",
+  "round": "gate-v2-prime",
+  "startedAt": "2026-08-16T19:04:04.912Z",
+  "question": "Read-only exploration of /home/namastex/prod/brain (do NOT edit anything). Search very thoroughly and answer with specific file paths and line numbers for every claim.\n\nQuestions:\n1. Every cloud model/provider dependency: where are Gemini embeddings called (model names, dims, task types)? Where is rlmx used and which models/providers does it default to (look for model ids like gemini-*, claude-*, gpt-*, provider config)? Any Anthropic/OpenAI/Google API usage? List env vars required (GEMINI_API_KEY etc.) and the files that read them.\n2. The embedding pipeline: which file implements embedding? Is there any local/OpenAI-compatible embedding fallback or is Gemini hard-required? What are embedDims defaults and where is the pgvector schema defined?\n3. Multimodal ingestion: how are audio/images/video/pdf ingested (which files, which models do transcription/vision)? Is it python/ (brain_tools.py?) or src/?\n4. Storage: list the Postgres tables and where the schema/migrations live. What is pgserve (embedded postgres?) — which file? What are the three deployment modes in code?\n5. Episodic/session memory: summarize .genie/wishes/brain-memory-organ and khortex-memory-sense (and cortex wish if present) — what memory model do they propose (episodic vs semantic, decay, consolidation)? Also check plugins/brain-khortex and memory/ dir.\n6. Anything about local-model support already planned/present (llama.cpp, Lemonade, Ollama, local embeddings) — search for those terms.\nReturn a structured report with paths like src/lib/foo.ts:123. Be exhaustive on question 1 and 2.",
+  "provenance": {
+    "promptSha256": "22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d",
+    "promptChars": 17788,
+    "promptSnapshot": "parity/prompts/22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d.md",
+    "agentYamlSha256": "74f5166d4b805a788f3ab55688aeb102925fa305ba41ac23ee498260c356f370",
+    "rootGit": {
+      "head": "1c6c9caf9ea11bb97b1d29efea44887339ffc0af",
+      "branch": "main",
+      "dirty": null,
+      "statusError": "Command failed: git -C /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain status --porcelain\nwarning: unable to access '.gitattributes': Too many levels of symbolic links\nerror: expected submodule path 'docs' not to be a symbolic link\n"
+    },
+    "rootFrozen": "/home/namastex/prod/brain",
+    "rlmxGit": {
+      "head": "2c1a49bed1fe75fcb13f2e09496bc64741ec4595",
+      "branch": "wish/rlmx-v2-prime-backend",
+      "dirty": true,
+      "statusError": null
+    },
+    "recipeDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore",
+    "agent": "explore",
+    "tool": "rlmx_explore",
+    "childModelPin": null,
+    "replTimeoutMs": null,
+    "runTimeoutMs": "600000",
+    "callTimeoutMs": 300000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "serverReadyMs": 466,
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore"
+  ],
+  "ok": false,
+  "isError": true,
+  "wallSeconds": 0.9,
+  "requestChars": 1595,
+  "resultChars": 273,
+  "answer": "rlmx rlmx_explore failed: prime backend: agent \"explore\" declares custom REPL tools (TOOLS.md), which the prime leg cannot honor (they are Python REPL functions prime's environment does not have). Remove it from the agent/config or switch the agent back to `backend: rlmx`.",
+  "footer": "",
+  "fullText": "rlmx rlmx_explore failed: prime backend: agent \"explore\" declares custom REPL tools (TOOLS.md), which the prime leg cannot honor (they are Python REPL functions prime's environment does not have). Remove it from the agent/config or switch the agent back to `backend: rlmx`.",
+  "structuredContent": {
+    "answer": "rlmx rlmx_explore failed: prime backend: agent \"explore\" declares custom REPL tools (TOOLS.md), which the prime leg cannot honor (they are Python REPL functions prime's environment does not have). Remove it from the agent/config or switch the agent back to `backend: rlmx`.",
+    "session_id": "sess_54c9ae3374f364be"
+  },
+  "progress": [],
+  "stderr": "(node:6834) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\nrlmx mcp: 1 microagent discovered (explore)\n"
+}

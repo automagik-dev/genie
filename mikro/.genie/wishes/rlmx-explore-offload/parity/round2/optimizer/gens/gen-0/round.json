@@ -1,0 +1,152 @@
+{
+  "gen": 0,
+  "label": "gen-0-khal-deepseek-v4-flash",
+  "model": "khal/deepseek-v4-flash",
+  "concurrency": 2,
+  "taskTimeoutS": 2400,
+  "tasks": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "heldOutRefused": [
+    1,
+    2
+  ],
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "suite": "round2-train",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "systemSha256": "06c6ea947c34a73437bb90220ac68e940532dbc72e3da6d24fea4d1556f6abb9",
+    "systemChars": 21327,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "600000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+    "PARITY_CALL_TIMEOUT_MS": "600000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "pinChildModel": true,
+  "groundTruthDrift": [],
+  "groundTruthDriftAllowed": false,
+  "roots": [
+    {
+      "root": "/home/namastex/prod/xdna-top",
+      "rlmxExistedBefore": false,
+      "rlmxExistsAfter": true,
+      "createdByThisRound": true,
+      "cleanedUp": true,
+      "removed": [
+        "CRITERIA.md",
+        "SYSTEM.md",
+        "TOOLS.md",
+        "rlmx.yaml"
+      ]
+    },
+    {
+      "root": "/home/namastex/prod/genie-desktop",
+      "rlmxExistedBefore": false,
+      "rlmxExistsAfter": true,
+      "createdByThisRound": true,
+      "cleanedUp": true,
+      "removed": [
+        "CRITERIA.md",
+        "SYSTEM.md",
+        "TOOLS.md",
+        "rlmx.yaml"
+      ]
+    },
+    {
+      "root": "/home/namastex/prod/fde-station",
+      "rlmxExistedBefore": false,
+      "rlmxExistsAfter": true,
+      "createdByThisRound": true,
+      "cleanedUp": true,
+      "removed": [
+        "CRITERIA.md",
+        "SYSTEM.md",
+        "TOOLS.md",
+        "rlmx.yaml"
+      ]
+    }
+  ],
+  "rlmxGit": {
+    "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+    "branch": "wish/rlmx-explore-offload",
+    "dirty": true
+  },
+  "genDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0",
+  "startedAt": "2026-07-27T07:56:18.589Z",
+  "finishedAt": "2026-07-27T08:06:59.811Z",
+  "wallSeconds": 641.2,
+  "perTask": [
+    {
+      "task": 3,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 175.1,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-3.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-3.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-3.score.json"
+    },
+    {
+      "task": 4,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 218.5,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-4.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-4.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-4.score.json"
+    },
+    {
+      "task": 5,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 279.4,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-5.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-5.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-5.score.json"
+    },
+    {
+      "task": 6,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 82.5,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-6.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-6.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-6.score.json"
+    },
+    {
+      "task": 7,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 114.4,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-7.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-7.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-7.score.json"
+    },
+    {
+      "task": 8,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 225.7,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-8.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/logs/task-8.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-0/runs/task-8.score.json"
+    }
+  ],
+  "failedTasks": [],
+  "exitCode": 0
+}

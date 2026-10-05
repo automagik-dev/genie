@@ -1,0 +1,78 @@
+{
+  "arm": "rlmx",
+  "task": 8,
+  "model": "khal/glm-5.2",
+  "round": "matrix-khal-glm-5-2",
+  "footer": "rlmx · agent=explore-r · khal/glm-5.2 · 1 iteration · 355,226 in / 60,479 out · $0.65 · 1149.8s · session sess_ad2738e887d4c714",
+  "wallSeconds": 1150,
+  "requestChars": 284,
+  "resultChars": 133,
+  "ok": true,
+  "root": "/home/namastex/prod/fde-station",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 1,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "channel/publish.sh:52",
+      "anchoredOn": "REPO_SLUG",
+      "claim": "The publish destination is an environment-overridable default, REPO_SLUG, so a fork redirects publishing by setting one variable instead of editing the script.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "channel/publish.sh:56",
+      "anchoredOn": "KEEP",
+      "claim": "Retention is bounded by KEEP, a small default: the channel prunes old versions rather than accumulating them, because it is a channel and not an archive.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "channel/publish.sh:59",
+      "anchoredOn": "ORIGIN",
+      "claim": "The release metadata advertises an ORIGIN, which is the identity apt displays and the field an apt pin can match against.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "channel/publish.sh:64",
+      "anchoredOn": "ARCH",
+      "claim": "One architecture is indexed, set by ARCH, and the line carries the reason: arch-all packages are indexed under the host arch tree rather than a separate one.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "channel/publish.sh:175",
+      "anchoredOn": "DIST_DIR",
+      "claim": "The distribution index directory is derived from the suite rather than hardcoded: DIST_DIR is built from the suite name at publish time.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

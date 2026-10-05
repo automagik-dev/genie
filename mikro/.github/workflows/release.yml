@@ -1,0 +1,275 @@
+name: Release Metadata
+
+# Every merge into main produces a GitHub release that matches main.
+#
+# main is the CLI/application release boundary consumed by scripts/install.sh
+# and `mikro update`. This workflow keeps release metadata in lockstep with it:
+#   - If main's package.json version is already released, bump the calendar
+#     version (scripts/version.mjs), commit that bump to main, tag the bump
+#     commit.
+#   - Otherwise release the version main already carries, so a reviewed bump
+#     that landed inside a PR is honoured as-is and never double-bumped.
+#
+# Two rules keep tags honest (docs/release-contract.md, "Coherence invariants"):
+#   1. Never derive a tag without committing the matching version files. The old
+#      date-derived hotfix tag logic was removed in de101ee for violating this.
+#   2. Never tag a commit whose version files disagree with the tag name. The
+#      release target is the bump commit, NOT github.sha — the merge commit still
+#      holds the previous version. The resolve step asserts this.
+#
+# The bump commit carries [auto-version], which this workflow skips, to break
+# the push -> release -> push loop. It deliberately does not use [skip ci]: that
+# marker is honoured by every workflow, and main's HEAD is the install/update
+# target. (Pushes made with github.token trigger no workflow runs at all, so the
+# bump commit gets no CI run of its own either way; its parent merge commit did,
+# and the bump changes only version literals. See docs/release-contract.md.)
+#
+# No workflow publishes to npm. The CLI and SDK are distributed from git; see
+# docs/release-contract.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Serialize. Two rapid merges would otherwise compute the same daily counter N
+# and race on the push to main. GitHub keeps only the newest queued run per
+# group, so a burst of merges can collapse into one release spanning all of
+# them — every commit still ships inside a release.
+concurrency:
+  group: release-metadata
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create Release
+    # head_commit is null on workflow_dispatch, so contains() is false and the
+    # job runs. The marker is a suffix on the scripts/version.mjs bump message,
+    # hence contains() rather than startsWith().
+    if: "!contains(github.event.head_commit.message, '[auto-version]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are required: scripts/version.mjs derives N from them and the
+          # changelog range is resolved from them.
+          fetch-depth: 0
+
+      # Select the newest release source without hiding a failed release. A
+      # normal newer merge owns its queued run, so this older run can stop. An
+      # auto-version tip is different: GITHUB_TOKEN pushes create no new run,
+      # so a rerun must resume that tip when its GitHub release is still absent.
+      - name: Select current release source
+        id: stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --quiet origin "${GITHUB_REF_NAME}" --tags
+          TIP=$(git rev-parse "origin/${GITHUB_REF_NAME}")
+
+          if [ "$TIP" = "$GITHUB_SHA" ]; then
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "$TIP"; then
+            echo "::error::${GITHUB_REF_NAME} moved to unrelated commit ${TIP:0:7}; refusing to classify this run as superseded"
+            exit 1
+          fi
+
+          SUBJECT=$(git show -s --format=%s "$TIP")
+          if [[ "$SUBJECT" != *"[auto-version]"* ]]; then
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+            echo "${GITHUB_REF_NAME} is at newer merge ${TIP:0:7}; its queued run owns the release."
+            exit 0
+          fi
+
+          VERSION=$(git show "${TIP}:package.json" | jq -r '.version')
+          TAG="v${VERSION}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::auto-version tip ${TIP:0:7} has no package version"
+            exit 1
+          fi
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            if ! git rev-parse -q --verify "refs/tags/${TAG}" > /dev/null; then
+              echo "::error::GitHub release ${TAG} exists but its git tag is missing"
+              exit 1
+            fi
+            TAG_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+            if [ "$TAG_SHA" != "$TIP" ]; then
+              echo "::error::GitHub release ${TAG} exists at ${TAG_SHA:0:7}, not current auto-version tip ${TIP:0:7}"
+              exit 1
+            fi
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+            echo "${TAG} already releases current tip ${TIP:0:7}; nothing to resume."
+          else
+            git checkout --detach "$TIP"
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+            echo "source_sha=${TIP}" >> "$GITHUB_OUTPUT"
+            echo "Resuming missing release ${TAG} from auto-version tip ${TIP:0:7}."
+          fi
+
+      - name: Resolve package release version
+        id: ver
+        if: steps.stale.outputs.superseded != 'true'
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::package.json version is empty"
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Release tag resolved from package.json: v${VERSION}"
+
+      - name: Check whether that release already exists
+        id: existing
+        if: steps.stale.outputs.superseded != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${TAG} is already released — auto-bumping the calendar version."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "${TAG} is unreleased — releasing main's committed version as-is."
+          fi
+
+      - name: Auto-bump calendar version
+        id: bump
+        if: steps.stale.outputs.superseded != 'true' && (steps.existing.outputs.exists == 'true')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # scripts/version.mjs is dependency-free by design, so this needs no
+          # setup-node and no npm ci.
+          node scripts/version.mjs
+
+          VERSION=$(jq -r '.version' package.json)
+          TAG="v${VERSION}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" > /dev/null; then
+            echo "::error::scripts/version.mjs produced ${TAG}, which already exists as a tag"
+            exit 1
+          fi
+
+          git add package.json package-lock.json src/version.ts dist/src/version.js dist/src/version.d.ts
+          if git diff --cached --quiet; then
+            echo "::error::version bump produced no file changes"
+            exit 1
+          fi
+
+          # The message must start with `chore(version)` so cliff.toml skips it
+          # in release notes, and carry [auto-version] so this workflow skips it.
+          git commit -m "chore(version): bump to ${VERSION} [auto-version]"
+
+          # A newer merge can land after the upfront stale check but before this
+          # push. That non-fast-forward is healthy supersession only when the
+          # run's original SHA is now an ancestor of the remote tip; any other
+          # push failure remains fatal.
+          if ! git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
+            git fetch --quiet origin "${GITHUB_REF_NAME}"
+            TIP=$(git rev-parse "origin/${GITHUB_REF_NAME}")
+            LOCAL_HEAD=$(git rev-parse HEAD)
+            if [ "$TIP" = "$LOCAL_HEAD" ]; then
+              echo "Push client returned nonzero, but remote confirms bump ${LOCAL_HEAD:0:7}; continuing release creation."
+            elif [ "$TIP" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$TIP"; then
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              echo "${GITHUB_REF_NAME} advanced to ${TIP:0:7} while this run was bumping ${GITHUB_SHA:0:7} — superseded; the queued run releases."
+              exit 0
+            else
+              echo "::error::version bump push failed and remote ${TIP:0:7} does not supersede ${GITHUB_SHA:0:7}"
+              exit 1
+            fi
+          fi
+
+          echo "superseded=false" >> "$GITHUB_OUTPUT"
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Bumped ${GITHUB_REF_NAME} to ${TAG} ($(git rev-parse --short HEAD))"
+
+      - name: Resolve release target
+        if: steps.stale.outputs.superseded != 'true' && (steps.bump.outputs.superseded != 'true')
+        id: target
+        env:
+          TAG: ${{ steps.bump.outputs.tag || steps.ver.outputs.tag }}
+          SHA: ${{ steps.bump.outputs.sha || steps.ver.outputs.sha }}
+        run: |
+          # Enforce the coherence invariant before anything is published: the
+          # tagged commit's version files must equal the tag.
+          PKG_VERSION=$(git show "${SHA}:package.json" | jq -r '.version')
+          TS_VERSION=$(git show "${SHA}:src/version.ts" | sed -n "s/.*VERSION = '\(.*\)'.*/\1/p")
+
+          if [ "v${PKG_VERSION}" != "${TAG}" ] || [ "v${TS_VERSION}" != "${TAG}" ]; then
+            echo "::error::refusing to cut ${TAG} at ${SHA}: package.json=${PKG_VERSION} src/version.ts=${TS_VERSION}"
+            exit 1
+          fi
+
+          # `gh release create` silently ignores --target when the tag already
+          # exists, so a pre-existing tag must already point at SHA.
+          if git rev-parse -q --verify "refs/tags/${TAG}" > /dev/null; then
+            TAG_SHA=$(git rev-parse "refs/tags/${TAG}^{commit}")
+            if [ "${TAG_SHA}" != "${SHA}" ]; then
+              echo "::error::refusing to cut ${TAG}: the tag already exists at ${TAG_SHA}, not ${SHA}"
+              exit 1
+            fi
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${TAG} at ${SHA}"
+
+      - name: Find previous release tag
+        if: steps.stale.outputs.superseded != 'true' && (steps.bump.outputs.superseded != 'true')
+        id: prev
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          # Tags reachable from the release target, newest first. Resolved from
+          # git rather than `gh release list`, whose ordering is API created_at
+          # and can invert (a release cut on a pre-existing tag reports the tag
+          # target's commit date), which would pick the wrong changelog window.
+          PREV=$(git tag --list 'v*' --merged "${SHA}" --sort=-creatordate | grep -vxF "${TAG}" | head -1 || true)
+          echo "tag=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Previous release tag: ${PREV:-<none>}"
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        if: steps.stale.outputs.superseded != 'true' && (steps.bump.outputs.superseded != 'true') && (steps.prev.outputs.tag != '')
+        with:
+          config: cliff.toml
+          args: ${{ format('{0}..{1}', steps.prev.outputs.tag, steps.target.outputs.sha) }}
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Create release
+        if: steps.stale.outputs.superseded != 'true' && (steps.bump.outputs.superseded != 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
+          TAG: ${{ steps.target.outputs.tag }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          if [ -z "$RELEASE_NOTES" ]; then
+            RELEASE_NOTES="Mikro release metadata for the main branch application boundary and SDK package version."
+          fi
+          printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
+          gh release create "${TAG}" \
+            --target "${SHA}" \
+            --title "${TAG}" \
+            --notes-file /tmp/release-notes.md

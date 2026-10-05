@@ -1,0 +1,80 @@
+{
+  "task": 6,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/genie-desktop",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen4-rep1-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T12:00:07.959Z",
+  "question": "This app integrates an external CLI called rtk. How does it find the binary on a machine, what happens on Windows versus everywhere else, and what timeouts and retry limits bound the download and unpack path? Answer with path:line citations.",
+  "provenance": {
+    "promptSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "promptChars": 36806,
+    "promptSnapshot": "parity/prompts/640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "3da8750fdc543ff3b7b2ab4c1a2d16aec7f74d35",
+      "branch": "wish/khal-native-theme",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 242.7,
+  "requestChars": 254,
+  "resultChars": 2299,
+  "answer": "The rtk binary is located in `src/main/services/RtkService.ts` through a two‑tier resolution:\n\n1. **Managed path** — `getManagedBinPath()` (line 132) joins `getManagedBinDir()` (line 128, `join(app.getPath('userData'), 'bin')`) with a platform-dependent `exe` (line 133): `process.platform === 'win32' ? 'rtk.exe' : 'rtk'`.\n\n2. **$PATH fallback** — `resolveBinary()` (line 164) first checks the managed path; if absent, it runs `findCmd` (line 180): `where.exe` on Windows, `which` elsewhere, searching for `'rtk'`. The managed binary is also linked into `~/.local/bin/rtk` via `getUserPathSymlinkPath()` (line 145), which returns `null` on Windows (line 146).\n\n**Windows vs other platforms** — the three platform switches above all differ for Windows: the binary is named `rtk.exe` not `rtk`, the lookup command is `where.exe` not `which`, and the user‑bin symlink is skipped. Additionally, `isPlatformDownloadable()` (line 273) returns `false` for Windows (`return false` at line 276); no native release exists upstream, so Windows users install manually.\n\n**Timeouts and retries in the download/unpack path:**  \n- `FETCH_API_TIMEOUT_MS = 60_000` (60 s, line 32) — GitHub API release request  \n- `FETCH_BODY_TIMEOUT_MS = 300_000` (5 min, line 33) — asset download body  \n- `TAR_TIMEOUT_MS = 120_000` (2 min, line 34) — `tar` extraction  \n- `MAX_ATTEMPTS = 3` (line 357) — retry count for truncated/corrupt CDN bytes\n\nCitations:\n- src/main/services/RtkService.ts:128 — `getManagedBinDir`\n- src/main/services/RtkService.ts:132 — `getManagedBinPath`\n- src/main/services/RtkService.ts:133 — `exe`\n- src/main/services/RtkService.ts:145 — `getUserPathSymlinkPath`\n- src/main/services/RtkService.ts:146 — `if (process.platform === 'win32') return null`\n- src/main/services/RtkService.ts:164 — `resolveBinary`\n- src/main/services/RtkService.ts:180 — `findCmd`\n- src/main/services/RtkService.ts:273 — `isPlatformDownloadable`\n- src/main/services/RtkService.ts:32 — `FETCH_API_TIMEOUT_MS`\n- src/main/services/RtkService.ts:33 — `FETCH_BODY_TIMEOUT_MS`\n- src/main/services/RtkService.ts:34 — `TAR_TIMEOUT_MS`\n- src/main/services/RtkService.ts:357 — `MAX_ATTEMPTS`\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 11 iterations · 145,496 in / 20,763 out · $0.03 · 242.5s · session sess_0608084128b33843",
+  "fullText": "The rtk binary is located in `src/main/services/RtkService.ts` through a two‑tier resolution:\n\n1. **Managed path** — `getManagedBinPath()` (line 132) joins `getManagedBinDir()` (line 128, `join(app.getPath('userData'), 'bin')`) with a platform-dependent `exe` (line 133): `process.platform === 'win32' ? 'rtk.exe' : 'rtk'`.\n\n2. **$PATH fallback** — `resolveBinary()` (line 164) first checks the managed path; if absent, it runs `findCmd` (line 180): `where.exe` on Windows, `which` elsewhere, searching for `'rtk'`. The managed binary is also linked into `~/.local/bin/rtk` via `getUserPathSymlinkPath()` (line 145), which returns `null` on Windows (line 146).\n\n**Windows vs other platforms** — the three platform switches above all differ for Windows: the binary is named `rtk.exe` not `rtk`, the lookup command is `where.exe` not `which`, and the user‑bin symlink is skipped. Additionally, `isPlatformDownloadable()` (line 273) returns `false` for Windows (`return false` at line 276); no native release exists upstream, so Windows users install manually.\n\n**Timeouts and retries in the download/unpack path:**  \n- `FETCH_API_TIMEOUT_MS = 60_000` (60 s, line 32) — GitHub API release request  \n- `FETCH_BODY_TIMEOUT_MS = 300_000` (5 min, line 33) — asset download body  \n- `TAR_TIMEOUT_MS = 120_000` (2 min, line 34) — `tar` extraction  \n- `MAX_ATTEMPTS = 3` (line 357) — retry count for truncated/corrupt CDN bytes\n\nCitations:\n- src/main/services/RtkService.ts:128 — `getManagedBinDir`\n- src/main/services/RtkService.ts:132 — `getManagedBinPath`\n- src/main/services/RtkService.ts:133 — `exe`\n- src/main/services/RtkService.ts:145 — `getUserPathSymlinkPath`\n- src/main/services/RtkService.ts:146 — `if (process.platform === 'win32') return null`\n- src/main/services/RtkService.ts:164 — `resolveBinary`\n- src/main/services/RtkService.ts:180 — `findCmd`\n- src/main/services/RtkService.ts:273 — `isPlatformDownloadable`\n- src/main/services/RtkService.ts:32 — `FETCH_API_TIMEOUT_MS`\n- src/main/services/RtkService.ts:33 — `FETCH_BODY_TIMEOUT_MS`\n- src/main/services/RtkService.ts:34 — `TAR_TIMEOUT_MS`\n- src/main/services/RtkService.ts:357 — `MAX_ATTEMPTS`\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 11 iterations · 145,496 in / 20,763 out · $0.03 · 242.5s · session sess_0608084128b33843",
+  "structuredContent": {
+    "session_id": "sess_0608084128b33843"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · working 45s",
+    "agent=explore-r · iteration 2 · 1 recursive spawn",
+    "agent=explore-r · iteration 2 · 2 recursive spawns",
+    "agent=explore-r · iteration 2 · 3 recursive spawns",
+    "agent=explore-r · iteration 2 · 4 recursive spawns",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · working 135s",
+    "agent=explore-r · working 150s",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · working 225s",
+    "agent=explore-r · iteration 11"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

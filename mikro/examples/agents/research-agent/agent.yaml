@@ -1,0 +1,14 @@
+schema_version: 1
+tools_api: 1
+
+shape: loop
+model: gemini-2.5-flash
+
+tools:
+  - fetch-url
+
+system: SYSTEM.md
+
+budget:
+  max_cost: 0.05
+  max_iterations: 6

@@ -1,0 +1,78 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "station/qwen3.5-2b-FLM",
+  "round": "station-arm-rep2",
+  "footer": "rlmx · agent=explore-r · station/qwen3.5-2b-FLM · 14 iterations · 21,963 in / 6,102 out · $0.00 · 404.6s · session sess_05d24b63f249fc6a",
+  "wallSeconds": 405,
+  "requestChars": 297,
+  "resultChars": 6619,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 6478,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/ptyManager.ts:38",
+      "anchoredOn": "new Map<string, PtyRecord>()",
+      "claim": "Live PTY sessions live in one module-level registry keyed by session id — new Map<string, PtyRecord>() at module scope — rather than being tracked per window.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/ptyManager.ts:695",
+      "anchoredOn": "resizePty",
+      "claim": "Resizing is an explicit operation on a session id: resizePty takes the column and row counts, so geometry changes are not a side effect of rendering.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/ptyManager.ts:708",
+      "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+      "claim": "Shutdown is graceful-then-forced on a fixed budget, GRACEFUL_KILL_TIMEOUT_MS, which is 3000 milliseconds.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/ptyManager.ts:727",
+      "anchoredOn": "gracefulKillProc",
+      "claim": "The kill helper gracefulKillProc takes that budget as a default parameter, so an individual caller can shorten or lengthen it without editing the shared constan",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/ptyManager.ts:127",
+      "anchoredOn": "RESERVED_ENV_KEYS",
+      "claim": "A PTY does not simply inherit the parent environment: RESERVED_ENV_KEYS names the variables the app manages itself and that a caller-supplied environment must n",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

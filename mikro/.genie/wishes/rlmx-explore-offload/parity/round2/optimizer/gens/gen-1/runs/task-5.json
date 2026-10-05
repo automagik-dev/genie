@@ -1,0 +1,80 @@
+{
+  "task": 5,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/5.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/genie-desktop",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-1-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T08:26:09.229Z",
+  "question": "In this desktop app, terminal sessions are backed by real PTY processes. Where are the live sessions tracked, how is a resize applied, how is a process shut down and with what timeout, and is there anything special about the environment a PTY is given? Cite path:line for each answer.",
+  "provenance": {
+    "promptSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "promptChars": 27840,
+    "promptSnapshot": "parity/prompts/02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "3da8750fdc543ff3b7b2ab4c1a2d16aec7f74d35",
+      "branch": "wish/khal-native-theme",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/current",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 236,
+  "requestChars": 297,
+  "resultChars": 4362,
+  "answer": "Live PTY sessions are tracked in a module-level `Map<string, PtyRecord>` called `ptys` (src/main/services/ptyManager.ts:38). The `PtyRecord` interface (line 21) holds the node-pty process handle, working directory, owner WebContents, kind (`PtyKind` at line 19), task/feature IDs, and an xterm mirror. A secondary map `pendingInitialPrompts` (line 98) keyed by taskId stores prompts not yet consumed.\n\nResize is applied through `resizePty(id, cols, rows)` (src/main/services/ptyManager.ts:695), which calls `record.proc.resize(cols, rows)` (line 700) on the underlying node-pty instance. The IPC handler at src/main/ipc/ptyIpc.ts:103 receives the `'pty:resize'` event and delegates to it.\n\nShutdown is handled by `gracefulKillProc(proc, timeoutMs)` (src/main/services/ptyManager.ts:727), which sends `SIGTERM` (line 757), then escalates to `SIGKILL` (line 750) after `GRACEFUL_KILL_TIMEOUT_MS` = 3000 ms (line 708). The public entry points are `killPty(id)` (line 789), `killPtyAwait(id)` (line 799), and `killAll()` (line 808). IPC handlers register at src/main/ipc/ptyIpc.ts:113 (`'pty:kill'`) and line 122 (`'pty:kill-await'`).\n\nThe environment differs by PTY type. Shell PTYs (inside `startPty`, line 563) start from a copy of `process.env` (line 591), strip `ELECTRON_RUN_AS_NODE` and `ELECTRON_NO_ATTACH_CONSOLE` (lines 593-594), set `TERM_PROGRAM = 'Apple_Terminal'` on macOS (line 599), set `ZDOTDIR` to the path from `ensureShellConfig()` for zsh (line 604), and inject worktree port variables from `WorkspacePortsRuntime.getEnvForWorktree()` (line 613). Agent PTYs (inside `startDirectPty`, line 405) use `spawnPlan.env`, which is built by `buildDirectEnv()` (src/main/services/ptyManager.ts:231, called from the Claude adapter at src/main/agents/claude/index.ts:46). `buildDirectEnv` sets `TERM_PROGRAM: 'dash'` (line 246), `HOME`, `PATH` (with the rtk-bin directory prepended), and `COLORFGBG` based on the theme (line 251). User-supplied `claudeEnvVars` are merged and filtered against `RESERVED_ENV_KEYS` (line 127) to prevent override of critical variables like `PATH`, `HOME`, `TERM`, etc.\n\nCitations:\n- src/main/services/ptyManager.ts:38 — `const ptys = new Map<string, PtyRecord>()`\n- src/main/services/ptyManager.ts:21 — `interface PtyRecord`\n- src/main/services/ptyManager.ts:19 — `export type PtyKind = 'agent' | 'shell' | 'tui' | 'service'`\n- src/main/services/ptyManager.ts:98 — `const pendingInitialPrompts = new Map<string, string>()`\n- src/main/services/ptyManager.ts:695 — `export function resizePty(id: string, cols: number, rows: number): void`\n- src/main/services/ptyManager.ts:700 — `record.proc.resize(cols, rows)`\n- src/main/ipc/ptyIpc.ts:103 — `ipcMain.on('pty:resize', ...)`\n- src/main/services/ptyManager.ts:727 — `function gracefulKillProc(proc: KillableProc, timeoutMs = GRACEFUL_KILL_TIMEOUT_MS): Promise<void>`\n- src/main/services/ptyManager.ts:708 — `const GRACEFUL_KILL_TIMEOUT_MS = 3000`\n- src/main/services/ptyManager.ts:757 — `proc.kill('SIGTERM')`\n- src/main/services/ptyManager.ts:750 — `proc.kill('SIGKILL')`\n- src/main/services/ptyManager.ts:789 — `export function killPty(id: string): void`\n- src/main/services/ptyManager.ts:799 — `export function killPtyAwait(id: string): Promise<void>`\n- src/main/services/ptyManager.ts:808 — `export async function killAll(): Promise<void>`\n- src/main/ipc/ptyIpc.ts:113 — `ipcMain.on('pty:kill', ...)`\n- src/main/ipc/ptyIpc.ts:122 — `ipcMain.handle('pty:kill-await', ...)`\n- src/main/services/ptyManager.ts:591 — `const env = { ...process.env }`\n- src/main/services/ptyManager.ts:593 — `delete env.ELECTRON_RUN_AS_NODE`\n- src/main/services/ptyManager.ts:599 — `env.TERM_PROGRAM = 'Apple_Terminal'`\n- src/main/services/ptyManager.ts:604 — `env.ZDOTDIR = ensureShellConfig()`\n- src/main/services/ptyManager.ts:613 — `WorkspacePortsRuntime.getEnvForWorktree(options.cwd)`\n- src/main/services/ptyManager.ts:231 — `export function buildDirectEnv(isDark: boolean, cwd?: string): Record<string, string>`\n- src/main/services/ptyManager.ts:246 — `TERM_PROGRAM: 'dash'`\n- src/main/services/ptyManager.ts:127 — `const RESERVED_ENV_KEYS = new Set([...])`\n- src/main/agents/claude/index.ts:46 — `const env = buildDirectEnv(ctx.isDark, ctx.cwd)`\n\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 9 iterations · 207,061 in / 28,371 out · $0.04 · 235.7s · session sess_c4fb1f71a41877c5",
+  "fullText": "Live PTY sessions are tracked in a module-level `Map<string, PtyRecord>` called `ptys` (src/main/services/ptyManager.ts:38). The `PtyRecord` interface (line 21) holds the node-pty process handle, working directory, owner WebContents, kind (`PtyKind` at line 19), task/feature IDs, and an xterm mirror. A secondary map `pendingInitialPrompts` (line 98) keyed by taskId stores prompts not yet consumed.\n\nResize is applied through `resizePty(id, cols, rows)` (src/main/services/ptyManager.ts:695), which calls `record.proc.resize(cols, rows)` (line 700) on the underlying node-pty instance. The IPC handler at src/main/ipc/ptyIpc.ts:103 receives the `'pty:resize'` event and delegates to it.\n\nShutdown is handled by `gracefulKillProc(proc, timeoutMs)` (src/main/services/ptyManager.ts:727), which sends `SIGTERM` (line 757), then escalates to `SIGKILL` (line 750) after `GRACEFUL_KILL_TIMEOUT_MS` = 3000 ms (line 708). The public entry points are `killPty(id)` (line 789), `killPtyAwait(id)` (line 799), and `killAll()` (line 808). IPC handlers register at src/main/ipc/ptyIpc.ts:113 (`'pty:kill'`) and line 122 (`'pty:kill-await'`).\n\nThe environment differs by PTY type. Shell PTYs (inside `startPty`, line 563) start from a copy of `process.env` (line 591), strip `ELECTRON_RUN_AS_NODE` and `ELECTRON_NO_ATTACH_CONSOLE` (lines 593-594), set `TERM_PROGRAM = 'Apple_Terminal'` on macOS (line 599), set `ZDOTDIR` to the path from `ensureShellConfig()` for zsh (line 604), and inject worktree port variables from `WorkspacePortsRuntime.getEnvForWorktree()` (line 613). Agent PTYs (inside `startDirectPty`, line 405) use `spawnPlan.env`, which is built by `buildDirectEnv()` (src/main/services/ptyManager.ts:231, called from the Claude adapter at src/main/agents/claude/index.ts:46). `buildDirectEnv` sets `TERM_PROGRAM: 'dash'` (line 246), `HOME`, `PATH` (with the rtk-bin directory prepended), and `COLORFGBG` based on the theme (line 251). User-supplied `claudeEnvVars` are merged and filtered against `RESERVED_ENV_KEYS` (line 127) to prevent override of critical variables like `PATH`, `HOME`, `TERM`, etc.\n\nCitations:\n- src/main/services/ptyManager.ts:38 — `const ptys = new Map<string, PtyRecord>()`\n- src/main/services/ptyManager.ts:21 — `interface PtyRecord`\n- src/main/services/ptyManager.ts:19 — `export type PtyKind = 'agent' | 'shell' | 'tui' | 'service'`\n- src/main/services/ptyManager.ts:98 — `const pendingInitialPrompts = new Map<string, string>()`\n- src/main/services/ptyManager.ts:695 — `export function resizePty(id: string, cols: number, rows: number): void`\n- src/main/services/ptyManager.ts:700 — `record.proc.resize(cols, rows)`\n- src/main/ipc/ptyIpc.ts:103 — `ipcMain.on('pty:resize', ...)`\n- src/main/services/ptyManager.ts:727 — `function gracefulKillProc(proc: KillableProc, timeoutMs = GRACEFUL_KILL_TIMEOUT_MS): Promise<void>`\n- src/main/services/ptyManager.ts:708 — `const GRACEFUL_KILL_TIMEOUT_MS = 3000`\n- src/main/services/ptyManager.ts:757 — `proc.kill('SIGTERM')`\n- src/main/services/ptyManager.ts:750 — `proc.kill('SIGKILL')`\n- src/main/services/ptyManager.ts:789 — `export function killPty(id: string): void`\n- src/main/services/ptyManager.ts:799 — `export function killPtyAwait(id: string): Promise<void>`\n- src/main/services/ptyManager.ts:808 — `export async function killAll(): Promise<void>`\n- src/main/ipc/ptyIpc.ts:113 — `ipcMain.on('pty:kill', ...)`\n- src/main/ipc/ptyIpc.ts:122 — `ipcMain.handle('pty:kill-await', ...)`\n- src/main/services/ptyManager.ts:591 — `const env = { ...process.env }`\n- src/main/services/ptyManager.ts:593 — `delete env.ELECTRON_RUN_AS_NODE`\n- src/main/services/ptyManager.ts:599 — `env.TERM_PROGRAM = 'Apple_Terminal'`\n- src/main/services/ptyManager.ts:604 — `env.ZDOTDIR = ensureShellConfig()`\n- src/main/services/ptyManager.ts:613 — `WorkspacePortsRuntime.getEnvForWorktree(options.cwd)`\n- src/main/services/ptyManager.ts:231 — `export function buildDirectEnv(isDark: boolean, cwd?: string): Record<string, string>`\n- src/main/services/ptyManager.ts:246 — `TERM_PROGRAM: 'dash'`\n- src/main/services/ptyManager.ts:127 — `const RESERVED_ENV_KEYS = new Set([...])`\n- src/main/agents/claude/index.ts:46 — `const env = buildDirectEnv(ctx.isDark, ctx.cwd)`\n\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 9 iterations · 207,061 in / 28,371 out · $0.04 · 235.7s · session sess_c4fb1f71a41877c5",
+  "structuredContent": {
+    "session_id": "sess_c4fb1f71a41877c5"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 2 · 1 recursive spawn",
+    "agent=explore-r · iteration 2 · 2 recursive spawns",
+    "agent=explore-r · iteration 2 · 3 recursive spawns",
+    "agent=explore-r · iteration 2 · 4 recursive spawns",
+    "agent=explore-r · working 45s",
+    "agent=explore-r · working 60s",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · working 135s",
+    "agent=explore-r · working 150s",
+    "agent=explore-r · working 165s",
+    "agent=explore-r · working 180s",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

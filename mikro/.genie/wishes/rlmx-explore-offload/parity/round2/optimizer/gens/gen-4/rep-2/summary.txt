@@ -1,0 +1,18 @@
+# gen-4 · khal/deepseek-v4-flash · suite=round2-train · recipe SYSTEM.md 640dfa69 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=5/7 weak=1 anchorsCited=6/7 c2=PASS c3=PASS cites=15/15 pass=false iters=8 spawns=4 wall=252.8s cost=$0.04 chars=2693 root=/home/namastex/prod/xdna-top
+  MISS F5 src/xdna_top/npu_power.py:84 — names the path but not the anchoring term `m.group("lb") == "["` (0/1 long tokens)
+  WEAK F7 src/xdna_top/discover_sysfs.py:55 — names the path but not the exact term `name == "amdgpu"` (1/1 of its long tokens present)
+TASK 4 ok=true facts=6/6 weak=0 anchorsCited=4/6 c2=PASS c3=PASS cites=12/12 pass=true iters=9 spawns=6 wall=377s cost=$0.03 chars=2480 root=/home/namastex/prod/xdna-top
+TASK 5 ok=false facts=0/5 weak=0 anchorsCited=0/5 c2=PASS c3=PASS cites=0/0 pass=false iters=? spawns=4 wall=650s cost=$? chars=67 root=/home/namastex/prod/genie-desktop
+  MISS F1 src/main/services/ptyManager.ts:38 — answer never names ptyManager.ts
+  MISS F2 src/main/services/ptyManager.ts:695 — answer never names ptyManager.ts
+  MISS F3 src/main/services/ptyManager.ts:708 — answer never names ptyManager.ts
+  MISS F4 src/main/services/ptyManager.ts:727 — answer never names ptyManager.ts
+  MISS F5 src/main/services/ptyManager.ts:127 — answer never names ptyManager.ts
+TASK 6 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=6/6 pass=true iters=5 spawns=2 wall=197.8s cost=$0.02 chars=1484 root=/home/namastex/prod/genie-desktop
+TASK 7 ok=true facts=5/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=7/7 pass=false iters=7 spawns=4 wall=205.8s cost=$0.02 chars=1131 root=/home/namastex/prod/fde-station
+  MISS F6 channel/enroll.sh:23 — names the path but not the anchoring term `SUITE` (0/1 long tokens)
+TASK 8 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=14/14 pass=true iters=5 spawns=4 wall=315.5s cost=$0.03 chars=2231 root=/home/namastex/prod/fde-station
+ROUND gen=4 facts=26/34 fitness=0.7647 weak=1 tasksPassed=3/6 runsOk=5/6 c2fail=0 c3fail=0 cites=54/54 spawns=24 cost=$0.14 wall=2002s

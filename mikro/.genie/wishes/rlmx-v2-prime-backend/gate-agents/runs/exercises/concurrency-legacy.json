@@ -1,0 +1,46 @@
+{
+  "exercise": "concurrency",
+  "leg": "legacy",
+  "startedAt": "2026-08-16T19:31:14.933Z",
+  "endedAt": "2026-08-16T19:31:20.126Z",
+  "parallel": true,
+  "slotA": {
+    "cwd": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/legacy/cwd-alpha",
+    "agent": "explore",
+    "marker": "MARKER_ALPHA.txt",
+    "ok": true,
+    "isError": false,
+    "wallSeconds": 3.2,
+    "answer": "(1) MARKER_ALPHA.txt\n(2) /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/legacy/cwd-alpha\n(3) alpha workspace marker\n",
+    "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 2 iterations · 315 in / 131 out · $0.0001 · 3.2s · session sess_06817e921bee29a9",
+    "toolsListed": [
+      "rlmx_query",
+      "rlmx_explore",
+      "rlmx_hello-world"
+    ]
+  },
+  "slotB": {
+    "cwd": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/legacy/cwd-beta",
+    "agent": "hello-world (shipped, verbatim; ambient model pinned in cwdB/.rlmx)",
+    "marker": "MARKER_BETA.txt",
+    "ok": true,
+    "isError": false,
+    "wallSeconds": 4.7,
+    "answer": "```repl\ngreet(\"rlmx-v2 gate concurrency exercise\")\n# Output: Hello, rlmx-v2 gate concurrency exercise!\n```\n\n**Hello, rlmx-v2 gate concurrency exercise!**\n",
+    "footer": "rlmx · agent=hello-world · deepseek/deepseek-v4-flash · 1 iteration · 331 in / 269 out · $0.0001 · 4.7s · session sess_0a750bb29532fb39",
+    "toolsListed": [
+      "rlmx_query",
+      "rlmx_explore",
+      "rlmx_hello-world"
+    ]
+  },
+  "assertions": {
+    "bothOk": true,
+    "aNamesOwnMarker": true,
+    "aNotBMarker": true,
+    "aNamesOwnCwd": true,
+    "bNotAMarker": true,
+    "bNotBMarker": true,
+    "overlapped": true
+  }
+}

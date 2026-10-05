@@ -1,0 +1,11 @@
+# gen-1 · khal/deepseek-v4-flash · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: none
+# HOLDOUT ROUND — task(s) 1, 2 are HELD OUT of the fitness set and were run once, for reporting. The recipe was never selected on them; this number must not feed a mutation or a model choice.
+TASK 1 ok=true facts=4/7 weak=1 anchorsCited=2/7 c2=PASS c3=PASS cites=23/23 pass=false iters=13 spawns=3 wall=521s cost=$0.04 chars=4409 root=/home/namastex/prod/rlmx
+  WEAK F2 src/rlm.ts:436 — names the path but not the exact term `maxIterations: opts.maxIterations` (1/2 of its long tokens present)
+  MISS F5 src/mcp/server.ts:487 — answer never names server.ts
+  MISS F6 src/cli.ts:35 — names the path but not the anchoring term `CLI flags > settings.json > rlmx.yaml` (0/3 long tokens)
+TASK 2 ok=true facts=6/7 weak=0 anchorsCited=6/7 c2=PASS c3=PASS cites=21/21 pass=false iters=10 spawns=3 wall=375.5s cost=$0.03 chars=4630 root=/home/namastex/prod/rlmx
+  MISS F7 src/khal-provider.ts:103 — names the path but not the anchoring term `NON_CHAT_MODES` (0/1 long tokens)
+ROUND gen=1 facts=10/14 fitness=0.7143 weak=1 tasksPassed=0/2 runsOk=2/2 c2fail=0 c3fail=0 cites=44/44 spawns=6 cost=$0.07 wall=521.2s

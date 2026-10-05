@@ -1,0 +1,530 @@
+{
+  "arm": "rlmx",
+  "task": 1,
+  "model": "khal/claude-haiku",
+  "round": "r14-haiku-tune3",
+  "footer": "rlmx · agent=explore · khal/claude-haiku · 24 iterations · 1,183,235 in / 69,713 out · $1.53 · 452.8s · session sess_e5a872bb4f1d00c3",
+  "wallSeconds": 453.2,
+  "requestChars": 1595,
+  "resultChars": 3661,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/prod/ryzen-ai-station"
+  ],
+  "need": 13,
+  "factTotal": 14,
+  "answerChars": 3523,
+  "citations": [
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 8,
+      "key": "src/lib/embedding.ts:8",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "* field. Instead, task instructions must be embedded as a prefix in the"
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 17,
+      "key": "src/lib/embedding.ts:17",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 18,
+      "key": "src/lib/embedding.ts:18",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "export type EmbeddingTaskType ="
+    },
+    {
+      "path": "src/lib/embedding.ts",
+      "line": 21,
+      "key": "src/lib/embedding.ts:21",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/embedding.ts",
+      "lines": 286,
+      "verdict": "resolves",
+      "text": "| \"SEMANTIC_SIMILARITY\""
+    },
+    {
+      "path": "src/lib/providers.ts",
+      "line": 9,
+      "key": "src/lib/providers.ts:9",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/providers.ts",
+      "line": 13,
+      "key": "src/lib/providers.ts:13",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/client.ts",
+      "line": 1,
+      "key": "src/lib/client.ts:1",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/client.ts",
+      "line": 5,
+      "key": "src/lib/client.ts:5",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/client.ts",
+      "line": 12,
+      "key": "src/lib/client.ts:12",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 7,
+      "key": "src/lib/config.ts:7",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 8,
+      "key": "src/lib/config.ts:8",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 9,
+      "key": "src/lib/config.ts:9",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 10,
+      "key": "src/lib/config.ts:10",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/storage.ts",
+      "line": 4,
+      "key": "src/lib/storage.ts:4",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 5,
+      "key": "src/lib/config.ts:5",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/config.ts",
+      "line": 12,
+      "key": "src/lib/config.ts:12",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 24,
+      "key": "src/db/schema.ts:24",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 35,
+      "key": "src/db/schema.ts:35",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 12,
+      "key": "src/lib/ingest.ts:12",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 15,
+      "key": "src/lib/ingest.ts:15",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 20,
+      "key": "src/lib/ingest.ts:20",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 25,
+      "key": "src/lib/ingest.ts:25",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 30,
+      "key": "src/lib/ingest.ts:30",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 35,
+      "key": "src/lib/ingest.ts:35",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 40,
+      "key": "src/lib/ingest.ts:40",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/ingest.ts",
+      "line": 45,
+      "key": "src/lib/ingest.ts:45",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 9,
+      "key": "src/db/schema.ts:9",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 18,
+      "key": "src/db/schema.ts:18",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 28,
+      "key": "src/db/schema.ts:28",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 42,
+      "key": "src/db/schema.ts:42",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "line": 50,
+      "key": "src/db/schema.ts:50",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/storage.ts",
+      "line": 1,
+      "key": "src/lib/storage.ts:1",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/storage.ts",
+      "line": 8,
+      "key": "src/lib/storage.ts:8",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/memory.ts",
+      "line": 15,
+      "key": "src/lib/memory.ts:15",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/memory.ts",
+      "line": 25,
+      "key": "src/lib/memory.ts:25",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/memory.ts",
+      "line": 30,
+      "key": "src/lib/memory.ts:30",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/memory.ts",
+      "line": 35,
+      "key": "src/lib/memory.ts:35",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/memory.ts",
+      "line": 40,
+      "key": "src/lib/memory.ts:40",
+      "exists": false,
+      "verdict": "missing-file"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 38,
+    "failures": [
+      "src/lib/providers.ts:9 (missing-file)",
+      "src/lib/providers.ts:13 (missing-file)",
+      "src/lib/client.ts:1 (missing-file)",
+      "src/lib/client.ts:5 (missing-file)",
+      "src/lib/client.ts:12 (missing-file)",
+      "src/lib/config.ts:7 (missing-file)",
+      "src/lib/config.ts:8 (missing-file)",
+      "src/lib/config.ts:9 (missing-file)",
+      "src/lib/config.ts:10 (missing-file)",
+      "src/lib/storage.ts:4 (missing-file)",
+      "src/lib/config.ts:5 (missing-file)",
+      "src/lib/config.ts:12 (missing-file)",
+      "src/db/schema.ts:24 (missing-file)",
+      "src/db/schema.ts:35 (missing-file)",
+      "src/lib/ingest.ts:12 (missing-file)",
+      "src/lib/ingest.ts:15 (missing-file)",
+      "src/lib/ingest.ts:20 (missing-file)",
+      "src/lib/ingest.ts:25 (missing-file)",
+      "src/lib/ingest.ts:30 (missing-file)",
+      "src/lib/ingest.ts:35 (missing-file)",
+      "src/lib/ingest.ts:40 (missing-file)",
+      "src/lib/ingest.ts:45 (missing-file)",
+      "src/db/schema.ts:9 (missing-file)",
+      "src/db/schema.ts:18 (missing-file)",
+      "src/db/schema.ts:28 (missing-file)",
+      "src/db/schema.ts:42 (missing-file)",
+      "src/db/schema.ts:50 (missing-file)",
+      "src/lib/storage.ts:1 (missing-file)",
+      "src/lib/storage.ts:8 (missing-file)",
+      "src/lib/memory.ts:15 (missing-file)",
+      "src/lib/memory.ts:25 (missing-file)",
+      "src/lib/memory.ts:30 (missing-file)",
+      "src/lib/memory.ts:35 (missing-file)",
+      "src/lib/memory.ts:40 (missing-file)"
+    ],
+    "pass": false
+  },
+  "criterion3": {
+    "failures": [
+      "src/lib/providers.ts:9 (missing-file)",
+      "src/lib/providers.ts:13 (missing-file)",
+      "src/lib/client.ts:1 (missing-file)",
+      "src/lib/client.ts:5 (missing-file)",
+      "src/lib/client.ts:12 (missing-file)",
+      "src/lib/config.ts:7 (missing-file)",
+      "src/lib/config.ts:8 (missing-file)",
+      "src/lib/config.ts:9 (missing-file)",
+      "src/lib/config.ts:10 (missing-file)",
+      "src/lib/storage.ts:4 (missing-file)",
+      "src/lib/config.ts:5 (missing-file)",
+      "src/lib/config.ts:12 (missing-file)",
+      "src/db/schema.ts:24 (missing-file)",
+      "src/db/schema.ts:35 (missing-file)",
+      "src/lib/ingest.ts:12 (missing-file)",
+      "src/lib/ingest.ts:15 (missing-file)",
+      "src/lib/ingest.ts:20 (missing-file)",
+      "src/lib/ingest.ts:25 (missing-file)",
+      "src/lib/ingest.ts:30 (missing-file)",
+      "src/lib/ingest.ts:35 (missing-file)",
+      "src/lib/ingest.ts:40 (missing-file)",
+      "src/lib/ingest.ts:45 (missing-file)",
+      "src/db/schema.ts:9 (missing-file)",
+      "src/db/schema.ts:18 (missing-file)",
+      "src/db/schema.ts:28 (missing-file)",
+      "src/db/schema.ts:42 (missing-file)",
+      "src/db/schema.ts:50 (missing-file)",
+      "src/lib/storage.ts:1 (missing-file)",
+      "src/lib/storage.ts:8 (missing-file)",
+      "src/lib/memory.ts:15 (missing-file)",
+      "src/lib/memory.ts:25 (missing-file)",
+      "src/lib/memory.ts:30 (missing-file)",
+      "src/lib/memory.ts:35 (missing-file)",
+      "src/lib/memory.ts:40 (missing-file)"
+    ],
+    "pass": false
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/rlmx-config.ts:54",
+      "anchoredOn": "provider: google",
+      "claim": "- rlmx-brain config generator hardcodes provider/model: `src/lib/rlmx-config.ts:53-55` → `provider: google`, `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "provider:",
+        "google"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/agent/rlmx-bridge.ts:131",
+      "anchoredOn": "modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"",
+      "claim": "- `src/agent/rlmx-bridge.ts:130-136` provider `\"google\"`, `modelId = manifest.yaml.model || \"gemini-3.1-flash-lite-preview\"`, resolved via `piAi.getModel(provid",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/agent/scaffold.ts:70",
+      "anchoredOn": "model: gemini-3.1-flash-lite-preview",
+      "claim": "- `src/agent/scaffold.ts:70` scaffolds `model: gemini-3.1-flash-lite-preview`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "model:"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/auto-kb/evaluation/answer-judge.ts:47",
+      "anchoredOn": "GEMINI_API_KEY",
+      "claim": "- `src/auto-kb/evaluation/answer-judge.ts:47-50` — LLM-as-judge, requires `GEMINI_API_KEY`.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/processors/image.ts:45",
+      "anchoredOn": "callGeminiVision",
+      "claim": "- `src/lib/processors/image.ts:45-100` — `callGeminiVision()`, model `process.env.BRAIN_VISION_MODEL ?? \"gemini-3.1-flash-lite-preview\"` (`:60-61`), endpoint `.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/ask-pipeline.ts:57",
+      "anchoredOn": "RLMX_API_KEY_ENV_MAP",
+      "claim": "`src/lib/ask-pipeline.ts:57-71` `RLMX_API_KEY_ENV_MAP` injects, from `~/.rlmx/settings.json` into `process.env`, keys for: **Gemini, Google, Anthropic, OpenAI, ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/cache.ts:69",
+      "anchoredOn": "gpt-4o-mini",
+      "claim": "- `src/lib/cache.ts:69,75` pricing constants reference `gpt-4o-mini` and `claude-3.5-sonnet` (cost estimation only, not calls).",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/db/migrations/005-brain-embeddings.sql:41",
+      "anchoredOn": "embed_dims",
+      "claim": "- **embedDims defaults:** `DEFAULT_DIMS = 768` (`embedding.ts:29`). Schema defaults: `brain_documents.embed_dims INT DEFAULT 768` and `brain_chunks.embed_dims I",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:18",
+      "anchoredOn": "EMBEDDED_MIGRATIONS",
+      "claim": "- **Schema/migrations location:** `src/db/migrations/*.sql`; embedded into the binary via `src/db/embedded-migrations.ts` (`EMBEDDED_MIGRATIONS`, referenced `sr",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/pgserve.ts:16",
+      "anchoredOn": "type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"",
+      "claim": "- **Three deployment modes:** `src/lib/pgserve.ts:16` `type DeploymentMode = \"persistent\" | \"data-dir\" | \"ephemeral\"`, detected in `detectDeploymentMode()` (`:7",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "memory/tests/test_embeddings_multilingual.py:95",
+      "anchoredOn": "MNEMOSYNE_EMBEDDING_API_URL",
+      "claim": "- **OpenAI-compatible / remote embedding API:** `embeddings.py:60-64` — `MNEMOSYNE_EMBEDDING_API_URL` (default OpenRouter), `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEM",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F12",
+      "anchor": "memory/mnemosyne/core/extraction.py:143",
+      "anchoredOn": "_llm_backend",
+      "claim": "- **Local LLM (llama.cpp / ctransformers) for consolidation:** `memory/mnemosyne/core/local_llm.py` — `_llm_backend` = `\"llamacpp\"` | `\"ctransformers\"` | None (",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F13",
+      "anchor": ".archive/memory/docs/configuration.md:138",
+      "anchoredOn": "Works with: llama.cpp server, vLLM, Ollama, LM Studio, or any OpenAI-compatible",
+      "claim": "- **Docs explicitly naming local backends:** `.archive/memory/docs/configuration.md:138` \"Works with: **llama.cpp server, vLLM, Ollama, LM Studio**, or any Open",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "llama.cpp",
+        "server",
+        "Ollama",
+        "OpenAI-compatible"
+      ]
+    },
+    {
+      "id": "F14",
+      "anchor": ".genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166",
+      "anchoredOn": "brain lacks MCP, local embeddings, and any [local model support]",
+      "claim": "- **Strategic note:** `.genie/brainstorms/mnemosyne-lang-choice/ASSESSMENT.md:166` observes \"brain lacks MCP, **local embeddings**, and any [local model support",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "brain",
+        "local",
+        "embeddings",
+        "model"
+      ]
+    }
+  ]
+}

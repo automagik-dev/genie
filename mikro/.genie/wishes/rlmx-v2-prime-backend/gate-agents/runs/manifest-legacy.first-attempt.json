@@ -1,0 +1,80 @@
+{
+  "leg": "legacy",
+  "yamlLeg": "rlmx",
+  "gateModel": "deepseek/deepseek-v4-flash",
+  "startedAt": "2026-08-16T18:31:52.397Z",
+  "tasks": [
+    {
+      "task": 1,
+      "frozenRoot": "/home/namastex/prod/brain",
+      "realRoot": "/Users/feliperosa/workspace/repos/brain",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 1 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 1,
+      "signal": null,
+      "wallSeconds": 46.4,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-1.json"
+    },
+    {
+      "task": 2,
+      "frozenRoot": "/home/namastex/workspace/repos/genie",
+      "realRoot": "/Users/feliperosa/workspace/repos/genie",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 2 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 0,
+      "signal": null,
+      "wallSeconds": 301.4,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-2.json"
+    },
+    {
+      "task": 3,
+      "frozenRoot": "/home/namastex/prod/brain",
+      "realRoot": "/Users/feliperosa/workspace/repos/brain",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 3 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 0,
+      "signal": null,
+      "wallSeconds": 161.3,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-3.json"
+    },
+    {
+      "task": 4,
+      "frozenRoot": "/home/namastex/prod/brain",
+      "realRoot": "/Users/feliperosa/workspace/repos/brain",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 4 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 0,
+      "signal": null,
+      "wallSeconds": 88.5,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-4.json"
+    },
+    {
+      "task": 5,
+      "frozenRoot": "/home/namastex/workspace/repos/genie",
+      "realRoot": "/Users/feliperosa/workspace/repos/genie",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 5 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 0,
+      "signal": null,
+      "wallSeconds": 112.2,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-5.json"
+    },
+    {
+      "task": 6,
+      "frozenRoot": "/home/namastex/workspace/repos/genie",
+      "realRoot": "/Users/feliperosa/workspace/repos/genie",
+      "mirrorRoot": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie",
+      "runCommand": "node /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs 6 deepseek/deepseek-v4-flash gate-v2-legacy --tasks-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks --root /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie --recipe /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore --agent explore --out-dir /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy",
+      "exit": 0,
+      "signal": null,
+      "wallSeconds": 83.4,
+      "timedOut": false,
+      "runFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/runs/gate-v2-legacy/task-6.json"
+    }
+  ]
+}

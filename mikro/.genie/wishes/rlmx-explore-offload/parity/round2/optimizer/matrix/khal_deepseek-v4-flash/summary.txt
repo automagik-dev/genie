@@ -1,0 +1,12 @@
+# gen-33820 · khal/deepseek-v4-flash · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=6/7 weak=0 anchorsCited=6/7 c2=PASS c3=PASS cites=19/19 pass=false iters=7 spawns=3 wall=338.2s cost=$0.03 chars=4057 root=/home/namastex/prod/xdna-top
+  MISS F5 src/xdna_top/npu_power.py:84 — names the path but not the anchoring term `m.group("lb") == "["` (0/1 long tokens)
+TASK 4 ok=true facts=6/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=34/34 pass=true iters=11 spawns=3 wall=255s cost=$0.02 chars=2686 root=/home/namastex/prod/xdna-top
+TASK 5 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=24/24 pass=true iters=9 spawns=3 wall=308.3s cost=$0.04 chars=3955 root=/home/namastex/prod/genie-desktop
+TASK 6 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=13/13 pass=true iters=14 spawns=0 wall=74.9s cost=$0.01 chars=3007 root=/home/namastex/prod/genie-desktop
+TASK 7 ok=true facts=5/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=7/7 pass=false iters=6 spawns=3 wall=215.2s cost=$0.03 chars=1372 root=/home/namastex/prod/fde-station
+  MISS F6 channel/enroll.sh:23 — names the path but not the anchoring term `SUITE` (0/1 long tokens)
+TASK 8 ok=true facts=5/5 weak=0 anchorsCited=4/5 c2=PASS c3=PASS cites=12/12 pass=true iters=5 spawns=3 wall=150.6s cost=$0.02 chars=1832 root=/home/namastex/prod/fde-station
+ROUND gen=33820 facts=32/34 fitness=0.9412 weak=0 tasksPassed=4/6 runsOk=6/6 c2fail=0 c3fail=0 cites=109/109 spawns=15 cost=$0.15 wall=714.4s

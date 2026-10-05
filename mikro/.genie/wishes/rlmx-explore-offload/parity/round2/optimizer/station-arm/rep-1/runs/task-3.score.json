@@ -1,0 +1,98 @@
+{
+  "arm": "rlmx",
+  "task": 3,
+  "model": "station/qwen3.5-2b-FLM",
+  "round": "station-arm-rep1",
+  "footer": "rlmx · agent=explore-r · station/qwen3.5-2b-FLM · 14 iterations · 50,612 in / 10,656 out · $0.00 · 892.9s · session sess_9077d9dcfd714448",
+  "wallSeconds": 893.3,
+  "requestChars": 362,
+  "resultChars": 951,
+  "ok": true,
+  "root": "/home/namastex/prod/xdna-top",
+  "outOfScope": [],
+  "need": 7,
+  "factTotal": 7,
+  "answerChars": 809,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/xdna_top/npu_power.py:30",
+      "anchoredOn": "DEBUGFS_ACCEL",
+      "claim": "The NPU power read is rooted at DEBUGFS_ACCEL, resolved to a per-device directory before any node is opened, so a wrong device is never read under another devic",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/xdna_top/npu_power.py:115",
+      "anchoredOn": "debugfs_accel_absent",
+      "claim": "When no accel directory resolves at all, the read returns unavailable with the reason debugfs_accel_absent rather than raising an exception at the caller.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/xdna_top/npu_power.py:123",
+      "anchoredOn": "debugfs_nodes_unreadable",
+      "claim": "A directory that exists but whose nodes cannot be read is its own reason, debugfs_nodes_unreadable — the ordinary unprivileged case, since debugfs is root-only.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/xdna_top/npu_power.py:130",
+      "anchoredOn": "debugfs_nodes_unparsable",
+      "claim": "A node that read but carried nothing parsable is a third distinct reason, debugfs_nodes_unparsable, so present-but-useless data is never reported as available.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/xdna_top/npu_power.py:84",
+      "anchoredOn": "m.group(\"lb\") == \"[\"",
+      "claim": "The active DPM level is the bracketed token: the parser marks a state active when the opening bracket group matched, m.group(\"lb\") == \"[\", or the closing one di",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/xdna_top/discover_sysfs.py:18",
+      "anchoredOn": "CPU-only fallback",
+      "claim": "iGPU discovery starts pessimistic: the initial status is the CPU-only fallback string, and it is upgraded only once a busy-percent node has actually been read.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/xdna_top/discover_sysfs.py:55",
+      "anchoredOn": "name == \"amdgpu\"",
+      "claim": "For power, hwmon is walked and the entry whose name is amdgpu wins — name == \"amdgpu\" overrides an earlier candidate, otherwise the first readable one is kept.",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

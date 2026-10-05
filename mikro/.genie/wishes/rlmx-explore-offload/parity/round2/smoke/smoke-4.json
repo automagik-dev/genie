@@ -1,0 +1,294 @@
+{
+  "label": "smoke-4",
+  "agent": "explore-r",
+  "tool": "rlmx_explore-r",
+  "root": "/home/namastex/prod/rlmx",
+  "model": "khal/deepseek-v4-flash",
+  "startedAt": "2026-07-27T05:41:16.562Z",
+  "question": "In this repository, answer four separate things, each under its own heading. (1) Which source files define rlmx's own custom LLM providers (not the ones the underlying LLM library ships), and for each: what base URL does it default to and which environment variable carries its API key? (2) How does the Python REPL subprocess receive code to execute and return its output — name the transport and every message type on it, from both the TypeScript side and the Python side. (3) What exactly decides whether the Gemini 'batteries' are loaded into the REPL namespace, and where are they loaded from? (4) How does a run decide that its context is too large for the model, and what does it switch on when that happens? Give a file:line citation for every claim.",
+  "provenance": {
+    "agent": "explore-r",
+    "promptSha256": "06c6ea947c34a73437bb90220ac68e940532dbc72e3da6d24fea4d1556f6abb9",
+    "promptChars": 21327,
+    "agentYamlSha256": "bd1cbaaf9334d93f6a5df25e44168e1f41238344657890714ad55aec8d97c46a",
+    "model": "khal/deepseek-v4-flash",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "rlmxGit": {
+      "head": "2a32fd9075182dde71f0a3b1748edb28ec3ad9c2",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "runTimeoutMs": "900000",
+    "replTimeoutMs": "600000"
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "toolDescription": "Launch the \"explore-r\" rlmx agent to handle a task autonomously. Answers a question about the codebase in the server's working directory by partitioning it across recursive sub-agents, then verifying every citation itself. Returns the answer with resolvable file:line citations. Use it instead of grepping and reading a large tree inline. Runs on khal/deepseek-v4-flash. Give it a complete, standalone prompt — it runs to completion and returns a single final report, and cannot ask follow-up questions mid-run. The result carries the tokens and cost it used plus a session_id; pass that session_id back to this tool to continue the conversation. (rlmx microagent \"explore-r\", shape=recurse)",
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 205.7,
+  "iterations": 12,
+  "answer": "## (1) Custom LLM Providers\n\nrlmx defines two custom LLM providers beyond the underlying pi/ai library's built-in ones:\n\n**Station provider** (src/station-provider.ts) -- a local Lemonade gateway. Default base URL: http://localhost:13305/api/v1, set at lines 38-41 via `process.env.STATION_BASE_URL ?? process.env.LEMONADE_BASE_URL ?? \"http://localhost:13305/api/v1\"`. This provider is keyless.\n\n**Khal provider** (src/khal-provider.ts) -- a LiteLLM gateway. Default base URL: https://llm.khal.ai/v1, set at line 47 via `process.env.KHAL_BASE_URL ?? \"https://llm.khal.ai/v1\"`. API key comes from KHAL_API_KEY (primary) or RLMX_KHAL_API_KEY (fallback), defined at line 74.\n\n## (2) Python REPL IPC Transport\n\nTransport: JSON lines over stdin/stdout (src/repl.ts:123-124, src/ipc.ts:1-2).\n\nNode -> Python (src/ipc.ts:6-36): execute, llm_response, inject, reset, shutdown.\n\nPython -> Node (src/ipc.ts:54-75, python/repl_server.py:16-19): execute_result, llm_request, ready.\n\n## (3) Gemini Batteries Loading Decision\n\nGemini batteries load when both conditions are met (src/rlm.ts:414): `isGoogleProvider(config.model.provider) && (config.toolsLevel === \"standard\" || config.toolsLevel === \"full\")`.\n\nLoaded from python/gemini_batteries.py (src/repl.ts:32) via _loadGeminiBatteries() at src/repl.ts:290-294.\n\n## (4) Context Too Large Detection & Switch\n\nvalidateContextSize() (src/cache.ts:52-67) estimates tokens as ceil((chars / 4) * 1.2) (line 37), then compares against PROVIDER_LIMITS[provider] (lines 15-20: anthropic=200000, openai=128000, google=1000000, default=128000).\n\nWhen too large (src/cli.ts:382-397): disables cache mode (lines 388-389), enables storage mode when config.storage.enabled is 'auto' or 'always' (lines 392-393). Same logic for batch at lines 643-656.\n\nCitations:\n- src/station-provider.ts:38-41\n- src/khal-provider.ts:47\n- src/khal-provider.ts:74\n- src/ipc.ts:1-2\n- src/ipc.ts:6-36\n- src/ipc.ts:54-75\n- python/repl_server.py:8-19\n- src/repl.ts:123-124\n- src/rlm.ts:414\n- src/repl.ts:32\n- src/repl.ts:290-294\n- src/cache.ts:15-20\n- src/cache.ts:52-67\n- src/cache.ts:26-38\n- src/cli.ts:382-397\n- src/cli.ts:643-656\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 12 iterations · 152,189 in / 13,620 out · $0.03 · 205.4s · session sess_4a316d48042562b4",
+  "fullText": "## (1) Custom LLM Providers\n\nrlmx defines two custom LLM providers beyond the underlying pi/ai library's built-in ones:\n\n**Station provider** (src/station-provider.ts) -- a local Lemonade gateway. Default base URL: http://localhost:13305/api/v1, set at lines 38-41 via `process.env.STATION_BASE_URL ?? process.env.LEMONADE_BASE_URL ?? \"http://localhost:13305/api/v1\"`. This provider is keyless.\n\n**Khal provider** (src/khal-provider.ts) -- a LiteLLM gateway. Default base URL: https://llm.khal.ai/v1, set at line 47 via `process.env.KHAL_BASE_URL ?? \"https://llm.khal.ai/v1\"`. API key comes from KHAL_API_KEY (primary) or RLMX_KHAL_API_KEY (fallback), defined at line 74.\n\n## (2) Python REPL IPC Transport\n\nTransport: JSON lines over stdin/stdout (src/repl.ts:123-124, src/ipc.ts:1-2).\n\nNode -> Python (src/ipc.ts:6-36): execute, llm_response, inject, reset, shutdown.\n\nPython -> Node (src/ipc.ts:54-75, python/repl_server.py:16-19): execute_result, llm_request, ready.\n\n## (3) Gemini Batteries Loading Decision\n\nGemini batteries load when both conditions are met (src/rlm.ts:414): `isGoogleProvider(config.model.provider) && (config.toolsLevel === \"standard\" || config.toolsLevel === \"full\")`.\n\nLoaded from python/gemini_batteries.py (src/repl.ts:32) via _loadGeminiBatteries() at src/repl.ts:290-294.\n\n## (4) Context Too Large Detection & Switch\n\nvalidateContextSize() (src/cache.ts:52-67) estimates tokens as ceil((chars / 4) * 1.2) (line 37), then compares against PROVIDER_LIMITS[provider] (lines 15-20: anthropic=200000, openai=128000, google=1000000, default=128000).\n\nWhen too large (src/cli.ts:382-397): disables cache mode (lines 388-389), enables storage mode when config.storage.enabled is 'auto' or 'always' (lines 392-393). Same logic for batch at lines 643-656.\n\nCitations:\n- src/station-provider.ts:38-41\n- src/khal-provider.ts:47\n- src/khal-provider.ts:74\n- src/ipc.ts:1-2\n- src/ipc.ts:6-36\n- src/ipc.ts:54-75\n- python/repl_server.py:8-19\n- src/repl.ts:123-124\n- src/rlm.ts:414\n- src/repl.ts:32\n- src/repl.ts:290-294\n- src/cache.ts:15-20\n- src/cache.ts:52-67\n- src/cache.ts:26-38\n- src/cli.ts:382-397\n- src/cli.ts:643-656\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 12 iterations · 152,189 in / 13,620 out · $0.03 · 205.4s · session sess_4a316d48042562b4",
+  "structuredContent": {
+    "session_id": "sess_4a316d48042562b4"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 2 · 1 recursive spawn",
+    "agent=explore-r · iteration 2 · 2 recursive spawns",
+    "agent=explore-r · iteration 2 · 3 recursive spawns",
+    "agent=explore-r · iteration 2 · 4 recursive spawns",
+    "agent=explore-r · working 30s",
+    "agent=explore-r · working 45s",
+    "agent=explore-r · working 60s",
+    "agent=explore-r · working 75s",
+    "agent=explore-r · working 90s",
+    "agent=explore-r · working 105s",
+    "agent=explore-r · working 120s",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · iteration 11",
+    "agent=explore-r · working 180s",
+    "agent=explore-r · iteration 12"
+  ],
+  "recursion": {
+    "spawnsReportedByProgress": 4,
+    "spawnProgressMessages": [
+      "agent=explore-r · iteration 2 · 1 recursive spawn",
+      "agent=explore-r · iteration 2 · 2 recursive spawns",
+      "agent=explore-r · iteration 2 · 3 recursive spawns",
+      "agent=explore-r · iteration 2 · 4 recursive spawns"
+    ],
+    "childProcessesObserved": [
+      {
+        "pid": 1333804,
+        "seenAtMs": 1785130891145,
+        "argv": [
+          "/home/namastex/.hermes/node/bin/node",
+          "/home/namastex/prod/rlmx/dist/src/cli.js",
+          "Custom LLM providers: Which source files define rlmx's own custom LLM providers (not the ones the underlying LLM library ships)? For each, what base URL does it default to and which environment variable carries its API key?\n\nIn the rlmx repository, answer the following question. Work fast and stop early: at most three or four blocks of code, then answer. Do NOT keep exploring after you have it, and do NOT delegate further. Answer in at most 150 words. Give a file:line for EVERY claim, path relative to the working directory, and quote the cited line. Line numbers must come from code you ran, never from memory. If you do not find it, reply exactly: NOT FOUND — <what you searched>. Do not guess a path and do not paste file contents.",
+          "--output",
+          "json",
+          "--stats",
+          "--max-iterations",
+          "14",
+          "--timeout",
+          "900000",
+          "--max-depth",
+          "3",
+          "--max-cost",
+          "1.9982832",
+          "--no-session"
+        ],
+        "hasModelFlag": false,
+        "secondsIntoRun": 14.6
+      },
+      {
+        "pid": 1333805,
+        "seenAtMs": 1785130891145,
+        "argv": [
+          "/home/namastex/.hermes/node/bin/node",
+          "/home/namastex/prod/rlmx/dist/src/cli.js",
+          "Python REPL transport: How does the Python REPL subprocess receive code to execute and return its output? Name the transport and every message type on it, from both the TypeScript side and the Python side.\n\nIn the rlmx repository, answer the following question. Work fast and stop early: at most three or four blocks of code, then answer. Do NOT keep exploring after you have it, and do NOT delegate further. Answer in at most 150 words. Give a file:line for EVERY claim, path relative to the working directory, and quote the cited line. Line numbers must come from code you ran, never from memory. If you do not find it, reply exactly: NOT FOUND — <what you searched>. Do not guess a path and do not paste file contents.",
+          "--output",
+          "json",
+          "--stats",
+          "--max-iterations",
+          "14",
+          "--timeout",
+          "900000",
+          "--max-depth",
+          "3",
+          "--max-cost",
+          "1.9982832",
+          "--no-session"
+        ],
+        "hasModelFlag": false,
+        "secondsIntoRun": 14.6
+      },
+      {
+        "pid": 1333811,
+        "seenAtMs": 1785130891145,
+        "argv": [
+          "/home/namastex/.hermes/node/bin/node",
+          "/home/namastex/prod/rlmx/dist/src/cli.js",
+          "Gemini batteries: What exactly decides whether the Gemini 'batteries' are loaded into the REPL namespace, and where are they loaded from?\n\nIn the rlmx repository, answer the following question. Work fast and stop early: at most three or four blocks of code, then answer. Do NOT keep exploring after you have it, and do NOT delegate further. Answer in at most 150 words. Give a file:line for EVERY claim, path relative to the working directory, and quote the cited line. Line numbers must come from code you ran, never from memory. If you do not find it, reply exactly: NOT FOUND — <what you searched>. Do not guess a path and do not paste file contents.",
+          "--output",
+          "json",
+          "--stats",
+          "--max-iterations",
+          "14",
+          "--timeout",
+          "900000",
+          "--max-depth",
+          "3",
+          "--max-cost",
+          "1.9982832",
+          "--no-session"
+        ],
+        "hasModelFlag": false,
+        "secondsIntoRun": 14.6
+      },
+      {
+        "pid": 1333817,
+        "seenAtMs": 1785130891145,
+        "argv": [
+          "/home/namastex/.hermes/node/bin/node",
+          "/home/namastex/prod/rlmx/dist/src/cli.js",
+          "Context too large: How does a run decide that its context is too large for the model, and what does it switch on when that happens?\n\nIn the rlmx repository, answer the following question. Work fast and stop early: at most three or four blocks of code, then answer. Do NOT keep exploring after you have it, and do NOT delegate further. Answer in at most 150 words. Give a file:line for EVERY claim, path relative to the working directory, and quote the cited line. Line numbers must come from code you ran, never from memory. If you do not find it, reply exactly: NOT FOUND — <what you searched>. Do not guess a path and do not paste file contents.",
+          "--output",
+          "json",
+          "--stats",
+          "--max-iterations",
+          "14",
+          "--timeout",
+          "900000",
+          "--max-depth",
+          "3",
+          "--max-cost",
+          "1.9982832",
+          "--no-session"
+        ],
+        "hasModelFlag": false,
+        "secondsIntoRun": 14.6
+      }
+    ]
+  },
+  "citations": {
+    "candidates": [
+      "src/repl.ts:123",
+      "src/ipc.ts:1",
+      "src/ipc.ts:6",
+      "src/ipc.ts:54",
+      "python/repl_server.py:16",
+      "src/rlm.ts:414",
+      "src/repl.ts:32",
+      "src/repl.ts:290",
+      "src/cache.ts:52",
+      "src/cli.ts:382",
+      "src/station-provider.ts:38",
+      "src/khal-provider.ts:47",
+      "src/khal-provider.ts:74",
+      "python/repl_server.py:8",
+      "src/cache.ts:15",
+      "src/cache.ts:26",
+      "src/cli.ts:643"
+    ],
+    "resolved": [
+      {
+        "path": "src/repl.ts",
+        "line": 123,
+        "text": "this.process = spawn(pythonPath, [serverPath], {"
+      },
+      {
+        "path": "src/ipc.ts",
+        "line": 1,
+        "text": "// IPC protocol types for Node.js <-> Python REPL subprocess communication."
+      },
+      {
+        "path": "src/ipc.ts",
+        "line": 6,
+        "text": "export interface ExecuteCommand {"
+      },
+      {
+        "path": "src/ipc.ts",
+        "line": 54,
+        "text": "export interface LLMRequest {"
+      },
+      {
+        "path": "python/repl_server.py",
+        "line": 16,
+        "text": "Python -> Node (stdout):"
+      },
+      {
+        "path": "src/rlm.ts",
+        "line": 414,
+        "text": "loadGeminiBatteries: isGoogleProvider(config.model.provider) && (config.toolsLevel === \"standard\" || config.toolsLevel === \"full\"),"
+      },
+      {
+        "path": "src/repl.ts",
+        "line": 32,
+        "text": "const GEMINI_BATTERIES_PATH = join(__dirname, \"..\", \"..\", \"python\", \"gemini_batteries.py\");"
+      },
+      {
+        "path": "src/repl.ts",
+        "line": 290,
+        "text": "private async _loadGeminiBatteries(): Promise<void> {"
+      },
+      {
+        "path": "src/cache.ts",
+        "line": 52,
+        "text": "export function validateContextSize("
+      },
+      {
+        "path": "src/cli.ts",
+        "line": 382,
+        "text": "if (!validation.valid) {"
+      },
+      {
+        "path": "src/station-provider.ts",
+        "line": 38,
+        "text": "export const STATION_BASE_URL ="
+      },
+      {
+        "path": "src/khal-provider.ts",
+        "line": 47,
+        "text": "export const KHAL_BASE_URL = process.env.KHAL_BASE_URL ?? \"https://llm.khal.ai/v1\";"
+      },
+      {
+        "path": "src/khal-provider.ts",
+        "line": 74,
+        "text": "export const KHAL_API_KEY_ENV = [\"KHAL_API_KEY\", \"RLMX_KHAL_API_KEY\"] as const;"
+      },
+      {
+        "path": "python/repl_server.py",
+        "line": 8,
+        "text": "IPC protocol:"
+      },
+      {
+        "path": "src/cache.ts",
+        "line": 15,
+        "text": "export const PROVIDER_LIMITS: Record<string, number> = {"
+      },
+      {
+        "path": "src/cache.ts",
+        "line": 26,
+        "text": "export function estimateTokens(context: LoadedContext): number {"
+      },
+      {
+        "path": "src/cli.ts",
+        "line": 643,
+        "text": "const validation = validateContextSize(context, config.model.provider);"
+      }
+    ],
+    "unresolved": [],
+    "groundedCount": 9,
+    "novel": [
+      "src/rlm.ts:414",
+      "src/repl.ts:32",
+      "src/repl.ts:290",
+      "src/cache.ts:52",
+      "src/station-provider.ts:38",
+      "src/khal-provider.ts:47",
+      "src/khal-provider.ts:74",
+      "src/cache.ts:15",
+      "src/cli.ts:643"
+    ]
+  },
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

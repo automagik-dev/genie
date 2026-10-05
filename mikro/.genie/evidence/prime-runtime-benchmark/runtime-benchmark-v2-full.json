@@ -1,0 +1,497 @@
+{
+  "version": "mikro-runtime-benchmark-v2",
+  "manifest": {
+    "version": "mikro-runtime-benchmark-v2",
+    "baseSha": "61993273b1085ba155c05e84e537b3479a92df01",
+    "harnessSha256": "0073150cc2826e5936eb279c30459ed07a07a97a6d96bfa4aec5123bcff98d63",
+    "primeSdkAdapterSha256": "e93d372e11aa7d8b487d400a1619a3083496e5a91fa00c46d9f8f388a6b5b0f1",
+    "legacyAdapterSha256": "e911f6dcf8e9f6700f98af57e7f0f30f040e89e4e2405e91c0a2c187abd1c629",
+    "primeVersion": "0.8.1",
+    "selectedCircuit": {
+      "selectionId": "deepseek/deepseek-v4-pro-0813",
+      "provider": "deepseek",
+      "id": "deepseek-v4-pro",
+      "baseUrl": "https://api.deepseek.com",
+      "peakInputUsdPerMillion": 1.32,
+      "peakOutputUsdPerMillion": 3.96,
+      "peakCacheReadUsdPerMillion": 0.044,
+      "contextWindow": 1000000,
+      "providerOutputCap": 17408
+    },
+    "selectionEvidence": {
+      "path": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-selection-lock.json",
+      "sha256": "6da102f0ec6fdd599438cccec97afa3aaf46ee659637daf08975cb226d492e01"
+    },
+    "runtimes": [
+      "mikro",
+      "prime-sdk"
+    ],
+    "excludedRuntime": {
+      "prime": {
+        "eligible": false,
+        "reasons": [
+          "output.schema unsupported",
+          "dict context unsupported",
+          "budget.maxDepth unsupported"
+        ],
+        "evidence": "src/mcp/backends/prime.ts"
+      }
+    },
+    "journeys": [
+      {
+        "id": "inline-incident-decision",
+        "contextType": null,
+        "promptSha256": "5f7e1118795e4810e0e038f1699060edbe883eefa8c1f2a95cba76c37b94b460",
+        "contextSha256": null,
+        "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720"
+      },
+      {
+        "id": "multi-file-release-context",
+        "contextType": "list",
+        "promptSha256": "c8d9b25e830fbc0ff8ebc033828598223e46eb221f672e4a9b4141ba22e16c15",
+        "contextSha256": "35cd9cf2531f98145c4baef735f0f2018f8ff18449a1b2dd14e4532dea6a1f93",
+        "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7"
+      },
+      {
+        "id": "json-authority-context",
+        "contextType": "dict",
+        "promptSha256": "555307b952b9df9d8d2824fa34d2e5a3187f931cda100c6fa1e55d8b8465ea47",
+        "contextSha256": "c4d0cb9c7e5731306f547727f9f199946fa0c3830ce07b57783483098935003a",
+        "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424"
+      }
+    ],
+    "repetitions": 3,
+    "probeCalls": 6,
+    "fullCalls": 18,
+    "providerCallsCeiling": 45,
+    "reasoning": "low",
+    "maxIterationsByRuntime": {
+      "mikro": 2,
+      "prime-sdk": 3
+    },
+    "maxInputTokens": 32768,
+    "maxOutputTokens": 8192,
+    "deadlineMs": 180000,
+    "retries": 0,
+    "rawAnswersPersisted": false,
+    "selectionRule": "quality first; then reliability, median latency, and cost per successful journey; Prime SDK promotion requires no solve-rate loss versus Mikro"
+  },
+  "manifestSha256": "02790c0efac06122a10ab925695ce958d2132e8b8a5cb7ed8f449d04ca0f3da1",
+  "stage": "full",
+  "runtimes": [
+    "mikro",
+    "prime-sdk"
+  ],
+  "authorizedCalls": 18,
+  "authorizedUsd": 3,
+  "startedAt": "2026-09-02T22:37:20.081Z",
+  "complete": true,
+  "records": [
+    {
+      "runtime": "mikro",
+      "journey": "inline-incident-decision",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "reason": "exact",
+      "answerSha256": "3d290016b67196e4419964ae5f2bb6aa0f36085ce422637d9cadc54178689c2f",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:37:20.082Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 43544,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 599,
+        "outputTokens": 2931,
+        "totalCost": 0.012431232
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "inline-incident-decision",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "f10a054d2f054c6f788551ead5666c16ad4855a5311695729de65fd0912f6647",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:38:04.074Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 6916,
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1047,
+        "outputTokens": 270,
+        "totalCost": 0.0024681360000000005
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "multi-file-release-context",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "be70c0c997addb9f9923a8151d22ab539367a23fc929f7e20ee24e5ef707aff2",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:38:11.428Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 31496,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 6202,
+        "outputTokens": 1485,
+        "totalCost": 0.014354472
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "multi-file-release-context",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "4378dfc14713ab53c0a55dda8abd116a164345f199a059189f5c474c593c3967",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:38:43.367Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 6168,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1190,
+        "outputTokens": 192,
+        "totalCost": 0.0024156
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "json-authority-context",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "reason": "exact",
+      "answerSha256": "87ee343f0f41ff70451bdc023c8595e2a94b18f9773b558d157b4c11a3defcb5",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:38:49.965Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 123564,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 12941,
+        "outputTokens": 7345,
+        "totalCost": 0.046725888
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "json-authority-context",
+      "repetition": 1,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "14a9e7ceaf9227a16a33c5958fa344342501997b351cd97e6e4f4c225dfe96ad",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:40:54.047Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 6630,
+      "iterations": 3,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 5180,
+        "outputTokens": 271,
+        "totalCost": 0.008473959999999999
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "inline-incident-decision",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "2ebfc887753665f3ffc7cd422add54fe06e09422e6f64e36a2971ccb5b8a3bec",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:41:01.133Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 57597,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 739,
+        "outputTokens": 2452,
+        "totalCost": 0.010719192
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "inline-incident-decision",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "reason": "exact",
+      "answerSha256": "c18d683f330f92b5ac2af7578ecdb688088549ac3621964f31a33f1428d72f43",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:41:59.159Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 6089,
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 23,
+        "outputTokens": 392,
+        "totalCost": 0.001644632
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "multi-file-release-context",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "1cbff1ab1715d9c874f548039ce37ceb5fa375a77465e139ddb339c2260ce792",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:42:05.686Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 39396,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 3400,
+        "outputTokens": 2411,
+        "totalCost": 0.014215784000000002
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "multi-file-release-context",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": false,
+      "reason": "invalid-json",
+      "answerSha256": "adbcd3c611b4d0a48ca4df943dc4496711c18925a1ca625e28a90dbffaea065c",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:42:45.514Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 63571,
+      "iterations": 3,
+      "budgetHit": "max-iterations",
+      "usage": {
+        "inputTokens": 828,
+        "outputTokens": 4028,
+        "totalCost": 0.017218432
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "json-authority-context",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "reason": "exact",
+      "answerSha256": "0dd36caa8b62b7525e00b480977952ab07ed3748cb0bc31b69e1fd4f2bfc1157",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:43:49.510Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 23912,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 579,
+        "outputTokens": 1240,
+        "totalCost": 0.005714104000000001
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "json-authority-context",
+      "repetition": 2,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "f1b401485bcef4d642eff928ccb4e059b366a86f863ddedacadb230e19427b77",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:44:13.869Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 14002,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 5046,
+        "outputTokens": 803,
+        "totalCost": 0.010139096
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "inline-incident-decision",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "2ebfc887753665f3ffc7cd422add54fe06e09422e6f64e36a2971ccb5b8a3bec",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:44:28.309Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 14956,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 721,
+        "outputTokens": 1032,
+        "totalCost": 0.005072232
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "inline-incident-decision",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "dcdd21c58315daebdb57490fde20efb110485842596f1ff0c2c201e87e006adc",
+      "expectedSha256": "0129219dd3bf429d01c41e1c5e8f3c0ed464e2f0803aa01f22e70bdb60793720",
+      "startedAt": "2026-09-02T22:44:43.695Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 5537,
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 23,
+        "outputTokens": 414,
+        "totalCost": 0.001731752
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "multi-file-release-context",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "b83dff1c0dad0378533b3000d7b49d414f2d7211f8a1252bfa226c9f3e97e33c",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:44:49.657Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 71218,
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 4291,
+        "totalCost": 0.017162024
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "multi-file-release-context",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "4378dfc14713ab53c0a55dda8abd116a164345f199a059189f5c474c593c3967",
+      "expectedSha256": "4e95f50d670b0e2313693367637533b0f646ae5177deac52040e6c58f26760a7",
+      "startedAt": "2026-09-02T22:46:01.314Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 10563,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 686,
+        "outputTokens": 649,
+        "totalCost": 0.0035825680000000004
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "mikro",
+      "journey": "json-authority-context",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "reason": "exact",
+      "answerSha256": "0dd36caa8b62b7525e00b480977952ab07ed3748cb0bc31b69e1fd4f2bfc1157",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:46:12.319Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 14278,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 863,
+        "outputTokens": 713,
+        "totalCost": 0.004013328
+      },
+      "limitCompliant": true
+    },
+    {
+      "runtime": "prime-sdk",
+      "journey": "json-authority-context",
+      "repetition": 3,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "reason": "value-mismatch",
+      "answerSha256": "8b42e9b61e4aa972fc91b0ffd31a1696c5d447da845d652c62a0fee8c58bd0e1",
+      "expectedSha256": "29f4b338133a4bb90a50dfb135837675858424e7c93007051dd8adda26936424",
+      "startedAt": "2026-09-02T22:46:27.040Z",
+      "pricingMultiplier": 0.5,
+      "wallMs": 4085,
+      "iterations": 2,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 5094,
+        "outputTokens": 210,
+        "totalCost": 0.007854176000000001
+      },
+      "limitCompliant": true
+    }
+  ],
+  "deepSeekBalanceStartUsd": 64.59,
+  "deepSeekBalanceCurrentUsd": 64.51,
+  "deepSeekSpendDeltaUsd": 0.0799999999999983,
+  "billing": {
+    "authority": "deepseek-usd-balance",
+    "observedSpendUsd": 0.0799999999999983,
+    "estimatedCostUsd": 0.09296830400000003,
+    "status": "unsettled"
+  },
+  "completedAt": "2026-09-02T22:46:31.552Z"
+}

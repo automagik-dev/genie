@@ -1,0 +1,264 @@
+export interface CliFlagSchema {
+  name: string;
+  aliases?: string[];
+  type: "boolean" | "string" | "number" | "list";
+  default?: string | number | boolean | string[] | null;
+  choices?: string[];
+  description: string;
+  appliesTo?: string[];
+}
+
+export interface ExitCodeSchema {
+  code: number;
+  meaning: string;
+}
+
+export interface JsonSchema {
+  $schema?: string;
+  type: string;
+  description?: string;
+  required?: string[];
+  properties: Record<string, unknown>;
+  additionalProperties?: boolean;
+}
+
+export interface MikroCliSchema {
+  schemaVersion: 1;
+  command: "mikro";
+  flags: CliFlagSchema[];
+  output: JsonSchema;
+  exitCodes: ExitCodeSchema[];
+}
+
+export const MIKRO_CLI_SCHEMA: MikroCliSchema = {
+  schemaVersion: 1,
+  command: "mikro",
+  flags: [
+    {
+      name: "--schema",
+      type: "boolean",
+      default: false,
+      description: "Print this machine-readable CLI schema as JSON and exit.",
+    },
+    {
+      name: "--context",
+      type: "string",
+      default: null,
+      description: "Path to context directory or file loaded for a query, cache warmup, or batch run.",
+      appliesTo: ["query", "cache", "batch"],
+    },
+    {
+      name: "--output",
+      type: "string",
+      default: "text",
+      choices: ["text", "json", "stream"],
+      description: "Output mode. json emits a single JSON object; stream emits JSONL iteration/final events.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--verbose",
+      type: "boolean",
+      default: false,
+      description: "Show iteration progress and diagnostic messages on stderr.",
+    },
+    {
+      name: "--max-iterations",
+      type: "number",
+      default: 30,
+      description: "Maximum RLM iterations for query or batch runs.",
+      appliesTo: ["query", "batch"],
+    },
+    {
+      name: "--timeout",
+      type: "number",
+      default: 300000,
+      description: "Timeout in milliseconds for query, cache, or batch execution.",
+    },
+    {
+      name: "--dir",
+      type: "string",
+      default: "current working directory",
+      description: "Directory for the init command or config discovery.",
+      appliesTo: ["init"],
+    },
+    {
+      name: "--help",
+      aliases: ["-h"],
+      type: "boolean",
+      default: false,
+      description: "Show help text and exit.",
+    },
+    {
+      name: "--version",
+      aliases: ["-v"],
+      type: "boolean",
+      default: false,
+      description: "Show mikro version and exit.",
+    },
+    {
+      name: "--stats",
+      type: "boolean",
+      default: false,
+      description: "Emit JSON stats to stderr, or include stats in --output json responses.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--log",
+      type: "string",
+      default: null,
+      description: "Write structured JSONL run logs to the given path.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--tools",
+      type: "string",
+      default: null,
+      choices: ["core", "standard", "full"],
+      description: "Tool level exposed to the RLM runtime.",
+      appliesTo: ["query", "cache", "batch", "benchmark"],
+    },
+    {
+      name: "--max-cost",
+      type: "number",
+      default: null,
+      description: "Maximum USD spend per run.",
+      appliesTo: ["query", "batch"],
+    },
+    {
+      name: "--max-tokens",
+      type: "number",
+      default: null,
+      description: "Maximum total tokens per run.",
+      appliesTo: ["query", "batch"],
+    },
+    {
+      name: "--max-depth",
+      type: "number",
+      default: null,
+      description: "Maximum recursive rlm_query depth.",
+      appliesTo: ["query", "batch"],
+    },
+    {
+      name: "--model",
+      type: "string",
+      default: null,
+      description:
+        'Model for this run: "provider/model", or a bare model id on the configured provider. Outranks settings.json and mikro.yaml, and re-pins the sub-call model. Recursive children receive it automatically.',
+      appliesTo: ["query"],
+    },
+    {
+      name: "--ext",
+      type: "list",
+      default: null,
+      description: "Comma-separated file extensions for context directories.",
+      appliesTo: ["query", "cache", "batch"],
+    },
+    {
+      name: "--thinking",
+      type: "string",
+      default: null,
+      choices: ["minimal", "low", "medium", "high"],
+      description: "Gemini 3 thinking level override.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--temperature",
+      type: "number",
+      default: null,
+      description:
+        "Sampling temperature, 0-2. Outranks agent.yaml and mikro.yaml's top-level `temperature:`. Unset sends no temperature at all, leaving the provider's own behaviour in place. Best-effort: pi/ai sends it on every api family and drops it only on the `anthropic-messages` api — when a reasoning level is set, or when the model declares `compat.supportsTemperature: false`. Claude reached via OpenRouter or Bedrock is not subject to that guard.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--cache",
+      type: "boolean",
+      default: false,
+      description: "Enable cache mode, injecting full context into the system prompt for provider caching.",
+      appliesTo: ["query", "batch"],
+    },
+    {
+      name: "--no-session",
+      type: "boolean",
+      default: false,
+      description: "Disable automatic session persistence after query runs.",
+      appliesTo: ["query"],
+    },
+    {
+      name: "--estimate",
+      type: "boolean",
+      default: false,
+      description: "Estimate context size and cost without warming cache.",
+      appliesTo: ["cache"],
+    },
+    {
+      name: "--parallel",
+      type: "number",
+      default: 1,
+      description: "Number of concurrent questions for the batch command.",
+      appliesTo: ["batch"],
+    },
+    {
+      name: "--batch-api",
+      type: "boolean",
+      default: false,
+      description: "Use Gemini Batch API for batch runs where available.",
+      appliesTo: ["batch"],
+    },
+    {
+      name: "--template",
+      type: "string",
+      default: "default",
+      choices: ["default", "code"],
+      description: "Template used by the init command.",
+      appliesTo: ["init"],
+    },
+    {
+      name: "--force",
+      aliases: ["-f"],
+      type: "boolean",
+      default: false,
+      description: "Allow mikro update to reset a dirty managed checkout to origin/main.",
+      appliesTo: ["update"],
+    },
+  ],
+  output: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    description: "Object emitted by `mikro --output json`. When --stats is set, stats is included.",
+    required: ["answer", "references", "usage", "iterations", "model"],
+    additionalProperties: true,
+    properties: {
+      answer: { type: "string", description: "Final answer text." },
+      references: { type: "array", items: { type: "string" }, description: "Referenced files or sources." },
+      usage: {
+        type: "object",
+        required: ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalCost", "llmCalls"],
+        properties: {
+          inputTokens: { type: "number" },
+          outputTokens: { type: "number" },
+          cacheReadTokens: { type: "number" },
+          cacheWriteTokens: { type: "number" },
+          totalCost: { type: "number" },
+          llmCalls: { type: "number" },
+        },
+      },
+      usageBreakdown: { type: "object", description: "Optional root/child/total usage split." },
+      iterations: { type: "number" },
+      model: { type: "string" },
+      budgetHit: { type: ["string", "null"], description: "Budget or abort reason, when applicable." },
+      geminiCounts: { type: "object", description: "Gemini battery call counts, when available." },
+      geminiBatteriesUsed: { type: "array", items: { type: "string" } },
+      stats: { type: "object", description: "Run statistics included with --stats and --output json." },
+    },
+  },
+  exitCodes: [
+    { code: 0, meaning: "success" },
+    { code: 1, meaning: "general error, validation error, missing query, missing provider key warning, or empty-response abort" },
+    { code: 130, meaning: "terminated by SIGINT" },
+    { code: 143, meaning: "terminated by SIGTERM" },
+  ],
+};
+
+export function printMikroCliSchema(): void {
+  console.log(JSON.stringify(MIKRO_CLI_SCHEMA, null, 2));
+}

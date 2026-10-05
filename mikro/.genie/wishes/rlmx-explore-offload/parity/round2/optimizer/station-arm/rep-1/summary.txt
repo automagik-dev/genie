@@ -1,0 +1,46 @@
+# gen-1 · station/qwen3.5-2b-FLM · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=0/7 weak=0 anchorsCited=0/7 c2=PASS c3=PASS cites=0/0 pass=false iters=14 spawns=0 wall=893.3s cost=$0 chars=809 root=/home/namastex/prod/xdna-top
+  MISS F1 src/xdna_top/npu_power.py:30 — answer never names npu_power.py
+  MISS F2 src/xdna_top/npu_power.py:115 — answer never names npu_power.py
+  MISS F3 src/xdna_top/npu_power.py:123 — answer never names npu_power.py
+  MISS F4 src/xdna_top/npu_power.py:130 — answer never names npu_power.py
+  MISS F5 src/xdna_top/npu_power.py:84 — answer never names npu_power.py
+  MISS F6 src/xdna_top/discover_sysfs.py:18 — answer never names discover_sysfs.py
+  MISS F7 src/xdna_top/discover_sysfs.py:55 — answer never names discover_sysfs.py
+TASK 4 ok=true facts=0/6 weak=0 anchorsCited=0/6 c2=PASS c3=PASS cites=0/0 pass=false iters=14 spawns=0 wall=167.4s cost=$0 chars=397 root=/home/namastex/prod/xdna-top
+  MISS F1 src/xdna_top/record.py:22 — answer never names record.py
+  MISS F2 src/xdna_top/record.py:23 — answer never names record.py
+  MISS F3 src/xdna_top/record.py:227 — answer never names record.py
+  MISS F4 src/xdna_top/exporter.py:13 — answer never names exporter.py
+  MISS F5 src/xdna_top/exporter.py:106 — answer never names exporter.py
+  MISS F6 src/xdna_top/exporter.py:62 — answer never names exporter.py
+TASK 5 ok=true facts=0/5 weak=0 anchorsCited=0/5 c2=PASS c3=PASS cites=0/0 pass=false iters=14 spawns=0 wall=199s cost=$0 chars=1074 root=/home/namastex/prod/genie-desktop
+  MISS F1 src/main/services/ptyManager.ts:38 — answer never names ptyManager.ts
+  MISS F2 src/main/services/ptyManager.ts:695 — answer never names ptyManager.ts
+  MISS F3 src/main/services/ptyManager.ts:708 — answer never names ptyManager.ts
+  MISS F4 src/main/services/ptyManager.ts:727 — answer never names ptyManager.ts
+  MISS F5 src/main/services/ptyManager.ts:127 — answer never names ptyManager.ts
+TASK 6 ok=true facts=0/5 weak=0 anchorsCited=0/5 c2=PASS c3=PASS cites=0/0 pass=false iters=14 spawns=0 wall=413.5s cost=$0 chars=449 root=/home/namastex/prod/genie-desktop
+  MISS F1 src/main/services/RtkService.ts:180 — answer never names RtkService.ts
+  MISS F2 src/main/services/RtkService.ts:32 — answer never names RtkService.ts
+  MISS F3 src/main/services/RtkService.ts:33 — answer never names RtkService.ts
+  MISS F4 src/main/services/RtkService.ts:34 — answer never names RtkService.ts
+  MISS F5 src/main/services/RtkService.ts:357 — answer never names RtkService.ts
+TASK 7 ok=true facts=0/6 weak=0 anchorsCited=0/6 c2=PASS c3=PASS cites=0/0 pass=false iters=6 spawns=0 wall=258.7s cost=$0 chars=174 root=/home/namastex/prod/fde-station
+  MISS F1 channel/enroll.sh:27 — answer never names enroll.sh
+  MISS F2 channel/enroll.sh:28 — answer never names enroll.sh
+  MISS F3 channel/enroll.sh:29 — answer never names enroll.sh
+  MISS F4 channel/enroll.sh:88 — answer never names enroll.sh
+  MISS F5 channel/enroll.sh:98 — answer never names enroll.sh
+  MISS F6 channel/enroll.sh:23 — answer never names enroll.sh
+TASK 8 ok=true facts=0/5 weak=0 anchorsCited=0/5 c2=FAIL c3=FAIL cites=0/1 pass=false iters=14 spawns=0 wall=134.8s cost=$0 chars=352 root=/home/namastex/prod/fde-station
+  MISS F1 channel/publish.sh:52 — answer never names publish.sh
+  MISS F2 channel/publish.sh:56 — answer never names publish.sh
+  MISS F3 channel/publish.sh:59 — answer never names publish.sh
+  MISS F4 channel/publish.sh:64 — answer never names publish.sh
+  MISS F5 channel/publish.sh:175 — answer never names publish.sh
+  C2FAIL app/models/order.rb:88 (missing-file)
+  C3FAIL app/models/order.rb:88 (missing-file)
+ROUND gen=1 facts=0/34 fitness=0 weak=0 tasksPassed=0/6 runsOk=6/6 c2fail=1 c3fail=1 cites=0/1 spawns=0 cost=$0 wall=2082s

@@ -1,0 +1,178 @@
+{
+  "arm": "rlmx",
+  "task": 5,
+  "model": "khal/qwen3.7-max",
+  "round": "matrix-gen1-khal-qwen3-7-max",
+  "footer": "rlmx · agent=explore-r · khal/qwen3.7-max · 6 iterations · 79,674 in / 31,879 out · $0.58 · 370.1s · session sess_8f089cb98763e715",
+  "wallSeconds": 370.4,
+  "requestChars": 297,
+  "resultChars": 3018,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 2883,
+  "citations": [
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 38,
+      "key": "src/main/services/ptyManager.ts:38",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const ptys = new Map<string, PtyRecord>();"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 695,
+      "key": "src/main/services/ptyManager.ts:695",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "export function resizePty(id: string, cols: number, rows: number): void {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 700,
+      "key": "src/main/services/ptyManager.ts:700",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "record.proc.resize(cols, rows);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 698,
+      "key": "src/main/services/ptyManager.ts:698",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "record.mirror?.resize(cols, rows);"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 727,
+      "key": "src/main/services/ptyManager.ts:727",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "function gracefulKillProc(proc: KillableProc, timeoutMs = GRACEFUL_KILL_TIMEOUT_MS): Promise<void> {"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 708,
+      "key": "src/main/services/ptyManager.ts:708",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "const GRACEFUL_KILL_TIMEOUT_MS = 3000;"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 504,
+      "key": "src/main/services/ptyManager.ts:504",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "name: 'xterm-256color',"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 246,
+      "key": "src/main/services/ptyManager.ts:246",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "TERM_PROGRAM: 'dash',"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 327,
+      "key": "src/main/services/ptyManager.ts:327",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.CLAUDE_CODE_NO_FLICKER = '1';"
+    },
+    {
+      "path": "src/main/services/ptyManager.ts",
+      "line": 336,
+      "key": "src/main/services/ptyManager.ts:336",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/ptyManager.ts",
+      "lines": 959,
+      "verdict": "resolves",
+      "text": "env.DASH_HOOK_PORT = String(hookServer.port);"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 10,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/ptyManager.ts:38",
+      "anchoredOn": "new Map<string, PtyRecord>()",
+      "claim": "Live PTY sessions live in one module-level registry keyed by session id — new Map<string, PtyRecord>() at module scope — rather than being tracked per window.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "Map<string",
+        "PtyRecord>()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/ptyManager.ts:695",
+      "anchoredOn": "resizePty",
+      "claim": "Resizing is an explicit operation on a session id: resizePty takes the column and row counts, so geometry changes are not a side effect of rendering.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "resizePty"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/ptyManager.ts:708",
+      "anchoredOn": "GRACEFUL_KILL_TIMEOUT_MS",
+      "claim": "Shutdown is graceful-then-forced on a fixed budget, GRACEFUL_KILL_TIMEOUT_MS, which is 3000 milliseconds.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "GRACEFUL_KILL_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/ptyManager.ts:727",
+      "anchoredOn": "gracefulKillProc",
+      "claim": "The kill helper gracefulKillProc takes that budget as a default parameter, so an individual caller can shorten or lengthen it without editing the shared constan",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "gracefulKillProc"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/ptyManager.ts:127",
+      "anchoredOn": "RESERVED_ENV_KEYS",
+      "claim": "A PTY does not simply inherit the parent environment: RESERVED_ENV_KEYS names the variables the app manages itself and that a caller-supplied environment must n",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

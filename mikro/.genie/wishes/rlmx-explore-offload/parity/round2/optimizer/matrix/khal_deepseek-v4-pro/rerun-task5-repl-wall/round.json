@@ -1,0 +1,71 @@
+{
+  "gen": 13025,
+  "label": "matrix-khal-deepseek-v4-pro-t5-wall",
+  "model": "khal/deepseek-v4-pro",
+  "concurrency": 1,
+  "taskTimeoutS": 2300,
+  "tasks": [
+    5
+  ],
+  "heldOutRefused": [
+    1,
+    2
+  ],
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "suite": "round2-train",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "systemChars": 27840,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "1500000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "1800000",
+    "PARITY_CALL_TIMEOUT_MS": "1500000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "pinChildModel": true,
+  "groundTruthDrift": [],
+  "groundTruthDriftAllowed": false,
+  "roots": [
+    {
+      "root": "/home/namastex/prod/genie-desktop",
+      "rlmxExistedBefore": false,
+      "rlmxExistsAfter": true,
+      "createdByThisRound": true,
+      "cleanedUp": true,
+      "removed": [
+        "CRITERIA.md",
+        "SYSTEM.md",
+        "TOOLS.md",
+        "rlmx.yaml"
+      ]
+    }
+  ],
+  "rlmxGit": {
+    "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+    "branch": "wish/rlmx-explore-offload",
+    "dirty": true
+  },
+  "genDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-13025",
+  "startedAt": "2026-07-27T10:08:18.727Z",
+  "finishedAt": "2026-07-27T10:14:21.674Z",
+  "wallSeconds": 362.9,
+  "perTask": [
+    {
+      "task": 5,
+      "exitCode": 0,
+      "timedOut": false,
+      "wallSeconds": 362.9,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-13025/runs/task-5.json",
+      "log": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-13025/logs/task-5.log",
+      "scored": true,
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-13025/runs/task-5.score.json"
+    }
+  ],
+  "failedTasks": [],
+  "exitCode": 0
+}

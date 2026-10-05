@@ -1,0 +1,15 @@
+# gen-1 · khal/deepseek-v4-flash · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=5/7 weak=0 anchorsCited=5/7 c2=PASS c3=PASS cites=25/25 pass=false iters=10 spawns=3 wall=323.5s cost=$0.03 chars=4722 root=/home/namastex/prod/xdna-top
+  MISS F5 src/xdna_top/npu_power.py:84 — names the path but not the anchoring term `m.group("lb") == "["` (0/1 long tokens)
+  MISS F6 src/xdna_top/discover_sysfs.py:18 — names the path but not the anchoring term `CPU-only fallback` (0/2 long tokens)
+TASK 4 ok=true facts=4/6 weak=0 anchorsCited=3/6 c2=PASS c3=PASS cites=11/11 pass=false iters=7 spawns=3 wall=203.3s cost=$0.02 chars=1803 root=/home/namastex/prod/xdna-top
+  MISS F1 src/xdna_top/record.py:22 — names the path but not the anchoring term `RECORD_SCHEMA_VERSION` (0/1 long tokens)
+  MISS F2 src/xdna_top/record.py:23 — names the path but not the anchoring term `RECORD_KIND` (0/1 long tokens)
+TASK 5 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=25/25 pass=true iters=9 spawns=4 wall=236s cost=$0.04 chars=4220 root=/home/namastex/prod/genie-desktop
+TASK 6 ok=true facts=5/5 weak=0 anchorsCited=5/5 c2=PASS c3=PASS cites=14/14 pass=true iters=7 spawns=4 wall=202.6s cost=$0.03 chars=2421 root=/home/namastex/prod/genie-desktop
+TASK 7 ok=true facts=5/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=12/12 pass=false iters=6 spawns=3 wall=114.2s cost=$0.01 chars=1960 root=/home/namastex/prod/fde-station
+  MISS F6 channel/enroll.sh:23 — names the path but not the anchoring term `SUITE` (0/1 long tokens)
+TASK 8 ok=true facts=5/5 weak=0 anchorsCited=4/5 c2=PASS c3=PASS cites=10/10 pass=true iters=5 spawns=3 wall=200.2s cost=$0.02 chars=1468 root=/home/namastex/prod/fde-station
+ROUND gen=1 facts=29/34 fitness=0.8529 weak=0 tasksPassed=3/6 runsOk=6/6 c2fail=0 c3fail=0 cites=97/97 spawns=20 cost=$0.15 wall=726.8s

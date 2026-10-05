@@ -1,0 +1,24 @@
+classifier A/B — redirect arm of SIDE_EFFECTING, pre-fix vs post-fix
+  pre  2026-07-27T22:42:42.551Z   post 2026-07-27T22:42:43.058Z
+  window since 2026-07-26T22:42:42.583Z · 138 transcripts · 43613 lines (identical in both runs)
+
+  off  family                 preCalls postCalls    dCalls        preChars       postChars         dChars    dChars%
+   *   repo-exploration          4955      4882       -73        13913427        13874850         -38577     -0.28
+       side-effecting-shell      1550      1559         9         1494782         1494442           -340     -0.02
+       other                      873       948        75          926998         1007564          80566      8.69
+   *   git-history                509       496       -13          983705          941136         -42569     -4.33
+       edits                     1250      1250         0          223094          223094              0      0.00
+       test-and-build             372       374         2          210230          211150            920      0.44
+       agent-delegation            60        60         0          150323          150323              0      0.00
+   *   web-research                20        20         0           56056           56056              0      0.00
+
+   *   OFFLOADABLE TOTAL         5484      5398       -86        14953188        14872042         -81146     -0.54
+
+  reclassifications (single pass over the same bytes, both classifiers):
+    182  repo-exploration    -> side-effecting-shell
+    119  side-effecting-shell -> other
+    109  side-effecting-shell -> repo-exploration
+     44  other                -> side-effecting-shell
+     19  git-history          -> side-effecting-shell
+      8  side-effecting-shell -> git-history
+      2  git-history          -> test-and-build

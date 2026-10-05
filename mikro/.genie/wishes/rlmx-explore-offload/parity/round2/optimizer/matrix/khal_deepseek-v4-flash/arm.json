@@ -1,0 +1,114 @@
+{
+  "arm": "model-matrix",
+  "model": "khal/deepseek-v4-flash",
+  "suite": "round2-train",
+  "tasks": [3, 4, 5, 6, 7, 8],
+  "heldOutNeverRunNeverRead": [1, 2],
+  "measurementOnly": true,
+  "promptEdits": "none — optimizer/current/ was not read into this run and not written; the recipe came from a frozen gens/ snapshot via --recipe",
+
+  "recipeUnderTest": {
+    "generation": 1,
+    "source": "optimizer/gens/gen-1/recipe",
+    "systemSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "whyThisGeneration": [
+      "totals history over the four recorded generations is [28, 29, 28, 29] facts of 34 — gen-1 and gen-3 tie on the primary metric (fitness 0.8529 each)",
+      "gen-1 wins the tie on tasksMechanicalPass, 3/6 vs gen-3's 2/6",
+      "gen-3 broke two of the guards its own EVOLUTION.md entry pre-registered: T5 F5 (ptyManager.ts:127 RESERVED_ENV_KEYS) regressed again, and spawns fell to 2 on tasks 3 and 4 against the stated '>= 3 on every run'",
+      "EVOLUTION.md's Pareto discipline already named gen-1 the best point at gen-2 -> gen-3; gen-3's result does not displace it"
+    ]
+  },
+
+  "howItWasRun": {
+    "driver": "parity/round2/run-train-round.mjs",
+    "argv": "--gen 33820 --model khal/deepseek-v4-flash --recipe <optimizer/gens/gen-1/recipe> --label matrix-khal-deepseek-v4-flash --concurrency 2",
+    "genNumberIsADirectoryNameOnly": "run-train-round.mjs writes to optimizer/gens/gen-<N>/ and has no output-dir flag. 33820 is sha256('matrix-arm:khal/deepseek-v4-flash') truncated into 10000..99999 — an arm-unique scratch number chosen so a concurrent matrix arm cannot land in the same directory. It is NOT a generation.",
+    "moved": "optimizer/gens/gen-33820 -> optimizer/matrix/khal_deepseek-v4-flash (whole tree, after the round exited 0)",
+    "summaryRegeneratedHere": true,
+    "staleAbsolutePaths": "round.json is kept byte-exact as written, so its genDir and perTask[].runJson/log fields still name .../gens/gen-33820. summary.json was regenerated at this path and its runJson/scoreJson fields are correct. Nothing else references the old path.",
+    "pinChildModel": true,
+    "concurrency": 2,
+    "envCorrections": {
+      "RLMX_REPL_TIMEOUT_MS": "600000",
+      "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+      "PARITY_CALL_TIMEOUT_MS": "600000",
+      "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+    },
+    "rlmxGitHead": "6ec4822",
+    "groundTruthDrift": [],
+    "rootsScaffoldedAndRestored": [
+      "/home/namastex/prod/xdna-top",
+      "/home/namastex/prod/genie-desktop",
+      "/home/namastex/prod/fde-station"
+    ]
+  },
+
+  "result": {
+    "factsFound": 32,
+    "factsNeeded": 34,
+    "fitness": 0.9412,
+    "factsWeak": 0,
+    "tasksMechanicalPass": 4,
+    "runsOk": 6,
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "citations": 109,
+    "citationsResolved": 109,
+    "recursiveSpawns": 15,
+    "costUsd": 0.15,
+    "wallSeconds": 714.4,
+    "misses": [
+      "task 3 F5 src/xdna_top/npu_power.py:84 — never writes `m.group(\"lb\") == \"[\"`",
+      "task 7 F6 channel/enroll.sh:23 — never writes `SUITE`"
+    ]
+  },
+
+  "comparisonToTheSameRecipeAtGen1": {
+    "note": "gen-1's own round is the same recipe, the same model, the same suite and the same harness at the same rlmx HEAD (6ec4822), started 84 minutes earlier (2026-07-27T08:22:45Z vs 09:46:15Z). The delta below is run-to-run variance, not a prompt effect.",
+    "gen1": { "facts": 29, "fitness": 0.8529, "tasksPassed": 3, "cites": "97/97", "spawns": 20, "costUsd": 0.15, "wallSeconds": 726.8 },
+    "thisArm": { "facts": 32, "fitness": 0.9412, "tasksPassed": 4, "cites": "109/109", "spawns": 15, "costUsd": 0.15, "wallSeconds": 714.4 },
+    "perTaskFactDelta": { "3": "+1", "4": "+2", "5": "0", "6": "0", "7": "0", "8": "0" },
+    "consequence": "a +3-fact swing on an identical (recipe, model, suite) triple is larger than the entire spread of the four recorded generations ([28, 29, 28, 29]). Single-round fitness differences of 1-2 facts are inside noise and cannot be used to select a prompt on their own."
+  },
+
+  "deviationsWorthReading": [
+    "task 6 fanned out ZERO times and ran to the 14-iteration cap in 74.9s, and still scored 5/5 with 13/13 citations resolving. gen-1's task 6 fanned out 4 times. The mandatory fan-out is not reliably mandatory at this model.",
+    "task 4 rose from 4/6 to 6/6 while its citation count rose from 11 to 34 — the gain is real (both RECORD_SCHEMA_VERSION and RECORD_KIND are now named) but it came with a 3x wider citation set.",
+    "task 3 F5 (npu_power.py:84) has now missed in every single recorded round, gen-0 through gen-3 and here. It is the one fact no configuration of this recipe has ever produced."
+  ],
+
+  "corrections": {
+    "addedAt": "2026-07-27",
+    "by": "round-2 campaign verifier",
+    "method": "text-level only — no round re-run here, no score recomputed, no scorer touched. Every field above is left byte-exact so the corrected reading can be checked against it.",
+
+    "headlineDoesNotReproduce": {
+      "published": "facts 32/34, fitness 0.9412, tasksPassed 4/6 — with task 4 at 6/6",
+      "whatIsStillTrue": "this round really did score 32/34. runs/, logs/, round.json and summary.* are the honest record of ONE execution and nothing in them is being retracted.",
+      "whatIsWithdrawn": "treating 32/34 as this arm's LEVEL. It is the maximum of the observations available for this (recipe, model, suite) triple, and it did not reproduce.",
+      "replicates": "three live re-runs of task 4 on the identical triple (recipe gens/gen-1 02184f35 + agent.yaml 20f8e018, model khal/deepseek-v4-flash, round2-train/4.md) scored 3/6, 5/6, 4/6 against the 6/6 published here",
+      "correctedLevel": "29-31/34, reported as a BAND",
+      "howTheBandIsComputed": "hold the five non-task-4 tasks at their published values (6+5+5+5+5 = 26 facts) and substitute each replicate for task 4: 26+3=29, 26+4=30, 26+5=31. The other five tasks were not replicated, so the band is a lower bound on the true spread, not an interval estimate.",
+      "task4ObservationsOnThisTriple": { "gen1Round": "4/6", "thisArm": "6/6", "replicate1": "3/6", "replicate2": "5/6", "replicate3": "4/6", "range": "3/6 to 6/6", "median": "4/6" },
+      "replicateRecordsNotCommitted": "the three replicates were executed live by the campaign verifier; their run/score JSON is NOT committed under this wish. Only the scored task-4 totals are on record. The band is verifier-reported and cannot be re-derived from this tree — the numbers above are the whole evidence.",
+      "consequenceForThisArmsOwnConclusion": "STRENGTHENED, not weakened. `comparisonToTheSameRecipeAtGen1.consequence` already says single-round differences of 1-2 facts are inside noise and cannot select a prompt. The replicates show the same task swinging 3/6 to 6/6 with nothing changed but the clock, so the honest statement is stronger: single-round differences of up to ~3 facts on this triple are inside noise."
+    },
+
+    "spawnsGuardCaveat": {
+      "observed": "task 6 of THIS arm fanned out ZERO times (spawns=0), on the recipe that was selected (gen-1, 02184f35)",
+      "whyItMatters": "EVOLUTION.md's gen-3 entry pre-registered 'Spawns must return to >= 3 on every run' as a hard guard, and recipeUnderTest.whyThisGeneration above cites gen-3's spawns=2 on tasks 3 and 4 as a reason gen-3 does not displace gen-1. The same condition holds on the selected recipe: spawns=0 here (task 6), spawns=2 on task 3 of the pro arm, spawns=2 on task 3 of the qwen arm — 3 of the 4 matrix arms running gen-1's exact snapshot break the guard, and gen-0, the shipped recipe, ran 2/2/0 on tasks 3/4/6.",
+      "corrected": "spawns<3 is a property of a round (model, load, question), not of a prompt. That bullet is withdrawn as a selection reason; the selection itself is unchanged, on the ground that a tie does not displace the incumbent.",
+      "seeAlso": "EVOLUTION.md — 'Guard 3 is real, and it does not separate gen-3 from the recipe that was selected'"
+    },
+
+    "whatSurvivesUnchanged": [
+      "cost: $0.15 for the round, the cheapest of the four matrix arms by 8.7x (pro), 13x (glm) and 18.8x (qwen). A +/-3-fact band moves cost-per-fact by ~10% and cannot reorder a 8.7x-18.8x spread.",
+      "criteria 2 and 3: 109/109 citations resolved, 0 fabrications, 6/6 runs ok — properties of these runs, not disputed",
+      "ground truth: preflight re-resolved all 34 anchors, groundTruthDrift []",
+      "task 3 F5 (npu_power.py:84) missed here as in every recorded round"
+    ],
+
+    "winnerFraming": "This arm is the cost winner of the matrix, robustly. It is NOT established as the accuracy winner: at n=1 per arm, with a measured 3-fact run-to-run band on this arm alone, the 4-fact margin over qwen3.7-max (28/34) collapses to +1 at the bottom of the band. See matrix/README.md and matrix/khal_deepseek-v4-flash/README.md."
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "task": 1,
+  "tasksDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+  "taskFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks/1.md",
+  "suite": "frozen-eval",
+  "root": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain",
+  "model": "deepseek/deepseek-v4-flash",
+  "round": "gate-v2-legacy",
+  "startedAt": "2026-08-16T18:31:52.746Z",
+  "question": "Read-only exploration of /home/namastex/prod/brain (do NOT edit anything). Search very thoroughly and answer with specific file paths and line numbers for every claim.\n\nQuestions:\n1. Every cloud model/provider dependency: where are Gemini embeddings called (model names, dims, task types)? Where is rlmx used and which models/providers does it default to (look for model ids like gemini-*, claude-*, gpt-*, provider config)? Any Anthropic/OpenAI/Google API usage? List env vars required (GEMINI_API_KEY etc.) and the files that read them.\n2. The embedding pipeline: which file implements embedding? Is there any local/OpenAI-compatible embedding fallback or is Gemini hard-required? What are embedDims defaults and where is the pgvector schema defined?\n3. Multimodal ingestion: how are audio/images/video/pdf ingested (which files, which models do transcription/vision)? Is it python/ (brain_tools.py?) or src/?\n4. Storage: list the Postgres tables and where the schema/migrations live. What is pgserve (embedded postgres?) — which file? What are the three deployment modes in code?\n5. Episodic/session memory: summarize .genie/wishes/brain-memory-organ and khortex-memory-sense (and cortex wish if present) — what memory model do they propose (episodic vs semantic, decay, consolidation)? Also check plugins/brain-khortex and memory/ dir.\n6. Anything about local-model support already planned/present (llama.cpp, Lemonade, Ollama, local embeddings) — search for those terms.\nReturn a structured report with paths like src/lib/foo.ts:123. Be exhaustive on question 1 and 2.",
+  "provenance": {
+    "promptSha256": "22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d",
+    "promptChars": 17788,
+    "promptSnapshot": "parity/prompts/22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d.md",
+    "agentYamlSha256": "6f35537c0057cd863c630df3e6c54b4397694a9dba052858557be262fb8dfd1d",
+    "rootGit": {
+      "head": null,
+      "error": "Command failed: git -C /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/brain status --porcelain\nerror: expected submodule path 'docs' not to be a symbolic link\n"
+    },
+    "rootFrozen": "/home/namastex/prod/brain",
+    "rlmxGit": {
+      "head": "90220119eb910d8d88362c98dccea409b49ad3d4",
+      "branch": "wish/rlmx-v2-prime-backend",
+      "dirty": true
+    },
+    "recipeDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore",
+    "agent": "explore",
+    "tool": "rlmx_explore",
+    "childModelPin": null,
+    "replTimeoutMs": null,
+    "runTimeoutMs": null,
+    "callTimeoutMs": 300000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "serverReadyMs": 531,
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore"
+  ],
+  "firstProgressMs": 113,
+  "ok": false,
+  "isError": true,
+  "wallSeconds": 44.1,
+  "requestChars": 1595,
+  "resultChars": 64,
+  "answer": "rlmx rlmx_explore failed: REPL execution timed out after 30000ms",
+  "footer": "",
+  "fullText": "rlmx rlmx_explore failed: REPL execution timed out after 30000ms",
+  "structuredContent": {
+    "answer": "rlmx rlmx_explore failed: REPL execution timed out after 30000ms",
+    "session_id": "sess_f1281aedeb56671c"
+  },
+  "progress": [
+    "agent=explore · iteration 1",
+    "agent=explore · iteration 2",
+    "agent=explore · iteration 3",
+    "agent=explore · iteration 3 · 1 recursive spawn",
+    "agent=explore · iteration 3 · 2 recursive spawns",
+    "agent=explore · iteration 3 · 3 recursive spawns",
+    "agent=explore · iteration 3 · 4 recursive spawns",
+    "agent=explore · working 30s"
+  ],
+  "stderr": "(node:35356) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\nrlmx mcp: 1 microagent discovered (explore)\n"
+}

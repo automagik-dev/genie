@@ -1,0 +1,353 @@
+{
+  "arm": "rlmx",
+  "task": 3,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r1-flash-baseline",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 10 iterations · 116,815 in / 6,113 out · $0.00 · 199.9s · session sess_3804397bedab1da9",
+  "wallSeconds": 200.2,
+  "requestChars": 1918,
+  "resultChars": 4769,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [],
+  "need": 10,
+  "factTotal": 11,
+  "answerChars": 4629,
+  "citations": [
+    {
+      "path": "src/lib/server.ts",
+      "line": 395,
+      "key": "src/lib/server.ts:395",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "state.httpServer = Bun.serve({"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 400,
+      "key": "src/lib/server.ts:400",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "});"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 244,
+      "key": "src/lib/server.ts:244",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "const port = opts.port ?? 3847;"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 940,
+      "key": "src/lib/server.ts:940",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "async function handleRequest(req: Request): Promise<Response> {"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 1020,
+      "key": "src/lib/server.ts:1020",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/bench/api.ts",
+      "line": 661,
+      "key": "src/bench/api.ts:661",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/api.ts",
+      "lines": 943,
+      "verdict": "resolves",
+      "text": "export async function router(req: Request): Promise<Response> {"
+    },
+    {
+      "path": "src/bench/api.ts",
+      "line": 860,
+      "key": "src/bench/api.ts:860",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/api.ts",
+      "lines": 943,
+      "verdict": "resolves",
+      "text": "// Serve legacy static assets (css, js, etc.)"
+    },
+    {
+      "path": "src/bench/routes/search.ts",
+      "line": 2,
+      "key": "src/bench/routes/search.ts:2",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/search.ts",
+      "lines": 46,
+      "verdict": "resolves",
+      "text": "* Search API route."
+    },
+    {
+      "path": "src/bench/routes/search.ts",
+      "line": 45,
+      "key": "src/bench/routes/search.ts:45",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/search.ts",
+      "lines": 46,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/bench/routes/ask.ts",
+      "line": 78,
+      "key": "src/bench/routes/ask.ts:78",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/ask.ts",
+      "lines": 181,
+      "verdict": "resolves",
+      "text": "const match = url.pathname.match(/^\\/api\\/brains\\/([^/]+)\\/ask$/);"
+    },
+    {
+      "path": "src/bench/routes/ask.ts",
+      "line": 80,
+      "key": "src/bench/routes/ask.ts:80",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/ask.ts",
+      "lines": 181,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": "src/bench/routes/khortex-ask.ts",
+      "line": 49,
+      "key": "src/bench/routes/khortex-ask.ts:49",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/khortex-ask.ts",
+      "lines": 334,
+      "verdict": "resolves",
+      "text": "if (url.pathname !== \"/api/khortex/ask\" || req.method !== \"POST\") return null;"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 963,
+      "key": "src/lib/server.ts:963",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "const principal = extractPrincipal(req);"
+    },
+    {
+      "path": "src/lib/auth/principal.ts",
+      "line": 25,
+      "key": "src/lib/auth/principal.ts:25",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/auth/principal.ts",
+      "lines": 312,
+      "verdict": "resolves",
+      "text": "* SAMPLING: the live k8s deployment is fully unauthenticated today, so"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 950,
+      "key": "src/lib/server.ts:950",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "\"Access-Control-Allow-Origin\": \"*\","
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 1,
+      "key": "src/cli.ts:1",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "resolves",
+      "text": "#!/usr/bin/env bun"
+    },
+    {
+      "path": "plugins/brain-khortex/.mcp.json",
+      "line": 2,
+      "key": "plugins/brain-khortex/.mcp.json:2",
+      "resolvedAs": "/home/namastex/prod/brain/plugins/brain-khortex/.mcp.json",
+      "lines": 12,
+      "verdict": "resolves",
+      "text": "\"mcpServers\": {"
+    },
+    {
+      "path": "plugins/brain-khortex/.mcp.json",
+      "line": 9,
+      "key": "plugins/brain-khortex/.mcp.json:9",
+      "resolvedAs": "/home/namastex/prod/brain/plugins/brain-khortex/.mcp.json",
+      "lines": 12,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "plugins/brain-khortex/mcp/khortex-mcp-launcher.sh",
+      "line": 13,
+      "key": "plugins/brain-khortex/mcp/khortex-mcp-launcher.sh:13",
+      "resolvedAs": "/home/namastex/prod/brain/plugins/brain-khortex/mcp/khortex-mcp-launcher.sh",
+      "lines": 40,
+      "verdict": "resolves",
+      "text": "# The MCP server itself discovers `brain serve` via BRAIN_KHORTEX_PORT or"
+    },
+    {
+      "path": "plugins/brain-khortex/mcp/khortex-mcp-launcher.sh",
+      "line": 14,
+      "key": "plugins/brain-khortex/mcp/khortex-mcp-launcher.sh:14",
+      "resolvedAs": "/home/namastex/prod/brain/plugins/brain-khortex/mcp/khortex-mcp-launcher.sh",
+      "lines": 40,
+      "verdict": "resolves",
+      "text": "# ~/.brain/config.json — this script only picks WHICH build to run."
+    },
+    {
+      "path": "src/bench/routes/search.ts",
+      "line": 10,
+      "key": "src/bench/routes/search.ts:10",
+      "resolvedAs": "/home/namastex/prod/brain/src/bench/routes/search.ts",
+      "lines": 46,
+      "verdict": "resolves",
+      "text": "if (url.pathname !== \"/api/search\" || req.method !== \"POST\") return null;"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 991,
+      "key": "src/lib/server.ts:991",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "if (path === \"/khortex/session/event\" && req.method === \"POST\") {"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 22,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/server.ts:395",
+      "anchoredOn": "httpServer",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:395-400`: state.httpServer = Bun.serve({",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/lib/server.ts:244",
+      "anchoredOn": "const port = opts.port ?? 3847;",
+      "claim": "- Default port `3847` — `/home/namastex/prod/brain/src/lib/server.ts:244`: `const port = opts.port ?? 3847;`",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "const",
+        "opts.port"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/server.ts:940",
+      "anchoredOn": "handleRequest",
+      "claim": "First-class in `handleRequest` (`/home/namastex/prod/brain/src/lib/server.ts:940-1018`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "handleRequest"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/bench/routes/search.ts:4",
+      "anchoredOn": "POST /api/search",
+      "claim": "- **search**: `POST /api/search` — `/home/namastex/prod/brain/src/bench/routes/search.ts:10`",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "/api/search"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/bench/routes/ask.ts:78",
+      "anchoredOn": "/^\\/api\\/brains\\/([^/]+)\\/ask$/",
+      "claim": "- **ask**: `POST /api/brains/:id/ask` — `/home/namastex/prod/brain/src/bench/routes/ask.ts:78` (`/^\\/api\\/brains\\/([^/]+)\\/ask$/`)",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/server.ts:963",
+      "anchoredOn": "const principal = extractPrincipal(req);",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:962`: `const principal = extractPrincipal(req);` — threaded into every handler and **never enforced**. From `/home/",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "const",
+        "principal"
+      ]
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/active-brain.ts:72",
+      "anchoredOn": "BRAIN_ENDPOINT",
+      "claim": "Note `BRAIN_KHORTEX_PORT` is **port-only, pinned to 127.0.0.1** — it cannot express a remote host. The one true remote knob is **`BRAIN_ENDPOINT`** (`/home/nama",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/brain-memory/store.ts:37",
+      "anchoredOn": "getDb",
+      "claim": "- **Everything else is DSN-direct.** `getDb()` is called at ~12 sites directly in `execute.ts` and pervasively downstream; **52 non-test modules** under `src/li",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "getDb"
+      ]
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:77",
+      "anchoredOn": "BRAIN_ADMIN_DATABASE_URL",
+      "claim": "- DSN comes from **`DATABASE_URL`** — `/home/namastex/prod/brain/src/lib/db.ts:85-90` (`readPrimaryDsn`), with `BRAIN_ADMIN_DATABASE_URL` for admin ops, else au",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:3",
+      "anchoredOn": "the stdio MCP server's process entry point... MCP over stdio is a strict",
+      "claim": "**stdio, and Postgres-direct.** `/home/namastex/prod/brain/src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:1-18` — \"the stdio MCP server's process entry point... ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "stdio",
+        "entry",
+        "stdio"
+      ]
+    },
+    {
+      "id": "F11",
+      "anchor": "src/compiled-entry.ts:34",
+      "anchoredOn": "discoverHookBaseUrl()",
+      "claim": "- `/home/namastex/prod/brain/src/compiled-entry.ts:34-52` `discoverHookBaseUrl()` + `:100` `fetch(\\`${baseUrl}/khortex/session/event\\`)` — the Claude Code hook ",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

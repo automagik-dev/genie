@@ -1,0 +1,83 @@
+{
+  "task": 6,
+  "tasksDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+  "taskFile": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-explore-offload/tasks/6.md",
+  "suite": "frozen-eval",
+  "root": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie",
+  "model": "deepseek/deepseek-v4-flash",
+  "round": "gate-v2-legacy",
+  "startedAt": "2026-08-16T19:01:54.049Z",
+  "question": "Repo: /home/namastex/workspace/repos/genie (branch dev, clean, up to date with origin/dev).\nProblem: genie-agent-sync mirrors 22 bare-name skills (byte-identical copies of the genie plugin's skills) into ~/.claude/skills/, each stamped with .genie-sync.json (managedBy: genie-agent-sync). Claude Code ALSO loads the same skills from the enabled genie@automagik plugin as genie:* entries, so every skill is listed twice per session (~4,400-5,000 wasted tokens/msg). The bare-name mirror route exists for Codex/Hermes runtimes which legitimately need it. Goal: a HOTFIX on dev that stops the Claude Code skills-mirror (or skips it when the plugin is enabled) WITHOUT breaking Codex/Hermes bare-name sync, agents sync, doctor, or uninstall. Key file: src/lib/agent-sync.ts (7182 lines; note CLAUDE_EXCLUDED_SKILLS = new Set(['council']) at line 90, AgentSyncSelection type 'auto'|'codex'|'claude'|'all'|'none' at line 274, per-target dir overrides at line 163). Related: src/genie-commands/doctor.ts, src/lib/agent-sync.test.ts, src/lib/runtime-integrations.test.ts. Also relevant: the locally installed genie marketplace lives at /home/namastex/.genie (source: directory) — understand how that installed copy relates to this repo (how does a repo fix reach the installed sync?).\nIn /home/namastex/workspace/repos/genie, find every trigger of the agent sync: grep for callers of the sync entrypoints from src/lib/agent-sync.ts (CLI commands, postinstall, doctor, plugin hooks, session hooks). Also inspect /home/namastex/.genie (the installed marketplace directory) — determine how it is produced from this repo (build artifact? npm pack? manual copy?) and what exact steps propagate a repo hotfix into the live installed sync on this machine. Return a structured report: trigger inventory with file:line refs, plus the install/propagation chain.",
+  "provenance": {
+    "promptSha256": "22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d",
+    "promptChars": 17788,
+    "promptSnapshot": "parity/prompts/22334876a626ea3952674bca3d4ec26abffb3491b992354992aaf2fab3bdc77d.md",
+    "agentYamlSha256": "6f35537c0057cd863c630df3e6c54b4397694a9dba052858557be262fb8dfd1d",
+    "rootGit": {
+      "head": "3a7e9ce74b94f59dc7806097b3458a689125c2e3",
+      "branch": "wish/mcp-write-tools",
+      "dirty": null,
+      "statusError": "Command failed: git -C /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/mirrors/genie status --porcelain\nerror: expected submodule path '.docs-vendor' not to be a symbolic link\n"
+    },
+    "rootFrozen": "/home/namastex/workspace/repos/genie",
+    "rlmxGit": {
+      "head": "2c1a49bed1fe75fcb13f2e09496bc64741ec4595",
+      "branch": "wish/rlmx-v2-prime-backend",
+      "dirty": true,
+      "statusError": null
+    },
+    "recipeDir": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/explore",
+    "agent": "explore",
+    "tool": "rlmx_explore",
+    "childModelPin": null,
+    "replTimeoutMs": "120000",
+    "runTimeoutMs": "600000",
+    "callTimeoutMs": 300000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "serverReadyMs": 486,
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore"
+  ],
+  "firstProgressMs": 76,
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 85.4,
+  "requestChars": 1858,
+  "resultChars": 3831,
+  "answer": "Based on my investigation of the genie repository, here is my structured report:\n\n## Trigger Inventory for Agent Sync (`runAgentSync` / `runAgentSyncSafe`)\n\n### Primary entrypoint\n\nThe core sync engine is `runAgentSync` in `src/lib/agent-sync.ts:7169`. It accepts `AgentSyncOptions` with a `selection` field (`'auto' | 'codex' | 'claude' | 'all' | 'none'`, defined at `src/lib/agent-sync.ts:311`). The selection logic at lines 7192–7200 shows:\n- `'auto' | 'all' | 'claude'` → runs `syncClaude` (line 7194–7195)\n- `'auto' | 'all'` → also runs `syncHermes` and `syncPi` (lines 7197–7199)\n- There is no `codex` arm — the code explicitly states at lines 7162–7167 that codex product skills are plugin-only, converged by `installCodexIntegration` in runtime-integrations.ts, not by `runAgentSync`.\n\n### Callers of the sync\n\n1. **`src/genie-commands/update.ts:2710`** — `runAgentSyncSafe()` is the primary wrapper. It calls `runAgentSync` at line 2714 with the selection passed through. This is the function that install/update commands use.\n\n2. **`src/genie-commands/install.ts:63`** imports `runAgentSyncSafe` from update.js. Line 484 (`narrowAgentSyncSelection`) gates the agent-sync scope for install: `'none'` or `'codex'` selections return `null` (skipping sync entirely), while `'auto'`/`'all'`/`'claude'` pass through unchanged.\n\n### Where the sync is triggered from (command entrypoints)\n\n- The install and update CLI commands both route through `runAgentSyncSafe` in `update.ts`. The `update.ts` command at line 1768 accepts a `sync` parameter (defaulting to `runAgentSyncSafe`), and at line 1788 documents that selection narrowing is structural in `runAgentSync`, not a Claude-only narrowing in the updater.\n\n### Hooks / postinstall\n\nI found no session hooks or plugin hooks that call `runAgentSync` directly. The sync appears to be triggered exclusively through the `genie install` and `genie update` CLI commands, via `runAgentSyncSafe`. The comment at line 2728 in update.ts confirms the retry model: \"will retry on the next genie update.\"\n\n### `~/.claude/skills` mirror\n\nThe Claude directory resolution happens at `src/lib/agent-sync.ts:7215` via `resolveClaudeDir()` (imported from `./genie-home.js` at line 58). The `CLAUDE_EXCLUDED_SKILLS` set at line 96 excludes `'council'` from Claude sync but keeps it for Codex/Hermes.\n\n## Install/Propagation Chain\n\nThe locally installed genie marketplace at `~/.genie` is produced from this repository. Based on the repo layout:\n\n1. **Source repo** → The TypeScript source in `src/lib/agent-sync.ts`, `src/genie-commands/install.ts`, `src/genie-commands/update.ts` is compiled/built.\n2. **Build artifact** → `dist/genie.js` (a single bundled file) exists at the repo root.\n3. **Install** → The `install.sh` script (present at repo root) downloads and installs the bundle. The install command (`genie install`) then triggers `runAgentSyncSafe` which copies skills into `~/.claude/skills/`.\n4. **Marketplace** → The `~/.genie` directory serves as the genie home/marketplace source, with `plugins/genie` being the plugin root that `resolveGenieSource` (line 456) looks for.\n\nTo propagate a repo hotfix to the live installed sync: a fix in `src/lib/agent-sync.ts` must be built into `dist/genie.js`, then the updated bundle installed (via `install.sh` or `genie update`), which re-runs the agent sync on the next install/update cycle.\n\n**Note:** I was unable to complete the full investigation of `~/.genie` (the installed marketplace) as the actual home directory path on this machine differs from the target path in the query. The `~/.genie` directory referenced in the query does not exist at the expected location on this environment.\n",
+  "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 24 iterations · 29,238 in / 7,384 out · $0.0075 · 84.9s · session sess_6ac51b1864130a2a",
+  "fullText": "Based on my investigation of the genie repository, here is my structured report:\n\n## Trigger Inventory for Agent Sync (`runAgentSync` / `runAgentSyncSafe`)\n\n### Primary entrypoint\n\nThe core sync engine is `runAgentSync` in `src/lib/agent-sync.ts:7169`. It accepts `AgentSyncOptions` with a `selection` field (`'auto' | 'codex' | 'claude' | 'all' | 'none'`, defined at `src/lib/agent-sync.ts:311`). The selection logic at lines 7192–7200 shows:\n- `'auto' | 'all' | 'claude'` → runs `syncClaude` (line 7194–7195)\n- `'auto' | 'all'` → also runs `syncHermes` and `syncPi` (lines 7197–7199)\n- There is no `codex` arm — the code explicitly states at lines 7162–7167 that codex product skills are plugin-only, converged by `installCodexIntegration` in runtime-integrations.ts, not by `runAgentSync`.\n\n### Callers of the sync\n\n1. **`src/genie-commands/update.ts:2710`** — `runAgentSyncSafe()` is the primary wrapper. It calls `runAgentSync` at line 2714 with the selection passed through. This is the function that install/update commands use.\n\n2. **`src/genie-commands/install.ts:63`** imports `runAgentSyncSafe` from update.js. Line 484 (`narrowAgentSyncSelection`) gates the agent-sync scope for install: `'none'` or `'codex'` selections return `null` (skipping sync entirely), while `'auto'`/`'all'`/`'claude'` pass through unchanged.\n\n### Where the sync is triggered from (command entrypoints)\n\n- The install and update CLI commands both route through `runAgentSyncSafe` in `update.ts`. The `update.ts` command at line 1768 accepts a `sync` parameter (defaulting to `runAgentSyncSafe`), and at line 1788 documents that selection narrowing is structural in `runAgentSync`, not a Claude-only narrowing in the updater.\n\n### Hooks / postinstall\n\nI found no session hooks or plugin hooks that call `runAgentSync` directly. The sync appears to be triggered exclusively through the `genie install` and `genie update` CLI commands, via `runAgentSyncSafe`. The comment at line 2728 in update.ts confirms the retry model: \"will retry on the next genie update.\"\n\n### `~/.claude/skills` mirror\n\nThe Claude directory resolution happens at `src/lib/agent-sync.ts:7215` via `resolveClaudeDir()` (imported from `./genie-home.js` at line 58). The `CLAUDE_EXCLUDED_SKILLS` set at line 96 excludes `'council'` from Claude sync but keeps it for Codex/Hermes.\n\n## Install/Propagation Chain\n\nThe locally installed genie marketplace at `~/.genie` is produced from this repository. Based on the repo layout:\n\n1. **Source repo** → The TypeScript source in `src/lib/agent-sync.ts`, `src/genie-commands/install.ts`, `src/genie-commands/update.ts` is compiled/built.\n2. **Build artifact** → `dist/genie.js` (a single bundled file) exists at the repo root.\n3. **Install** → The `install.sh` script (present at repo root) downloads and installs the bundle. The install command (`genie install`) then triggers `runAgentSyncSafe` which copies skills into `~/.claude/skills/`.\n4. **Marketplace** → The `~/.genie` directory serves as the genie home/marketplace source, with `plugins/genie` being the plugin root that `resolveGenieSource` (line 456) looks for.\n\nTo propagate a repo hotfix to the live installed sync: a fix in `src/lib/agent-sync.ts` must be built into `dist/genie.js`, then the updated bundle installed (via `install.sh` or `genie update`), which re-runs the agent sync on the next install/update cycle.\n\n**Note:** I was unable to complete the full investigation of `~/.genie` (the installed marketplace) as the actual home directory path on this machine differs from the target path in the query. The `~/.genie` directory referenced in the query does not exist at the expected location on this environment.\n\n---\nrlmx · agent=explore · deepseek/deepseek-v4-flash · 24 iterations · 29,238 in / 7,384 out · $0.0075 · 84.9s · session sess_6ac51b1864130a2a",
+  "structuredContent": {
+    "answer": "Based on my investigation of the genie repository, here is my structured report:\n\n## Trigger Inventory for Agent Sync (`runAgentSync` / `runAgentSyncSafe`)\n\n### Primary entrypoint\n\nThe core sync engine is `runAgentSync` in `src/lib/agent-sync.ts:7169`. It accepts `AgentSyncOptions` with a `selection` field (`'auto' | 'codex' | 'claude' | 'all' | 'none'`, defined at `src/lib/agent-sync.ts:311`). The selection logic at lines 7192–7200 shows:\n- `'auto' | 'all' | 'claude'` → runs `syncClaude` (line 7194–7195)\n- `'auto' | 'all'` → also runs `syncHermes` and `syncPi` (lines 7197–7199)\n- There is no `codex` arm — the code explicitly states at lines 7162–7167 that codex product skills are plugin-only, converged by `installCodexIntegration` in runtime-integrations.ts, not by `runAgentSync`.\n\n### Callers of the sync\n\n1. **`src/genie-commands/update.ts:2710`** — `runAgentSyncSafe()` is the primary wrapper. It calls `runAgentSync` at line 2714 with the selection passed through. This is the function that install/update commands use.\n\n2. **`src/genie-commands/install.ts:63`** imports `runAgentSyncSafe` from update.js. Line 484 (`narrowAgentSyncSelection`) gates the agent-sync scope for install: `'none'` or `'codex'` selections return `null` (skipping sync entirely), while `'auto'`/`'all'`/`'claude'` pass through unchanged.\n\n### Where the sync is triggered from (command entrypoints)\n\n- The install and update CLI commands both route through `runAgentSyncSafe` in `update.ts`. The `update.ts` command at line 1768 accepts a `sync` parameter (defaulting to `runAgentSyncSafe`), and at line 1788 documents that selection narrowing is structural in `runAgentSync`, not a Claude-only narrowing in the updater.\n\n### Hooks / postinstall\n\nI found no session hooks or plugin hooks that call `runAgentSync` directly. The sync appears to be triggered exclusively through the `genie install` and `genie update` CLI commands, via `runAgentSyncSafe`. The comment at line 2728 in update.ts confirms the retry model: \"will retry on the next genie update.\"\n\n### `~/.claude/skills` mirror\n\nThe Claude directory resolution happens at `src/lib/agent-sync.ts:7215` via `resolveClaudeDir()` (imported from `./genie-home.js` at line 58). The `CLAUDE_EXCLUDED_SKILLS` set at line 96 excludes `'council'` from Claude sync but keeps it for Codex/Hermes.\n\n## Install/Propagation Chain\n\nThe locally installed genie marketplace at `~/.genie` is produced from this repository. Based on the repo layout:\n\n1. **Source repo** → The TypeScript source in `src/lib/agent-sync.ts`, `src/genie-commands/install.ts`, `src/genie-commands/update.ts` is compiled/built.\n2. **Build artifact** → `dist/genie.js` (a single bundled file) exists at the repo root.\n3. **Install** → The `install.sh` script (present at repo root) downloads and installs the bundle. The install command (`genie install`) then triggers `runAgentSyncSafe` which copies skills into `~/.claude/skills/`.\n4. **Marketplace** → The `~/.genie` directory serves as the genie home/marketplace source, with `plugins/genie` being the plugin root that `resolveGenieSource` (line 456) looks for.\n\nTo propagate a repo hotfix to the live installed sync: a fix in `src/lib/agent-sync.ts` must be built into `dist/genie.js`, then the updated bundle installed (via `install.sh` or `genie update`), which re-runs the agent sync on the next install/update cycle.\n\n**Note:** I was unable to complete the full investigation of `~/.genie` (the installed marketplace) as the actual home directory path on this machine differs from the target path in the query. The `~/.genie` directory referenced in the query does not exist at the expected location on this environment.\n\n---\nrlmx · agent=explore · deepseek/deepseek-v4-flash · 24 iterations · 29,238 in / 7,384 out · $0.0075 · 84.9s · session sess_6ac51b1864130a2a",
+    "session_id": "sess_6ac51b1864130a2a"
+  },
+  "progress": [
+    "agent=explore · iteration 1",
+    "agent=explore · iteration 2",
+    "agent=explore · iteration 3",
+    "agent=explore · iteration 4",
+    "agent=explore · iteration 5",
+    "agent=explore · iteration 6",
+    "agent=explore · iteration 7",
+    "agent=explore · iteration 8",
+    "agent=explore · iteration 9",
+    "agent=explore · iteration 10",
+    "agent=explore · iteration 11",
+    "agent=explore · iteration 12",
+    "agent=explore · iteration 13",
+    "agent=explore · iteration 14",
+    "agent=explore · iteration 15",
+    "agent=explore · iteration 16",
+    "agent=explore · iteration 17",
+    "agent=explore · iteration 18",
+    "agent=explore · iteration 19",
+    "agent=explore · iteration 20",
+    "agent=explore · iteration 21",
+    "agent=explore · iteration 22",
+    "agent=explore · iteration 23",
+    "agent=explore · iteration 24"
+  ],
+  "stderr": "(node:50222) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\nrlmx mcp: 1 microagent discovered (explore)\n"
+}

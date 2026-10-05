@@ -1,0 +1,45 @@
+{
+  "exercise": "concurrency",
+  "leg": "prime",
+  "startedAt": "2026-08-16T19:31:28.141Z",
+  "endedAt": "2026-08-16T19:31:48.937Z",
+  "parallel": true,
+  "note": "prime 0.7.2 exposes only deepseek + prime-inference; the shipped demo agents (bare model ids, spec tools, station/khal pins) are not prime-reachable — both slots run the gate explore agent in distinct cwds.",
+  "slotA": {
+    "cwd": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/prime/cwd-gamma",
+    "agent": "explore (gate)",
+    "marker": "MARKER_GAMMA.txt",
+    "ok": true,
+    "isError": false,
+    "wallSeconds": 20.4,
+    "answer": "(1) Marker filename: MARKER_GAMMA.txt\n\n(2) Absolute working directory: /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/prime/cwd-gamma\n\n(3) Marker content: gamma workspace marker\n\nCitations:\n- MARKER_GAMMA.txt:1 — the marker file's content\n- cwd verified via os.getcwd() in this session: /Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/prime/cwd-gamma\n",
+    "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 6 iterations · 7,472 in / 1,744 out · $0.0016 · 20.1s · session sess_14f96bc6fba0eb7b",
+    "toolsListed": [
+      "rlmx_query",
+      "rlmx_explore"
+    ]
+  },
+  "slotB": {
+    "cwd": "/Users/feliperosa/workspace/repos/rlmx/.genie/wishes/rlmx-v2-prime-backend/gate-agents/.work/concurrency/prime/cwd-delta",
+    "agent": "explore (gate)",
+    "marker": "MARKER_DELTA.txt",
+    "ok": true,
+    "isError": false,
+    "wallSeconds": 5.7,
+    "answer": "```repl\nimport os, re\n\nSKIP = {\".git\", \"node_modules\", \"dist\", \"build\", \"target\", \".venv\",\n        \"__pycache__\", \"coverage\", \"vendor\"}\n\ndef walk(root=\".\"):\n    for d, subs, names in os.walk(root):\n        subs[:] = [s for s in subs if s not in SKIP and not s.startswith(\".\")]\n        for n in names:\n            yield os.path.relpath(os.path.join(d, n), root)\n\ndef look(root=\".\", depth=2):\n    \"\"\"Print the layout down to `depth` levels — orientation, not a census.\"\"\"\n    for d, subs, names in os.walk(root):\n        rel = os.path.relpath(d, root)\n        level = 0 if rel == \".\" else rel.count(os.sep) + 1\n        subs[:] = [] if level >= depth else [s for s in subs if s not in SKIP and not s.startswith(\".\")]\n        prefix = \"\" if rel == \".\" else rel + os.sep\n        for s in sorted(subs): print(prefix + s + os.sep)\n        for n in sorted(names)[:25]: print(prefix + n)\n        if len(names) > 25: print(f\"{prefix}… {len(names) - 25} more files\")\n    print(\"cwd:\", os.path.abspath(root))\n\ndef search(pattern, exts=None, root=\".\", limit=30):\n    \"\"\"Print `path:line: text` per match. Those line numbers are your citations.\"\"\"\n    hits = 0\n    for p in walk(root):\n        if exts and not p.endswith(tuple(exts)): continue\n        try:\n            with open(os.path.join(root, p), errors=\"replace\") as fh:\n                for i, line in enumerate(fh, 1):\n                    if re.search(pattern, line):\n                        print(f\"{p}:{i}: {line.rstrip()[:160]}\")\n                        hits += 1\n                        if hits >= limit: return print(f\"[{hits} hits, truncated]\")\n        except OSError: pass\n    print(f\"[{hits} hits for {pattern!r}]\")\n\ndef read(path, start=1, end=10**9):\n    \"\"\"Print a numbered slice, so what you read is what you cite.\"\"\"\n    with open(path, errors=\"replace\") as fh:\n        for i, line in enumerate(fh, 1):\n            if start <= i <= end: print(f\"{i}: {line.rstrip()}\")\n\nlook()\n```\n",
+    "footer": "rlmx · agent=explore · deepseek/deepseek-v4-flash · 1 iteration · 6,771 in / 612 out · $0.0011 · 5.4s · session sess_8fefc2c5ce541b55",
+    "toolsListed": [
+      "rlmx_query",
+      "rlmx_explore"
+    ]
+  },
+  "assertions": {
+    "bothOk": true,
+    "aNamesOwnMarker": true,
+    "aNotBMarker": true,
+    "aNamesOwnCwd": true,
+    "bNamesOwnMarker": false,
+    "bNotAMarker": true,
+    "bNamesOwnCwd": false
+  }
+}

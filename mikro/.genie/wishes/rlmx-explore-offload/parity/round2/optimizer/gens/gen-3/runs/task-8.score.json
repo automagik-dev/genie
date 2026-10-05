@@ -1,0 +1,175 @@
+{
+  "arm": "rlmx",
+  "task": 8,
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-3-khal-deepseek-v4-flash",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 6 iterations · 149,091 in / 22,947 out · $0.03 · 209.0s · session sess_710e4bb0ff7fafc1",
+  "wallSeconds": 209.2,
+  "requestChars": 284,
+  "resultChars": 2147,
+  "ok": true,
+  "root": "/home/namastex/prod/fde-station",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 2005,
+  "citations": [
+    {
+      "path": "channel/publish.sh",
+      "line": 52,
+      "key": "channel/publish.sh:52",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "REPO_SLUG=\"${REPO_SLUG:-namastex888/fde-station-apt}\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 56,
+      "key": "channel/publish.sh:56",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "KEEP=\"${KEEP:-2}\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 59,
+      "key": "channel/publish.sh:59",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "ORIGIN=\"FDE Station\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 62,
+      "key": "channel/publish.sh:62",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "CODENAME=\"stable\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 61,
+      "key": "channel/publish.sh:61",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "SUITE=\"stable\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 60,
+      "key": "channel/publish.sh:60",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "LABEL=\"FDE Station\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 53,
+      "key": "channel/publish.sh:53",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "CHANNEL_DIR=\"${CHANNEL_DIR:-$HOME/.local/share/fde-station-apt}\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 175,
+      "key": "channel/publish.sh:175",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "DIST_DIR=\"dists/$SUITE\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 176,
+      "key": "channel/publish.sh:176",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "IDX_DIR=\"$DIST_DIR/$COMPONENT/binary-$ARCH\""
+    },
+    {
+      "path": "channel/publish.sh",
+      "line": 177,
+      "key": "channel/publish.sh:177",
+      "resolvedAs": "/home/namastex/prod/fde-station/channel/publish.sh",
+      "lines": 298,
+      "verdict": "resolves",
+      "text": "POOL_DIR=\"pool/$COMPONENT\""
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 10,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "channel/publish.sh:52",
+      "anchoredOn": "REPO_SLUG",
+      "claim": "The publish destination is an environment-overridable default, REPO_SLUG, so a fork redirects publishing by setting one variable instead of editing the script.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "REPO_SLUG"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "channel/publish.sh:56",
+      "anchoredOn": "KEEP",
+      "claim": "Retention is bounded by KEEP, a small default: the channel prunes old versions rather than accumulating them, because it is a channel and not an archive.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "channel/publish.sh:59",
+      "anchoredOn": "ORIGIN",
+      "claim": "The release metadata advertises an ORIGIN, which is the identity apt displays and the field an apt pin can match against.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "ORIGIN"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "channel/publish.sh:64",
+      "anchoredOn": "ARCH",
+      "claim": "One architecture is indexed, set by ARCH, and the line carries the reason: arch-all packages are indexed under the host arch tree rather than a separate one.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "channel/publish.sh:175",
+      "anchoredOn": "DIST_DIR",
+      "claim": "The distribution index directory is derived from the suite rather than hardcoded: DIST_DIR is built from the suite name at publish time.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "DIST_DIR"
+      ]
+    }
+  ]
+}

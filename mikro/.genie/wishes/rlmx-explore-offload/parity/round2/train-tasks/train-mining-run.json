@@ -1,0 +1,124 @@
+{
+  "minedAt": "2026-07-27T06:45:51Z",
+  "argv": [
+    "--hours",
+    "24",
+    "--min-tasks",
+    "8",
+    "--host-read-idioms",
+    "--disjoint-by",
+    "session+subject",
+    "--exclude-tasks",
+    ".genie/wishes/rlmx-explore-offload/tasks",
+    "--out",
+    ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+    "--run-json",
+    "train-mining-run.json"
+  ],
+  "windowLadder": [
+    24,
+    168,
+    336,
+    720
+  ],
+  "windowHours": 720,
+  "windowAttempts": [
+    {
+      "windowHours": 24,
+      "transcriptsScanned": 66,
+      "candidatesFound": 0,
+      "selectable": 0
+    },
+    {
+      "windowHours": 168,
+      "transcriptsScanned": 639,
+      "candidatesFound": 0,
+      "selectable": 0
+    },
+    {
+      "windowHours": 336,
+      "transcriptsScanned": 751,
+      "candidatesFound": 0,
+      "selectable": 0
+    },
+    {
+      "windowHours": 720,
+      "transcriptsScanned": 751,
+      "candidatesFound": 0,
+      "selectable": 0
+    }
+  ],
+  "widenedBecause": "the 24h window yielded 0 selectable task(s) of 0 candidate(s), below the 8-task floor",
+  "transcriptsScanned": 751,
+  "candidatesFound": 0,
+  "written": 0,
+  "disjointFrom": {
+    "mode": "session+subject",
+    "excludeTasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+    "excludedTaskFiles": [
+      "1.md",
+      "2.md",
+      "3.md",
+      "4.md",
+      "5.md",
+      "6.md"
+    ],
+    "excludedSessions": [
+      "55c38d33-784e-49eb-8e39-7042e9fc806a",
+      "63144f8d-854f-49fa-9740-9d612f1067e8",
+      "9e70f460-c422-4fe5-b509-6f59e027508f",
+      "a9cb6b2e-8b66-459a-b27f-e58377dcc7ea"
+    ],
+    "subjectTest": "a candidate is dropped when ≥34% of the files its required facts anchor on are also anchor files of an excluded task in the same root",
+    "sessionsSeenAndDropped": [
+      {
+        "session": "55c38d33-784e-49eb-8e39-7042e9fc806a",
+        "segmentsDropped": 166
+      },
+      {
+        "session": "a9cb6b2e-8b66-459a-b27f-e58377dcc7ea",
+        "segmentsDropped": 55
+      },
+      {
+        "session": "9e70f460-c422-4fe5-b509-6f59e027508f",
+        "segmentsDropped": 5
+      },
+      {
+        "session": "63144f8d-854f-49fa-9740-9d612f1067e8",
+        "segmentsDropped": 3
+      }
+    ],
+    "droppedForSubjectOverlap": [],
+    "sharedSessionsNotExcluded": [],
+    "keptFromSharedSession": []
+  },
+  "hostReadIdioms": {
+    "enabled": true,
+    "changes": [
+      "`rtk proxy <verb>` unwrapped to <verb> (the two-word raw escape hatch)",
+      "`sed` without -i and without a redirect counted as a read (paging a file)",
+      "bare `export` skipped as a no-op stage prefix, like `cd`",
+      "`>/dev/null` not counted as a redirect (a discard is not a write)"
+    ],
+    "unchanged": "fact verification, all thresholds, and the criterion-2/3 rejection of a task whose own native answer fails the rubric"
+  },
+  "diversity": {
+    "sessions": 0,
+    "repos": 0,
+    "maxPerSession": 2,
+    "maxPerRoot": 3,
+    "skippedForDiversity": []
+  },
+  "thresholds": {
+    "minReadOps": 5,
+    "minAnswerChars": 300,
+    "minVerifiedFacts": 3,
+    "minClaimChars": 40,
+    "maxClaimChars": 260,
+    "maxAnchorHits": "8 lines, or 5% of the file, whichever is smaller",
+    "mutationsAllowed": 0,
+    "reviewCommissions": "rejected — a verdict is not a citation (WISH.md:66)",
+    "factKinds": "path:line claims about the task root only, anchored on a term the claim itself supplies (exact | re-anchored)"
+  },
+  "tasks": []
+}

@@ -1,0 +1,365 @@
+{
+  "arm": "rlmx",
+  "task": 3,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r2-flash-tune1",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 1 iteration · 1,304 in / 3,488 out · $0.0009 · 134.3s · session sess_1cac37d0d27a4c6e",
+  "wallSeconds": 134.6,
+  "requestChars": 1918,
+  "resultChars": 6638,
+  "ok": true,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [],
+  "need": 10,
+  "factTotal": 11,
+  "answerChars": 6500,
+  "citations": [
+    {
+      "path": "src/lib/server.ts",
+      "line": 17,
+      "key": "src/lib/server.ts:17",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "import { join, resolve } from \"node:path\";"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 53,
+      "key": "src/lib/server.ts:53",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": ""
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 70,
+      "key": "src/lib/server.ts:70",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "serverMode?: \"daemon\" | \"foreground\";"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 22,
+      "key": "src/lib/server.ts:22",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "import { checkRole } from \"./auth/check-role.js\";"
+    },
+    {
+      "path": "src/lib/server.ts",
+      "line": 25,
+      "key": "src/lib/server.ts:25",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "import { loadBrainConfig } from \"./brain-config.js\";"
+    },
+    {
+      "path": "src/lib/khortex.ts",
+      "line": 168,
+      "key": "src/lib/khortex.ts:168",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/khortex.ts",
+      "lines": 707,
+      "verdict": "resolves",
+      "text": "export function resolveKhortexAgentHome({"
+    },
+    {
+      "path": "src/lib/khortex.ts",
+      "line": 400,
+      "key": "src/lib/khortex.ts:400",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/khortex.ts",
+      "lines": 707,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/khortex.ts",
+      "line": 170,
+      "key": "src/lib/khortex.ts:170",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/khortex.ts",
+      "lines": 707,
+      "verdict": "resolves",
+      "text": "cwd = process.cwd(),"
+    },
+    {
+      "path": "src/lib/khortex.ts",
+      "line": 180,
+      "key": "src/lib/khortex.ts:180",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/khortex.ts",
+      "lines": 707,
+      "verdict": "resolves",
+      "text": "// and <workspace>/.agents contains _ask-maestro. Do not let an unrelated"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 15,
+      "key": "src/cli.ts:15",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "resolves",
+      "text": "import { join } from \"node:path\";"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 20,
+      "key": "src/cli.ts:20",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "resolves",
+      "text": "// root. Derive it from BRAIN_HOME once so skills, prompts, and agent profiles"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 45,
+      "key": "src/cli.ts:45",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "line-out-of-range"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 60,
+      "key": "src/cli.ts:60",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "line-out-of-range"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 88,
+      "key": "src/cli.ts:88",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "line-out-of-range"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 95,
+      "key": "src/cli.ts:95",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "line-out-of-range"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 102,
+      "key": "src/cli.ts:102",
+      "resolvedAs": "/home/namastex/prod/brain/src/cli.ts",
+      "lines": 36,
+      "verdict": "line-out-of-range"
+    },
+    {
+      "path": "src/lib/server-mcp.ts",
+      "line": 10,
+      "key": "src/lib/server-mcp.ts:10",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/server-mcp.ts",
+      "line": 15,
+      "key": "src/lib/server-mcp.ts:15",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/server-mcp.ts",
+      "line": 20,
+      "key": "src/lib/server-mcp.ts:20",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/server-mcp.ts",
+      "line": 25,
+      "key": "src/lib/server-mcp.ts:25",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/mcp-server.ts",
+      "line": 30,
+      "key": "src/lib/mcp-server.ts:30",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/mcp-server.ts",
+      "line": 40,
+      "key": "src/lib/mcp-server.ts:40",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/mcp-server.ts",
+      "line": 45,
+      "key": "src/lib/mcp-server.ts:45",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/mcp-server.ts",
+      "line": 50,
+      "key": "src/lib/mcp-server.ts:50",
+      "exists": false,
+      "verdict": "missing-file"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 24,
+    "failures": [
+      "src/cli.ts:45 (line-out-of-range)",
+      "src/cli.ts:60 (line-out-of-range)",
+      "src/cli.ts:88 (line-out-of-range)",
+      "src/cli.ts:95 (line-out-of-range)",
+      "src/cli.ts:102 (line-out-of-range)",
+      "src/lib/server-mcp.ts:10 (missing-file)",
+      "src/lib/server-mcp.ts:15 (missing-file)",
+      "src/lib/server-mcp.ts:20 (missing-file)",
+      "src/lib/server-mcp.ts:25 (missing-file)",
+      "src/lib/mcp-server.ts:30 (missing-file)",
+      "src/lib/mcp-server.ts:40 (missing-file)",
+      "src/lib/mcp-server.ts:45 (missing-file)",
+      "src/lib/mcp-server.ts:50 (missing-file)"
+    ],
+    "pass": false
+  },
+  "criterion3": {
+    "failures": [
+      "src/lib/server-mcp.ts:10 (missing-file)",
+      "src/lib/server-mcp.ts:15 (missing-file)",
+      "src/lib/server-mcp.ts:20 (missing-file)",
+      "src/lib/server-mcp.ts:25 (missing-file)",
+      "src/lib/mcp-server.ts:30 (missing-file)",
+      "src/lib/mcp-server.ts:40 (missing-file)",
+      "src/lib/mcp-server.ts:45 (missing-file)",
+      "src/lib/mcp-server.ts:50 (missing-file)"
+    ],
+    "pass": false
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/server.ts:395",
+      "anchoredOn": "httpServer",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:395-400`: state.httpServer = Bun.serve({",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/lib/server.ts:244",
+      "anchoredOn": "const port = opts.port ?? 3847;",
+      "claim": "- Default port `3847` — `/home/namastex/prod/brain/src/lib/server.ts:244`: `const port = opts.port ?? 3847;`",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "const"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/server.ts:940",
+      "anchoredOn": "handleRequest",
+      "claim": "First-class in `handleRequest` (`/home/namastex/prod/brain/src/lib/server.ts:940-1018`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/bench/routes/search.ts:4",
+      "anchoredOn": "POST /api/search",
+      "claim": "- **search**: `POST /api/search` — `/home/namastex/prod/brain/src/bench/routes/search.ts:10`",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/bench/routes/ask.ts:78",
+      "anchoredOn": "/^\\/api\\/brains\\/([^/]+)\\/ask$/",
+      "claim": "- **ask**: `POST /api/brains/:id/ask` — `/home/namastex/prod/brain/src/bench/routes/ask.ts:78` (`/^\\/api\\/brains\\/([^/]+)\\/ask$/`)",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/server.ts:963",
+      "anchoredOn": "const principal = extractPrincipal(req);",
+      "claim": "`/home/namastex/prod/brain/src/lib/server.ts:962`: `const principal = extractPrincipal(req);` — threaded into every handler and **never enforced**. From `/home/",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": [
+        "const"
+      ]
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/active-brain.ts:72",
+      "anchoredOn": "BRAIN_ENDPOINT",
+      "claim": "Note `BRAIN_KHORTEX_PORT` is **port-only, pinned to 127.0.0.1** — it cannot express a remote host. The one true remote knob is **`BRAIN_ENDPOINT`** (`/home/nama",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/brain-memory/store.ts:37",
+      "anchoredOn": "getDb",
+      "claim": "- **Everything else is DSN-direct.** `getDb()` is called at ~12 sites directly in `execute.ts` and pervasively downstream; **52 non-test modules** under `src/li",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/db.ts:77",
+      "anchoredOn": "BRAIN_ADMIN_DATABASE_URL",
+      "claim": "- DSN comes from **`DATABASE_URL`** — `/home/namastex/prod/brain/src/lib/db.ts:85-90` (`readPrimaryDsn`), with `BRAIN_ADMIN_DATABASE_URL` for admin ops, else au",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:3",
+      "anchoredOn": "the stdio MCP server's process entry point... MCP over stdio is a strict",
+      "claim": "**stdio, and Postgres-direct.** `/home/namastex/prod/brain/src/lib/khortex-memory/mcp/khortex-mcp-bin.ts:1-18` — \"the stdio MCP server's process entry point... ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "stdio",
+        "process",
+        "stdio"
+      ]
+    },
+    {
+      "id": "F11",
+      "anchor": "src/compiled-entry.ts:34",
+      "anchoredOn": "discoverHookBaseUrl()",
+      "claim": "- `/home/namastex/prod/brain/src/compiled-entry.ts:34-52` `discoverHookBaseUrl()` + `:100` `fetch(\\`${baseUrl}/khortex/session/event\\`)` — the Claude Code hook ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

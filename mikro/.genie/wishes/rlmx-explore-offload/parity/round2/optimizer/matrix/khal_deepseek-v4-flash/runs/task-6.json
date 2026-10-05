@@ -1,0 +1,71 @@
+{
+  "task": 6,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/genie-desktop",
+  "model": "khal/deepseek-v4-flash",
+  "round": "matrix-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T09:51:54.178Z",
+  "question": "This app integrates an external CLI called rtk. How does it find the binary on a machine, what happens on Windows versus everywhere else, and what timeouts and retry limits bound the download and unpack path? Answer with path:line citations.",
+  "provenance": {
+    "promptSha256": "02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4",
+    "promptChars": 27840,
+    "promptSnapshot": "parity/prompts/02184f3595d64de903f34b72b1ab9618afaafb947a881b767daa6f32125245c4.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "3da8750fdc543ff3b7b2ab4c1a2d16aec7f74d35",
+      "branch": "wish/khal-native-theme",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-1/recipe",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 74.9,
+  "requestChars": 254,
+  "resultChars": 3147,
+  "answer": "The app finds the `rtk` binary through a two-stage resolution cascade in `resolveBinary()` (src/main/services/RtkService.ts:164). **First**, it checks its own managed directory — `{userData}/bin/rtk.exe` on Windows, `{userData}/bin/rtk` on macOS/Linux (line 133 in `getManagedBinPath()`, whose parent dir is at line 129). If that file exists and passes a `--version` probe, it's used with source `'managed'`. **Second**, it falls back to searching `$PATH`: the lookup command is `where.exe` on Windows and `which` elsewhere (line 180). If found and probed successfully, it's used with source `'path'`. If neither succeeds, the method returns `null`.\n\n**Windows vs everywhere else** — The key difference is that on Windows there is no native upstream release, so several paths are disabled: `isPlatformDownloadable()` returns `false` for win32 (line 274–277); `getUserPathSymlinkPath()` returns `null` (line 146), meaning no `~/.local/bin/rtk` symlink is created. On macOS and Linux, a symlink is placed at `~/.local/bin/rtk` (line 147) so the binary resolves in `$PATH` wherever Claude Code's Bash tool runs the rewritten command.\n\n**Timeouts and retry limits in the download/unpack path** — Three constants bound the operation (lines 32–34): `FETCH_API_TIMEOUT_MS = 60_000` for GitHub API and checksums.txt fetches; `FETCH_BODY_TIMEOUT_MS = 300_000` (5 minutes) for the actual binary download body via `AbortController` (line 441); and `TAR_TIMEOUT_MS = 120_000` (2 minutes) for `tar` listing and extraction (lines 512, 541). The download loop retries up to `MAX_ATTEMPTS = 3` times (line 357), cleaning the temp archive and resetting progress after each failure (lines 370–373). Additionally, `probeVersion()` has a 3-second timeout (line 207: `{ timeout: 3000 }`), and the hook test in `runHookTest()` uses a 10-second timeout via `pipeStdin` (line 588: `10_000`).\n\n**Citations:**\n- src/main/services/RtkService.ts:133 — `const exe = process.platform === 'win32' ? 'rtk.exe' : 'rtk';`\n- src/main/services/RtkService.ts:129 — `return join(app.getPath('userData'), 'bin');`\n- src/main/services/RtkService.ts:146 — `if (process.platform === 'win32') return null;`\n- src/main/services/RtkService.ts:147 — `return join(homedir(), '.local', 'bin', 'rtk');`\n- src/main/services/RtkService.ts:164–202 — `resolveBinary()` with the two-stage cascade\n- src/main/services/RtkService.ts:180 — `const findCmd = process.platform === 'win32' ? 'where.exe' : 'which';`\n- src/main/services/RtkService.ts:274–277 — `isPlatformDownloadable()` returning false for win32\n- src/main/services/RtkService.ts:32 — `const FETCH_API_TIMEOUT_MS = 60_000;`\n- src/main/services/RtkService.ts:33 — `const FETCH_BODY_TIMEOUT_MS = 300_000;`\n- src/main/services/RtkService.ts:34 — `const TAR_TIMEOUT_MS = 120_000;`\n- src/main/services/RtkService.ts:357 — `const MAX_ATTEMPTS = 3;`\n- src/main/services/RtkService.ts:207 — `{ timeout: 3000 }` in `probeVersion()`\n- src/main/services/RtkService.ts:588 — `10_000` in `pipeStdin` for hook test\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 74,659 in / 3,221 out · $0.01 · 74.6s · session sess_4c21942837053355",
+  "fullText": "The app finds the `rtk` binary through a two-stage resolution cascade in `resolveBinary()` (src/main/services/RtkService.ts:164). **First**, it checks its own managed directory — `{userData}/bin/rtk.exe` on Windows, `{userData}/bin/rtk` on macOS/Linux (line 133 in `getManagedBinPath()`, whose parent dir is at line 129). If that file exists and passes a `--version` probe, it's used with source `'managed'`. **Second**, it falls back to searching `$PATH`: the lookup command is `where.exe` on Windows and `which` elsewhere (line 180). If found and probed successfully, it's used with source `'path'`. If neither succeeds, the method returns `null`.\n\n**Windows vs everywhere else** — The key difference is that on Windows there is no native upstream release, so several paths are disabled: `isPlatformDownloadable()` returns `false` for win32 (line 274–277); `getUserPathSymlinkPath()` returns `null` (line 146), meaning no `~/.local/bin/rtk` symlink is created. On macOS and Linux, a symlink is placed at `~/.local/bin/rtk` (line 147) so the binary resolves in `$PATH` wherever Claude Code's Bash tool runs the rewritten command.\n\n**Timeouts and retry limits in the download/unpack path** — Three constants bound the operation (lines 32–34): `FETCH_API_TIMEOUT_MS = 60_000` for GitHub API and checksums.txt fetches; `FETCH_BODY_TIMEOUT_MS = 300_000` (5 minutes) for the actual binary download body via `AbortController` (line 441); and `TAR_TIMEOUT_MS = 120_000` (2 minutes) for `tar` listing and extraction (lines 512, 541). The download loop retries up to `MAX_ATTEMPTS = 3` times (line 357), cleaning the temp archive and resetting progress after each failure (lines 370–373). Additionally, `probeVersion()` has a 3-second timeout (line 207: `{ timeout: 3000 }`), and the hook test in `runHookTest()` uses a 10-second timeout via `pipeStdin` (line 588: `10_000`).\n\n**Citations:**\n- src/main/services/RtkService.ts:133 — `const exe = process.platform === 'win32' ? 'rtk.exe' : 'rtk';`\n- src/main/services/RtkService.ts:129 — `return join(app.getPath('userData'), 'bin');`\n- src/main/services/RtkService.ts:146 — `if (process.platform === 'win32') return null;`\n- src/main/services/RtkService.ts:147 — `return join(homedir(), '.local', 'bin', 'rtk');`\n- src/main/services/RtkService.ts:164–202 — `resolveBinary()` with the two-stage cascade\n- src/main/services/RtkService.ts:180 — `const findCmd = process.platform === 'win32' ? 'where.exe' : 'which';`\n- src/main/services/RtkService.ts:274–277 — `isPlatformDownloadable()` returning false for win32\n- src/main/services/RtkService.ts:32 — `const FETCH_API_TIMEOUT_MS = 60_000;`\n- src/main/services/RtkService.ts:33 — `const FETCH_BODY_TIMEOUT_MS = 300_000;`\n- src/main/services/RtkService.ts:34 — `const TAR_TIMEOUT_MS = 120_000;`\n- src/main/services/RtkService.ts:357 — `const MAX_ATTEMPTS = 3;`\n- src/main/services/RtkService.ts:207 — `{ timeout: 3000 }` in `probeVersion()`\n- src/main/services/RtkService.ts:588 — `10_000` in `pipeStdin` for hook test\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 74,659 in / 3,221 out · $0.01 · 74.6s · session sess_4c21942837053355",
+  "structuredContent": {
+    "session_id": "sess_4c21942837053355"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · iteration 11",
+    "agent=explore-r · iteration 12",
+    "agent=explore-r · iteration 13",
+    "agent=explore-r · iteration 14"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

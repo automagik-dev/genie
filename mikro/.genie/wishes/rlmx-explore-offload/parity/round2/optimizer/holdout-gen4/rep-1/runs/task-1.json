@@ -1,0 +1,72 @@
+{
+  "task": 1,
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "taskFile": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/1.md",
+  "suite": "other",
+  "root": "/home/namastex/prod/rlmx",
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen4-holdout-rep1-khal-deepseek-v4-flash",
+  "startedAt": "2026-07-27T12:43:17.093Z",
+  "question": "In this repository a Python REPL block can call rlm_query() to spawn a child rlmx run. I need to know exactly what the parent controls about that child and what it does not. Which source lines decide (a) how many children can run at once, (b) what iteration cap and depth ceiling the child is handed, (c) how the child is spawned relative to the parent's process group, and (d) what decides the model the child ends up running on? Answer with a path:line citation for every claim.",
+  "provenance": {
+    "promptSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "promptChars": 36806,
+    "promptSnapshot": "parity/prompts/640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9.md",
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "rootGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "rlmxGit": {
+      "head": "6ec48226dbd5077c3c971a8144ee472f32331025",
+      "branch": "wish/rlmx-explore-offload",
+      "dirty": true
+    },
+    "recipeDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "agent": "explore-r",
+    "tool": "rlmx_explore-r",
+    "childModelPin": {
+      "model.provider": "khal",
+      "model.model": "deepseek-v4-flash",
+      "model.sub-call-model": "deepseek-v4-flash"
+    },
+    "replTimeoutMs": "600000",
+    "runTimeoutMs": "900000",
+    "callTimeoutMs": 600000,
+    "maxTotalTimeoutMs": 2400000
+  },
+  "toolsListed": [
+    "rlmx_query",
+    "rlmx_explore-r"
+  ],
+  "ok": true,
+  "isError": false,
+  "wallSeconds": 93.4,
+  "requestChars": 493,
+  "resultChars": 2691,
+  "answer": "This repository is at `/home/namastex/prod/rlmx`. Here are the four mechanisms the parent controls about a child spawned via `rlm_query()` through the Python REPL bridge (`python/llm_bridge.py:71`), which sends an `\"rlm_query\"` IPC request (`src/ipc.ts:59`) handled in `src/llm.ts:786`:\n\n**(a) How many children can run at once**  \nDecided by `MAX_CONCURRENT = 4` at `src/llm.ts:710`. The `rlmQueryBatched` function (line 699) slices prompts into batches of size `MAX_CONCURRENT` and runs each batch via `Promise.all`, so at most 4 child processes execute simultaneously.\n\n**(b) Iteration cap and depth ceiling**  \nThe depth ceiling is `options.maxDepth` passed via `RlmChildInvocationOptions`. At `src/llm.ts:581`, `currentDepth` (from `process.env.RLMX_RECURSION_DEPTH`, parsed at line 580) is compared against `options.maxDepth` — if `currentDepth >= options.maxDepth`, the child errors out with `\"Error: max recursive rlm_query depth {options.maxDepth} reached\"`. The parent controls this via the `recursiveOptions` object, which is spread into the child's options at line 791. An iteration cap (max total LLM calls) is not enforced in this function; the system prompt that the child receives (via its own config) may impose one, but that is not visible in `rlmQuery` itself.\n\n**(c) How the child is spawned relative to the parent's process group**  \nAt `src/llm.ts:611-619`, the child is spawned with `detached: process.platform !== \"win32\"` and `process.kill(-child.pid, \"SIGTERM\")` is used for termination (line 626). The `detached` flag means the child runs in its own process group on non-Windows, so killing the parent does not automatically kill the child. The `terminateChildTree` function (line 622) explicitly kills the child's process group via the negative PID. Environment is built by `buildChildEnv(process.env, parentRunId, correlationId)` (line 618), which carries the parent's `RLMX_RECURSION_DEPTH` and `RLMX_PARENT_RUN_ID` into the child so the child knows its depth and lineage.\n\n**(d) What decides the model the child runs on**  \nDecided by `resolveChildModelRef` at `src/llm.ts:738-739`. It returns `formatModelRef(config.model.provider, requestedModel || config.model.model)` — so if the Python caller passes `model=\"X\"` via the IPC `model` field (`src/ipc.ts:70`), the child uses that model id under the parent's provider; otherwise it uses the parent's primary model (`config.model.model`), *not* the parent's `subCallModel`. The resolved string is passed as the `model` field in the child's options at lines 791 and 805.\n",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 74,746 in / 3,389 out · $0.01 · 93.1s · session sess_cc4bfd7ffdfd788c",
+  "fullText": "This repository is at `/home/namastex/prod/rlmx`. Here are the four mechanisms the parent controls about a child spawned via `rlm_query()` through the Python REPL bridge (`python/llm_bridge.py:71`), which sends an `\"rlm_query\"` IPC request (`src/ipc.ts:59`) handled in `src/llm.ts:786`:\n\n**(a) How many children can run at once**  \nDecided by `MAX_CONCURRENT = 4` at `src/llm.ts:710`. The `rlmQueryBatched` function (line 699) slices prompts into batches of size `MAX_CONCURRENT` and runs each batch via `Promise.all`, so at most 4 child processes execute simultaneously.\n\n**(b) Iteration cap and depth ceiling**  \nThe depth ceiling is `options.maxDepth` passed via `RlmChildInvocationOptions`. At `src/llm.ts:581`, `currentDepth` (from `process.env.RLMX_RECURSION_DEPTH`, parsed at line 580) is compared against `options.maxDepth` — if `currentDepth >= options.maxDepth`, the child errors out with `\"Error: max recursive rlm_query depth {options.maxDepth} reached\"`. The parent controls this via the `recursiveOptions` object, which is spread into the child's options at line 791. An iteration cap (max total LLM calls) is not enforced in this function; the system prompt that the child receives (via its own config) may impose one, but that is not visible in `rlmQuery` itself.\n\n**(c) How the child is spawned relative to the parent's process group**  \nAt `src/llm.ts:611-619`, the child is spawned with `detached: process.platform !== \"win32\"` and `process.kill(-child.pid, \"SIGTERM\")` is used for termination (line 626). The `detached` flag means the child runs in its own process group on non-Windows, so killing the parent does not automatically kill the child. The `terminateChildTree` function (line 622) explicitly kills the child's process group via the negative PID. Environment is built by `buildChildEnv(process.env, parentRunId, correlationId)` (line 618), which carries the parent's `RLMX_RECURSION_DEPTH` and `RLMX_PARENT_RUN_ID` into the child so the child knows its depth and lineage.\n\n**(d) What decides the model the child runs on**  \nDecided by `resolveChildModelRef` at `src/llm.ts:738-739`. It returns `formatModelRef(config.model.provider, requestedModel || config.model.model)` — so if the Python caller passes `model=\"X\"` via the IPC `model` field (`src/ipc.ts:70`), the child uses that model id under the parent's provider; otherwise it uses the parent's primary model (`config.model.model`), *not* the parent's `subCallModel`. The resolved string is passed as the `model` field in the child's options at lines 791 and 805.\n\n---\nrlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 74,746 in / 3,389 out · $0.01 · 93.1s · session sess_cc4bfd7ffdfd788c",
+  "structuredContent": {
+    "session_id": "sess_cc4bfd7ffdfd788c"
+  },
+  "progress": [
+    "agent=explore-r · iteration 1",
+    "agent=explore-r · iteration 2",
+    "agent=explore-r · iteration 3",
+    "agent=explore-r · iteration 4",
+    "agent=explore-r · iteration 5",
+    "agent=explore-r · iteration 6",
+    "agent=explore-r · iteration 7",
+    "agent=explore-r · iteration 8",
+    "agent=explore-r · iteration 9",
+    "agent=explore-r · iteration 10",
+    "agent=explore-r · iteration 11",
+    "agent=explore-r · iteration 12",
+    "agent=explore-r · iteration 13",
+    "agent=explore-r · iteration 14",
+    "agent=explore-r · working 90s"
+  ],
+  "stderr": "rlmx mcp: 1 microagent discovered (explore-r)\n"
+}

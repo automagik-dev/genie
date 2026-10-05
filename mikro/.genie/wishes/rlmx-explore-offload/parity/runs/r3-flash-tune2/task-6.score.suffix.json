@@ -1,0 +1,110 @@
+{
+  "arm": "rlmx",
+  "task": 6,
+  "model": "khal/deepseek-v4-flash",
+  "round": "r3-flash-tune2",
+  "footer": "rlmx · agent=explore · khal/deepseek-v4-flash · 1 iteration · 0 in / 0 out · $0.00 · 302.8s · session sess_0999d70518bc9fd3",
+  "wallSeconds": 303.1,
+  "requestChars": 1858,
+  "resultChars": 129,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [
+    "/home/namastex/.genie"
+  ],
+  "need": 8,
+  "factTotal": 8,
+  "answerChars": 1,
+  "citations": [],
+  "criterion2": {
+    "scoredCitations": 0,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/hermes-skills-config.ts:14",
+      "anchoredOn": "$GENIE_HOME/skills",
+      "claim": "- **Hermes never reads `~/.claude/skills`**: `syncHermes` (**:5666**) only symlinks `~/.hermes/plugins/genie` → `<GENIE_HOME>/plugins/hermes-genie` and merges `",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/update.ts:2661",
+      "anchoredOn": "~/.genie/.last-agent-sync",
+      "claim": "Wrapper: `runAgentSyncSafe()` — `src/genie-commands/update.ts:2046` (calls `runAgentSync`, touches `~/.genie/.last-agent-sync` marker at :2060; marker is write-",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/genie.ts:161",
+      "anchoredOn": "installCommand",
+      "claim": "| 1 | `genie install` (invoked by `install.sh` line 679 after binary promotion; CLI registered at `src/genie.ts:128`) | `installCommand` → `runSync` default = `",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/update.ts:1759",
+      "anchoredOn": "runAgentSyncSafe",
+      "claim": "| 2 | `genie update` (normal, already-up-to-date) | `updateCommand` → `runTrackedManualUpdateConvergence` → `runManualUpdateConvergence` → `runAgentSyncSafe` | ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "src/genie-commands/doctor.ts:32",
+      "anchoredOn": "CLAUDE_EXCLUDED_SKILLS",
+      "claim": "| 6 | `genie doctor` | **READ-ONLY** — never calls `runAgentSync`. `checkAgentSync` :1436 → `checkClaudeSync` :1023 computes expected mirror as source-skills mi",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/genie-commands/uninstall.ts:45",
+      "anchoredOn": "MANIFEST_NAME",
+      "claim": "| 7 | `genie uninstall` | does not sync; imports `MANIFEST_NAME`/`inspectManagedSkillTree`/`removeManagedSkillTree` etc. (`src/genie-commands/uninstall.ts:40-61",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/setup.ts:12",
+      "anchoredOn": "acquireLifecycleLease",
+      "claim": "| 8 | `genie setup` | no sync — imports only `acquireLifecycleLease` (`src/genie-commands/setup.ts:11`) |",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/smart-install-hook.test.ts:57",
+      "anchoredOn": "SessionStart",
+      "claim": "| 9 | Claude Code plugin hooks (`plugins/genie/hooks/hooks.json`: SessionStart `session-context.cjs`, PreToolUse `dispatch-runtime.cjs` → `genie hook dispatch`)",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

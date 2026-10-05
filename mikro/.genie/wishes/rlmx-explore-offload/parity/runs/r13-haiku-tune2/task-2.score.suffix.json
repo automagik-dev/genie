@@ -1,0 +1,187 @@
+{
+  "arm": "rlmx",
+  "task": 2,
+  "model": "khal/claude-haiku",
+  "round": "r13-haiku-tune2",
+  "footer": "rlmx · agent=explore · khal/claude-haiku · 2 iterations · 31,965 in / 18,988 out · $0.13 · 112.3s · session sess_856034b5668d71ec",
+  "wallSeconds": 112.6,
+  "requestChars": 1818,
+  "resultChars": 4643,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [],
+  "need": 9,
+  "factTotal": 10,
+  "answerChars": 4509,
+  "citations": [
+    {
+      "path": "src/lib/agent-sync/codex.ts",
+      "line": 24,
+      "key": "src/lib/agent-sync/codex.ts:24",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/agent-sync/codex.ts",
+      "line": 29,
+      "key": "src/lib/agent-sync/codex.ts:29",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 26,
+      "key": "src/lib/agent-sync.ts:26",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "constants,"
+    },
+    {
+      "path": "src/commands/doctor.ts",
+      "line": 55,
+      "key": "src/commands/doctor.ts:55",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/cli.ts",
+      "line": 29,
+      "key": "src/cli.ts:29",
+      "exists": false,
+      "verdict": "missing-file"
+    },
+    {
+      "path": "src/commands/skill/uninstall.ts",
+      "line": 15,
+      "key": "src/commands/skill/uninstall.ts:15",
+      "exists": false,
+      "verdict": "missing-file"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 6,
+    "failures": [
+      "src/lib/agent-sync/codex.ts:24 (missing-file)",
+      "src/lib/agent-sync/codex.ts:29 (missing-file)",
+      "src/commands/doctor.ts:55 (missing-file)",
+      "src/cli.ts:29 (missing-file)",
+      "src/commands/skill/uninstall.ts:15 (missing-file)"
+    ],
+    "pass": false
+  },
+  "criterion3": {
+    "failures": [
+      "src/lib/agent-sync/codex.ts:24 (missing-file)",
+      "src/lib/agent-sync/codex.ts:29 (missing-file)",
+      "src/commands/doctor.ts:55 (missing-file)",
+      "src/cli.ts:29 (missing-file)",
+      "src/commands/skill/uninstall.ts:15 (missing-file)"
+    ],
+    "pass": false
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/runtime-integrations.ts:2171",
+      "anchoredOn": "const cwd = options.cwd ?? process.cwd()",
+      "claim": "**childCwd = process.cwd() confirmed:** `src/lib/runtime-integrations.ts:481-490` (`resolveRuntimeExecutable` → `validateTrustedExecutablePath(..., cwd)`), fed ",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": [
+        "process.cwd()"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "**File:** `src/genie-commands/install.ts:156-175` const codexFailed = results.some((result) => result.runtime === 'codex' && !result.ok); // 156",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/agent-sync.ts:3521",
+      "anchoredOn": "syncOneSkill",
+      "claim": "**File:** `src/lib/agent-sync.ts:3521-3532` (`syncOneSkill`)",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/doctor.ts:984",
+      "anchoredOn": "sourceDigest === managedDigest && computeDirDigest(dir) === managedDigest",
+      "claim": "- **doctor:** `src/genie-commands/doctor.ts:797-817` (`summarizeManagedSkills`). Line 811 requires `sourceDigest === managedDigest && computeDirDigest(dir) === ",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F5",
+      "anchor": "plugins/genie/workflows/council.js:23",
+      "anchoredOn": "__GENIE_LENS_ROOT__",
+      "claim": "**What/where:** `LENS_ROOT` is the absolute path to the installed genie plugin dir, injected into the `/council` workflow. Template ships unstamped: `plugins/ge",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F6",
+      "anchor": "src/lib/agent-sync.ts:5078",
+      "anchoredOn": "stampWorkflowTemplate",
+      "claim": "**Stamping:** `src/lib/agent-sync.ts:5060-5066` (`stampWorkflowTemplate`):",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/doctor.ts:1001",
+      "anchoredOn": "councilStampState",
+      "claim": "`src/genie-commands/doctor.ts:828-838` (`councilStampState`):",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/interactivity.ts:22",
+      "anchoredOn": "isInteractive",
+      "claim": "**Sole consumer:** `src/lib/interactivity.ts:22-27` (`isInteractive`):",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/genie-commands/uninstall.ts:3468",
+      "anchoredOn": "uninstallCommand",
+      "claim": "**Root cause.** `uninstallCommand` (`src/genie-commands/uninstall.ts:3426`, signature `options: { removeMarketplace?: boolean } = {}`) **never calls `isInteract",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/genie-commands/install.ts:353",
+      "anchoredOn": "codexFailed",
+      "claim": "| A2 | agent-sync scope gated on a codex-only `codexFailed` flag under `auto` → claude/hermes skipped too | `src/genie-commands/install.ts:162-175` | One block,",
+      "namesAnchorPath": false,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

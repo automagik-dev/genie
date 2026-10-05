@@ -1,0 +1,357 @@
+{
+  "wish": "rlmx-microagent-plugin",
+  "criterion": "B3",
+  "arm": "control",
+  "control": true,
+  "model": "sonnet",
+  "startedAt": "2026-07-27T21:03:19.625Z",
+  "finishedAt": "2026-07-27T21:09:17.124Z",
+  "host": {
+    "claudeCode": "2.1.220 (Claude Code)",
+    "node": "v22.23.1"
+  },
+  "skillUnderTest": null,
+  "preRegistered": {
+    "items": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "passBar": {
+      "routedAtLeast": 4,
+      "ofItems": 5,
+      "plantedMustEscalate": true
+    },
+    "tasksDir": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+    "plantedRecord": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json"
+  },
+  "pins": {
+    "verifiedAt": "2026-07-27T21:03:19.598Z",
+    "items": [
+      {
+        "task": 3,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/3.md",
+        "chars": 349,
+        "sha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e"
+      },
+      {
+        "task": 4,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/4.md",
+        "chars": 306,
+        "sha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df"
+      },
+      {
+        "task": 5,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/5.md",
+        "chars": 284,
+        "sha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f"
+      },
+      {
+        "task": 6,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+        "chars": 241,
+        "sha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799"
+      },
+      {
+        "task": 7,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/7.md",
+        "chars": 291,
+        "sha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7"
+      }
+    ],
+    "planted": {
+      "record": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json",
+      "chars": 67,
+      "sha256": "6bec40334302304701ef423c920b986d7a0d61b1b3406781ab625ad9abb6572c",
+      "isError": true,
+      "citations": 0,
+      "wallSeconds": 650,
+      "model": "khal/deepseek-v4-flash",
+      "round": "gen4-rep2-khal-deepseek-v4-flash",
+      "questionMatchesTask5": true
+    }
+  },
+  "routed": 0,
+  "ofItems": 5,
+  "routedTasks": [],
+  "notRoutedTasks": [
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "plantedEscalated": false,
+  "routingPass": false,
+  "escalationPass": false,
+  "pass": false,
+  "runs": [
+    {
+      "id": "task-3",
+      "task": 3,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e",
+      "promptChars": 349,
+      "exitCode": 0,
+      "wallSeconds": 37,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/task-3.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/task-3.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Bash",
+      "nativeToolsBeforeRouting": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Bash",
+        "Read",
+        "Bash"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "Confirms exactly three reasons. I have everything needed to answer.\n\n## NPU power/clock state reads\n\n`read_npu_power()` in `src/xdna_top/npu_power.py:96-137` reads the amdxdna driver's debugfs nodes at `/sys/kernel/debug/accel/<bdf>/{dpm_level,powerstate}` — a best-effort, additive signal (submission-counter deltas remain the primary NPU activity signal, per the module docstring at `npu_power.py:1-9`).\n\nFlow:\n1. `_debugfs_dir(bdf)` (`npu_power.py:39-59`) resolves the per-device dir: if `bdf` is given, only that exact `/sys/kernel/debug/accel/<bdf>` (no fallback to another device); otherwise the first sorted subdir under `/sys/kernel/debug/accel`. Any `OSError` (e.g. `PermissionError` from the usually mode-700 debugfs root) is caught and turned into `None`.\n2. `_read()` (`npu_power.py:62-67`) does a guarded text read of `dpm_level` and `powerstate`, returning `None` on any `OSError`.\n3. `dpm_level` is parsed by `parse_dpm_level()` (`npu_power.py:70-93`) via the `_DPM_TOKEN` regex (`npu_power.py:36`), which extracts `npuclk`/`hclk` pairs and marks the bracketed `[..]` token as the active DPM state.\n\nIt always returns a dict with `available`, `source`, `reason`, `powerstate`, `dpm` (`npu_power.py:105-111`) — never raises. The three distinct `reason` values for `available: False` are, in order of the checks that produce them:\n\n- **`\"debugfs_accel_absent\"`** (`npu_power.py:114-116`) — `_debugfs_dir` returned `None`: either no `/sys/kernel/debug/accel` (driver doesn't export it, or debugfs not mounted), or the specific `bdf` subdir doesn't exist.\n- **`\"debugfs_nodes_unreadable\"`** (`npu_power.py:120-124`) — the device dir exists but *both* `dpm_level` and `powerstate` reads failed (typically debugfs is root-only for an unprivileged caller, or this driver build doesn't export those particular files).\n- **`\"debugfs_nodes_unparsable\"`** (`npu_power.py:126-131`) — at least one node was read, but `dpm_level` didn't yield a parseable `npuclk,hclk` token *and* `powerstate` was empty/falsy — i.e., data came back but wasn't usable.\n\nOnly if none of those trip does it set `available: True`, `source: \"debugfs\"`, and populate `powerstate`/`dpm` (`npu_power.py:133-137`).\n\n## iGPU telemetry discovery\n\nSeparate and much simpler: `discover_sysfs()` in `src/xdna_top/discover_sysfs.py:8-66` probes plain sysfs, not debugfs, for two independent things — busy % and power — with different candidate-selection strategies for each.\n\n- **Busy %**: a hardcoded, ordered candidate list — `/sys/class/drm/card0/device/gpu_busy_percent`, `card1`, `card2` (`discover_sysfs.py:22-26`). It iterates in that fixed order and takes the **first** candidate that both `os.path.exists()` and is actually readable (`discover_sysfs.py:27-36`), then breaks — first-match-wins, no preference logic beyond card index order.\n- **Power**: scans every entry under `/sys/class/hwmon` (`discover_sysfs.py:39-58`), and for each dir with a readable `power1_input`, reads the sibling `name` file. Selection rule (`discover_sysfs.py:54-56`): store this `power1_input` as `gpu_power_path` if its hwmon `name == \"amdgpu\"` **or** no power path has been stored yet — i.e., it takes the first hwmon found by default but will overwrite that choice as soon as one named `amdgpu` shows up, so `amdgpu` always wins regardless of iteration order, and any other named hwmon is only ever a fallback-until-something-better-or-amdgpu appears.\n\nStatus/result reporting: `result[\"status\"]` starts as `\"CPU-only fallback\"` (`discover_sysfs.py:18`) and flips to `\"iGPU found\"` only when a busy-percent candidate succeeds (`discover_sysfs.py:33`) — the power probe never changes `status` on its own. There's no \"reason\" taxonomy here like in `npu_power.py`; failures (missing path, `PermissionError`, `OSError`) are silently skipped/continued (`discover_sysfs.py:35-36`, `:57-58`), leaving the corresponding path field as `None`.",
+        "usd": 0.1539041,
+        "ms": 35480,
+        "turns": 7,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-4",
+      "task": 4,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df",
+      "promptChars": 306,
+      "exitCode": 0,
+      "wallSeconds": 19,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/task-4.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/task-4.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Bash",
+      "nativeToolsBeforeRouting": [
+        "Bash",
+        "Bash",
+        "Read",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "## Recorder (`src/xdna_top/record.py`)\n\n**Event identity** — every event is a dict with a `\"type\"` key (`\"telemetry\"`, `\"mark\"`, `\"meta\"`, `\"summary\"`) plus a `\"schema_version\"` (currently `\"1.0\"`, `RECORD_SCHEMA_VERSION` at `record.py:22`). Telemetry/mark events are built by `build_telemetry_event` (`record.py:26-36`) and `build_mark_event` (`record.py:39-46`); meta/summary framing events are built by `_meta_event`/`_summary_event` (`record.py:171-190`), which also carry a `\"kind\": RECORD_KIND` (`\"xdna-top.record\"`, `record.py:23`) so a stream can be distinguished from other JSONL producers.\n\n**Line writing** — two paths:\n- `append_event` (`record.py:49-59`) — used by `mark_main` for one-off marks; opens the file in **append** mode (`\"a\"`).\n- `_open_writer` (`record.py:197-223`) — used by `run_record` for a full recording session; opens the file in **write/truncate** mode (`\"w\"`) and yields a `write_line` closure that writes+flushes after every event, so an interrupted recording still leaves a valid partial file (comment at `record.py:201-205`).\n\nBoth ultimately serialize with `_dump` (`record.py:226-227`): `json.dumps(event) + \"\\n\"` — plain JSONL, one event per line.\n\n## Exporter (`src/xdna_top/exporter.py`)\n\n**Wiring to the registry** — `serve()` (`exporter.py:103-109`) creates a fresh `CollectorRegistry()` and registers a single collector instance:\n```python\nregistry.register(XdnaCollector(_hardware_reader(gauge, npu_device)))\nstart_http_server(port, addr=host, registry=registry)\n```\n`XdnaCollector` (`exporter.py:128-152`) implements the `collect()` protocol prometheus_client expects — it calls `read_fn()` (a hardware sampler from `_hardware_reader`, `exporter.py:92-100`) at scrape time and yields metric families from `_build_metrics` (`exporter.py:20-89`). On any exception it swallows it and yields just `xdna_up 0` (`exporter.py:142-150`) rather than raising, so a broken probe shows up as a metric, not a 500.\n\n**Naming rule** — Counter metrics must be declared **without** the `_total` suffix; `prometheus_client`'s `CounterMetricFamily` appends `_total` itself. This is called out explicitly at `exporter.py:62-63`:\n```python\n# Counter families are named WITHOUT _total; prometheus_client appends it.\nyield CounterMetricFamily(\"xdna_npu_submissions\", ...)\n```\nSo if you add a new counter, name it `xdna_foo_bar` (not `xdna_foo_bar_total`) — it'll be exposed as `xdna_foo_bar_total` on scrape. Gauges (`GaugeMetricFamily`) have no such transformation, e.g. `xdna_igpu_busy_percent` at `exporter.py:36-38`.",
+        "usd": 0.1194302,
+        "ms": 18127,
+        "turns": 5,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-5",
+      "task": 5,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 87,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/task-5.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Agent",
+      "nativeToolsBeforeRouting": [
+        "Agent",
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Bash",
+        "Bash",
+        "Read",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've kicked off a search for the PTY session management code. I'll report back once it completes.",
+        "usd": 0.0569387,
+        "ms": 8145,
+        "turns": 2,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-6",
+      "task": 6,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799",
+      "promptChars": 241,
+      "exitCode": 0,
+      "wallSeconds": 95,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/task-6.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/task-6.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Agent",
+      "nativeToolsBeforeRouting": [
+        "Agent",
+        "Bash",
+        "Bash",
+        "Read",
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Read",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've launched an agent to trace through the rtk CLI integration code. I'll report back with specific file/line citations once it completes.",
+        "usd": 0.0345294,
+        "ms": 8322,
+        "turns": 2,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-7",
+      "task": 7,
+      "planted": false,
+      "root": "/home/namastex/prod/fde-station",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7",
+      "promptChars": 291,
+      "exitCode": 0,
+      "wallSeconds": 15,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/task-7.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/task-7.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Bash",
+      "nativeToolsBeforeRouting": [
+        "Bash",
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "`channel/enroll.sh` owns enrollment.\n\n**Destination paths** (`channel/enroll.sh:27-29`):\n- `KEYRING_DEST=\"/usr/share/keyrings/fde-station-archive-keyring.gpg\"`\n- `SOURCES_DEST=\"/etc/apt/sources.list.d/fde-station.sources\"`\n- `AUTH_DEST=\"/etc/apt/auth.conf.d/fde-station.conf\"`\n\n**How the source ties to the keyring**: the deb822 source written at `channel/enroll.sh:81-89` includes `Signed-By: $KEYRING_DEST` (line 88) — i.e. it points directly at the installed keyring path (`/usr/share/keyrings/fde-station-archive-keyring.gpg`) rather than relying on a global trusted.gpg.d drop.\n\n**Credential file permission** — `AUTH_DEST` (`/etc/apt/auth.conf.d/fde-station.conf`):\n- `channel/enroll.sh:93`: `install -D -m 0600 /dev/null \"$AUTH_DEST\"` — file is created with mode `0600` *before* the secret is written.\n- `channel/enroll.sh:94`/`99`: `umask 077` is also set around the write (reset to `022` after), belt-and-suspenders against the heredoc write.\n- `channel/enroll.sh:98`: `chmod 600 \"$AUTH_DEST\"` — re-asserted explicitly after the `cat > ... <<EOF` write, in case the shell redirection didn't preserve the mode from the `install` step.\n\nSo the PAT-bearing file ends up `0600`, owned by root (script requires `id -u == 0`, line 38), readable only by root — consistent with the comment at line 4 that this must run as root since it writes into `/usr/share/keyrings` and `/etc/apt`. By contrast the keyring (line 59/65: `install -D -m 0644`) and sources file (line 80: `install -D -m 0644 /dev/null`) are both world-readable `0644`, since they contain no secret.",
+        "usd": 0.13083679999999998,
+        "ms": 13207,
+        "turns": 3,
+        "isError": false
+      }
+    },
+    {
+      "id": "planted-task-5",
+      "task": 5,
+      "planted": {
+        "deliveredAt": -1,
+        "delivered": false,
+        "nativeToolsAfter": [],
+        "nativeToolCountAfter": 0,
+        "rlmxRetriesAfter": 0,
+        "finalCitationCount": 0
+      },
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 0,
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 105,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/transcripts/planted-task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/control/calls/planted-task-5.jsonl",
+      "routed": false,
+      "rlmxCallCount": 0,
+      "firstRlmxCallAt": null,
+      "firstToolUse": "Agent",
+      "nativeToolsBeforeRouting": [
+        "Agent",
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Bash",
+        "Read",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Bash",
+        "Read",
+        "Read",
+        "Bash"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've launched an Explore agent to trace through the PTY session management code. I'll report back once it finds the tracking map, resize handler, shutdown/timeout logic, and spawn environment details.",
+        "usd": 0.036611199999999997,
+        "ms": 11980,
+        "turns": 2,
+        "isError": false
+      },
+      "escalated": false
+    }
+  ]
+}

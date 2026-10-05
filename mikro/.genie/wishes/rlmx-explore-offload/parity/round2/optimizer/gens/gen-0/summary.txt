@@ -1,0 +1,16 @@
+# gen-0 · khal/deepseek-v4-flash · suite=round2-train · recipe SYSTEM.md 06c6ea94 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=6/7 weak=0 anchorsCited=5/7 c2=PASS c3=PASS cites=14/14 pass=false iters=14 spawns=2 wall=174.9s cost=$0.02 chars=2803 root=/home/namastex/prod/xdna-top
+  MISS F5 src/xdna_top/npu_power.py:84 — names the path but not the anchoring term `m.group("lb") == "["` (0/1 long tokens)
+TASK 4 ok=true facts=4/6 weak=0 anchorsCited=2/6 c2=PASS c3=PASS cites=9/9 pass=false iters=13 spawns=2 wall=218.4s cost=$0.02 chars=2077 root=/home/namastex/prod/xdna-top
+  MISS F1 src/xdna_top/record.py:22 — names the path but not the anchoring term `RECORD_SCHEMA_VERSION` (0/1 long tokens)
+  MISS F2 src/xdna_top/record.py:23 — names the path but not the anchoring term `RECORD_KIND` (0/1 long tokens)
+TASK 5 ok=true facts=4/5 weak=1 anchorsCited=5/5 c2=PASS c3=PASS cites=40/40 pass=false iters=10 spawns=4 wall=279.3s cost=$0.03 chars=5023 root=/home/namastex/prod/genie-desktop
+  WEAK F1 src/main/services/ptyManager.ts:38 — names the path but not the exact term `new Map<string, PtyRecord>()` (1/2 of its long tokens present)
+TASK 6 ok=true facts=4/5 weak=0 anchorsCited=3/5 c2=PASS c3=PASS cites=12/12 pass=false iters=10 spawns=0 wall=82.3s cost=$0.0094 chars=4478 root=/home/namastex/prod/genie-desktop
+  MISS F1 src/main/services/RtkService.ts:180 — names the path but not the anchoring term `findCmd` (0/1 long tokens)
+TASK 7 ok=true facts=5/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=6/6 pass=false iters=5 spawns=3 wall=114.3s cost=$0.01 chars=1005 root=/home/namastex/prod/fde-station
+  MISS F6 channel/enroll.sh:23 — names the path but not the anchoring term `SUITE` (0/1 long tokens)
+TASK 8 ok=true facts=5/5 weak=0 anchorsCited=4/5 c2=PASS c3=PASS cites=20/20 pass=true iters=5 spawns=3 wall=225.5s cost=$0.03 chars=2776 root=/home/namastex/prod/fde-station
+ROUND gen=0 facts=28/34 fitness=0.8235 weak=1 tasksPassed=1/6 runsOk=6/6 c2fail=0 c3fail=0 cites=101/101 spawns=14 cost=$0.1194 wall=641.2s

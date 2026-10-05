@@ -1,0 +1,245 @@
+{
+  "authoredAt": "2026-07-27T06:45:55Z",
+  "authoredBy": "round-2 prep (explore-offload wish), verified by scripts/author-explore-tasks.mjs",
+  "argv": [
+    "--spec",
+    ".genie/wishes/rlmx-explore-offload/parity/round2/authored-spec.json",
+    "--exclude-tasks",
+    ".genie/wishes/rlmx-explore-offload/tasks",
+    "--out",
+    ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+    "--run-json",
+    "authored-run.json"
+  ],
+  "spec": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/authored-spec.json",
+  "written": 8,
+  "startAt": 1,
+  "strictness": "term on the anchor line itself (no ±3 slack, no re-anchoring), term in the claim, ≤8 occurrences or 5% of the file, claim 40..260 chars, every anchor cited in the reference answer, reference answer passes criteria 2 and 3",
+  "disjointFrom": {
+    "excludeTasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/tasks",
+    "excludedTaskFiles": [
+      "1.md",
+      "2.md",
+      "3.md",
+      "4.md",
+      "5.md",
+      "6.md"
+    ],
+    "subjectTest": "an authored task is refused when ≥34% of the files its facts anchor on are also anchor files of an excluded task in the same root",
+    "measured": [
+      {
+        "file": "1.md",
+        "root": "/home/namastex/prod/rlmx",
+        "anchorFiles": 5,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "2.md",
+        "root": "/home/namastex/prod/rlmx",
+        "anchorFiles": 1,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "3.md",
+        "root": "/home/namastex/prod/xdna-top",
+        "anchorFiles": 2,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "4.md",
+        "root": "/home/namastex/prod/xdna-top",
+        "anchorFiles": 2,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "5.md",
+        "root": "/home/namastex/prod/genie-desktop",
+        "anchorFiles": 1,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "6.md",
+        "root": "/home/namastex/prod/genie-desktop",
+        "anchorFiles": 1,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "7.md",
+        "root": "/home/namastex/prod/fde-station",
+        "anchorFiles": 1,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      },
+      {
+        "file": "8.md",
+        "root": "/home/namastex/prod/fde-station",
+        "anchorFiles": 1,
+        "strongestOverlapWith": null,
+        "anchorFileOverlap": null,
+        "sharedFiles": [],
+        "note": "no eval task shares this root, so the subject test cannot clash"
+      }
+    ]
+  },
+  "fitnessSet": {
+    "included": [
+      "3.md",
+      "4.md",
+      "5.md",
+      "6.md",
+      "7.md",
+      "8.md"
+    ],
+    "heldOut": [
+      {
+        "file": "1.md",
+        "reason": "Training-signal contamination: this task is authored about the tree the round-2 prompt was written in, and its F1-F7 anchor on the same line set (src/llm.ts:667, src/rlm.ts:436, src/rlm.ts:438, src/llm.ts:563, src/mcp/server.ts:487, src/cli.ts:35, src/config.ts:122) that parity/round2/recursion-recon.md §2/§3/§4 is built from. F6 anchors src/cli.ts:35, whose verified text exists only because the same change corrected src/settings.ts. Selecting on it would tune the prompt against ground truth authored by the investigation that produced the prompt — a self-consistency loop, not a training signal. Kept as a held-out diagnostic."
+      },
+      {
+        "file": "2.md",
+        "reason": "Training-signal contamination by root: authored about the same working tree the round-2 prompt was written in, by the same author, in the same sitting. Its anchor files (src/khal-provider.ts) are not the recursion-recon line set, so the loop is looser than task 1's — but 'same tree, same author, same sitting' is the condition the disjointness test exists to break, and a fitness set should not have to argue about degree. Kept as a held-out diagnostic."
+      }
+    ],
+    "contract": "an optimizer may compute fitness only over `included`; `heldOut` tasks are diagnostics and scoring them is reporting, never selection"
+  },
+  "tasks": [
+    {
+      "file": "1.md",
+      "root": "/home/namastex/prod/rlmx",
+      "rootGit": "2a32fd9",
+      "session": "authored-rlmx-recursion-child",
+      "requiredFacts": 7,
+      "factsToPass": 7,
+      "inRootCitations": 7,
+      "anchorFiles": [
+        "src/llm.ts",
+        "src/rlm.ts",
+        "src/mcp/server.ts",
+        "src/cli.ts",
+        "src/config.ts"
+      ],
+      "fitness": false,
+      "fitnessNote": "Training-signal contamination: this task is authored about the tree the round-2 prompt was written in, and its F1-F7 anchor on the same line set (src/llm.ts:667, src/rlm.ts:436, src/rlm.ts:438, src/llm.ts:563, src/mcp/server.ts:487, src/cli.ts:35, src/config.ts:122) that parity/round2/recursion-recon.md §2/§3/§4 is built from. F6 anchors src/cli.ts:35, whose verified text exists only because the same change corrected src/settings.ts. Selecting on it would tune the prompt against ground truth authored by the investigation that produced the prompt — a self-consistency loop, not a training signal. Kept as a held-out diagnostic."
+    },
+    {
+      "file": "2.md",
+      "root": "/home/namastex/prod/rlmx",
+      "rootGit": "2a32fd9",
+      "session": "authored-rlmx-khal-provider",
+      "requiredFacts": 7,
+      "factsToPass": 7,
+      "inRootCitations": 7,
+      "anchorFiles": [
+        "src/khal-provider.ts"
+      ],
+      "fitness": false,
+      "fitnessNote": "Training-signal contamination by root: authored about the same working tree the round-2 prompt was written in, by the same author, in the same sitting. Its anchor files (src/khal-provider.ts) are not the recursion-recon line set, so the loop is looser than task 1's — but 'same tree, same author, same sitting' is the condition the disjointness test exists to break, and a fitness set should not have to argue about degree. Kept as a held-out diagnostic."
+    },
+    {
+      "file": "3.md",
+      "root": "/home/namastex/prod/xdna-top",
+      "rootGit": "c05ea15",
+      "session": "authored-xdna-npu-power",
+      "requiredFacts": 7,
+      "factsToPass": 7,
+      "inRootCitations": 7,
+      "anchorFiles": [
+        "src/xdna_top/npu_power.py",
+        "src/xdna_top/discover_sysfs.py"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    },
+    {
+      "file": "4.md",
+      "root": "/home/namastex/prod/xdna-top",
+      "rootGit": "c05ea15",
+      "session": "authored-xdna-record-export",
+      "requiredFacts": 6,
+      "factsToPass": 6,
+      "inRootCitations": 6,
+      "anchorFiles": [
+        "src/xdna_top/record.py",
+        "src/xdna_top/exporter.py"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    },
+    {
+      "file": "5.md",
+      "root": "/home/namastex/prod/genie-desktop",
+      "rootGit": "3da8750",
+      "session": "authored-genie-desktop-pty",
+      "requiredFacts": 5,
+      "factsToPass": 5,
+      "inRootCitations": 5,
+      "anchorFiles": [
+        "src/main/services/ptyManager.ts"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    },
+    {
+      "file": "6.md",
+      "root": "/home/namastex/prod/genie-desktop",
+      "rootGit": "3da8750",
+      "session": "authored-genie-desktop-rtk",
+      "requiredFacts": 5,
+      "factsToPass": 5,
+      "inRootCitations": 5,
+      "anchorFiles": [
+        "src/main/services/RtkService.ts"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    },
+    {
+      "file": "7.md",
+      "root": "/home/namastex/prod/fde-station",
+      "rootGit": "d1e2206",
+      "session": "authored-fde-station-enroll",
+      "requiredFacts": 6,
+      "factsToPass": 6,
+      "inRootCitations": 7,
+      "anchorFiles": [
+        "channel/enroll.sh"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    },
+    {
+      "file": "8.md",
+      "root": "/home/namastex/prod/fde-station",
+      "rootGit": "d1e2206",
+      "session": "authored-fde-station-publish",
+      "requiredFacts": 5,
+      "factsToPass": 5,
+      "inRootCitations": 5,
+      "anchorFiles": [
+        "channel/publish.sh"
+      ],
+      "fitness": true,
+      "fitnessNote": null
+    }
+  ]
+}

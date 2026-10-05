@@ -1,0 +1,24 @@
+# gen-1 · khal/glm-5.2 · suite=round2-train · recipe SYSTEM.md 02184f35 / agent.yaml 20f8e018
+# fact rule: HIT = names anchor path AND the anchoring term. Proxy for criterion 1, harsher than it; training signal only.
+# held out, never run: 1, 2
+TASK 3 ok=true facts=5/7 weak=0 anchorsCited=5/7 c2=PASS c3=PASS cites=27/27 pass=false iters=7 spawns=4 wall=678.3s cost=$0.42 chars=5123 root=/home/namastex/prod/xdna-top
+  MISS F5 src/xdna_top/npu_power.py:84 — names the path but not the anchoring term `m.group("lb") == "["` (0/1 long tokens)
+  MISS F6 src/xdna_top/discover_sysfs.py:18 — names the path but not the anchoring term `CPU-only fallback` (0/2 long tokens)
+TASK 4 ok=true facts=6/6 weak=0 anchorsCited=6/6 c2=PASS c3=PASS cites=32/32 pass=true iters=5 spawns=4 wall=595.6s cost=$0.35 chars=5386 root=/home/namastex/prod/xdna-top
+TASK 5 ok=true facts=4/5 weak=0 anchorsCited=4/5 c2=PASS c3=PASS cites=27/27 pass=false iters=8 spawns=4 wall=216.1s cost=$0.26 chars=4932 root=/home/namastex/prod/genie-desktop
+  MISS F5 src/main/services/ptyManager.ts:127 — names the path but not the anchoring term `RESERVED_ENV_KEYS` (0/1 long tokens)
+TASK 6 ok=false facts=0/5 weak=0 anchorsCited=0/5 c2=PASS c3=PASS cites=0/0 pass=false iters=? spawns=4 wall=672.1s cost=$? chars=67 root=/home/namastex/prod/genie-desktop
+  MISS F1 src/main/services/RtkService.ts:180 — answer never names RtkService.ts
+  MISS F2 src/main/services/RtkService.ts:32 — answer never names RtkService.ts
+  MISS F3 src/main/services/RtkService.ts:33 — answer never names RtkService.ts
+  MISS F4 src/main/services/RtkService.ts:34 — answer never names RtkService.ts
+  MISS F5 src/main/services/RtkService.ts:357 — answer never names RtkService.ts
+TASK 7 ok=true facts=5/6 weak=0 anchorsCited=5/6 c2=PASS c3=PASS cites=15/15 pass=false iters=5 spawns=4 wall=185.7s cost=$0.27 chars=2572 root=/home/namastex/prod/fde-station
+  MISS F6 channel/enroll.sh:23 — names the path but not the anchoring term `SUITE` (0/1 long tokens)
+TASK 8 ok=true facts=0/5 weak=0 anchorsCited=0/5 c2=PASS c3=PASS cites=0/0 pass=false iters=1 spawns=14 wall=1150s cost=$0.65 chars=1 root=/home/namastex/prod/fde-station
+  MISS F1 channel/publish.sh:52 — answer never names publish.sh
+  MISS F2 channel/publish.sh:56 — answer never names publish.sh
+  MISS F3 channel/publish.sh:59 — answer never names publish.sh
+  MISS F4 channel/publish.sh:64 — answer never names publish.sh
+  MISS F5 channel/publish.sh:175 — answer never names publish.sh
+ROUND gen=1 facts=20/34 fitness=0.5882 weak=0 tasksPassed=1/6 runsOk=5/6 c2fail=0 c3fail=0 cites=101/101 spawns=34 cost=$1.95 wall=2148.3s

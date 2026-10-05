@@ -1,0 +1,253 @@
+{
+  "generatedAt": "2026-07-27T22:42:42.551Z",
+  "window": {
+    "hours": 24,
+    "since": "2026-07-26T22:42:41.910Z"
+  },
+  "root": "/home/namastex/.claude/projects",
+  "scanned": {
+    "files": 138,
+    "lines": 43613,
+    "unparsableLines": 0
+  },
+  "measured": {
+    "note": "verbatim from each assistant turn's usage block — API counts, not estimates",
+    "assistantTurns": 17687,
+    "outputTokens": 8537792,
+    "inputTokens": 362517,
+    "cacheCreationInputTokens": 125996910,
+    "cacheReadInputTokens": 2819821340
+  },
+  "estimated": {
+    "note": "tool-result characters are exact; tokens are chars/4, a convention — print them with ~",
+    "toolResultChars": 17958615,
+    "approxTokens": 4489654
+  },
+  "families": [
+    {
+      "family": "repo-exploration",
+      "label": "repo exploration (Read/Grep/Glob + read-only shell)",
+      "offloadable": true,
+      "note": "the explore-r class — already covered by an existing agent",
+      "calls": 4955,
+      "sessions": 11,
+      "projects": 5,
+      "callsPerSession": 450.5,
+      "resultChars": 13913427,
+      "approxTokens": 3478357,
+      "shareOfContextPct": 77.5,
+      "medianCharsPerCall": 867,
+      "tools": [
+        "Bash×4146",
+        "Read×809"
+      ],
+      "samples": []
+    },
+    {
+      "family": "side-effecting-shell",
+      "label": "shell that changes state",
+      "offloadable": false,
+      "note": "writes, installs, git mutations — not offloadable even when it also reads",
+      "calls": 1550,
+      "sessions": 10,
+      "projects": 5,
+      "callsPerSession": 155,
+      "resultChars": 1494782,
+      "approxTokens": 373696,
+      "shareOfContextPct": 8.3,
+      "medianCharsPerCall": 443,
+      "tools": [
+        "Bash×1550"
+      ],
+      "samples": []
+    },
+    {
+      "family": "git-history",
+      "label": "git history interrogation",
+      "offloadable": true,
+      "note": "read-only, self-contained questions over a repo's history",
+      "calls": 509,
+      "sessions": 9,
+      "projects": 4,
+      "callsPerSession": 56.6,
+      "resultChars": 983705,
+      "approxTokens": 245926,
+      "shareOfContextPct": 5.5,
+      "medianCharsPerCall": 1090,
+      "tools": [
+        "Bash×509"
+      ],
+      "samples": [
+        "cd /home/namastex/prod && git log --oneline main..origin/main | head -25; echo ---REFS---; git branch -r; echo",
+        "ls -la ~/.fde-station-gnupg 2>/dev/null | head; echo ---CHANNEL---; ls ~/.local/share/fde-station-apt 2>/dev/n",
+        "git log -1 --format='%H %s' 6f1e498 2>/dev/null; cd ~/.local/share/fde-station-apt && git log -1 --format=%B 6",
+        "git show origin/dev:.genie/wishes/fde-station-defect-sweep/WISH.md | sed -n '1,120p'",
+        "git show origin/dev:fde-station/channel/publish.sh | head -80",
+        "git show origin/dev:fde-station/ci/run-ci.sh | sed -n '1,60p'; echo ...; git show origin/dev:fde-station/ci/ru"
+      ]
+    },
+    {
+      "family": "other",
+      "label": "everything else",
+      "offloadable": false,
+      "note": "unclassified",
+      "calls": 873,
+      "sessions": 9,
+      "projects": 4,
+      "callsPerSession": 97,
+      "resultChars": 926998,
+      "approxTokens": 231750,
+      "shareOfContextPct": 5.2,
+      "medianCharsPerCall": 377,
+      "tools": [
+        "Bash×610",
+        "SendMessage×47",
+        "ToolSearch×42",
+        "ScheduleWakeup×35",
+        "Monitor×34"
+      ],
+      "samples": []
+    },
+    {
+      "family": "edits",
+      "label": "edits (Edit/Write/NotebookEdit)",
+      "offloadable": false,
+      "note": "mutations — never a candidate for a read-only microagent",
+      "calls": 1250,
+      "sessions": 9,
+      "projects": 4,
+      "callsPerSession": 138.9,
+      "resultChars": 223094,
+      "approxTokens": 55774,
+      "shareOfContextPct": 1.2,
+      "medianCharsPerCall": 177,
+      "tools": [
+        "Edit×991",
+        "Write×259"
+      ],
+      "samples": []
+    },
+    {
+      "family": "test-and-build",
+      "label": "test / build / typecheck runs",
+      "offloadable": false,
+      "note": "side-effecting and host-specific; keep them native",
+      "calls": 372,
+      "sessions": 9,
+      "projects": 4,
+      "callsPerSession": 41.3,
+      "resultChars": 210230,
+      "approxTokens": 52558,
+      "shareOfContextPct": 1.2,
+      "medianCharsPerCall": 283,
+      "tools": [
+        "Bash×372"
+      ],
+      "samples": []
+    },
+    {
+      "family": "agent-delegation",
+      "label": "delegation to subagents (Task/Agent)",
+      "offloadable": false,
+      "note": "already offloaded — shown for scale, not as a candidate",
+      "calls": 60,
+      "sessions": 8,
+      "projects": 4,
+      "callsPerSession": 7.5,
+      "resultChars": 150323,
+      "approxTokens": 37581,
+      "shareOfContextPct": 0.8,
+      "medianCharsPerCall": 1083,
+      "tools": [
+        "Agent×60"
+      ],
+      "samples": []
+    },
+    {
+      "family": "web-research",
+      "label": "web fetch / search",
+      "offloadable": true,
+      "note": "read-only, but answers are external — offload only with citations",
+      "calls": 20,
+      "sessions": 3,
+      "projects": 3,
+      "callsPerSession": 6.7,
+      "resultChars": 56056,
+      "approxTokens": 14014,
+      "shareOfContextPct": 0.3,
+      "medianCharsPerCall": 1947,
+      "tools": [
+        "WebFetch×16",
+        "WebSearch×4"
+      ],
+      "samples": []
+    }
+  ],
+  "candidates": [
+    "repo-exploration",
+    "git-history",
+    "web-research"
+  ],
+  "tokenOptimizer": {
+    "present": true,
+    "sessions": 9,
+    "waste": 39000,
+    "toolCalls": 2552,
+    "worst": {
+      "session": "3eadf222-6e52-4c36-9eb1-a02900d6269d",
+      "waste": 16000,
+      "score": 74
+    }
+  },
+  "topProjects": [
+    {
+      "project": "-home-namastex-workspace",
+      "output": 3001433,
+      "cacheCreate": 43721420,
+      "turns": 6970,
+      "chars": 9327266,
+      "approxResultTokens": 2331817
+    },
+    {
+      "project": "-home-namastex-prod",
+      "output": 3020421,
+      "cacheCreate": 48358381,
+      "turns": 5300,
+      "chars": 3531808,
+      "approxResultTokens": 882952
+    },
+    {
+      "project": "-home-namastex-prod-brain",
+      "output": 1957145,
+      "cacheCreate": 28555115,
+      "turns": 3830,
+      "chars": 3162261,
+      "approxResultTokens": 790565
+    },
+    {
+      "project": "-home-namastex-workspace-repos-omni",
+      "output": 545992,
+      "cacheCreate": 5202880,
+      "turns": 1564,
+      "chars": 1935770,
+      "approxResultTokens": 483943
+    },
+    {
+      "project": "-home-namastex-prod-xdna-top",
+      "output": 9906,
+      "cacheCreate": 35591,
+      "turns": 14,
+      "chars": 1510,
+      "approxResultTokens": 378
+    },
+    {
+      "project": "-tmp-claude-1000--home-namastex-workspace-2cbc9745-3e7e-4191-b818-43ee1074af44-scratchpad-control-ws",
+      "output": 858,
+      "cacheCreate": 30912,
+      "turns": 2,
+      "chars": 0,
+      "approxResultTokens": 0
+    }
+  ],
+  "samplesNote": "verbatim command samples are retained for git-history only (the family this record is about); other families sample unrelated private projects and are emptied here. Every number is unchanged."
+}

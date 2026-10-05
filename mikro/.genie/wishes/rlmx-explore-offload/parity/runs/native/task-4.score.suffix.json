@@ -1,0 +1,408 @@
+{
+  "arm": "native",
+  "task": 4,
+  "root": "/home/namastex/prod/brain",
+  "outOfScope": [
+    "/home/namastex/brain-station-validation"
+  ],
+  "need": 11,
+  "factTotal": 12,
+  "answerChars": 4029,
+  "citations": [
+    {
+      "path": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "line": 89,
+      "key": "/home/namastex/prod/brain/src/lib/pgserve.ts:89",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "export function deriveDatabaseName(slug: string): string {"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "line": 109,
+      "key": "/home/namastex/prod/brain/src/lib/pgserve.ts:109",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/pgserve.ts",
+      "lines": 253,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/identity.ts",
+      "line": 115,
+      "key": "/home/namastex/prod/brain/src/lib/identity.ts:115",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/identity.ts",
+      "lines": 175,
+      "verdict": "resolves",
+      "text": "const perBrainDb = deriveDatabaseName(shortName);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/init.ts",
+      "line": 327,
+      "key": "/home/namastex/prod/brain/src/lib/init.ts:327",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/init.ts",
+      "lines": 526,
+      "verdict": "resolves",
+      "text": "const database = deriveDatabaseName(slug);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/lazy-init.ts",
+      "line": 96,
+      "key": "/home/namastex/prod/brain/src/lib/lazy-init.ts:96",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/lazy-init.ts",
+      "lines": 185,
+      "verdict": "resolves",
+      "text": "const database = deriveDatabaseName(slug);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/server.ts",
+      "line": 261,
+      "key": "/home/namastex/prod/brain/src/lib/server.ts:261",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/server.ts",
+      "lines": 1931,
+      "verdict": "resolves",
+      "text": "const database = deriveDatabaseName(config.slug);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/init/handlers/register.ts",
+      "line": 95,
+      "key": "/home/namastex/prod/brain/src/lib/init/handlers/register.ts:95",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/init/handlers/register.ts",
+      "lines": 144,
+      "verdict": "resolves",
+      "text": "const database = pgserveMod.deriveDatabaseName(slug);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/omni/init.ts",
+      "line": 245,
+      "key": "/home/namastex/prod/brain/src/lib/omni/init.ts:245",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/omni/init.ts",
+      "lines": 427,
+      "verdict": "resolves",
+      "text": "const perBrainDb = deriveDatabaseName(shortName);"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/auto-brain.ts",
+      "line": 151,
+      "key": "/home/namastex/prod/brain/src/lib/auto-brain.ts:151",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/auto-brain.ts",
+      "lines": 403,
+      "verdict": "resolves",
+      "text": "const database = deriveDatabaseName(agentSlug);"
+    },
+    {
+      "path": "identity.ts",
+      "line": 67,
+      "key": "identity.ts:67",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/identity.ts",
+      "lines": 175,
+      "verdict": "resolves",
+      "text": "* Post-condition: brain is fully usable. The registry row exists in the"
+    },
+    {
+      "path": "identity.ts",
+      "line": 77,
+      "key": "identity.ts:77",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/identity.ts",
+      "lines": 175,
+      "verdict": "resolves",
+      "text": "* get the same provisioning omni already inlines manually."
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/db.ts",
+      "line": 376,
+      "key": "/home/namastex/prod/brain/src/lib/db.ts:376",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "export async function ensureBrainDatabase("
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/db.ts",
+      "line": 473,
+      "key": "/home/namastex/prod/brain/src/lib/db.ts:473",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "onnotice: pgOnnotice,"
+    },
+    {
+      "path": "db.ts",
+      "line": 412,
+      "key": "db.ts:412",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "await adminSql.unsafe(`CREATE DATABASE \"${database}\"`);"
+    },
+    {
+      "path": "db.ts",
+      "line": 456,
+      "key": "db.ts:456",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "// CREATE DATABASE cannot run inside a transaction, use unsafe"
+    },
+    {
+      "path": "db.ts",
+      "line": 459,
+      "key": "db.ts:459",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": ");"
+    },
+    {
+      "path": "db.ts",
+      "line": 495,
+      "key": "db.ts:495",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "* Resolve the autopg runtime role Brain connects as: the signed app"
+    },
+    {
+      "path": "db.ts",
+      "line": 502,
+      "key": "db.ts:502",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "\"runtime role\","
+    },
+    {
+      "path": "db.ts",
+      "line": 532,
+      "key": "db.ts:532",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/db.ts",
+      "lines": 1900,
+      "verdict": "resolves",
+      "text": "return `ALTER DATABASE \"${assertPgIdentifier(database, \"database\")}\" OWNER TO \"${assertPgIdentifier(role, \"runtime role\""
+    },
+    {
+      "path": "/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md",
+      "line": 735,
+      "key": "/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md:735",
+      "resolvedAs": "/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md",
+      "lines": 932,
+      "verdict": "resolves",
+      "text": "`brain_station_validation`. Embeddings OFF (no `GEMINI_API_KEY`; migration 021 deferred — see"
+    },
+    {
+      "path": "RUNBOOK.md",
+      "line": 711,
+      "key": "RUNBOOK.md:711",
+      "resolvedAs": "/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md",
+      "lines": 932,
+      "verdict": "resolves",
+      "text": "DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/brain_station_validation"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/registry-db.ts",
+      "line": 20,
+      "key": "/home/namastex/prod/brain/src/lib/registry-db.ts:20",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/registry-db.ts",
+      "lines": 25,
+      "verdict": "resolves",
+      "text": "export function resolveRegistryDatabase(): string {"
+    },
+    {
+      "path": "/home/namastex/prod/brain/src/lib/registry-db.ts",
+      "line": 24,
+      "key": "/home/namastex/prod/brain/src/lib/registry-db.ts:24",
+      "resolvedAs": "/home/namastex/prod/brain/src/lib/registry-db.ts",
+      "lines": 25,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "001-brain-foundation.sql",
+      "line": 9,
+      "key": "001-brain-foundation.sql:9",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/001-brain-foundation.sql",
+      "lines": 113,
+      "verdict": "resolves",
+      "text": "CREATE TABLE IF NOT EXISTS brains ("
+    },
+    {
+      "path": "001-brain-foundation.sql",
+      "line": 29,
+      "key": "001-brain-foundation.sql:29",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/001-brain-foundation.sql",
+      "lines": 113,
+      "verdict": "resolves",
+      "text": ");"
+    },
+    {
+      "path": "003-brain-identity.sql",
+      "line": 34,
+      "key": "003-brain-identity.sql:34",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/003-brain-identity.sql",
+      "lines": 42,
+      "verdict": "resolves",
+      "text": "ALTER TABLE brains ADD COLUMN IF NOT EXISTS archive_ttl INTERVAL;"
+    },
+    {
+      "path": "003-brain-identity.sql",
+      "line": 38,
+      "key": "003-brain-identity.sql:38",
+      "resolvedAs": "/home/namastex/prod/brain/src/db/migrations/003-brain-identity.sql",
+      "lines": 42,
+      "verdict": "resolves",
+      "text": "ALTER TABLE brains ADD COLUMN IF NOT EXISTS default_strategy TEXT DEFAULT 'rag';"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 27,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/identity.ts:115",
+      "anchoredOn": "const perBrainDb = deriveDatabaseName(shortName);",
+      "claim": "- `/home/namastex/prod/brain/src/lib/identity.ts:115` — `const perBrainDb = deriveDatabaseName(shortName);` inside `createBrain()`, followed by `ensureBrainData",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "const",
+        "perBrainDb",
+        "deriveDatabaseName(shortName);"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/lib/init.ts:327",
+      "anchoredOn": "deriveDatabaseName",
+      "claim": "- `/home/namastex/prod/brain/src/lib/init.ts:327` and `:417` - `/home/namastex/prod/brain/src/lib/lazy-init.ts:96, :120` - `/home/namastex/prod/brain/src/lib/se",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "deriveDatabaseName"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/lib/lazy-init.ts:96",
+      "anchoredOn": "deriveDatabaseName",
+      "claim": "- `/home/namastex/prod/brain/src/lib/lazy-init.ts:96, :120` - `/home/namastex/prod/brain/src/lib/server.ts:261` — `const database = deriveDatabaseName(config.sl",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "deriveDatabaseName"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/lib/server.ts:261",
+      "anchoredOn": "const database = deriveDatabaseName(config.slug);",
+      "claim": "- `/home/namastex/prod/brain/src/lib/server.ts:261` — `const database = deriveDatabaseName(config.slug);`",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "const",
+        "database",
+        "deriveDatabaseName(config.slug);"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/lib/db.ts:374",
+      "anchoredOn": "DATABASE",
+      "claim": "`/home/namastex/prod/brain/src/lib/db.ts:376-473`. - DSN mode (`db.ts:412`): `await adminSql.unsafe(\\`CREATE DATABASE \"${database}\"\\`)` — **no OWNER clause**. O",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "DATABASE"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": ".genie/wishes/kv-slot-cag/RUNBOOK.md:734",
+      "anchoredOn": "/home/namastex/brain-station-validation",
+      "claim": "`/home/namastex/prod/brain/.genie/wishes/kv-slot-cag/RUNBOOK.md:735`: > Validation brain `brn_vo9nz7`, vault `/home/namastex/brain-station-validation`, DB `brai",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "/home/namastex/brain-station-validation"
+      ]
+    },
+    {
+      "id": "F7",
+      "anchor": "src/lib/registry-db.ts:3",
+      "anchoredOn": "brain serve",
+      "claim": "**Nuance that matters:** on a real `brain serve` install, the per-brain DB of the *active* brain also doubles as the **registry** DB. `/home/namastex/prod/brain",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "brain",
+        "serve"
+      ]
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/active-brain.ts:35",
+      "anchoredOn": "brainSlug",
+      "claim": "- `~/.brain/config.json` (`/home/namastex/prod/brain/src/lib/active-brain.ts:33-42`) records `{ database, brainSlug, pid, port, pgPort }` — a **database name**,",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F9",
+      "anchor": "src/lib/rls.ts:26",
+      "anchoredOn": "roleNameFor",
+      "claim": "`/home/namastex/prod/brain/src/lib/rls.ts:26-56`: export function roleNameFor(shortName: string): string {",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F10",
+      "anchor": "src/lib/omni/checkpoints.ts:125",
+      "anchoredOn": "withBrainRole",
+      "claim": "- `NOLOGIN NOINHERIT` — no password, cannot connect. Used only via `SET LOCAL ROLE` inside a transaction (`withBrainRole`, rls.ts:74-95). Only 5 non-test call s",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F11",
+      "anchor": "src/lib/init/grants.ts:42",
+      "anchoredOn": "applyBrainGrants",
+      "claim": "- Grants re-applied per brain per DB: `src/lib/init/grants.ts:44-57` (`applyBrainGrants`) and `ensureDefaultPrivileges`; `init.ts:364-376` applies the triple to",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": true,
+      "partialTermHits": [
+        "applyBrainGrants"
+      ]
+    },
+    {
+      "id": "F12",
+      "anchor": ".genie/brainstorms/brain-lxc/DRAFT.md:65",
+      "anchoredOn": "brain_app",
+      "claim": "The \"per-brain DB with dedicated owner\" phrasing appears verbatim as a **future design goal**, not current behavior: `/home/namastex/prod/brain/.genie/brainstor",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}

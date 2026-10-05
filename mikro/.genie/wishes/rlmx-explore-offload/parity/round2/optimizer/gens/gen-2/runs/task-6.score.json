@@ -1,0 +1,215 @@
+{
+  "arm": "rlmx",
+  "task": 6,
+  "model": "khal/deepseek-v4-flash",
+  "round": "gen-2-khal-deepseek-v4-flash",
+  "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 9 iterations · 63,948 in / 3,382 out · $0.0097 · 85.9s · session sess_5683a2cbaf4fe646",
+  "wallSeconds": 86.2,
+  "requestChars": 254,
+  "resultChars": 2947,
+  "ok": true,
+  "root": "/home/namastex/prod/genie-desktop",
+  "outOfScope": [],
+  "need": 5,
+  "factTotal": 5,
+  "answerChars": 2806,
+  "citations": [
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 164,
+      "key": "src/main/services/RtkService.ts:164",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "private static async resolveBinary(): Promise<{"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 32,
+      "key": "src/main/services/RtkService.ts:32",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const FETCH_API_TIMEOUT_MS = 60_000;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 33,
+      "key": "src/main/services/RtkService.ts:33",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const FETCH_BODY_TIMEOUT_MS = 300_000;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 34,
+      "key": "src/main/services/RtkService.ts:34",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const TAR_TIMEOUT_MS = 120_000;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 128,
+      "key": "src/main/services/RtkService.ts:128",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "private static getManagedBinDir(): string {"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 132,
+      "key": "src/main/services/RtkService.ts:132",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "private static getManagedBinPath(): string {"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 133,
+      "key": "src/main/services/RtkService.ts:133",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const exe = process.platform === 'win32' ? 'rtk.exe' : 'rtk';"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 145,
+      "key": "src/main/services/RtkService.ts:145",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "private static getUserPathSymlinkPath(): string | null {"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 146,
+      "key": "src/main/services/RtkService.ts:146",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "if (process.platform === 'win32') return null;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 180,
+      "key": "src/main/services/RtkService.ts:180",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const findCmd = process.platform === 'win32' ? 'where.exe' : 'which';"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 273,
+      "key": "src/main/services/RtkService.ts:273",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "private static isPlatformDownloadable(): boolean {"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 276,
+      "key": "src/main/services/RtkService.ts:276",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "return false;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 357,
+      "key": "src/main/services/RtkService.ts:357",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const MAX_ATTEMPTS = 3;"
+    },
+    {
+      "path": "src/main/services/RtkService.ts",
+      "line": 441,
+      "key": "src/main/services/RtkService.ts:441",
+      "resolvedAs": "/home/namastex/prod/genie-desktop/src/main/services/RtkService.ts",
+      "lines": 1042,
+      "verdict": "resolves",
+      "text": "const wallTimer = setTimeout(() => controller.abort(), FETCH_BODY_TIMEOUT_MS);"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 14,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/main/services/RtkService.ts:180",
+      "anchoredOn": "findCmd",
+      "claim": "Binary lookup is delegated to the platform resolver: findCmd is where.exe on Windows and which everywhere else, so no bespoke PATH walking is done.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "findCmd"
+      ]
+    },
+    {
+      "id": "F2",
+      "anchor": "src/main/services/RtkService.ts:32",
+      "anchoredOn": "FETCH_API_TIMEOUT_MS",
+      "claim": "The metadata call is bounded separately from the transfer by FETCH_API_TIMEOUT_MS, which is 60 seconds.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "FETCH_API_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/main/services/RtkService.ts:33",
+      "anchoredOn": "FETCH_BODY_TIMEOUT_MS",
+      "claim": "The body download gets its own, much longer budget, FETCH_BODY_TIMEOUT_MS at 300 seconds, because it bounds a real transfer rather than an API round trip.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "FETCH_BODY_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F4",
+      "anchor": "src/main/services/RtkService.ts:34",
+      "anchoredOn": "TAR_TIMEOUT_MS",
+      "claim": "Unpacking is bounded independently of both by TAR_TIMEOUT_MS at 120 seconds, so a corrupt archive cannot hang the install indefinitely.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "TAR_TIMEOUT_MS"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/main/services/RtkService.ts:357",
+      "anchoredOn": "MAX_ATTEMPTS",
+      "claim": "Retries are bounded as well: MAX_ATTEMPTS is 3, so a flapping network fails in bounded time rather than spinning against the endpoint.",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "MAX_ATTEMPTS"
+      ]
+    }
+  ]
+}

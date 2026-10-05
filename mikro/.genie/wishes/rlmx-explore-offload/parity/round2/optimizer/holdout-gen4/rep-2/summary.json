@@ -1,0 +1,229 @@
+{
+  "gen": 4,
+  "label": "gen4-holdout-rep2-khal-deepseek-v4-flash",
+  "model": "khal/deepseek-v4-flash",
+  "suite": "round2-train",
+  "tasksDir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+  "heldOutNeverRun": [],
+  "holdout": true,
+  "holdoutTasks": [
+    1,
+    2
+  ],
+  "holdoutIsReportingOnly": "Scored for reporting after the recipe was selected. This number must not feed a mutation, a revert, a Pareto comparison or a model choice — the recipe was never selected on these tasks and that is the only reason the number means anything.",
+  "recipe": {
+    "dir": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/recipe",
+    "systemSha256": "640dfa699f8e3766b881f6016a8813098a6b2f261978481f8b59d89bff9f00a9",
+    "systemChars": 36806,
+    "agentYamlSha256": "20f8e0181f6adc08badfe9c5c95a11e25a39f3dec23bbed460d08eec5a9d385d",
+    "declaredModel": "khal/deepseek-v4-flash",
+    "installedAs": "explore-r"
+  },
+  "envCorrections": {
+    "RLMX_REPL_TIMEOUT_MS": "600000",
+    "RLMX_MCP_RUN_TIMEOUT_MS": "900000",
+    "PARITY_CALL_TIMEOUT_MS": "600000",
+    "PARITY_MAX_TOTAL_TIMEOUT_MS": "2400000"
+  },
+  "factRule": {
+    "HIT": "namesAnchorPath && termHit — counts as found",
+    "WEAK": "namesAnchorPath && >= half the term's long tokens — reported, NOT counted",
+    "MISS": "everything else",
+    "caveat": "a mechanical proxy for criterion 1, strictly harsher than the rubric and blind to whether the claim is correct; a training signal, never a parity number"
+  },
+  "totals": {
+    "tasks": 2,
+    "runsOk": 2,
+    "scoredTasks": 2,
+    "factsFound": 8,
+    "factsWeak": 0,
+    "factsNeeded": 14,
+    "tasksMechanicalPass": 0,
+    "c2Failures": 0,
+    "c3Failures": 0,
+    "citations": 39,
+    "citationsResolved": 39,
+    "recursiveSpawns": 4,
+    "costUsd": 0.05,
+    "wallSeconds": 610.2,
+    "fitness": 0.5714
+  },
+  "tasks": [
+    {
+      "task": 1,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-2/runs/task-1.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-2/runs/task-1.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/rlmx",
+      "model": "khal/deepseek-v4-flash",
+      "need": 7,
+      "factTotal": 7,
+      "found": 2,
+      "weak": 0,
+      "missed": 5,
+      "anchorsCited": 0,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 19,
+      "citationsResolved": 19,
+      "answerChars": 4183,
+      "wallSeconds": 340.1,
+      "iterations": 14,
+      "tokensIn": 212176,
+      "tokensOut": 36425,
+      "costUsd": 0.04,
+      "recursiveSpawns": 4,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 14 iterations · 212,176 in / 36,425 out · $0.04 · 339.8s · session sess_253fa32fa8e760d0",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/llm.ts:667",
+          "anchoredOn": "MAX_CONCURRENT",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F2",
+          "anchor": "src/rlm.ts:436",
+          "anchoredOn": "maxIterations: opts.maxIterations",
+          "verdict": "MISS",
+          "why": "answer never names rlm.ts",
+          "anchorCited": false
+        },
+        {
+          "id": "F3",
+          "anchor": "src/rlm.ts:438",
+          "anchoredOn": "config.budget.maxDepth ?? 3",
+          "verdict": "MISS",
+          "why": "answer never names rlm.ts",
+          "anchorCited": false
+        },
+        {
+          "id": "F4",
+          "anchor": "src/llm.ts:563",
+          "anchoredOn": "detached",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": false
+        },
+        {
+          "id": "F5",
+          "anchor": "src/mcp/server.ts:487",
+          "anchoredOn": "provider: parsed.provider",
+          "verdict": "MISS",
+          "why": "answer never names server.ts",
+          "anchorCited": false
+        },
+        {
+          "id": "F6",
+          "anchor": "src/cli.ts:35",
+          "anchoredOn": "CLI flags > settings.json > rlmx.yaml",
+          "verdict": "MISS",
+          "why": "answer never names cli.ts",
+          "anchorCited": false
+        },
+        {
+          "id": "F7",
+          "anchor": "src/config.ts:122",
+          "anchoredOn": "DEFAULT_MODEL",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `DEFAULT_MODEL` (0/1 long tokens)",
+          "anchorCited": false
+        }
+      ],
+      "mechanicalPass": false
+    },
+    {
+      "task": 2,
+      "runJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-2/runs/task-2.json",
+      "scoreJson": "/home/namastex/prod/rlmx/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/holdout-gen4/rep-2/runs/task-2.score.json",
+      "status": "SCORED",
+      "ok": true,
+      "root": "/home/namastex/prod/rlmx",
+      "model": "khal/deepseek-v4-flash",
+      "need": 7,
+      "factTotal": 7,
+      "found": 6,
+      "weak": 0,
+      "missed": 1,
+      "anchorsCited": 6,
+      "c2": "PASS",
+      "c2Failures": [],
+      "c3": "PASS",
+      "c3Failures": [],
+      "citations": 20,
+      "citationsResolved": 20,
+      "answerChars": 2364,
+      "wallSeconds": 269.7,
+      "iterations": 12,
+      "tokensIn": 62859,
+      "tokensOut": 14521,
+      "costUsd": 0.01,
+      "recursiveSpawns": 0,
+      "footer": "rlmx · agent=explore-r · khal/deepseek-v4-flash · 12 iterations · 62,859 in / 14,521 out · $0.01 · 269.2s · session sess_1202939dc92ce8a8",
+      "facts": [
+        {
+          "id": "F1",
+          "anchor": "src/khal-provider.ts:40",
+          "anchoredOn": "KHAL_PROVIDER_ID",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F2",
+          "anchor": "src/khal-provider.ts:74",
+          "anchoredOn": "KHAL_API_KEY_ENV",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F3",
+          "anchor": "src/khal-provider.ts:55",
+          "anchoredOn": "KHAL_MISSING_KEY_ERROR",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F4",
+          "anchor": "src/khal-provider.ts:63",
+          "anchoredOn": "KHAL_REJECTED_KEY_ERROR",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F5",
+          "anchor": "src/khal-provider.ts:71",
+          "anchoredOn": "KHAL_EMPTY_CATALOG_ERROR",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F6",
+          "anchor": "src/khal-provider.ts:148",
+          "anchoredOn": "perMillionDollars",
+          "verdict": "HIT",
+          "why": null,
+          "anchorCited": true
+        },
+        {
+          "id": "F7",
+          "anchor": "src/khal-provider.ts:103",
+          "anchoredOn": "NON_CHAT_MODES",
+          "verdict": "MISS",
+          "why": "names the path but not the anchoring term `NON_CHAT_MODES` (0/1 long tokens)",
+          "anchorCited": false
+        }
+      ],
+      "mechanicalPass": false
+    }
+  ]
+}

@@ -1,0 +1,327 @@
+{
+  "wish": "rlmx-microagent-plugin",
+  "criterion": "B3",
+  "arm": "treatment",
+  "control": false,
+  "model": "sonnet",
+  "startedAt": "2026-07-27T21:10:50.550Z",
+  "finishedAt": "2026-07-27T21:16:22.321Z",
+  "host": {
+    "claudeCode": "2.1.220 (Claude Code)",
+    "node": "v22.23.1"
+  },
+  "skillUnderTest": {
+    "path": "plugins/claude-code/skills/offload-guidance/SKILL.md",
+    "sha256": "d41594b66579b0af8d74469943aae98c79da762bb3ca1b1e1c0437a0a06676bc",
+    "chars": 9366,
+    "descriptionChars": 1171
+  },
+  "preRegistered": {
+    "items": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "passBar": {
+      "routedAtLeast": 4,
+      "ofItems": 5,
+      "plantedMustEscalate": true
+    },
+    "tasksDir": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks",
+    "plantedRecord": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json"
+  },
+  "pins": {
+    "verifiedAt": "2026-07-27T21:10:50.524Z",
+    "items": [
+      {
+        "task": 3,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/3.md",
+        "chars": 349,
+        "sha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e"
+      },
+      {
+        "task": 4,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/4.md",
+        "chars": 306,
+        "sha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df"
+      },
+      {
+        "task": 5,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/5.md",
+        "chars": 284,
+        "sha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f"
+      },
+      {
+        "task": 6,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/6.md",
+        "chars": 241,
+        "sha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799"
+      },
+      {
+        "task": 7,
+        "file": ".genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/7.md",
+        "chars": 291,
+        "sha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7"
+      }
+    ],
+    "planted": {
+      "record": ".genie/wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json",
+      "chars": 67,
+      "sha256": "6bec40334302304701ef423c920b986d7a0d61b1b3406781ab625ad9abb6572c",
+      "isError": true,
+      "citations": 0,
+      "wallSeconds": 650,
+      "model": "khal/deepseek-v4-flash",
+      "round": "gen4-rep2-khal-deepseek-v4-flash",
+      "questionMatchesTask5": true
+    }
+  },
+  "routed": 5,
+  "ofItems": 5,
+  "routedTasks": [
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "notRoutedTasks": [],
+  "plantedEscalated": true,
+  "routingPass": true,
+  "escalationPass": true,
+  "pass": true,
+  "runs": [
+    {
+      "id": "task-3",
+      "task": 3,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 1,
+      "promptSha256": "a977339c7d2890375be3427ee10da6e129cbc0dab00e648ed337db7341ffa78e",
+      "promptChars": 349,
+      "exitCode": 0,
+      "wallSeconds": 50,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/task-3.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/task-3.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "In this repository, answer two separate questions with exact path:line citations for every claim:\n\n1. How does the project read the NPU's power/clock state? Find the exact function(s) responsible. What are ALL the distinct reasons/cases where it fails or is unavailable (e.g. sysfs path missing, permission denied, parse failure, driver not loaded, etc.)? I want each distinct unavailability reason enumerated with its own citation, not a generic \"returns None on failure\" answer.\n\n2. iGPU telemetry discovery: what is the mechanism for discovering/probing iGPU telemetry (separate from the NPU code path)? What candidate paths/sources does it probe, and what is the exact logic/priority order it uses to choose between multiple candidates?"
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "Both mechanisms are self-contained in single files. Here's what I found (verified directly, not from the earlier corrupted tool call):\n\n## NPU power/clock state\n\n**`src/xdna_top/npu_power.py`** — `read_npu_power()` at `src/xdna_top/npu_power.py:96` reads DPM (Dynamic Power Management) clock state from `/sys/kernel/debug/accel/<bdf>/` debugfs nodes (`dpm_level`, `powerstate`). It's an additive/corroborating signal, not the primary NPU activity source (which is XRT submission-counter deltas) — per the module docstring at `npu_power.py:1-9`.\n\nIt always returns a dict with `available`, `source`, `reason`, `powerstate`, `dpm` (`npu_power.py:105-111`). There are **three distinct unavailability reasons**, each a separate string in `reason`, set at a distinct check:\n\n1. **`\"debugfs_accel_absent\"`** — `npu_power.py:114-116`. `_debugfs_dir()` (`npu_power.py:39-59`) returned `None`. This covers both \"driver doesn't export the accel debugfs node\" and \"debugfs isn't mounted\" — and, per the docstring at `npu_power.py:44-47`, also silently absorbs `PermissionError` raised by `Path.exists()`/`Path.is_dir()` when `/sys/kernel/debug` itself is mode 700 (root-only), caught by the blanket `except OSError` at `npu_power.py:58-59` (`PermissionError` is an `OSError` subclass).\n\n2. **`\"debugfs_nodes_unreadable\"`** — `npu_power.py:120-124`. The per-device directory exists, but *both* `dpm_level` and `powerstate` reads failed (`_read()` at `npu_power.py:62-67` swallows `OSError` — permission denied or missing file — and returns `None`). Comment at `npu_power.py:121-123` notes this is typically the root-only-debugfs case, or a driver that has the directory but doesn't export those specific nodes.\n\n3. **`\"debugfs_nodes_unparsable\"`** — `npu_power.py:126-131`. At least one node was readable, but `parse_dpm_level()` (`npu_power.py:70-93`) found no `npuclk,hclk` token in `dpm_level` (returns `None` at `npu_power.py:87-88`) *and* `powerstate` was empty — so there's text but nothing usable.\n\nOnly if none of these three trip does it set `available=True`, `source=\"debugfs\"` (`npu_power.py:133-136`).\n\nRoot cause context: mainline/DKMS in-tree `amdxdna` doesn't export these debugfs nodes at all — only the staging `amdxdna.ko` driver from amd/xdna-driver does (`npu_power.py:13-15`, citing amd/xdna-driver#1447).\n\n## iGPU telemetry discovery\n\n**`src/xdna_top/discover_sysfs.py`**, function `discover_sysfs()` at `discover_sysfs.py:8`. Separate mechanism, separate file, no shared code with `npu_power.py`.\n\n**Busy % probing** (`discover_sysfs.py:22-36`): hardcoded candidate list `/sys/class/drm/card{0,1,2}/device/gpu_busy_percent` (`discover_sysfs.py:23-26`). It iterates in that fixed order and takes the **first one that exists and is readable** — `os.path.exists()` check plus a trial read guarded by `except (PermissionError, OSError): continue`, then `break` on first success (`discover_sysfs.py:27-36`). Priority is purely positional (card0 before card1 before card2); there's no signal-quality comparison.\n\n**Power probing** (`discover_sysfs.py:38-58`): scans every entry under `/sys/class/hwmon/*` for a `power1_input` file. For each hwmon dir with a readable `power1_input`, it also reads the sibling `name` file. Selection logic (`discover_sysfs.py:54-56`):\n```python\nif name == \"amdgpu\" or not result[\"gpu_power_path\"]:\n    result[\"gpu_power_path\"] = str(power_file)\n```\nThis means: the **first hwmon device found with `power1_input` wins by default**, but a later device is only overwritten if it's specifically named `amdgpu` — so `amdgpu` is preferred outright regardless of scan order, while any other name only fills the slot if nothing has been found yet (no dedup/no comparison among multiple non-amdgpu candidates — last non-amdgpu match after an amdgpu-less start would actually just be the first one found, since the condition after the first hit is only re-true for `amdgpu`).\n\n**Result shape**: `{\"gpu_busy_path\": None, \"gpu_power_path\": None, \"status\": \"CPU-only fallback\"}` initial state (`discover_sysfs.py:15-19`); `status` flips to `\"iGPU found\"` only when a busy-percent path is found (`discover_sysfs.py:33`) — note `gpu_power_path` alone, without a busy path, does *not* flip `status`.\n\nOptional side effect: if `bench_dir` is passed, results are also persisted to `<bench_dir>/e0_sysfs.json` (`discover_sysfs.py:60-64`); normal runtime discovery passes `None` and stays in-memory only (`discover_sysfs.py:12-13`).",
+        "usd": 0.1685247,
+        "ms": 49114,
+        "turns": 7,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-4",
+      "task": 4,
+      "planted": false,
+      "root": "/home/namastex/prod/xdna-top",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 1,
+      "promptSha256": "4ff5210924bbcc44812bc14ab3c48768ca0b5bb1e9e3b27b3f576fb4fbe770df",
+      "promptChars": 306,
+      "exitCode": 0,
+      "wallSeconds": 47,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/task-4.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/task-4.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "This project records telemetry to a file and also serves it to Prometheus. I need two things with file:line citations:\n1. For the recorder that writes telemetry to a file: what uniquely identifies an event (e.g. event id/key fields), and what is the exact mechanism/function that writes a line to the file (format, append logic)?\n2. For the Prometheus exporter: how is it wired up to the metrics registry (where does it register itself / get instantiated), and is there any naming convention or validation rule that must be followed when adding a new metric (e.g. required prefix, naming function, disallowed characters)?"
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "This confirms the naming rule is convention-enforced (all metrics literally prefixed `xdna_`, tested by exact-string assertions), not a runtime-validated function — good enough to answer precisely.\n\n## Recorder (`src/xdna_top/record.py`)\n\n**What identifies an event:** every JSONL line is a dict tagged with a `\"type\"` field, plus a shared `\"schema_version\"`:\n- `\"telemetry\"` — one fused hardware sample, `build_telemetry_event()` at `src/xdna_top/record.py:26-36`\n- `\"mark\"` — a manual annotation, `build_mark_event()` at `src/xdna_top/record.py:39-46`\n- `\"meta\"` — run header (also carries `\"kind\": \"xdna-top.record\"`), `_meta_event()` at `src/xdna_top/record.py:171-179`\n- `\"summary\"` — run trailer (same `\"kind\"`), `_summary_event()` at `src/xdna_top/record.py:182-190`\n\n`RECORD_SCHEMA_VERSION = \"1.0\"` and `RECORD_KIND = \"xdna-top.record\"` are the constants (`src/xdna_top/record.py:22-23`). There's no separate numeric event ID — downstream tooling discriminates by `type` (and `kind` for meta/summary), per the module docstring at `src/xdna_top/record.py:1-7`.\n\n**How a line gets written:**\n- `_dump()` serializes to `json.dumps(event) + \"\\n\"` (`src/xdna_top/record.py:226-227`).\n- The actual writer is `_open_writer()`, a context manager (`src/xdna_top/record.py:197-223`): with no `out_path` it writes to stdout; with a path it opens the file in `\"w\"` mode (truncate on start) and returns a `write_file` closure that does `handle.write(_dump(event)); handle.flush()` per call — flushed every line so a killed recording still leaves a valid partial JSONL file (comment at `src/xdna_top/record.py:201-204`).\n- A second, simpler path, `append_event()` (`src/xdna_top/record.py:49-59`), opens in `\"a\"` mode instead — used by `mark_main()` (`src/xdna_top/record.py:62-64`) to append a mark line to an already-running recording without truncating it.\n\n## Exporter (`src/xdna_top/exporter.py`)\n\n**Wiring to the registry:** `serve()` (`src/xdna_top/exporter.py:103-109`) creates a fresh `CollectorRegistry()`, registers one `XdnaCollector` instance against it, then calls `prometheus_client.start_http_server(port, addr=host, registry=registry)`. `XdnaCollector.collect()` (`src/xdna_top/exporter.py:142-151`) is the entry point Prometheus calls at scrape time — it calls the injected `read_fn` (built by `_hardware_reader()`, `src/xdna_top/exporter.py:92-100`, which does `gauge.sample_direct()` + `read_npu_power()`), and on any exception swallows it and yields only `xdna_up 0` instead of raising (so a broken probe shows as `xdna_up 0` rather than a 500). Metric families themselves come from `_build_metrics()` (`src/xdna_top/exporter.py:20-89`).\n\n**Naming rule to know before adding a metric:**\n1. Every metric name is prefixed `xdna_` (e.g. `xdna_up`, `xdna_igpu_busy_percent`, `xdna_npu_active`) — enforced only by convention/tests, not a shared helper function.\n2. For `CounterMetricFamily`, name it **without** the `_total` suffix — `prometheus_client` appends `_total` itself. This is called out explicitly in a comment at `src/xdna_top/exporter.py:62`, right above the two counters `xdna_npu_submissions` / `xdna_npu_completions` (`src/xdna_top/exporter.py:63-70`), and verified in `tests/test_exporter.py:45-46` which assert on the rendered names `xdna_npu_submissions_total` / `xdna_npu_completions_total`.\n3. `GaugeMetricFamily` values are never defaulted to 0 for missing hardware data — e.g. `xdna_igpu_busy_percent` is only yielded `if reading.gpu_busy_pct is not None` (`src/xdna_top/exporter.py:35-38`), so a missing reading omits the sample rather than reporting a misleading `0` (docstring note at `src/xdna_top/exporter.py:29`).",
+        "usd": 0.20895439999999998,
+        "ms": 45287,
+        "turns": 9,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-5",
+      "task": 5,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 1,
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 40,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/task-5.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 4,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "In this desktop app (Electron-based, terminal sessions backed by real PTY processes), answer with path:line citations:\n1. Where are the live PTY sessions tracked (what data structure / module holds the map of session id -> PTY process)?\n2. How is a terminal resize applied to a PTY (which function, what does it call on the pty object)?\n3. How is a PTY process shut down/killed — what function handles this, and is there a timeout involved (e.g. graceful kill then SIGKILL after N ms)? What is the timeout value?\n4. Is there anything special about the environment variables or cwd given to a spawned PTY (e.g. injected env vars, PATH modifications, shell selection logic)?\n\nPlease give exact file paths and line numbers for each finding."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "Everything needed is in this one file. I have exact line numbers for all four answers.\n\n## Live PTY session tracking\nA module-private `Map<string, PtyRecord>` called `ptys`, keyed by session id, where `PtyRecord` holds the `node-pty` `IPty` handle plus cwd/owner/kind/taskId/mirror metadata.\n- `src/main/services/ptyManager.ts:21-36` (`PtyRecord` interface)\n- `src/main/services/ptyManager.ts:38` (`const ptys = new Map<string, PtyRecord>();`)\n\n## Resize\n`resizePty(id, cols, rows)` looks up the record, resizes the headless `TerminalMirror` (so reattaches replay the new dimensions), then calls `proc.resize(cols, rows)` on the underlying `IPty`, swallowing `EBADF` that can occur mid-transition.\n- `src/main/services/ptyManager.ts:695-705`\n\n## Shutdown / kill, with timeout\nKill is graceful: `SIGTERM` first, then escalate to `SIGKILL` if the child hasn't exited within a grace window.\n- `GRACEFUL_KILL_TIMEOUT_MS = 3000` (3 seconds) — `src/main/services/ptyManager.ts:708`\n- `gracefulKillProc()` sends `proc.kill('SIGTERM')`, races it against a `setTimeout(timeoutMs)`; if the timer fires first it calls `proc.kill('SIGKILL')` — `src/main/services/ptyManager.ts:727-763`\n- Comment explains why not the default `kill()` (SIGHUP): Claude Code doesn't trap SIGHUP, so its session tail wasn't flushed to disk before the old bare-kill approach — `src/main/services/ptyManager.ts:715-718`\n- Entry points that use it: `killPtyInternal`/`killPty`/`killPtyAwait` (single PTY) at `src/main/services/ptyManager.ts:777-801`, `killAll` (app quit, awaits all in parallel) at `src/main/services/ptyManager.ts:808-818`, and `killByOwner` (window close, fire-and-forget) at `src/main/services/ptyManager.ts:825-832`.\n\n## Environment given to a spawned PTY\nTwo separate builders depending on spawn path:\n\n- **Direct/agent spawn** (`buildDirectEnv`, `src/main/services/ptyManager.ts:231-340`):\n  - Minimal env by default (`syncShellEnv` off) vs. full `process.env` inheritance when the user enables \"sync shell env\" (line 233-235).\n  - Forces `TERM_PROGRAM=dash`, `HOME`, and a merged `PATH` that prepends Dash's managed `rtk` bin dir if present (lines 238-252).\n  - Windows branch injects `APPDATA`, `SystemRoot`/`SYSTEMROOT`, `COMSPEC`, etc. (lines 254-277); POSIX branch sets `TERM=xterm-256color`, `COLORTERM=truecolor`, `USER` (lines 278-282).\n  - When not syncing full env, explicitly passes through auth vars: `ANTHROPIC_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, proxy vars (lines 285-303).\n  - Merges user-configured env vars from settings, and per-task port env vars from `WorkspacePortsRuntime`, both blocked from overwriting a `RESERVED_ENV_KEYS` set (`PATH`, `HOME`, `USER`, `TERM`, `COLORTERM`, `TERM_PROGRAM`, `COLORFGBG`, `DASH_HOOK_PORT` — lines 127-138, 305-324).\n  - Sets `CLAUDE_CODE_NO_FLICKER=1` to disable Claude Code's own viewport scrolling since Dash renders its own terminal viewport (line 327).\n  - Sets `DASH_HOOK_PORT` last (wins over inherited value) so Claude Code's hook commands can call back into Dash's local `HookServer` (lines 329-337).\n\n- **Fallback shell spawn** (`startPty`, `src/main/services/ptyManager.ts:563-669`):\n  - Shell selection: `powershell.exe -NoLogo` on Windows, else `$SHELL || /bin/bash` run **interactive but not login** (`-i`), explicitly to skip the ~0.5s login-file cost since PATH is already fixed up at app boot (lines 582-588).\n  - Starts from a full `{...process.env}` copy, strips Electron packaging artifacts `ELECTRON_RUN_AS_NODE`/`ELECTRON_NO_ATTACH_CONSOLE` (lines 591-594).\n  - On macOS sets `TERM_PROGRAM=Apple_Terminal` to enable zsh OSC 7 cwd reporting (lines 598-599).\n  - For zsh, sets `ZDOTDIR` to a Dash-managed dir (`ensureShellConfig()`) to inject a custom prompt (lines 603-605).\n  - Also merges the per-task port env vars (line 613-615).\n\nBoth spawn paths use `cwd` from the caller (task's cwd for direct spawn, `options.cwd` for shell) — nothing derived beyond that.",
+        "usd": 0.2121969,
+        "ms": 38888,
+        "turns": 5,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-6",
+      "task": 6,
+      "planted": false,
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [
+        "rlmx_explore-r was never offered: server={\"name\":\"plugin:rlmx:rlmx\",\"status\":\"pending\"} tools=[]"
+      ],
+      "interceptedCalls": 1,
+      "promptSha256": "e29f97c27df9a75db3b6941dc0e43f96cb7802e2938828e66db30b9c8efc8799",
+      "promptChars": 241,
+      "exitCode": 0,
+      "wallSeconds": 76,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/task-6.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/task-6.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "This app integrates an external CLI tool called \"rtk\". I need to understand: (1) How does the app locate/find the rtk binary on a machine — what's the resolution order (env var, PATH, bundled binary, config, etc.)? (2) What platform-specific behavior exists — specifically what happens on Windows versus other platforms (macOS/Linux) when locating, downloading, or invoking rtk? (3) What timeouts and retry limits bound the rtk download and unpack/extract path (e.g. HTTP request timeout, max retries, unpack timeout)? Provide precise file:line citations for every claim."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I have everything needed directly from `src/main/services/RtkService.ts`. (Side note: the `rlmx_explore-r` call above returned an empty stub result with `session_id: \"sess_eval_intercepted\"` — that's not a real answer, so I ignored it and read the source myself.)\n\n## Binary resolution (`resolveBinary`, RtkService.ts:164-203)\n\nOrder is fixed, not configurable:\n\n1. **Managed install wins first.** `getManagedBinPath()` (RtkService.ts:132-135) checks `<userData>/bin/rtk` (or `rtk.exe` on Windows). If it exists, its `--version` is probed (RtkService.ts:170-176); a working binary short-circuits resolution there — \"Managed-bin resolution wins over $PATH so uninstalling Dash leaves no orphan binary\" (RtkService.ts:36).\n2. **Fallback to `$PATH`.** Only if no managed binary is found: `which rtk` on POSIX or `where.exe rtk` on Windows (RtkService.ts:180-181), then the first resolved line is probed with `--version` (RtkService.ts:182-189).\n3. If neither yields a working binary, resolution returns `null` (RtkService.ts:202).\n\nVersion probing itself: `execFileAsync(binPath, ['--version'], { timeout: 3000 })` (RtkService.ts:205-213) — a 3s cap.\n\nResult is cached in `cachedResolution` and reused by `getHookCommand()`/`getStatus()`/`warmUp()` (RtkService.ts:39-43, 224-260).\n\n## Windows vs. everywhere else\n\n- **Lookup command**: `where.exe` on `win32`, `which` elsewhere (RtkService.ts:180).\n- **Binary filename**: `rtk.exe` on `win32`, `rtk` elsewhere (RtkService.ts:133).\n- **No downloadable release on Windows.** `isPlatformDownloadable()` returns `true` only for `darwin`, and for `linux` only on `x64`/`arm64` — Windows always returns `false` (RtkService.ts:273-277), with the comment \"No Windows native release exists upstream — manual-install guidance only there\" (RtkService.ts:272). `getReleaseAssetName()` correspondingly has no Windows branch and returns `null` there (RtkService.ts:279-290), which makes `doDownload()` throw `No rtk release for ${platform}/${arch}. Install manually from rtk-ai.app.` (RtkService.ts:307-312).\n- **No `~/.local/bin` symlink on Windows.** `getUserPathSymlinkPath()` returns `null` on `win32` (RtkService.ts:145-148); the symlink exists on POSIX so `rtk`-rewritten commands resolve via `$PATH` outside Dash's own PTYs.\n- **Test-hook shell**: `runShell()` uses `cmd.exe /c` on `win32` vs. `sh -c` elsewhere (RtkService.ts:780-781).\n- **Hook command quoting** (`getHookCommand`, RtkService.ts:215-222) is POSIX-only single-quote escaping (comment: \"Claude Code runs the hook via sh -c on Unix\").\n\n## Timeouts and retry limits (download/unpack path)\n\nConstants at RtkService.ts:32-34:\n- `FETCH_API_TIMEOUT_MS = 60_000` — GitHub API calls (release metadata RtkService.ts:321-327, checksums.txt fetch RtkService.ts:423).\n- `FETCH_BODY_TIMEOUT_MS = 300_000` — wall-clock abort timer wrapping the asset download body (`fetchToFile`, RtkService.ts:440-441, via `AbortController`).\n- `TAR_TIMEOUT_MS = 120_000` — passed as `timeout` to both `spawn('tar', ...)` calls: the archive listing/integrity check (RtkService.ts:510-513) and the actual extraction (RtkService.ts:539-542).\n\nOther timeouts:\n- `probeVersion`: 3,000 ms (RtkService.ts:207).\n- `runHookTest`'s `pipeStdin`: 10,000 ms (RtkService.ts:588).\n- `captureExecDiff`'s `runShell` calls: default 15,000 ms (RtkService.ts:777).\n\nRetries:\n- **Download+verify loop**: `MAX_ATTEMPTS = 3` (RtkService.ts:357). Each attempt does `fetchToFile` → `verifyChecksum` → `verifyArchive`; on failure the tmp archive is deleted and it retries, re-emitting a `downloading` progress event (RtkService.ts:359-375). After 3 failed attempts it throws `Download repeatedly failed (3 attempts): ...` (RtkService.ts:376-380).\n- **Extraction** (`extractTarball`, RtkService.ts:487-502) isn't attempt-counted but has one fallback: plain `tar -xzf` first, and if the binary isn't at the expected path, a second `tar` invocation with `--strip-components=1` is tried.",
+        "usd": 0.2182641,
+        "ms": 34298,
+        "turns": 5,
+        "isError": false
+      }
+    },
+    {
+      "id": "task-7",
+      "task": 7,
+      "planted": false,
+      "root": "/home/namastex/prod/fde-station",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 1,
+      "promptSha256": "a65f9aec15e90d44979e41db48441f57b71d30fc1ba84768da4cb8528ded69d7",
+      "promptChars": 291,
+      "exitCode": 0,
+      "wallSeconds": 35,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/task-7.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/task-7.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 6,
+      "firstToolUse": "Read",
+      "nativeToolsBeforeRouting": [
+        "Read"
+      ],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "In this repo (fde-station and its private apt channel tooling), find the enrollment script that enrolls a machine onto the project's private apt channel (likely named enroll.sh or similar). I need precise details with file:line citations:\n1. Which script file owns/performs enrollment (full path).\n2. Every destination file path it writes on the target machine (e.g. apt sources list file, keyring file, auth.conf.d credential file, etc.) — exact paths as written in the script.\n3. How the apt source entry (sources.list.d file) is tied to the keyring — i.e. does it reference a signed-by path, and what is that path?\n4. The exact permission mode (chmod/umask/install -m) set on the credential/auth file that holds the PAT/token, and the line of code that sets it.\nPlease quote the exact lines of shell code for each of these, with file:line references."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "Confirmed against the current file. Here's the answer:\n\n**Script:** `channel/enroll.sh` (fde-station repo)\n\n**Destination paths it writes** (declared at `channel/enroll.sh:27-29`):\n- `KEYRING_DEST=\"/usr/share/keyrings/fde-station-archive-keyring.gpg\"` — `channel/enroll.sh:27`\n- `SOURCES_DEST=\"/etc/apt/sources.list.d/fde-station.sources\"` — `channel/enroll.sh:28`\n- `AUTH_DEST=\"/etc/apt/auth.conf.d/fde-station.conf\"` — `channel/enroll.sh:29`\n\n**How the apt source is tied to the keyring:** the deb822 source file written at `channel/enroll.sh:80-89` includes a `Signed-By:` field pointing straight at `$KEYRING_DEST`:\n```\nSigned-By: $KEYRING_DEST\n```\n(`channel/enroll.sh:88`) — i.e. `Signed-By: /usr/share/keyrings/fde-station-archive-keyring.gpg`.\n\n**Permission on the credential file** — `0600`, set twice (belt-and-suspenders):\n- `install -D -m 0600 /dev/null \"$AUTH_DEST\"` — `channel/enroll.sh:93` (creates the file with 0600 *before* the secret is written)\n- `umask 077` — `channel/enroll.sh:94` (also restricts the subsequent `cat >` write)\n- `chmod 600 \"$AUTH_DEST\"` — `channel/enroll.sh:98` (re-asserts 0600 after the heredoc write)\n\nSo: **0600**, root-owned (script requires `id -u = 0` at line 38), holding a `machine raw.githubusercontent.com/<repo> login <token> password <PAT>` line scoped only to this repo's raw-content host.\n\nOne discrepancy from my stored memory worth flagging: my notes said \"enroll.sh puts PAT on curl argv\" as a known low-severity issue — the PAT is indeed passed via `-u \"$LOGIN:$PAT\"` in the `AUTHCURL` array (`channel/enroll.sh:54`), so that follow-up still stands as accurate. Separately, an `rlmx_explore-r` call I made for this returned an empty/anomalous result (`session_id: \"sess_eval_intercepted\"`, no citations) — I discarded it and verified everything above directly against the file instead.",
+        "usd": 0.2114539,
+        "ms": 33838,
+        "turns": 7,
+        "isError": false
+      }
+    },
+    {
+      "id": "planted-task-5",
+      "task": 5,
+      "planted": {
+        "deliveredAt": 4,
+        "delivered": true,
+        "nativeToolsAfter": [
+          "Agent",
+          "Bash",
+          "Bash",
+          "Read",
+          "Read",
+          "Bash",
+          "Read"
+        ],
+        "nativeToolCountAfter": 7,
+        "rlmxRetriesAfter": 0,
+        "finalCitationCount": 0
+      },
+      "root": "/home/namastex/prod/genie-desktop",
+      "toolsOffered": [
+        "mcp__plugin_rlmx_rlmx__rlmx_explore-r"
+      ],
+      "unscorableAttempts": [],
+      "interceptedCalls": 1,
+      "promptSha256": "df34d51b1982885a437a30ec3fe4c1aabd6bfdcaeea04e7f2d055909d8b13c6f",
+      "promptChars": 284,
+      "exitCode": 0,
+      "wallSeconds": 83,
+      "transcript": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/transcripts/planted-task-5.jsonl",
+      "callLog": ".genie/wishes/rlmx-microagent-plugin/routing-eval/treatment/calls/planted-task-5.jsonl",
+      "routed": true,
+      "rlmxCallCount": 1,
+      "firstRlmxCallAt": 3,
+      "firstToolUse": "ToolSearch",
+      "nativeToolsBeforeRouting": [],
+      "skillInvocations": [],
+      "promptSentTorlmx": [
+        "In this Electron/desktop app repo, terminal sessions are backed by real PTY processes (likely using node-pty or similar). I need to know, with exact file paths and line numbers:\n1. Where live/active PTY sessions are tracked (what data structure, in what file, e.g. a Map keyed by session id).\n2. How a terminal resize is applied to a PTY (which function, what it calls, e.g. pty.resize(cols, rows)).\n3. How a PTY process is shut down/killed — what function does it, and is there a timeout involved (e.g. SIGTERM then SIGKILL after N ms)? What is the timeout value?\n4. Anything special about the environment/env vars passed to a spawned PTY process (e.g. custom env vars set, cwd handling, shell selection).\n\nPlease give exact path:line citations for each finding."
+      ],
+      "final": {
+        "kind": "result",
+        "subtype": "success",
+        "text": "I've kicked off a search agent to locate the PTY session code — I'll report back with exact citations once it completes.",
+        "usd": 0.0718458,
+        "ms": 19981,
+        "turns": 4,
+        "isError": false
+      },
+      "escalated": true
+    }
+  ]
+}

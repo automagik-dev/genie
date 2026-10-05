@@ -1,0 +1,3555 @@
+{
+  "version": "mikro-prime-sdk-model-benchmark-v2",
+  "manifest": {
+    "version": "mikro-prime-sdk-model-benchmark-v2",
+    "baseSha": "61993273b1085ba155c05e84e537b3479a92df01",
+    "harnessSha256": "9fb1ae3fd70bb65c4f2439adf8fd1b72ddd526bbe8d222e344ac7f3de3a5bdbf",
+    "fixtureHarnessSha256": "b27b1f34e147ecbbec4e6457f4aa49343f1ddbb82438922c7577d5d638fe4b89",
+    "primeSdkAdapterSha256": "2dd9ac3b0ec9705d967fb099347adc43fbdec9ecd08a79ce9fb351e30ba3857f",
+    "primeVersion": "0.8.1",
+    "runtime": "Mikro PrimeSdkBackend using Prime Agent 0.8.1 in-process SDK",
+    "wire": "Prime AgentSession -> prime-agent-ai -> OpenRouter and direct DeepSeek OpenAI chat completions",
+    "routePolicy": "GLM via pinned OpenRouter FP8; DeepSeek via its official direct API",
+    "routes": {
+      "z-ai/glm-5.3": {
+        "provider": "GMICloud",
+        "slug": "gmicloud",
+        "tag": "gmicloud/fp8",
+        "quantization": "fp8"
+      },
+      "z-ai/glm-5.3-flash": {
+        "provider": "GMICloud",
+        "slug": "gmicloud",
+        "tag": "gmicloud/fp8",
+        "quantization": "fp8"
+      },
+      "deepseek/deepseek-v4-flash-0731": {
+        "provider": "DeepSeek",
+        "tag": "deepseek-direct",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-flash",
+        "quantization": "provider-managed"
+      },
+      "deepseek/deepseek-v4-pro-0813": {
+        "provider": "DeepSeek",
+        "tag": "deepseek-direct",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-pro",
+        "quantization": "provider-managed"
+      }
+    },
+    "routesEnforced": true,
+    "commonUpstream": false,
+    "modelOnlyLeaderboardEligible": false,
+    "upstreamObservable": true,
+    "models": [
+      {
+        "id": "z-ai/glm-5.3",
+        "wireProvider": "openrouter",
+        "wireModel": "z-ai/glm-5.3",
+        "promptRate": 1.4,
+        "completionRate": 4.4,
+        "builtIn": true
+      },
+      {
+        "id": "z-ai/glm-5.3-flash",
+        "wireProvider": "openrouter",
+        "wireModel": "z-ai/glm-5.3-flash",
+        "promptRate": 0.075,
+        "completionRate": 0.25,
+        "builtIn": false
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-0731",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-flash",
+        "promptRate": 0.44,
+        "completionRate": 1.32,
+        "cacheReadRate": 0.014,
+        "builtIn": true
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro-0813",
+        "wireProvider": "deepseek",
+        "wireModel": "deepseek-v4-pro",
+        "promptRate": 1.32,
+        "completionRate": 3.96,
+        "cacheReadRate": 0.044,
+        "builtIn": true
+      }
+    ],
+    "cases": [
+      {
+        "id": "shortest-path-01",
+        "family": "shortest-path",
+        "seed": 1408346567,
+        "promptSha256": "df7cb018db97539a33cb69f6a84cf289e913ef4950052fc255b6a855b4ae2bc0",
+        "expectedSha256": "2c65c3b9ba8faa055117959095e0423526301ec4cc0ed2e5c9a889260e840434"
+      },
+      {
+        "id": "shortest-path-02",
+        "family": "shortest-path",
+        "seed": 1408346664,
+        "promptSha256": "bcd493fdb54767ae9b9203953bcaec59824ac9151f5521876f24d8ed65c01c39",
+        "expectedSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b"
+      },
+      {
+        "id": "shortest-path-03",
+        "family": "shortest-path",
+        "seed": 1408346761,
+        "promptSha256": "36bd4be8dfaca4b8be767fc620e7ff94b915ec75a7d1edddc1e100779f1c2060",
+        "expectedSha256": "79eb311af69f7b24bfa1768e6c96462c61aba4396b344193cce5c92a2a2cb5b3"
+      },
+      {
+        "id": "shortest-path-04",
+        "family": "shortest-path",
+        "seed": 1408346858,
+        "promptSha256": "f6cde16c42eacf5c84f3bcd5c7dde7299b0154d397df1cae3e3d05bfa1749d70",
+        "expectedSha256": "d0c8f06255dfef8b04213cddfd36a8925ae4a941f929a2be7b14c6e64d146e70"
+      },
+      {
+        "id": "shortest-path-05",
+        "family": "shortest-path",
+        "seed": 1408346955,
+        "promptSha256": "b349537559f268309fa294720fd280120a06fa9c0ebb66b2b473a795aee497cd",
+        "expectedSha256": "25d8c40d7d7bd310e9e5c9f661d4d11c2471cfdd86f4a3a49b6b9527b17959c4"
+      },
+      {
+        "id": "shortest-path-06",
+        "family": "shortest-path",
+        "seed": 1408347052,
+        "promptSha256": "eb54b9fe46008d87bd1351777571826143cb1d7abd59961737bad9b1bd0ff059",
+        "expectedSha256": "c307a2f2444930d51330220191640daa18c2adcfd6ef95e6515a49a2fa29b0b6"
+      },
+      {
+        "id": "shortest-path-07",
+        "family": "shortest-path",
+        "seed": 1408347149,
+        "promptSha256": "62667ab6ea6a6d7803d78a322a5fd30a284c7f7aa53bb85efed4233c29ed7676",
+        "expectedSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5"
+      },
+      {
+        "id": "shortest-path-08",
+        "family": "shortest-path",
+        "seed": 1408347246,
+        "promptSha256": "716e2e20172bb86020009400332b4b9d32acb7dd890da76e962fd59be7c768c7",
+        "expectedSha256": "8467da4fb6cd977f76a80ce1f7cd0515bbdf2226ab0967a655c2afeafbf9706f"
+      },
+      {
+        "id": "shortest-path-09",
+        "family": "shortest-path",
+        "seed": 1408347343,
+        "promptSha256": "0b37d161b37856b70a69e7e239130cb6698c97af6944ff7d80ceee713b01ef67",
+        "expectedSha256": "4da5bb96907d26734f0bb3726e39191a4dce23f72601b6f6016aad2f6c93909f"
+      },
+      {
+        "id": "shortest-path-10",
+        "family": "shortest-path",
+        "seed": 1408347440,
+        "promptSha256": "e53f677a45c6294cf1a9e71ede99fb1ddfe4bb1856d381378078ada2d9d4dd7c",
+        "expectedSha256": "a79fffa8b7267d33787d58c2bbdf0f1f166834db4244fe76f4ce4022878d7b91"
+      },
+      {
+        "id": "critical-path-01",
+        "family": "critical-path",
+        "seed": 1408356567,
+        "promptSha256": "94e90965eb7c9fa66901d64a85b9fa862523ccbcf7109d931f1d7aef2c72694c",
+        "expectedSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee"
+      },
+      {
+        "id": "critical-path-02",
+        "family": "critical-path",
+        "seed": 1408356664,
+        "promptSha256": "bb02c69b8b59bdf87dc124c241e58ac29c821c90cf7c036d835da16523861368",
+        "expectedSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d"
+      },
+      {
+        "id": "critical-path-03",
+        "family": "critical-path",
+        "seed": 1408356761,
+        "promptSha256": "7500cfe675c178b9d0497248972d2061321c6301485bbf9af0bab36d5f8f2da2",
+        "expectedSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae"
+      },
+      {
+        "id": "critical-path-04",
+        "family": "critical-path",
+        "seed": 1408356858,
+        "promptSha256": "bf95f827b11f1717192d79ca58a526e8148f4067071d09f57c42a79981ad3d9e",
+        "expectedSha256": "cb00e3a7bf4550cf5201ce7f5a0afa5e68dedb958a4eb1747f700e03b0407930"
+      },
+      {
+        "id": "critical-path-05",
+        "family": "critical-path",
+        "seed": 1408356955,
+        "promptSha256": "862f5a19e0d9a074c1331ffaf7502f4b85803b2a3ce985de7d4db31bbe121401",
+        "expectedSha256": "ce28e25630a4277de9275b9959e5d9f37501066f769c856b5912fccb50c90c8d"
+      },
+      {
+        "id": "critical-path-06",
+        "family": "critical-path",
+        "seed": 1408357052,
+        "promptSha256": "d58091104d29b45951a18bd49da42171d27b36c6677a345ae9309595fb5e899a",
+        "expectedSha256": "2e0a00b4747f48de9e99a46cf28e3e661ebe60e95f61d96e394488eb188265ba"
+      },
+      {
+        "id": "critical-path-07",
+        "family": "critical-path",
+        "seed": 1408357149,
+        "promptSha256": "98a16b902db228f4f01dfd208475e819fa9c7e876e60e7db55816acd931ce13b",
+        "expectedSha256": "cc9ad16b9d4132a54021454f030fec63c29ec4ed42e03cf3b74e68f9592b2fa9"
+      },
+      {
+        "id": "critical-path-08",
+        "family": "critical-path",
+        "seed": 1408357246,
+        "promptSha256": "b1fee6c6c8d415bf2523b729eaeadd95d660016e4906fe8ebb31e21c7684131d",
+        "expectedSha256": "3dfb248939248af50c4a1d9878188e8d6b17a930fe1cd399896f621f1e44857d"
+      },
+      {
+        "id": "critical-path-09",
+        "family": "critical-path",
+        "seed": 1408357343,
+        "promptSha256": "ed10b40bfb5b69b969ce45c4f91fa5f5d7fc6f110d0207f650f32f042de6c8b4",
+        "expectedSha256": "11f1a528e7c87843b5418c9588a13bc28c3b1d8703c150e3aaf1134ee0b0a3cf"
+      },
+      {
+        "id": "critical-path-10",
+        "family": "critical-path",
+        "seed": 1408357440,
+        "promptSha256": "bd038906595b38122f237bc87fc29ad573d34f0627728221e5003e6ad5c804c3",
+        "expectedSha256": "d780a20bc64a73f478bf4a976748549c62dc739498e0c51982ae9c48eb3ee720"
+      },
+      {
+        "id": "event-ledger-01",
+        "family": "event-ledger",
+        "seed": 1408366567,
+        "promptSha256": "3040062a3a3774af1ab927c18b80a8216ebf66562837ab10c1f972cfc8f7eae2",
+        "expectedSha256": "e6ee969dc0826e37b5ebad141f3fb71629d71cbb8c6520bcf0771c9854078ee8"
+      },
+      {
+        "id": "event-ledger-02",
+        "family": "event-ledger",
+        "seed": 1408366664,
+        "promptSha256": "074a1768aea0fb39be498e9782ed8b98f4432dfb3dd3f83c829eded6a6f081c8",
+        "expectedSha256": "8364a50965365b3f85625506bd13802084d6797aca1c9f3bfc309d81f63975c5"
+      },
+      {
+        "id": "event-ledger-03",
+        "family": "event-ledger",
+        "seed": 1408366761,
+        "promptSha256": "76502f567c0101a743654bfa59d17f96e0b6b5e7d239c94a6723f78b6248b227",
+        "expectedSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f"
+      },
+      {
+        "id": "event-ledger-04",
+        "family": "event-ledger",
+        "seed": 1408366858,
+        "promptSha256": "839533c55fd2d23ff1f507a13ba4ca8a014313d45a53e5e409073a1d8d2779c3",
+        "expectedSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11"
+      },
+      {
+        "id": "event-ledger-05",
+        "family": "event-ledger",
+        "seed": 1408366955,
+        "promptSha256": "87ce6beb1b51a5eb9c910b294c1b9c17a9252e157e484e8e94f74d9e58b0494b",
+        "expectedSha256": "fcc9d70b155e5fe5940b0124c626f4d6590db6a9e2eba4846a847cbac533c491"
+      },
+      {
+        "id": "event-ledger-06",
+        "family": "event-ledger",
+        "seed": 1408367052,
+        "promptSha256": "1ed16466659bf00bd65908df6bb4d26c903af7d373e0a6783190aeb7c44103c5",
+        "expectedSha256": "b6dbfad50555c3b7246c901a0d9f4cc7bed0d0e03f8c49f3c6424a7862bda769"
+      },
+      {
+        "id": "event-ledger-07",
+        "family": "event-ledger",
+        "seed": 1408367149,
+        "promptSha256": "ee20a5f4bf3ae33f535cc1529262a62f3f8a64c31e6ec37056e1edd7023eea92",
+        "expectedSha256": "5da15b2908c4aead506958450ec01679fee027dcb9b7d32fb5488ad857a27082"
+      },
+      {
+        "id": "event-ledger-08",
+        "family": "event-ledger",
+        "seed": 1408367246,
+        "promptSha256": "1ce0eb93d9ae6ff382c26fcc5a99df68766eed5db250e3e21082e0d4720a16e6",
+        "expectedSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794"
+      },
+      {
+        "id": "event-ledger-09",
+        "family": "event-ledger",
+        "seed": 1408367343,
+        "promptSha256": "ba99829f926352e04b54f4bdfa4b0c1a1fad9f1e97646cbd48ad1ac21ba4c29c",
+        "expectedSha256": "89724af90fe4559a0d70dc31bfe28dcb8051722e860c378594f948aa87e5bf8e"
+      },
+      {
+        "id": "event-ledger-10",
+        "family": "event-ledger",
+        "seed": 1408367440,
+        "promptSha256": "ab42ade97c0219b3a7d60029fd2dea3c38607d30b351857d7675f94ed60f2e2c",
+        "expectedSha256": "c70e1107712cda7ea8f18bd7eff765abe6d0edfdc0a12a7995e2fbace1e132f4"
+      },
+      {
+        "id": "relational-join-01",
+        "family": "relational-join",
+        "seed": 1408376567,
+        "promptSha256": "7d4ee96bfaf24e06847f39eb754ef72a2250e1523f14cf04892916dcee427f2a",
+        "expectedSha256": "c70b9d905d475e70924239f667067fd1047516ea49be476bfe6af7450a78aeab"
+      },
+      {
+        "id": "relational-join-02",
+        "family": "relational-join",
+        "seed": 1408376664,
+        "promptSha256": "7ca0050ee9ac50c6c2e03201f0a4889816104ccffcda6bc271e64a4aa48ce327",
+        "expectedSha256": "79ac644354245222041e6fcf4af8d34f7627be055f53d739775be5b257782f3e"
+      },
+      {
+        "id": "relational-join-03",
+        "family": "relational-join",
+        "seed": 1408376761,
+        "promptSha256": "50cacab78102b0360ded5e883ea56361a6758b3de623ea9d2762bcf39fbc186d",
+        "expectedSha256": "5a88cd1e28a2629734bb2c9eb6db2fb0ce9eb172c8ff012102da94b1adcf4d3c"
+      },
+      {
+        "id": "relational-join-04",
+        "family": "relational-join",
+        "seed": 1408376858,
+        "promptSha256": "25357a7f565ddbd1abbdffec5ac6fed7774222e8c1e9f03f53d77c3b3ae61470",
+        "expectedSha256": "701a31d51de238034afc31258526d1ad60d7d5d7a0d0745abdbc9f935a53baa6"
+      },
+      {
+        "id": "relational-join-05",
+        "family": "relational-join",
+        "seed": 1408376955,
+        "promptSha256": "fcb7c0473c39262e75d04d04d127ec71a79ad2ce32fdc6b33b0fef76b44356ce",
+        "expectedSha256": "9b78985d4c78a8d76a4ce6292f230902256fe93f359a4ef9338b2f594db15ee1"
+      },
+      {
+        "id": "relational-join-06",
+        "family": "relational-join",
+        "seed": 1408377052,
+        "promptSha256": "5500372f9a73df6117abba1bfd223e9c973cb53c9a7a6311c303952c6cacbe00",
+        "expectedSha256": "d483f71838aed8a6820bc1e972f8296c01e2043617e9024795ec8cd327dccc82"
+      },
+      {
+        "id": "relational-join-07",
+        "family": "relational-join",
+        "seed": 1408377149,
+        "promptSha256": "d664499db0a8cb252a44a40f2f7f327deb0730a4c648e138153908e0d177f52c",
+        "expectedSha256": "733bf0cb9fd4bc261c6a47de5f500b0d72d53f7c50b570a47ae817853959b45f"
+      },
+      {
+        "id": "relational-join-08",
+        "family": "relational-join",
+        "seed": 1408377246,
+        "promptSha256": "d7c905b84d470e803aac97c9c6eea908cd931f6522fa9fc46b18ff4f97ccb65c",
+        "expectedSha256": "079476842223ab7e3a8cdde5d619ab672018e785500ebd52e22d5b771f69e78d"
+      },
+      {
+        "id": "relational-join-09",
+        "family": "relational-join",
+        "seed": 1408377343,
+        "promptSha256": "34b3f44bb836610e18dd457728021dcae937593796e3f528c3bcb2d914909c86",
+        "expectedSha256": "251da01b34376fc6374115d71b2d66eed4d7e2fd2ab75412942bbc44639b630f"
+      },
+      {
+        "id": "relational-join-10",
+        "family": "relational-join",
+        "seed": 1408377440,
+        "promptSha256": "5fa901217cfb089da205a595deba3977a4929b3da313be553880e45973ab71e0",
+        "expectedSha256": "ef2dd4c222c1e2a0461cb0b41fbc965603d969c72d444c80dfdbd7521f16fb0a"
+      },
+      {
+        "id": "boolean-circuit-01",
+        "family": "boolean-circuit",
+        "seed": 1408386567,
+        "promptSha256": "7fcccc4b246a62fdefa76f4865c9803b810dfaef653cca9bba3e172641523467",
+        "expectedSha256": "fa6a02864853a4efd54ed6bacec62d3af01588306d0e08e7f10c07ab6754cf53"
+      },
+      {
+        "id": "boolean-circuit-02",
+        "family": "boolean-circuit",
+        "seed": 1408386664,
+        "promptSha256": "f46430508dc251eef471843a84c17b6fd4cc16440d57c4ae3431b26b750cc96f",
+        "expectedSha256": "8f051d9ed81af91b4d9fb43912a1292be57bef7a849acf26742bdfe17c608bbd"
+      },
+      {
+        "id": "boolean-circuit-03",
+        "family": "boolean-circuit",
+        "seed": 1408386761,
+        "promptSha256": "dc3a058f1309eeb66b78765cbeb0b29a83d95d93141d48cde3c69d545a0573e2",
+        "expectedSha256": "3ab73d51ad90ef5a8047ad36924edd2d76c3124a5e6a0da9c3038ec4922ebba7"
+      },
+      {
+        "id": "boolean-circuit-04",
+        "family": "boolean-circuit",
+        "seed": 1408386858,
+        "promptSha256": "1847728cac06cae06ffd5cca0ccac9237077416ea1877ee87f59e32fc3dec99c",
+        "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7"
+      },
+      {
+        "id": "boolean-circuit-05",
+        "family": "boolean-circuit",
+        "seed": 1408386955,
+        "promptSha256": "1e425fc8789b0c33e8293e5963add68aaf0242c3fb3635c0223f29c452c644c1",
+        "expectedSha256": "8451c1d0b661003cab0a29d3aa82da656a2d48f63dfd9b9cae04ef829321473b"
+      },
+      {
+        "id": "boolean-circuit-06",
+        "family": "boolean-circuit",
+        "seed": 1408387052,
+        "promptSha256": "912039d135fb90db0926ad49fafb2cade4aa99a73e40c839ed5f7dd0e7ee66c0",
+        "expectedSha256": "bd0972afb84382b7cd7e0243dc0031c39c3d35f9e38f5e1c5f982e1e3243f66d"
+      },
+      {
+        "id": "boolean-circuit-07",
+        "family": "boolean-circuit",
+        "seed": 1408387149,
+        "promptSha256": "f8bb6be4e63087ce919cb31885f4a339f5d1abf60dde8f731a641be964fa76b3",
+        "expectedSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764"
+      },
+      {
+        "id": "boolean-circuit-08",
+        "family": "boolean-circuit",
+        "seed": 1408387246,
+        "promptSha256": "1b2a10c2784bbe77f83631cd08f686f2dd80805584c7512844297f869c066ae7",
+        "expectedSha256": "b2f10265902297a63df7ee36fd7da5b5ed39ae3fd3a5852a8d270fd16514680a"
+      },
+      {
+        "id": "boolean-circuit-09",
+        "family": "boolean-circuit",
+        "seed": 1408387343,
+        "promptSha256": "bf65a3dcf3b4721bb7eca1f57badff2fc8a4fac59e98d192b8df661f0f80ac50",
+        "expectedSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3"
+      },
+      {
+        "id": "boolean-circuit-10",
+        "family": "boolean-circuit",
+        "seed": 1408387440,
+        "promptSha256": "1b681622cdb0ddf0fa9b0082fab4edfe2fccbbf4ff332ff585697d0741de938e",
+        "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7"
+      },
+      {
+        "id": "weighted-set-cover-01",
+        "family": "weighted-set-cover",
+        "seed": 1408396567,
+        "promptSha256": "d5b7c42af3c86be9f273c47d8e95dd51d29b746a5711a2511bec03d2dfae6155",
+        "expectedSha256": "2dba7996f991c474853162da2a057b2498dcd61cefbca0decc31cbe3a6fe459a"
+      },
+      {
+        "id": "weighted-set-cover-02",
+        "family": "weighted-set-cover",
+        "seed": 1408396664,
+        "promptSha256": "ed6fd3fdcff0db409a1439e0150f978fb097fa837338a2a414b34405a8964a79",
+        "expectedSha256": "49c3e9d2507c2fadbff70fc8cd9564bfd0f6af5ddb20769c72beb937c5ccd8e5"
+      },
+      {
+        "id": "weighted-set-cover-03",
+        "family": "weighted-set-cover",
+        "seed": 1408396761,
+        "promptSha256": "860d93d4bbcae498208873fe8267fd7d266cbe7b44865347a7f3dd13971b0a8a",
+        "expectedSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a"
+      },
+      {
+        "id": "weighted-set-cover-04",
+        "family": "weighted-set-cover",
+        "seed": 1408396858,
+        "promptSha256": "c72df0d6eeff39c979adc3d1706e60dbb09e2d07973a768092fefc2436af8696",
+        "expectedSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb"
+      },
+      {
+        "id": "weighted-set-cover-05",
+        "family": "weighted-set-cover",
+        "seed": 1408396955,
+        "promptSha256": "9173eac0ea2c6cdc426d782cc6f0f097d94e3d73cd723d09bfbf2f094ce1f38a",
+        "expectedSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e"
+      },
+      {
+        "id": "weighted-set-cover-06",
+        "family": "weighted-set-cover",
+        "seed": 1408397052,
+        "promptSha256": "e6e376a600fa6e6804905c5f2da48150c61b35bd49b260981b5d393ad8e3977c",
+        "expectedSha256": "8e4c1a7d813e3d0f74d4476082cc071762a9c55fb0c80d5885a0371402f76772"
+      },
+      {
+        "id": "weighted-set-cover-07",
+        "family": "weighted-set-cover",
+        "seed": 1408397149,
+        "promptSha256": "be64166b4d85feb8266b9f99c913690e8e12f03fcc7b5dd936009e1052b818ac",
+        "expectedSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551"
+      },
+      {
+        "id": "weighted-set-cover-08",
+        "family": "weighted-set-cover",
+        "seed": 1408397246,
+        "promptSha256": "fd4159085b99cd78ccfaf250f29288654210599151b5265c7e6209c34006b657",
+        "expectedSha256": "2c6de95e8dea3320e88141e23d59d9ac5462f7ca385c714475423de162fb3cd6"
+      },
+      {
+        "id": "weighted-set-cover-09",
+        "family": "weighted-set-cover",
+        "seed": 1408397343,
+        "promptSha256": "f4694026954c9d50ea57af5d207eeda28f6d92c28ace20a187581d6c984ab800",
+        "expectedSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6"
+      },
+      {
+        "id": "weighted-set-cover-10",
+        "family": "weighted-set-cover",
+        "seed": 1408397440,
+        "promptSha256": "5f8bfbef3924fb382b3354ca45aa8be1f51a2a0925eb0649c2f415044cb79731",
+        "expectedSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf"
+      }
+    ],
+    "fullCalls": 240,
+    "probeCalls": 4,
+    "fullProviderCalls": 480,
+    "probeProviderCalls": 8,
+    "maxIterations": 2,
+    "maxInputTokens": 32768,
+    "rootOutputTokens": 8192,
+    "providerModelMaxTokens": 17408,
+    "deadlineMs": 180000,
+    "retries": 0,
+    "reasoning": "low",
+    "temperature": 0,
+    "inferenceSeed": null,
+    "fixtureSeedPolicy": "deterministic task generation; provider sampling seed omitted for official DeepSeek compatibility",
+    "responseFormat": null,
+    "structuredOutputChannel": "Prime emit_done tool with output.schema validation",
+    "toolChoice": "omitted for all models; compliance with the sole emit_done tool is measured as reliability",
+    "payloadContractEvidence": "sanitized fields and metadata hash per provider call",
+    "rawAnswersPersisted": false,
+    "billingAuthority": "OpenRouter key usage delta per GLM calls; DeepSeek USD balance delta per direct calls",
+    "scoring": "semantic exact + field accuracy; deterministic; no judge model"
+  },
+  "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+  "stage": "full",
+  "models": [
+    "deepseek/deepseek-v4-flash-0731"
+  ],
+  "authorizedCalls": 60,
+  "authorizedUsd": 4,
+  "startedAt": "2026-09-02T18:58:30.601Z",
+  "complete": true,
+  "records": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:58:30.602Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-05",
+      "family": "relational-join",
+      "seed": 1408376955,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.42857142857142855,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "f62bded864f3b3215c079e44bb28a2512125b895637c1d2c007685010ea527cd",
+      "promptSha256": "fcb7c0473c39262e75d04d04d127ec71a79ad2ce32fdc6b33b0fef76b44356ce",
+      "expectedSha256": "9b78985d4c78a8d76a4ce6292f230902256fe93f359a4ef9338b2f594db15ee1",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1700,
+        "outputTokens": 660,
+        "totalCost": 0.0016245760000000002
+      },
+      "wallMs": 5437,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:58:36.472Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-07",
+      "family": "relational-join",
+      "seed": 1408377149,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "093203cc72d29c643f8e8523b6104725012c7ce7ddb8e1f6cd7f37685da64501",
+      "promptSha256": "d664499db0a8cb252a44a40f2f7f327deb0730a4c648e138153908e0d177f52c",
+      "expectedSha256": "733bf0cb9fd4bc261c6a47de5f500b0d72d53f7c50b570a47ae817853959b45f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1704,
+        "outputTokens": 1438,
+        "totalCost": 0.0026532960000000003
+      },
+      "wallMs": 8623,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:58:45.533Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-04",
+      "family": "critical-path",
+      "seed": 1408356858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "cb00e3a7bf4550cf5201ce7f5a0afa5e68dedb958a4eb1747f700e03b0407930",
+      "promptSha256": "bf95f827b11f1717192d79ca58a526e8148f4067071d09f57c42a79981ad3d9e",
+      "expectedSha256": "cb00e3a7bf4550cf5201ce7f5a0afa5e68dedb958a4eb1747f700e03b0407930",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 1167,
+        "outputTokens": 437,
+        "totalCost": 0.0010956960000000002
+      },
+      "wallMs": 3346,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:58:49.303Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-03",
+      "family": "relational-join",
+      "seed": 1408376761,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "19896dc43c1352e7ee064aba45d957e0763472d5da9f7355f10d9c897ad9446e",
+      "promptSha256": "50cacab78102b0360ded5e883ea56361a6758b3de623ea9d2762bcf39fbc186d",
+      "expectedSha256": "5a88cd1e28a2629734bb2c9eb6db2fb0ce9eb172c8ff012102da94b1adcf4d3c",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 682,
+        "outputTokens": 1002,
+        "totalCost": 0.0016424320000000003
+      },
+      "wallMs": 5707,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:58:55.441Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-01",
+      "family": "event-ledger",
+      "seed": 1408366567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "e6ee969dc0826e37b5ebad141f3fb71629d71cbb8c6520bcf0771c9854078ee8",
+      "promptSha256": "3040062a3a3774af1ab927c18b80a8216ebf66562837ab10c1f972cfc8f7eae2",
+      "expectedSha256": "e6ee969dc0826e37b5ebad141f3fb71629d71cbb8c6520bcf0771c9854078ee8",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 503,
+        "outputTokens": 1581,
+        "totalCost": 0.00232616
+      },
+      "wallMs": 8960,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:04.845Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-09",
+      "family": "event-ledger",
+      "seed": 1408367343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "89724af90fe4559a0d70dc31bfe28dcb8051722e860c378594f948aa87e5bf8e",
+      "promptSha256": "ba99829f926352e04b54f4bdfa4b0c1a1fad9f1e97646cbd48ad1ac21ba4c29c",
+      "expectedSha256": "89724af90fe4559a0d70dc31bfe28dcb8051722e860c378594f948aa87e5bf8e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 504,
+        "outputTokens": 870,
+        "totalCost": 0.0013880800000000003
+      },
+      "wallMs": 5101,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:10.385Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-07",
+      "family": "critical-path",
+      "seed": 1408357149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "cc9ad16b9d4132a54021454f030fec63c29ec4ed42e03cf3b74e68f9592b2fa9",
+      "promptSha256": "98a16b902db228f4f01dfd208475e819fa9c7e876e60e7db55816acd931ce13b",
+      "expectedSha256": "cc9ad16b9d4132a54021454f030fec63c29ec4ed42e03cf3b74e68f9592b2fa9",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 277,
+        "outputTokens": 431,
+        "totalCost": 0.00070872
+      },
+      "wallMs": 3069,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:13.892Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-10",
+      "family": "relational-join",
+      "seed": 1408377440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "bea5d07bb36ead40f145684b7e419aa41717bf5fec80bdadd508f0c6b42310d4",
+      "promptSha256": "5fa901217cfb089da205a595deba3977a4929b3da313be553880e45973ab71e0",
+      "expectedSha256": "ef2dd4c222c1e2a0461cb0b41fbc965603d969c72d444c80dfdbd7521f16fb0a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 686,
+        "outputTokens": 844,
+        "totalCost": 0.0014356320000000003
+      },
+      "wallMs": 4963,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:19.289Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-02",
+      "family": "shortest-path",
+      "seed": 1408346664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b",
+      "promptSha256": "bcd493fdb54767ae9b9203953bcaec59824ac9151f5521876f24d8ed65c01c39",
+      "expectedSha256": "29f39cd20f15aefd937d2e42b4ad44e982cb273137a333d2204d017041afe26b",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 279,
+        "outputTokens": 2741,
+        "totalCost": 0.0037588
+      },
+      "wallMs": 18111,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:37.835Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-08",
+      "family": "event-ledger",
+      "seed": 1408367246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794",
+      "promptSha256": "1ce0eb93d9ae6ff382c26fcc5a99df68766eed5db250e3e21082e0d4720a16e6",
+      "expectedSha256": "645f68e52d7a94bc9b9e8867baaf43b0a7165e0f9aabeda77380122c105d4794",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 377,
+        "outputTokens": 1865,
+        "totalCost": 0.002647392
+      },
+      "wallMs": 10098,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:48.373Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-10",
+      "family": "event-ledger",
+      "seed": 1408367440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "c70e1107712cda7ea8f18bd7eff765abe6d0edfdc0a12a7995e2fbace1e132f4",
+      "promptSha256": "ab42ade97c0219b3a7d60029fd2dea3c38607d30b351857d7675f94ed60f2e2c",
+      "expectedSha256": "c70e1107712cda7ea8f18bd7eff765abe6d0edfdc0a12a7995e2fbace1e132f4",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 374,
+        "outputTokens": 1660,
+        "totalCost": 0.002375472
+      },
+      "wallMs": 9536,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T18:59:58.359Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-03",
+      "family": "event-ledger",
+      "seed": 1408366761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f",
+      "promptSha256": "76502f567c0101a743654bfa59d17f96e0b6b5e7d239c94a6723f78b6248b227",
+      "expectedSha256": "b4628926deb7c6549809013680486f6c8d370d8fcb82d4d55341b9c36f69c38f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 374,
+        "outputTokens": 1698,
+        "totalCost": 0.0024256319999999996
+      },
+      "wallMs": 9072,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:00:07.866Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-10",
+      "family": "weighted-set-cover",
+      "seed": 1408397440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf",
+      "promptSha256": "5f8bfbef3924fb382b3354ca45aa8be1f51a2a0925eb0649c2f415044cb79731",
+      "expectedSha256": "f00ba0efcc8681f17ecafca7f9a8378726223b0b8ce24389c693c561b6276dbf",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 277,
+        "outputTokens": 2649,
+        "totalCost": 0.00363648
+      },
+      "wallMs": 20946,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:00:29.243Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-08",
+      "family": "critical-path",
+      "seed": 1408357246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "3dfb248939248af50c4a1d9878188e8d6b17a930fe1cd399896f621f1e44857d",
+      "promptSha256": "b1fee6c6c8d415bf2523b729eaeadd95d660016e4906fe8ebb31e21c7684131d",
+      "expectedSha256": "3dfb248939248af50c4a1d9878188e8d6b17a930fe1cd399896f621f1e44857d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 275,
+        "outputTokens": 700,
+        "totalCost": 0.00106292
+      },
+      "wallMs": 6231,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:00:35.908Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-05",
+      "family": "boolean-circuit",
+      "seed": 1408386955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "8451c1d0b661003cab0a29d3aa82da656a2d48f63dfd9b9cae04ef829321473b",
+      "promptSha256": "1e425fc8789b0c33e8293e5963add68aaf0242c3fb3635c0223f29c452c644c1",
+      "expectedSha256": "8451c1d0b661003cab0a29d3aa82da656a2d48f63dfd9b9cae04ef829321473b",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 397,
+        "outputTokens": 464,
+        "totalCost": 0.00080508
+      },
+      "wallMs": 3579,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:00:39.920Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-09",
+      "family": "critical-path",
+      "seed": 1408357343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "11f1a528e7c87843b5418c9588a13bc28c3b1d8703c150e3aaf1134ee0b0a3cf",
+      "promptSha256": "ed10b40bfb5b69b969ce45c4f91fa5f5d7fc6f110d0207f650f32f042de6c8b4",
+      "expectedSha256": "11f1a528e7c87843b5418c9588a13bc28c3b1d8703c150e3aaf1134ee0b0a3cf",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 277,
+        "outputTokens": 614,
+        "totalCost": 0.0009502800000000001
+      },
+      "wallMs": 5286,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:00:45.630Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-05",
+      "family": "weighted-set-cover",
+      "seed": 1408396955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e",
+      "promptSha256": "9173eac0ea2c6cdc426d782cc6f0f097d94e3d73cd723d09bfbf2f094ce1f38a",
+      "expectedSha256": "b5547dc75951b05b79211891b25463de3dc5fb0ba21a97855b75eb7208b8a14e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 272,
+        "outputTokens": 2352,
+        "totalCost": 0.00324224
+      },
+      "wallMs": 18264,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:04.329Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-01",
+      "family": "boolean-circuit",
+      "seed": 1408386567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "fa6a02864853a4efd54ed6bacec62d3af01588306d0e08e7f10c07ab6754cf53",
+      "promptSha256": "7fcccc4b246a62fdefa76f4865c9803b810dfaef653cca9bba3e172641523467",
+      "expectedSha256": "fa6a02864853a4efd54ed6bacec62d3af01588306d0e08e7f10c07ab6754cf53",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 393,
+        "outputTokens": 453,
+        "totalCost": 0.0007888000000000001
+      },
+      "wallMs": 4033,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:08.779Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-06",
+      "family": "shortest-path",
+      "seed": 1408347052,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "c307a2f2444930d51330220191640daa18c2adcfd6ef95e6515a49a2fa29b0b6",
+      "promptSha256": "eb54b9fe46008d87bd1351777571826143cb1d7abd59961737bad9b1bd0ff059",
+      "expectedSha256": "c307a2f2444930d51330220191640daa18c2adcfd6ef95e6515a49a2fa29b0b6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 321,
+        "outputTokens": 1047,
+        "totalCost": 0.0015412000000000002
+      },
+      "wallMs": 7596,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:16.804Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-01",
+      "family": "weighted-set-cover",
+      "seed": 1408396567,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.75,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "9ba33082da2ec8c851cf832d19775f62cb0219bfa1697f9a354532d135e70f9e",
+      "promptSha256": "d5b7c42af3c86be9f273c47d8e95dd51d29b746a5711a2511bec03d2dfae6155",
+      "expectedSha256": "2dba7996f991c474853162da2a057b2498dcd61cefbca0decc31cbe3a6fe459a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 280,
+        "outputTokens": 314,
+        "totalCost": 0.0005556000000000001
+      },
+      "wallMs": 3174,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:20.401Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-07",
+      "family": "weighted-set-cover",
+      "seed": 1408397149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551",
+      "promptSha256": "be64166b4d85feb8266b9f99c913690e8e12f03fcc7b5dd936009e1052b818ac",
+      "expectedSha256": "eea263fead4c303460f0f8268b5231fc61f250470139b9f986505f4e7d0cb551",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 272,
+        "outputTokens": 2132,
+        "totalCost": 0.00295184
+      },
+      "wallMs": 17410,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:38.248Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-07",
+      "family": "shortest-path",
+      "seed": 1408347149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5",
+      "promptSha256": "62667ab6ea6a6d7803d78a322a5fd30a284c7f7aa53bb85efed4233c29ed7676",
+      "expectedSha256": "21277a98a04e53c069718bc18208051f5524fb805e9aa935d5a9198c850a94b5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 307,
+        "outputTokens": 1671,
+        "totalCost": 0.00235872
+      },
+      "wallMs": 12339,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:51.018Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-09",
+      "family": "boolean-circuit",
+      "seed": 1408387343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3",
+      "promptSha256": "bf65a3dcf3b4721bb7eca1f57badff2fc8a4fac59e98d192b8df661f0f80ac50",
+      "expectedSha256": "092544059cc3fab072377ce3f884b4ee8cfcf82426c5a608521bc568d8e999a3",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 265,
+        "outputTokens": 454,
+        "totalCost": 0.000735592
+      },
+      "wallMs": 3482,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:54.922Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-03",
+      "family": "critical-path",
+      "seed": 1408356761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae",
+      "promptSha256": "7500cfe675c178b9d0497248972d2061321c6301485bbf9af0bab36d5f8f2da2",
+      "expectedSha256": "590a8bcc5921a7b226e631421fc05029d01712f42b8e1db726bc022fb8076cae",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 271,
+        "outputTokens": 398,
+        "totalCost": 0.00066252
+      },
+      "wallMs": 3625,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:01:58.993Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-02",
+      "family": "boolean-circuit",
+      "seed": 1408386664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "8f051d9ed81af91b4d9fb43912a1292be57bef7a849acf26742bdfe17c608bbd",
+      "promptSha256": "f46430508dc251eef471843a84c17b6fd4cc16440d57c4ae3431b26b750cc96f",
+      "expectedSha256": "8f051d9ed81af91b4d9fb43912a1292be57bef7a849acf26742bdfe17c608bbd",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 259,
+        "outputTokens": 445,
+        "totalCost": 0.000721072
+      },
+      "wallMs": 3316,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:02.753Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-03",
+      "family": "shortest-path",
+      "seed": 1408346761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "79eb311af69f7b24bfa1768e6c96462c61aba4396b344193cce5c92a2a2cb5b3",
+      "promptSha256": "36bd4be8dfaca4b8be767fc620e7ff94b915ec75a7d1edddc1e100779f1c2060",
+      "expectedSha256": "79eb311af69f7b24bfa1768e6c96462c61aba4396b344193cce5c92a2a2cb5b3",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 300,
+        "outputTokens": 268,
+        "totalCost": 0.0005036800000000001
+      },
+      "wallMs": 2754,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:05.947Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-08",
+      "family": "boolean-circuit",
+      "seed": 1408387246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b2f10265902297a63df7ee36fd7da5b5ed39ae3fd3a5852a8d270fd16514680a",
+      "promptSha256": "1b2a10c2784bbe77f83631cd08f686f2dd80805584c7512844297f869c066ae7",
+      "expectedSha256": "b2f10265902297a63df7ee36fd7da5b5ed39ae3fd3a5852a8d270fd16514680a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 265,
+        "outputTokens": 450,
+        "totalCost": 0.000730312
+      },
+      "wallMs": 3812,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:10.208Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-03",
+      "family": "weighted-set-cover",
+      "seed": 1408396761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a",
+      "promptSha256": "860d93d4bbcae498208873fe8267fd7d266cbe7b44865347a7f3dd13971b0a8a",
+      "expectedSha256": "19d9760622e358deb82713676534a130c34901c1a14a1f1b31da74d0ac67ad1a",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 281,
+        "outputTokens": 3770,
+        "totalCost": 0.005117960000000001
+      },
+      "wallMs": 28456,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:39.095Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-10",
+      "family": "critical-path",
+      "seed": 1408357440,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.25,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4a22f4932d13f8a2ac396968a382dc990dc3bab5f7309a527fb435a2490a0901",
+      "promptSha256": "bd038906595b38122f237bc87fc29ad573d34f0627728221e5003e6ad5c804c3",
+      "expectedSha256": "d780a20bc64a73f478bf4a976748549c62dc739498e0c51982ae9c48eb3ee720",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 281,
+        "outputTokens": 672,
+        "totalCost": 0.0010286000000000002
+      },
+      "wallMs": 5309,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:44.822Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-08",
+      "family": "shortest-path",
+      "seed": 1408347246,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "8467da4fb6cd977f76a80ce1f7cd0515bbdf2226ab0967a655c2afeafbf9706f",
+      "promptSha256": "716e2e20172bb86020009400332b4b9d32acb7dd890da76e962fd59be7c768c7",
+      "expectedSha256": "8467da4fb6cd977f76a80ce1f7cd0515bbdf2226ab0967a655c2afeafbf9706f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 314,
+        "outputTokens": 1814,
+        "totalCost": 0.00255056
+      },
+      "wallMs": 13667,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:02:58.911Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-10",
+      "family": "boolean-circuit",
+      "seed": 1408387440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "promptSha256": "1b681622cdb0ddf0fa9b0082fab4edfe2fccbbf4ff332ff585697d0741de938e",
+      "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 269,
+        "outputTokens": 457,
+        "totalCost": 0.0007413119999999999
+      },
+      "wallMs": 3254,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:02.591Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-09",
+      "family": "relational-join",
+      "seed": 1408377343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "c85bbd7b7ce204fb10029cdc06a0c4720062e2ca65caccb4528a776f8c170cc8",
+      "promptSha256": "34b3f44bb836610e18dd457728021dcae937593796e3f528c3bcb2d914909c86",
+      "expectedSha256": "251da01b34376fc6374115d71b2d66eed4d7e2fd2ab75412942bbc44639b630f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 677,
+        "outputTokens": 1551,
+        "totalCost": 0.002364912
+      },
+      "wallMs": 9849,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:12.857Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-01",
+      "family": "critical-path",
+      "seed": 1408356567,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee",
+      "promptSha256": "94e90965eb7c9fa66901d64a85b9fa862523ccbcf7109d931f1d7aef2c72694c",
+      "expectedSha256": "7477c23f98a166b3b080f7570eb20ddc7057d613a9e089b12a6080548f53f5ee",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 279,
+        "outputTokens": 733,
+        "totalCost": 0.0011082400000000001
+      },
+      "wallMs": 4834,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:18.132Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-04",
+      "family": "relational-join",
+      "seed": 1408376858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "20c56fff5522a15d626cfcea997adc46db6e8bb75438333520237f014ab2a403",
+      "promptSha256": "25357a7f565ddbd1abbdffec5ac6fed7774222e8c1e9f03f53d77c3b3ae61470",
+      "expectedSha256": "701a31d51de238034afc31258526d1ad60d7d5d7a0d0745abdbc9f935a53baa6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 676,
+        "outputTokens": 1397,
+        "totalCost": 0.002161192
+      },
+      "wallMs": 7998,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:26.626Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-02",
+      "family": "critical-path",
+      "seed": 1408356664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d",
+      "promptSha256": "bb02c69b8b59bdf87dc124c241e58ac29c821c90cf7c036d835da16523861368",
+      "expectedSha256": "72fe461c4ffea2e329bc138433d5aeb0a23b19010ae90de202d0a7febac8387d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 277,
+        "outputTokens": 786,
+        "totalCost": 0.0011773200000000001
+      },
+      "wallMs": 6218,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:33.291Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-10",
+      "family": "shortest-path",
+      "seed": 1408347440,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "a79fffa8b7267d33787d58c2bbdf0f1f166834db4244fe76f4ce4022878d7b91",
+      "promptSha256": "e53f677a45c6294cf1a9e71ede99fb1ddfe4bb1856d381378078ada2d9d4dd7c",
+      "expectedSha256": "a79fffa8b7267d33787d58c2bbdf0f1f166834db4244fe76f4ce4022878d7b91",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 293,
+        "outputTokens": 1611,
+        "totalCost": 0.00227336
+      },
+      "wallMs": 12210,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:45.939Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-01",
+      "family": "relational-join",
+      "seed": 1408376567,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "ea2e60cbb13c77b60e1e92bb765e9926cdf19b9b0490c72086080353094a692d",
+      "promptSha256": "7d4ee96bfaf24e06847f39eb754ef72a2250e1523f14cf04892916dcee427f2a",
+      "expectedSha256": "c70b9d905d475e70924239f667067fd1047516ea49be476bfe6af7450a78aeab",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 687,
+        "outputTokens": 901,
+        "totalCost": 0.0015113120000000001
+      },
+      "wallMs": 5586,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:03:51.950Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-07",
+      "family": "event-ledger",
+      "seed": 1408367149,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5714285714285714,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "2071078c5027c43b59447ebbe524a4480a0d2241d6be2a038d7b0db2ccf87f31",
+      "promptSha256": "ee20a5f4bf3ae33f535cc1529262a62f3f8a64c31e6ec37056e1edd7023eea92",
+      "expectedSha256": "5da15b2908c4aead506958450ec01679fee027dcb9b7d32fb5488ad857a27082",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 377,
+        "outputTokens": 1497,
+        "totalCost": 0.002161632
+      },
+      "wallMs": 9508,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:04:01.874Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-09",
+      "family": "weighted-set-cover",
+      "seed": 1408397343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6",
+      "promptSha256": "f4694026954c9d50ea57af5d207eeda28f6d92c28ace20a187581d6c984ab800",
+      "expectedSha256": "b20c08b0ba69986317a57575917d333a4c77566d68b36499702ae8ee68a547c6",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 280,
+        "outputTokens": 6757,
+        "totalCost": 0.00906036
+      },
+      "wallMs": 48143,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:04:50.450Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-04",
+      "family": "event-ledger",
+      "seed": 1408366858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11",
+      "promptSha256": "839533c55fd2d23ff1f507a13ba4ca8a014313d45a53e5e409073a1d8d2779c3",
+      "expectedSha256": "e8bd823dd9154d8636db08d0bbdbfde6ad0e2d9d758be72fcb82f9af26c77e11",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 376,
+        "outputTokens": 2823,
+        "totalCost": 0.003911512000000001
+      },
+      "wallMs": 15147,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:06.075Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-01",
+      "family": "shortest-path",
+      "seed": 1408346567,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.16666666666666666,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "360fce481c36418f8e1ad9bf228c1f93c0909c78b2267d1b9a7d67b48b9b9b18",
+      "promptSha256": "df7cb018db97539a33cb69f6a84cf289e913ef4950052fc255b6a855b4ae2bc0",
+      "expectedSha256": "2c65c3b9ba8faa055117959095e0423526301ec4cc0ed2e5c9a889260e840434",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 335,
+        "outputTokens": 132,
+        "totalCost": 0.00033956
+      },
+      "wallMs": 1790,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:08.313Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-06",
+      "family": "relational-join",
+      "seed": 1408377052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.42857142857142855,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4bd48da341d86362acc537f53e6c58d901528a897e53c15508a2eac44d21b57b",
+      "promptSha256": "5500372f9a73df6117abba1bfd223e9c973cb53c9a7a6311c303952c6cacbe00",
+      "expectedSha256": "d483f71838aed8a6820bc1e972f8296c01e2043617e9024795ec8cd327dccc82",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 682,
+        "outputTokens": 864,
+        "totalCost": 0.0014602720000000003
+      },
+      "wallMs": 5297,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:14.044Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-04",
+      "family": "boolean-circuit",
+      "seed": 1408386858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "promptSha256": "1847728cac06cae06ffd5cca0ccac9237077416ea1877ee87f59e32fc3dec99c",
+      "expectedSha256": "87affb8629f1065f33bd43b5cabf4b00b2c0d5c1f76bb6a84b1c704c78d79db7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 261,
+        "outputTokens": 437,
+        "totalCost": 0.000711392
+      },
+      "wallMs": 2759,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:17.247Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-02",
+      "family": "weighted-set-cover",
+      "seed": 1408396664,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.25,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "4779c1fe1eb48efae9442414b5096f0fb216f24b696e4288193b0a03d84c8d6e",
+      "promptSha256": "ed6fd3fdcff0db409a1439e0150f978fb097fa837338a2a414b34405a8964a79",
+      "expectedSha256": "49c3e9d2507c2fadbff70fc8cd9564bfd0f6af5ddb20769c72beb937c5ccd8e5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 276,
+        "outputTokens": 269,
+        "totalCost": 0.0004944400000000001
+      },
+      "wallMs": 2594,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:20.281Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-05",
+      "family": "event-ledger",
+      "seed": 1408366955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "fcc9d70b155e5fe5940b0124c626f4d6590db6a9e2eba4846a847cbac533c491",
+      "promptSha256": "87ce6beb1b51a5eb9c910b294c1b9c17a9252e157e484e8e94f74d9e58b0494b",
+      "expectedSha256": "fcc9d70b155e5fe5940b0124c626f4d6590db6a9e2eba4846a847cbac533c491",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 372,
+        "outputTokens": 1293,
+        "totalCost": 0.0018901520000000002
+      },
+      "wallMs": 7382,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:28.099Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-03",
+      "family": "boolean-circuit",
+      "seed": 1408386761,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "3ab73d51ad90ef5a8047ad36924edd2d76c3124a5e6a0da9c3038ec4922ebba7",
+      "promptSha256": "dc3a058f1309eeb66b78765cbeb0b29a83d95d93141d48cde3c69d545a0573e2",
+      "expectedSha256": "3ab73d51ad90ef5a8047ad36924edd2d76c3124a5e6a0da9c3038ec4922ebba7",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 265,
+        "outputTokens": 453,
+        "totalCost": 0.000734272
+      },
+      "wallMs": 2786,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:31.320Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-06",
+      "family": "weighted-set-cover",
+      "seed": 1408397052,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "8e4c1a7d813e3d0f74d4476082cc071762a9c55fb0c80d5885a0371402f76772",
+      "promptSha256": "e6e376a600fa6e6804905c5f2da48150c61b35bd49b260981b5d393ad8e3977c",
+      "expectedSha256": "8e4c1a7d813e3d0f74d4476082cc071762a9c55fb0c80d5885a0371402f76772",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 281,
+        "outputTokens": 3342,
+        "totalCost": 0.004553000000000001
+      },
+      "wallMs": 24919,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:05:56.683Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-06",
+      "family": "event-ledger",
+      "seed": 1408367052,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.7142857142857143,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "627bc3d775f015db477a1700f7c380eca13fc611fa1161f42578565d6c92906b",
+      "promptSha256": "1ed16466659bf00bd65908df6bb4d26c903af7d373e0a6783190aeb7c44103c5",
+      "expectedSha256": "b6dbfad50555c3b7246c901a0d9f4cc7bed0d0e03f8c49f3c6424a7862bda769",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 370,
+        "outputTokens": 1146,
+        "totalCost": 0.0016952320000000003
+      },
+      "wallMs": 7011,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:06:04.130Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-09",
+      "family": "shortest-path",
+      "seed": 1408347343,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "4da5bb96907d26734f0bb3726e39191a4dce23f72601b6f6016aad2f6c93909f",
+      "promptSha256": "0b37d161b37856b70a69e7e239130cb6698c97af6944ff7d80ceee713b01ef67",
+      "expectedSha256": "4da5bb96907d26734f0bb3726e39191a4dce23f72601b6f6016aad2f6c93909f",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 279,
+        "outputTokens": 1426,
+        "totalCost": 0.002023
+      },
+      "wallMs": 9753,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:06:14.327Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-04",
+      "family": "shortest-path",
+      "seed": 1408346858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "d0c8f06255dfef8b04213cddfd36a8925ae4a941f929a2be7b14c6e64d146e70",
+      "promptSha256": "f6cde16c42eacf5c84f3bcd5c7dde7299b0154d397df1cae3e3d05bfa1749d70",
+      "expectedSha256": "d0c8f06255dfef8b04213cddfd36a8925ae4a941f929a2be7b14c6e64d146e70",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 293,
+        "outputTokens": 1406,
+        "totalCost": 0.0020027599999999997
+      },
+      "wallMs": 9021,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:06:23.797Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-08",
+      "family": "relational-join",
+      "seed": 1408377246,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.5,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "5b68403e0f7edd21f9173066c1a1988e8438a61e10ac952d3a92c4b833a9c0e5",
+      "promptSha256": "d7c905b84d470e803aac97c9c6eea908cd931f6522fa9fc46b18ff4f97ccb65c",
+      "expectedSha256": "079476842223ab7e3a8cdde5d619ab672018e785500ebd52e22d5b771f69e78d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 679,
+        "outputTokens": 969,
+        "totalCost": 0.0015975520000000001
+      },
+      "wallMs": 5446,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:06:29.676Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-06",
+      "family": "boolean-circuit",
+      "seed": 1408387052,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "bd0972afb84382b7cd7e0243dc0031c39c3d35f9e38f5e1c5f982e1e3243f66d",
+      "promptSha256": "912039d135fb90db0926ad49fafb2cade4aa99a73e40c839ed5f7dd0e7ee66c0",
+      "expectedSha256": "bd0972afb84382b7cd7e0243dc0031c39c3d35f9e38f5e1c5f982e1e3243f66d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 273,
+        "outputTokens": 472,
+        "totalCost": 0.000762872
+      },
+      "wallMs": 2841,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:06:32.948Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-08",
+      "family": "weighted-set-cover",
+      "seed": 1408397246,
+      "ok": false,
+      "semanticPass": false,
+      "formatPass": false,
+      "fieldAccuracy": 0,
+      "scoreReason": "structured-output-missing",
+      "failureCategory": "structured-output-missing",
+      "errorClass": "Error",
+      "errorSha256": "ec5787e39adf36581df43cef806a954fa0d7c46d915d74581de3f5e01d7c800c",
+      "promptSha256": "fd4159085b99cd78ccfaf250f29288654210599151b5265c7e6209c34006b657",
+      "expectedSha256": "2c6de95e8dea3320e88141e23d59d9ac5462f7ca385c714475423de162fb3cd6",
+      "wallMs": 53722,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:27.105Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "relational-join-02",
+      "family": "relational-join",
+      "seed": 1408376664,
+      "ok": true,
+      "semanticPass": false,
+      "formatPass": true,
+      "fieldAccuracy": 0.4444444444444444,
+      "scoreReason": "value-mismatch",
+      "parsedFormat": "strict",
+      "answerSha256": "f951b6d758f0fc8d1564c084ef1c5acae7174914cfba470a27155c91e0488636",
+      "promptSha256": "7ca0050ee9ac50c6c2e03201f0a4889816104ccffcda6bc271e64a4aa48ce327",
+      "expectedSha256": "79ac644354245222041e6fcf4af8d34f7627be055f53d739775be5b257782f3e",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 674,
+        "outputTokens": 1658,
+        "totalCost": 0.002504832
+      },
+      "wallMs": 8601,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:36.148Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "shortest-path-05",
+      "family": "shortest-path",
+      "seed": 1408346955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "25d8c40d7d7bd310e9e5c9f661d4d11c2471cfdd86f4a3a49b6b9527b17959c4",
+      "promptSha256": "b349537559f268309fa294720fd280120a06fa9c0ebb66b2b473a795aee497cd",
+      "expectedSha256": "25d8c40d7d7bd310e9e5c9f661d4d11c2471cfdd86f4a3a49b6b9527b17959c4",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 307,
+        "outputTokens": 853,
+        "totalCost": 0.0012789600000000002
+      },
+      "wallMs": 5081,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:41.656Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "boolean-circuit-07",
+      "family": "boolean-circuit",
+      "seed": 1408387149,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764",
+      "promptSha256": "f8bb6be4e63087ce919cb31885f4a339f5d1abf60dde8f731a641be964fa76b3",
+      "expectedSha256": "f101fdbf3eb05c81b0b9a152467db7a5a3c2d1ff61a2ac5b544f2f5048de2764",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 267,
+        "outputTokens": 452,
+        "totalCost": 0.000733832
+      },
+      "wallMs": 3440,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:45.546Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "event-ledger-02",
+      "family": "event-ledger",
+      "seed": 1408366664,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "8364a50965365b3f85625506bd13802084d6797aca1c9f3bfc309d81f63975c5",
+      "promptSha256": "074a1768aea0fb39be498e9782ed8b98f4432dfb3dd3f83c829eded6a6f081c8",
+      "expectedSha256": "8364a50965365b3f85625506bd13802084d6797aca1c9f3bfc309d81f63975c5",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 374,
+        "outputTokens": 1475,
+        "totalCost": 0.002131272
+      },
+      "wallMs": 8578,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:54.573Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-05",
+      "family": "critical-path",
+      "seed": 1408356955,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "ce28e25630a4277de9275b9959e5d9f37501066f769c856b5912fccb50c90c8d",
+      "promptSha256": "862f5a19e0d9a074c1331ffaf7502f4b85803b2a3ce985de7d4db31bbe121401",
+      "expectedSha256": "ce28e25630a4277de9275b9959e5d9f37501066f769c856b5912fccb50c90c8d",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 283,
+        "outputTokens": 668,
+        "totalCost": 0.0010242
+      },
+      "wallMs": 4204,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:07:59.213Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "weighted-set-cover-04",
+      "family": "weighted-set-cover",
+      "seed": 1408396858,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb",
+      "promptSha256": "c72df0d6eeff39c979adc3d1706e60dbb09e2d07973a768092fefc2436af8696",
+      "expectedSha256": "cca1e8606d438fa1134608a56ffa180ab0b0e00a61303f90d7ad2d3d4b6cbedb",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 281,
+        "outputTokens": 2293,
+        "totalCost": 0.00316832
+      },
+      "wallMs": 17073,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "wireProvider": "deepseek",
+      "wireModel": "deepseek-v4-flash",
+      "startedAt": "2026-09-02T19:08:16.737Z",
+      "deepSeekPricingMultiplier": 0.5,
+      "task": "critical-path-06",
+      "family": "critical-path",
+      "seed": 1408357052,
+      "ok": true,
+      "semanticPass": true,
+      "formatPass": true,
+      "fieldAccuracy": 1,
+      "scoreReason": "exact",
+      "parsedFormat": "strict",
+      "answerSha256": "2e0a00b4747f48de9e99a46cf28e3e661ebe60e95f61d96e394488eb188265ba",
+      "promptSha256": "d58091104d29b45951a18bd49da42171d27b36c6677a345ae9309595fb5e899a",
+      "expectedSha256": "2e0a00b4747f48de9e99a46cf28e3e661ebe60e95f61d96e394488eb188265ba",
+      "iterations": 1,
+      "budgetHit": null,
+      "usage": {
+        "inputTokens": 275,
+        "outputTokens": 507,
+        "totalCost": 0.00080816
+      },
+      "wallMs": 3534,
+      "limitCompliant": true,
+      "route": "deepseek-direct",
+      "payloadContractPass": true,
+      "payloadProofs": [
+        {
+          "call": 1,
+          "maxTokensField": "max_tokens",
+          "maxTokens": 8192,
+          "reasoning": null,
+          "thinking": {
+            "type": "enabled"
+          },
+          "reasoningEffort": "low",
+          "temperature": 0,
+          "inferenceSeed": null,
+          "responseFormat": null,
+          "emitDoneToolPresent": true,
+          "toolChoice": null,
+          "provider": null,
+          "contractPass": true,
+          "sha256": "a62ab46ed82447b3ef14361b1308c28892f81489743b24c269865693772ee120"
+        }
+      ]
+    }
+  ],
+  "openRouterUsageStartUsd": null,
+  "openRouterUsageCurrentUsd": null,
+  "openRouterUsageDeltaUsd": 0,
+  "deepSeekBalanceStartUsd": 65.02,
+  "deepSeekBalanceCurrentUsd": 64.89,
+  "deepSeekSpendDeltaUsd": 0.12999999999999545,
+  "totalAuthoritativeSpendUsd": 0.12999999999999545,
+  "billing": {
+    "authority": "provider-native-account-deltas",
+    "status": "unsettled",
+    "openrouter": {
+      "status": "not-used",
+      "responseUsageCostUsd": 0,
+      "differenceUsd": 0,
+      "toleranceUsd": 0.000001
+    },
+    "deepseek": {
+      "status": "contaminated",
+      "estimatedCostUsd": 0.05520528800000002,
+      "differenceUsd": 0.07479471199999543,
+      "toleranceUsd": 0.0011041057600000004,
+      "spendDeltaUsd": 0.12999999999999545
+    }
+  },
+  "claimEligible": false,
+  "completedAt": "2026-09-02T19:08:20.699Z"
+}

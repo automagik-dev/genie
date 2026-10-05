@@ -1,0 +1,8 @@
+schema_version: 1
+tools_api: 1
+shape: loop
+model: station/Qwen3.6-35B-A3B-MTP-GGUF
+description: Answers a factual question about a directory of code or docs passed as context, citing file paths. Use for "where/how is X done here" instead of grepping a large tree inline.
+system: SYSTEM.md
+budget:
+  max_iterations: 8

@@ -1,0 +1,531 @@
+{
+  "arm": "rlmx",
+  "task": 6,
+  "model": "khal/mimo-v2.5",
+  "round": "r6-mimo-tune1",
+  "footer": "rlmx · agent=explore · khal/mimo-v2.5 · 24 iterations · 69,348 in / 18,758 out · $0.13 · 354.4s · session sess_fbd7cf396753b779",
+  "wallSeconds": 354.7,
+  "requestChars": 1858,
+  "resultChars": 7705,
+  "ok": true,
+  "root": "/home/namastex/workspace/repos/genie",
+  "outOfScope": [
+    "/home/namastex/.genie"
+  ],
+  "need": 8,
+  "factTotal": 8,
+  "answerChars": 7573,
+  "citations": [
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 359,
+      "key": "src/genie-commands/install.ts:359",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "const agentSyncSelection = narrowAgentSyncSelection(selection);"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 362,
+      "key": "src/genie-commands/install.ts:362",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "runSync(agentSyncSelection);"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 328,
+      "key": "src/genie-commands/install.ts:328",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "export function runInstallAgentSync("
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 333,
+      "key": "src/genie-commands/install.ts:333",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 518,
+      "key": "src/genie-commands/install.ts:518",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "export function narrowAgentSyncSelection(selection: IntegrationSelection): IntegrationSelection | null {"
+    },
+    {
+      "path": "src/genie-commands/install.ts",
+      "line": 520,
+      "key": "src/genie-commands/install.ts:520",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 2688,
+      "key": "src/genie-commands/update.ts:2688",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): AgentSyncReport | null {"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 2710,
+      "key": "src/genie-commands/update.ts:2710",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 1757,
+      "key": "src/genie-commands/update.ts:1757",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "export function runUpdateAgentSync("
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 1762,
+      "key": "src/genie-commands/update.ts:1762",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 2796,
+      "key": "src/genie-commands/update.ts:2796",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "// `runAgentSync` has no codex arm, so it structurally never writes Codex"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 2801,
+      "key": "src/genie-commands/update.ts:2801",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "(options.runSync ?? (() => runUpdateAgentSync(agentSyncSelection)))();"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 1781,
+      "key": "src/genie-commands/update.ts:1781",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "export function runLegacySyncOnlyConvergence(options: LegacySyncOnlyConvergenceOptions): void {"
+    },
+    {
+      "path": "src/genie-commands/update.ts",
+      "line": 1789,
+      "key": "src/genie-commands/update.ts:1789",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/genie-commands/doctor.ts",
+      "line": 1196,
+      "key": "src/genie-commands/doctor.ts:1196",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "function checkClaudeSync(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {"
+    },
+    {
+      "path": "src/genie-commands/doctor.ts",
+      "line": 1215,
+      "key": "src/genie-commands/doctor.ts:1215",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "{"
+    },
+    {
+      "path": "src/genie-commands/uninstall.ts",
+      "line": 3420,
+      "key": "src/genie-commands/uninstall.ts:3420",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "let agentSyncLock: { release: () => void } | null;"
+    },
+    {
+      "path": "src/genie-commands/uninstall.ts",
+      "line": 3434,
+      "key": "src/genie-commands/uninstall.ts:3434",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "agentSyncLock.release();"
+    },
+    {
+      "path": "install.ts",
+      "line": 328,
+      "key": "install.ts:328",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/install.ts",
+      "lines": 545,
+      "verdict": "resolves",
+      "text": "export function runInstallAgentSync("
+    },
+    {
+      "path": "update.ts",
+      "line": 2688,
+      "key": "update.ts:2688",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "export function runAgentSyncSafe(opts: RunAgentSyncSafeOptions = {}): AgentSyncReport | null {"
+    },
+    {
+      "path": "agent-sync.ts",
+      "line": 6927,
+      "key": "agent-sync.ts:6927",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {"
+    },
+    {
+      "path": "update.ts",
+      "line": 1757,
+      "key": "update.ts:1757",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/update.ts",
+      "lines": 3716,
+      "verdict": "resolves",
+      "text": "export function runUpdateAgentSync("
+    },
+    {
+      "path": "doctor.ts",
+      "line": 1196,
+      "key": "doctor.ts:1196",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "function checkClaudeSync(pluginRoot: string, claudeDir: string, settingsPath: string): CheckResult[] {"
+    },
+    {
+      "path": "uninstall.ts",
+      "line": 3422,
+      "key": "uninstall.ts:3422",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/uninstall.ts",
+      "lines": 3615,
+      "verdict": "resolves",
+      "text": "agentSyncLock = acquireAgentSyncLock(genieDir);"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 6927,
+      "key": "src/lib/agent-sync.ts:6927",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export function runAgentSync(opts: AgentSyncOptions = {}): AgentSyncReport {"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 5645,
+      "key": "src/lib/agent-sync.ts:5645",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "function syncClaude(ctx: RunContext, report: AgentReport): void {"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 5669,
+      "key": "src/lib/agent-sync.ts:5669",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 98,
+      "key": "src/lib/agent-sync.ts:98",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export function claudeGeniePluginEnabled(settingsPath: string): boolean {"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 106,
+      "key": "src/lib/agent-sync.ts:106",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 5700,
+      "key": "src/lib/agent-sync.ts:5700",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "function syncHermes(ctx: RunContext, opts: AgentSyncOptions, report: AgentReport): void {"
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 69,
+      "key": "scripts/build-binary.sh:69",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "echo \"==> [${PLATFORM}] bun build --compile --target=${TARGET}  (v${VERSION})\""
+    },
+    {
+      "path": "scripts/build-binary.sh",
+      "line": 73,
+      "key": "scripts/build-binary.sh:73",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/scripts/build-binary.sh",
+      "lines": 231,
+      "verdict": "resolves",
+      "text": "--outfile \"${STAGE}/genie\""
+    },
+    {
+      "path": "install.sh",
+      "line": 656,
+      "key": "install.sh:656",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "\"$STAGING_DIR/genie\" __install-promote \\"
+    },
+    {
+      "path": "install.sh",
+      "line": 812,
+      "key": "install.sh:812",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/install.sh",
+      "lines": 912,
+      "verdict": "resolves",
+      "text": "\"$LOCAL_BIN/genie\" install \"$@\" |"
+    },
+    {
+      "path": "agent-sync.ts",
+      "line": 5645,
+      "key": "agent-sync.ts:5645",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "function syncClaude(ctx: RunContext, report: AgentReport): void {"
+    },
+    {
+      "path": "agent-sync.ts",
+      "line": 5669,
+      "key": "agent-sync.ts:5669",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    },
+    {
+      "path": "agent-sync.ts",
+      "line": 95,
+      "key": "agent-sync.ts:95",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "* broken settings file. GENIE_FORCE_CLAUDE_SKILLS_MIRROR=1 is the ops"
+    },
+    {
+      "path": "agent-sync.ts",
+      "line": 99,
+      "key": "agent-sync.ts:99",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "if (process.env.GENIE_FORCE_CLAUDE_SKILLS_MIRROR === '1') return false;"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 1204,
+      "key": "doctor.ts:1204",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "const pluginEnabled = claudeGeniePluginEnabled(settingsPath);"
+    },
+    {
+      "path": "doctor.ts",
+      "line": 1205,
+      "key": "doctor.ts:1205",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/genie-commands/doctor.ts",
+      "lines": 2018,
+      "verdict": "resolves",
+      "text": "const excluded = pluginEnabled ? new Set([...sourceSkillDigests(pluginRoot).keys()]) : CLAUDE_EXCLUDED_SKILLS;"
+    },
+    {
+      "path": "agent-sync.test.ts",
+      "line": 1624,
+      "key": "agent-sync.test.ts:1624",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.test.ts",
+      "lines": 5373,
+      "verdict": "resolves",
+      "text": "// Claude skills-mirror suppression (genie@automagik plugin enabled)"
+    },
+    {
+      "path": "agent-sync.test.ts",
+      "line": 1750,
+      "key": "agent-sync.test.ts:1750",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.test.ts",
+      "lines": 5373,
+      "verdict": "resolves",
+      "text": "});"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 90,
+      "key": "src/lib/agent-sync.ts:90",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export const CLAUDE_EXCLUDED_SKILLS = new Set(['council']);"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 290,
+      "key": "src/lib/agent-sync.ts:290",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "export type AgentSyncSelection = 'auto' | 'codex' | 'claude' | 'all' | 'none';"
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 3507,
+      "key": "src/lib/agent-sync.ts:3507",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "function syncSkillDirsInto("
+    },
+    {
+      "path": "src/lib/agent-sync.ts",
+      "line": 3529,
+      "key": "src/lib/agent-sync.ts:3529",
+      "resolvedAs": "/home/namastex/workspace/repos/genie/src/lib/agent-sync.ts",
+      "lines": 7218,
+      "verdict": "resolves",
+      "text": "}"
+    }
+  ],
+  "criterion2": {
+    "scoredCitations": 46,
+    "failures": [],
+    "pass": true
+  },
+  "criterion3": {
+    "failures": [],
+    "pass": true
+  },
+  "factSignals": [
+    {
+      "id": "F1",
+      "anchor": "src/lib/hermes-skills-config.ts:14",
+      "anchoredOn": "$GENIE_HOME/skills",
+      "claim": "- **Hermes never reads `~/.claude/skills`**: `syncHermes` (**:5666**) only symlinks `~/.hermes/plugins/genie` → `<GENIE_HOME>/plugins/hermes-genie` and merges `",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F2",
+      "anchor": "src/genie-commands/update.ts:2661",
+      "anchoredOn": "~/.genie/.last-agent-sync",
+      "claim": "Wrapper: `runAgentSyncSafe()` — `src/genie-commands/update.ts:2046` (calls `runAgentSync`, touches `~/.genie/.last-agent-sync` marker at :2060; marker is write-",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "~/.genie/.last-agent-sync"
+      ]
+    },
+    {
+      "id": "F3",
+      "anchor": "src/genie.ts:161",
+      "anchoredOn": "installCommand",
+      "claim": "| 1 | `genie install` (invoked by `install.sh` line 679 after binary promotion; CLI registered at `src/genie.ts:128`) | `installCommand` → `runSync` default = `",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F4",
+      "anchor": "src/genie-commands/update.ts:1759",
+      "anchoredOn": "runAgentSyncSafe",
+      "claim": "| 2 | `genie update` (normal, already-up-to-date) | `updateCommand` → `runTrackedManualUpdateConvergence` → `runManualUpdateConvergence` → `runAgentSyncSafe` | ",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "runAgentSyncSafe"
+      ]
+    },
+    {
+      "id": "F5",
+      "anchor": "src/genie-commands/doctor.ts:32",
+      "anchoredOn": "CLAUDE_EXCLUDED_SKILLS",
+      "claim": "| 6 | `genie doctor` | **READ-ONLY** — never calls `runAgentSync`. `checkAgentSync` :1436 → `checkClaudeSync` :1023 computes expected mirror as source-skills mi",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": true,
+      "partialTermHits": [
+        "CLAUDE_EXCLUDED_SKILLS"
+      ]
+    },
+    {
+      "id": "F6",
+      "anchor": "src/genie-commands/uninstall.ts:45",
+      "anchoredOn": "MANIFEST_NAME",
+      "claim": "| 7 | `genie uninstall` | does not sync; imports `MANIFEST_NAME`/`inspectManagedSkillTree`/`removeManagedSkillTree` etc. (`src/genie-commands/uninstall.ts:40-61",
+      "namesAnchorPath": true,
+      "namesBasename": true,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F7",
+      "anchor": "src/genie-commands/setup.ts:12",
+      "anchoredOn": "acquireLifecycleLease",
+      "claim": "| 8 | `genie setup` | no sync — imports only `acquireLifecycleLease` (`src/genie-commands/setup.ts:11`) |",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    },
+    {
+      "id": "F8",
+      "anchor": "src/lib/smart-install-hook.test.ts:57",
+      "anchoredOn": "SessionStart",
+      "claim": "| 9 | Claude Code plugin hooks (`plugins/genie/hooks/hooks.json`: SessionStart `session-context.cjs`, PreToolUse `dispatch-runtime.cjs` → `genie hook dispatch`)",
+      "namesAnchorPath": false,
+      "namesBasename": false,
+      "termHit": false,
+      "partialTermHits": []
+    }
+  ]
+}
