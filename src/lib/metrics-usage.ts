@@ -167,12 +167,16 @@ export function sessionLogFiles(session: RuntimeSession, env: NodeJS.ProcessEnv 
   return [];
 }
 
-/** A logged TTL split genie cannot price: a bad counter, 1h above the total, or 5m + 1h that miss the total. */
+/**
+ * A logged TTL split genie cannot price: a bad counter, any SUPPLIED counter (1h or 5m, alone or together)
+ * above the total, or 5m + 1h that miss the total.
+ */
 function ttlContradicts(ttl: Rec, total: number): boolean {
   const hour = ttl.ephemeral_1h_input_tokens;
   const fiveMinutes = ttl.ephemeral_5m_input_tokens;
   if (badCount(hour) || badCount(fiveMinutes)) return true;
   if (hour !== undefined && num(hour) > total) return true;
+  if (fiveMinutes !== undefined && num(fiveMinutes) > total) return true;
   return hour !== undefined && fiveMinutes !== undefined && num(hour) + num(fiveMinutes) !== total;
 }
 

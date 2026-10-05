@@ -173,19 +173,40 @@ export type PriceUpdateResult =
 
 const refuse = (code: 1 | 2, message: string): PriceUpdateResult => ({ ok: false, code, message });
 
-/** What genie stores, prints and reports for a source: a URL without userinfo, query or fragment. */
+/**
+ * ONE grammar both decides whether a source is URL-like and finds its secrets, and it is at least as lenient as
+ * a WHATWG URL parser, so no spelling a parser would accept escapes redaction. As the parser does, tab/CR/LF
+ * are dropped anywhere and C0 controls/spaces trimmed at both ends. A leading `scheme:` then makes the source
+ * URL-like, whatever run of `/` or `\` follows (`https:user:pw@host`, `https:\\\\user:pw@host`). Its secrets
+ * are everything up to the last `@` before the first `?`/`#` (the userinfo, even where the parser would reject
+ * the URL) and everything from that `?`/`#` on. A source with neither, which includes every local path such as
+ * `./prices:2026.json`, `prices:2026.json` or `/tmp/a b.json`, is returned byte for byte.
+ */
+const URL_LIKE = /^([a-z][a-z0-9+.-]*:[/\\]*)([^?#]*)([?#][\s\S]*)?$/i;
+
+function splitSource(from: string): { shown: string; secrets: string[] } {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the WHATWG parser trims exactly C0 controls and space.
+  const normalized = from.replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+  const match = URL_LIKE.exec(normalized);
+  if (!match) return { shown: from, secrets: [] };
+  const [, prefix = '', rest = '', tail = ''] = match;
+  const at = rest.lastIndexOf('@');
+  if (at < 0 && tail === '') return { shown: from, secrets: [] };
+  const secrets = [at > 0 ? rest.slice(0, at) : '', tail.slice(1)].filter((secret) => secret !== '');
+  return { shown: `${prefix}${rest.slice(at + 1)}`, secrets };
+}
+
+/** What genie stores, prints and reports for a source: a URL-like source without userinfo, query or fragment. */
 export function displaySource(from: string): string {
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(from)) return from;
-  try {
-    const url = new URL(from);
-    url.username = '';
-    url.password = '';
-    url.search = '';
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return from.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, '$1').replace(/[?#].*$/, '');
-  }
+  return splitSource(from).shown;
+}
+
+/** A message that may quote the raw source (a runtime or file-system error), with every secret of it removed. */
+function redactSource(text: string, from: string): string {
+  const { shown, secrets } = splitSource(from);
+  let out = text.split(from).join(shown);
+  for (const secret of secrets) out = out.split(secret).join('[redacted]');
+  return out;
 }
 
 async function fetchSource(
@@ -200,8 +221,7 @@ async function fetchSource(
       return { bytes: Buffer.from(await res.arrayBuffer()) };
     } catch (error) {
       // The runtime's message may quote the URL it was handed: never echo the raw one.
-      const reason = (error instanceof Error ? error.message : String(error)).split(from).join(shown);
-      return refuse(1, `GET ${shown}: ${reason}`);
+      return refuse(1, `GET ${shown}: ${redactSource(error instanceof Error ? error.message : String(error), from)}`);
     }
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(from))
@@ -209,7 +229,11 @@ async function fetchSource(
   try {
     return { bytes: readFileSync(from) };
   } catch (error) {
-    return refuse(2, `cannot read ${from}: ${error instanceof Error ? error.message : String(error)}`);
+    // A path is shown verbatim; a URL-like one that reached here (padded, slashless) never shows its secrets.
+    return refuse(
+      2,
+      `cannot read ${shown}: ${redactSource(error instanceof Error ? error.message : String(error), from)}`,
+    );
   }
 }
 

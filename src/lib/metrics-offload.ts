@@ -191,7 +191,13 @@ export function offloadInWindow(
     failed: own.filter((row) => !row.ok).length,
     ambiguous: shared.length,
     // An ambiguous attempt may be this card's: leaving it out would understate the bill, so the bill is unknown.
-    tokens: shared.length > 0 || tokens.includes(null) ? null : (tokens as number[]).reduce((sum, t) => sum + t, 0),
-    costUsd: shared.length > 0 || costs.includes(null) ? null : (costs as number[]).reduce((sum, c) => sum + c, 0),
+    tokens: shared.length > 0 || tokens.includes(null) ? null : finiteOrNull(tokens as number[]),
+    costUsd: shared.length > 0 || costs.includes(null) ? null : finiteOrNull(costs as number[]),
   };
+}
+
+/** The sum, or null when it overflows — an unknown total, never Infinity. An empty window stays a measured 0. */
+function finiteOrNull(values: number[]): number | null {
+  const sum = values.reduce((total, v) => total + v, 0);
+  return Number.isFinite(sum) ? sum : null;
 }

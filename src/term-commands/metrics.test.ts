@@ -288,6 +288,41 @@ describe('genie metrics', () => {
     }
   }, 60_000);
 
+  test('R4: status and update errors stay secret-free for padded, slashless, backslash and malformed sources', () => {
+    const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
+    const path = join(home, 'metrics', 'prices.json');
+    execFileSync('mkdir', ['-p', join(home, 'metrics')]);
+    const sources = [
+      ' https://user:hunter2@example.invalid/p.json?token=abc123#frag',
+      'https:user:hunter2@example.invalid/p.json?token=abc123',
+      'https:\\\\user:hunter2@example.invalid/p.json?token=abc123',
+      ' https://user:hunter2@[bad/p.json?token=abc123',
+    ];
+    for (const source of sources) {
+      const meta = { source, fetchedAt: '2026-10-05T00:00:00.000Z', sha256: 'a'.repeat(64), models: 1 };
+      writeFileSync(path, `${JSON.stringify({ genie: meta, models: JSON.parse(body) })}\n`);
+      const before = readFileSync(path);
+      const text = run(['metrics', 'prices', 'status']);
+      const json = run(['metrics', 'prices', 'status', '--json']);
+      expect(text.code).toBe(0);
+      expect(JSON.parse(json.stdout).table.models).toBe(1);
+      const update = run(['metrics', 'prices', 'update', '--from', source]);
+      expect(update.code).toBe(2);
+      for (const out of [text.stdout, text.stderr, json.stdout, json.stderr, update.stdout, update.stderr]) {
+        expect(out).not.toMatch(/hunter2|abc123|frag/);
+      }
+      expect(readFileSync(path).equals(before)).toBe(true);
+    }
+  }, 120_000);
+
+  test('R4: a local source with spaces and a colon is shown verbatim by status', () => {
+    const from = join(root, 'my prices:2026.json');
+    writeFileSync(from, JSON.stringify({ m: { input_cost_per_token: 0.001 } }));
+    expect(run(['metrics', 'prices', 'update', '--from', from]).code).toBe(0);
+    expect(run(['metrics', 'prices', 'status']).stdout).toContain(`source:  ${from}\n`);
+    expect(JSON.parse(run(['metrics', 'prices', 'status', '--json']).stdout).table.source).toBe(from);
+  }, 60_000);
+
   test('status --json names the switch, the ledger and this shell’s session', () => {
     const status = run(['metrics', 'status', '--json'], { PI_SESSION_ID: 'pi-1', PI_SESSION_FILE: '/s/pi-1.jsonl' });
     expect(status.code).toBe(0);

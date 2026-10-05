@@ -412,6 +412,44 @@ describe('ledger → verified intervals', () => {
     expect(summarize([priced as Interval])[0]?.offloadUsd).toBeCloseTo(0.05, 6);
   });
 
+  test('offload (R4): an interval sum that overflows is unknown, never Infinity, down to the summary and the Phoenix span', () => {
+    const at1 = t('2026-10-04T13:00:00Z');
+    const at2 = t('2026-10-04T13:10:00Z');
+    const db = seedDb([
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ]);
+    const repoRoot = join(root, 'repo');
+    const run = (ts: string, ok: boolean, tokensIn: number, cost: number) => ({
+      runId: ts,
+      ts,
+      agent: 'wish-context',
+      dir: repoRoot,
+      ok,
+      footer: { tokensIn, tokensOut: 0, cost },
+    });
+    const ledger = join(repoRoot, '.mikro', 'runs', 'wish-context.jsonl');
+    const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
+
+    write(ledger, jsonl([run('2026-10-04T13:02:00Z', true, 10, 1e308), run('2026-10-04T13:03:00Z', false, 10, 1e308)]));
+    const [costOverflow] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    // The counts and the finite token sum stay measured; only the money is unknown.
+    expect(costOverflow?.offload).toEqual({ attempts: 2, failed: 1, ambiguous: 0, tokens: 20, costUsd: null });
+    expect(summarize([costOverflow as Interval])[0]?.offloadUsd).toBeNull();
+    const span = intervalSpan(costOverflow as Interval, 'salt');
+    expect(span.attributes['genie.offload.cost_usd']).toBeUndefined();
+    expect(span.attributes).toMatchObject({ 'genie.offload.attempts': 2, 'genie.offload.tokens': 20 });
+
+    write(
+      ledger,
+      jsonl([run('2026-10-04T13:02:00Z', true, 1e308, 0.01), run('2026-10-04T13:03:00Z', true, 1e308, 0.02)]),
+    );
+    const [tokenOverflow] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    expect(tokenOverflow?.offload?.tokens).toBeNull();
+    expect(tokenOverflow?.offload?.costUsd).toBeCloseTo(0.03, 12);
+    expect(intervalSpan(tokenOverflow as Interval, 'salt').attributes['genie.offload.tokens']).toBeUndefined();
+  });
+
   test('offload: an unpriced attempt makes the bill unknown; another card in the same window makes runs ambiguous; registered worktrees and GENIE_HOME ledgers count', () => {
     const at1 = t('2026-10-04T14:00:00Z');
     const at2 = t('2026-10-04T14:10:00Z');
@@ -880,10 +918,13 @@ describe('ledger → verified intervals', () => {
       };
       const ttlUsage = (total: number, split: string) => {
         write(claudeFile(), ttl(total, split));
-        const db = seedDb([
-          { id: 1, task: 't1', kind: 'claim', at: at1 },
-          { id: 2, task: 't1', kind: 'report', at: at2 },
-        ]);
+        const seeded = join(root, 'repo', '.genie', 'genie.db');
+        const db = existsSync(seeded)
+          ? seeded
+          : seedDb([
+              { id: 1, task: 't1', kind: 'claim', at: at1 },
+              { id: 2, task: 't1', kind: 'report', at: at2 },
+            ]);
         const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1), line(db, 2, 'report', at2)]);
         return buildIntervals(matched, env, ttlPrices)[0]?.usage;
       };
@@ -910,6 +951,24 @@ describe('ledger → verified intervals', () => {
         const usage = ttlUsage(100, '{"ephemeral_1h_input_tokens":60,"ephemeral_5m_input_tokens":40}');
         expect(usage).toMatchObject({ cacheWrite: 100, costSource: 'table', pricedCalls: 1 });
         expect(usage?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+      });
+
+      test('TTL (R4): a 5m count alone above the total leaves the call unpriced; its tokens stay reported', () => {
+        expect(ttlUsage(100, '{"ephemeral_5m_input_tokens":200}')).toMatchObject({ ...unpriced, cacheWrite: 100 });
+      });
+
+      test('TTL (R4): a 1h count alone above the total leaves the call unpriced', () => {
+        expect(ttlUsage(100, '{"ephemeral_1h_input_tokens":200}')).toMatchObject({ ...unpriced, cacheWrite: 100 });
+      });
+
+      test('TTL (R4 controls): a supplied count within the total keeps today’s pricing', () => {
+        // 5m alone (equal or below the total): the flat rate, never a reconstructed 1h remainder.
+        expect(ttlUsage(100, '{"ephemeral_5m_input_tokens":100}')?.costUsd).toBeCloseTo(100 * 0.00002, 12);
+        expect(ttlUsage(100, '{"ephemeral_5m_input_tokens":40}')?.costUsd).toBeCloseTo(100 * 0.00002, 12);
+        // 1h alone: the split.
+        expect(ttlUsage(100, '{"ephemeral_1h_input_tokens":60}')?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
+        // No counter supplied: flat.
+        expect(ttlUsage(100, '{}')?.costUsd).toBeCloseTo(100 * 0.00002, 12);
       });
     });
   });

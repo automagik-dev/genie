@@ -197,6 +197,59 @@ describe('R3: an already-stored source is redacted on read (item 5)', () => {
   });
 });
 
+describe('R4: every spelling a URL parser would accept is redacted; local files are shown verbatim', () => {
+  const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
+  const secret = /hunter2|abc123|frag/;
+  const credentialed = [
+    ' https://user:hunter2@example.invalid/p.json?token=abc123#frag',
+    '\thttps://user:hunter2@example.invalid/p.json?token=abc123',
+    'https://user:hunter2@example.invalid/p.json?token=abc123 \n',
+    'https:user:hunter2@example.invalid/p.json?token=abc123',
+    'https:\\\\user:hunter2@example.invalid/p.json?token=abc123',
+    ' https://user:hunter2@[bad/p.json?token=abc123',
+    'ht\ntps://user:hunter2@example.invalid/p.json#frag',
+  ];
+
+  for (const source of credentialed) {
+    test(`stored ${JSON.stringify(source)}: still present, never shown with its secrets, file untouched`, () => {
+      writeEnvelope(pricesPath(), body, { source });
+      const before = readFileSync(pricesPath());
+      const loaded = loadPriceTable();
+      expect(loaded?.meta.models).toBe(1);
+      expect(JSON.stringify(loaded?.meta)).not.toMatch(secret);
+      expect(loaded?.meta.source).toMatch(/^https:[/\\]*(example.invalid|\[bad)\/p.json$/);
+      expect(readFileSync(pricesPath()).equals(before)).toBe(true);
+    });
+  }
+
+  const local = ['/tmp/a b.json', './prices:2026.json', 'prices.json', 'prices:2026.json', ' padded name.json'];
+  for (const source of local) {
+    test(`stored local source ${JSON.stringify(source)} is shown byte for byte`, () => {
+      writeEnvelope(pricesPath(), body, { source });
+      expect(loadPriceTable()?.meta.source).toBe(source);
+    });
+  }
+
+  test('an update refused for a credentialed --from never echoes its secrets', async () => {
+    for (const from of [credentialed[0], credentialed[3], credentialed[4], credentialed[5]] as string[]) {
+      const result = await updatePriceTable(from);
+      expect(result.ok).toBe(false);
+      expect(result.ok ? '' : result.message).not.toMatch(secret);
+    }
+  });
+
+  test('a local file with spaces and a colon is copied and shown verbatim; a missing one is named verbatim', async () => {
+    const from = join(root, 'a b:2026.json');
+    writeFileSync(from, JSON.stringify({ m: { input_cost_per_token: 0.001 } }));
+    expect(await updatePriceTable(from)).toMatchObject({ ok: true, meta: { source: from } });
+    expect(loadPriceTable()?.meta.source).toBe(from);
+    const missing = join(root, 'gone b:2026.json');
+    const refused = await updatePriceTable(missing);
+    expect(refused).toMatchObject({ ok: false, code: 2 });
+    expect(refused.ok ? '' : refused.message).toContain(`cannot read ${missing}`);
+  });
+});
+
 describe('prices update', () => {
   const litellm = {
     sample_spec: { max_tokens: 'set to max tokens' },
