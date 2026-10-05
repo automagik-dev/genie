@@ -699,14 +699,70 @@ describe('ledger → verified intervals', () => {
         prices,
       );
       const [row] = summarize(intervals, true);
-      expect(row).toMatchObject({ calls: 2, pricedCalls: 1 });
+      expect(row).toMatchObject({ calls: 2, pricedCalls: 1, costSource: 'table' });
       const text = formatSummary(summarize(intervals, true), { lines: 2, unmatched: 0, corrupt: 0 });
-      expect(text).toContain('\tpriced\n');
-      expect(text).toMatch(/claim→report\t1\t.*\t1\/2\n/);
+      expect(text).toContain('\tpriced\tcostSource\n');
+      expect(text).toMatch(/claim→report\t1\t.*\t1\/2\ttable\n/);
 
       const bare = summarize(claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null));
       expect(Object.keys(bare[0] ?? {})).not.toContain('pricedCalls');
+      expect(Object.keys(bare[0] ?? {})).not.toContain('costSource');
       expect(formatSummary(bare, { lines: 2, unmatched: 0, corrupt: 0 })).not.toContain('priced');
+    });
+
+    test('summary provenance: runtime and table intervals make a mixed row; an unpriced row is null', () => {
+      const usage = (costUsd: number | null, costSource: 'runtime' | 'table' | null) => ({
+        calls: 1,
+        input: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 1,
+        costUsd,
+        costSource,
+        pricedCalls: costUsd === null ? 0 : 1,
+      });
+      const at = (task: string, u: ReturnType<typeof usage>) =>
+        ({
+          db: '/d',
+          task,
+          fromEvent: 1,
+          toEvent: 2,
+          transition: 'claim→report',
+          startAt: 0,
+          endAt: 1,
+          durationMs: 1,
+          session: { id: 's', source: 'claude-code', file: null },
+          usage: u,
+          sharedSession: false,
+          offload: null,
+          sessionMatch: 'exact',
+        }) as Interval;
+      expect(summarize([at('a', usage(1, 'runtime')), at('b', usage(2, 'table'))], true)[0]).toMatchObject({
+        costUsd: 3,
+        costSource: 'mixed',
+      });
+      expect(summarize([at('a', usage(null, null))], true)[0]).toMatchObject({ costUsd: null, costSource: null });
+      // Two finite interval costs whose sum overflows: unknown, never Infinity.
+      expect(summarize([at('a', usage(1e308, 'table')), at('b', usage(1e308, 'table'))], true)[0]?.costUsd).toBeNull();
+    });
+
+    test('an interval sum that overflows is null, never Infinity; a negative runtime price is no price', () => {
+      const huge: PriceTable = { ...prices, models: { 'claude-opus-5-5': { input_cost_per_token: 1e308 } } };
+      const call = (id: string) => ({
+        type: 'assistant',
+        timestamp: '2026-10-04T10:05:00Z',
+        message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 0 } },
+      });
+      const [overflow] = claudeIntervals([call('a'), call('b')], huge);
+      expect(overflow?.usage).toMatchObject({ costUsd: null, costSource: null });
+
+      const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-n.jsonl');
+      const usage = { input: 1, output: 1, cost: { total: -0.5 } };
+      write(
+        file,
+        jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:07Z', message: { role: 'assistant', usage } }]),
+      );
+      expect(readUsageSamples({ id: null, source: 'pi', file }, env)[0]?.costUsd).toBeNull();
     });
   });
 });

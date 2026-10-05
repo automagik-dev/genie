@@ -139,7 +139,7 @@ function sumUsage(samples: UsageSample[], startAt: number, endAt: number, prices
         .filter((c): c is number => c !== null)
     : [];
   const priced = [...runtime, ...table];
-  const costUsd = priced.length > 0 ? priced.reduce((sum, c) => sum + c, 0) : null;
+  const costUsd = finiteSum(priced);
   const totals: UsageTotals = {
     calls: inside.length,
     input: inside.reduce((sum, s) => sum + s.input, 0),
@@ -149,10 +149,24 @@ function sumUsage(samples: UsageSample[], startAt: number, endAt: number, prices
     costUsd,
   };
   if (!prices) return totals;
-  const source: CostSource | null =
-    costUsd === null ? null : table.length === 0 ? 'runtime' : runtime.length === 0 ? 'table' : 'mixed';
+  if (costUsd === null) return { ...totals, costSource: null, pricedCalls: 0 };
+  const source = combineSources([runtime.length > 0 ? 'runtime' : null, table.length > 0 ? 'table' : null]);
   return { ...totals, costSource: source, pricedCalls: priced.length };
 }
+
+/** The sum, or null when there is nothing to sum or it overflows — never Infinity. */
+const finiteSum = (values: number[]): number | null => {
+  if (values.length === 0) return null;
+  const sum = values.reduce((total, v) => total + v, 0);
+  return Number.isFinite(sum) ? sum : null;
+};
+
+/** Who priced a set of costs: one source, or 'mixed' when they differ; null when none priced. */
+const combineSources = (sources: Array<CostSource | null | undefined>): CostSource | null => {
+  const known = new Set(sources.filter((s): s is CostSource => !!s));
+  if (known.size === 0) return null;
+  return known.size === 1 ? ([...known][0] as CostSource) : 'mixed';
+};
 
 const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id ?? session.file ?? ''}`;
 
@@ -191,7 +205,7 @@ function usageFor(
 
 /**
  * Consecutive matched events of one card → intervals, with the opening session's usage inside each.
- * `prices` (the operator's optional table, read offline) prices calls the runtime left unpriced.
+ * `prices` (the operator's optional table, read from disk, never fetched) prices calls the runtime left unpriced.
  */
 export function buildIntervals(
   matched: CaptureLine[],
@@ -282,6 +296,8 @@ export interface TransitionSummary {
   calls?: number;
   /** Present only while a price table is loaded: how many of `calls` `costUsd` covers (a partial sum shows here). */
   pricedCalls?: number;
+  /** Present only while a price table is loaded: who priced `costUsd` across the rows' intervals; null when unpriced. */
+  costSource?: CostSource | null;
 }
 
 const quantile = (sorted: number[], q: number) =>
@@ -299,7 +315,8 @@ export function summarize(intervals: Interval[], coverage = false): TransitionSu
     .map(([transition, group]) => {
       const minutes = group.map((i) => i.durationMs / 60000).sort((a, b) => a - b);
       const known = group.map((i) => i.usage).filter((u): u is UsageTotals => u !== null);
-      const priced = known.map((u) => u.costUsd).filter((c): c is number => c !== null);
+      const pricedUsage = known.filter((u) => u.costUsd !== null);
+      const costUsd = finiteSum(pricedUsage.map((u) => u.costUsd as number));
       return {
         transition,
         n: group.length,
@@ -307,13 +324,14 @@ export function summarize(intervals: Interval[], coverage = false): TransitionSu
         p90Minutes: quantile(minutes, 0.9),
         withUsage: known.length,
         meanTokens: known.length > 0 ? Math.round(known.reduce((s, u) => s + totalTokens(u), 0) / known.length) : null,
-        costUsd: priced.length > 0 ? priced.reduce((s, c) => s + c, 0) : null,
+        costUsd,
         // A partial sum is not a total: one interval whose offload bill is unknown makes the transition's unknown.
         offloadUsd: allOrNull(group.map((i) => i.offload?.costUsd ?? null)),
         ...(coverage
           ? {
               calls: known.reduce((sum, u) => sum + u.calls, 0),
               pricedCalls: known.reduce((sum, u) => sum + (u.pricedCalls ?? 0), 0),
+              costSource: costUsd === null ? null : combineSources(pricedUsage.map((u) => u.costSource)),
             }
           : {}),
       };
@@ -330,11 +348,11 @@ export function formatSummary(
   const coverage = rows.some((r) => r.pricedCalls !== undefined);
   const out = [
     head,
-    `transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd${coverage ? '\tpriced' : ''}`,
+    `transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd${coverage ? '\tpriced\tcostSource' : ''}`,
   ];
   for (const r of rows) {
     out.push(
-      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}${coverage ? `\t${r.pricedCalls ?? 0}/${r.calls ?? 0}` : ''}`,
+      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}${coverage ? `\t${r.pricedCalls ?? 0}/${r.calls ?? 0}\t${r.costSource ?? '-'}` : ''}`,
     );
   }
   return `${out.join('\n')}\n`;

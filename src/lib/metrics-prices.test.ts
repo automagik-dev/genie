@@ -206,5 +206,39 @@ describe('prices update', () => {
     expect(loadPriceTable()).toBeNull();
     writeFileSync(path, '{torn');
     expect(loadPriceTable()).toBeNull();
+    // A hand-edited header whose fields are not plain values is no table — never a crash.
+    const models = { m: { input_cost_per_token: 1 } };
+    for (const genie of [
+      { source: { toString: null }, fetchedAt: 'x', sha256: 'x', models: 1 },
+      { source: 'x', fetchedAt: 7, sha256: 'x', models: 1 },
+      { source: 'x', fetchedAt: 'x', sha256: 'x', models: '1' },
+    ]) {
+      writeFileSync(path, JSON.stringify({ genie, models }));
+      expect(loadPriceTable()).toBeNull();
+    }
+  });
+});
+
+describe('numeric safety', () => {
+  const entry = (rates: Record<string, unknown>): PriceTable => ({
+    meta: { source: 't', fetchedAt: 't', sha256: 't', models: 1 },
+    models: { m: rates },
+  });
+  const base = { input_cost_per_token: 0.001, output_cost_per_token: 0.002 };
+
+  test('a negative or non-finite token count prices nothing', () => {
+    expect(tableCost(entry(base), 'm', tokens(-10, 5))).toBeNull();
+    expect(tableCost(entry(base), 'm', tokens(10, Number.NaN))).toBeNull();
+    expect(tableCost(entry(base), 'm', tokens(Number.POSITIVE_INFINITY, 0))).toBeNull();
+  });
+
+  test('a negative rate is absent, and a cost that overflows is null, never Infinity', () => {
+    expect(tableCost(entry({ ...base, input_cost_per_token: -1 }), 'm', tokens(10, 0))).toBeNull();
+    expect(tableCost(entry({ ...base, input_cost_per_token: 1e308 }), 'm', tokens(10, 0))).toBeNull();
+  });
+
+  test('rates are read from the entry’s own fields only, never inherited ones', () => {
+    const inherited = Object.create({ input_cost_per_token: 0.001, output_cost_per_token: 0.002 });
+    expect(tableCost(entry(inherited), 'm', tokens(10, 1))).toBeNull();
   });
 });

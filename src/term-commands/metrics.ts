@@ -7,7 +7,7 @@
  *   metrics export    ledger + task_events + runtime session logs → per-transition time and tokens;
  *                     `--phoenix` projects the intervals to a Phoenix the operator configured
  *   metrics prices    update|status the optional price table that derives USD where the runtime
- *                     did not price a call; only `prices update` touches the network
+ *                     did not price a call; only `prices update` fetches it (export never does)
  *
  * Capture is OFF until `enable` runs: a host that never runs it sees no new
  * file, directory, latency or network call. Enabling sends nothing anywhere —
@@ -165,7 +165,7 @@ function registerPricesCommand(metrics: Command): void {
 
   prices
     .command('update')
-    .description('Download (or copy) the LiteLLM price table into GENIE_HOME; the one verb that touches the network')
+    .description('Download (or copy) the LiteLLM price table into GENIE_HOME; export never fetches prices itself')
     .option('--from <url-or-file>', 'Where to read the table from (default: LiteLLM on GitHub)')
     .action(async (options: { from?: string }) => {
       const result = await updatePriceTable(options.from);

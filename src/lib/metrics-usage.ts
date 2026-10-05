@@ -222,7 +222,9 @@ function piSamples(records: Rec[]): UsageSample[] {
       cacheRead: num(usage.cacheRead),
       cacheWrite: num(usage.cacheWrite),
       output: num(usage.output),
-      costUsd: cost && typeof cost.total === 'number' ? cost.total : null,
+      // A negative or non-finite price is no price.
+      costUsd:
+        cost && typeof cost.total === 'number' && Number.isFinite(cost.total) && cost.total >= 0 ? cost.total : null,
       model: str(message.model),
     });
   }

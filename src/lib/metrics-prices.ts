@@ -6,7 +6,7 @@
  * Tokens stay the primary currency. Nothing here is on by default: with no
  * table at `<GENIE_HOME>/metrics/prices.json`, `genie metrics export` behaves
  * and prints exactly as it did before the table existed. The export reads the
- * table OFFLINE; only `genie metrics prices update` touches the network, and
+ * table from disk and never fetches it; only `genie metrics prices update` does, and
  * only when the operator runs it.
  *
  * The table is LiteLLM's `model_prices_and_context_window.json`, stored
@@ -66,6 +66,8 @@ const obj = (value: unknown): Rec | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
 const rate = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+/** A rate the entry itself carries — an inherited property is no rate. */
+const ownRate = (entry: Rec, field: string): number | null => (Object.hasOwn(entry, field) ? rate(entry[field]) : null);
 
 export function pricesPath(): string {
   return join(metricsDir(), 'prices.json');
@@ -76,7 +78,8 @@ export function countPricedModels(models: Rec): number {
   let n = 0;
   for (const value of Object.values(models)) {
     const entry = obj(value);
-    if (entry && (rate(entry.input_cost_per_token) !== null || rate(entry.output_cost_per_token) !== null)) n++;
+    if (entry && (ownRate(entry, 'input_cost_per_token') !== null || ownRate(entry, 'output_cost_per_token') !== null))
+      n++;
   }
   return n;
 }
@@ -92,15 +95,11 @@ export function loadPriceTable(path = pricesPath()): PriceTable | null {
   const header = obj(parsed?.genie);
   const models = obj(parsed?.models);
   if (!header || !models) return null;
-  return {
-    meta: {
-      source: String(header.source ?? ''),
-      fetchedAt: String(header.fetchedAt ?? ''),
-      sha256: String(header.sha256 ?? ''),
-      models: typeof header.models === 'number' ? header.models : countPricedModels(models),
-    },
-    models,
-  };
+  const { source, fetchedAt, sha256, models: count } = header;
+  // A hand-edited header is no table rather than a crash: every field must be the plain value genie wrote.
+  if (typeof source !== 'string' || typeof fetchedAt !== 'string' || typeof sha256 !== 'string') return null;
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) return null;
+  return { meta: { source, fetchedAt, sha256, models: count }, models };
 }
 
 /** Exact id first, then the part after the last `/` (`openai-codex/gpt-6.1-sol` → `gpt-6.1-sol`); null otherwise. */
@@ -118,15 +117,20 @@ function tierSuffix(entry: Rec, prompt: number): string {
   let best = -1;
   for (const key of Object.keys(entry)) {
     const n = Number(TIER.exec(key)?.[1] ?? -1);
-    if (n > best && prompt > n * 1000 && rate(entry[key]) !== null) best = n;
+    if (n > best && prompt > n * 1000 && ownRate(entry, key) !== null) best = n;
   }
   return best < 0 ? '' : `_above_${best}k_tokens`;
 }
 
 export const hasTokens = (t: PricedTokens): boolean => t.input + t.cacheRead + t.cacheWrite + t.output > 0;
 
-/** USD for one call, or null when any kind it used has no rate. A call with no tokens at all costs 0. */
+/**
+ * USD for one call, or null when any kind it used has no rate, a token count is negative or non-finite, or the
+ * cost overflows. A call with no tokens at all costs 0.
+ */
 export function tableCost(table: PriceTable, model: string | null, tokens: PricedTokens): number | null {
+  const counts = [tokens.input, tokens.cacheRead, tokens.cacheWrite, tokens.output, tokens.cacheWrite1h ?? 0];
+  if (!counts.every((n) => Number.isFinite(n) && n >= 0)) return null;
   if (!hasTokens(tokens)) return 0;
   const entry = entryFor(table, model);
   if (!entry) return null;
@@ -142,11 +146,11 @@ export function tableCost(table: PriceTable, model: string | null, tokens: Price
   let cost = 0;
   for (const [count, field] of parts) {
     if (count === 0) continue;
-    const perToken = rate(entry[`${field}${tier}`]);
+    const perToken = ownRate(entry, `${field}${tier}`);
     if (perToken === null) return null;
     cost += count * perToken;
   }
-  return cost;
+  return Number.isFinite(cost) ? cost : null;
 }
 
 export type PriceUpdateResult =

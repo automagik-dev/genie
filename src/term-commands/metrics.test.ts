@@ -200,10 +200,10 @@ describe('genie metrics', () => {
     const priced = exportUsage();
     expect(priced.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
     expect(priced.usage.costUsd).toBeCloseTo(0.02, 12);
-    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t-\t1\/1$/m);
-    expect(priced.stdout).toContain('\toffloadUsd\tpriced');
+    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t-\t1\/1\ttable$/m);
+    expect(priced.stdout).toContain('\toffloadUsd\tpriced\tcostSource');
     const pricedJson = JSON.parse(run(['metrics', 'export', '--json'], env).stdout);
-    expect(pricedJson.summary[0]).toMatchObject({ calls: 1, pricedCalls: 1 });
+    expect(pricedJson.summary[0]).toMatchObject({ calls: 1, pricedCalls: 1, costSource: 'table' });
 
     writeFileSync(table, 'not json');
     const refused = run(['metrics', 'prices', 'update', '--from', table]);
@@ -212,6 +212,56 @@ describe('genie metrics', () => {
     expect(readFileSync(join(home, 'metrics', 'prices.json')).equals(stored)).toBe(true);
     const status = JSON.parse(run(['metrics', 'prices', 'status', '--json']).stdout);
     expect(status).toMatchObject({ path: join(home, 'metrics', 'prices.json'), table: { source: table, models: 1 } });
+  }, 60_000);
+
+  test('prices update over http: 200 stores it, a re-run is idempotent, non-2xx exits 1 and keeps the table', async () => {
+    // A loopback server in this process, so the CLI must run without blocking the event loop.
+    const body = JSON.stringify({ 'claude-opus-5-5': { input_cost_per_token: 1e-5, output_cost_per_token: 1e-4 } });
+    let status = 200;
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(body, { status }) });
+    const runAsync = async (args: string[]) => {
+      const proc = Bun.spawn(['bun', GENIE, ...args], {
+        cwd: repo,
+        env: { ...process.env, NO_COLOR: '1', GENIE_HOME: home },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { stdout, stderr, code };
+    };
+    const url = `http://127.0.0.1:${server.port}/model_prices.json`;
+    const stored = join(home, 'metrics', 'prices.json');
+    try {
+      const first = await runAsync(['metrics', 'prices', 'update', '--from', url]);
+      expect(first.code).toBe(0);
+      expect(first.stdout).toContain(`prices: 1 models from ${url}`);
+      const firstTable = JSON.parse(readFileSync(stored, 'utf8'));
+
+      const again = await runAsync(['metrics', 'prices', 'update', '--from', url]);
+      expect(again.code).toBe(0);
+      const againTable = JSON.parse(readFileSync(stored, 'utf8'));
+      // Same bytes fetched → same sha and same models; only fetchedAt may move.
+      expect(againTable.genie.sha256).toBe(firstTable.genie.sha256);
+      expect(againTable.models).toEqual(firstTable.models);
+
+      const shown = await runAsync(['metrics', 'prices', 'status']);
+      expect(shown.code).toBe(0);
+      expect(shown.stdout).toContain(`source:  ${url}`);
+      expect(shown.stdout).toContain('models:  1');
+
+      status = 503;
+      const before = readFileSync(stored);
+      const failed = await runAsync(['metrics', 'prices', 'update', '--from', url]);
+      expect(failed.code).toBe(1);
+      expect(failed.stderr).toContain('answered 503');
+      expect(readFileSync(stored).equals(before)).toBe(true);
+    } finally {
+      server.stop(true);
+    }
   }, 60_000);
 
   test('status --json names the switch, the ledger and this shell’s session', () => {
