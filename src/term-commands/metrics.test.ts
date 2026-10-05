@@ -158,6 +158,56 @@ describe('genie metrics', () => {
     60_000,
   );
 
+  test('prices: no table → export unchanged; update --from a local file prices Claude calls; a bad file is refused', () => {
+    const claude = join(root, 'claude');
+    const env = { CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CONFIG_DIR: claude };
+    expect(run(['metrics', 'prices', 'status']).stdout).toContain('no price table — USD stays runtime-priced only');
+    expect(run(['metrics', 'enable']).code).toBe(0);
+    const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
+    expect(run(['task', 'comment', id, 'one'], env).code).toBe(0);
+    execFileSync('mkdir', ['-p', join(claude, 'projects', '-repo')]);
+    const call = {
+      type: 'assistant',
+      timestamp: new Date().toISOString(),
+      message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1000, output_tokens: 100 } },
+    };
+    writeFileSync(join(claude, 'projects', '-repo', 's.jsonl'), `${JSON.stringify(call)}\n`);
+    expect(run(['task', 'comment', id, 'two'], env).code).toBe(0);
+
+    const out = join(root, 'intervals.jsonl');
+    const exportUsage = () => {
+      const exported = run(['metrics', 'export', '--out', out], env);
+      expect(exported.code).toBe(0);
+      return { stdout: exported.stdout, usage: JSON.parse(readFileSync(out, 'utf8').trim()).usage };
+    };
+    const bare = exportUsage();
+    expect(bare.usage).toEqual({ calls: 1, input: 1000, cacheRead: 0, cacheWrite: 0, output: 100, costUsd: null });
+    expect(bare.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t-\t/m);
+
+    const table = join(root, 'litellm.json');
+    writeFileSync(
+      table,
+      JSON.stringify({ 'claude-opus-5-5': { input_cost_per_token: 1e-5, output_cost_per_token: 1e-4 } }),
+    );
+    const update = run(['metrics', 'prices', 'update', '--from', table]);
+    expect(update.code).toBe(0);
+    expect(update.stdout).toContain(`prices: 1 models from ${table}`);
+    const stored = readFileSync(join(home, 'metrics', 'prices.json'));
+
+    const priced = exportUsage();
+    expect(priced.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
+    expect(priced.usage.costUsd).toBeCloseTo(0.02, 12);
+    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t/m);
+
+    writeFileSync(table, 'not json');
+    const refused = run(['metrics', 'prices', 'update', '--from', table]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('is not JSON; the stored table is unchanged');
+    expect(readFileSync(join(home, 'metrics', 'prices.json')).equals(stored)).toBe(true);
+    const status = JSON.parse(run(['metrics', 'prices', 'status', '--json']).stdout);
+    expect(status).toMatchObject({ path: join(home, 'metrics', 'prices.json'), table: { source: table, models: 1 } });
+  }, 60_000);
+
   test('status --json names the switch, the ledger and this shell’s session', () => {
     const status = run(['metrics', 'status', '--json'], { PI_SESSION_ID: 'pi-1', PI_SESSION_FILE: '/s/pi-1.jsonl' });
     expect(status.code).toBe(0);

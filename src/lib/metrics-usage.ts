@@ -35,10 +35,16 @@ export interface UsageSample {
   output: number;
   /** Only when the runtime itself priced the call (pi/OMP); null otherwise — never a guess. */
   costUsd: number | null;
+  /**
+   * The model id the runtime logged for the call, as written (pi/OMP may provider-prefix it); null when
+   * the log names none. Claude Code's `<synthetic>` placeholder is no model and reads as null.
+   */
+  model: string | null;
 }
 
 type Rec = Record<string, unknown>;
 
+const str = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 const obj = (value: unknown): Rec | null =>
   typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Rec) : null;
@@ -163,6 +169,7 @@ function claudeSamples(records: Rec[]): UsageSample[] {
       cacheWrite: num(usage.cache_creation_input_tokens),
       output: num(usage.output_tokens),
       costUsd: null,
+      model: message.model === '<synthetic>' ? null : str(message.model),
     });
   }
   return [...byMessage.values()];
@@ -173,8 +180,11 @@ function codexSamples(records: Rec[]): UsageSample[] {
   // Codex re-emits the same token_count (identical cumulative total) more than once per turn; only a
   // total that moved is a new model call. Summing every event overcounted 4–16% on real rollouts.
   let previousTotal: string | null = null;
+  // The model rides each turn's `turn_context`; a token_count belongs to the latest one before it.
+  let model: string | null = null;
   for (const record of records) {
     const payload = obj(record.payload);
+    if (record.type === 'turn_context') model = str(payload?.model);
     const info = obj(payload?.info);
     const last = obj(info?.last_token_usage);
     if (record.type !== 'event_msg' || payload?.type !== 'token_count' || !last) continue;
@@ -189,6 +199,7 @@ function codexSamples(records: Rec[]): UsageSample[] {
       cacheWrite: num(last.cache_write_input_tokens),
       output: num(last.output_tokens),
       costUsd: null,
+      model,
     });
   }
   return out;
@@ -208,6 +219,7 @@ function piSamples(records: Rec[]): UsageSample[] {
       cacheWrite: num(usage.cacheWrite),
       output: num(usage.output),
       costUsd: cost && typeof cost.total === 'number' ? cost.total : null,
+      model: str(message.model),
     });
   }
   return out;
