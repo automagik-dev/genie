@@ -121,7 +121,9 @@ describe('cache TTL and long-context tiers', () => {
   });
 });
 
-// The envelope exactly as `prices update` writes it: header, then the fetched body byte for byte.
+// A faithful fixture of the 33f286d / v6.261005.4 writer: `${JSON.stringify({ genie: meta, models })}\n`, where
+// `sha256` is the hash of the DOWNLOADED bytes (often pretty-printed), not of the re-serialized body stored here.
+const downloaded = '{\n  "m": { "input_cost_per_token": 0.001 }\n}\n';
 function writeEnvelope(
   path: string,
   body: string,
@@ -130,15 +132,15 @@ function writeEnvelope(
   const meta = {
     source: 'https://example.invalid/p.json',
     fetchedAt: '2026-10-05T00:00:00.000Z',
-    sha256: createHash('sha256').update(body).digest('hex'),
+    sha256: createHash('sha256').update(downloaded).digest('hex'),
     models: 1,
     ...header,
   };
   mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, `{"genie":${JSON.stringify(meta)},"models":${body}}\n`);
+  writeFileSync(path, `${JSON.stringify({ genie: meta, models: JSON.parse(body) })}\n`);
 }
 
-describe('R3: the stored envelope must be truthful (item 4)', () => {
+describe('R3: the stored envelope must have the shape genie writes (item 4)', () => {
   const body = JSON.stringify({ m: { input_cost_per_token: 0.001 } });
 
   test('a well-formed envelope loads (control)', () => {
@@ -161,24 +163,29 @@ describe('R3: the stored envelope must be truthful (item 4)', () => {
     }
   });
 
-  test('sha256 must match the stored body: an edited rate is no table', () => {
-    writeEnvelope(pricesPath(), body);
-    const text = readFileSync(pricesPath(), 'utf8').replace('0.001', '0.002');
-    writeFileSync(pricesPath(), text);
-    expect(loadPriceTable()).toBeNull();
-  });
-
   test('the model count must equal the priced models in the body', () => {
     writeEnvelope(pricesPath(), body, { models: 0 });
     expect(loadPriceTable()).toBeNull();
     writeEnvelope(pricesPath(), body, { models: 2 });
     expect(loadPriceTable()).toBeNull();
   });
+});
 
-  test('a body stored with a different serialization than its hash is no table', () => {
-    const pretty = JSON.stringify({ m: { input_cost_per_token: 0.001 } }, null, 2);
-    writeEnvelope(pricesPath(), body, { sha256: createHash('sha256').update(pretty).digest('hex') });
-    expect(loadPriceTable()).toBeNull();
+describe('R3: a table written by the 33f286d / v6.261005.4 updater keeps loading', () => {
+  test('the faithful fixture loads as PRESENT and prices calls; sha256 is provenance, not a body check', () => {
+    writeEnvelope(pricesPath(), JSON.stringify({ m: { input_cost_per_token: 0.001 } }));
+    const loaded = loadPriceTable();
+    expect(loaded?.meta).toMatchObject({ models: 1, sha256: createHash('sha256').update(downloaded).digest('hex') });
+    expect(tableCost(loaded as PriceTable, 'm', tokens(10, 0))).toBeCloseTo(0.01, 12);
+  });
+
+  test('the updater itself, fed a pretty-printed source, writes a table that loads and prices', async () => {
+    const from = join(root, 'pretty.json');
+    writeFileSync(from, downloaded);
+    expect((await updatePriceTable(from)).ok).toBe(true);
+    const loaded = loadPriceTable();
+    expect(loaded?.meta.sha256).toBe(createHash('sha256').update(downloaded).digest('hex'));
+    expect(tableCost(loaded as PriceTable, 'm', tokens(10, 0))).toBeCloseTo(0.01, 12);
   });
 });
 

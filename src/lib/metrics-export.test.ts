@@ -746,8 +746,33 @@ describe('ledger → verified intervals', () => {
         costSource: 'mixed',
       });
       expect(summarize([at('a', usage(null, null))], true)[0]).toMatchObject({ costUsd: null, costSource: null });
-      // Two finite interval costs whose sum overflows: unknown, never Infinity.
-      expect(summarize([at('a', usage(1e308, 'table')), at('b', usage(1e308, 'table'))], true)[0]?.costUsd).toBeNull();
+      // Two finite interval costs whose sum overflows: unknown, never Infinity — and no call is claimed priced.
+      expect(summarize([at('a', usage(1e308, 'table')), at('b', usage(1e308, 'table'))], true)[0]).toMatchObject({
+        costUsd: null,
+        costSource: null,
+        pricedCalls: 0,
+        calls: 2,
+      });
+    });
+
+    test('offloadUsd: a transition sum that overflows is null, never Infinity', () => {
+      const offloaded = (task: string) =>
+        ({
+          db: '/d',
+          task,
+          fromEvent: 1,
+          toEvent: 2,
+          transition: 'claim→report',
+          startAt: 0,
+          endAt: 1,
+          durationMs: 1,
+          session: { id: null, source: null, file: null },
+          usage: null,
+          sharedSession: false,
+          offload: { attempts: 1, failed: 0, ambiguous: 0, tokens: 1, costUsd: 1e308 },
+          sessionMatch: null,
+        }) as Interval;
+      expect(summarize([offloaded('a'), offloaded('b')])[0]?.offloadUsd).toBeNull();
     });
 
     test('an interval sum that overflows is null, never Infinity; a negative runtime price is no price', () => {

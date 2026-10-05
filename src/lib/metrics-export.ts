@@ -302,8 +302,9 @@ export interface TransitionSummary {
 
 const quantile = (sorted: number[], q: number) =>
   sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
+/** Every value known and the sum finite, else null — a partial or overflowing sum is not a total. */
 const allOrNull = (values: Array<number | null>): number | null =>
-  values.length > 0 && !values.includes(null) ? (values as number[]).reduce((sum, v) => sum + v, 0) : null;
+  values.includes(null) ? null : finiteSum(values as number[]);
 const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
 /** `coverage` (set while a price table is loaded) adds `calls`/`pricedCalls`; without it every row keeps its shape. */
@@ -330,7 +331,8 @@ export function summarize(intervals: Interval[], coverage = false): TransitionSu
         ...(coverage
           ? {
               calls: known.reduce((sum, u) => sum + u.calls, 0),
-              pricedCalls: known.reduce((sum, u) => sum + (u.pricedCalls ?? 0), 0),
+              // A null total (nothing priced, or an overflow) claims no priced calls — same rule as an interval.
+              pricedCalls: costUsd === null ? 0 : known.reduce((sum, u) => sum + (u.pricedCalls ?? 0), 0),
               costSource: costUsd === null ? null : combineSources(pricedUsage.map((u) => u.costSource)),
             }
           : {}),

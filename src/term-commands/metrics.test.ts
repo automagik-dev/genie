@@ -274,7 +274,11 @@ describe('genie metrics', () => {
       models: 1,
     };
     execFileSync('mkdir', ['-p', join(home, 'metrics')]);
-    writeFileSync(join(home, 'metrics', 'prices.json'), `{"genie":${JSON.stringify(meta)},"models":${body}}\n`);
+    // The 33f286d writer's exact format: one JSON.stringify of header and models.
+    writeFileSync(
+      join(home, 'metrics', 'prices.json'),
+      `${JSON.stringify({ genie: meta, models: JSON.parse(body) })}\n`,
+    );
     const text = run(['metrics', 'prices', 'status']);
     const json = run(['metrics', 'prices', 'status', '--json']);
     expect(text.code).toBe(0);
