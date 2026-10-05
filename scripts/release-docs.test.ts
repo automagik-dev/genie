@@ -45,6 +45,51 @@ function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
 
+const RAW_MAIN = 'https://raw.githubusercontent.com/automagik-dev/genie/main';
+
+/** The operator one-liner in SECURITY.md that compares the two published pin copies. */
+function pinCrossCheckScript(): string {
+  const blocks = [...read('SECURITY.md').matchAll(/```bash\n([\s\S]*?)```/g)].map((match) => match[1]);
+  const matching = blocks.filter((block) => block.includes('curl') && block.includes('SIGNING_IDENTITY_PIN'));
+  expect(matching).toHaveLength(1);
+  expect(matching[0]).toContain(RAW_MAIN);
+  return matching[0];
+}
+
+/** Runs that one-liner for real against a loopback server standing in for raw.githubusercontent.com. */
+async function runPinCrossCheck(routes: Record<string, { status: number; body: string }>) {
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(request) {
+      const hit = routes[new URL(request.url).pathname];
+      return hit ? new Response(hit.body, { status: hit.status }) : new Response('not found', { status: 404 });
+    },
+  });
+  try {
+    const script = pinCrossCheckScript().replaceAll(RAW_MAIN, `http://127.0.0.1:${server.port}`);
+    const proc = Bun.spawn(['bash', '-c', script], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      env: { ...process.env, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
+    });
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    return { stdout, exitCode };
+  } finally {
+    server.stop(true);
+  }
+}
+
+/**
+ * The operator docs as one text: README.md, then UPGRADING.md, which holds the
+ * retirement, rollback, restore, MCP and Orca prose moved verbatim out of the
+ * README (wish `genie-launch`). Concatenated, a negative check still covers
+ * both files.
+ */
+function operatorDocs(): string {
+  return `${read('README.md')}\n${read('UPGRADING.md')}`;
+}
+
 function buildHelperInputs(): string[] {
   const pending = [...read('scripts/build-binary.sh').matchAll(/scripts\/([a-z0-9-]+\.[jt]s)/g)].map(
     (match) => `scripts/${match[1]}`,
@@ -747,6 +792,84 @@ describe('Group E release and documentation contracts', () => {
     expect(read('scripts/check-fingerprint-pinning.sh')).not.toContain('all four witnesses');
   });
 
+  test('signing-identity documentation names only the channels that exist', () => {
+    // A documented pin channel must be a document this repository serves at a
+    // URL that answers 200 today. Only two qualify: SECURITY.md and the RFC
+    // 9116 document at raw `main`. The project-site copy answers 404 and the
+    // pinned issue never existed, so neither may be named as a channel.
+    const security = read('SECURITY.md');
+    const mirror = read('.well-known/security.txt');
+    const template = read('.github/ISSUE_TEMPLATE/signing-key-fingerprint.md');
+    for (const source of [security, mirror, template]) {
+      expect(source).not.toContain('automagik.dev/.well-known/security.txt');
+    }
+    for (const gone of [
+      'label%3Apinned',
+      'SIGNING_CERT_IDENTITY_<YYYYMMDD>',
+      'three independent channels',
+      'all three pinning channels',
+      'Cross-check the three channels',
+      'out-of-band channel',
+    ]) {
+      expect(security).not.toContain(gone);
+    }
+    expect(security).toContain('https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt');
+    for (const gone of ['automagik.dev/.well-known/security.txt', 'label%3Apinned', 'SIGNING_CERT_IDENTITY']) {
+      expect(mirror).not.toContain(gone);
+    }
+    for (const gone of ['project site', 'This pinned issue', 'Three-Channel Cross-Check']) {
+      expect(template).not.toContain(gone);
+    }
+    // The pin itself is not weakened: both published copies keep the marker
+    // block and every canonical value.
+    for (const source of [security, mirror]) {
+      expect(source).toContain('BEGIN SIGNING_IDENTITY_PIN');
+      expect(source).toContain('END SIGNING_IDENTITY_PIN');
+      expect(source).toContain(
+        'certificate-identity-regexp: ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+      );
+      expect(source).toContain('certificate-oidc-issuer:     https://token.actions.githubusercontent.com');
+      expect(source).toContain('provenance source-uri:       github.com/automagik-dev/genie');
+    }
+  });
+
+  test('the pin cross-check one-liner fails closed unless both published copies are fetched and agree', async () => {
+    const security = read('SECURITY.md');
+    const mirror = read('.well-known/security.txt');
+    const ok = (body: string) => ({ status: 200, body });
+    const down = { status: 403, body: 'rate limited' };
+
+    // Real files from this tree: both fetched, same three values.
+    const agree = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': ok(mirror) });
+    expect(agree.exitCode).toBe(0);
+    expect(agree.stdout).toContain('agree');
+
+    // Both fetches fail (rate limit, outage): two empty streams must not read as a match.
+    const bothDown = await runPinCrossCheck({ '/SECURITY.md': down, '/.well-known/security.txt': down });
+    expect(bothDown.exitCode).not.toBe(0);
+    expect(bothDown.stdout).not.toContain('agree');
+
+    // Both fetches succeed but neither carries a pin block.
+    const noPin = await runPinCrossCheck({
+      '/SECURITY.md': ok('<html>maintenance</html>'),
+      '/.well-known/security.txt': ok('<html>maintenance</html>'),
+    });
+    expect(noPin.exitCode).not.toBe(0);
+    expect(noPin.stdout).not.toContain('agree');
+
+    // One side fails.
+    const oneDown = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': down });
+    expect(oneDown.exitCode).not.toBe(0);
+
+    // One side tampered: a changed issuer is a real mismatch.
+    const tampered = mirror.replace('token.actions.githubusercontent.com', 'token.actions.example.invalid');
+    expect(tampered).not.toBe(mirror);
+    const drift = await runPinCrossCheck({ '/SECURITY.md': ok(security), '/.well-known/security.txt': ok(tampered) });
+    expect(drift.exitCode).not.toBe(0);
+    expect(drift.stdout).not.toContain('agree');
+    expect(drift.stdout).toContain('example.invalid');
+  });
+
   test('release packaging validates the extracted archive payload', () => {
     const build = read('scripts/build-binary.sh');
     // The Orca bundle and its parity check left with the plugin.
@@ -848,7 +971,7 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('operator docs keep one lifecycle authority, rollback, uninstall and MCP retirement', () => {
-    const operator = read('README.md');
+    const operator = operatorDocs();
     for (const topic of [
       '## Lifecycle authority',
       'Orca mode is retired',
@@ -873,7 +996,7 @@ describe('Group E release and documentation contracts', () => {
     for (const path of ['plugins/genie', 'orca-marketplace.json', '.github/workflows/orca-plugin-ref.yml']) {
       expect(existsSync(join(ROOT, path))).toBe(false);
     }
-    const operator = read('README.md');
+    const operator = operatorDocs();
     expect(operator).toContain('### Orca integration retired');
     expect(operator).toContain('empty `plugins/genie/` directory');
     for (const retired of [
@@ -925,7 +1048,7 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('operator docs name the two delivery surfaces and keep the plugin era retired', () => {
-    const docs = read('README.md');
+    const docs = operatorDocs();
     // Wish `skills-everywhere-c` named three surfaces; the Orca plugin was
     // retired (`retire-orca-integration`), leaving the signed binary and the
     // skills.sh channel.
@@ -938,6 +1061,18 @@ describe('Group E release and documentation contracts', () => {
       'skills: skipped (consent: none)',
     ]) {
       expect(docs).toContain(statement);
+    }
+    // Wish `genie-launch` Decision 4: the install-surface strings stay in the
+    // README itself, not only in the moved text.
+    const readme = read('README.md');
+    for (const statement of [
+      'Genie ships exactly two surfaces',
+      'npx skills add automagik-dev/genie',
+      'skills-install.json',
+      '~/.agents/skills',
+      'skills: skipped (consent: none)',
+    ]) {
+      expect(readme).toContain(statement);
     }
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');

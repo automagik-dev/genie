@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { designReviewDigest, designReviewViolations } from '../skills/brainstorm/references/design-review-evidence.mjs';
 
 // Behavior guard: executes the body of .claude/workflows/brainstorm.js across runs under fake agents
@@ -130,7 +131,6 @@ function executeLedger(prompt: string): Out {
     out.precondition = { path: spec.precondition, exists };
     if (!exists) return out;
   }
-  const payloads = tempDir('genie-bs-payload-');
   const exits: Record<string, number> = {};
   for (const step of spec.steps) {
     const blocked = (step.onlyAfter ?? []).some((name: string) => exits[name] !== 0);
@@ -146,13 +146,8 @@ function executeLedger(prompt: string): Out {
       out.runs.push({ step: step.step, exitCode: 0, stdout: '', stderr: '' });
       continue;
     }
-    const argv = (step.argv as string[]).map((arg) =>
-      arg.replace(/^@\{(\w+)\}$/, (_whole, name: string) => {
-        const file = join(payloads, `${step.step}-${name}.json`);
-        writeFileSync(file, JSON.stringify(step.files[name]));
-        return `@${file}`;
-      }),
-    );
+    // Every payload arrives already packed in argv: the agent passes the arguments through and writes nothing.
+    const argv = step.argv as string[];
     const result = Bun.spawnSync(argv, { stdout: 'pipe', stderr: 'pipe' });
     exits[step.step] = result.exitCode ?? -1;
     out.runs.push({
@@ -251,6 +246,13 @@ function blockOf(path: string): Out {
   if (!match) throw new Error(`no ledger block in ${path}`);
   return JSON.parse(match[1] as string);
 }
+
+// The one transport the workflow's steps use: percent-packed JSON, which the ledger CLI requires of every JSON flag.
+const pack = (value: unknown): string =>
+  `packed:${encodeURIComponent(JSON.stringify(value)).replace(
+    /[!'()*~]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  )}`;
 
 function cli(...args: string[]): Out {
   const result = Bun.spawnSync(['node', LEDGER, ...args], { stdout: 'pipe', stderr: 'pipe' });
@@ -469,7 +471,12 @@ describe('rounds across runs', () => {
     ]);
     expect(second.result.questions.map((q) => q.id)).toEqual(['R1-2', 'R2-1']);
     expect(second.result.notes).toContain('R1-2 was not answered; it stays Asked and is shown again.');
-    expect(second.calls.find((c) => c.label === 'lead:plan')?.prompt).toContain('"id": "R1-1"');
+    const leadPrompt = second.calls.find((c) => c.label === 'lead:plan')?.prompt ?? '';
+    expect(leadPrompt).toContain('"id": "R1-1"');
+    // The settled question lives in the DRAFT the lead reads; only the still-open one rides the state.
+    expect(leadPrompt).not.toContain(question(1).question);
+    expect(leadPrompt).toContain('read what the owner said there, never from the state');
+    expect(leadPrompt).toContain(question(2).question);
     expect(readFileSync(env.draft, 'utf8')).toContain('- **R1-1** (round 2, decision)');
   });
 
@@ -542,6 +549,305 @@ describe('rounds across runs', () => {
     expect(again.result.state).toBe('round');
     expect(again.result.notes.join('\n')).toContain('Not recorded: size:M lowers what the owner approved');
     expect(blockOf(env.draft).size.map((s: Out) => s.value)).toEqual(['G', 'M', 'G']);
+  });
+
+  test('two scope drops approved by two answers in one round are both recorded with their own approvedBy', async () => {
+    const drops = [
+      question(1, {
+        question: 'Drop the first helper?',
+        header: 'Drop1',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+      question(2, {
+        question: 'Drop the second helper?',
+        header: 'Drop2',
+        options: [
+          { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the second helper' },
+          { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    ];
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: drops }),
+    });
+    expect(raised.result.state).toBe('round');
+    expect(raised.result.questions.map((q: Out) => q.id)).toEqual(['R1-1', 'R1-2']);
+
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          answerTo(raised.result.questions[0], 'Drop it (Recommended)'),
+          answerTo(raised.result.questions[1], 'Drop it (Recommended)'),
+        ],
+      },
+    );
+    expect(second.result.state).toBe('round');
+    expect(second.result.notes.join('\n')).not.toContain('Not recorded:');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.item)).toEqual(['the helper', 'the second helper']);
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([
+      { by: 'owner', round: 2, approvedBy: 'R1-1' },
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+    ]);
+  });
+
+  test('a drop no answer covers still waits while the approved drop in the same plan is recorded', async () => {
+    const drop = question(1, {
+      question: 'Drop the first helper?',
+      header: 'Drop1',
+      options: [
+        { label: 'Drop it (Recommended)', description: 'a narrower wish', value: 'scope-drop:the helper' },
+        { label: 'Keep it', description: 'the wider wish', value: 'keep' },
+      ],
+    });
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({ scope: ['the helper', 'the second helper'], questions: [drop] }),
+    });
+    const approvedBy = raised.result.questions[0].id;
+    const second = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      { answers: [answerTo(raised.result.questions[0], 'Drop it (Recommended)')] },
+    );
+    expect(second.result.state).toBe('round');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([{ by: 'owner', round: 2, approvedBy }, undefined]);
+    expect(scopeIn[1].item).toBe('the second helper');
+    const note = second.result.notes.find((line: string) => line.startsWith('Not recorded:'));
+    expect(note).toBe(
+      "Not recorded: scope-drop:the second helper lowers what the owner approved, and no unused Settled answer agrees to it; it waits for the owner's answer.",
+    );
+    expect(note).not.toContain('scope-drop:the helper');
+  });
+
+  /** Round 1 asks one multi-select-or-single drop question per entry of `drops`; each names `scope-drop:<item>` for its items. */
+  function dropQuestions(...drops: string[][]): Out[] {
+    return drops.map((items, index) =>
+      question(index + 1, {
+        question: `Which helpers go (answer ${index + 1})?`,
+        header: `Drop${index + 1}`,
+        multiSelect: true,
+        options: [
+          ...items.map((item) => ({
+            label: `Drop ${item}`,
+            description: 'a narrower wish',
+            value: `scope-drop:${item}`,
+          })),
+          { label: 'Keep them', description: 'the wider wish', value: 'keep' },
+        ],
+      }),
+    );
+  }
+
+  /** The `--approved` ids the ratchet step of the round's ledger:commit call carries, in argv order. */
+  function approvedArgv(record: { calls: Call[] }): string[] {
+    const commit = record.calls.find((call) => call.label === 'ledger:commit');
+    const spec = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(commit?.prompt ?? '')?.[1] ?? '{}') as { steps: Out[] };
+    const argv: string[] = spec.steps.find((step) => step.step === 'ratchet')?.argv ?? [];
+    return argv.flatMap((arg, index) => (arg === '--approved' ? [argv[index + 1] as string] : []));
+  }
+
+  test('H1: overlapping answers still record every drop; the argv names the answers in Settled order and the ledger accepts it', async () => {
+    // Drops `the helper`, `the second helper` (Scope IN order). R1-1 names only the second; the newer R1-2 names both.
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper', 'the second helper'],
+        questions: dropQuestions(['the second helper'], ['the helper', 'the second helper']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop the second helper'] },
+          { id: second.id, question: second.question, answer: ['Drop the helper', 'Drop the second helper'] },
+        ],
+      },
+    );
+    expect(answered.result.state).toBe('round');
+    expect(answered.result.notes.join('\n')).not.toContain('Not recorded:');
+    expect(approvedArgv(answered)).toEqual(['R1-2']);
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.dropped)).toEqual([
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+      { by: 'owner', round: 2, approvedBy: 'R1-2' },
+    ]);
+  });
+
+  test('H1: two answers that each pay for a drop are emitted in Settled order, not in drop order', async () => {
+    // Scope IN order is beta, alpha. R1-1 names both; the newer R1-2 names beta, so beta <- R1-2 and alpha <- R1-1.
+    // Taken in drop order the ids would read R1-2, R1-1; the ledger and the script agree on Settled order.
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['beta', 'alpha'],
+        questions: dropQuestions(['alpha', 'beta'], ['beta']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop alpha', 'Drop beta'] },
+          { id: second.id, question: second.question, answer: ['Drop beta'] },
+        ],
+      },
+    );
+    expect(answered.result.state).toBe('round');
+    expect(answered.result.notes.join('\n')).not.toContain('Not recorded:');
+    expect(approvedArgv(answered)).toEqual(['R1-1', 'R1-2']);
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => [entry.item, entry.dropped.approvedBy])).toEqual([
+      ['beta', 'R1-2'],
+      ['alpha', 'R1-1'],
+    ]);
+  });
+
+  test('the answer recorded for a drop is the newest that names it, as before one answer paid for several', async () => {
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper'],
+        questions: dropQuestions(['the helper'], ['the helper']),
+      }),
+    });
+    const [first, second] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: [], questions: [] }) },
+      {
+        answers: [
+          { id: first.id, question: first.question, answer: ['Drop the helper'] },
+          { id: second.id, question: second.question, answer: ['Drop the helper'] },
+        ],
+      },
+    );
+    expect(approvedArgv(answered)).toEqual(['R1-2']);
+    expect(blockOf(env.draft).scopeIn[0].dropped).toEqual({ by: 'owner', round: 2, approvedBy: 'R1-2' });
+  });
+
+  test('P2: a lead-authored addition in the same plan as an approved drop is not attributed to the owner', async () => {
+    const env = newEnv();
+    const raised = await clean(env, {
+      'lead:plan': plan({
+        scope: ['the helper', 'the second helper'],
+        questions: dropQuestions(['the helper']),
+      }),
+    });
+    const [asked] = raised.result.questions;
+    const answered = await clean(
+      env,
+      { 'lead:plan': plan({ scope: ['the second helper', 'a third helper'], questions: [] }) },
+      { answers: [{ id: asked.id, question: asked.question, answer: ['Drop the helper'] }] },
+    );
+    expect(answered.result.state).toBe('round');
+    const scopeIn = blockOf(env.draft).scopeIn;
+    expect(scopeIn.map((entry: Out) => entry.item)).toEqual(['the helper', 'the second helper', 'a third helper']);
+    // The addition is the lead's; the drop keeps the owner's answer as its approval.
+    expect(scopeIn[2]).toEqual({ item: 'a third helper', by: 'lead', round: 2 });
+    expect(scopeIn[0].dropped).toEqual({ by: 'lead', round: 2, approvedBy: asked.id });
+  });
+});
+
+// ---------------------------------------------------------------- the payload transport
+
+describe('the ledger payload transport', () => {
+  const JSON_FLAGS = ['--answers', '--questions', '--scope', '--decided', '--findings'];
+  const stepsOf = (calls: Call[]): Out[] =>
+    calls
+      .filter((call) => call.label.startsWith('ledger:'))
+      .flatMap(
+        (call) =>
+          (JSON.parse((/```json\n([\s\S]*?)\n```/.exec(call.prompt) as RegExpExecArray)[1]) as { steps: Out[] }).steps,
+      );
+
+  test('no step hands the agent JSON to re-type: every payload is packed into argv, no file is named', async () => {
+    const env = newEnv();
+    const { calls } = await clean(env, { 'lead:plan': plan({ questions: [question(1)] }) });
+    const steps = stepsOf(calls);
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step.files).toBeUndefined();
+      const argv = step.argv as string[];
+      expect(argv.join(' ')).not.toContain('@{');
+      for (const [index, arg] of argv.entries()) {
+        if (JSON_FLAGS.includes(argv[index - 1] as string)) expect(arg).toMatch(/^packed:[A-Za-z0-9%._-]*$/);
+      }
+    }
+    const flags = steps.flatMap((step) => step.argv as string[]).filter((arg) => JSON_FLAGS.includes(arg));
+    expect(flags).toContain('--answers');
+    expect(flags).toContain('--questions');
+  });
+
+  // One command-line argument holds 128 KiB on Linux (MAX_ARG_STRLEN), and a packed payload is what an
+  // owner's words become in it: past the script's cap the run refuses by name before any agent is asked to
+  // spawn it, instead of failing as E2BIG halfway through a round.
+  test('an answer too large for one argument is refused by name before any agent runs', async () => {
+    const { env, asked } = await askedOnce();
+    for (const pad of ['a'.repeat(200_000), 'é'.repeat(40_000)]) {
+      const refused = await runBrainstorm(env, {}, { answers: [answerTo(asked[0], pad)] });
+      expect(refused.calls).toEqual([]);
+      expect(refused.result.state).toBe('failed');
+      expect(refused.result.notes.join('\n')).toContain('payload too large: the --answers argument of step apply is');
+      expect(refused.result.notes.join('\n')).toContain('98304');
+    }
+    expect(blockOf(env.draft).settled).toEqual([]);
+  });
+
+  test('an answer just under the cap still settles, and the state apply returns stays small', async () => {
+    const { env, asked } = await askedOnce();
+    const words = 'x'.repeat(90_000);
+    const run = await clean(env, { 'lead:plan': plan({ questions: [] }) }, { answers: [answerTo(asked[0], words)] });
+    expect(run.result.state).toBe('round');
+    expect(blockOf(env.draft).settled[0].answer).toBe(words);
+    const lead = run.calls.find((c) => c.label === 'lead:plan')?.prompt ?? '';
+    expect(lead).not.toContain('xxxxxxxx');
+  });
+
+  test('a question with quotes, a backslash, an arrow and an emoji reaches the DRAFT byte for byte', async () => {
+    const text = 'Keep the "helper" as-is? It\'s C:\\tmp\\x (yes!) *really*~ → “small” 🧞';
+    const env = newEnv();
+    const { result } = await clean(env, { 'lead:plan': plan({ questions: [question(1, { question: text })] }) });
+    expect(result.state).toBe('round');
+    expect(blockOf(env.draft).asked[0].question).toBe(text);
+  });
+
+  test('a state that does not survive the transport names itself, never the generic start failure', async () => {
+    const env = newEnv();
+    const wrapper = join(tempDir('genie-bs-wrapper-'), 'mangled-state.mjs');
+    writeFileSync(
+      wrapper,
+      [
+        `import { runRoundLedger } from ${JSON.stringify(pathToFileURL(LEDGER).href)};`,
+        'const argv = process.argv.slice(2);',
+        'const { exitCode, output } = runRoundLedger(argv);',
+        "if (argv[0] === 'apply') output.state = '{\"round\":1}';",
+        'process.stdout.write(`${JSON.stringify(output, null, 2)}\\n`);',
+        'process.exitCode = exitCode;',
+        '',
+      ].join('\n'),
+    );
+    const { result, labels } = await clean(
+      env,
+      {},
+      { tools: { ledger: wrapper, evidence: EVIDENCE, reviewContract: REVIEW_CONTRACT } },
+    );
+    expect(labels).toEqual(['ledger:apply']);
+    expect(result.state).toBe('failed');
+    expect(result.notes.join('\n')).toContain('transport');
+    expect(result.notes.join('\n')).not.toContain('The round ledger failed to start');
   });
 });
 
@@ -668,7 +974,19 @@ describe('the Socratic council', () => {
   test('P1: Socrates numbers decisions after the existing P ids, and commit records them as --decided', async () => {
     const env = newEnv();
     cli('apply', '--draft', env.draft);
-    cli('council', '--draft', env.draft, '--round', '1', '--run', 'seed', '--ceiling', '3', '--decided', '["P1","P2"]');
+    cli(
+      'council',
+      '--draft',
+      env.draft,
+      '--round',
+      '1',
+      '--run',
+      'seed',
+      '--ceiling',
+      '3',
+      '--decided',
+      pack(['P1', 'P2']),
+    );
     const council = { convene: true, decision: 'd', reason: 'r', lenses: ['a', 'b', DISSENT_KEY].map(LENS) };
     const { calls } = await clean(
       env,
@@ -685,7 +1003,19 @@ describe('the Socratic council', () => {
 
     const again = newEnv();
     cli('apply', '--draft', again.draft);
-    cli('council', '--draft', again.draft, '--round', '1', '--run', 'seed', '--ceiling', '3', '--decided', '["P1"]');
+    cli(
+      'council',
+      '--draft',
+      again.draft,
+      '--round',
+      '1',
+      '--run',
+      'seed',
+      '--ceiling',
+      '3',
+      '--decided',
+      pack(['P1']),
+    );
     const reused = await clean(
       again,
       { 'lead:plan': plan({ council, questions: [] }), ...councilFakes(['P1', 'P7']) },
@@ -818,7 +1148,7 @@ describe('the Socratic council', () => {
     const env = newEnv();
     cli('apply', '--draft', env.draft);
     // A recorded run id that this round's convening would reuse makes the ledger refuse the council step.
-    cli('council', '--draft', env.draft, '--round', '1', '--run', 'round-2', '--ceiling', '3', '--decided', '[]');
+    cli('council', '--draft', env.draft, '--round', '1', '--run', 'round-2', '--ceiling', '3', '--decided', pack([]));
     const { result, labels } = await clean(
       env,
       { 'lead:plan': wantingCouncil(), ...councilFakes(['P1']) },
@@ -847,11 +1177,9 @@ describe('the Socratic council', () => {
         { label: 'Convene anyway', description: 'about 1M tokens', value: 'convene' },
       ],
     };
-    expect(
-      cli('ask', '--draft', env.draft, '--round', '1', '--questions', JSON.stringify([approvalQuestion])).code,
-    ).toBe(0);
+    expect(cli('ask', '--draft', env.draft, '--round', '1', '--questions', pack([approvalQuestion])).code).toBe(0);
     const approve = [{ id: 'R1-1', question: approvalQuestion.question, answer: 'Convene anyway' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(approve)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(approve)).code).toBe(0);
     const reopenText = 'R1-1 was "Convene anyway" → hold the council after all?';
     const reopen = {
       kind: 'decision',
@@ -864,9 +1192,9 @@ describe('the Socratic council', () => {
         { label: 'Keep it', description: '', value: 'keep' },
       ],
     };
-    expect(cli('ask', '--draft', env.draft, '--round', '2', '--questions', JSON.stringify([reopen])).code).toBe(0);
+    expect(cli('ask', '--draft', env.draft, '--round', '2', '--questions', pack([reopen])).code).toBe(0);
     const hold = [{ id: 'R2-1', question: reopenText, answer: 'Hold it' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(hold)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(hold)).code).toBe(0);
     expect(blockOf(env.draft).settled.find((e: Out) => e.id === 'R1-1').reopenedBy).toBe('R2-1');
 
     const { result, labels } = await clean(env, { 'lead:plan': wantingCouncil() });
@@ -1086,7 +1414,7 @@ describe('crystallize, review and the repair budget', () => {
 
   test('a reopened review-findings answer is not acted on', async () => {
     const { env, choice } = await fixFirstRound();
-    const stop = cli('apply', '--draft', env.draft, '--answers', JSON.stringify([answerTo(choice, 'Stop')]));
+    const stop = cli('apply', '--draft', env.draft, '--answers', pack([answerTo(choice, 'Stop')]));
     expect(stop.code).toBe(0);
     const reopenText = `${choice.id} was "Stop" → go on with the brainstorm?`;
     const reopen = {
@@ -1100,18 +1428,10 @@ describe('crystallize, review and the repair budget', () => {
         { label: 'Stay stopped', description: '', value: 'stay' },
       ],
     };
-    const asked = cli(
-      'ask',
-      '--draft',
-      env.draft,
-      '--round',
-      String(stop.out.round),
-      '--questions',
-      JSON.stringify([reopen]),
-    );
+    const asked = cli('ask', '--draft', env.draft, '--round', String(stop.out.round), '--questions', pack([reopen]));
     expect(asked.code).toBe(0);
     const goOn = [{ id: asked.out.asked[0].id, question: reopenText, answer: 'Go on' }];
-    expect(cli('apply', '--draft', env.draft, '--answers', JSON.stringify(goOn)).code).toBe(0);
+    expect(cli('apply', '--draft', env.draft, '--answers', pack(goOn)).code).toBe(0);
 
     const { result, labels } = await clean(env, { 'lead:plan': plan({ questions: [] }) });
     expect(result.state).toBe('round');

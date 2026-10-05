@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 
-// Single-source guard: the wish delivery workflow lives only in .claude/workflows/wish.js.
-// The wish skill is a front door that runs that workflow and must not carry a roster of its own,
-// while the enums and clauses it relays must equal the script's, normalized, not merely contained.
+// Saved-execution guard: .claude/workflows/wish.js owns the saved delivery workflow.
+// The wish skill prefers that workflow and also provides a standalone native fallback;
+// the enums and inherited clauses it relays must equal the script's, normalized, not merely contained.
 
 const ROOT = join(import.meta.dir, '..');
 const read = (rel: string): string => readFileSync(join(ROOT, rel), 'utf8');
@@ -39,12 +39,11 @@ describe('wish skill fronts the wish workflow', () => {
     expect(metaPhases()).toEqual(['Admit', 'Work', 'Gate', 'Review', 'Repair', 'Publish', 'Read-back', 'Render']);
   });
 
-  test('the skill points at the workflow, names no client tool, and carries no roster', () => {
+  test('the skill points at the workflow by explicit path and names no client tool', () => {
     expectExplicitScriptPathRule(skill, 'wish');
     // The user-scope path is a host layout, not a client tool name: `wish` stays
     // runtime-neutral, so it may say WHERE the file is and never WHO runs it.
     expect(skill).not.toMatch(/Claude Code|Workflow tool/);
-    expect(/^\d+\. \*\*[A-Za-z]+\*\*/m.test(skill)).toBe(false);
   });
 
   test('every state and every route the script returns is defined in the skill, by equal enums', () => {
@@ -72,20 +71,27 @@ describe('wish skill fronts the wish workflow', () => {
     );
   });
 
-  test('the by-hand section lists the same stages in the same order', () => {
-    const byHand = normalize(skill.slice(skill.indexOf('## Without a workflow surface')));
-    const order = [
-      'read-only scout',
-      'blind judge',
-      'one executor',
-      'mechanical gate',
-      'reviewer that is not the executor',
-      'repair rounds',
-      'one publisher',
-    ];
-    const positions = order.map((phrase) => byHand.indexOf(phrase));
-    expect(positions.every((p) => p >= 0)).toBe(true);
-    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  test("the denylist the script declares is the set the skill's native fallback describes", () => {
+    // The script's DENYLIST is the single source and the front door names every entry, so the two
+    // sides are pinned as SETS, not as a sample: a new entry the table omits and a table rule the
+    // script dropped are both red. The entries are lifted with the regex `scripts/mikro/triage.ts`
+    // already uses, so the run-time mirror and this pin cannot read the const differently.
+    const block = /^const DENYLIST = \[([\s\S]*?)^\]$/m.exec(script);
+    if (!block) throw new Error('wish.js: DENYLIST not found');
+    const declared = [...block[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1] as string);
+    expect(declared.length).toBeGreaterThan(0);
+    const fallback = read('skills/wish/references/native-fallback.md');
+    const start = fallback.indexOf('### Full consequence denylist');
+    if (start === -1) throw new Error('native-fallback.md: no Full consequence denylist section');
+    const next = fallback.indexOf('\n### ', start + 1);
+    const described = fallback
+      .slice(start, next === -1 ? undefined : next)
+      .split('\n')
+      .filter((line) => line.startsWith('|'))
+      .map((line) => (line.split('|')[1] ?? '').trim())
+      .filter((cell) => cell && cell !== 'Rule' && !/^-+$/.test(cell))
+      .flatMap((cell) => [...cell.matchAll(/`([^`]+)`/g)].map((m) => m[1] as string));
+    expect([...described].sort()).toEqual([...declared].sort());
   });
 
   test('the three inherited clauses are verbatim in the source skill, the front door and the script', () => {

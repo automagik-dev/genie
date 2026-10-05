@@ -8,14 +8,19 @@
 //
 //   apply        --draft P [--answers JSON]           settle answers to Asked ids; creates the DRAFT or its block
 //   ask          --draft P --round N --questions JSON record a batch, ids R<round>-<n>
-//   ratchet      --draft P --round N --by WHO [--size P|M|G] [--scope JSON] [--approved ID]
+//   ratchet      --draft P --round N --by WHO [--size P|M|G] [--scope JSON] [--approved ID]...
 //   council      --draft P --round N --run ID --ceiling N [--approved ID] [--decided JSON]
 //   review       --draft P --round N --verdict V --digest SHA256 [--repaired] [--findings JSON]
 //   render       --draft P                            rewrite the five ledger-owned sections
 //   check-design --design P --draft P [--root P]      template and Source checks
 //
-// Any JSON flag may be given as `@<file>` to read the JSON from that file, so a
-// question text never has to survive shell quoting.
+// Any JSON flag is given as `packed:<percent-encoded JSON>` — the form the
+// workflow's steps write, which crosses a model channel byte for byte — or as
+// `@<file>` to read the JSON from that file, so a question text never has to
+// survive shell quoting or a model re-serialising JSON. Inline JSON is refused:
+// it is exactly the form a model re-serialises, and an over-escaped quote in an
+// owner's answer then fails the reopen check forever. A human on the by-hand
+// path writes the payload to a file and passes `@<file>`.
 //
 // Rules a caller codes against:
 // - `apply` returns the round this run works on: 1 + the highest round recorded
@@ -33,6 +38,11 @@
 // - `ratchet --scope` is the WHOLE Scope IN list. A smaller size or a missing
 //   item is a downgrade, taken only with `--approved` naming an unused Settled
 //   decision whose value names it exactly: `size:<P|M|G>`, `scope-drop:<item>`.
+//   Repeat `--approved` once per answer that agreed: one answer may pay for
+//   several tokens. Each token is recorded with the newest of the passed answers
+//   (by Settled position, never by flag order) whose value names it; every token
+//   must be named by one of them and every passed answer must name at least one,
+//   or the whole call is refused and nothing is written.
 // - A council past the ceiling needs `--approved` naming an unused Settled
 //   `council-approval` answer whose value is `convene`; none past 3, ever, and
 //   no approval question is asked at 3.
@@ -65,9 +75,10 @@ const EVIDENCE_END = '<!-- genie-design-review:end -->';
 
 const USAGE = [
   'usage: round-ledger.mjs <command> [flags]',
+  '  every JSON flag takes packed:<percent-encoded JSON> or @<file>, never inline JSON',
   '  apply        --draft <DRAFT.md> [--answers <json>]',
   '  ask          --draft <DRAFT.md> --round <n> --questions <json>',
-  '  ratchet      --draft <DRAFT.md> --round <n> --by <who> [--size <P|M|G>] [--scope <json>] [--approved <id>]',
+  '  ratchet      --draft <DRAFT.md> --round <n> --by <who> [--size <P|M|G>] [--scope <json>] [--approved <id>]...',
   '  council      --draft <DRAFT.md> --round <n> --run <id> --ceiling <0-3> [--approved <id>] [--decided <json>]',
   '  review       --draft <DRAFT.md> --round <n> --verdict <SHIP|FIX-FIRST|BLOCKED> --digest <sha256> [--repaired] [--findings <json>]',
   '  render       --draft <DRAFT.md>',
@@ -77,7 +88,7 @@ const USAGE = [
 const FLAGS = {
   apply: { required: ['draft'], optional: ['answers'] },
   ask: { required: ['draft', 'round', 'questions'] },
-  ratchet: { required: ['draft', 'round', 'by'], optional: ['size', 'scope', 'approved'] },
+  ratchet: { required: ['draft', 'round', 'by'], optional: ['size', 'scope', 'approved'], multiple: ['approved'] },
   council: { required: ['draft', 'round', 'run', 'ceiling'], optional: ['approved', 'decided'] },
   review: { required: ['draft', 'round', 'verdict', 'digest'], optional: ['findings'], booleans: ['repaired'] },
   render: { required: ['draft'] },
@@ -96,23 +107,33 @@ class Refusal extends Error {
 
 // ---------------------------------------------------------------- flags
 
+/** The flag name a token spells, or a UsageError when this command does not take it. */
+function flagName(token, command, known) {
+  const name = String(token).replace(/^--/, '');
+  if (!token.startsWith('--') || !known.has(name)) throw new UsageError(`${command} does not take ${token}`);
+  return name;
+}
+
+/** One flag's value: a repeatable flag collects every value it was given, in order. */
+function collectFlag(flags, name, value, repeatable) {
+  flags[name] = repeatable ? [...(flags[name] ?? []), value] : value;
+}
+
 function parseFlags(command, argv) {
   const spec = FLAGS[command];
-  const valued = new Set([...spec.required, ...(spec.optional ?? [])]);
+  const known = new Set([...spec.required, ...(spec.optional ?? []), ...(spec.booleans ?? [])]);
   const booleans = new Set(spec.booleans ?? []);
+  const multiple = new Set(spec.multiple ?? []);
   const flags = {};
   for (let index = 0; index < argv.length; index += 1) {
-    const name = String(argv[index]).replace(/^--/, '');
-    if (!argv[index].startsWith('--') || !(valued.has(name) || booleans.has(name))) {
-      throw new UsageError(`${command} does not take ${argv[index]}`);
-    }
-    if (Object.hasOwn(flags, name)) throw new UsageError(`--${name} is given twice`);
+    const name = flagName(argv[index], command, known);
+    if (Object.hasOwn(flags, name) && !multiple.has(name)) throw new UsageError(`--${name} is given twice`);
     if (booleans.has(name)) {
       flags[name] = true;
       continue;
     }
     if (argv[index + 1] === undefined) throw new UsageError(`--${name} needs a value`);
-    flags[name] = argv[index + 1];
+    collectFlag(flags, name, argv[index + 1], multiple.has(name));
     index += 1;
   }
   const missing = spec.required.filter((name) => !Object.hasOwn(flags, name));
@@ -124,12 +145,20 @@ function jsonFlag(flags, name, fallback) {
   const raw = flags[name];
   if (raw === undefined) return fallback;
   let text = raw;
-  if (raw.startsWith('@')) {
+  if (raw.startsWith('packed:')) {
+    try {
+      text = decodeURIComponent(raw.slice('packed:'.length));
+    } catch (error) {
+      throw new UsageError(`--${name} is not a valid packed payload: ${error.message}`);
+    }
+  } else if (raw.startsWith('@')) {
     try {
       text = readFileSync(raw.slice(1), 'utf8');
     } catch (error) {
       throw new UsageError(`--${name} names a file that cannot be read: ${raw.slice(1)} (${error.code ?? error})`);
     }
+  } else {
+    throw new UsageError(`--${name} must be packed:<percent-encoded JSON> or @<file>, not inline JSON`);
   }
   try {
     return JSON.parse(text);
@@ -402,8 +431,7 @@ function settlementFor(asked, answer, round) {
 function answerAgain(settled, answer, result) {
   const same = asList(settled.answer).join(', ') === asList(answer.answer).join(', ');
   if (isSkip(answer.answer) || (same && answer.question === settled.question)) {
-    if (!isSkip(answer.answer))
-      result.applied.push({ id: settled.id, provenance: settled.provenance, unchanged: true });
+    if (!isSkip(answer.answer)) result.applied.push({ id: settled.id, unchanged: true });
     return null;
   }
   return `${settled.id} is Settled; it changes only through a question whose reopens names it and quotes old → new`;
@@ -425,7 +453,8 @@ function applyOne(ledger, answer, round, result) {
   ledger.asked.splice(index, 1);
   ledger.settled.push(entry);
   if (asked.reopens) findSettled(ledger, asked.reopens).reopenedBy = id;
-  result.applied.push({ id, provenance: entry.provenance, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
+  // The echo names what was applied and nothing the owner wrote: the DRAFT is the record of that.
+  result.applied.push({ id, ...(asked.reopens ? { reopens: asked.reopens } : {}) });
   return null;
 }
 
@@ -435,6 +464,58 @@ function answerRefusal(ledger, answer, round, result, seen) {
   if (seen.has(answer.id)) return `${answer.id} is answered twice in one batch`;
   seen.add(answer.id);
   return applyOne(ledger, answer, round, result);
+}
+
+// The read model apply returns: `state`, a `packed:`-prefixed percent-encoded JSON payload, so the
+// transport identifies itself and a state a model decoded and re-formatted is refused. A Settled entry
+// keeps its id, kind, value, round and reopen links: the owner's words (answer, provenance) and the
+// question text stay in the DRAFT's ledger block and its rendered `## Settled` section, so the state grows
+// with the number of entries and never with what anyone wrote. The one exception is the question of the
+// review-findings choice still waiting to be acted on, which the workflow lists back to the lead and the
+// repairer. That is the latest review-findings entry that no reopen replaced and that was settled after the
+// last recorded review (the workflow's `pendingReviewChoice`, minus its settle-choice refinement): a choice
+// a later review has spent is history. The workflow builds that question from the reviewer's finding ids and
+// it quotes no owner answer; a reopen question quotes one verbatim, so a reopen entry never carries its
+// question. A question still OPEN rides `asked` (one batch at most) because the workflow relays it.
+const STATE_SETTLED_KEYS = ['id', 'kind', 'question', 'value', 'round', 'reopenedBy', 'reopens'];
+
+function pendingFindingsChoice(ledger) {
+  const lastReview = Math.max(0, ...ledger.reviews.map((entry) => Number(entry.round) || 0));
+  const waiting = ledger.settled.filter(
+    (entry) =>
+      entry.kind === 'review-findings' &&
+      !entry.reopens &&
+      !entry.reopenedBy &&
+      (Number(entry.round) || 0) > lastReview,
+  );
+  return waiting.length > 0 ? waiting[waiting.length - 1] : null;
+}
+
+function settledView(entry, pending) {
+  const keepsQuestion = entry === pending;
+  return Object.fromEntries(
+    STATE_SETTLED_KEYS.filter((key) => entry[key] !== undefined && (key !== 'question' || keepsQuestion)).map((key) => [
+      key,
+      entry[key],
+    ]),
+  );
+}
+
+function stateOf(ledger) {
+  const pending = pendingFindingsChoice(ledger);
+  return {
+    settled: ledger.settled.map((entry) => settledView(entry, pending)),
+    asked: ledger.asked,
+    size: ledger.size,
+    scopeIn: ledger.scopeIn,
+    councils: ledger.councils,
+    reviews: ledger.reviews,
+  };
+}
+
+/** The one transport: payload bytes cross a model channel percent-packed, never as JSON a model re-serialises. */
+function pack(value) {
+  return encodeURIComponent(value).replace(/[!'()*~]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function commandApply(flags) {
@@ -450,7 +531,8 @@ function commandApply(flags) {
   }
   result.skipped = draft.ledger.asked.map((entry) => entry.id);
   if (draft.dirty || result.applied.some((entry) => !entry.unchanged)) saveDraft(draft);
-  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, ledger: draft.ledger } };
+  const state = `packed:${pack(JSON.stringify(stateOf(draft.ledger)))}`;
+  return { exitCode: result.refused.length > 0 ? 1 : 0, output: { ...result, state } };
 }
 
 // ---------------------------------------------------------------- ask
@@ -560,14 +642,41 @@ function currentScope(ledger) {
   return ledger.scopeIn.filter((entry) => !entry.dropped).map((entry) => entry.item);
 }
 
+/** Where an answer sits in Settled: a later position is a newer answer. */
+function settledPosition(ledger, id) {
+  return ledger.settled.findIndex((entry) => entry.id === id);
+}
+
+/**
+ * The answer that pays for each downgrade token: the newest of the passed ids, by Settled position, whose value
+ * names it. Settled order, never the order of the flags, so one call has one outcome however it is spelled; the
+ * workflow makes the same choice over the same answers.
+ */
+function approvalByToken(ledger, approved, downgrades) {
+  const newestFirst = [...approved].sort((a, b) => settledPosition(ledger, b) - settledPosition(ledger, a));
+  const byToken = new Map();
+  for (const token of downgrades) {
+    const id = newestFirst.find((candidate) => asList(findSettled(ledger, candidate)?.value).includes(token));
+    if (id !== undefined) byToken.set(token, id);
+  }
+  return byToken;
+}
+
 function downgradeProblem(ledger, approved, downgrades) {
   const wanted = downgrades.join(', ');
-  if (!approved) return `${wanted} lowers what the owner approved; it needs --approved <settled id> that agreed to it`;
-  const problem = settledApprovalProblem(ledger, approved, 'decision');
-  if (problem) return problem;
-  const values = asList(findSettled(ledger, approved).value);
-  const missing = downgrades.filter((token) => !values.includes(token));
-  if (missing.length > 0) return `--approved ${approved} did not agree to ${missing.join(', ')}`;
+  if (approved.length === 0) {
+    return `${wanted} lowers what the owner approved; it needs --approved <settled id> that agreed to it`;
+  }
+  for (const id of approved) {
+    const problem = settledApprovalProblem(ledger, id, 'decision');
+    if (problem) return problem;
+  }
+  const agrees = (id) => downgrades.some((token) => asList(findSettled(ledger, id).value).includes(token));
+  const stray = approved.find((id) => !agrees(id));
+  if (stray !== undefined) return `--approved ${stray} did not agree to ${wanted}`;
+  const byToken = approvalByToken(ledger, approved, downgrades);
+  const missing = downgrades.filter((token) => !byToken.has(token));
+  if (missing.length > 0) return `--approved ${approved.join(', ')} did not agree to ${missing.join(', ')}`;
   return null;
 }
 
@@ -590,12 +699,16 @@ function applyRatchet(ledger, plan, stamp) {
       value: plan.size,
       by: stamp.by,
       round: stamp.round,
-      ...(plan.lowered ? { approvedBy: stamp.approvedBy } : {}),
+      ...(plan.lowered ? { approvedBy: stamp.approvedBy.get(`size:${plan.size}`) } : {}),
     });
     changes.push({ change: plan.lowered ? 'size-lowered' : 'size-raised', value: plan.size });
   }
   for (const entry of ledger.scopeIn.filter((item) => !item.dropped && plan.dropped.includes(item.item))) {
-    entry.dropped = stamp;
+    entry.dropped = {
+      by: stamp.by,
+      round: stamp.round,
+      approvedBy: stamp.approvedBy.get(`scope-drop:${entry.item}`),
+    };
     changes.push({ change: 'scope-dropped', item: entry.item });
   }
   for (const item of plan.added) {
@@ -608,16 +721,20 @@ function applyRatchet(ledger, plan, stamp) {
 function commandRatchet(flags) {
   const round = roundFlag(flags);
   const by = textFlag(flags, 'by');
+  const approved = flags.approved ?? [];
   if (flags.size === undefined && flags.scope === undefined) throw new UsageError('ratchet needs --size or --scope');
   if (flags.size !== undefined && !SIZES.includes(flags.size)) throw new UsageError('--size must be P, M or G');
+  const duplicate = approved.find((id, index) => approved.indexOf(id) !== index);
+  if (duplicate !== undefined) throw new UsageError(`--approved ${duplicate} is given twice`);
   const scope = flags.scope === undefined ? null : stringList(jsonFlag(flags, 'scope'), 'scope', /\S/);
   const draft = loadDraft(flags.draft);
   const { ledger } = draft;
   const plan = ratchetPlan(ledger, flags.size, scope);
   const lowers = plan.downgrades.length > 0;
-  const problem = lowers ? downgradeProblem(ledger, flags.approved, plan.downgrades) : null;
-  if (problem) throw new Refusal(problem, flags.approved ?? null);
-  const changes = applyRatchet(ledger, plan, { by, round, approvedBy: lowers ? flags.approved : undefined });
+  const problem = lowers ? downgradeProblem(ledger, approved, plan.downgrades) : null;
+  if (problem) throw new Refusal(problem, approved[0] ?? null);
+  const approvedBy = lowers ? approvalByToken(ledger, approved, plan.downgrades) : new Map();
+  const changes = applyRatchet(ledger, plan, { by, round, approvedBy });
   if (changes.length > 0) saveDraft(draft);
   return { exitCode: 0, output: { size: currentSize(ledger), scope: currentScope(ledger), changes } };
 }

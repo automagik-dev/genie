@@ -182,10 +182,11 @@ export function loadWishPolicy(dir: string): WishPolicy {
 
 // ─── Denylist matching (a mirror of wish.js's own) ───────
 
-// Mirrors `repoRelative` / `escapeRule` / `denylistRule` in wish.js: a trailing-slash rule is a
-// prefix, a `*` rule is a path shape that never matches a colocated `*.test.ts`, a rule with a
-// space is prose the script does not match, and a bare `package.json` hits the prose entry through
-// wish.js's own closing fallback. `triage.test.ts` runs both matchers over one table of paths.
+// Mirrors `repoRelative` / `escapeRule` / `denylistRule` in wish.js: matching is case-insensitive, a
+// trailing-slash rule is a prefix, a `*` rule is a path shape that never matches a colocated
+// `*.test.ts`, a rule with a space is prose the script does not match, and a bare `package.json` hits
+// the prose entry through wish.js's own closing fallback. `triage.test.ts` runs both matchers over
+// one table of paths.
 const escapeRule = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function repoRelative(value: string): string {
@@ -200,21 +201,23 @@ function repoRelative(value: string): string {
 export function denylistRule(candidate: string, denylist: string[]): string {
   const value = repoRelative(candidate);
   if (!value) return '';
+  const folded = value.toLowerCase();
   for (const rule of denylist) {
+    const name = rule.toLowerCase();
     if (rule.endsWith('/')) {
-      if (value === rule.slice(0, -1) || value.startsWith(rule)) return rule;
+      if (folded === name.slice(0, -1) || folded.startsWith(name)) return rule;
       continue;
     }
     if (rule.includes(' ')) continue;
     if (rule.includes('*')) {
-      if (value.endsWith('.test.ts')) continue;
-      const parts = rule.split('*').map(escapeRule).join('[^/]*');
-      if (new RegExp(`^${parts}$`).test(value)) return rule;
+      if (folded.endsWith('.test.ts')) continue;
+      const parts = name.split('*').map(escapeRule).join('[^/]*');
+      if (new RegExp(`^${parts}$`).test(folded)) return rule;
       continue;
     }
-    if (value === rule || value.endsWith(`/${rule}`)) return rule;
+    if (folded === name || folded.endsWith(`/${name}`)) return rule;
   }
-  return value === 'package.json' ? 'package.json scripts' : '';
+  return folded === 'package.json' ? 'package.json scripts' : '';
 }
 
 export function denylistHits(paths: string[], denylist: string[]): { path: string; entry: string }[] {

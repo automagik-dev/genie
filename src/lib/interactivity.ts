@@ -69,6 +69,9 @@ const WORKSPACE_EXEMPT = new Set([
   // sqlite-backed self-resolving DB as `task`/`board`; it must work in a fresh
   // repo with no workspace.json (QA: `genie idea` on a fresh repo).
   'idea',
+  // `metrics` is the opt-in capture switch: it reads and writes only
+  // `<GENIE_HOME>/metrics/`, never `.genie/workspace.json`.
+  'metrics',
   // `mikro` is the microagent runtime, whose whole point is that any repository
   // on a host with genie installed can run it. It reads a git checkout and
   // `<GENIE_HOME>/templates`, never `.genie/workspace.json`; gating it would

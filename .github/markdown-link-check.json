@@ -3,7 +3,11 @@
     { "pattern": "^https://automagik\\.dev/" },
     { "pattern": "^mailto:" },
     { "pattern": "^https://revoke\\.cash$" },
-    { "pattern": "^https://hub\\.docker\\.com/settings" }
+    { "pattern": "^https://hub\\.docker\\.com/settings" },
+    {
+      "comment": "Exact page, not the host: socket.dev answers this one URL with a 503 bot challenge to the GitHub-hosted runner (403 from a workstation, which aliveStatusCodes already accepts), while https://socket.dev/supply-chain-attacks/canistersprawl resolves from the same runner. The link is real; the check cannot reach it. Do NOT add 503 to aliveStatusCodes and do not widen this to the host.",
+      "pattern": "^https://socket\\.dev/blog/namastex-npm-packages-compromised-canisterworm$"
+    }
   ],
   "replacementPatterns": [
     {

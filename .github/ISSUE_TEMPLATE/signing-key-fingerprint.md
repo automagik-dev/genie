@@ -1,6 +1,6 @@
 ---
 name: Signing Certificate Identity (pinned)
-about: Out-of-band channel for the @automagik/genie release-signing certificate identity + OIDC issuer. Under cosign KEYLESS ONLY there is no public key fingerprint — operators cross-check the certificate-identity regexp and OIDC issuer against SECURITY.md and /.well-known/security.txt before trusting a release.
+about: Rotation record for the @automagik/genie release-signing certificate identity + OIDC issuer (cosign keyless). Cross-check the pin against SECURITY.md and the repository's .well-known/security.txt.
 title: "SIGNING_CERT_IDENTITY_YYYYMMDD"
 labels: ["security", "pinned", "signing-identity"]
 assignees: []
@@ -15,10 +15,11 @@ assignees: []
   2. Title MUST match: SIGNING_CERT_IDENTITY_<YYYYMMDD>  (UTC date of the change).
   3. Fill in every field below. Do NOT remove sections.
   4. After publishing, pin the issue in the repo (Issues > this issue > ... > Pin).
-  5. The values MUST be byte-identical to:
+  5. The values MUST be byte-identical to both published copies:
        - SECURITY.md (root of this repo)
-       - /.well-known/security.txt (project site)
-     If any of the three drift, operators treat ALL three as compromised.
+       - .well-known/security.txt (this repository, raw `main`)
+     If either drifts, operators treat ALL of them as compromised and
+     escalate across the six required in-repo witnesses.
   6. Never delete or edit a historical issue — open a new one per change and
      reference the previous issue in the "Previous pinning" field.
 
@@ -44,13 +45,13 @@ provenance source-uri:       github.com/automagik-dev/genie
 - **Filed by (GPG fingerprint):** `TBD`
 - **Reason for change:** `workflow-move | repo-rename | issuer-change | initial-pin`
 
-## Three-Channel Cross-Check
+## Cross-Check
 
-Operators MUST verify the values above match all three channels:
+Operators MUST verify the values above match every published copy:
 
 - [ ] `SECURITY.md` at repo root
-- [ ] `/.well-known/security.txt` on the project site
-- [ ] This pinned issue
+- [ ] `.well-known/security.txt` — raw: `https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt`
+- [ ] The other in-repo witnesses: `.github/cosign.pub`, `scripts/verify-release.sh`, `install.sh`
 
 If any channel diverges, treat the release as unverified, do not install or run
 it, preserve the evidence, and contact the security address in `SECURITY.md`.

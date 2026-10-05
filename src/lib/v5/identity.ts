@@ -34,13 +34,25 @@ export function resolveWorkerIdentity(): string {
 /**
  * Infer the acting runtime kind from the environment. An explicit
  * `GENIE_AGENT_KIND` always wins; otherwise the coding-agent markers are probed
- * in order (Claude Code, Codex, Hermes), falling back to 'human'.
+ * from the most specific to the most generic, because shells nest and markers
+ * leak inward: OMP (`OMPCODE`), Codex (`CODEX_THREAD_ID`), pi (`PI_SESSION_ID` /
+ * `PI_SESSION_FILE`), Claude Code (`CLAUDECODE`), Hermes — falling back to 'human'.
+ *
+ * `CLAUDECODE` is probed LATE on purpose: OMP 18.6.1 sets BOTH `OMPCODE=1` and
+ * `CLAUDECODE=1` in its tool shells (Claude-compatibility), so a Claude-first
+ * order attributed every OMP card event to claude-code. OMP resolves to 'pi',
+ * the roster name for the pi family.
+ *
+ * 'human' is a fallback, not evidence: any runtime without a marker here (a
+ * script, a cron job, an unrecognised agent) resolves to it.
  */
 export function resolveAuthorKind(): string {
   const env = process.env;
   if (env.GENIE_AGENT_KIND) return env.GENIE_AGENT_KIND;
-  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
+  if (env.OMPCODE) return 'pi';
   if (env.CODEX_THREAD_ID) return 'codex';
+  if (env.PI_SESSION_ID || env.PI_SESSION_FILE) return 'pi';
+  if (env.CLAUDECODE || env.CLAUDE_CODE) return 'claude-code';
   if (env.HERMES || env.HERMES_HOME) return 'hermes';
   return 'human';
 }
