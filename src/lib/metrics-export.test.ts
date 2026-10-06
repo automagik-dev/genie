@@ -379,7 +379,7 @@ describe('ledger → verified intervals', () => {
     expect(interval).toMatchObject({ sessionMatch: null, usage: null });
   });
 
-  describe('an OMP shell in ANOTHER checkout of the repository (a git worktree)', () => {
+  describe('an OMP shell whose cwd is not its session’s (a git worktree): matched by its logged genie call', () => {
     const at1 = t('2026-10-04T10:00:00Z');
     const at2 = t('2026-10-04T10:10:00Z');
     const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
@@ -433,27 +433,25 @@ describe('ledger → verified intervals', () => {
       return sessionFile(name);
     };
     const claimCall = (timestamp: string) => toolCall(timestamp, 'genie task checkout t1 --worker w');
-    const interval = (cwd = worktree) => {
+    const interval = (cwd = worktree, database = db) => {
       const lines = [
-        { ...line(db, 1, 'claim', at1, anonymous), cwd },
-        { ...line(db, 2, 'report', at2, anonymous), cwd },
+        { ...line(database, 1, 'claim', at1, anonymous), cwd },
+        { ...line(database, 2, 'report', at2, anonymous), cwd },
       ];
       return buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0];
     };
 
-    test('the one session of the same repository is matched, labelled window, with its usage', () => {
-      const file = omp('root-session', repoRoot);
+    test('the one session of the same repository WITHOUT a logged genie call for the card is not matched', () => {
+      omp('root-session', repoRoot);
+      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
+    });
+
+    test('the one session whose log ran genie for the card just before the event is matched, labelled window', () => {
+      const file = omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
       expect(interval()).toMatchObject({
         sessionMatch: 'window',
         session: { source: 'pi', id: 'root-session', file },
         usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
-      });
-      // A session started in a subdirectory of a registered worktree is of the same repository too.
-      rmSync(file);
-      const nested = omp('nested-session', join(worktree, 'packages', 'x'));
-      expect(interval(repoRoot)).toMatchObject({
-        sessionMatch: 'window',
-        session: { id: 'nested-session', file: nested },
       });
     });
 
@@ -467,7 +465,7 @@ describe('ledger → verified intervals', () => {
       });
     });
 
-    test('two sessions: a genie call logged by a SUBAGENT of one of them is that session’s evidence', () => {
+    test('a genie call logged by a SUBAGENT of a session is that session’s evidence', () => {
       omp('idle', repoRoot);
       const parent = omp('parent', repoRoot);
       write(
@@ -477,20 +475,23 @@ describe('ledger → verified intervals', () => {
       expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'parent', file: parent } });
     });
 
-    test('two sessions and no tool call for the card in either log: no usage is attributed', () => {
+    test('two sessions and no tool call for the card in either log: no match', () => {
       omp('a', repoRoot);
       omp('b', repoRoot);
-      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', session: anonymous, usage: null });
+      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
     });
 
-    test('two sessions that BOTH ran genie for the card near the event: no usage is attributed', () => {
+    test('two sessions that BOTH ran genie for the card near the event: ambiguous, no usage is attributed', () => {
       omp('a', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
       omp('b', worktree, [claimCall('2026-10-04T09:59:50Z')]);
-      expect(interval(join(repoRoot, 'src'))).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+      expect(interval(join(repoRoot, 'src'))).toMatchObject({
+        sessionMatch: 'ambiguous',
+        session: anonymous,
+        usage: null,
+      });
     });
 
     test('a tool call is evidence only for this card, as a genie task command, shortly BEFORE the event', () => {
-      omp('idle', repoRoot);
       omp('near-misses', repoRoot, [
         toolCall('2026-10-04T09:58:00Z', 'genie task checkout t1 --worker w'), // two minutes earlier: too old
         toolCall('2026-10-04T10:00:01Z', 'genie task status t1'), // after the event
@@ -503,7 +504,7 @@ describe('ledger → verified intervals', () => {
           message: { role: 'user', content: 'genie task done t1' },
         },
       ]);
-      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
     });
 
     test('a session whose cwd IS the capture cwd still wins, with no log evidence asked for', () => {
@@ -514,29 +515,50 @@ describe('ledger → verified intervals', () => {
         session: { id: 'worktree-session', file: exact },
         usage: { calls: 1 },
       });
-      // Two with the capture cwd stay ambiguous: the repository fallback is only for NO equal-cwd session.
+      // Two with the capture cwd stay ambiguous: the evidence fallback is only for NO equal-cwd session.
       omp('worktree-session-2', worktree);
       expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
     });
 
-    test('a session of a DIFFERENT repository is never matched, even when its log ran genie for the card', () => {
-      omp('other-repo', join(root, 'other'), [claimCall('2026-10-04T09:59:58Z')]);
+    test('a session started in ANOTHER repository whose log ran genie for the card is matched', () => {
+      omp('same-repo-idle', repoRoot);
+      const writer = omp('other-repo-writer', join(root, 'other'), [claimCall('2026-10-04T09:59:58Z')]);
+      expect(interval()).toMatchObject({
+        sessionMatch: 'window',
+        session: { source: 'pi', id: 'other-repo-writer', file: writer },
+        usage: { calls: 1, input: 50 },
+      });
+    });
+
+    test('a session started in another repository WITHOUT the tool call is never matched', () => {
+      omp('other-repo', join(root, 'other'));
       expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
-      // Beside one session of this repository it changes nothing either.
-      const mine = omp('mine', repoRoot);
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'mine', file: mine } });
     });
 
     test('a session that started after the event is not matched', () => {
-      omp('late', repoRoot, [claimCall('2026-10-04T10:04:00Z')], '2026-10-04T10:03:00Z');
+      // Its header is later than the event even though a record in it claims an earlier call.
+      omp('late', repoRoot, [claimCall('2026-10-04T09:59:58Z')], '2026-10-04T10:03:00Z');
       expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
     });
 
-    test('a capture cwd outside every checkout of the repository is not matched to its sessions', () => {
+    test('a capture cwd outside every checkout of the repository never reaches the evidence fallback', () => {
       omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
       expect(interval(join(root, 'unrelated'))).toMatchObject({ sessionMatch: null, usage: null });
       // A sibling directory that merely shares the root's name as a prefix is not inside it.
       expect(interval(`${repoRoot}-copy`)).toMatchObject({ sessionMatch: null, usage: null });
+    });
+
+    test('a database that is not <root>/.genie/genie.db names no repository: never matched by evidence', () => {
+      const fixtures = join(root, 'fixtures');
+      const testDb = join(fixtures, 'run-1', 'race.db');
+      mkdirSync(join(testDb, '..'), { recursive: true });
+      const handle = new Database(testDb);
+      handle.run('CREATE TABLE task_events (id INTEGER PRIMARY KEY, task_id TEXT, kind TEXT, created_at INTEGER)');
+      handle.run("INSERT INTO task_events VALUES (1, 't1', 'claim', ?), (2, 't1', 'report', ?)", [at1, at2]);
+      handle.close();
+      // dirname(dirname(db)) is `fixtures`, and the capture cwd is inside it.
+      omp('test-runner', fixtures, [claimCall('2026-10-04T09:59:58Z')]);
+      expect(interval(join(fixtures, 'run-1'), testDb)).toMatchObject({ sessionMatch: null, usage: null });
     });
   });
 

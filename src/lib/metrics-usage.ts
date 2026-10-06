@@ -17,8 +17,9 @@
  * OMP 18.6.1 exports no session id to its tool shells, so an OMP capture line
  * carries only its cwd; {@link matchOmpSessionByCwd} finds the session whose own
  * `session.cwd` record equals it and whose life overlaps the interval. An agent
- * that runs genie from ANOTHER checkout of the repository (a git worktree) never
- * has an equal cwd; {@link matchOmpSessionByRepo} is the fallback for that case.
+ * that runs genie from another directory than its session's (a git worktree)
+ * never has an equal cwd; {@link matchOmpSessionByEvidence} is the fallback: the
+ * one live session whose log ran `genie task` for the card just before the event.
  */
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
@@ -345,44 +346,51 @@ export function matchOmpSessionByCwd(
  */
 export const OMP_TOOL_CALL_WINDOW_MS = 60_000;
 
-/** Per export run: `(log file, task id)` → the timestamps of the tool calls that invoked genie for that task. */
-export type OmpEvidenceCache = Map<string, number[]>;
+/** One logged tool call whose command ran `genie task …`. */
+interface GenieToolCall {
+  at: number;
+  command: string;
+}
+
+/** Per export run: log file → its `genie task …` tool calls, so each log is read once however many cards ask. */
+export type OmpEvidenceCache = Map<string, GenieToolCall[]>;
 
 const GENIE_TASK_COMMAND = /\bgenie(?:\.[jt]s)?["']?\s+task\s/;
+const GENIE_BYTES = Buffer.from('genie', 'utf8');
+const TASK_BYTES = Buffer.from('task', 'utf8');
 
-/** Whether one parsed log record is an assistant tool call whose command ran `genie task …` naming `taskId`. */
-function isGenieToolCall(record: Rec | null, taskId: string): boolean {
+/** The `genie task …` commands of one parsed log record's assistant tool calls. */
+function genieCommands(record: Rec | null): string[] {
   const message = obj(record?.message);
-  if (record?.type !== 'message' || message?.role !== 'assistant' || !Array.isArray(message.content)) return false;
-  return message.content.some((part) => {
+  if (record?.type !== 'message' || message?.role !== 'assistant' || !Array.isArray(message.content)) return [];
+  const commands: string[] = [];
+  for (const part of message.content) {
     const command = obj(obj(part)?.arguments)?.command;
-    return (
-      obj(part)?.type === 'toolCall' &&
-      typeof command === 'string' &&
-      command.includes(taskId) &&
-      GENIE_TASK_COMMAND.test(command)
-    );
-  });
+    if (obj(part)?.type === 'toolCall' && typeof command === 'string' && GENIE_TASK_COMMAND.test(command)) {
+      commands.push(command);
+    }
+  }
+  return commands;
 }
 
 /**
- * The timestamps of one OMP log's tool calls whose command ran `genie task …` naming `taskId`:
+ * Every tool call of one OMP log whose command ran `genie task …`, in one streaming pass:
  *
  *   {"type":"message","timestamp":"<ISO>","message":{"role":"assistant","content":[
  *     {"type":"toolCall","name":"bash","arguments":{"command":"genie task comment <taskId> …"}}]}}
  *
- * The log is read in chunks and a line is only decoded when its bytes contain the task id — these
- * logs run to tens of MB and almost no line names a given card.
+ * The log is read in chunks and a line is only decoded when its bytes contain both "genie" and
+ * "task" — these logs run to tens of MB and few lines run genie.
  */
-function genieToolCallTimes(file: string, taskId: string): number[] {
-  const needle = Buffer.from(taskId, 'utf8');
-  const times: number[] = [];
+function readGenieToolCalls(file: string): GenieToolCall[] {
+  const calls: GenieToolCall[] = [];
   const inspect = (line: Buffer): void => {
-    if (!line.includes(needle)) return;
+    if (!line.includes(GENIE_BYTES) || !line.includes(TASK_BYTES)) return;
     try {
       const record = obj(JSON.parse(line.toString('utf8')));
       const at = Date.parse(String(record?.timestamp));
-      if (isGenieToolCall(record, taskId) && Number.isFinite(at)) times.push(at);
+      if (!Number.isFinite(at)) return;
+      for (const command of genieCommands(record)) calls.push({ at, command });
     } catch {
       // a torn line of a live log
     }
@@ -409,34 +417,39 @@ function genieToolCallTimes(file: string, taskId: string): number[] {
   } finally {
     if (fd !== null) closeSync(fd);
   }
-  return times;
+  return calls;
 }
 
 /** Whether a session's own log, or one of its subagents' (the sibling `<session>/` folder), ran genie for the task shortly before `at`. */
 function sessionInvokedGenie(main: string, taskId: string, at: number, cache: OmpEvidenceCache): boolean {
   const sibling = main.replace(/\.jsonl$/, '');
   for (const file of [main, ...(isDir(sibling) ? listJsonl(sibling) : [])]) {
-    const key = `${file}\u0000${taskId}`;
-    let times = cache.get(key);
-    if (!times) {
-      times = genieToolCallTimes(file, taskId);
-      cache.set(key, times);
+    let calls = cache.get(file);
+    if (!calls) {
+      calls = readGenieToolCalls(file);
+      cache.set(file, calls);
     }
-    if (times.some((time) => time <= at && at - time <= OMP_TOOL_CALL_WINDOW_MS)) return true;
+    const ran = (call: GenieToolCall) =>
+      call.at <= at && at - call.at <= OMP_TOOL_CALL_WINDOW_MS && call.command.includes(taskId);
+    if (calls.some(ran)) return true;
   }
   return false;
 }
 
 /**
  * The fallback when NO OMP session has the capture cwd itself: the agent ran genie from another
- * checkout of the repository than the one its session was started in (a git worktree). Candidates are
- * the overlapping OMP sessions whose header cwd lies in a checkout of the event's repository — the root
- * its `<root>/.genie/genie.db` names, or a worktree git registered for it — and only while the capture
- * cwd lies in one too. One candidate is the session. Several are told apart by evidence alone: the one
- * whose log holds a `genie task …` tool call naming this card within {@link OMP_TOOL_CALL_WINDOW_MS}
- * before the event. No such session, or more than one, is 'ambiguous' — never a guess.
+ * directory than the one its session was started in — a git worktree of the repository, or the
+ * repository itself from a session started somewhere else entirely. A header cwd says nothing then,
+ * so the only tie is evidence: among the OMP sessions alive at the event (started by it, log still
+ * written at or after it — the file's mtime, the same cheap liveness test the equal-cwd rule uses),
+ * the ONE whose log holds a `genie task …` tool call naming this card within
+ * {@link OMP_TOOL_CALL_WINDOW_MS} at or before the event. None is null and several are 'ambiguous' —
+ * never a guess, and a lone live session with no such call is not matched either.
+ *
+ * Only an event of a real repository reaches it: its `db` must be `<root>/.genie/genie.db` and the
+ * capture cwd must lie in a checkout of that root (the root, or a worktree git registered for it).
  */
-export function matchOmpSessionByRepo(
+export function matchOmpSessionByEvidence(
   event: { cwd: string; db: string; task: string; at: number },
   env: NodeJS.ProcessEnv = process.env,
   cache: OmpEvidenceCache = new Map(),
@@ -444,10 +457,9 @@ export function matchOmpSessionByRepo(
   // Only a per-repo database names a repository; any other path (a test fixture, a foreign file) names none.
   if (basename(event.db) !== 'genie.db' || basename(dirname(event.db)) !== '.genie') return null;
   const checkouts = repoCheckouts(repoRootOfDb(event.db));
-  const inRepo = (dir: string) => checkouts.some((c) => dir === c || dir.startsWith(`${c}${sep}`));
-  if (!inRepo(event.cwd)) return null;
-  const candidates = ompSessionsOverlapping(event.at, env, inRepo);
-  if (candidates.length <= 1) return candidates[0] ?? null;
-  const proven = candidates.filter((c) => sessionInvokedGenie(c.file, event.task, event.at, cache));
-  return proven.length === 1 ? (proven[0] ?? null) : 'ambiguous';
+  if (!checkouts.some((c) => event.cwd === c || event.cwd.startsWith(`${c}${sep}`))) return null;
+  const alive = ompSessionsOverlapping(event.at, env, () => true);
+  const proven = alive.filter((c) => sessionInvokedGenie(c.file, event.task, event.at, cache));
+  if (proven.length > 1) return 'ambiguous';
+  return proven[0] ?? null;
 }

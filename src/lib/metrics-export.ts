@@ -26,7 +26,7 @@ import {
   type OmpEvidenceCache,
   type UsageSample,
   matchOmpSessionByCwd,
-  matchOmpSessionByRepo,
+  matchOmpSessionByEvidence,
   readUsageSamples,
 } from './metrics-usage.js';
 
@@ -66,9 +66,9 @@ export interface Interval {
   offload: OffloadUsage | null;
   /**
    * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
-   * OMP shell exported none and exactly one OMP session overlapped the interval, in the same cwd or,
-   * when none has that cwd, in a checkout of the same repository (several of those are told apart only
-   * by a logged `genie task` call for this card just before the event); 'ambiguous' — several
+   * OMP shell exported none and exactly one OMP session overlapped the interval in the same cwd or,
+   * when none has that cwd, exactly one live OMP session logged a `genie task` call for this card
+   * just before the event; 'ambiguous' — several
    * remained, so no usage is attributed; null — no runtime session at all.
    */
   sessionMatch: 'exact' | 'window' | 'ambiguous' | null;
@@ -180,7 +180,7 @@ const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id 
 
 /**
  * The opening event's session, or — for an OMP shell that exported no id — the one OMP session that
- * matches by cwd and window, then (only when none has that cwd) by repository checkout and window.
+ * matches by cwd and window, then (only when none has that cwd) by its logged `genie task` call.
  */
 function resolveIntervalSession(
   from: CaptureLine,
@@ -194,7 +194,7 @@ function resolveIntervalSession(
   if (!from.cwd) return { session, match: null };
   const found =
     matchOmpSessionByCwd(from.cwd, from.at, env) ??
-    matchOmpSessionByRepo({ cwd: from.cwd, db: from.db, task: from.task, at: from.at }, env, evidence);
+    matchOmpSessionByEvidence({ cwd: from.cwd, db: from.db, task: from.task, at: from.at }, env, evidence);
   if (found === 'ambiguous') return { session, match: 'ambiguous' };
   if (found === null) return { session, match: null };
   return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };
