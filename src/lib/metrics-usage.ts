@@ -19,7 +19,7 @@
  * `session.cwd` record equals it and whose life overlaps the interval. An agent
  * that runs genie from another directory than its session's (a git worktree)
  * never has an equal cwd; {@link matchOmpSessionByEvidence} is the fallback: the
- * one live session whose log ran `genie task` for the card just before the event.
+ * one live session that was running a genie write for the card when the event was written.
  */
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
@@ -339,62 +339,193 @@ export function matchOmpSessionByCwd(
 }
 
 /**
- * How long before a card event its `genie task …` tool call may have been logged. OMP writes the
- * assistant record (with the tool call) and then runs the command: over 69 real events of one host the
- * record preceded the event by 0.3–3.2 s. 60 s leaves room for a command that does work before its
- * genie call, and stays far below the minutes that separate two sessions touching the same card.
+ * How long a tool call with NO logged result (still running, or a torn log) may have taken to reach its
+ * `genie task …` write. A call that has a result is bounded by that result instead. On one real host
+ * the 105 bash calls of a session ran for 6 ms – 20.8 s (median 0.36 s); 60 s covers a command that
+ * does work before its genie call.
  */
 export const OMP_TOOL_CALL_WINDOW_MS = 60_000;
 
-/** One logged tool call whose command ran `genie task …`. */
-interface GenieToolCall {
+/** Slack on each side of a call's execution interval: clocks of two processes and millisecond rounding. */
+export const OMP_TOOL_CALL_SLACK_MS = 2_000;
+
+/** One logged tool call that names `genie` somewhere in its arguments. */
+interface OmpToolCall {
+  /** When the assistant record carrying the call was written — the call's issuance. */
   at: number;
-  command: string;
+  /** When its `toolResult` record was written; null while none is logged. */
+  endAt: number | null;
+  /** The shell command of a `bash` call; null for every other tool. */
+  command: string | null;
+  /** The call's whole arguments, serialized. */
+  text: string;
 }
 
-/** Per export run: log file → its `genie task …` tool calls, so each log is read once however many cards ask. */
-export type OmpEvidenceCache = Map<string, GenieToolCall[]>;
+/** Per export run: log file → its tool calls that name genie, so each log is read once however many cards ask. */
+export type OmpEvidenceCache = Map<string, OmpToolCall[]>;
 
-const GENIE_TASK_COMMAND = /\bgenie(?:\.[jt]s)?["']?\s+task\s/;
-const GENIE_BYTES = Buffer.from('genie', 'utf8');
-const TASK_BYTES = Buffer.from('task', 'utf8');
+/**
+ * `genie task <verb> <id>` verbs that append a card event (`src/term-commands/v5-task.ts` over
+ * `appendTaskEventInTx`). `status`, `list`, `export`, `import`, `sync`, `heartbeat` and `delete` append
+ * none, and `create` names no existing card.
+ */
+const CARD_WRITE_VERBS = new Set([
+  'adopt',
+  'assign',
+  'block',
+  'checkout',
+  'comment',
+  'done',
+  'link',
+  'move',
+  'release',
+  'report',
+  'set-wish',
+  'unblock',
+]);
 
-/** The `genie task …` commands of one parsed log record's assistant tool calls. */
-function genieCommands(record: Rec | null): string[] {
-  const message = obj(record?.message);
-  if (record?.type !== 'message' || message?.role !== 'assistant' || !Array.isArray(message.content)) return [];
-  const commands: string[] = [];
-  for (const part of message.content) {
-    const command = obj(obj(part)?.arguments)?.command;
-    if (obj(part)?.type === 'toolCall' && typeof command === 'string' && GENIE_TASK_COMMAND.test(command)) {
-      commands.push(command);
-    }
-  }
-  return commands;
+/** Commands that only print or search their arguments: naming a card in one of them runs nothing. */
+const INERT_COMMANDS = new Set(['echo', 'printf', 'grep', 'rg', 'cat']);
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const GENIE_EXECUTABLE = /(?:^|\/)genie(?:\.[jt]s)?$/;
+const GENIE_WORD = /(?<![A-Za-z0-9_])genie(?![A-Za-z0-9_])/;
+const COMMAND_SEPARATORS = new Set([';', '&', '|', '\n', '(', ')']);
+
+interface ShellToken {
+  text: string;
+  /** Holds an unquoted or double-quoted `$` or a backtick: the shell expands it, so its value is not in the log. */
+  expands: boolean;
 }
 
 /**
- * Every tool call of one OMP log whose command ran `genie task …`, in one streaming pass:
- *
- *   {"type":"message","timestamp":"<ISO>","message":{"role":"assistant","content":[
- *     {"type":"toolCall","name":"bash","arguments":{"command":"genie task comment <taskId> …"}}]}}
- *
- * The log is read in chunks and a line is only decoded when its bytes contain both "genie" and
- * "task" — these logs run to tens of MB and few lines run genie.
+ * A shell command line → its simple commands, each a list of words. This is a lexer, not a shell
+ * parser: it honours single quotes, double quotes and backslash escapes, and starts a new simple
+ * command at every unquoted `;`, `&`, `|`, newline or parenthesis — which is all the recognizer below
+ * needs. Anything it cannot see through (a here-document body, `eval "$x"`) is at worst left
+ * unrecognized, and an unrecognized mention of a card only ever WITHHOLDS a match.
  */
-function readGenieToolCalls(file: string): GenieToolCall[] {
-  const calls: GenieToolCall[] = [];
-  const inspect = (line: Buffer): void => {
-    if (!line.includes(GENIE_BYTES) || !line.includes(TASK_BYTES)) return;
-    try {
-      const record = obj(JSON.parse(line.toString('utf8')));
-      const at = Date.parse(String(record?.timestamp));
-      if (!Number.isFinite(at)) return;
-      for (const command of genieCommands(record)) calls.push({ at, command });
-    } catch {
-      // a torn line of a live log
-    }
+function simpleCommands(command: string): ShellToken[][] {
+  const commands: ShellToken[][] = [];
+  let words: ShellToken[] = [];
+  let word: ShellToken | null = null;
+  let quote: "'" | '"' | null = null;
+  const endWord = () => {
+    if (word) words.push(word);
+    word = null;
   };
+  const add = (char: string, expands = false) => {
+    word = { text: (word?.text ?? '') + char, expands: (word?.expands ?? false) || expands };
+  };
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i] as string;
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else add(char);
+    } else if (char === '\\' && i + 1 < command.length) {
+      add(command[++i] as string);
+    } else if (char === quote) {
+      quote = null;
+    } else if (quote === null && (char === "'" || char === '"')) {
+      quote = char;
+      add('');
+    } else if (quote === null && COMMAND_SEPARATORS.has(char)) {
+      endWord();
+      commands.push(words);
+      words = [];
+    } else if (quote === null && (char === ' ' || char === '\t')) {
+      endWord();
+    } else {
+      add(char, char === '$' || char === '`');
+    }
+  }
+  endWord();
+  commands.push(words);
+  return commands.filter((list) => list.length > 0);
+}
+
+/** The words after the genie executable when `words` INVOKES genie, else null. */
+function genieArguments(words: ShellToken[]): ShellToken[] | null {
+  let i = 0;
+  const skipAssignments = () => {
+    while (i < words.length && ENV_ASSIGNMENT.test(words[i]?.text ?? '')) i++;
+  };
+  skipAssignments();
+  // Wrappers that run their operand as the command: `env [VAR=x…]`, `flock <file>`, `bun [run]`, `node`.
+  if (words[i]?.text === 'env') {
+    i++;
+    skipAssignments();
+  }
+  if (words[i]?.text === 'flock') i += 2;
+  if (words[i]?.text === 'bun' || words[i]?.text === 'node') {
+    i++;
+    if (words[i]?.text === 'run') i++;
+  }
+  return GENIE_EXECUTABLE.test(words[i]?.text ?? '') ? words.slice(i + 1) : null;
+}
+
+type Evidence = 'wrote' | 'possible' | null;
+
+const mentions = (text: string, taskId: string): boolean => {
+  for (let at = text.indexOf(taskId); at !== -1; at = text.indexOf(taskId, at + 1)) {
+    const before = text[at - 1] ?? ' ';
+    const after = text[at + taskId.length] ?? ' ';
+    if (!/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after)) return true;
+  }
+  return false;
+};
+
+/**
+ * What one simple command says about the card:
+ *
+ *   'wrote'    — it INVOKES genie (the executable at command position, after env assignments and the
+ *                wrappers above — never as an argument of echo/grep), then any global options, `task`, a
+ *                verb of {@link CARD_WRITE_VERBS}, and the card id as a whole word.
+ *   null       — a recognized genie invocation that cannot have written this card (a read-only verb,
+ *                another card), an inert command, or no mention of the card at all.
+ *   'possible' — anything else that names both genie and the card, or a genie write whose card is a
+ *                shell expansion: it may have written the event, and it cannot be proven either way.
+ */
+function simpleCommandEvidence(words: ShellToken[], taskId: string, callMentionsCard: boolean): Evidence {
+  const args = genieArguments(words);
+  if (args) {
+    const rest = args.slice(args.findIndex((word) => !word.text.startsWith('-')));
+    const isCardWrite = rest[0]?.text === 'task' && CARD_WRITE_VERBS.has(rest[1]?.text ?? '');
+    if (!isCardWrite) return null;
+    if (rest.some((word) => word.text === taskId)) return 'wrote';
+    return callMentionsCard && rest.some((word) => word.expands) ? 'possible' : null;
+  }
+  const expands = words.some((word) => word.expands);
+  if (INERT_COMMANDS.has(words[0]?.text ?? '') && !expands) return null;
+  const text = words.map((word) => word.text).join(' ');
+  return mentions(text, taskId) && GENIE_WORD.test(text) ? 'possible' : null;
+}
+
+/** What one tool call says about the card: a `bash` call by its simple commands, any other tool by a bare mention. */
+function callEvidence(call: OmpToolCall, taskId: string): Evidence {
+  if (!mentions(call.text, taskId)) return null;
+  if (call.command === null) return 'possible';
+  let evidence: Evidence = null;
+  for (const words of simpleCommands(call.command)) {
+    const found = simpleCommandEvidence(words, taskId, true);
+    if (found === 'wrote') return 'wrote';
+    evidence = found ?? evidence;
+  }
+  return evidence;
+}
+
+/** Whether the event falls inside the call's execution: issuance → logged result, or the window when no result is logged. */
+function ranDuring(call: OmpToolCall, at: number): boolean {
+  const end = call.endAt ?? call.at + OMP_TOOL_CALL_WINDOW_MS;
+  return at >= call.at - OMP_TOOL_CALL_SLACK_MS && at <= end + OMP_TOOL_CALL_SLACK_MS;
+}
+
+const TOOL_CALL_BYTES = Buffer.from('"type":"toolCall"', 'utf8');
+const TOOL_RESULT_BYTES = Buffer.from('"toolCallId":"', 'utf8');
+const GENIE_BYTES = Buffer.from('genie', 'utf8');
+
+/** Feeds every line of a file to `inspect`, reading in chunks: these logs run to tens of MB. */
+function forEachLine(file: string, inspect: (line: Buffer) => void): void {
   let fd: number | null = null;
   try {
     fd = openSync(file, 'r');
@@ -417,23 +548,87 @@ function readGenieToolCalls(file: string): GenieToolCall[] {
   } finally {
     if (fd !== null) closeSync(fd);
   }
+}
+
+/**
+ * Every tool call of one OMP log that names genie, with its execution interval, in one streaming pass:
+ *
+ *   {"type":"message","timestamp":"<ISO>","message":{"role":"assistant","content":[
+ *     {"type":"toolCall","id":"<call>","name":"bash","arguments":{"command":"genie task comment <id> …"}}]}}
+ *   {"type":"message","timestamp":"<ISO>","message":{"role":"toolResult","toolCallId":"<call>","toolName":"bash",…}}
+ *
+ * A line is only decoded when its bytes hold a tool call naming genie, or the result of one already
+ * collected (the `toolCallId` is read from the bytes first).
+ */
+function readOmpToolCalls(file: string): OmpToolCall[] {
+  const genieToolCall = (item: Rec, at: number): OmpToolCall | null => {
+    if (item.type !== 'toolCall') return null;
+    const text = JSON.stringify(item.arguments ?? null);
+    if (!GENIE_WORD.test(text)) return null;
+    const command = item.name === 'bash' ? obj(item.arguments)?.command : null;
+    return { at, endAt: null, command: typeof command === 'string' ? command : null, text };
+  };
+  const calls: OmpToolCall[] = [];
+  const open = new Map<string, OmpToolCall>();
+  const collect = (record: Rec | null): void => {
+    const message = obj(record?.message);
+    const at = Date.parse(String(record?.timestamp));
+    if (!message || !Number.isFinite(at)) return;
+    if (message.role === 'toolResult' && typeof message.toolCallId === 'string') {
+      const call = open.get(message.toolCallId);
+      if (call && call.endAt === null) call.endAt = at;
+      return;
+    }
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) return;
+    for (const part of message.content) {
+      const item = obj(part);
+      const call = item ? genieToolCall(item, at) : null;
+      if (!call) continue;
+      calls.push(call);
+      if (typeof item?.id === 'string') open.set(item.id, call);
+    }
+  };
+  const resultOfOpenCall = (line: Buffer): boolean => {
+    const start = line.indexOf(TOOL_RESULT_BYTES);
+    if (start === -1) return false;
+    const from = start + TOOL_RESULT_BYTES.length;
+    const end = line.indexOf(34, from);
+    return end !== -1 && open.has(line.toString('utf8', from, end));
+  };
+  forEachLine(file, (line) => {
+    const isCall = line.includes(TOOL_CALL_BYTES) && line.includes(GENIE_BYTES);
+    if (!isCall && !resultOfOpenCall(line)) return;
+    try {
+      collect(obj(JSON.parse(line.toString('utf8'))));
+    } catch {
+      // a torn line of a live log
+    }
+  });
   return calls;
 }
 
-/** Whether a session's own log, or one of its subagents' (the sibling `<session>/` folder), ran genie for the task shortly before `at`. */
-function sessionInvokedGenie(main: string, taskId: string, at: number, cache: OmpEvidenceCache): boolean {
+/**
+ * What a session's own log, and its subagents' (the sibling `<session>/` folder, one level — the same
+ * reach as usage reading), say about the card at `at`: 'wrote' as soon as one call running then
+ * invoked a genie write for it, else 'possible' when one named it unrecognizably.
+ */
+function sessionEvidence(main: string, taskId: string, at: number, cache: OmpEvidenceCache): Evidence {
   const sibling = main.replace(/\.jsonl$/, '');
+  let evidence: Evidence = null;
   for (const file of [main, ...(isDir(sibling) ? listJsonl(sibling) : [])]) {
     let calls = cache.get(file);
     if (!calls) {
-      calls = readGenieToolCalls(file);
+      calls = readOmpToolCalls(file);
       cache.set(file, calls);
     }
-    const ran = (call: GenieToolCall) =>
-      call.at <= at && at - call.at <= OMP_TOOL_CALL_WINDOW_MS && call.command.includes(taskId);
-    if (calls.some(ran)) return true;
+    for (const call of calls) {
+      if (!ranDuring(call, at)) continue;
+      const found = callEvidence(call, taskId);
+      if (found === 'wrote') return 'wrote';
+      evidence = found ?? evidence;
+    }
   }
-  return false;
+  return evidence;
 }
 
 /**
@@ -442,9 +637,13 @@ function sessionInvokedGenie(main: string, taskId: string, at: number, cache: Om
  * repository itself from a session started somewhere else entirely. A header cwd says nothing then,
  * so the only tie is evidence: among the OMP sessions alive at the event (started by it, log still
  * written at or after it — the file's mtime, the same cheap liveness test the equal-cwd rule uses),
- * the ONE whose log holds a `genie task …` tool call naming this card within
- * {@link OMP_TOOL_CALL_WINDOW_MS} at or before the event. None is null and several are 'ambiguous' —
- * never a guess, and a lone live session with no such call is not matched either.
+ * the ONE that was running a tool call which invoked a genie WRITE verb for this card when the event
+ * was written ({@link simpleCommandEvidence}, {@link ranDuring}).
+ *
+ * No such session is null — a lone live session without the call included. Several are 'ambiguous'.
+ * So is one proven session beside ANOTHER session that named the card and genie in a call running at
+ * that moment which cannot be recognized (another tool, an unrecognized shell form): that one may be
+ * the writer, and an unprovable writer must never let a bystander win. Never a guess.
  *
  * Only an event of a real repository reaches it: its `db` must be `<root>/.genie/genie.db` and the
  * capture cwd must lie in a checkout of that root (the root, or a worktree git registered for it).
@@ -459,7 +658,9 @@ export function matchOmpSessionByEvidence(
   const checkouts = repoCheckouts(repoRootOfDb(event.db));
   if (!checkouts.some((c) => event.cwd === c || event.cwd.startsWith(`${c}${sep}`))) return null;
   const alive = ompSessionsOverlapping(event.at, env, () => true);
-  const proven = alive.filter((c) => sessionInvokedGenie(c.file, event.task, event.at, cache));
-  if (proven.length > 1) return 'ambiguous';
-  return proven[0] ?? null;
+  const evidence = alive.map((session) => sessionEvidence(session.file, event.task, event.at, cache));
+  const writers = alive.filter((_, index) => evidence[index] === 'wrote');
+  if (writers.length === 0) return null;
+  if (writers.length > 1 || evidence.includes('possible')) return 'ambiguous';
+  return writers[0] ?? null;
 }
