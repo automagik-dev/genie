@@ -22,7 +22,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
 import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
 import { type PriceTable, hasTokens, tableCost } from './metrics-prices.js';
-import { type UsageSample, matchOmpSessionByCwd, readUsageSamples } from './metrics-usage.js';
+import {
+  type OmpEvidenceCache,
+  type UsageSample,
+  matchOmpSessionByCwd,
+  matchOmpSessionByEvidence,
+  newOmpEvidenceCache,
+  readUsageSamples,
+} from './metrics-usage.js';
 
 export interface UsageTotals {
   calls: number;
@@ -60,8 +67,10 @@ export interface Interval {
   offload: OffloadUsage | null;
   /**
    * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
-   * OMP shell exported none and exactly one OMP session in the same cwd overlapped the interval;
-   * 'ambiguous' — several did, so no usage is attributed; null — no runtime session at all.
+   * OMP shell exported none and exactly one OMP session overlapped the interval in the same cwd or,
+   * when none has that cwd, exactly one live OMP session was running a genie write for this card
+   * when the event was written and no other session's running call named it; 'ambiguous' — several
+   * remained, so no usage is attributed; null — no runtime session at all.
    */
   sessionMatch: 'exact' | 'window' | 'ambiguous' | null;
 }
@@ -170,17 +179,23 @@ const combineSources = (sources: Array<CostSource | null | undefined>): CostSour
 
 const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id ?? session.file ?? ''}`;
 
-/** The opening event's session, or — for an OMP shell that exported no id — the one OMP session that matches by cwd and window. */
+/**
+ * The opening event's session, or — for an OMP shell that exported no id — the one OMP session that
+ * matches by cwd and window, then (only when none has that cwd) by its logged genie write of the card.
+ */
 function resolveIntervalSession(
   from: CaptureLine,
   env: NodeJS.ProcessEnv,
+  evidence: OmpEvidenceCache,
 ): { session: RuntimeSession; match: Interval['sessionMatch'] } {
   const session = from.session;
   if (session.source === null) return { session, match: null };
   if (session.ambiguous) return { session, match: 'ambiguous' };
   if (session.source !== 'pi' || session.id !== null || session.file !== null) return { session, match: 'exact' };
   if (!from.cwd) return { session, match: null };
-  const found = matchOmpSessionByCwd(from.cwd, from.at, env);
+  const found =
+    matchOmpSessionByCwd(from.cwd, from.at, env) ??
+    matchOmpSessionByEvidence({ cwd: from.cwd, db: from.db, task: from.task, at: from.at }, env, evidence);
   if (found === 'ambiguous') return { session, match: 'ambiguous' };
   if (found === null) return { session, match: null };
   return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };
@@ -232,13 +247,17 @@ export function buildIntervals(
     if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
     return offloadRows.get(root) ?? null;
   };
+  // The cards an id-less OMP line asks about: the evidence index keeps only tool calls naming one of them.
+  const ompEvidence: OmpEvidenceCache = newOmpEvidenceCache(
+    matched.filter((l) => l.session.source === 'pi' && l.session.id === null).map((l) => l.task),
+  );
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
     events.sort((a, b) => a.at - b.at || a.event - b.event);
     for (let i = 0; i + 1 < events.length; i++) {
       const from = events[i] as CaptureLine;
       const to = events[i + 1] as CaptureLine;
-      const { session, match } = resolveIntervalSession(from, env);
+      const { session, match } = resolveIntervalSession(from, env, ompEvidence);
       const samples = match === 'ambiguous' ? null : samplesFor(session);
       intervals.push({
         db: from.db,
