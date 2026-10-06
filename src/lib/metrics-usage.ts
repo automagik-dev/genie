@@ -15,15 +15,18 @@
  * interval as having no usage, never as zero.
  *
  * OMP 18.6.1 exports no session id to its tool shells, so an OMP capture line
- * carries only its cwd; {@link matchPiSessionByCwd} finds the session whose own
- * `session.cwd` record equals it and whose life overlaps the interval.
+ * carries only its cwd; {@link matchOmpSessionByCwd} finds the session whose own
+ * `session.cwd` record equals it and whose life overlaps the interval. An agent
+ * that runs genie from ANOTHER checkout of the repository (a git worktree) never
+ * has an equal cwd; {@link matchOmpSessionByRepo} is the fallback for that case.
  */
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir } from './genie-home.js';
 import type { RuntimeSession } from './metrics-capture.js';
+import { repoCheckouts, repoRootOfDb } from './metrics-offload.js';
 
 export interface UsageSample {
   /** Epoch ms of the model call's record. */
@@ -291,23 +294,22 @@ function readPiSessionHeader(file: string): { id: string | null; cwd: string; st
 export type PiSessionMatch = { id: string | null; file: string } | 'ambiguous' | null;
 
 /**
- * The single OMP session that wrote the opening event: its header's cwd is equal, it had started by
- * `openedAt` and it was still written at or after it. Only `~/.omp` is scanned — only OMP shells
- * produce id-less lines, so a pi log there would be someone else's usage. Two candidates are
- * 'ambiguous' — never a guess; none is null. Top-level session logs only: an OMP subagent's log lives
- * in its parent's folder, so a `genie` call from a subagent shell is matched to the parent session.
+ * Every top-level OMP session whose header cwd passes `cwdMatches`, that had started by `openedAt` and
+ * was still written at or after it. Only `~/.omp` is scanned — only OMP shells produce id-less lines,
+ * so a pi log there would be someone else's usage. Top-level session logs only: an OMP subagent's log
+ * lives in its parent's folder, so a `genie` call from a subagent shell is matched to the parent session.
  */
-export function matchOmpSessionByCwd(
-  cwd: string,
+function ompSessionsOverlapping(
   openedAt: number,
-  env: NodeJS.ProcessEnv = process.env,
-): PiSessionMatch {
+  env: NodeJS.ProcessEnv,
+  cwdMatches: (cwd: string) => boolean,
+): Array<{ id: string | null; file: string }> {
   const root = join(env.HOME || homedir(), '.omp', 'agent', 'sessions');
   const hits: Array<{ id: string | null; file: string }> = [];
   for (const slug of safeReaddir(root)) {
     for (const file of listJsonl(join(root, slug))) {
       const header = piSessionHeader(file);
-      if (!header || header.cwd !== cwd || !(header.startedAt <= openedAt)) continue;
+      if (!header || !cwdMatches(header.cwd) || !(header.startedAt <= openedAt)) continue;
       let lastWrite = 0;
       try {
         lastWrite = statSync(file).mtimeMs;
@@ -317,6 +319,135 @@ export function matchOmpSessionByCwd(
       if (lastWrite >= openedAt) hits.push({ id: header.id, file });
     }
   }
+  return hits;
+}
+
+/**
+ * The single OMP session that wrote the opening event: its header's cwd is equal, it had started by
+ * `openedAt` and it was still written at or after it. Two candidates are 'ambiguous' — never a guess;
+ * none is null.
+ */
+export function matchOmpSessionByCwd(
+  cwd: string,
+  openedAt: number,
+  env: NodeJS.ProcessEnv = process.env,
+): PiSessionMatch {
+  const hits = ompSessionsOverlapping(openedAt, env, (header) => header === cwd);
   if (hits.length > 1) return 'ambiguous';
   return hits[0] ?? null;
+}
+
+/**
+ * How long before a card event its `genie task …` tool call may have been logged. OMP writes the
+ * assistant record (with the tool call) and then runs the command: over 69 real events of one host the
+ * record preceded the event by 0.3–3.2 s. 60 s leaves room for a command that does work before its
+ * genie call, and stays far below the minutes that separate two sessions touching the same card.
+ */
+export const OMP_TOOL_CALL_WINDOW_MS = 60_000;
+
+/** Per export run: `(log file, task id)` → the timestamps of the tool calls that invoked genie for that task. */
+export type OmpEvidenceCache = Map<string, number[]>;
+
+const GENIE_TASK_COMMAND = /\bgenie(?:\.[jt]s)?["']?\s+task\s/;
+
+/** Whether one parsed log record is an assistant tool call whose command ran `genie task …` naming `taskId`. */
+function isGenieToolCall(record: Rec | null, taskId: string): boolean {
+  const message = obj(record?.message);
+  if (record?.type !== 'message' || message?.role !== 'assistant' || !Array.isArray(message.content)) return false;
+  return message.content.some((part) => {
+    const command = obj(obj(part)?.arguments)?.command;
+    return (
+      obj(part)?.type === 'toolCall' &&
+      typeof command === 'string' &&
+      command.includes(taskId) &&
+      GENIE_TASK_COMMAND.test(command)
+    );
+  });
+}
+
+/**
+ * The timestamps of one OMP log's tool calls whose command ran `genie task …` naming `taskId`:
+ *
+ *   {"type":"message","timestamp":"<ISO>","message":{"role":"assistant","content":[
+ *     {"type":"toolCall","name":"bash","arguments":{"command":"genie task comment <taskId> …"}}]}}
+ *
+ * The log is read in chunks and a line is only decoded when its bytes contain the task id — these
+ * logs run to tens of MB and almost no line names a given card.
+ */
+function genieToolCallTimes(file: string, taskId: string): number[] {
+  const needle = Buffer.from(taskId, 'utf8');
+  const times: number[] = [];
+  const inspect = (line: Buffer): void => {
+    if (!line.includes(needle)) return;
+    try {
+      const record = obj(JSON.parse(line.toString('utf8')));
+      const at = Date.parse(String(record?.timestamp));
+      if (isGenieToolCall(record, taskId) && Number.isFinite(at)) times.push(at);
+    } catch {
+      // a torn line of a live log
+    }
+  };
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, 'r');
+    const chunk = Buffer.alloc(1 << 20);
+    let rest: Buffer = Buffer.alloc(0);
+    for (;;) {
+      const read = readSync(fd, chunk, 0, chunk.length, null);
+      if (read <= 0) break;
+      let data: Buffer = rest.length > 0 ? Buffer.concat([rest, chunk.subarray(0, read)]) : chunk.subarray(0, read);
+      for (let end = data.indexOf(10); end !== -1; end = data.indexOf(10)) {
+        inspect(data.subarray(0, end));
+        data = data.subarray(end + 1);
+      }
+      // `data` may alias `chunk`, which the next read overwrites.
+      rest = Buffer.from(data);
+    }
+    inspect(rest);
+  } catch {
+    // an unreadable log is no evidence
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+  return times;
+}
+
+/** Whether a session's own log, or one of its subagents' (the sibling `<session>/` folder), ran genie for the task shortly before `at`. */
+function sessionInvokedGenie(main: string, taskId: string, at: number, cache: OmpEvidenceCache): boolean {
+  const sibling = main.replace(/\.jsonl$/, '');
+  for (const file of [main, ...(isDir(sibling) ? listJsonl(sibling) : [])]) {
+    const key = `${file}\u0000${taskId}`;
+    let times = cache.get(key);
+    if (!times) {
+      times = genieToolCallTimes(file, taskId);
+      cache.set(key, times);
+    }
+    if (times.some((time) => time <= at && at - time <= OMP_TOOL_CALL_WINDOW_MS)) return true;
+  }
+  return false;
+}
+
+/**
+ * The fallback when NO OMP session has the capture cwd itself: the agent ran genie from another
+ * checkout of the repository than the one its session was started in (a git worktree). Candidates are
+ * the overlapping OMP sessions whose header cwd lies in a checkout of the event's repository — the root
+ * its `<root>/.genie/genie.db` names, or a worktree git registered for it — and only while the capture
+ * cwd lies in one too. One candidate is the session. Several are told apart by evidence alone: the one
+ * whose log holds a `genie task …` tool call naming this card within {@link OMP_TOOL_CALL_WINDOW_MS}
+ * before the event. No such session, or more than one, is 'ambiguous' — never a guess.
+ */
+export function matchOmpSessionByRepo(
+  event: { cwd: string; db: string; task: string; at: number },
+  env: NodeJS.ProcessEnv = process.env,
+  cache: OmpEvidenceCache = new Map(),
+): PiSessionMatch {
+  // Only a per-repo database names a repository; any other path (a test fixture, a foreign file) names none.
+  if (basename(event.db) !== 'genie.db' || basename(dirname(event.db)) !== '.genie') return null;
+  const checkouts = repoCheckouts(repoRootOfDb(event.db));
+  const inRepo = (dir: string) => checkouts.some((c) => dir === c || dir.startsWith(`${c}${sep}`));
+  if (!inRepo(event.cwd)) return null;
+  const candidates = ompSessionsOverlapping(event.at, env, inRepo);
+  if (candidates.length <= 1) return candidates[0] ?? null;
+  const proven = candidates.filter((c) => sessionInvokedGenie(c.file, event.task, event.at, cache));
+  return proven.length === 1 ? (proven[0] ?? null) : 'ambiguous';
 }

@@ -379,6 +379,167 @@ describe('ledger → verified intervals', () => {
     expect(interval).toMatchObject({ sessionMatch: null, usage: null });
   });
 
+  describe('an OMP shell in ANOTHER checkout of the repository (a git worktree)', () => {
+    const at1 = t('2026-10-04T10:00:00Z');
+    const at2 = t('2026-10-04T10:10:00Z');
+    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
+    let repoRoot: string;
+    let worktree: string;
+    let db: string;
+
+    beforeEach(() => {
+      repoRoot = join(root, 'repo');
+      // Outside the repo root, as `git worktree add` registers it: <root>/.git/worktrees/<n>/gitdir.
+      worktree = join(root, 'elsewhere', 'wt');
+      write(join(repoRoot, '.git', 'worktrees', 'wt', 'gitdir'), `${join(worktree, '.git')}\n`);
+      db = seedDb([
+        { id: 1, task: 't1', kind: 'claim', at: at1 },
+        { id: 2, task: 't1', kind: 'report', at: at2 },
+      ]);
+    });
+
+    /** A bash tool-call record, shaped as OMP 18.6.1 writes it. */
+    const toolCall = (timestamp: string, command: string) => ({
+      type: 'message',
+      timestamp,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '' },
+          { type: 'toolCall', id: 'call_1', name: 'bash', arguments: { i: 'x', command, timeout: 30 } },
+        ],
+      },
+    });
+    const sessionFile = (name: string) =>
+      join(root, '.omp', 'agent', 'sessions', '-repo', `2026-10-04T09-00-00Z_${name}.jsonl`);
+    /** One OMP session log: header, one priced model call inside the interval, then `records`. */
+    const omp = (name: string, cwd: string, records: unknown[] = [], started = '2026-10-04T09:00:00Z') => {
+      write(
+        sessionFile(name),
+        jsonl([
+          { type: 'title', v: 1, title: name },
+          { type: 'session', id: name, timestamp: started, cwd },
+          {
+            type: 'message',
+            timestamp: '2026-10-04T10:05:00Z',
+            message: {
+              role: 'assistant',
+              usage: { input: 50, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+            },
+          },
+          ...records,
+        ]),
+      );
+      return sessionFile(name);
+    };
+    const claimCall = (timestamp: string) => toolCall(timestamp, 'genie task checkout t1 --worker w');
+    const interval = (cwd = worktree) => {
+      const lines = [
+        { ...line(db, 1, 'claim', at1, anonymous), cwd },
+        { ...line(db, 2, 'report', at2, anonymous), cwd },
+      ];
+      return buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0];
+    };
+
+    test('the one session of the same repository is matched, labelled window, with its usage', () => {
+      const file = omp('root-session', repoRoot);
+      expect(interval()).toMatchObject({
+        sessionMatch: 'window',
+        session: { source: 'pi', id: 'root-session', file },
+        usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
+      });
+      // A session started in a subdirectory of a registered worktree is of the same repository too.
+      rmSync(file);
+      const nested = omp('nested-session', join(worktree, 'packages', 'x'));
+      expect(interval(repoRoot)).toMatchObject({
+        sessionMatch: 'window',
+        session: { id: 'nested-session', file: nested },
+      });
+    });
+
+    test('two sessions of the repository: the one whose log ran genie for this card just before the event', () => {
+      omp('idle', repoRoot);
+      const worker = omp('worker', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      expect(interval()).toMatchObject({
+        sessionMatch: 'window',
+        session: { source: 'pi', id: 'worker', file: worker },
+        usage: { calls: 1, input: 50 },
+      });
+    });
+
+    test('two sessions: a genie call logged by a SUBAGENT of one of them is that session’s evidence', () => {
+      omp('idle', repoRoot);
+      const parent = omp('parent', repoRoot);
+      write(
+        join(parent.replace(/\.jsonl$/, ''), 'G1Worker.jsonl'),
+        jsonl([toolCall('2026-10-04T09:59:59Z', 'cd /x && bun dist/genie.js task comment t1 "note"')]),
+      );
+      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'parent', file: parent } });
+    });
+
+    test('two sessions and no tool call for the card in either log: no usage is attributed', () => {
+      omp('a', repoRoot);
+      omp('b', repoRoot);
+      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', session: anonymous, usage: null });
+    });
+
+    test('two sessions that BOTH ran genie for the card near the event: no usage is attributed', () => {
+      omp('a', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      omp('b', worktree, [claimCall('2026-10-04T09:59:50Z')]);
+      expect(interval(join(repoRoot, 'src'))).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+    });
+
+    test('a tool call is evidence only for this card, as a genie task command, shortly BEFORE the event', () => {
+      omp('idle', repoRoot);
+      omp('near-misses', repoRoot, [
+        toolCall('2026-10-04T09:58:00Z', 'genie task checkout t1 --worker w'), // two minutes earlier: too old
+        toolCall('2026-10-04T10:00:01Z', 'genie task status t1'), // after the event
+        toolCall('2026-10-04T09:59:58Z', 'genie task checkout t2 --worker w'), // another card
+        toolCall('2026-10-04T09:59:58Z', 'grep t1 /home/genie/notes/task list.md'), // names the card, runs no genie
+        // The card id in a tool RESULT or a user message is not a tool call.
+        {
+          type: 'message',
+          timestamp: '2026-10-04T09:59:58Z',
+          message: { role: 'user', content: 'genie task done t1' },
+        },
+      ]);
+      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+    });
+
+    test('a session whose cwd IS the capture cwd still wins, with no log evidence asked for', () => {
+      omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      const exact = omp('worktree-session', worktree);
+      expect(interval()).toMatchObject({
+        sessionMatch: 'window',
+        session: { id: 'worktree-session', file: exact },
+        usage: { calls: 1 },
+      });
+      // Two with the capture cwd stay ambiguous: the repository fallback is only for NO equal-cwd session.
+      omp('worktree-session-2', worktree);
+      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
+    });
+
+    test('a session of a DIFFERENT repository is never matched, even when its log ran genie for the card', () => {
+      omp('other-repo', join(root, 'other'), [claimCall('2026-10-04T09:59:58Z')]);
+      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
+      // Beside one session of this repository it changes nothing either.
+      const mine = omp('mine', repoRoot);
+      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'mine', file: mine } });
+    });
+
+    test('a session that started after the event is not matched', () => {
+      omp('late', repoRoot, [claimCall('2026-10-04T10:04:00Z')], '2026-10-04T10:03:00Z');
+      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
+    });
+
+    test('a capture cwd outside every checkout of the repository is not matched to its sessions', () => {
+      omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      expect(interval(join(root, 'unrelated'))).toMatchObject({ sessionMatch: null, usage: null });
+      // A sibling directory that merely shares the root's name as a prefix is not inside it.
+      expect(interval(`${repoRoot}-copy`)).toMatchObject({ sessionMatch: null, usage: null });
+    });
+  });
+
   test('mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown', () => {
     const at1 = t('2026-10-04T13:00:00Z');
     const at2 = t('2026-10-04T13:10:00Z');
