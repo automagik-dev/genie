@@ -521,34 +521,63 @@ describe('ledger → verified intervals', () => {
       expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
     });
 
-    test('only an INVOCATION of a card-writing genie verb for this very card is evidence', () => {
-      const alone = (command: string) => {
-        omp('only', repoRoot, [toolCall('2026-10-04T09:59:58Z', command)]);
-        return interval()?.sessionMatch ?? null;
-      };
+    /** `command` in a lone session, then the same session beside one PROVEN to have written the card. */
+    const verdicts = (command: string) => {
+      rmSync(sessionFile('proven'), { force: true });
+      omp('only', repoRoot, [toolCall('2026-10-04T09:59:58Z', command)]);
+      const alone = interval()?.sessionMatch ?? null;
+      omp('proven', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      return [command, alone, interval()?.sessionMatch ?? null];
+    };
+
+    test('a genie executable at command position, a write verb, and the card as that verb’s operand: proven', () => {
       const proven = [
         'genie task checkout t1 --worker w',
         'genie --no-interactive task checkout t1 --worker w',
+        'genie task checkout --worker=w t1',
+        'genie task block --reason "waiting on review" --hold t1',
         'bun dist/genie.js task comment t1 "note"',
+        'cd /x\ngenie task done t1', // a second LINE of the command, not a word glued to the first
         'cd /x && GENIE_HOME=/h ./dist/genie.js task done t1',
         'env A=b flock /var/tmp/l node /opt/genie/dist/genie.js task release t1',
         "genie task comment t1 --worker w -- 'a; b && c | d'",
         'bun run check; genie task report t1 --worker w -- done',
       ];
-      for (const command of proven) expect([command, alone(command)]).toEqual([command, 'window']);
-      const never = [
-        'genie task status t1', // a read-only verb
+      // Alone it is the writer; beside another proven session nobody is.
+      for (const command of proven) expect(verdicts(command)).toEqual([command, 'window', 'ambiguous']);
+    });
+
+    test('a call that names the card without proving a write is never the writer, and blocks any other session', () => {
+      const unproven = [
+        'genie task status t1', // a read-only verb: a concurrent poll costs the other session its match
         'genie task heartbeat t1', // writes no card event
-        'genie task checkout t10 --worker w', // another card whose id merely starts the same
-        "genie task comment t2 --worker w -- 'blocked on t1'", // another card; t1 is comment text
-        'echo "next: genie task checkout t1" >> notes.md', // an argument of echo, not a command
-        "printf 'genie task done t1\\n'",
-        'grep -r t1 /home/genie/notes',
-        'ID=t1; genie task done "$ID"', // the card is a shell expansion: possible, never proven
-        'cat > notes.md <<EOF\ngenie task done t1\nEOF', // a here-document body is data
+        "genie task comment t2 --worker w -- 't1'", // t1 is the comment's text
+        'genie task comment t2 --worker t1 -- note', // t1 is an option's value
+        'genie task link t2 --wish t1', // likewise
+        'genie task done t1 --help', // prints help, writes nothing
+        'genie task done --force t1', // an option the verb does not register
+        'genie -V task done t1', // a global option that is not --no-interactive
+        'echo genie task done t1', // an argument of echo, not at command position
+        'echo "next: genie task checkout t1" >> notes.md',
+        'echo t1 | xargs genie task done', // the card reaches genie through a pipe
+        "echo 'genie task done t1' | sh",
+        'genie task status "$(genie task done t1)"', // inside a command substitution
+        "cat >> HANDOFF.md <<'EOF'\n  genie task report t1 --worker w -- done\nEOF", // a here-document body is data
+        'genie task done t1 <<< ""', // any here-document or here-string disqualifies the whole call
         'mygenie task done t1', // not the genie executable
+        'grep -r t1 notes/', // no genie at all: a mention is a mention
       ];
-      for (const command of never) expect([command, alone(command)]).toEqual([command, null]);
+      for (const command of unproven) expect(verdicts(command)).toEqual([command, null, 'ambiguous']);
+    });
+
+    test('a call that does not name the card as a whole word says nothing about it', () => {
+      const silent = [
+        'genie task checkout t10 --worker w', // another card whose id merely starts the same
+        'genie task done xt1',
+        'ID=t_1; genie task done "$ID"', // the log never names the card: invisible (an inherent limit)
+        './report.sh',
+      ];
+      for (const command of silent) expect(verdicts(command)).toEqual([command, null, 'window']);
     });
 
     test('the event must fall inside the call’s own execution: issued → result', () => {
@@ -579,24 +608,33 @@ describe('ledger → verified intervals', () => {
       expect(interval()).toMatchObject({ sessionMatch: 'window', session: { file: edge } });
     });
 
-    test('a writer that cannot be recognized (the eval tool) never lets another session win', () => {
-      // Alone: possible, never proven.
-      omp('eval-writer', repoRoot, [evalCall('2026-10-04T09:59:59Z', 'genie task checkout t1 --worker w')]);
+    test('a mention by ANOTHER tool (eval) is never proof, and never lets another session win', () => {
+      omp('eval-writer', repoRoot, [evalCall('2026-10-04T09:59:59Z', 'run(["genie", "task", "checkout", "t1"])')]);
       expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-      // Beside a poller that only read the card: still nobody.
-      omp('poller', repoRoot, [toolCall('2026-10-04T09:59:50Z', 'genie task status t1')]);
-      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-      // Beside a session PROVEN to have written the card then: either may be the writer.
       omp('proven', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
       expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', session: anonymous, usage: null });
     });
 
-    test('a proven session is not demoted by its own unrecognized mentions, nor by a bystander’s echo', () => {
+    test('a mention that was not RUNNING at the event blocks nobody', () => {
+      const writer = omp('writer', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      omp('earlier-reader', repoRoot, [
+        toolCall('2026-10-04T09:59:40Z', 'genie task status t1', 'r'),
+        toolResult('2026-10-04T09:59:41Z', 'r'),
+        evalCall('2026-10-04T10:00:30Z', 'print("t1")'),
+      ]);
+      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
+    });
+
+    test('a proven session is not blocked by its own other mentions of the card', () => {
       const writer = omp('writer', repoRoot, [
         toolCall('2026-10-04T09:59:58Z', 'genie --no-interactive task checkout t1 --worker w', 'a'),
+        toolCall('2026-10-04T09:59:59Z', 'genie task status t1', 'b'),
         evalCall('2026-10-04T09:59:59Z', 'print("genie task t1")'),
       ]);
-      omp('bystander', repoRoot, [toolCall('2026-10-04T09:59:59Z', 'echo "next: genie task checkout t1" >> notes.md')]);
+      write(
+        join(writer.replace(/\.jsonl$/, ''), 'G1Worker.jsonl'),
+        jsonl([toolCall('2026-10-04T09:59:59Z', 'grep t1 notes.md')]),
+      );
       expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
     });
 

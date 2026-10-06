@@ -27,6 +27,7 @@ import {
   type UsageSample,
   matchOmpSessionByCwd,
   matchOmpSessionByEvidence,
+  newOmpEvidenceCache,
   readUsageSamples,
 } from './metrics-usage.js';
 
@@ -67,8 +68,8 @@ export interface Interval {
   /**
    * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
    * OMP shell exported none and exactly one OMP session overlapped the interval in the same cwd or,
-   * when none has that cwd, exactly one live OMP session logged a `genie task` call for this card
-   * just before the event; 'ambiguous' — several
+   * when none has that cwd, exactly one live OMP session was running a genie write for this card
+   * when the event was written and no other session's running call named it; 'ambiguous' — several
    * remained, so no usage is attributed; null — no runtime session at all.
    */
   sessionMatch: 'exact' | 'window' | 'ambiguous' | null;
@@ -180,7 +181,7 @@ const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id 
 
 /**
  * The opening event's session, or — for an OMP shell that exported no id — the one OMP session that
- * matches by cwd and window, then (only when none has that cwd) by its logged `genie task` call.
+ * matches by cwd and window, then (only when none has that cwd) by its logged genie write of the card.
  */
 function resolveIntervalSession(
   from: CaptureLine,
@@ -246,7 +247,10 @@ export function buildIntervals(
     if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
     return offloadRows.get(root) ?? null;
   };
-  const ompEvidence: OmpEvidenceCache = new Map();
+  // The cards an id-less OMP line asks about: the evidence index keeps only tool calls naming one of them.
+  const ompEvidence: OmpEvidenceCache = newOmpEvidenceCache(
+    matched.filter((l) => l.session.source === 'pi' && l.session.id === null).map((l) => l.task),
+  );
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
     events.sort((a, b) => a.at - b.at || a.event - b.event);
