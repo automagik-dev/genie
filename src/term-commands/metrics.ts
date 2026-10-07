@@ -97,7 +97,14 @@ async function runExport(options: ExportOptions): Promise<number> {
   const prices = loadPriceTable();
   const intervals = buildIntervals(matched, process.env, prices);
   const summary = summarize(intervals, prices !== null);
-  const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt };
+  // `ignored` (lines of a database that is not `<root>/.genie/genie.db`) is reported only when non-zero:
+  // a ledger with none keeps the exact text line and JSON object it always produced.
+  const stats = {
+    lines: ledger.lines.length,
+    unmatched,
+    corrupt: ledger.corrupt,
+    ...(ledger.ignored > 0 ? { ignored: ledger.ignored } : {}),
+  };
   if (options.out) {
     writeFileSync(options.out, intervals.map((i) => `${JSON.stringify(i)}\n`).join(''), { mode: 0o600 });
     // Tighten a pre-existing regular file only: never a tty or pipe (`--out /dev/stdout`), never fatal.

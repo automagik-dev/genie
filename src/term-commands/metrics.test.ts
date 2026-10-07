@@ -264,6 +264,46 @@ describe('genie metrics', () => {
     }
   }, 60_000);
 
+  test('export ignores ledger lines of a database that is not <root>/.genie/genie.db, and says how many', () => {
+    expect(run(['metrics', 'enable']).code).toBe(0);
+    const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
+    expect(run(['task', 'comment', id, 'one']).code).toBe(0);
+    expect(run(['task', 'comment', id, 'two']).code).toBe(0);
+    const ledger = join(home, 'metrics', 'events.jsonl');
+    const captured = readFileSync(ledger, 'utf8');
+
+    // A ledger with only per-repo lines: the summary line and the JSON object keep the shape they always had.
+    const cleanText = run(['metrics', 'export']).stdout;
+    const cleanJson = JSON.parse(run(['metrics', 'export', '--json']).stdout);
+    const lines = captured.trim().split('\n').length;
+    expect(cleanText.split('\n')[0]).toBe(`ledger lines ${lines}, unmatched 0, corrupt 0`);
+    expect(Object.keys(cleanJson)).toEqual(['lines', 'unmatched', 'corrupt', 'intervals', 'summary']);
+    expect(cleanJson.intervals).toBeGreaterThan(0);
+
+    // What a pre-#3134 suite run left behind: the same events, verifiable, under a test database path.
+    const scratch = join(root, 'genie-task-AbCd', 'race.db');
+    execFileSync('mkdir', ['-p', join(root, 'genie-task-AbCd')]);
+    execFileSync('cp', [join(repo, '.genie', 'genie.db'), scratch]);
+    const polluted = captured
+      .trim()
+      .split('\n')
+      .map((row) => `${JSON.stringify({ ...JSON.parse(row), db: scratch })}\n`)
+      .join('');
+    writeFileSync(ledger, captured + polluted);
+
+    const text = run(['metrics', 'export']).stdout;
+    expect(text.split('\n')[0]).toBe(`ledger lines ${lines}, unmatched 0, corrupt 0, ignored ${lines}`);
+    expect(text.split('\n').slice(1)).toEqual(cleanText.split('\n').slice(1));
+    const json = JSON.parse(run(['metrics', 'export', '--json']).stdout);
+    expect(Object.keys(json)).toEqual(['lines', 'unmatched', 'corrupt', 'ignored', 'intervals', 'summary']);
+    expect(json).toEqual({ ...cleanJson, ignored: lines, summary: json.summary });
+    expect(json.summary.map((r: { transition: string; n: number }) => [r.transition, r.n])).toEqual(
+      cleanJson.summary.map((r: { transition: string; n: number }) => [r.transition, r.n]),
+    );
+    // Read past, never pruned.
+    expect(readFileSync(ledger, 'utf8')).toBe(captured + polluted);
+  }, 60_000);
+
   test('status --json names the switch, the ledger and this shell’s session', () => {
     const status = run(['metrics', 'status', '--json'], { PI_SESSION_ID: 'pi-1', PI_SESSION_FILE: '/s/pi-1.jsonl' });
     expect(status.code).toBe(0);

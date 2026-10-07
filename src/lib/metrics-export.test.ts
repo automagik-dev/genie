@@ -1,6 +1,16 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
@@ -863,10 +873,80 @@ describe('ledger → verified intervals', () => {
     const path = join(root, 'events.jsonl');
     write(
       path,
-      `${JSON.stringify(line('/x', 1, 'claim', 5))}\n{"torn\n${JSON.stringify(line('/x', 2, 'report', 50))}\n`,
+      `${JSON.stringify(line('/x/.genie/genie.db', 1, 'claim', 5))}\n{"torn\n${JSON.stringify(line('/x/.genie/genie.db', 2, 'report', 50))}\n`,
     );
     expect(readCaptureLedger(path, 10)).toMatchObject({ corrupt: 1, lines: [{ event: 2 }] });
-    expect(readCaptureLedger(join(root, 'absent.jsonl'))).toEqual({ lines: [], corrupt: 0 });
+    expect(readCaptureLedger(join(root, 'absent.jsonl'))).toEqual({ lines: [], corrupt: 0, ignored: 0 });
+  });
+
+  describe('lines of a database that is not <root>/.genie/genie.db are ignored (#3135)', () => {
+    const at1 = t('2026-10-04T10:00:00Z');
+    const at2 = t('2026-10-04T10:10:00Z');
+    const events = [
+      { id: 1, task: 't1', kind: 'claim', at: at1 },
+      { id: 2, task: 't1', kind: 'report', at: at2 },
+    ];
+
+    /** A test database with REAL matching rows: before the filter it verified and produced an interval. */
+    function seedScratchDb(): string {
+      const repoDb = seedDb(events);
+      const scratch = join(root, 'genie-task-AbCd', 'race.db');
+      mkdirSync(join(scratch, '..'), { recursive: true });
+      copyFileSync(repoDb, scratch);
+      return scratch;
+    }
+
+    test('a mixed ledger builds intervals only from the per-repo lines and counts the rest', () => {
+      const scratch = seedScratchDb();
+      const repoDb = join(root, 'repo', '.genie', 'genie.db');
+      const path = join(root, 'events.jsonl');
+      const body = jsonl([
+        line(scratch, 1, 'claim', at1),
+        line(repoDb, 1, 'claim', at1),
+        line(scratch, 2, 'report', at2),
+        line(repoDb, 2, 'report', at2),
+        { ...line(repoDb, 2, 'report', at2), db: undefined },
+      ]);
+      write(path, body);
+
+      const ledger = readCaptureLedger(path);
+      expect(ledger.ignored).toBe(3);
+      expect(ledger.corrupt).toBe(0);
+      expect(ledger.lines.map((l) => l.db)).toEqual([repoDb, repoDb]);
+      const { matched, unmatched } = verifyAgainstTaskEvents(ledger.lines);
+      expect(unmatched).toBe(0);
+      const intervals = buildIntervals(matched, env);
+      expect(intervals).toHaveLength(1);
+      expect(intervals[0]).toMatchObject({ db: repoDb, transition: 'claim→report' });
+      // The ledger is read, never rewritten.
+      expect(readFileSync(path, 'utf8')).toBe(body);
+
+      const stats = { lines: ledger.lines.length, unmatched, corrupt: ledger.corrupt, ignored: ledger.ignored };
+      expect(formatSummary(summarize(intervals), stats).split('\n')[0]).toBe(
+        'ledger lines 2, unmatched 0, corrupt 0, ignored 3',
+      );
+      // --since applies first: a line outside the window is not counted as ignored either.
+      expect(readCaptureLedger(path, at2)).toMatchObject({ ignored: 2, lines: [{ event: 2 }] });
+    });
+
+    test('a ledger with only per-repo lines reads and prints exactly as before', () => {
+      const repoDb = seedDb(events);
+      const path = join(root, 'events.jsonl');
+      const lines = [line(repoDb, 1, 'claim', at1), line(repoDb, 2, 'report', at2)];
+      write(path, jsonl(lines));
+      const ledger = readCaptureLedger(path);
+      expect(ledger).toEqual({ lines, corrupt: 0, ignored: 0 });
+      const summary = summarize(buildIntervals(verifyAgainstTaskEvents(ledger.lines).matched, env));
+      const pinned =
+        'ledger lines 2, unmatched 0, corrupt 0\n' +
+        'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd\n' +
+        'claim→report\t1\t10.0\t10.0\t0/1\t-\t-\t-\n';
+      expect(formatSummary(summary, { lines: 2, unmatched: 0, corrupt: 0 })).toBe(pinned);
+      expect(formatSummary(summary, { lines: 2, unmatched: 0, corrupt: 0, ignored: 0 })).toBe(pinned);
+      expect(formatSummary([], { lines: 0, unmatched: 0, corrupt: 0, ignored: 0 })).toBe(
+        'ledger lines 0, unmatched 0, corrupt 0\nno intervals yet: a card needs two captured events\n',
+      );
+    });
   });
 
   describe('price table', () => {
