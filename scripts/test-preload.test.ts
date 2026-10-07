@@ -86,7 +86,12 @@ const seen = ['GENIE_METRICS', 'CLAUDECODE', 'FORCE_COLOR'].map((k) => k + '=' +
 process.stdout.write(seen);
 `,
     );
-    const argv = (api: string): string[] => ['run', workerPath, join(dir, `${api}.db`)];
+    // A per-repo database path (`<root>/.genie/genie.db`): capture skips any other, so a scratch name
+    // here would leave the ledger empty whatever the preload did and the probe would prove nothing.
+    const argv = (api: string): string[] => {
+      mkdirSync(join(dir, api, '.genie'), { recursive: true });
+      return ['run', workerPath, join(dir, api, '.genie', 'genie.db')];
+    };
     const bun = process.execPath;
 
     const viaBunSpawn = Bun.spawn([bun, ...argv('bun-spawn')], { stdout: 'pipe', stderr: 'pipe' });

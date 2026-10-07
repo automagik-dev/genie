@@ -19,7 +19,7 @@
 
 import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync } from 'node:fs';
-import type { CaptureLine, RuntimeSession } from './metrics-capture.js';
+import { type CaptureLine, type RuntimeSession, isCanonicalRepoDb } from './metrics-capture.js';
 import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
 import { type PriceTable, hasTokens, tableCost } from './metrics-prices.js';
 import {
@@ -76,24 +76,31 @@ export interface Interval {
 }
 
 export interface LedgerRead {
+  /** In-window lines of a per-repo database — the only ones the export uses. */
   lines: CaptureLine[];
   corrupt: number;
+  /** In-window lines whose `db` is not `<root>/.genie/genie.db` (a test or scratch database): read past, never used. */
+  ignored: number;
 }
 
 export function readCaptureLedger(path: string, sinceMs = 0): LedgerRead {
-  if (!existsSync(path)) return { lines: [], corrupt: 0 };
+  if (!existsSync(path)) return { lines: [], corrupt: 0, ignored: 0 };
   const lines: CaptureLine[] = [];
   let corrupt = 0;
+  let ignored = 0;
   for (const raw of readFileSync(path, 'utf8').split('\n')) {
     if (raw.trim() === '') continue;
     try {
       const line = JSON.parse(raw) as CaptureLine;
-      if (line.v === 1 && line.source === 'task_event' && line.at >= sinceMs) lines.push(line);
+      if (line.v !== 1 || line.source !== 'task_event' || !(line.at >= sinceMs)) continue;
+      // Written before capture refused these: a test or scratch database is no card lifecycle. Read past, never pruned.
+      if (typeof line.db === 'string' && isCanonicalRepoDb(line.db)) lines.push(line);
+      else ignored++;
     } catch {
       corrupt++;
     }
   }
-  return { lines, corrupt };
+  return { lines, corrupt, ignored };
 }
 
 /** Keep the lines whose `(task, event, kind, at)` names a stored row of their db. */
@@ -360,9 +367,10 @@ export function summarize(intervals: Interval[], coverage = false): TransitionSu
 
 export function formatSummary(
   rows: TransitionSummary[],
-  stats: { lines: number; unmatched: number; corrupt: number },
+  stats: { lines: number; unmatched: number; corrupt: number; ignored?: number },
 ): string {
-  const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}`;
+  // `ignored` appears only when it is not zero, so a ledger with nothing to ignore prints what it always did.
+  const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}${stats.ignored ? `, ignored ${stats.ignored}` : ''}`;
   if (rows.length === 0) return `${head}\nno intervals yet: a card needs two captured events\n`;
   const coverage = rows.some((r) => r.pricedCalls !== undefined);
   const out = [
