@@ -252,6 +252,39 @@ describe('context budget', () => {
     expect(check.contextBudget).toEqual({ value: 250000, source: 'settings' });
   });
 
+  test("the settings key takes Claude Code's shorthands; the env var is a plain count", () => {
+    const settingsPath = join(configDir, 'settings.json');
+    for (const [written, tokens] of [
+      ['400k', 400000],
+      ['1M', 1000000],
+      [400, 400000],
+      ['400', 400000],
+      [400000, 400000],
+    ] as const) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: written }));
+      expect(run().contextBudget).toEqual({ value: tokens, source: 'settings' });
+    }
+    writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: 'soon' }));
+    expect(run().contextBudget).toEqual({ value: null, source: 'settings' });
+    expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400k' }).contextBudget).toEqual({ value: null, source: 'env' });
+  });
+
+  test('per-model windows are counted, since each wins over the global key for its model', () => {
+    const settingsPath = join(configDir, 'settings.json');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ autoCompactWindow: '400k', modelSettings: { opus: { autoCompactWindow: '300k' }, sonnet: {} } }),
+    );
+    const withGlobal = run();
+    expect(withGlobal.status).toBe('pass');
+    expect(withGlobal.name).toContain('1 per-model override(s)');
+    expect(withGlobal.contextBudget).toEqual({ value: 400000, source: 'settings', perModelOverrides: 1 });
+    writeFileSync(settingsPath, JSON.stringify({ modelSettings: { opus: { autoCompactWindow: 300000 } } }));
+    const onlyPerModel = run();
+    expect(onlyPerModel.name).toContain('400k recommended');
+    expect(onlyPerModel.contextBudget).toEqual({ value: null, source: 'default', perModelOverrides: 1 });
+  });
+
   test('neither set: the Claude Code default applies and 400k is the recommendation', () => {
     const absent = run();
     writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ model: 'opus' }));

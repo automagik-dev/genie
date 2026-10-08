@@ -126,6 +126,8 @@ export interface CheckResult {
 export interface ContextBudgetStatus {
   value: number | null;
   source: 'env' | 'settings' | 'default' | 'unknown';
+  /** Present only when `modelSettings` carries per-model windows, which win over the global key. */
+  perModelOverrides?: number;
 }
 
 // ============================================================================
@@ -1311,11 +1313,31 @@ export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env)
   ];
 }
 
-/** A positive finite token count, or `null` for anything Claude Code could not mean as a window. */
-function parseCompactWindow(raw: unknown): number | null {
-  const parsed =
-    typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+/**
+ * A positive finite token count, or `null` for anything Claude Code could not mean as a window.
+ * The env var is a plain token count. The settings key also takes Claude Code's shorthands: a `k`
+ * or `M` suffix (`400k`, `1M`) and a bare thousand (`400` is 400,000 — the range is 100K to 1M, so
+ * a value of 1000 or less can only be thousands).
+ */
+function parseCompactWindow(raw: unknown, shorthand: boolean): number | null {
+  let parsed = Number.NaN;
+  if (typeof raw === 'number') parsed = raw;
+  else if (typeof raw === 'string' && raw.trim() !== '') {
+    const suffixed = shorthand ? /^(\d+(?:\.\d+)?)\s*([kKmM])$/.exec(raw.trim()) : null;
+    parsed = suffixed ? Number(suffixed[1]) * (suffixed[2].toLowerCase() === 'k' ? 1_000 : 1_000_000) : Number(raw);
+  }
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return shorthand && parsed <= 1_000 ? parsed * 1_000 : parsed;
+}
+
+/** How many `modelSettings.<model>.autoCompactWindow` entries the settings carry; each wins over the global key for its model. */
+function perModelCompactWindows(settings: Record<string, unknown>): number {
+  const models = settings.modelSettings;
+  if (models === null || typeof models !== 'object' || Array.isArray(models)) return 0;
+  return Object.values(models).filter(
+    (entry) =>
+      entry !== null && typeof entry === 'object' && (entry as Record<string, unknown>).autoCompactWindow !== undefined,
+  ).length;
 }
 
 function contextBudgetLine(status: ContextBudgetStatus, where: string): CheckResult[] {
@@ -1335,7 +1357,7 @@ export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckR
   const fromEnv = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   if (fromEnv !== undefined && fromEnv !== '') {
     return contextBudgetLine(
-      { value: parseCompactWindow(fromEnv), source: 'env' },
+      { value: parseCompactWindow(fromEnv, false), source: 'env' },
       'env CLAUDE_CODE_AUTO_COMPACT_WINDOW',
     );
   }
@@ -1351,18 +1373,21 @@ export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckR
   if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
     return contextBudgetLine({ value: null, source: 'unknown' }, 'settings.json unreadable or malformed');
   }
+  const perModel = perModelCompactWindows(settings as Record<string, unknown>);
+  const overrides = perModel > 0 ? `; ${perModel} per-model override(s) in modelSettings win for their model` : '';
+  const rider = perModel > 0 ? { perModelOverrides: perModel } : {};
   const fromSettings = (settings as Record<string, unknown>).autoCompactWindow;
   if (fromSettings !== undefined) {
     return contextBudgetLine(
-      { value: parseCompactWindow(fromSettings), source: 'settings' },
-      'settings.json autoCompactWindow',
+      { value: parseCompactWindow(fromSettings, true), source: 'settings', ...rider },
+      `settings.json autoCompactWindow${overrides}`,
     );
   }
   return [
     {
-      name: 'context budget: Claude Code default applies (auto-compact window not set); 400k recommended',
+      name: `context budget: Claude Code default applies (auto-compact window not set${overrides}); 400k recommended`,
       status: 'pass',
-      contextBudget: { value: null, source: 'default' },
+      contextBudget: { value: null, source: 'default', ...rider },
     },
   ];
 }
