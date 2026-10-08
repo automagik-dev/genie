@@ -252,33 +252,50 @@ describe('context budget', () => {
     expect(check.contextBudget).toEqual({ value: 250000, source: 'settings' });
   });
 
-  test("the settings key takes Claude Code's shorthands; the env var is a plain count", () => {
+  test('only a whole token count from 100000 to 1000000 is reported; anything Claude Code would drop is unknown', () => {
     const settingsPath = join(configDir, 'settings.json');
-    for (const [written, tokens] of [
-      ['400k', 400000],
-      ['1M', 1000000],
-      [400, 400000],
-      ['400', 400000],
-      [400000, 400000],
-    ] as const) {
-      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: written }));
-      expect(run().contextBudget).toEqual({ value: tokens, source: 'settings' });
+    for (const kept of [100000, 400000, 1000000]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: kept }));
+      expect(run().contextBudget).toEqual({ value: kept, source: 'settings' });
     }
-    writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: 'soon' }));
-    expect(run().contextBudget).toEqual({ value: null, source: 'settings' });
-    expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400k' }).contextBudget).toEqual({ value: null, source: 'env' });
+    // The shorthands belong to /autocompact and the CLI flag; in settings.json Claude Code drops them.
+    for (const dropped of ['400k', '1M', 400, '400000', 99999, 1000001, 250000.5, 0, -1, true, null, [], {}]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: dropped }));
+      const check = run();
+      expect(check.status).toBe('pass');
+      expect(check.name).toContain('unknown');
+      expect(check.contextBudget).toEqual({ value: null, source: 'settings' });
+    }
+    expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }).contextBudget).toEqual({ value: 400000, source: 'env' });
+    for (const odd of ['400k', '400', '4e5', '0x61A80', '400000.5', ' 400000', '1000001']) {
+      expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: odd }).contextBudget).toEqual({ value: null, source: 'env' });
+    }
   });
 
   test('per-model windows are counted, since each wins over the global key for its model', () => {
     const settingsPath = join(configDir, 'settings.json');
     writeFileSync(
       settingsPath,
-      JSON.stringify({ autoCompactWindow: '400k', modelSettings: { opus: { autoCompactWindow: '300k' }, sonnet: {} } }),
+      JSON.stringify({
+        autoCompactWindow: 400000,
+        modelSettings: {
+          opus: { autoCompactWindow: 300000 },
+          fable: { autoCompactWindow: 'auto' },
+          sonnet: {},
+          haiku: { autoCompactWindow: '300k' },
+          other: { autoCompactWindow: 50 },
+          broken: null,
+        },
+      }),
     );
     const withGlobal = run();
     expect(withGlobal.status).toBe('pass');
-    expect(withGlobal.name).toContain('1 per-model override(s)');
-    expect(withGlobal.contextBudget).toEqual({ value: 400000, source: 'settings', perModelOverrides: 1 });
+    expect(withGlobal.name).toContain('2 per-model override(s)');
+    expect(withGlobal.contextBudget).toEqual({ value: 400000, source: 'settings', perModelOverrides: 2 });
+    for (const shape of ['x', [1], 7, null]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: 400000, modelSettings: shape }));
+      expect(run().contextBudget).toEqual({ value: 400000, source: 'settings' });
+    }
     writeFileSync(settingsPath, JSON.stringify({ modelSettings: { opus: { autoCompactWindow: 300000 } } }));
     const onlyPerModel = run();
     expect(onlyPerModel.name).toContain('400k recommended');

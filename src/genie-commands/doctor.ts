@@ -1313,35 +1313,35 @@ export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env)
   ];
 }
 
+/** Claude Code takes the window as a whole token count from 100,000 to 1,000,000. */
+const inCompactRange = (tokens: number): boolean =>
+  Number.isInteger(tokens) && tokens >= 100_000 && tokens <= 1_000_000;
+
 /**
- * A positive finite token count, or `null` for anything Claude Code could not mean as a window.
- * The env var is a plain token count. The settings key also takes Claude Code's shorthands: a `k`
- * or `M` suffix (`400k`, `1M`) and a bare thousand (`400` is 400,000 — the range is 100K to 1M, so
- * a value of 1000 or less can only be thousands).
+ * The window a source names, or `null` when Claude Code would not use it as written. The settings key
+ * is a JSON number (the `400k` and bare-thousand shorthands belong to `/autocompact` and the CLI flag
+ * only, and Claude Code drops any other settings value); the env var is the same count as digits.
+ * Anything else is reported unknown rather than as a number that may not be the one in force.
  */
-function parseCompactWindow(raw: unknown, shorthand: boolean): number | null {
-  let parsed = Number.NaN;
-  if (typeof raw === 'number') parsed = raw;
-  else if (typeof raw === 'string' && raw.trim() !== '') {
-    const suffixed = shorthand ? /^(\d+(?:\.\d+)?)\s*([kKmM])$/.exec(raw.trim()) : null;
-    parsed = suffixed ? Number(suffixed[1]) * (suffixed[2].toLowerCase() === 'k' ? 1_000 : 1_000_000) : Number(raw);
-  }
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return shorthand && parsed <= 1_000 ? parsed * 1_000 : parsed;
+function parseCompactWindow(raw: unknown, from: 'env' | 'settings'): number | null {
+  const tokens = from === 'settings' ? raw : typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null;
+  return typeof tokens === 'number' && inCompactRange(tokens) ? tokens : null;
 }
 
-/** How many `modelSettings.<model>.autoCompactWindow` entries the settings carry; each wins over the global key for its model. */
+/** How many `modelSettings.<model>.autoCompactWindow` entries Claude Code would honour; each wins over the global key for its model. */
 function perModelCompactWindows(settings: Record<string, unknown>): number {
   const models = settings.modelSettings;
   if (models === null || typeof models !== 'object' || Array.isArray(models)) return 0;
-  return Object.values(models).filter(
-    (entry) =>
-      entry !== null && typeof entry === 'object' && (entry as Record<string, unknown>).autoCompactWindow !== undefined,
-  ).length;
+  return Object.values(models).filter((entry) => {
+    if (entry === null || typeof entry !== 'object') return false;
+    const window = (entry as Record<string, unknown>).autoCompactWindow;
+    return window === 'auto' || (typeof window === 'number' && inCompactRange(window));
+  }).length;
 }
 
 function contextBudgetLine(status: ContextBudgetStatus, where: string): CheckResult[] {
-  const window = status.value === null ? 'unknown' : String(status.value);
+  const window =
+    status.value === null ? 'unknown, not a whole token count from 100000 to 1000000' : String(status.value);
   return [{ name: `context budget: auto-compact window ${window} (${where})`, status: 'pass', contextBudget: status }];
 }
 
@@ -1357,7 +1357,7 @@ export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckR
   const fromEnv = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   if (fromEnv !== undefined && fromEnv !== '') {
     return contextBudgetLine(
-      { value: parseCompactWindow(fromEnv, false), source: 'env' },
+      { value: parseCompactWindow(fromEnv, 'env'), source: 'env' },
       'env CLAUDE_CODE_AUTO_COMPACT_WINDOW',
     );
   }
@@ -1371,7 +1371,13 @@ export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckR
     }
   }
   if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
-    return contextBudgetLine({ value: null, source: 'unknown' }, 'settings.json unreadable or malformed');
+    return [
+      {
+        name: 'context budget: auto-compact window unknown (settings.json unreadable or malformed)',
+        status: 'pass',
+        contextBudget: { value: null, source: 'unknown' },
+      },
+    ];
   }
   const perModel = perModelCompactWindows(settings as Record<string, unknown>);
   const overrides = perModel > 0 ? `; ${perModel} per-model override(s) in modelSettings win for their model` : '';
@@ -1379,7 +1385,7 @@ export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckR
   const fromSettings = (settings as Record<string, unknown>).autoCompactWindow;
   if (fromSettings !== undefined) {
     return contextBudgetLine(
-      { value: parseCompactWindow(fromSettings, true), source: 'settings', ...rider },
+      { value: parseCompactWindow(fromSettings, 'settings'), source: 'settings', ...rider },
       `settings.json autoCompactWindow${overrides}`,
     );
   }
